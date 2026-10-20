@@ -35,13 +35,8 @@ defmodule HalC2.Pi.ThreadRuntime do
   # Pi does not bound its answer to a steer, so the runtime gives it this long and
   # then takes it as taken (`steer_timeout/2`): a little over the 30s Codex gives a
   # steer, so one Pi is merely slow to answer is not cut off sooner than another
-  # provider's would be. The steer's caller waits on that and, if it ends the turn,
-  # on the turn's settling too (`settle/1`: one call, then the stats), plus a margin
-  # for the local work recording that end (flush, commits, closing items, `finish/3`)
-  # and timer granularity: without it, a refusal answered at the last moment could
-  # lose to the caller's own timeout and be reported as taken.
+  # provider's would be.
   @steer_answer_ms 33_000
-  @steer_record_ms 10_000
 
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
@@ -62,26 +57,23 @@ defmodule HalC2.Pi.ThreadRuntime do
   `agent_settled` after Pi's answer to the steer, so new work it started is the turn's.
   Returns once Pi answered: its refusal is the error. A refusal that ends the turn
   returns once the turn is recorded (`settle/1`), so the wait covers Pi's answer and that.
-  A steer Pi has not answered in `@steer_answer_ms` is taken as taken: Pi still holds it,
+  A steer Pi has not answered in its answer budget is taken as taken: Pi still holds it,
   and may act on it, so the message is the turn's.
+
+  The wait has no budget of its own. A refusal can be held behind steers sent
+  after this one (`steered/3`), each with its own answer budget, and then
+  behind the turn's settling, so no fixed caller timeout can outlast every
+  staggered pair — one that expired would report a refused steer as taken.
+  Every steer is eventually replied (answered, taken on its answer timer,
+  released with the held refusals, or answered as the turn ends), and a
+  runtime that stops surfaces as this call's exit, as it did before.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
-      nil ->
-        {:error, "no active Pi turn in this thread"}
-
-      pid ->
-        GenServer.call(
-          pid,
-          {:steer, run_id, message},
-          steer_answer_ms() + @call_ms + @stats_ms + @steer_record_ms
-        )
+      nil -> {:error, "no active Pi turn in this thread"}
+      pid -> GenServer.call(pid, {:steer, run_id, message}, :infinity)
     end
-  catch
-    # Only a runtime stuck past its own answer budget gets here: the steer is taken, as
-    # one Pi answers too late is.
-    :exit, {:timeout, _} -> :ok
   end
 
   defp steer_answer_ms, do: Application.get_env(:hal_c2, :pi_steer_answer_ms, @steer_answer_ms)
@@ -329,8 +321,14 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
-    state = if state.turn, do: end_turn(state, "failed", "Pi exited unexpectedly"), else: state
-    {:noreply, %{state | conn: nil, compact: nil, steers: unanswered(state.steers, "failed")}}
+    # With a turn open, `end_turn/3` already answered every outstanding steer;
+    # without one there should be none, but answer any left rather than drop them.
+    state =
+      if state.turn,
+        do: end_turn(state, "failed", "Pi exited unexpectedly"),
+        else: %{state | steers: unanswered(state.steers, "failed")}
+
+    {:noreply, %{state | conn: nil, compact: nil}}
   end
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
@@ -931,8 +929,12 @@ defmodule HalC2.Pi.ThreadRuntime do
   # its message is the turn's. A settle that waited on it alone ends the turn now, and
   # Pi's late answer is dropped. Unlike an answered steer (`steered/3`), a timed-out
   # one does not clear `settled` or release the held refusals while other steers are
-  # still out: an answer proves Pi took the steer into work that settles again, a
-  # timeout proves nothing, so the owed settle stays. The held refusals then hear
+  # still out. Dropping it here also abandons its entry in the connection's pending
+  # map (and the `send_request` monitor on it) until Pi answers or its process
+  # exits — one entry per timed-out steer for the connection's lifetime, the same
+  # deliberate cost the ACP runtime spells out above its `answer/3`. An answer
+  # proves Pi took the steer into work that settles again; a timeout proves
+  # nothing, so the owed settle stays. The held refusals then hear
   # once the last steer out resolves (each bounded by its own answer timer, an
   # answer, or Pi's exit), which is the first moment it is known whether the turn
   # ended — releasing them sooner would tell a declined steer's sender it was

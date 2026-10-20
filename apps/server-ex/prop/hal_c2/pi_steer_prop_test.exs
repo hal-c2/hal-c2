@@ -10,7 +10,9 @@ defmodule HalC2.PiSteerPropTest do
   the turn, so it is sent on its own too), or one Pi never answers once the run settled
   (which the runtime takes as taken once its answer budget, shortened here, runs out);
   steer it twice at once, including a declined steer held behind one Pi never answers
-  (in either order); interrupt it.
+  (in either order); steer it twice staggered, the second dispatched while the first
+  is still in flight, so a held refusal outlives the first steer's own answer budget;
+  interrupt it.
 
   Turns run on the fake `pi --mode rpc` in `test/support/fake_pi_rpc.py`. The model
   checks that each turn ends once, with the status it should, that every steer's
@@ -126,6 +128,9 @@ defmodule HalC2.PiSteerPropTest do
             {:ignored, :declined}
           ])
         ]}},
+      {2,
+       {:call, __MODULE__, :steer_staggered,
+        [id(next), id(next + 1), oneof([{:declined, :ignored}, {:ignored, :declined}])]}},
       {1, {:call, __MODULE__, :steer, [id(next), :refused]}},
       {1, {:call, __MODULE__, :interrupt, []}}
     ])
@@ -147,6 +152,7 @@ defmodule HalC2.PiSteerPropTest do
 
   def precondition(%{turn: turn}, {:call, _, :send, _}), do: turn == nil
   def precondition(%{how: how}, {:call, _, :steer_pair, _}), do: how == :pair
+  def precondition(%{how: how}, {:call, _, :steer_staggered, _}), do: how == :pair
 
   def precondition(%{how: :pair}, {:call, _, :steer, [_, kind]}), do: kind == :refused
   # A turn taking a steer in answers it; one that settled as it landed never does.
@@ -157,6 +163,10 @@ defmodule HalC2.PiSteerPropTest do
     runs = state.runs ++ [{msg, "running"}]
     %{state | next: state.next + 1, runs: runs, turn: msg, how: how}
   end
+
+  # Staggered or at once, the pair's outcomes are the same.
+  def next_state(state, result, {:call, mod, :steer_staggered, args}),
+    do: next_state(state, result, {:call, mod, :steer_pair, args})
 
   # Pi takes the first, then the second, each after the run settled.
   def next_state(state, _result, {:call, _, :steer_pair, [a, b, kinds]}) do
@@ -247,6 +257,7 @@ defmodule HalC2.PiSteerPropTest do
         {:call, _, :steer, [_, :refused]} -> match?({:error, _}, reply)
         {:call, _, :steer_pair, [_, _, {:declined, :joins}]} -> match?([{:error, _}, :ok], reply)
         {:call, _, :steer_pair, _} -> reply == [:ok, :ok]
+        {:call, _, :steer_staggered, _} -> reply == [:ok, :ok]
         _ -> reply == :ok
       end
 
@@ -312,6 +323,25 @@ defmodule HalC2.PiSteerPropTest do
     # Unless the turn works on, every run it left, the ones sent on their own included,
     # runs to its end.
     ending = if kind_b == :joins, do: [], else: ending ++ unfinished_runs()
+    {replies, settled(ending, System.monotonic_time(:millisecond) + @wait_ms)}
+  end
+
+  # Two steers staggered: the second is dispatched while the first is still in
+  # flight, so whichever is declined is held behind the unanswered one's whole
+  # answer budget (and the settling after it) before its sender hears. Its
+  # caller must still hear the refusal, not a timeout taken as taken.
+  def steer_staggered(a, b, {kind_a, kind_b}) do
+    {text_a, ending} = steer_text(a, kind_a)
+    {text_b, _} = steer_text(b, kind_b)
+
+    first =
+      Task.async(fn ->
+        answer(Orchestration.dispatch(message(a, text_a, "start_immediately", "steer")))
+      end)
+
+    reply_b = answer(Orchestration.dispatch(message(b, text_b, "start_immediately", "steer")))
+    replies = [Task.await(first, @wait_ms), reply_b]
+    ending = ending ++ unfinished_runs()
     {replies, settled(ending, System.monotonic_time(:millisecond) + @wait_ms)}
   end
 
