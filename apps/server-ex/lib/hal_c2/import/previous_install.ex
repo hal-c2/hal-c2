@@ -67,15 +67,16 @@ defmodule HalC2.Import.PreviousInstall do
       threads =
         for thread <- Map.values(index.threads), thread.parent == nil do
           project = index.projects[thread.project]
+          members = family(index, thread.id)
 
           %{
             "id" => thread.id,
             "title" => thread.title,
             "project" => (project && project.title) || thread.project,
             "updatedAt" => thread.updated_at,
-            "subagents" => length(family(index, thread.id)) - 1,
+            "subagents" => length(members) - 1,
             "settled" => thread.settled,
-            "imported" => todo(family(index, thread.id), done) == []
+            "imported" => todo(members, done) == []
           }
         end
 

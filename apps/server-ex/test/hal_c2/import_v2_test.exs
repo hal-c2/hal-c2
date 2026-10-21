@@ -101,6 +101,86 @@ defmodule HalC2.Import.V2Test do
     end
   end
 
+  # The happy path the refusals guard: stopping after a prefix and resuming
+  # stores exactly what one import of the whole source stores, change for change.
+  @tag :tmp_dir
+  test "an import stopped after a prefix and resumed stores what one import stores",
+       %{tmp_dir: dir} do
+    events = node_events()
+    whole = Path.join(dir, "whole.sqlite")
+    write_node_log(whole, events)
+
+    one =
+      start_supervised!({HalC2.Store, path: Path.join(dir, "one.sqlite"), name: nil}, id: :one)
+
+    assert {:ok, _} = HalC2.Import.V2.run(whole, one, only: ["thread-1"])
+
+    for split <- [3, 20] do
+      source = Path.join(dir, "split-#{split}.sqlite")
+      write_node_log(source, Enum.take(events, split))
+
+      store =
+        start_supervised!(
+          {HalC2.Store, path: Path.join(dir, "resumed-#{split}.sqlite"), name: nil},
+          id: {:resumed, split}
+        )
+
+      assert {:ok, _} = HalC2.Import.V2.run(source, store, only: ["thread-1"])
+      tail = HalC2.Store.stream_tail(HalC2.Store.path(store), "thread-1")
+      append_node_log(source, Enum.drop(events, split))
+
+      assert {:ok, _} =
+               HalC2.Import.V2.run(source, store,
+                 only: ["thread-1"],
+                 resume: %{"thread-1" => tail}
+               )
+
+      assert changes(HalC2.Store.path(store), "thread-1") ==
+               changes(HalC2.Store.path(one), "thread-1")
+    end
+  end
+
+  # A write that lands after the first post-skip batch is stored (a resume with
+  # more than a batch left) is refused at the next batch, not appended over.
+  @tag :tmp_dir
+  test "a resumed import written to after its first stored batch is refused", %{tmp_dir: dir} do
+    source = Path.join(dir, "node.sqlite")
+    events = many_events(2_610)
+    write_node_log(source, Enum.take(events, 10))
+
+    store = start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite"), name: nil})
+    assert {:ok, _} = HalC2.Import.V2.run(source, store, only: ["thread-1"])
+    tail = HalC2.Store.stream_tail(HalC2.Store.path(store), "thread-1")
+    append_node_log(source, Enum.drop(events, 10))
+
+    foreign = HalC2.Patch.diff(nil, %{"id" => "item-foreign", "text" => "written here"})
+
+    # Progress is reported per chunk, after that chunk's flushes: at 2,500 read
+    # the first post-skip batch (2,000 changes) is already stored.
+    write_here = fn read, _total ->
+      if read >= 2_500 and Process.get(:foreign_written) != true do
+        Process.put(:foreign_written, true)
+
+        {:ok, _} =
+          HalC2.Store.append(store, [
+            {:thread, "thread-1", [{"turn-item", "item-foreign", foreign, 1}]}
+          ])
+      end
+    end
+
+    assert_raise RuntimeError, ~r/cannot be continued/, fn ->
+      HalC2.Import.V2.run(source, store,
+        only: ["thread-1"],
+        resume: %{"thread-1" => tail},
+        progress: write_here
+      )
+    end
+
+    # The first batch landed, the write here landed, and nothing after either.
+    {count, _} = HalC2.Store.stream_tail(HalC2.Store.path(store), "thread-1")
+    assert count == elem(tail, 0) + 2_000 + 1
+  end
+
   @tag :tmp_dir
   test "a resume naming a stream the source no longer has at all is refused", %{tmp_dir: dir} do
     source = Path.join(dir, "node.sqlite")
@@ -150,6 +230,24 @@ defmodule HalC2.Import.V2Test do
         {"thread", "thread-1", "provider-session.detached",
          %{"providerSessionId" => "ps-3", "detachedAt" => "now"}}
       ]
+  end
+
+  # One thread and `n - 1` streamed updates of one item, each a change of its own.
+  defp many_events(n) do
+    thread = %{"id" => "thread-1", "title" => "New thread", "projectId" => "project-1"}
+    item = %{"id" => "item-1", "type" => "reasoning", "status" => "running", "text" => ""}
+
+    [{"thread", "thread-1", "thread.created", thread}] ++
+      for i <- 1..(n - 1),
+          do: {"thread", "thread-1", "turn-item.updated", %{item | "text" => "tok#{i}"}}
+  end
+
+  # The stored changes, in order, without their store-local sequences.
+  defp changes(path, stream_id) do
+    HalC2.Store.reduce_stream(path, stream_id, 0, [], fn event, acc ->
+      [{event.kind, event.entity, event.patch, event.at} | acc]
+    end)
+    |> Enum.reverse()
   end
 
   defp write_node_log(path, events) do
