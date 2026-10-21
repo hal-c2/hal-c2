@@ -224,6 +224,116 @@ defmodule HalC2.ProviderUsageLimitsTest do
     assert Limits.get("claude-gone") == nil
   end
 
+  # An upgrade that lands while a turn runs has no `:instance` in the old
+  # state; the turn's own ids say whose quota its updates are.
+  test "a Codex runtime upgraded mid-turn keeps that turn's instance" do
+    start()
+
+    {:ok, _} =
+      HalC2.Settings.update(
+        &put_in(&1, [Access.key("providerInstances", %{}), "codex-work"], %{
+          "driver" => "codex"
+        })
+      )
+
+    assert {:ok, %{instance: "codex-work"} = upgraded} =
+             HalC2.Codex.ThreadRuntime.code_change(
+               0,
+               %{turn: %{ids: %{instance: "codex-work"}}, v: 0},
+               nil
+             )
+
+    assert {:ok, %{instance: nil}} =
+             HalC2.Codex.ThreadRuntime.code_change(0, %{turn: nil, v: 0}, nil)
+
+    assert {:noreply, _} =
+             HalC2.Codex.ThreadRuntime.handle_info(
+               {:json_rpc, nil,
+                {:notification, "account/rateLimits/updated",
+                 %{
+                   "rateLimits" => %{
+                     "limitId" => "codex",
+                     "primary" => %{"usedPercent" => 88, "windowDurationMins" => 300}
+                   }
+                 }}},
+               upgraded
+             )
+
+    :sys.get_state(Limits)
+
+    assert [%{"id" => "primary", "usedPercent" => 88} | _] =
+             Limits.get("codex-work")["windows"]
+
+    assert [%{"id" => "primary", "usedPercent" => 42} | _] = Limits.get("codex")["windows"]
+  end
+
+  # A runtime that started after the thread's last turn knows no turn ids;
+  # quota its background work reports joins that turn's instance, recovered
+  # from the thread the same way its other between-turns work recovers it.
+  test "Claude quota after a restart joins the thread's latest turn's instance",
+       %{dir: dir} do
+    start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
+    start_supervised!(HalC2.Streams)
+    start_supervised!(HalC2.Shell)
+    start()
+
+    {:ok, _} =
+      HalC2.Settings.update(
+        &put_in(&1, [Access.key("providerInstances", %{}), "claude-work"], %{
+          "driver" => "claudeAgent"
+        })
+      )
+
+    run = %{
+      "id" => "run-1",
+      "ordinal" => 1,
+      "providerInstanceId" => "claude-work",
+      "activeAttemptId" => "att-1",
+      "rootNodeId" => "root-1",
+      "providerThreadId" => "pth-1"
+    }
+
+    {:ok, _} =
+      HalC2.Streams.commit("th-limits", :thread, [
+        {"thread", "th-limits", HalC2.Patch.diff(nil, %{"id" => "th-limits", "title" => "t"})},
+        {"run", "run-1", HalC2.Patch.diff(nil, run)}
+      ])
+
+    assert {:noreply, %{last_ids: %{instance: "claude-work"}}} =
+             HalC2.Claude.ThreadRuntime.handle_info(
+               {:claude, nil,
+                {:message,
+                 %{
+                   "type" => "rate_limit_event",
+                   "rate_limit_info" => %{
+                     "rateLimitType" => "five_hour",
+                     "utilization" => 0.66,
+                     "resetsAt" => 1_790_000_000
+                   }
+                 }}},
+               %{turn: nil, wake: nil, last_ids: nil, thread_id: "th-limits"}
+             )
+
+    :sys.get_state(Limits)
+
+    work = Map.new(Limits.get("claude-work")["windows"], &{&1["id"], &1})
+    assert work["five_hour"]["usedPercent"] == 66.0
+  end
+
+  # A removed instance's bucket name goes with its published limits, so the
+  # id being reused later cannot write under the old account's model name.
+  test "a probe drops the bucket names of instances settings no longer have" do
+    start()
+
+    :sys.replace_state(Limits, fn state ->
+      %{state | claude_names: %{"claudeAgent" => "Fable 1", "claude-gone" => "Opus 2"}}
+    end)
+
+    :ok = Limits.refresh([])
+
+    assert :sys.get_state(Limits).claude_names == %{"claudeAgent" => "Fable 1"}
+  end
+
   test "a provider's auth names the account its probe saw, so clients can merge it" do
     start()
     # The account arrives as a cast after the probe; a call after it has been handled.
