@@ -3089,7 +3089,11 @@ defmodule HalC2.Orchestration do
   # (a held queue a newer message passed, say) move up behind it in queue order.
   # Without a hold nothing moves: the queue's first run already has the next ordinal.
   # A run cancelled while queued left it too, so it keeps its number, and the run after
-  # it has no checkpoint at `ordinal - 1` to start from.
+  # it has no checkpoint at `ordinal - 1` to start from. Dense numbering is a
+  # conscious cost: every pass over a waiting queue of N renumbers all N (each
+  # shifted ordinal is a real diff, so the unchanged-diff filter does not help),
+  # which is fine for realistic queue sizes; numbering waiting runs with
+  # headroom would trade that for gaps in queued ordinals.
   defp start_ordinal(state, runs, run) do
     own = run && run["id"]
 

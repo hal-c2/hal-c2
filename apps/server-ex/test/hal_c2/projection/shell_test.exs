@@ -153,6 +153,20 @@ defmodule HalC2.Projection.ShellTest do
     assert Shell.latest_run([older, newer])["id"] == "run-2"
   end
 
+  # A missing ordinal reads as 0 in the active/activity picks too: `nil` sorts
+  # above every integer, so a legacy run without one would win them outright.
+  test "a run stored without an ordinal does not win the active or activity pick" do
+    legacy = Map.delete(run("run-1", 1, "running"), "ordinal")
+
+    shell =
+      Shell.thread_shell(
+        state([{"thread", @thread}, {"run", legacy}, {"run", run("run-2", 2, "preparing")}])
+      )
+
+    assert shell["activeRunId"] == "run-2"
+    assert shell["activityRunStatus"] == "preparing"
+  end
+
   test "the pending runtime request is the most recently created pending one" do
     request = fn id, status, created_at ->
       {"runtime-request",

@@ -2375,6 +2375,47 @@ defmodule HalC2.OrchestrationTest do
                StreamState.list(state, "context-transfer")
     end
 
+    # Fork history is selected by ordinal (start order): a held queued run a
+    # newer run passed was renumbered above the fork point when the passer
+    # started, so it and its queued message stay in the source — the same
+    # rule the ledger states for messages queued after the fork point.
+    test "a fork at a run that passed a held queue does not copy the held run" do
+      source_id = launch("hello")
+      [run] = runs(await_statuses(source_id, ["completed"]))
+
+      {:ok, _} =
+        HalC2.Streams.commit(source_id, :thread, [
+          {"run", "held",
+           %{
+             "s" => %{
+               "id" => "held",
+               "threadId" => source_id,
+               "ordinal" => run["ordinal"] + 1,
+               "status" => "queued",
+               "queuePosition" => 1,
+               "queueHeld" => true
+             }
+           }},
+          {"message", "held-msg",
+           %{
+             "s" => %{
+               "id" => "held-msg",
+               "threadId" => source_id,
+               "runId" => "held",
+               "role" => "user",
+               "text" => "held ask"
+             }
+           }}
+        ])
+
+      fork_id = fork(source_id, run["id"])
+      state = current(fork_id)
+
+      assert [%{"status" => "completed", "threadId" => ^fork_id}] = runs(state)
+      texts = for m <- StreamState.list(state, "message"), do: m["text"]
+      refute "held ask" in texts
+    end
+
     test "a fork on another provider gets the history as a transcript" do
       source_id = launch("hello")
       [run] = runs(await_statuses(source_id, ["completed"]))

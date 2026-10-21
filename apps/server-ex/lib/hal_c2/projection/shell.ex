@@ -30,12 +30,12 @@ defmodule HalC2.Projection.Shell do
     turn_items = StreamState.list(state, "turn-item")
     provider_threads = StreamState.list(state, "provider-thread")
     latest_run = latest_run(runs)
-    active_run = runs |> Enum.filter(&interruptible?/1) |> latest_by(&get(&1, "ordinal"))
+    active_run = runs |> Enum.filter(&interruptible?/1) |> latest_by(&(get(&1, "ordinal") || 0))
 
     activity_run =
       runs
       |> Enum.filter(&(interruptible?(&1) or get(&1, "status") == "waiting"))
-      |> latest_by(&get(&1, "ordinal"))
+      |> latest_by(&(get(&1, "ordinal") || 0))
 
     pending_request =
       state
@@ -186,9 +186,10 @@ defmodule HalC2.Projection.Shell do
   # The first element with the greatest key, as a stable descending sort's head.
   # Of equal keys that is the oldest made, unlike `latest_run/1` above (and the
   # clients' latest picks), which take the newest made: for legacy runs stored
-  # without an ordinal the activity/active picks here can name an older run than
-  # a client's. Ordinals are unique for every run made since, so only the
-  # latest-run pick was aligned.
+  # without an ordinal (keyed 0 at the call sites above, as in `latest_run/1`)
+  # the activity/active picks here can name an older run than a client's.
+  # Ordinals are unique for every run made since, so only the latest-run pick
+  # was aligned.
   defp latest_by([], _key), do: nil
   defp latest_by(list, key), do: Enum.max_by(list, key)
 
