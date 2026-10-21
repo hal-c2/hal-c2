@@ -9,6 +9,11 @@ if [ "$#" -ne 2 ]; then
   exit 1
 fi
 drivers="${1:?sqldrivers directory}"
+# A trailing slash would make -L follow a linked directory; strip them all so
+# the checks below do not depend on the caller's spelling.
+while [ "${drivers}" != "/" ] && [ "${drivers}" != "${drivers%/}" ]; do
+  drivers="${drivers%/}"
+done
 name="${2:?driver file name (libqsqlite.so on Linux, libqsqlite.dylib on macOS)}"
 case "${name}" in
   libqsqlite.so | libqsqlite.dylib) ;;
@@ -17,10 +22,11 @@ case "${name}" in
     exit 1
     ;;
 esac
-# Both packagers build the staging tree fresh and pass a literal path, so no
-# ancestor can be a symlink on the real path; what a deploy tool can produce is
-# a linked sqldrivers directory or driver file, checked here in the spelling
-# the packagers pass (no trailing slash, which would follow the link).
+# Ancestors above the bundle root are not checked: they are not archived, and
+# they routinely are links (macOS /tmp, a linked build dir). Inside the bundle
+# the deploy tools create the directories fresh rather than linking them; what
+# they can still produce is a linked sqldrivers directory or driver file, and
+# those are checked here.
 if [ -L "${drivers}" ]; then
   echo "error: ${drivers} is a symlink; the bundle must carry the sqldrivers directory itself" >&2
   exit 1

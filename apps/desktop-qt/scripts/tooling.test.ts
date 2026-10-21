@@ -113,14 +113,21 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
       expect(check(drivers, "libqsqlite.dylib").status).toBe(1);
     });
 
-    it("rejects an empty driver file and copies that are not named like Qt's driver", () => {
+    it("rejects an empty driver file", () => {
       const drivers = temporaryDirectory();
       NodeFS.writeFileSync(NodePath.join(drivers, "libqsqlite.so"), "");
+      const result = check(drivers);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("is empty");
+    });
+
+    it("rejects copies that are not named like Qt's driver", () => {
+      const drivers = temporaryDirectory();
       NodeFS.writeFileSync(NodePath.join(drivers, "libqsqliteNOTREAL"), "driver");
       NodeFS.writeFileSync(NodePath.join(drivers, "libqsqlite.so.bak"), "driver");
       const result = check(drivers);
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("is empty");
+      expect(result.stderr).toContain("has no libqsqlite.so as a regular file");
     });
 
     // The bundle carries the link, not its target, which need not exist where the app runs.
@@ -148,6 +155,10 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
       const result = check(drivers);
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("is a symlink");
+      // However the caller spells it: a trailing slash must not follow the link.
+      const trailing = check(drivers + "/");
+      expect(trailing.status).toBe(1);
+      expect(trailing.stderr).toContain("is a symlink");
     });
 
     it("rejects a driver name that is not one of Qt's two", () => {
@@ -174,7 +185,7 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
       );
       // After the pruning loop that can remove the driver, before signing.
       expect(macos.indexOf("check-sqlite-driver.sh")).toBeGreaterThan(
-        macos.indexOf('Contents/PlugIns" -name'),
+        macos.indexOf("-name '*.dylib'"),
       );
       expect(macos.indexOf("check-sqlite-driver.sh")).toBeLessThan(macos.indexOf("codesign"));
     });
