@@ -467,8 +467,14 @@ defmodule HalC2.Devices do
     # used as a candidate would make the paths cwd-relative.
     home_candidates =
       case System.get_env("HOME") || System.user_home() do
-        home when is_binary(home) and home != "" ->
-          [Path.join([home, "Library", "Android", "sdk"]), Path.join([home, "Android", "Sdk"])]
+        home when is_binary(home) ->
+          # A whitespace-only home joined as a path is cwd-relative.
+          if String.trim(home) == "",
+            do: [],
+            else: [
+              Path.join([home, "Library", "Android", "sdk"]),
+              Path.join([home, "Android", "Sdk"])
+            ]
 
         _ ->
           []

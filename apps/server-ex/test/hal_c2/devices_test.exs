@@ -71,6 +71,20 @@ defmodule HalC2.DevicesTest do
       System.put_env("ANDROID_HOME", "   ")
       assert HalC2.Devices.platform_reason("android") =~ "Android SDK was not found"
       System.delete_env("ANDROID_HOME")
+
+      # A whitespace-only HOME is no home either: "   " joined as a path
+      # is cwd-relative and would find an SDK planted under it.
+      ws_trap = Path.join([dir, "   ", "Android", "Sdk"])
+      tool(Path.join([ws_trap, "platform-tools", "adb"]), "fake_adb.sh")
+      tool(Path.join([ws_trap, "emulator", "emulator"]), "fake_emulator.sh")
+
+      tool(
+        Path.join([ws_trap, "cmdline-tools", "latest", "bin", "avdmanager"]),
+        "fake_emulator.sh"
+      )
+
+      System.put_env("HOME", "   ")
+      assert HalC2.Devices.platform_reason("android") =~ "Android SDK was not found"
     end)
   end
 
