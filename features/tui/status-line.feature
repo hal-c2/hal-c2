@@ -114,6 +114,15 @@ Feature: Errors stay on the terminal client's status line
     Then the picker "Status history" lists "Pull failed: Error: timed out" then "Pull failed: Error: offline"
 
   @tui
+  Scenario: Opening the status history dismisses the pinned error
+    Given the terminal is 160 columns wide
+    And pulling will fail with "offline"
+    And the user pulls the branch
+    When the user runs the palette command "Show status history"
+    And the user presses Escape
+    Then the status line no longer shows "Pull failed"
+
+  @tui
   Scenario: A plugin that replaces the status message gives way to an error
     Given the plugin "clock" replaces the "statusbar" content
     And pulling will fail with "offline"

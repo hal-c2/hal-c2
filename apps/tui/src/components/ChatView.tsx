@@ -972,7 +972,7 @@ export function ChatView({
       platform: client.hostPlatform,
     });
     if (!resolution.ok) {
-      store.setStatus(resolution.error, "error");
+      store.setStatus(resolution.error, "warning");
       return;
     }
     const workspaceRoot = resolution.path;
@@ -1009,7 +1009,7 @@ export function ChatView({
     if (projectFlow?.step !== "repository" || projectSubmissionPendingRef.current) return;
     const repositoryInput = projectDraft.trim();
     if (repositoryInput.length === 0) {
-      store.setStatus("Enter a repository or Git URL.", "error");
+      store.setStatus("Enter a repository or Git URL.", "warning");
       return;
     }
 
@@ -1062,7 +1062,7 @@ export function ChatView({
       platform: client.hostPlatform,
     });
     if (!resolution.ok) {
-      store.setStatus(resolution.error, "error");
+      store.setStatus(resolution.error, "warning");
       return;
     }
 
@@ -1085,7 +1085,7 @@ export function ChatView({
 
   const chooseProjectSource = (row: Extract<AddProjectPaletteRow, { kind: "source" }>) => {
     if (row.disabled) {
-      if (row.description) store.setStatus(row.description, "error");
+      if (row.description) store.setStatus(row.description, "warning");
       return;
     }
     if (row.source === "local") {
@@ -2203,7 +2203,7 @@ export function ChatView({
       if (activeComposerImages.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         store.setStatus(
           `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
-          "error",
+          "warning",
         );
         closeFiles();
         return;
@@ -2251,11 +2251,11 @@ export function ChatView({
 
   const pasteComposerImage = (paste: { readonly bytes: Uint8Array; readonly mimeType: string }) => {
     if (!detail && focus !== "new") {
-      store.setStatus("Select a thread before pasting an image.", "error");
+      store.setStatus("Select a thread before pasting an image.", "warning");
       return;
     }
     if (userInputActive) {
-      store.setStatus("Answer the pending question before attaching an image.", "error");
+      store.setStatus("Answer the pending question before attaching an image.", "warning");
       return;
     }
     if (
@@ -2264,13 +2264,13 @@ export function ChatView({
     ) {
       store.setStatus(
         `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
-        "error",
+        "warning",
       );
       return;
     }
     const extension = imageExtensionForMimeType(paste.mimeType);
     if (!extension) {
-      store.setStatus("Paste a supported image format.", "error");
+      store.setStatus("Paste a supported image format.", "warning");
       return;
     }
 
@@ -2310,11 +2310,11 @@ export function ChatView({
 
     return (async () => {
       if (!detail && focus !== "new") {
-        store.setStatus("Select a thread before attaching an image path.", "error");
+        store.setStatus("Select a thread before attaching an image path.", "warning");
         return failed;
       }
       if (userInputActive) {
-        store.setStatus("Answer the pending question before attaching an image.", "error");
+        store.setStatus("Answer the pending question before attaching an image.", "warning");
         return failed;
       }
       if (activeComposerImages.some((image) => image.relativePath === imagePath)) {
@@ -2327,7 +2327,7 @@ export function ChatView({
       ) {
         store.setStatus(
           `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
-          "error",
+          "warning",
         );
         return failed;
       }

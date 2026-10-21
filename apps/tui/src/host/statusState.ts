@@ -42,6 +42,8 @@ export interface TuiStatusRowState {
 const PINNED_SEPARATOR = " · ";
 /** How a pinned error says it is waiting to be dismissed, so it does not read as a stuck line. */
 const DISMISS_HINT = "click error or ^K to dismiss";
+/** Where ^K does not open the palette (terminal drawer, image preview), only the click is promised. */
+const DISMISS_HINT_CLICK_ONLY = "click error to dismiss";
 
 export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
   const composeHint = [
@@ -74,16 +76,25 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
   const pinnedLabel = beside ? `${statusGlyphColor("error").glyph} ${input.pinnedError}` : "";
   // A pinned error announces how to dismiss it at the head of the hints, which
   // `clip` keeps, instead of widening the status budget the layout promises.
-  const hintWithDismiss = input.pinnedError !== null ? `${DISMISS_HINT} · ${hint}` : hint;
+  // The ^K half is only promised where the compose hint is in effect: the
+  // terminal drawer and image preview bind no ctrl+k there.
+  const composeInEffect =
+    !input.imagePreview &&
+    !input.addingProject &&
+    !(!input.draft && input.questionBanner !== null) &&
+    !input.terminalOpen;
+  const hintWithDismiss =
+    input.pinnedError !== null
+      ? `${composeInEffect ? DISMISS_HINT : DISMISS_HINT_CLICK_ONLY} · ${hint}`
+      : hint;
   const room = Math.max(0, input.mainWidth - 2);
   // Widths are terminal cells, as `clip` counts them: a wide character takes two.
   const statusCells = Bun.stringWidth(statusLabel);
   const pinnedCells = Bun.stringWidth(pinnedLabel);
-  // Beside an error the two share what they need: at least 32 cells where half the row allows
-  // it, and never more than half the row.
+  // Beside an error the two share what they need, and never more than half the row.
   const besideNeed = pinnedCells + PINNED_SEPARATOR.length + statusCells;
   const statusWidth = beside
-    ? Math.min(room, Math.floor(input.mainWidth / 2), Math.max(32, besideNeed))
+    ? Math.min(room, Math.floor(input.mainWidth / 2), besideNeed)
     : Math.min(room, Math.max(8, Math.min(32, statusCells)));
   const hintWidth = Math.max(0, room - statusWidth);
   if (!beside) {

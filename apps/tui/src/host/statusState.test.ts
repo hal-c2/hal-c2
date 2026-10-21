@@ -28,7 +28,7 @@ describe("status row beside a pinned error", () => {
     expect(state.pinned).toBe("✗ Offline · ");
     expect(state.hint).toContain("click error or ^K to dismiss");
     expect(state.label).toBe("✓ Pulled.");
-    // Half of 100 columns would leave the hints 48 cells; two short messages need 32.
+    // Half of 100 columns would leave the hints 48 cells; two short messages need less.
     expect(state.hint.length).toBeGreaterThan(60);
   });
 
@@ -50,6 +50,27 @@ describe("status row beside a pinned error", () => {
     expect(state.errorPinned).toBe(true);
   });
 
+  it("promises only the click where ^K does not open the palette", () => {
+    for (const overrides of [{ terminalOpen: true }, { imagePreview: true }]) {
+      const state = row({
+        status: { kind: "error", text: "Offline" },
+        pinnedError: "Offline",
+        ...overrides,
+      });
+      expect(state.hint).toContain("click error to dismiss");
+      expect(state.hint).not.toContain("^K to dismiss");
+    }
+  });
+
+  it("keeps the dismiss hint visible beside a long pinned error", () => {
+    const state = row({
+      mainWidth: 100,
+      status: { kind: "error", text: "x".repeat(300) },
+      pinnedError: "x".repeat(300),
+    });
+    expect(state.hint).toContain("click error or ^K to dismiss");
+  });
+
   it("does not add the dismiss hint when no error is pinned", () => {
     const state = row({ status: { kind: "error", text: "Offline" } });
     expect(state.label).toBe("✗ Offline");
@@ -57,7 +78,7 @@ describe("status row beside a pinned error", () => {
     expect(state.hint).not.toContain("click error or ^K to dismiss");
   });
 
-  it("shares at most half of a narrow row, below the 32-cell floor", () => {
+  it("shares at most half of a narrow row", () => {
     const state = row({
       mainWidth: 50,
       status: { kind: "success", text: "Setting saved" },

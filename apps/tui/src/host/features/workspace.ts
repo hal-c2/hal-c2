@@ -186,7 +186,7 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
           const copied = kit.copy(url);
           kit.status(
             copied ? "Link copied." : "This terminal has no clipboard access.",
-            copied ? "success" : "error",
+            copied ? "success" : "warning",
           );
           return;
         }

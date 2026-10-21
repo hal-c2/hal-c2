@@ -77,7 +77,7 @@ export function createEditorFeature(kit: FeatureKit, options: EditorOptions): Fe
             copied
               ? `Your edit of ${path} is on the clipboard.`
               : "This terminal has no clipboard access.",
-            copied ? "success" : "error",
+            copied ? "success" : "warning",
           );
         } else kit.status(`Kept ${path} as it is on disk.`, "info");
       },

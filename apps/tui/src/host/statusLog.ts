@@ -37,7 +37,7 @@ export function createStatusLog(ctx: {
   /** Put text on the system clipboard; false when the terminal cannot. */
   readonly copy: (text: string) => boolean;
   /** Sets the status line (never an error: that would pin). */
-  readonly say: (text: string, kind: "info" | "success") => void;
+  readonly say: (text: string, kind: "info" | "success" | "warning") => void;
 }) {
   let pinned: string | null = null;
   const history: StatusErrorEntry[] = [];
@@ -114,7 +114,7 @@ export function createStatusLog(ctx: {
           const entry = shown[Number(value)];
           if (!entry) return;
           if (ctx.copy(entry.text)) ctx.say("Error copied to clipboard.", "success");
-          else ctx.say("Clipboard unavailable here.", "info");
+          else ctx.say("Clipboard unavailable here.", "warning");
         },
       });
       return true;
