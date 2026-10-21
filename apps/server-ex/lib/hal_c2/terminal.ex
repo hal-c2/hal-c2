@@ -12,7 +12,12 @@ defmodule HalC2.Terminal do
   command each shell is running.
 
   Attached processes receive `{:hal_c2_terminal, {thread_id, terminal_id}, event}`, with
-  events shaped as `TerminalAttachStreamEvent`.
+  events shaped as `TerminalAttachStreamEvent`. An attach also tells the
+  attaching pid the events the attach itself produced (its flush, a shell it
+  started) as `{:hal_c2_terminal_attach, {thread_id, terminal_id}, event}`,
+  since its snapshot already holds them: a socket fans those out to the
+  subscriptions it already held, and other direct subscribers may ignore the
+  shape (it says nothing its snapshot does not).
   """
 
   use GenServer, restart: :temporary
@@ -44,7 +49,8 @@ defmodule HalC2.Terminal do
   @doc """
   `terminal.attach`: sends `subscriber` the terminal's events from now on and
   returns its snapshot. A terminal that does not exist yet is opened when the
-  input has a `cwd`.
+  input has a `cwd`. Events the attach itself produces arrive as
+  `{:hal_c2_terminal_attach, key, event}` (see the moduledoc).
   """
   def attach(%{"threadId" => thread_id, "terminalId" => terminal_id} = input, subscriber) do
     case {lookup(thread_id, terminal_id), input["cwd"]} do
@@ -319,6 +325,9 @@ defmodule HalC2.Terminal do
        seq: 0,
        updated_at: now(),
        subscribers: %{},
+       # The pid of an attach in flight, told what the attach itself produces
+       # as `:hal_c2_terminal_attach` (see `handle_call({:attach, …})`).
+       attach_capture: nil,
        error: nil
      }}
   end
@@ -339,7 +348,7 @@ defmodule HalC2.Terminal do
     # subscriber reading snapshot-plus-events. Other direct subscribers ignore
     # the shape.
     {ref, others} = Map.pop(state.subscribers, subscriber)
-    state = flush_output(%{state | subscribers: others} |> Map.put(:attach_capture, subscriber))
+    state = flush_output(%{state | subscribers: others, attach_capture: subscriber})
 
     open? =
       (state.cwd == nil and input["cwd"] != nil) or
@@ -350,7 +359,7 @@ defmodule HalC2.Terminal do
         do: open_session(state, input),
         else: resize_to(state, input["cols"] || state.cols, input["rows"] || state.rows)
 
-    state = Map.put(state, :attach_capture, nil)
+    state = %{state | attach_capture: nil}
     subscribers = Map.put(state.subscribers, subscriber, ref || Process.monitor(subscriber))
 
     # A shell that failed to start while attaching is explained to the attaching
@@ -488,6 +497,10 @@ defmodule HalC2.Terminal do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  # A terminal from before the attach capture has no field for it.
+  @impl true
+  def code_change(_old, state, _extra), do: {:ok, Map.put_new(state, :attach_capture, nil)}
 
   @impl true
   def terminate(_reason, state) do
@@ -699,9 +712,14 @@ defmodule HalC2.Terminal do
     for {pid, _} <- state.subscribers, do: send(pid, {:hal_c2_terminal, key, attach_event})
 
     # An attach in flight left its pid out above; it is told as an attach event
-    # instead (see `handle_call({:attach, …})`).
+    # instead (see `handle_call({:attach, …})`) — except an error, which the
+    # attach handler sends the attacher itself, as the plain event, so the
+    # attacher is told exactly once.
     if capture = Map.get(state, :attach_capture),
-      do: send(capture, {:hal_c2_terminal_attach, key, attach_event})
+      do:
+        unless(event["type"] == "error",
+          do: send(capture, {:hal_c2_terminal_attach, key, attach_event})
+        )
 
     if event["type"] in ~w(started restarted exited error activity),
       do: Hub.upsert(summary(state), self())

@@ -1377,9 +1377,19 @@ defmodule HalC2.Web.Socket do
     subs = Map.get(state.by_terminal, key, %{})
     seq = terminal_seq(event)
     held? = event["type"] in ~w(output snapshot restarted cleared exited closed activity)
+    snapshot? = event["type"] == "snapshot"
 
     {frames, subs} =
       Enum.map_reduce(subs, subs, fn
+        # A snapshot below the floor is a new incarnation of the terminal
+        # (its process restarted its sequence at 0 after a close): the
+        # subscription restarts from it instead of being starved until the
+        # sequence climbs back past the old floor.
+        {id, floor}, acc
+        when snapshot? and is_integer(seq) and is_integer(floor) and seq < floor ->
+          {Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event}),
+           Map.put(acc, id, seq)}
+
         {_id, floor}, acc
         when held? and is_integer(seq) and is_integer(floor) and seq <= floor ->
           {nil, acc}
@@ -1419,9 +1429,24 @@ defmodule HalC2.Web.Socket do
             # by the attach's own path, a call this socket waits on, so it has
             # reached the terminal's MC before any attach that follows is made
             # and cannot land after it, as a cast in a process of its own could.
-            if ordered?,
-              do: remote(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()]),
-              else: :erpc.cast(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()])
+            # The wait is the trade-off: a hung owning MC stalls this socket
+            # for the call's 15 seconds, where the cast never blocked (attach
+            # itself is synchronous on this same path). A detach that did not
+            # get through is logged: only the terminal's monitor is left to
+            # drop this socket, whenever it eventually dies.
+            if ordered? do
+              case remote(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()]) do
+                {:ok, _} ->
+                  :ok
+
+                {:error, reason} ->
+                  Logger.warning(
+                    "terminal detach for #{thread_id}/#{terminal_id} did not reach #{mc}: #{reason}"
+                  )
+              end
+            else
+              :erpc.cast(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()])
+            end
 
             %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
         end
