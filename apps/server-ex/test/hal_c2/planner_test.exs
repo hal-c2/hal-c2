@@ -592,7 +592,7 @@ defmodule HalC2.PlannerTest do
 
       items = %{"t" => task(%{"repository" => @repo, "number" => 7})}
 
-      assert %{"misplaced" => %{}} = Sync.settled(synced, %{"after" => ["t"]}, items)
+      assert Sync.settled(synced, %{"after" => ["t"]}, items)["misplaced"] == %{}
 
       assert %{"misplaced" => %{"acme/api#7" => _}} =
                Sync.settled(synced, %{"after" => []}, items)
@@ -634,7 +634,8 @@ defmodule HalC2.PlannerTest do
       # task stays on the milestone.
       assert %{"misplaced" => %{"acme/api#7" => _}} = took_into.(synced)
       landed = took_out.(took_into.(synced))
-      assert %{"misplaced" => %{}, "after" => ["t"]} = landed
+      assert landed["after"] == ["t"]
+      assert landed["misplaced"] == %{}
     end
 
     test "takes the issue out of any milestone once the task names another" do
@@ -847,8 +848,92 @@ defmodule HalC2.PlannerTest do
       assert %{"number" => 7, "milestone" => nil} = out
       assert %{"number" => 8, "milestone" => 3} = into
 
-      assert %{"after" => ["t"], "refs" => %{"t" => %{"number" => 8}}, "misplaced" => %{}} =
-               synced |> took_out.() |> took_into.()
+      landed = synced |> took_out.() |> took_into.()
+      assert %{"after" => ["t"], "refs" => %{"t" => %{"number" => 8}}} = landed
+      assert landed["misplaced"] == %{}
+    end
+
+    test "reads a mark named for its task, as a plan saved before marks were named for their issue" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{"t" => issue.(7)}
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, []),
+          milestone.("mr", 4, ["u"]),
+          {"t", task(issue.(8))},
+          {"u", %{"id" => "u", "projectId" => "p", "after" => [], "issue" => issue.(7)}}
+        ])
+
+      assert Sync.settled(synced, %{"after" => []}, items)["misplaced"] ==
+               %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 4}, took}] = asks
+      assert took.(synced)["misplaced"] == %{}
+    end
+
+    test "an issue sent out of any milestone and to another in one push is asked once, for the other" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # "t" left #7 in "ms" (remembered in `refs`, marked), names #8 in "mr"
+      # by now, and "u" names #7 in "mr": one push would send #7 out by the
+      # move and in by the correction.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(7)},
+        "misplaced" => %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, []),
+          milestone.("mr", 4, ["t", "u"]),
+          {"t", task(issue.(8))},
+          {"u", %{"id" => "u", "projectId" => "p", "after" => [], "issue" => issue.(7)}}
+        ])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 4}, took}] = asks
+
+      landed = took.(synced)
+      assert landed["misplaced"] == %{}
+      refute "t" in landed["after"]
     end
 
     test "asks an issue two tasks send out of any milestone once, and runs both tasks' tooks" do
@@ -861,7 +946,7 @@ defmodule HalC2.PlannerTest do
         "due" => nil,
         "after" => ["old"],
         "refs" => %{"old" => issue.(7)},
-        "misplaced" => %{"new" => issue.(7)}
+        "misplaced" => %{"acme/api#7" => %{"task" => "new", "issue" => issue.(7)}}
       }
 
       ms = %{
@@ -883,7 +968,9 @@ defmodule HalC2.PlannerTest do
                Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
 
       assert %{"number" => 7, "milestone" => nil} = input
-      assert %{"after" => [], "misplaced" => %{}} = took.(synced)
+      landed = took.(synced)
+      assert landed["after"] == []
+      assert landed["misplaced"] == %{}
     end
 
     test "drops an ask for an issue whose saved ref is not whole, instead of raising" do

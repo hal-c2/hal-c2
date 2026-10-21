@@ -859,13 +859,32 @@ defmodule HalC2Plugins.Planner.Sync do
   # The issue `ref` of the task `id` related to the milestone or off it is no longer
   # misplaced in it, nor is the mark of another issue, which stays until its own
   # correction took. A `ref` that is not an issue keeps the marks.
-  defp placed(%{"misplaced" => at} = synced, _id, ref) do
+  defp placed(%{"misplaced" => _at} = synced, _id, ref) do
     if is_map(ref) and Map.has_key?(ref, "number"),
-      do: %{synced | "misplaced" => Map.delete(at, issue_key(ref))},
+      do: %{synced | "misplaced" => Map.delete(marks(synced), issue_key(ref))},
       else: synced
   end
 
   defp placed(synced, _id, _ref), do: synced
+
+  # The milestone's marks, named for their issue as `misplaced/2` writes them.
+  # A plan saved before they were has them named for their task instead, and
+  # reads as the marks it meant; a mark of neither shape is left as it is, and
+  # no reader matches on it.
+  defp marks(%{"misplaced" => at}) when is_map(at) do
+    Map.new(at, fn
+      {key, %{"task" => _task, "issue" => _issue} = mark} ->
+        {key, mark}
+
+      {id, %{"repository" => _repository, "number" => _number} = issue} ->
+        {issue_key(issue), %{"task" => id, "issue" => issue}}
+
+      {key, mark} ->
+        {key, mark}
+    end)
+  end
+
+  defp marks(_synced), do: %{}
 
   # A mark's name for its issue, as `refs` names one per task but a task can
   # leave more than one issue behind in a milestone.
@@ -1078,7 +1097,7 @@ defmodule HalC2Plugins.Planner.Sync do
     # asked first. A task this milestone holds again is misplaced only when it
     # names another issue by now (`settled/3`): the issue the mark names goes
     # out, the task staying.
-    marked = synced["misplaced"] || %{}
+    marked = marks(synced)
 
     to_correct =
       for {_key, %{"task" => id, "issue" => issue}} <- marked,
@@ -1113,10 +1132,11 @@ defmodule HalC2Plugins.Planner.Sync do
          )}
       end
 
-    # An issue a move and a correction both send to the same milestone is asked once,
+    # An issue a move and a correction both send to one milestone is asked once,
     # and the ask's `took` runs every one of theirs: whichever task named the issue (a
     # relink hands an issue over, and `refs` keeps it with the old task), each clears
-    # its own mark.
+    # its own mark. One sent to two milestones is asked for the last target only
+    # (`asked/1`), so a refused correction keeps its mark.
     for {id, issue, milestone, took} <- asked(moves ++ corrections),
         same?(issue["repository"], ref["repository"]),
         project = project_id(Map.put(items[id] || %{}, "issue", issue), projects),
@@ -1145,9 +1165,16 @@ defmodule HalC2Plugins.Planner.Sync do
          Map.update(grouped, at, [ask], &[ask | &1])}
       end)
 
-    for at <- Enum.reverse(order) do
-      [{id, issue, milestone, _} | _] = group = Enum.reverse(grouped[at])
-      tooks = for {_, _, _, took} <- group, do: took
+    # An issue sent to two milestones in one push (out of any by a move, into
+    # one by a correction) is asked once, for the last target, with every
+    # ask's `took`: the first target's landing must not clear the mark the
+    # last one's refusal still needs.
+    last = Map.new(asks, fn {_, issue, milestone, _} -> {key(issue), milestone} end)
+    by_issue = Enum.group_by(asks, fn {_, issue, _, _} -> key(issue) end)
+
+    for at <- Enum.reverse(order), elem(at, 1) == last[elem(at, 0)] do
+      [{id, issue, milestone, _} | _] = Enum.reverse(grouped[at])
+      tooks = for {_, _, _, took} <- by_issue[elem(at, 0)], do: took
       {id, issue, milestone, fn synced -> Enum.reduce(tooks, synced, & &1.(&2)) end}
     end
   end
@@ -1211,7 +1238,7 @@ defmodule HalC2Plugins.Planner.Sync do
         {issue_key(issue), %{"task" => id, "issue" => issue}}
       end
 
-    Map.update(synced, "misplaced", at, &Map.merge(&1, at))
+    Map.put(synced, "misplaced", Map.merge(marks(synced), at))
   end
 
   @doc """
@@ -1221,12 +1248,13 @@ defmodule HalC2Plugins.Planner.Sync do
   keeps its mark, as that issue is the plan's to put in the milestone and the marked one
   is still to go out of it.
   """
-  def settled(%{"misplaced" => at} = synced, %{"after" => held}, items) do
+  def settled(%{"misplaced" => _at} = synced, %{"after" => held}, items) do
     %{
       synced
       | "misplaced" =>
-          Map.reject(at, fn {_key, %{"task" => id, "issue" => issue}} ->
-            restored?(id, issue, held, items)
+          Map.reject(marks(synced), fn
+            {_key, %{"task" => id, "issue" => issue}} -> restored?(id, issue, held, items)
+            {_key, _mark} -> false
           end)
     }
   end
