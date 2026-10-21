@@ -366,9 +366,11 @@ defmodule HalC2.Web.SocketTest do
 
   # The other half of the drop above: no `more` is forwarded while the
   # subscription is replaying, so its floor never moves for a page that
-  # would be dropped. The stream server here is the test itself, so a
-  # forwarded ask lands in this mailbox as its cast.
-  test "a more while replaying is not forwarded, and one after live is" do
+  # would be dropped — but the ask is held and forwarded at `live`, since
+  # the client asks once and waits (it does not re-ask on `live`). The
+  # stream server here is the test itself, so a forwarded ask lands in
+  # this mailbox as its cast.
+  test "a more while replaying is held and forwarded on live" do
     {:push, _hello, state} = HalC2.Web.Socket.init([])
     tag = {node(), make_ref()}
 
@@ -380,17 +382,30 @@ defmodule HalC2.Web.SocketTest do
         buffers: %{2 => %{events: [], bytes: 0, replay: true}}
     }
 
+    me = self()
     ask = {JSON.encode!(%{"t" => "more", "id" => 2, "items" => 3}), [opcode: :text]}
-    assert {:ok, ^state} = HalC2.Web.Socket.handle_in(ask, state)
+    assert {:ok, state} = HalC2.Web.Socket.handle_in(ask, state)
     refute_received {:"$gen_cast", {:more, _, _, _}}
 
-    assert {:push, _live, state} =
+    # A snapshot part in between resets the buffer but keeps the held ask.
+    assert {:push, _snapshot, state} =
+             HalC2.Web.Socket.handle_info(
+               {:hal_c2_stream, {"th-x", tag}, {:snapshot, 1, "at", [], :done, %{handle: "h"}}},
+               state
+             )
+
+    refute_received {:"$gen_cast", {:more, _, _, _}}
+
+    assert {:push, [{:text, live}], state} =
              HalC2.Web.Socket.handle_info(
                {:hal_c2_stream, {"th-x", tag}, {:live, 1, "h"}},
                state
              )
 
-    me = self()
+    assert %{"t" => "live", "id" => 2} = live |> IO.iodata_to_binary() |> JSON.decode!()
+    assert_received {:"$gen_cast", {:more, ^me, 3, ^tag}}
+
+    # Once live, an ask goes straight out, as before.
     assert {:ok, _} = HalC2.Web.Socket.handle_in(ask, state)
     assert_received {:"$gen_cast", {:more, ^me, 3, ^tag}}
   end

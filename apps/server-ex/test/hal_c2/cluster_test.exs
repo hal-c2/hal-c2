@@ -134,6 +134,50 @@ defmodule HalC2.ClusterTest do
     assert for({"turn-item", id, _} <- page, do: id) == ["item-1"]
   end
 
+  # The tagged path across MCs: the socket's late `more` and the page it must
+  # not produce both travel the relay, whose order (initial first, then what
+  # it is sent) is what the socket's argument rests on.
+  test "a more carrying an old tag does not page a tagged subscription through its relay",
+       %{b: b} do
+    alias HalC2.Streams
+
+    run = fn n -> {"run", "run-#{n}", %{"s" => %{"id" => "run-#{n}", "ordinal" => n}}} end
+
+    item = fn n ->
+      fields = %{"id" => "item-#{n}", "runId" => "run-#{n}", "ordinal" => n, "text" => ""}
+      {"turn-item", "item-#{n}", %{"s" => fields}}
+    end
+
+    changes = for n <- 1..3, change <- [run.(n), item.(n)], do: change
+    {:ok, seq} = Streams.commit("tagged-th", :thread, changes)
+
+    subscriber = Node.spawn(b, Streams.Relay, :loop, [self()])
+    old = {node(), make_ref()}
+    new = {node(), make_ref()}
+
+    :ok = Streams.subscribe("tagged-th", subscriber, nil, %{window: {:items, 1}, tag: old})
+    assert_receive {:hal_c2_stream, {"tagged-th", ^old}, {:snapshot, ^seq, _, _, :done, _}}, 1_000
+    assert_receive {:hal_c2_stream, {"tagged-th", ^old}, {:live, ^seq, _}}, 1_000
+
+    # The right tag pages through the relay.
+    :ok = Streams.more("tagged-th", subscriber, 1, old)
+    assert_receive {:hal_c2_stream, {"tagged-th", ^old}, {:page, ^seq, page, 2, :done}}, 1_000
+    assert for({"turn-item", id, _} <- page, do: id) == ["item-2"]
+
+    :ok = Streams.unsubscribe("tagged-th", subscriber, old)
+    :ok = Streams.subscribe("tagged-th", subscriber, nil, %{window: {:items, 1}, tag: new})
+    assert_receive {:hal_c2_stream, {"tagged-th", ^new}, {:snapshot, ^seq, _, _, :done, _}}, 1_000
+    assert_receive {:hal_c2_stream, {"tagged-th", ^new}, {:live, ^seq, _}}, 1_000
+
+    :ok = Streams.more("tagged-th", subscriber, 2, old)
+    :ok = Streams.more("tagged-th", subscriber, 2, new)
+    assert_receive {:hal_c2_stream, {"tagged-th", ^new}, {:page, ^seq, page, nil, :done}}, 1_000
+    assert for({"turn-item", id, _} <- page, do: id) == ["item-1", "item-2"]
+
+    # The old tag's ask produced no page before this one (same relay, in order).
+    refute_received {:hal_c2_stream, {"tagged-th", _}, {:page, _, _, _, _}}
+  end
+
   # Found by proof/hal_c2/stream_relay_proof_test.exs.
   test "a relay that failed before its subscriber left does not take the stream down",
        %{b: b} do
