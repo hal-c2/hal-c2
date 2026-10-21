@@ -174,24 +174,58 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
   # `HalC2.Paths` only refuses an old home itself as a root; a root typed here is refused
   # inside one too, the rule it keeps for an MC's own directory. `root?/3` is lexical,
-  # so a root that exists is checked by where its links land as well.
+  # so the root is also checked by where its links land: its longest existing prefix
+  # resolved (a not-yet-created root inside a link to an old home is still refused
+  # here, not later as "no MC has run"), and against the old homes resolved the same
+  # way (a root naming the real target of a linked `~/.t3` is inside it).
   def installed_home(root, _configured, user_home) do
-    checked =
-      case HalC2.Paths.real(String.trim(root)) do
-        {:ok, real} -> real
-        _ -> root
-      end
+    checked = resolved(String.trim(root))
 
-    if HalC2.Paths.root?(root, :mc, user_home) and HalC2.Paths.root?(checked, :mc, user_home),
-      do: {:ok, {:root, String.trim(root)}},
-      else:
-        {:error,
-         "--root #{inspect(root)} is not an absolute HAL_C2_HOME root outside ~/.t3 and ~/.hal-c2"}
+    if HalC2.Paths.root?(root, :mc, user_home) and
+         HalC2.Paths.root?(checked, :mc, user_home) and
+         not inside_resolved_legacy?(checked, user_home),
+       do: {:ok, {:root, String.trim(root)}},
+       else:
+         {:error,
+          "--root #{inspect(root)} is not an absolute HAL_C2_HOME root outside ~/.t3 and ~/.hal-c2"}
   end
 
+  # The path with every link of its longest existing prefix resolved; a tail
+  # that does not exist yet is carried over unresolved.
+  defp resolved(path) do
+    expanded = Path.expand(path)
+
+    case HalC2.Paths.real(expanded) do
+      {:ok, real} ->
+        real
+
+      _ ->
+        parent = Path.dirname(expanded)
+
+        if parent == expanded,
+          do: expanded,
+          else: Path.join(resolved(parent), Path.basename(expanded))
+    end
+  end
+
+  defp inside_resolved_legacy?(checked, user_home) do
+    Enum.any?([".hal-c2", ".t3"], fn name ->
+      case HalC2.Paths.real(Path.join(user_home, name)) do
+        {:ok, legacy} -> at_or_under?(checked, legacy)
+        _ -> false
+      end
+    end)
+  end
+
+  defp at_or_under?(path, dir) do
+    parts = Path.split(dir)
+    Enum.take(Path.split(path), length(parts)) == parts
+  end
+
+  @doc false
   # The version an app's build was compiled as, or nil when there is none. mise-tasks/release/mc
   # reads it the same way (`file:consult/1`); change both together.
-  defp built_version(lib) do
+  def built_version(lib) do
     case :file.consult(Path.join([lib, "ebin", "#{Path.basename(lib)}.app"])) do
       {:ok, [{:application, _, props}]} -> to_string(props[:vsn])
       _ -> nil
@@ -205,16 +239,40 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   # installed MC fails at once.
   def installed_record(home, env \\ System.get_env(), user_home \\ HalC2.Paths.user_home()) do
     dirs = HalC2.Paths.mc_dirs(home, env, user_home)
+    record_path = Path.join(dirs.state, "server-runtime.json")
+    token_path = Path.join(dirs.data, "access-token")
 
-    with {:ok, record} <- File.read(Path.join(dirs.state, "server-runtime.json")),
-         {:ok, %{"origin" => base}} <- JSON.decode(record),
-         {:ok, token} <- File.read(Path.join(dirs.data, "access-token")) do
+    # Only a missing file means no MC has run here; a broken one is named, so
+    # the developer fixes the file instead of second-guessing `--root`.
+    missing =
+      "No installed MC has run from #{dirs.data}; if it keeps its files under a " <>
+        "HAL_C2_HOME root, pass --release --root <that root>"
+
+    with {:ok, record} <- read_installed(record_path, missing),
+         {:ok, base} <- decode_record(record, record_path),
+         {:ok, token} <- read_installed(token_path, missing) do
       {:ok, base, String.trim(token)}
-    else
-      _ ->
-        {:error,
-         "No installed MC has run from #{dirs.data}; if it keeps its files under a " <>
-           "HAL_C2_HOME root, pass --release --root <that root>"}
+    end
+  end
+
+  defp read_installed(path, missing) do
+    case File.read(path) do
+      {:ok, _} = read -> read
+      {:error, :enoent} -> {:error, missing}
+      {:error, reason} -> {:error, "Could not read #{path}: #{:file.format_error(reason)}"}
+    end
+  end
+
+  defp decode_record(record, path) do
+    case JSON.decode(record) do
+      {:ok, %{"origin" => base}} when is_binary(base) ->
+        {:ok, base}
+
+      {:ok, _} ->
+        {:error, "#{path} does not name the MC's address (no \"origin\")"}
+
+      {:error, reason} ->
+        {:error, "Could not decode #{path}: #{inspect(reason)}"}
     end
   end
 

@@ -163,6 +163,33 @@ defmodule HalC2.UpgradeTest do
     to_valid = Path.join(dir, "to-valid")
     File.ln_s!(Path.join(dir, "hal-c2"), to_valid)
     assert home.(to_valid, :dev) == {:ok, {:root, to_valid}}
+
+    # A root not created yet inside the link is refused by its resolved
+    # prefix, not waved through to the no-installed-MC error later.
+    assert {:error, _} = home.(Path.join(into_old, "not-created"), :dev)
+
+    # The reverse: a root naming where a linked old home really points.
+    other_home = Path.join(dir, "home2")
+    real_old = Path.join(dir, "real-old")
+    File.mkdir_p!(other_home)
+    File.mkdir_p!(real_old)
+    File.ln_s!(real_old, Path.join(other_home, ".t3"))
+
+    assert {:error, _} =
+             Mix.Tasks.HalC2.Upgrade.installed_home(Path.join(real_old, "sub"), :dev, other_home)
+  end
+
+  test "the built version is read from the app's build, or nil without one", %{tmp_dir: dir} do
+    lib = Path.join(dir, "hal_c2")
+    File.mkdir_p!(Path.join(lib, "ebin"))
+
+    File.write!(
+      Path.join([lib, "ebin", "hal_c2.app"]),
+      ~s({application, hal_c2, [{vsn, "1.2.3"}]}.\n)
+    )
+
+    assert Mix.Tasks.HalC2.Upgrade.built_version(lib) == "1.2.3"
+    assert Mix.Tasks.HalC2.Upgrade.built_version(Path.join(dir, "missing")) == nil
   end
 
   test "--root is refused, before any build, unless it comes with --release alone" do
@@ -389,6 +416,34 @@ defmodule HalC2.UpgradeTest do
 
     assert {:ok, "http://127.0.0.1:9", "tok"} =
              Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
+  end
+
+  test "a broken installed MC record is named, not read as no MC here", %{tmp_dir: dir} do
+    home = {:root, dir}
+    dirs = HalC2.Paths.mc_dirs(home, %{}, dir)
+    record = Path.join(dirs.state, "server-runtime.json")
+    token = Path.join(dirs.data, "access-token")
+    File.mkdir_p!(dirs.state)
+    File.mkdir_p!(dirs.data)
+
+    File.write!(record, "not json")
+    File.write!(token, "tok\n")
+
+    assert {:error, reason} = Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
+    assert reason =~ "Could not decode"
+    assert reason =~ "server-runtime.json"
+    refute reason =~ "No installed MC has run"
+
+    File.write!(record, ~s({}))
+    assert {:error, reason} = Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
+    assert reason =~ "no \"origin\""
+
+    File.write!(record, ~s({"origin":"http://127.0.0.1:9"}))
+    File.rm!(token)
+    File.mkdir_p!(token)
+    assert {:error, reason} = Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
+    assert reason =~ "Could not read"
+    assert reason =~ "access-token"
   end
 
   # A copy of a beam with one function no longer exported, as a version built
