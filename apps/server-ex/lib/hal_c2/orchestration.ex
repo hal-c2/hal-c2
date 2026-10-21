@@ -1029,6 +1029,67 @@ defmodule HalC2.Orchestration do
   end
 
   @doc """
+  Organizes a thread plugin `plugin_id` started, as `changes` asks: `"settled"`
+  settles or unsettles it (a pinned thread, and one the user unsettled by hand,
+  are left settled as they are) and `"listed"` shows or hides it in the thread
+  list. Only the plugin's own threads; a change already so writes nothing.
+  """
+  @spec organize_plugin_thread(String.t(), String.t(), map) :: :ok | {:error, String.t()}
+  def organize_plugin_thread(thread_id, plugin_id, changes) do
+    at = Entities.now()
+
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      case StreamState.get(state, "thread")[thread_id] do
+        %{"plugin" => %{"id" => ^plugin_id}} = thread ->
+          cond do
+            thread["deletedAt"] != nil ->
+              {[], {:error, "Thread #{thread_id} is deleted."}}
+
+            thread["moving"] != nil or thread["movedTo"] != nil ->
+              {[], {:error, "Thread #{thread_id} is moving or has moved."}}
+
+            true ->
+              fields = organize_fields(thread, changes, at)
+
+              if Enum.any?(fields, fn {key, value} -> thread[key] != value end) do
+                {[upsert(state, "thread", thread_id, &Map.merge(&1, fields))], :ok}
+              else
+                {[], :ok}
+              end
+          end
+
+        %{} ->
+          {[], {:error, "Thread #{thread_id} was not started by #{plugin_id}."}}
+
+        nil ->
+          {[], {:error, "unknown thread #{thread_id}"}}
+      end
+    end)
+  end
+
+  defp organize_fields(thread, changes, at) do
+    settled =
+      case changes["settled"] do
+        true ->
+          if thread["pinnedAt"] == nil and thread["settledOverride"] != "active",
+            do: thread_fields("thread.settle", %{}, thread, at),
+            else: %{}
+
+        false ->
+          if thread["settledOverride"] == "settled",
+            do: thread_fields("thread.unsettle", %{}, thread, at),
+            else: %{}
+
+        _ ->
+          %{}
+      end
+
+    if is_boolean(changes["listed"]),
+      do: Map.put(settled, "plugin", Map.put(thread["plugin"], "listed", changes["listed"])),
+      else: settled
+  end
+
+  @doc """
   Creates a thread, in the project root, an existing worktree, or a new worktree,
   and sends its first message when there is one (`orchestration.launchThread`). A
   new worktree is prepared first (`HalC2.WorktreeSetup`), with the message's run
