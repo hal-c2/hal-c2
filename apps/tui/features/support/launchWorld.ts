@@ -160,8 +160,10 @@ const TERMINAL_MARKER_PREFIXES = [
   "KONSOLE_",
   "ITERM_",
   "WT_",
+  "VTE_",
+  "GNOME_TERMINAL_",
 ];
-const TERMINAL_MARKERS = new Set(["LC_TERMINAL"]);
+const TERMINAL_MARKERS = new Set(["LC_TERMINAL", "TERM_SESSION_ID", "TERMINAL_EMULATOR"]);
 
 /** The test process's env minus anything that would point at real state or a real tmux. */
 function cleanEnv(ctx: LaunchWorld): Record<string, string> {
@@ -203,7 +205,6 @@ interface Spawned {
   readonly exited: Promise<number>;
   /** The terminal the client's output draws, as the user would see it. */
   readonly screen: {
-    text(): string;
     /** The screen's last non-blank row: where the client draws its status line. */
     statusLine(): string;
     /** Resolves once the screen, or just its status line, shows `text`. */
@@ -271,20 +272,25 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
   const exited = (async () => {
     const code = await proc.exited;
     await Promise.all([readOut, readErr]);
+    // Flush the parser: an empty write's callback runs after every queued
+    // one, so after this every terminal write has fired and dispose is safe.
+    await new Promise<void>((resolve) => terminal.write(new Uint8Array(0), resolve));
     markDrawn(false);
     return code;
   })();
   drained = exited;
   const screen = {
-    text: screenText,
     statusLine,
     until: (text: string, where = "screen") =>
       new Promise<void>((resolve, reject) => {
+        let settled = false;
         const settle = () => {
+          settled = true;
           clearTimeout(timer);
           screenWaiters.delete(waiter);
         };
         const waiter = () => {
+          if (settled) return;
           if (!(where === "status" ? statusLine() : screenText()).includes(text)) return;
           settle();
           resolve();
@@ -301,9 +307,11 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
         // If the client dies first, fail at once with its complete stderr
         // (`exited` only resolves once both streams are drained).
         void exited.then((code) => {
+          if (settled) return;
           // Flush the parser first: the final chunk may be queued but not yet
           // parsed, and an empty write's callback runs after every prior one.
           terminal.write(new Uint8Array(0), () => {
+            if (settled) return;
             waiter();
             settle();
             reject(
@@ -496,14 +504,10 @@ export interface DirectLaunch {
  * Start the client's entry with `args`. A client that draws stays open in
  * `ctx.direct`; one that exits first is finished into `ctx.client`.
  */
-export async function startDirect(
-  ctx: LaunchWorld,
-  args: ReadonlyArray<string>,
-  options: { preload?: string } = {},
-): Promise<void> {
+export async function startDirect(ctx: LaunchWorld, args: ReadonlyArray<string>): Promise<void> {
   const setup = launchSetup(ctx);
   const env = withTerminal(cleanEnv(ctx), setup.env);
-  const preload = preloadArgs(ctx, options.preload);
+  const preload = preloadArgs(ctx);
   const spawned = spawn(ctx, [process.execPath, ...preload, CLIENT_ENTRY, ...args], env);
   const drew = await within(spawned.drawn, DRAW_TIMEOUT_MS, "the client", spawned);
   if (drew) {
