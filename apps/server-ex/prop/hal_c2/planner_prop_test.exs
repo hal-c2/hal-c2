@@ -294,11 +294,13 @@ defmodule HalC2.PlannerPropTest do
   # (a look with none to read alone is not full, the one the plugin makes as it
   # starts included); `had`: the closed
   # issues linked tasks had at the look before, whose copies the next look reuses until
-  # the age passes `@full_read`.
+  # the age passes `@full_read`; `touched`: the issues GitHub has stamped as
+  # changed since the look before, which its updated listing therefore names.
   def initial_state,
     do: %{
       age: nil,
       had: MapSet.new(),
+      touched: MapSet.new(),
       board: @board,
       boards: %{},
       full: false,
@@ -962,13 +964,16 @@ defmodule HalC2.PlannerPropTest do
 
   # GitHub merges a pull request, or names one as closing an issue, or no longer; the plan
   # hears of it at the next look.
-  defp step(m, {:call, _, :merge, [pr]}), do: {%{m | merged: MapSet.put(m.merged, pr)}, :ok}
+  defp step(m, {:call, _, :merge, [pr]}) do
+    naming = for {number, prs} <- m.closing, pr in prs, do: number
+    {%{touch(m, naming) | merged: MapSet.put(m.merged, pr)}, :ok}
+  end
 
   defp step(m, {:call, _, :refer, [number, pr]}),
-    do: {%{m | closing: Map.update(m.closing, number, [pr], &(&1 ++ [pr]))}, :ok}
+    do: {%{touch(m, [number]) | closing: Map.update(m.closing, number, [pr], &(&1 ++ [pr]))}, :ok}
 
   defp step(m, {:call, _, :unrefer, [number, pr]}),
-    do: {%{m | closing: Map.update!(m.closing, number, &List.delete(&1, pr))}, :ok}
+    do: {%{touch(m, [number]) | closing: Map.update!(m.closing, number, &List.delete(&1, pr))}, :ok}
 
   defp step(m, {:call, _, :run, [action, slot]}), do: {ask(m, action, slot), :ok}
   defp step(m, {:call, _, :work, [slot, _project]}), do: {ask(m, "work", slot), :ok}
@@ -1065,6 +1070,9 @@ defmodule HalC2.PlannerPropTest do
   # which GitHub answers at once.
   defp step(m, {:call, _, :answer, [push]}) do
     {%{slot: slot, gen: gen, ops: ops, b: b, board: on}, held} = Map.pop(m.held, push)
+    # A push GitHub took stamps its issue as changed there, as the harness's
+    # state read after a push records it.
+    m = if item = m.items[slot], do: touch(m, [item.issue]), else: m
     {m, took} = land(%{m | held: held}, ops, b, push, on)
 
     case m.flights[slot] do
@@ -1098,33 +1106,33 @@ defmodule HalC2.PlannerPropTest do
   # GitHub makes an issue a sub-issue of another, or of none; the plan hears of it at the
   # next look.
   defp step(m, {:call, _, :adopt, [number, nil]}),
-    do: {%{m | parents: Map.delete(m.parents, number)}, :ok}
+    do: {%{touch(m, [number]) | parents: Map.delete(m.parents, number)}, :ok}
 
   defp step(m, {:call, _, :adopt, [number, parent]}),
-    do: {put_in(m.parents[number], parent), :ok}
+    do: {put_in(touch(m, [number]).parents[number], parent), :ok}
 
   # GitHub puts `parent` under `sub`, and `sub` where `parent` was; the plan hears of it
   # at the next look.
   defp step(m, {:call, _, :swap, [sub, parent]}),
-    do: {%{m | parents: swapped(m.parents, sub, parent)}, :ok}
+    do: {%{touch(m, [sub, parent]) | parents: swapped(m.parents, sub, parent)}, :ok}
 
   # GitHub marks an issue blocked by another too, or by none, or turns the dependency on
   # `blocker` around; the plan hears of it at the next look.
   defp step(m, {:call, _, :block, [number, nil]}),
-    do: {%{m | blockers: Map.delete(m.blockers, number)}, :ok}
+    do: {%{touch(m, [number]) | blockers: Map.delete(m.blockers, number)}, :ok}
 
   defp step(m, {:call, _, :block, [number, blocker]}),
-    do: {%{m | blockers: Map.update(m.blockers, number, [blocker], &(&1 ++ [blocker]))}, :ok}
+    do: {%{touch(m, [number]) | blockers: Map.update(m.blockers, number, [blocker], &(&1 ++ [blocker]))}, :ok}
 
   defp step(m, {:call, _, :turn, [number, blocker]}),
-    do: {%{m | blockers: turned(m.blockers, number, blocker)}, :ok}
+    do: {%{touch(m, [number, blocker]) | blockers: turned(m.blockers, number, blocker)}, :ok}
 
   # GitHub moves an issue; the plan hears of it at the next look.
   defp step(m, {:call, _, :close, [number, reason]}),
-    do: {put_in(m.closed[number], reason), :ok}
+    do: {put_in(touch(m, [number]).closed[number], reason), :ok}
 
   defp step(m, {:call, _, :reopen, [number]}),
-    do: {%{m | closed: Map.delete(m.closed, number)}, :ok}
+    do: {%{touch(m, [number]) | closed: Map.delete(m.closed, number)}, :ok}
 
   # Someone takes the task's issue off the board the settings name; the plan hears of it
   # at the next look that reads the whole board.
@@ -1511,10 +1519,24 @@ defmodule HalC2.PlannerPropTest do
   # part. A task with a push on the way, or kept, keeps all it has, its board item too,
   # as the plugin keeps such a task whole when it applies a look; the push's answer sets
   # the board item only when the push added one (`settle/3`).
+  # The issues GitHub stamps as changed, which the next look's updated listing
+  # therefore names; cleared by each look, as the look's `before` covers them.
+  defp touch(m, numbers),
+    do: %{m | touched: MapSet.union(m.touched, MapSet.new(numbers -- [nil]))}
+
   defp looked(m, kept \\ []) do
-    # A look with no closed issue to read alone is not the full read either.
-    full? = not reuses?(m) and closed_linked(m) != MapSet.new()
-    m = %{m | age: if(full?, do: 0, else: m.age), had: closed_linked(m)}
+    # A look with no closed issue to read alone is not the full read either. A
+    # reusing look whose missing closed issues all came back in the updated
+    # listing (touched on GitHub since, or never had) reused no copy either, so
+    # it is the full read too, as `Sync.look/3` counts it.
+    closed = closed_linked(m)
+
+    full? =
+      closed != MapSet.new() and
+        (not reuses?(m) or
+           MapSet.subset?(closed, MapSet.union(m.touched, MapSet.difference(closed, m.had))))
+
+    m = %{m | age: if(full?, do: 0, else: m.age), had: closed, touched: MapSet.new()}
     listed = Map.get(m.boards, m.board, %{})
     whole? = &(Map.has_key?(m.flights, &1) or &1 in kept)
 

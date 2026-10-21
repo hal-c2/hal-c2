@@ -36,7 +36,10 @@ defmodule HalC2Plugins.Planner.Sync do
   fails or is cut short. Without a `before` the look that reads issues is a full one,
   `full: true` in what it finds: every linked issue not among the open ones is read
   alone, a call for each, four at a time. A look whose listing failed or was cut
-  short, so it read every such issue alone and none failed, counts as full too. A look that reads no issues (sync is off, or
+  short, so it read every such issue alone and none failed, counts as full too.
+  A look without a `before` is full even where an alone-read failed: that issue
+  is absent from `details`, so the next look reads it alone again (below), and
+  the ones read stand for the day. A look that reads no issues (sync is off, or
   the MC's projects could not be read), and one with no linked issue missing from
   the open ones, is never full: the next look may still be the full one, at no
   extra cost when there was nothing to read alone. One issue whose read failed is
@@ -176,7 +179,9 @@ defmodule HalC2Plugins.Planner.Sync do
           details: details,
           unwatched: unwatched,
           # `full?` is nil when no linked issue was missing, so such a look is
-          # not full (see the doc) even without a `before`.
+          # not full (see the doc) even without a `before`. Without a `before`
+          # a failed alone-read does not stop the look counting as full: that
+          # issue is absent from `details` and is read alone again next look.
           full: full? == true or (before == nil and full? != nil)
       },
       problems
