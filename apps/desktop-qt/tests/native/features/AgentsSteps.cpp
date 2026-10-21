@@ -160,8 +160,7 @@ const Steps steps([] {
     expect(same, describeAgents(world));
   });
   step(QStringLiteral("%1 is shown to have ended %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    // ICU puts a narrow no-break space before "AM".
-    const QString ended = agents(world).value(rowTitled(world, c[0]), AgentsModel::EndedRole).toString().replace(QChar(0x202F), QLatin1Char(' '));
+    const QString ended = agents(world).value(rowTitled(world, c[0]), AgentsModel::EndedRole).toString();
     expect(ended == c[1], describeAgents(world));
   });
   step(QStringLiteral("the Agents tab never started its list over"), [](World& world, const Captures&, const Table&) {
