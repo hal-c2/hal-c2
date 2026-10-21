@@ -699,7 +699,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   # A steer Pi has not answered may have reached it after this settle, and start new
-  # work: the turn waits for the answer (`steered/2`). An interrupted turn ends here.
+  # work: the turn waits for the answer (`steered/3`). An interrupted turn ends here.
   defp event("agent_settled", _event, %{compact: nil} = state) do
     if state.interrupted or :gen_server.reqids_size(state.steers) == 0,
       do: settle(state),
@@ -919,7 +919,10 @@ defmodule HalC2.Pi.ThreadRuntime do
 
       true ->
         state = settle_held(state)
-        GenServer.reply(from, answer)
+        # A turn the user stopped keeps the message, as `unanswered/2` keeps an
+        # unanswered steer's: an error here would find the run interrupted (the
+        # settle above may have recorded it) and send the message on its own.
+        GenServer.reply(from, if(state.interrupted, do: :ok, else: answer))
         state
     end
   end
@@ -965,9 +968,13 @@ defmodule HalC2.Pi.ThreadRuntime do
       else: state
   end
 
-  # The held refusals' callers hear them, once the turn ended or runs on.
+  # The held refusals' callers hear them, once the turn ended or runs on — except
+  # from a turn the user stopped, whose callers hear `:ok` so their messages stay
+  # in the stopped turn instead of being sent on their own (`unanswered/2`).
   defp refusals(state) do
-    for {from, answer} <- Enum.reverse(state.refused), do: GenServer.reply(from, answer)
+    for {from, answer} <- Enum.reverse(state.refused),
+        do: GenServer.reply(from, if(state.interrupted, do: :ok, else: answer))
+
     %{state | refused: []}
   end
 

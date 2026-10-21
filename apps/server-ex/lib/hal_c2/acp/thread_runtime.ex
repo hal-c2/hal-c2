@@ -246,8 +246,17 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   def handle_call(:interrupt, _from, %{prompt: prompt} = state) when prompt != nil do
     Connection.notify(state.conn, "session/cancel", %{"sessionId" => state.session_id})
-    state = cancel_requests(state)
-    {:reply, :ok, %{state | interrupted: true}}
+    state = %{cancel_requests(state) | interrupted: true}
+
+    # The turn's prompt already answered and only steers are still out: their
+    # answers are discarded for an interrupted turn (`answered/2`), so end it
+    # now instead of waiting on an agent that may never answer after a cancel.
+    if state.answer != nil do
+      {:noreply, state} = answered(state, state.answer)
+      {:reply, :ok, state}
+    else
+      {:reply, :ok, state}
+    end
   end
 
   # Between turns, stopping the thread stops its background work.
