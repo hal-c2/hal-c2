@@ -973,7 +973,8 @@ defmodule HalC2.PlannerPropTest do
     do: {%{touch(m, [number]) | closing: Map.update(m.closing, number, [pr], &(&1 ++ [pr]))}, :ok}
 
   defp step(m, {:call, _, :unrefer, [number, pr]}),
-    do: {%{touch(m, [number]) | closing: Map.update!(m.closing, number, &List.delete(&1, pr))}, :ok}
+    do:
+      {%{touch(m, [number]) | closing: Map.update!(m.closing, number, &List.delete(&1, pr))}, :ok}
 
   defp step(m, {:call, _, :run, [action, slot]}), do: {ask(m, action, slot), :ok}
   defp step(m, {:call, _, :work, [slot, _project]}), do: {ask(m, "work", slot), :ok}
@@ -1122,7 +1123,11 @@ defmodule HalC2.PlannerPropTest do
     do: {%{touch(m, [number]) | blockers: Map.delete(m.blockers, number)}, :ok}
 
   defp step(m, {:call, _, :block, [number, blocker]}),
-    do: {%{touch(m, [number]) | blockers: Map.update(m.blockers, number, [blocker], &(&1 ++ [blocker]))}, :ok}
+    do:
+      {%{
+         touch(m, [number])
+         | blockers: Map.update(m.blockers, number, [blocker], &(&1 ++ [blocker]))
+       }, :ok}
 
   defp step(m, {:call, _, :turn, [number, blocker]}),
     do: {%{touch(m, [number, blocker]) | blockers: turned(m.blockers, number, blocker)}, :ok}
@@ -1589,16 +1594,21 @@ defmodule HalC2.PlannerPropTest do
     do: MapSet.new(for({_, %{issue: n}} <- m.items, here?(n), Map.has_key?(m.closed, n), do: n))
 
   # What a look read alone, seen from the model: all the closed issues when it did not
-  # reuse the copies, otherwise some of those it had no copy of and none it had.
+  # reuse the copies, otherwise some of those it had no copy of and none it had. A
+  # command of one look reads an issue alone at most once; a restart or a board
+  # switch looks twice, so there the reads are compared as a set.
   defp read_alone?(before, {:call, _, cmd, _}, alone)
        when cmd in [:look, :nest_while_looking, :restart, :switch_board] do
     closed = closed_linked(before)
     reuses? = cmd in [:look, :nest_while_looking] and reuses?(before)
+    read = MapSet.new(alone)
+    once? = cmd not in [:look, :nest_while_looking] or length(alone) == MapSet.size(read)
 
     ok? =
-      if reuses?,
-        do: MapSet.subset?(alone, MapSet.difference(closed, before.had)),
-        else: alone == closed
+      once? and
+        if reuses?,
+          do: MapSet.subset?(read, MapSet.difference(closed, before.had)),
+          else: read == closed
 
     if ok? do
       true
@@ -2664,7 +2674,8 @@ defmodule HalC2.PlannerPropTest do
     end
   end
 
-  # The issues the plugin read alone since the last step.
+  # The issues the plugin read alone since the last step, as a list: a look that
+  # read one twice is seen (`read_alone?/3` sets it for two-look commands).
   defp read_alone do
     calls = gh_calls()
 
@@ -2674,7 +2685,6 @@ defmodule HalC2.PlannerPropTest do
           {:ok, %{"query" => query, "variables" => %{"number" => number}}} <-
             [JSON.decode(stdin)],
           String.contains?(query, "issue(number: $number) { ...IssueFields"),
-          into: MapSet.new(),
           do: number
 
     Process.put(:pl_alone_read, length(calls))
