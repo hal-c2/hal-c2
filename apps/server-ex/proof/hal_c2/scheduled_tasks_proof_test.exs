@@ -40,6 +40,7 @@ defmodule HalC2.ScheduledTasksProofTest do
     abstracts: %{
       "HalC2.ScheduledTasks.start_link/1" => "starts the process crash and restart stand for",
       "HalC2.ScheduledTasks.list/1" => @plain,
+      "HalC2.ScheduledTasks.run_timeout_ms/0" => @plain,
       "HalC2.ScheduledTasks handle_call :list" => @plain,
       "HalC2.ScheduledTasks.next_run/2" => "aims a run; the model counts ticks",
       "HalC2.ScheduledTasks handle_info _" => "ignores what it does not know, as stale does",
