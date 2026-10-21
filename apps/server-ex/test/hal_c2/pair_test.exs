@@ -38,6 +38,9 @@ defmodule HalC2.PairTest do
           "http://host:",
           "http://host:/path",
           "http://[::1]:",
+          "http://[::1]3780",
+          "http://host/%zz",
+          "http://host/%2",
           "http://exa|mple.com",
           "http://host/\e[31mred"
         ] do
@@ -92,7 +95,7 @@ defmodule HalC2.PairTest do
     {installed, _port} = cross_profile(dir, fn _ -> "http://127.0.0.2:#{caller_port}" end)
 
     assert {:error, message} = HalC2.Pair.command(["--release", "--tailscale"])
-    assert message =~ "already fronts a different HAL-C2 server"
+    assert message =~ "whose identity could not be verified as this one"
     refute File.exists?(Path.join(installed.data, "hal-c2.sqlite"))
   end
 
@@ -112,7 +115,7 @@ defmodule HalC2.PairTest do
     {installed, _port} = cross_profile(dir, &"http://0.0.0.0:#{&1}")
 
     assert {:error, message} = HalC2.Pair.command(["--release", "--tailscale"])
-    assert message =~ "already fronts a different HAL-C2 server"
+    assert message =~ "whose identity could not be verified as this one"
     refute File.exists?(Path.join(installed.data, "hal-c2.sqlite"))
   end
 

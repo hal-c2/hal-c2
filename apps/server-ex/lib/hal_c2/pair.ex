@@ -66,7 +66,7 @@ defmodule HalC2.Pair do
       dirs = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home())
 
       with {:ok, base} <- base(opts[:tailscale], port, serve_port, rest, running, dirs),
-           {:ok, token} <- mint(dirs, running) do
+           {:ok, token} <- mint_for(opts, serve_port, dirs, running) do
         link = "#{String.trim_trailing(base, "/")}/?token=#{token}"
 
         if opts[:tailscale] do
@@ -86,6 +86,23 @@ defmodule HalC2.Pair do
   # one-line refusal like every other failure of this command, not a stack
   # trace out of a release `eval` — after a `--tailscale` publish it would
   # also leave the Serve mapping behind unexplained.
+  # A `--tailscale` mint failure happens after `publish/3` already made the
+  # Serve mapping: the refusal names the side effect and how to undo it, so
+  # the mapping is never left behind silent.
+  defp mint_for(opts, serve_port, dirs, running) do
+    tailscale = opts[:tailscale]
+
+    case mint(dirs, running) do
+      {:error, message} when tailscale ->
+        {:error,
+         message <>
+           " Tailscale Serve was already published for this pairing; remove it with `tailscale serve --https=#{serve_port} off`."}
+
+      result ->
+        result
+    end
+  end
+
   defp mint(dirs, running) do
     # Minting ahead of a first start: the store's directory may not be there yet.
     if running == nil, do: HalC2.Paths.ensure!(dirs)
@@ -110,13 +127,19 @@ defmodule HalC2.Pair do
   # default port and keeps illegal host characters and raw escapes, so each of
   # those would pass the checks below and mint a token into an unopenable link.
   # URI.new still lets an empty port (`http://host:`) through as the default,
-  # so the raw authority is checked for a colon nothing follows.
+  # so the raw authority is checked for a colon nothing follows. It is also
+  # lenient about a bracketless-bracket host (`http://[::1]3780` parses with
+  # host "::1]3780") and malformed percent-escapes (`http://host/%zz`), so
+  # the host must be a hostname or an IP literal and every `%` must be
+  # followed by two hex digits.
   defp base_url?(url) do
     case URI.new(url) do
       {:ok,
        %URI{scheme: scheme, host: host, port: port, userinfo: nil, query: nil, fragment: nil}}
       when scheme in ["http", "https"] and host not in [nil, ""] and port in 1..65_535 ->
-        not String.match?(url, ~r/\s/u) and
+        host_ok?(host) and
+          not String.match?(url, ~r/\s/u) and
+          not String.match?(url, ~r/%(?![0-9A-Fa-f]{2})/) and
           not String.match?(url, ~r{://[^/?#]*:(?:$|[/?#])})
 
       _ ->
@@ -127,6 +150,11 @@ defmodule HalC2.Pair do
     # address this command refuses, not a crash.
     ArgumentError -> false
     FunctionClauseError -> false
+  end
+
+  defp host_ok?(host) do
+    String.match?(host, ~r/^[A-Za-z0-9.\-]+$/) or
+      match?({:ok, _}, :inet.parse_address(String.to_charlist(host)))
   end
 
   # A refused address is echoed rebuilt from its parsed form, without its
@@ -202,6 +230,12 @@ defmodule HalC2.Pair do
     if release == true or HalC2.Upgrade.release_root() do
       installed(installed)
     else
+      # Deliberate asymmetry with `installed/1`: the checkout path trusts a
+      # located record on pid liveness alone, because minting ahead of a
+      # first start (no record at all) is a supported use here — a merely
+      # dead origin is recoverable by starting that MC, and no token is
+      # printed at a *checked* wrong origin. The release/`--release` path
+      # instead must never pair with the wrong MC, so it identity-probes.
       {:ok, HalC2.RuntimeRecord.locate(home, installed)}
     end
   end

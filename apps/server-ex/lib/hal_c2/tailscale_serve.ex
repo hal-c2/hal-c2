@@ -117,8 +117,11 @@ defmodule HalC2.TailscaleServe do
 
     cond do
       not loopback_alias?(other, target) ->
+        # Not probed (its self-reported id is not trusted), so do not claim
+        # it fronts a different server: it may front this very MC under a
+        # non-loopback address, or nothing HAL-C2 at all.
         {:taken,
-         "Tailscale Serve on HTTPS port #{port} already fronts a different HAL-C2 server. #{port_hint(command_name)}"}
+         "Tailscale Serve on HTTPS port #{port} already fronts a HAL-C2 server whose identity could not be verified as this one. #{port_hint(command_name)}"}
 
       expected == "" ->
         {:taken,
