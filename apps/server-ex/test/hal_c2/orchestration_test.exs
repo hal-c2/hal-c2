@@ -63,6 +63,64 @@ defmodule HalC2.OrchestrationTest do
     thread_id
   end
 
+  # A thread whose run is only recorded (no live runtime ever starts): for
+  # paths that decide against stream state, or ask a stand-in in the registry.
+  defp recorded_run(run_status, thread_fields \\ %{}) do
+    thread_id = "thread-#{System.unique_integer([:positive])}"
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+
+    {:ok, %{"threadId" => ^thread_id}} =
+      Orchestration.launch_thread(%{
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => thread_id,
+        "projectId" => "project-1",
+        "title" => "Try codex",
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default",
+        "workspaceStrategy" => %{"type" => "root"}
+      })
+
+    at = HalC2.Orchestration.Entities.now()
+    run_id = "run-recorded-#{System.unique_integer([:positive])}"
+
+    ids = %{
+      thread: thread_id,
+      run: run_id,
+      root_node: "node-recorded-#{run_id}",
+      provider_thread: "provider-thread:codex:#{thread_id}",
+      message: "m1",
+      attempt: "attempt-recorded-#{run_id}",
+      instance: "codex",
+      driver: "codex"
+    }
+
+    run =
+      HalC2.Orchestration.Entities.run(
+        ids,
+        1,
+        %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        at
+      )
+      |> Map.merge(%{
+        "status" => run_status,
+        "queuePosition" => if(run_status == "queued", do: 1)
+      })
+
+    message = HalC2.Orchestration.Entities.message(ids, "m1", "user", "first", false, at)
+
+    changes =
+      [{"run", run_id, %{"s" => run}}, {"message", "m1", %{"s" => message}}]
+      |> then(fn changes ->
+        if thread_fields == %{},
+          do: changes,
+          else: [{"thread", thread_id, %{"s" => thread_fields}} | changes]
+      end)
+
+    {:ok, _} = HalC2.Streams.commit(thread_id, :thread, changes)
+    {thread_id, run_id}
+  end
+
   # Waits on the thread's own event stream until its run reaches a terminal status.
   defp await_run(thread_id, status) do
     receive do
@@ -802,6 +860,33 @@ defmodule HalC2.OrchestrationTest do
   end
 
   describe "queued messages" do
+    # The guard lives in `decide_next/2` itself, not only in callers checked
+    # earlier in other transactions: a move marked in between must not start.
+    test "a moving thread starts nothing from its queue" do
+      moving = %{"label" => "desktop", "at" => HalC2.Orchestration.Entities.now()}
+      {thread_id, run_id} = recorded_run("queued", %{"moving" => moving})
+
+      assert :ok = Orchestration.start_next(thread_id)
+
+      assert %{"status" => "queued", "queuePosition" => 1} =
+               StreamState.get(current(thread_id), "run")[run_id]
+    end
+
+    test "a moved thread starts nothing from its queue" do
+      moved = %{
+        "mc" => "desktop@127.0.0.1",
+        "label" => "desktop",
+        "at" => HalC2.Orchestration.Entities.now()
+      }
+
+      {thread_id, run_id} = recorded_run("queued", %{"movedTo" => moved})
+
+      assert :ok = Orchestration.start_next(thread_id)
+
+      assert %{"status" => "queued", "queuePosition" => 1} =
+               StreamState.get(current(thread_id), "run")[run_id]
+    end
+
     test "a message sent during a run waits in the queue and starts when the run ends" do
       thread_id = launch("wait for it")
       _ = await_run(thread_id, "running")
@@ -978,16 +1063,11 @@ defmodule HalC2.OrchestrationTest do
 
     # A runtime (a plugin provider's, say) can refuse with a reason that is not
     # a string; the sender still hears a bounded refusal, not a crash, and the
-    # reserved message still leaves the turn.
+    # reserved message still leaves the turn. The run is only recorded, so the
+    # odd stand-in registers first and no runtime has to be killed for it.
     @tag :capture_log
-    test "a steer refused with a reason that is not a string still leaves the turn",
-         %{tmp_dir: dir} do
-      gates = held_steers(dir)
-      thread_id = launch("wait for it")
-      _ = await_run(thread_id, "running")
-
-      [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
-      Process.exit(runtime, :kill)
+    test "a steer refused with a reason that is not a string still leaves the turn" do
+      {thread_id, _run_id} = recorded_run("running")
       odd_runtime(thread_id)
 
       assert {:error, reason} =
@@ -1000,7 +1080,6 @@ defmodule HalC2.OrchestrationTest do
       state = current(thread_id)
       refute StreamState.get(state, "message")["m2"]
       refute StreamState.get(state, "turn-item")["turn-item:user:m2"]
-      File.touch!(Path.join(gates, "steer"))
     end
 
     @tag :capture_log
@@ -2743,14 +2822,14 @@ defmodule HalC2.OrchestrationTest do
   end
 
   # A stand-in in the Codex registry that refuses a steer with a reason that is
-  # not a string (and settles at once). Registering retries briefly: the killed
-  # runtime's registry entry has no receipt to wait on.
+  # not a string (and settles at once). Its thread has no live runtime, so it
+  # registers first try and `:odd_registered` is the receipt to wait on.
   defp odd_runtime(thread_id) do
     parent = self()
 
     pid =
       spawn(fn ->
-        register_odd(thread_id, 200)
+        {:ok, _} = Registry.register(HalC2.Codex.Registry, thread_id, nil)
         send(parent, :odd_registered)
         odd_loop()
       end)
@@ -2758,17 +2837,6 @@ defmodule HalC2.OrchestrationTest do
     assert_receive :odd_registered, 5_000
     on_exit(fn -> Process.exit(pid, :kill) end)
     pid
-  end
-
-  defp register_odd(thread_id, tries) do
-    case Registry.register(HalC2.Codex.Registry, thread_id, nil) do
-      {:ok, _} ->
-        :ok
-
-      {:error, {:already_registered, _}} when tries > 0 ->
-        Process.sleep(10)
-        register_odd(thread_id, tries - 1)
-    end
   end
 
   defp odd_loop do

@@ -2636,8 +2636,13 @@ defmodule HalC2.Orchestration do
     runs = StreamState.list(state, "run")
 
     # A deleted thread runs nothing more; an archived one nothing from its queue until it is
-    # unarchived and the queue resumed or another turn ends.
-    with true <- thread != nil and thread["deletedAt"] == nil and thread["archivedAt"] == nil,
+    # unarchived and the queue resumed or another turn ends. A moving or moved
+    # thread starts nothing here either: this is the transaction that starts a
+    # run, so the guard cannot be raced by a move marked after an earlier
+    # caller's check (a refused promote's interrupt, say).
+    with true <-
+           thread != nil and thread["deletedAt"] == nil and thread["archivedAt"] == nil and
+             thread["moving"] == nil and thread["movedTo"] == nil,
          false <- Enum.any?(runs, &(&1["status"] in @active_statuses)),
          %{} = next <- Enum.find(queued_runs(state), &(&1["queueHeld"] != true)),
          %{} = message <- StreamState.get(state, "message")[next["userMessageId"]] do
