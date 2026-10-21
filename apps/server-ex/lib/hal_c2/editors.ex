@@ -231,9 +231,11 @@ defmodule HalC2.Editors do
 
   # The editor that opens `.txt` files: the `shell\open\command` of the class the
   # user's choice names, else the class registered for the extension. A choice naming
-  # a class with no usable command (a Store app's `DelegateExecute` class, an
-  # uninstalled editor) falls through to the extension's class, as Explorer discards
-  # an invalid choice. Nil without either.
+  # a class with no usable command falls through to the extension's class. That is a
+  # deliberate divergence from Explorer for a Store app's `DelegateExecute` class:
+  # the choice is valid and Explorer would open it, but no command line can launch
+  # it, so the MC offers the extension's editor rather than none. A genuinely broken
+  # choice (an uninstalled editor) falls through the same way. Nil without either.
   defp windows_editor(reg, explorer) do
     with nil <-
            editor_of_class(
@@ -258,10 +260,13 @@ defmodule HalC2.Editors do
   defp editor_of_class(_reg, nil), do: nil
 
   defp editor_of_class(reg, class) do
-    # A ProgId is a single key name: a class with a path separator in it would
-    # walk the lookup to an unrelated key, so it names no editor (and the
-    # extension's class gets its chance, as with any unusable choice).
-    if String.contains?(class, ["\\", "/"]), do: nil, else: editor_of_named_class(reg, class)
+    # A ProgId is a single key name, or `Applications\<exe>` when the user picked
+    # an executable in the Open With dialog. Anything else with a path separator
+    # in it would walk the lookup to an unrelated key, so it names no editor (and
+    # the extension's class gets its chance, as with any unusable choice).
+    if class =~ ~r/\A[^\\\/]+\z/ or class =~ ~r/\AApplications\\[^\\\/]+\z/,
+      do: editor_of_named_class(reg, class),
+      else: nil
   end
 
   defp editor_of_named_class(reg, class) do
@@ -273,6 +278,7 @@ defmodule HalC2.Editors do
         line = if type == "REG_EXPAND_SZ", do: expand_variables(line), else: line
 
         with [program | args] <- command_words(line),
+             false <- extensionless_windows_path?(program),
              command when command != nil <- System.find_executable(program) do
           {command,
            for arg <- args do
@@ -282,6 +288,15 @@ defmodule HalC2.Editors do
           _ -> nil
         end
     end
+  end
+
+  # An unquoted program path with spaces splits to its first word (`C:\Program`),
+  # and on Windows `find_executable` would try PATHEXT extensions on it, so a
+  # planted `C:\Program.exe` would be offered and run (#409). An extensionless
+  # Windows absolute program word therefore counts as no editor, on every host.
+  defp extensionless_windows_path?(program) do
+    (String.match?(program, ~r/\A[A-Za-z]:[\\\/]/) or String.starts_with?(program, "\\\\")) and
+      Path.extname(program) == ""
   end
 
   # The `{type, data}` of the value `reg query` prints for `args`, or nil. `reg` writes
@@ -443,10 +458,13 @@ defmodule HalC2.Editors do
   # Accepted divergences from Explorer, unverified on a real Windows host (tracked in
   # #397): these apply to every Windows launch through `launch/2`, not just the
   # default editor — named editors and the file manager go through here too.
-  # `:spawn_executable` is CreateProcess-backed and cannot run `.cmd`/`.bat`
-  # shims (those need `%ComSpec% /c`), so a default or a named editor (VS Code,
-  # Cursor and friends typically resolve through PATHEXT to a `.cmd` shim)
-  # resolving to one starts nothing;
+  # Whether `.cmd`/`.bat` shims run is unverified: `:spawn_executable` is
+  # CreateProcess-backed, but Elixir's `System.cmd` docs warn batch files run
+  # implicitly through `cmd.exe` on the path that shares this primitive, and
+  # named editors (VS Code, Cursor and friends) typically resolve through
+  # PATHEXT to a `.cmd` shim. If they do run, untrusted arguments must not
+  # reach a batch file (the BatBadBut risk); if they do not, such editors
+  # start nothing. A real Windows host must settle which (#397);
   # `:hide` with `:nouse_stdio` suits a GUI program, while a registered console editor
   # gets no console and no standard streams; and `:spawn_executable` builds the
   # CreateProcess command line from `args`, so a spaced target path or an embedded

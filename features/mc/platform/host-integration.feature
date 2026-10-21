@@ -68,6 +68,12 @@ Feature: The MC working with its host machine
     Then Windows opens "src/app.ts" in Notepad
 
   @mc
+  Scenario: On Windows a program the user picked in the Open With dialog is the default editor
+    Given the MC runs on Windows and the user's chosen program is the application notepad.exe
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad
+
+  @mc
   Scenario: On Windows the MC holds nothing open for the editor it started
     Given the MC runs on Windows and opens text files in Notepad
     When a client opens "src/app.ts" at line 12 column 4 in the default editor

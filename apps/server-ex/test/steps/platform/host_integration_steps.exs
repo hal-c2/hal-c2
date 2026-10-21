@@ -254,12 +254,28 @@ defmodule HalC2.Steps.Platform.HostIntegration do
       "    (Default)    #{type}    " <>
         String.replace(line, "NOTEPAD", Path.join(context.bin, "notepad"))
 
+    progid =
+      Enum.find_value(answers, fn {_key, value} ->
+        case String.split(value) do
+          ["ProgId", "REG_SZ", class] -> class
+          _ -> nil
+        end
+      end)
+
+    command_keys =
+      Enum.uniq(["txtfile", progid] -- [nil])
+
     body =
       ~s|case "$2" in\n| <>
         Enum.map_join(answers, fn {key, value} ->
-          ~s|  *'#{key}'*) printf '\\r\\nHKEY\\r\\n#{value}\\r\\n' ;;\n|
+          # printf reads backslash escapes in its format, so a value holding
+          # one (a ProgId like Applications\notepad.exe) doubles it.
+          escaped = String.replace(value, "\\", "\\\\")
+          ~s|  *'#{key}'*) printf '\\r\\nHKEY\\r\\n#{escaped}\\r\\n' ;;\n|
         end) <>
-        ~s|  *'HKCR\\txtfile\\shell\\open\\command'*) printf '\\r\\nHKEY\\r\\n%s\\r\\n' '#{command}' ;;\n| <>
+        Enum.map_join(command_keys, fn class ->
+          ~s|  *'HKCR\\#{class}\\shell\\open\\command'*) printf '\\r\\nHKEY\\r\\n%s\\r\\n' '#{command}' ;;\n|
+        end) <>
         ~s|  *) exit 1 ;;\nesac|
 
     install_script(context, "reg", body)
@@ -267,6 +283,13 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
   step "the MC runs on Windows and opens text files in Notepad", context do
     windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}])
+  end
+
+  step "the MC runs on Windows and the user's chosen program is the application notepad.exe",
+       context do
+    windows_host(context, [
+      {"UserChoice", "    ProgId    REG_SZ    Applications\\notepad.exe"}
+    ])
   end
 
   step ~r/^the MC runs on Windows and Notepad is registered with the command line '(?<line>[^']+)'$/,
