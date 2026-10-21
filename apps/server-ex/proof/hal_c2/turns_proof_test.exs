@@ -62,6 +62,8 @@ defmodule HalC2.TurnsProofTest do
         "serves reads and other RPCs; messages arrive by dispatch/1",
       "HalC2.Orchestration.launch_thread/2" =>
         "creates a thread, then sends its message as dispatch/1 does",
+      "HalC2.Orchestration.organize_plugin_thread/3" =>
+        "settles a plugin's thread and lists or unlists it: sidebar organization, no turn state",
       "HalC2.Orchestration.release_prepared/2" => @preparing,
       "HalC2.Orchestration.progress_prepared/3" => @preparing,
       "HalC2.Orchestration.fail_prepared/4" => @preparing,
