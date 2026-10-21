@@ -419,8 +419,11 @@ QList<Row> project(const Model& model) {
   for (const Run& run : thread.runs) {
     // Held for the user and never started: still queued, or cancelled while held.
     if (run.held && (run.status == QLatin1String("queued") || run.status == QLatin1String("cancelled"))) continue;
-    // Runs are in the order they were made, so `>=` gives equal ordinals to the
-    // newest, as the MC's latest pick does.
+    // Runs are in the order they were made, so `>=` would give equal ordinals
+    // to the newest made. The generators only ever make unique ordinals, so
+    // no tie arises here; the implementation's tie-break is later-starting
+    // (first item in timeline order), covered by the dedicated regression in
+    // tst_TimelineRepaintRegression instead.
     if (latest.isEmpty() || run.ordinal >= thread.runs.value(latest).ordinal) latest = run.id;
   }
 

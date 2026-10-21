@@ -762,10 +762,21 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
     if (kind == QLatin1String("run")) m_agentsTouched = true;
     // Runs, attempts and requests change fold labels, visibility and the
     // working state; they change far less often than items.
+    const QJsonValue wasOrdinal = existed ? current->value(QLatin1String("ordinal")) : QJsonValue();
     if (next) {
       byKind.insert(id, *next);
     } else {
       byKind.remove(id);
+    }
+    // A renumbered run (it took its start ordinal) moves its windowed
+    // entities' cached run_ord with it: re-cache them, or restore()/park()
+    // would filter and trim by the stale ordinal until they next change.
+    if (kind == QLatin1String("run") && existed && next && wasOrdinal != next->value(QLatin1String("ordinal"))) {
+      for (const QString& windowed : kWindowed) {
+        for (auto it = m_entities[windowed].cbegin(); it != m_entities[windowed].cend(); ++it) {
+          if (text(*it, QLatin1String("runId")) == id) m_dirty.insert({windowed, it.key()});
+        }
+      }
     }
     return true;
   }
