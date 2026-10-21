@@ -56,6 +56,31 @@ defmodule HalC2.Test.WsClient do
     %{client | conn: conn, ws: ws}
   end
 
+  @doc """
+  Waits until `pid`'s mailbox holds at least `count` messages — the receipt
+  that frames a client sent have queued at a suspended process, in the order
+  a test then resumes it in. Bounded: after `attempts` tries it raises with
+  the mailbox it found, so a regression fails instead of hanging.
+  """
+  def await_mailbox(pid, count, attempts \\ 200) do
+    {:message_queue_len, len} = Process.info(pid, :message_queue_len) || {:message_queue_len, 0}
+
+    cond do
+      len >= count ->
+        :ok
+
+      attempts <= 0 ->
+        raise "mailbox of #{inspect(pid)} never held #{count} messages " <>
+                "(#{len}): #{inspect(Process.info(pid, :messages), limit: 20)}"
+
+      true ->
+        receive do
+        after
+          5 -> await_mailbox(pid, count, attempts - 1)
+        end
+    end
+  end
+
   @doc "Receives the next decoded JSON frame."
   def recv(%{inbox: [frame | rest]} = client, _timeout), do: {frame, %{client | inbox: rest}}
 
