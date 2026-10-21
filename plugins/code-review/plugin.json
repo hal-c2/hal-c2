@@ -33,6 +33,10 @@
       "reason": "Each review is a thread in which your chosen agent reviews the pull request."
     },
     {
+      "id": "threads:organize",
+      "reason": "To settle a review thread when its review is done, and to keep review threads out of the thread list when you show reviews on the Reviews page only."
+    },
+    {
       "id": "agentTools",
       "reason": "The reviewing agent reports its verdict and comments through a tool of this plugin."
     }
@@ -144,6 +148,13 @@
       "description": "Empty for the agent's default model."
     },
     {
+      "key": "modelOptions",
+      "label": "Model options",
+      "type": "object",
+      "default": {},
+      "description": "The chosen model's options, such as its reasoning effort, as {\"effort\": \"high\"}. Empty for the model's defaults."
+    },
+    {
       "key": "runtimeMode",
       "label": "Access",
       "type": "choice",
@@ -160,8 +171,8 @@
       "key": "prompt",
       "label": "Review prompt",
       "type": "longText",
-      "default": "Review pull request #{{pr.number}} \"{{pr.title}}\" in {{repository}} by {{pr.author}}, which merges {{pr.head}} into {{pr.base}}.\n\nYour working directory is a checkout of the pull request's head. The change is `git diff {{pr.mergeBase}} HEAD`; read the code around it where that helps.\n\nLook for bugs, security problems, missing tests and changes that break callers. Leave out style a formatter or linter would catch. Comment only where you are confident, and say what to do about it.",
-      "description": "{{pr.number}}, {{pr.title}}, {{pr.author}}, {{pr.base}}, {{pr.head}}, {{pr.headSha}}, {{pr.mergeBase}}, {{pr.url}} and {{repository}} are filled in. How to report the findings is added after it."
+      "default": "Review pull request #{{pr.number}} \"{{pr.title}}\" in {{repository}} by {{pr.author}}, which merges {{pr.head}} into {{pr.base}}.\n\nYour working directory is a checkout of the pull request's head. The change is `git diff {{pr.mergeBase}} HEAD`; read the code around it where that helps, and run the tests the change touches where that settles a question.\n\nJudge the change against what its description says it does. Look for bugs, security problems, missing tests and changes that break callers. Leave out style a formatter or linter would catch. Comment only where you are confident, and say what to do about it; for a crash or data-loss claim, show the evidence (the code path, a test, or a run) in the comment.",
+      "description": "{{pr.number}}, {{pr.title}}, {{pr.author}}, {{pr.base}}, {{pr.head}}, {{pr.headSha}}, {{pr.mergeBase}}, {{pr.url}}, {{pr.body}} and {{repository}} are filled in. The description, failing checks, comments already on the pull request and your previous review of it are added after it, then how to report the findings."
     },
     {
       "key": "instructions",
