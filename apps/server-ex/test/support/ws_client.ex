@@ -84,14 +84,29 @@ defmodule HalC2.Test.WsClient do
   @doc "Receives the next decoded JSON frame."
   def recv(%{inbox: [frame | rest]} = client, _timeout), do: {frame, %{client | inbox: rest}}
 
+  @doc """
+  Receives the next decoded JSON frame. `timeout` bounds the whole wait: a
+  TCP chunk that completes no frame re-checks the same deadline instead of
+  re-arming it, so a fragmented-frame trickle cannot extend the wait.
+  """
   def recv(client, timeout) do
+    recv_by(client, System.monotonic_time(:millisecond) + timeout, timeout)
+  end
+
+  defp recv_by(%{inbox: [frame | rest]} = client, _deadline, _timeout),
+    do: {frame, %{client | inbox: rest}}
+
+  defp recv_by(client, deadline, timeout) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+    if remaining <= 0, do: raise("no frame within #{timeout} ms")
     socket = Mint.HTTP.get_socket(client.conn)
 
     # Only this connection's socket messages; several clients may share a test process.
     receive do
-      {tag, ^socket, _} = message when tag in [:tcp, :ssl] -> recv(feed(client, message), timeout)
+      {tag, ^socket, _} = message when tag in [:tcp, :ssl] ->
+        recv_by(feed(client, message), deadline, timeout)
     after
-      timeout -> raise "no frame within #{timeout} ms"
+      remaining -> raise "no frame within #{timeout} ms"
     end
   end
 
