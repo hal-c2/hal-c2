@@ -2023,6 +2023,17 @@ defmodule HalC2.Steps.Planning.Planner do
     })
   end
 
+  step "GitHub refuses renaming \#{int} to {string}", %{args: [number, title]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [JSON.encode!(%{"title" => title})],
+        "exit" => 1,
+        "stderr" => "HTTP 422: Validation Failed\n"
+      }
+    ])
+  end
+
   step "GitHub answers renaming \#{int} to {string} late, taking it",
        %{args: [number, title]} = context do
     answers_late(context, number, title, %{"stdout" => %{"number" => number}})
@@ -2489,6 +2500,117 @@ defmodule HalC2.Steps.Planning.Planner do
       }
     ])
     |> Map.merge(%{gh_gate: gate, gh_gates: Map.put(context[:gh_gates] || %{}, title, gate)})
+  end
+
+  # Moves `title` from one milestone to another and back while GitHub holds the
+  # first move, answers that move, and waits with the move back in flight: the
+  # flight has then answered one leg and chained the next. Returns the first
+  # move's own call, still running its runner.
+  defp move_answered_back(context, title, from, to) do
+    %{mc: mc} = context
+
+    move = fn from, to ->
+      call = %{
+        "id" => @id,
+        "method" => "moveToMilestone",
+        "input" => move_input(context, title, from, to)
+      }
+
+      Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+    end
+
+    in? = fn milestone ->
+      fn plan ->
+        item(plan, title)["id"] in (item(plan, milestone) || %{"after" => []})["after"]
+      end
+    end
+
+    moving = move.(from, to)
+    {_, context} = await_topic(context, "plan", in?.(to))
+    back = move.(to, from)
+    {_, context} = await_topic(context, "plan", in?.(from))
+    answer_late(context, to)
+    await_answered()
+    {{moving, back}, context}
+  end
+
+  # The flight that has answered a leg: a move is pushed by the milestone that
+  # holds the task, so it is that item's flight, not the task's.
+  defp answered_flight do
+    %{pushing: pushing} = :sys.get_state(HalC2Plugins.Planner)
+
+    Enum.find_value(pushing, fn {id, flight} ->
+      case flight[:answered] do
+        {_error, %{"moved" => _moved}} -> {id, flight}
+        _ -> nil
+      end
+    end)
+  end
+
+  defp await_answered do
+    answered =
+      Enum.reduce_while(1..600, nil, fn _, _ ->
+        case answered_flight() do
+          nil -> Process.sleep(50) && {:cont, nil}
+          found -> {:halt, found}
+        end
+      end)
+
+    answered || flunk("no push was answered in time")
+  end
+
+  # Answers the gate of the milestone moved back to until both moves' calls
+  # are done: the chained push and the move back's own push each wait on it.
+  defp await_moves(context, from, tasks) do
+    answer_late(context, from)
+
+    for task <- tasks do
+      case Task.yield(task, 5_000) do
+        {:ok, {{:ok, _}, _}} ->
+          :ok
+
+        nil ->
+          answer_late(context, from)
+          assert {{:ok, _}, _} = Task.await(task, 30_000)
+      end
+    end
+  end
+
+  # Sends the flight's answered report to the planner once more, as a runner
+  # whose reply was lost does; returns what the planner answers with it.
+  defp report_again(_context, _title) do
+    {id, flight} = answered_flight() || flunk("no answered push is in flight")
+    {error, extra} = flight.answered
+
+    reply =
+      GenServer.call(
+        HalC2Plugins.Planner,
+        {:pushed, id, flight.token, flight.answered_leg, error, extra}
+      )
+
+    {reply, flight}
+  end
+
+  step "the user moves {string} from {string} to {string}, then back, and the first answer is reported to the planner again",
+       %{args: [title, from, to]} = context do
+    {{moving, back}, context} = move_answered_back(context, title, from, to)
+    {reply, flight} = report_again(context, title)
+    assert reply == flight.answered_reply
+    await_moves(context, from, [moving, back])
+    context
+  end
+
+  step "the user moves {string} from {string} to {string}, then back, {string} is restarted, and the first answer is reported to the planner again",
+       %{args: [title, from, to, id]} = context do
+    {{moving, back}, context} = move_answered_back(context, title, from, to)
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+    {reply, _flight} = report_again(context, title)
+    # Decided again from what the first taking saved, the resend finds nothing
+    # left to push: the move it carries already landed in the plan, and the
+    # chained push is already with its runner.
+    assert reply == :ok
+    await_moves(context, from, [moving, back])
+    context
   end
 
   step "the user moves {string} from {string} to {string}, then {string} from {string} to {string} and out of it, before GitHub answers",

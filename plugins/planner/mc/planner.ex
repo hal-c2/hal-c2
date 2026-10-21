@@ -569,8 +569,8 @@ defmodule HalC2Plugins.Planner do
   defp decide(message, projects), do: server({:projects, projects, message})
 
   defp effects(effects, settings, projects) do
-    for {id, token, ops, synced} <- Map.get(effects, :pushes, []),
-        do: push(id, token, ops, synced, projects)
+    for {id, token, leg, ops, synced} <- Map.get(effects, :pushes, []),
+        do: push(id, token, leg, ops, synced, projects)
 
     for post <- Map.get(effects, :posts, []), do: post(post, settings)
     :ok
@@ -582,7 +582,7 @@ defmodule HalC2Plugins.Planner do
   # waiting on it. The server hears with the MC's projects as the change read them, so a
   # chained push does not depend on a look having read them since the server started.
   # The chained push is decided by the server under its current settings.
-  defp push(id, token, ops, synced, projects) do
+  defp push(id, token, leg, ops, synced, projects) do
     {error, extra} =
       try do
         Sync.run(ops, synced)
@@ -592,8 +592,8 @@ defmodule HalC2Plugins.Planner do
            %{"synced" => synced}}
       end
 
-    case report(id, token, error, extra, projects) do
-      {:push, ops, synced} -> push(id, token, ops, synced, projects)
+    case report(id, token, leg, error, extra, projects) do
+      {:push, leg, ops, synced} -> push(id, token, leg, ops, synced, projects)
       :ok -> :ok
     end
   end
@@ -609,18 +609,20 @@ defmodule HalC2Plugins.Planner do
   # monitor hears as a stopped push. A call that timed out or crashed the server
   # ends the runner at once — retrying it would send the report again into a
   # server that may have taken it, or replay a crashing call.
-  defp report(id, token, error, extra, projects) do
+  defp report(id, token, leg, error, extra, projects) do
     deadline = System.monotonic_time(:millisecond) + 30_000
-    report(id, token, error, extra, projects, deadline)
+    report(id, token, leg, error, extra, projects, deadline, 100)
   end
 
-  defp report(id, token, error, extra, projects, deadline) do
-    decide({:pushed, id, token, error, extra}, projects)
+  # The wait between tries doubles up to a second, so every runner whose report
+  # lands in the same stop does not knock on the restarted server in lockstep.
+  defp report(id, token, leg, error, extra, projects, deadline, delay) do
+    decide({:pushed, id, token, leg, error, extra}, projects)
   catch
     :exit, reason ->
       if retryable?(reason) and System.monotonic_time(:millisecond) < deadline do
-        Process.sleep(100)
-        report(id, token, error, extra, projects, deadline)
+        Process.sleep(delay)
+        report(id, token, leg, error, extra, projects, deadline, min(delay * 2, 1_000))
       else
         :ok
       end
@@ -745,9 +747,10 @@ defmodule HalC2Plugins.Planner do
   # whose callers do not read them, until a look or such a change reads them again.
   # A push report is decided with the projects its change read, but does not install
   # them: it may arrive long after a look refreshed the server's list.
-  def handle_call({:projects, projects, {:pushed, _, _, _, _} = message}, from, state) do
-    {:reply, reply, decided} = handle_call(message, from, %{state | projects: projects})
-    {:reply, reply, announce(%{decided | projects: state.projects})}
+  def handle_call({:projects, projects, {:pushed, _, _, _, _, _} = message}, from, state) do
+    decided_state = Map.put(%{state | projects: projects}, :defer_announce, true)
+    {:reply, reply, decided} = handle_call(message, from, decided_state)
+    {:reply, reply, announce(Map.put(%{decided | projects: state.projects}, :defer_announce, false))}
   end
 
   def handle_call({:projects, projects, message}, from, state),
@@ -1000,7 +1003,7 @@ defmodule HalC2Plugins.Planner do
 
   # How the push `token` of a task went, from its runner: whether it synced, what GitHub
   # has of the task and what the task learnt, such as its board item. The task keeps
-  # what GitHub has, and the runner gets the task's next push, `{:push, ops, synced}`,
+  # what GitHub has, and the runner gets the task's next push, `{:push, leg, ops, synced}`,
   # when the task changed while GitHub had this one; a refusal of a task that did not
   # change stands until its next change, unless the push moved an issue to a milestone
   # the plan has moved it on from, which the next push sets right (`Sync.reasserts/4`)
@@ -1010,20 +1013,28 @@ defmodule HalC2Plugins.Planner do
   # unlinked or relinked from since, or for a task removed since, says nothing; the next
   # look reads the board again. A push the planner took on from before a restart under
   # another board (`load/1`) added the task to that board, which the task forgets.
-  def handle_call({:pushed, id, token, error, extra}, _from, state) do
+  def handle_call({:pushed, id, token, leg, error, extra}, _from, state) do
     case state.pushing[id] do
-      %{token: ^token} = flight
-      when is_map_key(flight, :answered_reply) and not is_nil(flight.answered_reply) ->
-        # This report already landed and its reply was lost: answer it again with
-        # the next push it was answered with, without taking it a second time.
-        if flight[:answered] == {error, extra} do
-          {:reply, flight.answered_reply, state}
-        else
-          pushed(state, flight, id, error, extra)
-        end
-
       %{token: ^token} = flight ->
-        pushed(state, flight, id, error, extra)
+        # This report already landed and its reply was lost: answer it again with
+        # the next push it was answered with, without taking it a second time. A
+        # report is a resend only of the leg it answers: the next leg's own
+        # report, however alike, is a new one and is taken. Across a restart the
+        # answered reply was not saved, so a resend is decided again instead.
+        cond do
+          flight[:answered] == {error, extra} and flight[:answered_leg] == leg and
+              not is_nil(flight[:answered_reply]) ->
+            {:reply, flight.answered_reply, state}
+
+          flight[:answered] == {error, extra} and flight[:answered_leg] == leg ->
+            pushed(state, flight, id, leg, error, extra)
+
+          flight[:leg] == leg ->
+            pushed(state, flight, id, leg, error, extra)
+
+          true ->
+            {:reply, :ok, state}
+        end
 
       _ ->
         {:reply, :ok, state}
@@ -1034,9 +1045,15 @@ defmodule HalC2Plugins.Planner do
   # A report resent after a restart, whose answered reply was not saved with the
   # flight, is known by what it reports and the chained push it was answered with
   # is decided again from what the first taking saved.
-  defp pushed(state, flight, id, error, extra) do
+  defp pushed(state, flight, id, leg, error, extra) do
+    # The report as it arrived, before anything is taken out of it below: what a
+    # resend presents, and so what the flight keeps for it, is this same shape.
+    reported = {error, extra}
     changed? = flight.changed
-    replay? = flight[:answered] == {error, extra} and flight[:chained] == true
+
+    replay? =
+      flight[:answered] == reported and flight[:answered_leg] == leg and
+        flight[:chained] == true
     board = state.settings["board"] || ""
     extra = if flight.board == board, do: extra, else: Map.delete(extra, "boardItemId")
     {moved, extra} = Map.pop(extra, "moved", [])
@@ -1057,13 +1074,16 @@ defmodule HalC2Plugins.Planner do
 
     case next do
       {ops, synced} ->
-        reply = {:push, ops, synced}
+        next_leg = make_ref()
+        reply = {:push, next_leg, ops, synced}
 
         flight =
           Map.merge(flight, %{
             changed: false,
             board: board,
-            answered: {error, extra},
+            leg: next_leg,
+            answered: reported,
+            answered_leg: leg,
             answered_reply: reply,
             chained: true
           })
@@ -1791,19 +1811,23 @@ defmodule HalC2Plugins.Planner do
               board = state.settings["board"] || ""
               # The token names the push to its runner, and the monitor is this server's
               # watch on it: they part when a restart takes the flight on (`load/1`).
+              leg = make_ref()
+
               flight = %{
                 token: token,
                 monitor: token,
                 runner: runner,
                 changed: false,
                 board: board,
+                leg: leg,
                 answered: nil,
+                answered_leg: nil,
                 answered_reply: nil,
                 chained: false
               }
 
               state = put_in(state.pushing[id], flight)
-              {[{id, token, ops, synced} | pushes], state}
+              {[{id, token, leg, ops, synced} | pushes], state}
           end
       end
     end)
@@ -1900,7 +1924,9 @@ defmodule HalC2Plugins.Planner do
 
   defp changed(state) do
     save(state)
-    announce(state)
+    # A push report decided with its change's projects announces once, with the
+    # server's own projects restored (see the `{:projects, ...}` call above).
+    if state[:defer_announce], do: state, else: announce(state)
   end
 
   # What clients follow: `plan` for the Planner page, `runs` for its runs, and
@@ -2012,13 +2038,27 @@ defmodule HalC2Plugins.Planner do
 
           case runner(saved["runner"]) do
             {runner, token} ->
+              {answered, answered_leg} =
+                case loaded_term(saved["answered"]) do
+                  {{_, _} = reported, leg} when is_reference(leg) -> {reported, leg}
+                  _ -> {nil, nil}
+                end
+
+              leg =
+                case loaded_ref(saved["leg"]) do
+                  nil -> answered_leg
+                  leg -> leg
+                end
+
               flight = %{
                 token: token,
                 monitor: Process.monitor(runner),
                 runner: runner,
                 changed: saved["changed"] == true,
                 board: saved["board"] || "",
-                answered: loaded_term(saved["answered"]),
+                leg: leg,
+                answered: answered,
+                answered_leg: answered_leg,
                 answered_reply: nil,
                 chained: saved["chained"] == true
               }
@@ -2093,6 +2133,21 @@ defmodule HalC2Plugins.Planner do
 
   defp loaded_term(_saved), do: nil
 
+  # A flight's leg, saved as `saved_term/1` saves a term: it is a reference,
+  # which the tuple-checked `loaded_term/1` above would refuse.
+  defp loaded_ref(saved) when is_binary(saved) do
+    with {:ok, binary} <- Base.decode64(saved),
+         ref when is_reference(ref) <- :erlang.binary_to_term(binary, [:safe]) do
+      ref
+    else
+      _ -> nil
+    end
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp loaded_ref(_saved), do: nil
+
   defp save(state) do
     data = %{
       "items" => state.items,
@@ -2105,12 +2160,18 @@ defmodule HalC2Plugins.Planner do
         Map.new(state.pushing, fn {id, flight} ->
           runner = {run_id(), flight.runner, flight.token}
           runner = runner |> :erlang.term_to_binary() |> Base.encode64()
+          answered =
+            if flight[:answered],
+              do: {flight.answered, flight[:answered_leg]},
+              else: nil
+
           saved = %{
             "runner" => runner,
             "changed" => flight.changed,
             "board" => flight.board,
             "chained" => flight[:chained] == true,
-            "answered" => saved_term(flight[:answered])
+            "leg" => saved_term(flight[:leg]),
+            "answered" => saved_term(answered)
           }
 
           {id, saved}
