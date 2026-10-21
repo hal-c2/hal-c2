@@ -361,6 +361,16 @@ defmodule HalC2.AcpTest do
     read_done(String.trim(probe))
   end
 
+  test "forgetting an instance leaves no generation entry behind" do
+    :persistent_term.put({HalC2.Acp, "gone", :generation}, make_ref())
+    :persistent_term.put({HalC2.Acp, "gone", :models}, [])
+
+    HalC2.Acp.forget("gone")
+
+    assert :persistent_term.get({HalC2.Acp, "gone", :generation}, :none) == :none
+    assert :persistent_term.get({HalC2.Acp, "gone", :models}, :none) == :none
+  end
+
   # Other services broadcast `providers_changed` too. The read's own broadcast follows
   # the removal of its probe directory, which follows its publication, so the first
   # broadcast seen once that directory is gone means the read is done.

@@ -495,7 +495,12 @@ defmodule HalC2.Acp do
   # possibly older-config one cannot win by finishing last. Lock-free
   # `:persistent_term` readers can still see a brief torn state during those puts;
   # the lock serializes the publish against `forget/1`, it does not make it atomic
-  # for readers.
+  # for readers. The session writers (`put_models/2`, `put_commands/2`,
+  # `put_unauthenticated/1`) take the same lock, so they cannot interleave with
+  # `forget/1`'s erases, but they are deliberately not generation-gated: they
+  # report what a live session currently offers (or that its account is gone),
+  # which stays authoritative for that session until the probe `forget/1`
+  # triggers publishes over it.
   defp load(id) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-acp-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
@@ -1232,8 +1237,20 @@ defmodule HalC2.Acp do
         ],
         do: :persistent_term.erase({__MODULE__, id, key})
 
-    :persistent_term.put({__MODULE__, id, :generation}, make_ref())
+    # Erased, not bumped: `publish/4` compares against the `nil` default, which
+    # never equals a read's ref, and a forgotten (or deleted) instance leaves
+    # no generation entry behind.
+    :persistent_term.erase({__MODULE__, id, :generation})
     :ok
+  end
+
+  @doc """
+  Marks an instance signed out, under the lock `forget/1` takes, and tells
+  subscribed clients. Used by `HalC2.Acp.Antigravity.drop_account/1`.
+  """
+  def put_unauthenticated(id) do
+    locked(id, fn -> :persistent_term.put({__MODULE__, id, :unauthenticated}, true) end)
+    HalC2.Settings.notify_providers()
   end
 
   @doc """
@@ -1242,10 +1259,9 @@ defmodule HalC2.Acp do
   """
   def put_models(id, config_options) do
     if Enum.any?(config_options, &(&1["id"] == "model")) do
-      :persistent_term.put(
-        {__MODULE__, id, :models},
-        models(%{"configOptions" => config_options})
-      )
+      models = models(%{"configOptions" => config_options})
+
+      locked(id, fn -> :persistent_term.put({__MODULE__, id, :models}, models) end)
 
       HalC2.Settings.notify_providers()
     end
@@ -1298,14 +1314,20 @@ defmodule HalC2.Acp do
         end
 
       changed =
-        :persistent_term.get({__MODULE__, id, :commands}, []) != slash or
-          :persistent_term.get({__MODULE__, id, :skills}, []) != skills
+        locked(id, fn ->
+          changed =
+            :persistent_term.get({__MODULE__, id, :commands}, []) != slash or
+              :persistent_term.get({__MODULE__, id, :skills}, []) != skills
 
-      if changed do
-        :persistent_term.put({__MODULE__, id, :commands}, slash)
-        :persistent_term.put({__MODULE__, id, :skills}, skills)
-        HalC2.Settings.notify_providers()
-      end
+          if changed do
+            :persistent_term.put({__MODULE__, id, :commands}, slash)
+            :persistent_term.put({__MODULE__, id, :skills}, skills)
+          end
+
+          changed
+        end)
+
+      if changed, do: HalC2.Settings.notify_providers()
     end
 
     :ok
