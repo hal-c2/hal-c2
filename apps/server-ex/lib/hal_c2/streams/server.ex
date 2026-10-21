@@ -16,7 +16,7 @@ defmodule HalC2.Streams.Server do
         `@max_replay` of them or they do not fit one chunk,
     * `{:live, seq, handle}` once it is caught up, then
     * `{:events, events, seq}` for every later commit that touches its view, and
-    * `{:page, seq, rows, floor, :more | :done}` chunks answering `more/3`.
+    * `{:page, seq, rows, floor, :more | :done}` chunks answering `more/4`.
 
   Each arrives as `{:hal_c2_stream, stream_id, message}`, or as
   `{:hal_c2_stream, {stream_id, tag}, message}` when the client gave a `tag`: a

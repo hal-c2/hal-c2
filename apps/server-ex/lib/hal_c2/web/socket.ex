@@ -85,8 +85,7 @@ defmodule HalC2.Web.Socket do
           else: {:push, Protocol.encode(error_frame(id, "#{scope} is required")), state}
 
       {:ok, {:more, id, items}} ->
-        more(state, id, items)
-        {:ok, state}
+        {:ok, more(state, id, items)}
 
       {:ok, {:unsub, id}} ->
         {:ok, unsubscribe(state, id)}
@@ -1358,18 +1357,36 @@ defmodule HalC2.Web.Socket do
   # before `live` (a resync-driven resubscribe does not reset its live
   # status), and the page it would move this subscription's floor for is the
   # one `stream_message/3` drops — the floor must not move for a page the
-  # client never sees. The client asks again once live.
+  # client never sees. The ask is not the client's to repeat either (the Qt
+  # timeline asks once and waits behind its own loading flag), so it is
+  # held in the subscription's buffer and forwarded when `live` arrives.
   defp more(state, id, items) do
-    with %{^id => {:stream, mc, stream_id}} <- state.subs,
-         false <- get_in(state.buffers, [id, :replay]) == true do
-      case stream_route(state, id, stream_id) do
-        {:server, _ref, server, tag} ->
-          message = if tag, do: {:more, self(), items, tag}, else: {:more, self(), items}
-          GenServer.cast(server, message)
+    case state.subs do
+      %{^id => {:stream, _mc, _stream_id}} ->
+        if get_in(state.buffers, [id, :replay]) == true do
+          buffer = state.buffers[id]
+          pending = Map.get(buffer, :pending_more, 0) + items
+          %{state | buffers: Map.put(state.buffers, id, Map.put(buffer, :pending_more, pending))}
+        else
+          send_more(state, id, items)
+          state
+        end
 
-        :legacy ->
-          :erpc.cast(mc, HalC2.Streams, :more, [stream_id, self(), items])
-      end
+      _ ->
+        state
+    end
+  end
+
+  defp send_more(state, id, items) do
+    %{^id => {:stream, mc, stream_id}} = state.subs
+
+    case stream_route(state, id, stream_id) do
+      {:server, _ref, server, tag} ->
+        message = if tag, do: {:more, self(), items, tag}, else: {:more, self(), items}
+        GenServer.cast(server, message)
+
+      :legacy ->
+        :erpc.cast(mc, HalC2.Streams, :more, [stream_id, self(), items])
     end
   end
 
@@ -1590,33 +1607,42 @@ defmodule HalC2.Web.Socket do
       |> put_floor(meta)
 
     # Still replaying until `live`, through every snapshot part: a page is only
-    # ever an answer to a `more` sent once live (below).
+    # ever an answer to a `more` sent once live (below). An ask held from
+    # before this part (`more/3`) is carried over the buffer's reset.
+    held = Map.take(Map.get(state.buffers, id, %{}), [:pending_more])
+
     buffers =
       if part_state == :done,
-        do: Map.put(state.buffers, id, %{events: [], bytes: 0, replay: true}),
+        do: Map.put(state.buffers, id, Map.merge(%{events: [], bytes: 0, replay: true}, held)),
         else:
-          Map.put(state.buffers, id, %{
-            events: [],
-            bytes: 0,
-            snapshot_part: part + 1,
-            replay: true
-          })
+          Map.put(
+            state.buffers,
+            id,
+            Map.merge(%{events: [], bytes: 0, snapshot_part: part + 1, replay: true}, held)
+          )
 
     {:push, Protocol.encode(frame), %{state | buffers: buffers}}
   end
 
   # Replayed events may still be buffered; they go out before the live marker.
+  # An ask held while replaying (`more/3`) is forwarded now that its page
+  # will be seen, behind the live marker it waited for.
   defp stream_message(state, id, {:live, seq, handle}) do
     {frames, state} = flush(state)
 
-    state =
+    {pending, state} =
       case state.buffers do
         %{^id => buffer} ->
-          %{state | buffers: Map.put(state.buffers, id, Map.delete(buffer, :replay))}
+          {pending, buffer} =
+            buffer |> Map.delete(:replay) |> Map.pop(:pending_more)
+
+          {pending, %{state | buffers: Map.put(state.buffers, id, buffer)}}
 
         _ ->
-          state
+          {nil, state}
       end
+
+    if pending, do: send_more(state, id, pending)
 
     live = %{"t" => "live", "id" => id, "offset" => seq, "handle" => handle}
     {:push, frames ++ [Protocol.encode(live)], state}
