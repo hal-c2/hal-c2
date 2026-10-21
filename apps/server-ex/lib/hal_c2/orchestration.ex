@@ -2774,6 +2774,9 @@ defmodule HalC2.Orchestration do
   end
 
   # `state` with `changes` made, for what is decided after them in the same commit.
+  # Every change replays at `state.seq`: safe only while
+  # `StreamState.apply_event/2` neither dedupes nor orders by seq and the
+  # result's `created`/`changed` stamps go unread before commit.
   defp applied(state, changes) do
     Enum.reduce(changes, state, fn {kind, id, patch}, state ->
       StreamState.apply_event(state, %{seq: state.seq, kind: kind, entity: id, patch: patch})
