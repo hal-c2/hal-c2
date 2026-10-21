@@ -4,8 +4,6 @@
 import { expect } from "bun:test";
 
 import { step } from "../../steps.ts";
-import { DEFAULT_REMOTE_REQUEST_TIMEOUT_MS } from "@hal-c2/client-runtime/authorization";
-
 import { TUI_RENDERER_CONFIG } from "../../../src/terminalStartup.ts";
 import { FAKE_MC_ENVIRONMENT_ID, type FakeMc } from "../fakeMc.ts";
 import {
@@ -400,8 +398,12 @@ step("its status line counts the projects and threads", async (ctx: LaunchWorld)
 
 // --- a socket ticket nobody answers ---
 
-/** Client-runtime's default for an authorization request. */
-const TICKET_REQUEST_TIMEOUT_MS = DEFAULT_REMOTE_REQUEST_TIMEOUT_MS;
+/**
+ * The behaviour the ledger specifies (features/tui/launch.feature): deliberately
+ * a literal, not client-runtime's constant, so a default change fails here until
+ * the feature text is updated on purpose.
+ */
+const TICKET_REQUEST_TIMEOUT_MS = 10_000;
 
 step(
   "an MC is running on this machine that does not answer socket ticket requests",
@@ -424,12 +426,12 @@ step("the first ticket request was given up on only after 10 seconds", async (ct
   );
   const lived = first.endedAt! - first.startedAt;
   // The client's timer starts before the request reaches the MC, and loopback
-  // transit is milliseconds even on a loaded runner, so the lower bound keeps
-  // only 1s of slack: a regression to a 6s timeout must fail this scenario.
-  // The upper slack only needs to catch a wholesale change of default
-  // (30s/60s), so it is wide. A miss on either bound on a loaded runner means rerun first.
+  // transit is milliseconds even on a loaded runner, so the bounds keep only
+  // 1s/5s of slack: a regression to a 6s or 20s timeout, or a wholesale change
+  // of the 10s default, must fail this scenario. A miss on a loaded runner
+  // means rerun first.
   expect(lived).toBeGreaterThanOrEqual(TICKET_REQUEST_TIMEOUT_MS - 1_000);
-  expect(lived).toBeLessThan(TICKET_REQUEST_TIMEOUT_MS + 15_000);
+  expect(lived).toBeLessThan(TICKET_REQUEST_TIMEOUT_MS + 5_000);
 });
 
 // --- SSH ---

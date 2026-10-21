@@ -22,7 +22,7 @@ export {
 } from "../rpc/http.ts";
 export type RemoteEnvironmentAuthError = RemoteEnvironmentRequestError;
 
-export const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 10_000;
+const DEFAULT_REMOTE_REQUEST_TIMEOUT_MS = 10_000;
 
 const clientMetadataTokenExchangeFields = (
   clientMetadata: AuthClientPresentationMetadata | undefined,
