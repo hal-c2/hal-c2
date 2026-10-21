@@ -397,6 +397,9 @@ def command(msg):
         respond(msg, {"summary": "Compacted.", "tokensBefore": 1000})
     elif kind == "prompt" and steer(msg) and "decline" in msg.get("message", ""):
         # A steer saying "decline" that reaches Pi once its run settled is rejected.
+        # One also saying "after stop" is rejected only once the abort reaches Pi.
+        if "after stop" in msg.get("message", "") and not aborted[0]:
+            wait_for(lambda m: m.get("type") == "abort")
         respond(msg, error="Pi cannot start this message")
     elif kind == "prompt" and steer(msg) and "ignore" in msg.get("message", ""):
         # A steer saying "ignore" that reaches Pi once its run settled is never answered.

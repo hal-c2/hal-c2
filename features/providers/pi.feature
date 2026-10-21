@@ -580,6 +580,11 @@ Feature: Pi
     When the user steers the thread with a message Pi holds and stops the turn
     Then the stopped turn ends with the message in it and no new turn starts
 
+  Scenario: A message Pi declines after the user stopped its settled turn is not sent again
+    Given a Pi turn that went idle just before the steer landed
+    When the user steers the thread with a message Pi declines after the turn is stopped
+    Then the stopped turn ends with the message in it and no new turn starts
+
   @backlog
   Scenario: Steering a Pi thread with /compact compacts instead of prompting
     Given a Pi turn is running

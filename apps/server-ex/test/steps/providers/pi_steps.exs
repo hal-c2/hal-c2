@@ -856,6 +856,25 @@ defmodule HalC2.Steps.Providers.Pi do
     Map.put(context, :steered, "hold this thought")
   end
 
+  # The fake declines a steer that says "decline after stop" only once the abort
+  # reaches it: the run already settled (the runtime holds the settle for the
+  # steer's answer), the user stops the turn, and only then does Pi refuse.
+  step "the user steers the thread with a message Pi declines after the turn is stopped",
+       context do
+    steered = Task.async(fn -> steer(context, "decline after stop this one") end)
+    await_steer_sent(context, "decline after stop this one")
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    assert {:ok, _} = Task.await(steered, 15_000)
+    Map.put(context, :steered, "decline after stop this one")
+  end
+
   step "the stopped turn ends with the message in it and no new turn starts", context do
     state = FakeAcp.await_runs(context, 1)
     assert [%{"status" => "interrupted", "id" => run}] = StreamState.list(state, "run")
