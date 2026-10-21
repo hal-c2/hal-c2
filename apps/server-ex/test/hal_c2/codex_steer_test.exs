@@ -39,13 +39,22 @@ defmodule HalC2.CodexSteerTest do
     assert catch_exit(ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []}))
   end
 
+  # The ordering the near-deadline case below relies on, with no env override:
+  # reverting either default so the outer no longer outlives the handler's
+  # nested call fails here instead of silently restoring the race.
+  test "the steer budget outlives the nested provider call's by default" do
+    Application.delete_env(:hal_c2, :codex_steer_timeout_ms)
+
+    assert ThreadRuntime.steer_timeout() > ThreadRuntime.steer_call_timeout()
+  end
+
   # The nested provider call's exit arriving near (but before) this call's own
   # deadline is still a refusal, not held: the outer budget must outlive the
-  # inner one (35s over `Connection.call`'s 30s by default), or a provider
-  # that never answers `turn/steer` would always trip the outer timeout first.
+  # inner one, or a provider that never answers `turn/steer` would always trip
+  # the outer timeout first.
   test "a steer whose runtime dies on its nested call near the deadline is not held" do
-    Application.put_env(:hal_c2, :codex_steer_timeout_ms, 500)
-    stand_in("thread-1", {:inner_timeout_after, 400})
+    Application.put_env(:hal_c2, :codex_steer_timeout_ms, 1_000)
+    stand_in("thread-1", {:inner_timeout_after, 600})
 
     assert catch_exit(ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []}))
   end

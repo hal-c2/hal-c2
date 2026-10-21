@@ -31,6 +31,13 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   @state_version 2
 
+  # The steer's two budgets, one source so their ordering cannot drift: the
+  # handler's nested `turn/steer` call (`steer_call_timeout/0`, passed
+  # explicitly rather than left to `Connection.call`'s default) and the outer
+  # steer call's default above it. See `steer_call/3`.
+  @steer_call_timeout_ms 30_000
+  @steer_timeout_ms @steer_call_timeout_ms + 5_000
+
   # runtimeMode -> {approvalPolicy, approvalsReviewer, sandboxPolicy type}. Auto lets Codex's own reviewer answer what it would ask the user.
   @runtime_policies %{
     "approval-required" => {"untrusted", "user", "readOnly"},
@@ -70,22 +77,34 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  @doc false
+  # The outer steer call's budget. Its default is derived above
+  # `steer_call_timeout/0` (see the module attributes), so the two stay
+  # ordered; an env override below the inner budget reorders them on purpose
+  # (tests timeout a steer quickly that way).
+  def steer_timeout,
+    do: Application.get_env(:hal_c2, :codex_steer_timeout_ms, @steer_timeout_ms)
+
+  @doc false
+  # The handler's nested `turn/steer` budget, passed explicitly at the call.
+  def steer_call_timeout, do: @steer_call_timeout_ms
+
   # `HalC2.RuntimeSteer` owns which timeout means held. The handler blocks in
-  # a nested `Connection.call` (30s by default), so this outer budget defaults
-  # above it (35s, like Muse's): with equal budgets the outer deadline —
-  # started strictly before the handler starts the inner call — would always
-  # win, and a provider that never answers `turn/steer` would be reported as a
-  # delivery. Ordered this way, a promptly started handler whose provider
-  # hangs is decided by the inner exit (a refusal), while a steer stuck behind
-  # mailbox backlog past the outer budget still falls through to `:ok`. A
-  # refusal is always the refusal: settling the runtime so the caller sees
-  # whether the turn still runs is best-effort, and a settle that itself times
-  # out or finds the runtime gone must not turn it into a delivery. The two
-  # budgets stack: a wedged runtime blocks the dispatching process for the
-  # steer budget plus the settle budget (35s + 30s by default) before the
-  # sender hears the refusal, so tune them together, not one in isolation.
+  # a nested `Connection.call` on the inner budget, so the outer defaults
+  # above it: with equal budgets the outer deadline — started strictly before
+  # the handler starts the inner call — would always win, and a provider that
+  # never answers `turn/steer` would be reported as a delivery. Ordered this
+  # way, a promptly started handler whose provider hangs is decided by the
+  # inner exit (a refusal), while a steer stuck behind mailbox backlog past
+  # the outer budget still falls through to `:ok`. A refusal is always the
+  # refusal: settling the runtime so the caller sees whether the turn still
+  # runs is best-effort, and a settle that itself times out or finds the
+  # runtime gone must not turn it into a delivery. The two budgets stack: a
+  # wedged runtime blocks the dispatching process for the steer budget plus
+  # the settle budget (35s + 30s by default) before the sender hears the
+  # refusal, so tune them together, not one in isolation.
   defp steer_call(pid, run_id, message) do
-    timeout = Application.get_env(:hal_c2, :codex_steer_timeout_ms, 35_000)
+    timeout = steer_timeout()
 
     with {:error, _} = error <- HalC2.RuntimeSteer.call(pid, run_id, message, timeout) do
       # Notifications that preceded the refusal sit in the runtime's mailbox ahead
@@ -233,7 +252,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       "input" => codex_input(message)
     }
 
-    case Connection.call(state.conn, "turn/steer", params) do
+    case Connection.call(state.conn, "turn/steer", params, steer_call_timeout()) do
       {:ok, _} -> {:reply, :ok, state}
       {:error, reason} -> {:reply, {:error, rpc_message(reason)}, state}
     end
