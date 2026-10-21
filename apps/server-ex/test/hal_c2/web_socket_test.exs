@@ -26,6 +26,14 @@ defmodule HalC2.Web.SocketTest do
     assert {:error, 401} = WsClient.connect(port, "/ws?token=wrong")
   end
 
+  test "recv_until's expiry names the caller's budget, not the remainder", %{port: port} do
+    client = connect(port)
+
+    assert_raise RuntimeError, "no frame within 200 ms", fn ->
+      WsClient.recv_until(client, &(&1["t"] == "never-sent"), 200)
+    end
+  end
+
   test "shell lists threads and pushes changes", %{port: port} do
     :ok = HalC2.Shell.subscribe(self())
 

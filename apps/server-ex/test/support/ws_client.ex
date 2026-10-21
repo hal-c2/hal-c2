@@ -109,9 +109,10 @@ defmodule HalC2.Test.WsClient do
   @doc """
   Receives frames until one matches `fun`, returning it and the frames skipped.
   `timeout` bounds the whole wait, not each frame: a trickle of non-matching
-  frames does not extend it.
+  frames does not extend it. The default is generous for that total bound —
+  callers waiting on slow paths (resync, cluster, usage sources) pass more.
   """
-  def recv_until(client, fun, timeout \\ 2_000, skipped \\ []) do
+  def recv_until(client, fun, timeout \\ 5_000, skipped \\ []) do
     deadline = System.monotonic_time(:millisecond) + timeout
     recv_until(client, fun, timeout, deadline, skipped)
   end
@@ -119,7 +120,18 @@ defmodule HalC2.Test.WsClient do
   defp recv_until(client, fun, timeout, deadline, skipped) do
     remaining = deadline - System.monotonic_time(:millisecond)
     if remaining <= 0, do: raise("no frame within #{timeout} ms")
-    {frame, client} = recv(client, remaining)
+
+    {frame, client} =
+      try do
+        recv(client, remaining)
+      rescue
+        # `recv/2` reports the remainder it was given; the caller's budget is
+        # the diagnostic that names the wait that actually expired.
+        error in RuntimeError ->
+          if error.message =~ "no frame within",
+            do: raise("no frame within #{timeout} ms"),
+            else: reraise(error, __STACKTRACE__)
+      end
 
     if fun.(frame),
       do: {frame, Enum.reverse(skipped), client},
