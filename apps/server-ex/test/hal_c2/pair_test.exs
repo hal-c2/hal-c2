@@ -49,6 +49,22 @@ defmodule HalC2.PairTest do
     refute File.exists?(Path.join(home, "hal-c2.sqlite"))
   end
 
+  test "a non-UTF-8 argument is a refusal, not a crash", %{home: home} do
+    assert {:error, message} = HalC2.Pair.command([<<0xFF, 0xFE>>])
+    assert message =~ "BASE_URL must be an http or https address"
+    assert message =~ "(withheld)"
+    refute File.exists?(Path.join(home, "hal-c2.sqlite"))
+  end
+
+  test "a store that cannot be made is a one-line refusal, not a stack trace", %{tmp_dir: dir} do
+    blocker = Path.join(dir, "blocker")
+    File.write!(blocker, "a file, not a directory")
+    Application.put_env(:hal_c2, :home, Path.join(blocker, "home"))
+
+    assert {:error, message} = HalC2.Pair.command(["http://127.0.0.1:3780"])
+    assert message =~ "Could not create a pairing token in"
+  end
+
   test "a refused option is named, but echoed printable-only" do
     assert {:error, message} = HalC2.Pair.command(["--tailscale-serve-port=foo"])
     assert message =~ "--tailscale-serve-port=foo"
@@ -89,13 +105,49 @@ defmodule HalC2.PairTest do
     assert File.exists?(Path.join(installed.data, "hal-c2.sqlite"))
   end
 
+  test "a mapping answered from a non-loopback target is not reused on its word alone",
+       %{tmp_dir: dir} do
+    # The target answers with the installed MC's (public) id, but it is not a
+    # loopback alias of the listener being published: its say-so is not proof.
+    {installed, _port} = cross_profile(dir, &"http://0.0.0.0:#{&1}")
+
+    assert {:error, message} = HalC2.Pair.command(["--release", "--tailscale"])
+    assert message =~ "already fronts a different HAL-C2 server"
+    refute File.exists?(Path.join(installed.data, "hal-c2.sqlite"))
+  end
+
+  test "a stale record with a live pid does not pass for a running installed MC",
+       %{tmp_dir: dir} do
+    {installed, _port} = cross_profile(dir, &"http://127.0.0.2:#{&1}")
+
+    # The record's pid (this test's) is alive, but nothing at its origin
+    # answers as an MC: a listener that never replies.
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, packet: :raw, active: false, reuseaddr: true])
+    {:ok, dead_port} = :inet.port(listen)
+    on_exit(fn -> :gen_tcp.close(listen) end)
+
+    record_path = Path.join(installed.state, "server-runtime.json")
+    record = record_path |> File.read!() |> JSON.decode!()
+
+    File.write!(
+      record_path,
+      JSON.encode!(%{record | "origin" => "http://127.0.0.1:#{dead_port}"})
+    )
+
+    assert {:error, message} = HalC2.Pair.command(["--release"])
+    assert message =~ "not running"
+    refute File.exists?(Path.join(installed.data, "hal-c2.sqlite"))
+  end
+
   test "a mapping is not blessed when neither side has an identity to check", %{tmp_dir: dir} do
     # The installed MC's identity file is empty and it answers "" at its
     # origin, as does the mapping's target: "" must not match "".
     {installed, _port} = cross_profile(dir, &"http://127.0.0.2:#{&1}", "")
 
+    # Refused before any Serve check now: an installed MC whose origin does
+    # not answer with an identity does not pass for running either.
     assert {:error, message} = HalC2.Pair.command(["--release", "--tailscale"])
-    assert message =~ "could not be verified as this one"
+    assert message =~ "not running"
     refute File.exists?(Path.join(installed.data, "hal-c2.sqlite"))
   end
 

@@ -45,9 +45,10 @@ defmodule HalC2.Pair do
 
   @doc "The command as `{:ok, lines}` (the link first) or `{:error, message}`."
   def command(args) do
-    # Only what the store and the Tailscale check need. Starting `:hal_c2` itself would
-    # bind the MC's port inside this `eval`.
-    {:ok, _} = Application.ensure_all_started([:exqlite, :inets])
+    # Only what the store and the Tailscale check need (`:ssl` so an https
+    # identity probe can succeed from a release `eval`). Starting `:hal_c2`
+    # itself would bind the MC's port inside this `eval`.
+    {:ok, _} = Application.ensure_all_started([:exqlite, :inets, :ssl])
 
     {opts, rest, invalid} =
       OptionParser.parse(args,
@@ -64,10 +65,8 @@ defmodule HalC2.Pair do
 
       dirs = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home())
 
-      with {:ok, base} <- base(opts[:tailscale], port, serve_port, rest, running, dirs) do
-        # Minting ahead of a first start: the store's directory may not be there yet.
-        if running == nil, do: HalC2.Paths.ensure!(dirs)
-        token = HalC2.Auth.create_pairing_token(Path.join(dirs.data, "hal-c2.sqlite"))
+      with {:ok, base} <- base(opts[:tailscale], port, serve_port, rest, running, dirs),
+           {:ok, token} <- mint(dirs, running) do
         link = "#{String.trim_trailing(base, "/")}/?token=#{token}"
 
         if opts[:tailscale] do
@@ -81,6 +80,19 @@ defmodule HalC2.Pair do
         end
       end
     end
+  end
+
+  # A store that cannot be made or opened (locked, corrupt, unwritable) is a
+  # one-line refusal like every other failure of this command, not a stack
+  # trace out of a release `eval` — after a `--tailscale` publish it would
+  # also leave the Serve mapping behind unexplained.
+  defp mint(dirs, running) do
+    # Minting ahead of a first start: the store's directory may not be there yet.
+    if running == nil, do: HalC2.Paths.ensure!(dirs)
+    {:ok, HalC2.Auth.create_pairing_token(Path.join(dirs.data, "hal-c2.sqlite"))}
+  rescue
+    error ->
+      {:error, "Could not create a pairing token in #{dirs.data}: #{Exception.message(error)}"}
   end
 
   @doc """
@@ -110,6 +122,11 @@ defmodule HalC2.Pair do
       _ ->
         false
     end
+  rescue
+    # Not UTF-8 (reachable from an Elixir caller, if not a terminal): an
+    # address this command refuses, not a crash.
+    ArgumentError -> false
+    FunctionClauseError -> false
   end
 
   # A refused address is echoed rebuilt from its parsed form, without its
@@ -125,6 +142,9 @@ defmodule HalC2.Pair do
       _ ->
         "(withheld)"
     end
+  rescue
+    ArgumentError -> "(withheld)"
+    FunctionClauseError -> "(withheld)"
   end
 
   defp check_options([], [_, _ | _], _opts),
@@ -198,8 +218,16 @@ defmodule HalC2.Pair do
 
   defp installed(home) do
     case HalC2.RuntimeRecord.running(home) do
-      nil -> {:error, not_running(home)}
-      record -> {:ok, {home, record}}
+      nil ->
+        {:error, not_running(home)}
+
+      record ->
+        # Pid liveness alone blesses a stale record whose pid was recycled:
+        # the record's origin must also answer as an MC before a token is
+        # minted into a link nothing HAL-C2 serves.
+        if HalC2.TailscaleServe.environment_id_at(record["origin"]),
+          do: {:ok, {home, record}},
+          else: {:error, not_running(home)}
     end
   end
 
@@ -217,7 +245,7 @@ defmodule HalC2.Pair do
       "The installed MC is not running at the home HAL_C2_HOME or HAL_C2_MC_HOME names. Start it, then run `#{command_name()}` again."
 
   defp base(true, port, serve_port, _rest, running, dirs),
-    do: HalC2.TailscaleServe.publish(port, serve_port, located_id(dirs, running))
+    do: HalC2.TailscaleServe.publish(port, serve_port, located_id(dirs, running), command_name())
 
   defp base(_, _port, _serve_port, rest, running, _dirs),
     do: {:ok, List.first(rest) || (running && running["origin"]) || HalC2.Web.base_url()}
