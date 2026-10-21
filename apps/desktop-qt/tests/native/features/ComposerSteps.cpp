@@ -156,6 +156,11 @@ const Steps steps([] {
            QStringLiteral("the composer shows %1").arg(show(composer)));
   });
 
+  step(QStringLiteral("the suggestion list says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return shown(world).value(QStringLiteral("suggestionsEmptyText")) == c[0]; },
+                  [&] { return QStringLiteral("the suggestion list to say \"%1\"; the composer shows %2").arg(c[0], show(shown(world))); });
+  });
+
   step(QStringLiteral("the composer is in %1 mode").arg(q), [](World& world, const Captures& c, const Table&) {
     world.waitFor([&] { return shown(world).value(QStringLiteral("interactionMode")) == c[0]; },
                   [&] { return QStringLiteral("the mode; the composer shows %1").arg(show(shown(world))); });
