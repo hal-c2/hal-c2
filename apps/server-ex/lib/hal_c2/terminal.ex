@@ -348,7 +348,10 @@ defmodule HalC2.Terminal do
     # subscriber reading snapshot-plus-events. Other direct subscribers ignore
     # the shape.
     {ref, others} = Map.pop(state.subscribers, subscriber)
-    state = flush_output(%{state | subscribers: others, attach_capture: subscriber})
+
+    # `Map.put/3`, not a strict update: a terminal whose suspend timed out
+    # in a hot reload never ran `code_change/3` and has no field yet.
+    state = flush_output(%{state | subscribers: others} |> Map.put(:attach_capture, subscriber))
 
     open? =
       (state.cwd == nil and input["cwd"] != nil) or
@@ -359,7 +362,7 @@ defmodule HalC2.Terminal do
         do: open_session(state, input),
         else: resize_to(state, input["cols"] || state.cols, input["rows"] || state.rows)
 
-    state = %{state | attach_capture: nil}
+    state = Map.put(state, :attach_capture, nil)
     subscribers = Map.put(state.subscribers, subscriber, ref || Process.monitor(subscriber))
 
     # A shell that failed to start while attaching is explained to the attaching
