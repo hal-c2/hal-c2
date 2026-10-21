@@ -976,6 +976,33 @@ defmodule HalC2.OrchestrationTest do
       File.touch!(Path.join(gates, "steer"))
     end
 
+    # A runtime (a plugin provider's, say) can refuse with a reason that is not
+    # a string; the sender still hears a bounded refusal, not a crash, and the
+    # reserved message still leaves the turn.
+    @tag :capture_log
+    test "a steer refused with a reason that is not a string still leaves the turn",
+         %{tmp_dir: dir} do
+      gates = held_steers(dir)
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+
+      [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+      Process.exit(runtime, :kill)
+      odd_runtime(thread_id)
+
+      assert {:error, reason} =
+               send_message(thread_id, "m2", "hold this", %{
+                 "dispatchMode" => %{"type" => "start_immediately"},
+                 "deliveryIntent" => "steer"
+               })
+
+      assert reason =~ "its runtime answered"
+      state = current(thread_id)
+      refute StreamState.get(state, "message")["m2"]
+      refute StreamState.get(state, "turn-item")["turn-item:user:m2"]
+      File.touch!(Path.join(gates, "steer"))
+    end
+
     @tag :capture_log
     test "a promote whose runtime stops as it is asked goes back first in the queue",
          %{tmp_dir: dir} do
@@ -2713,6 +2740,47 @@ defmodule HalC2.OrchestrationTest do
     )
 
     gates
+  end
+
+  # A stand-in in the Codex registry that refuses a steer with a reason that is
+  # not a string (and settles at once). Registering retries briefly: the killed
+  # runtime's registry entry has no receipt to wait on.
+  defp odd_runtime(thread_id) do
+    parent = self()
+
+    pid =
+      spawn(fn ->
+        register_odd(thread_id, 200)
+        send(parent, :odd_registered)
+        odd_loop()
+      end)
+
+    assert_receive :odd_registered, 5_000
+    on_exit(fn -> Process.exit(pid, :kill) end)
+    pid
+  end
+
+  defp register_odd(thread_id, tries) do
+    case Registry.register(HalC2.Codex.Registry, thread_id, nil) do
+      {:ok, _} ->
+        :ok
+
+      {:error, {:already_registered, _}} when tries > 0 ->
+        Process.sleep(10)
+        register_odd(thread_id, tries - 1)
+    end
+  end
+
+  defp odd_loop do
+    receive do
+      {:"$gen_call", from, {:steer, _run_id, _message}} ->
+        GenServer.reply(from, {:error, %{"odd" => "refusal"}})
+        odd_loop()
+
+      {:"$gen_call", from, :settle} ->
+        GenServer.reply(from, :ok)
+        odd_loop()
+    end
   end
 
   defp await_turn_item(thread_id, id) do
