@@ -173,9 +173,16 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   def installed_home(nil, configured, _user_home), do: {:ok, configured}
 
   # `HalC2.Paths` only refuses an old home itself as a root; a root typed here is refused
-  # inside one too, the rule it keeps for an MC's own directory.
+  # inside one too, the rule it keeps for an MC's own directory. `root?/3` is lexical,
+  # so a root that exists is checked by where its links land as well.
   def installed_home(root, _configured, user_home) do
-    if HalC2.Paths.root?(root, :mc, user_home),
+    checked =
+      case HalC2.Paths.real(String.trim(root)) do
+        {:ok, real} -> real
+        _ -> root
+      end
+
+    if HalC2.Paths.root?(root, :mc, user_home) and HalC2.Paths.root?(checked, :mc, user_home),
       do: {:ok, {:root, String.trim(root)}},
       else:
         {:error,

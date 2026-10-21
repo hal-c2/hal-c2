@@ -295,7 +295,7 @@ Feature: MC self-update and hot upgrades
     Then the reload looks for that MC in the root's MC directories
 
   @mc
-  Scenario Outline: A developer's release reload refuses a root that names no installed MC
+  Scenario Outline: A developer's release reload refuses a root that cannot name an installed MC
     When a developer reloads the installed MC naming the root "<root>"
     Then the reload is refused naming that root
 

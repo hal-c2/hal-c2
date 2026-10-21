@@ -6,6 +6,10 @@
 #USAGE arg "[mcs]..." help="Dev MCs to reload by node name instead of the local one"
 set -euo pipefail
 if [[ ${usage_release:-false} == true ]]; then
+  if [[ -n ${usage_mcs:-} ]]; then
+    echo "--release reloads the installed MC, not named dev MCs" >&2
+    exit 2
+  fi
   if [[ -n ${usage_root:-} ]]; then
     exec mix hal_c2.upgrade --release --root "$usage_root"
   fi

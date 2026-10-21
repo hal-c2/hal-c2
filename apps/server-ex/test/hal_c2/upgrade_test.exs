@@ -150,6 +150,21 @@ defmodule HalC2.UpgradeTest do
     end
   end
 
+  test "a --root that links into an old home is refused by where it lands", %{tmp_dir: dir} do
+    home = &Mix.Tasks.HalC2.Upgrade.installed_home(&1, &2, dir)
+
+    File.mkdir_p!(Path.join(dir, ".t3"))
+    into_old = Path.join(dir, "into-old")
+    File.ln_s!(Path.join(dir, ".t3"), into_old)
+    assert {:error, reason} = home.(into_old, :dev)
+    assert reason =~ inspect(into_old)
+
+    File.mkdir_p!(Path.join(dir, "hal-c2"))
+    to_valid = Path.join(dir, "to-valid")
+    File.ln_s!(Path.join(dir, "hal-c2"), to_valid)
+    assert home.(to_valid, :dev) == {:ok, {:root, to_valid}}
+  end
+
   test "--root is refused, before any build, unless it comes with --release alone" do
     for args <- [
           ["--root", "/srv/hal-c2"],
