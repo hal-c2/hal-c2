@@ -6,6 +6,12 @@ defmodule HalC2.UpgradeSourcePropTest do
   that stopped midway, with its checksum taken away again, or with a wrong stamp left
   beside the unpacked bundle, fetching the version unpacks the archive last written
   whole, and nothing when there is none. No peer or release URL answers here.
+
+  Sequentially, `rm_checksum` and `corrupt_stamp` pin that observable contract, not
+  every branch behind it: after `rm_checksum` the source check already refuses (and
+  drops) the archive, so `unpack/2`'s own missing-checksum refusal is race-only
+  defence — a checksum taken between the source check and the unpack — that no
+  sequential command here reaches.
   """
 
   use ExUnit.Case, async: false

@@ -227,7 +227,7 @@ defmodule HalC2.Upgrade.Source do
     archive = archive_path(version, platform)
 
     if File.read(stamp) == {:ok, sum} and File.regular?(archive) and
-         sha256(archive) == sum and HalC2.Upgrade.manifest(dir) != nil do
+         sha256_if_present(archive) == sum and HalC2.Upgrade.manifest(dir) != nil do
       {:ok, dir}
     else
       File.rm(stamp)
@@ -241,7 +241,7 @@ defmodule HalC2.Upgrade.Source do
         :ok ->
           # A writer outside the upgrade server may have replaced the archive since
           # its checksum was read; only stamp what was actually checked.
-          if sha256(archive_path(version, platform)) == sum do
+          if sha256_if_present(archive_path(version, platform)) == sum do
             File.write!(stamp, sum)
             {:ok, dir}
           else
@@ -338,6 +338,14 @@ defmodule HalC2.Upgrade.Source do
 
   defp unpacked_dir(version, platform),
     do: Path.join(cache_dir(version), "bundle-#{platform}")
+
+  # An archive a writer outside the upgrade server took mid-unpack is simply
+  # not the sum: the unpack answers "the bundle changed" instead of raising.
+  defp sha256_if_present(path) do
+    sha256(path)
+  rescue
+    File.Error -> nil
+  end
 
   defp sha256(path) do
     path
