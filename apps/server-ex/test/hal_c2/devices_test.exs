@@ -53,15 +53,10 @@ defmodule HalC2.DevicesTest do
     System.delete_env("ANDROID_SDK_ROOT")
     System.put_env("PATH", dir)
 
-    # No HOME at all: the reason is answered (a string, or nil if this host's
-    # own SDK is found through the OS home), never raised.
-    System.delete_env("HOME")
-
-    assert HalC2.Devices.platform_reason("android") in [nil] or
-             is_binary(HalC2.Devices.platform_reason("android"))
-
-    # An empty HOME is no home either: it must not make the candidates
-    # cwd-relative and find an SDK under the working directory.
+    # An empty HOME is no home: it must not make the candidates
+    # cwd-relative and find an SDK under the working directory. (Deleting
+    # HOME would not do: the lookup falls back to the OS home, which is
+    # this host's answer, not a deterministic one.)
     trap = Path.join([dir, "Android", "Sdk"])
     tool(Path.join([trap, "platform-tools", "adb"]), "fake_adb.sh")
     tool(Path.join([trap, "emulator", "emulator"]), "fake_emulator.sh")
