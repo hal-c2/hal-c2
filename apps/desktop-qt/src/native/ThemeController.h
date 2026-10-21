@@ -50,8 +50,9 @@ class ThemeController : public QObject, public NativeController {
   // Whether the window's theme editor is open (themeEditor.toggle); the
   // editor sets it back when it closes.
   Q_PROPERTY(bool editorOpen READ editorOpen WRITE setEditorOpen NOTIFY editorOpenChanged)
-  // The draft the editor holds, unsaved changes included, for as long as it
-  // is open: it outlives the page that opened it.
+  // The draft the editor holds, unsaved changes included: held while it is
+  // open, and after an outside-press close until it is reopened or replaced
+  // (see hideEditor). It outlives the page that opened it.
   Q_PROPERTY(QVariantMap editing READ editing NOTIFY editingChanged)
   // Picking a colour off the app: while `inspecting`, the window's
   // ThemeInspector hands the colour under the pointer to pick(), and `picked`

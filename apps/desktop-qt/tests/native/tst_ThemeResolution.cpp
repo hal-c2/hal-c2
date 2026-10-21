@@ -246,6 +246,23 @@ private slots:
     QCOMPARE(canvas(), QStringLiteral("#050505"));
   }
 
+  // draft("") starts from the theme actually drawn: a single-appearance
+  // theme chosen as a half (no whole theme set) is that draft, not the
+  // standard look.
+  void aDraftWithNoIdStartsFromTheDrawnHalf() {
+    save({{QStringLiteral("customThemes"), QJsonArray{theme(QStringLiteral("midnight"), QStringLiteral("dark"), QStringLiteral("#050505"))}}});
+    QVERIFY(themes()->choose(QStringLiteral("midnight")));
+    QCOMPARE(themes()->themeId(), QString());
+    themes()->setSystemDark(true);
+    QCOMPARE(themes()->resolvedId(), QStringLiteral("midnight"));
+    const QVariantMap drawn = themes()->draft(QString());
+    QCOMPARE(drawn.value(QStringLiteral("label")), QVariant(QStringLiteral("midnight")));
+    QCOMPARE(drawn.value(QStringLiteral("colors")).toMap().value(QStringLiteral("canvas")), QVariant(QStringLiteral("#050505")));
+    // In the other appearance nothing is chosen, so the standard look is drawn and drafted.
+    themes()->setSystemDark(false);
+    QCOMPARE(themes()->draft(QString()).value(QStringLiteral("label")), QVariant(QStringLiteral("HAL-C2")));
+  }
+
   // settings/search-and-navigation.feature: restoring defaults puts the whole
   // theme choice back at once, or, when it cannot be saved, none of it.
   void restoringDefaultsIsAllOrNothing() {
