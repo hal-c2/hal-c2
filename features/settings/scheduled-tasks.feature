@@ -106,6 +106,13 @@ Feature: Scheduled tasks
       And a task made later with the same id starts with no run history
 
     @mc
+    Scenario: Deleting a task stops the turn its run already started
+      Given a task whose run's turn is already running in its thread
+      When the user deletes the task
+      Then the turn its run started is interrupted
+      And the run is stopped and the waiting user is told "Schedule task not found."
+
+    @mc
     Scenario: Pausing a task stops its runs and resuming schedules it again
       Given a task that runs every hour
       When the user pauses the task
