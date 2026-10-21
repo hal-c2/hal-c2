@@ -264,6 +264,13 @@ Feature: Agent code review
       Then #12 gets the finding badged high with the suggested fix and the findings at a glance
 
     @mc
+    Scenario: A finding that starts with bold text still gets its severity badge
+      Given a review of #12 is running
+      When the agent reports a low finding starting with bold text on "src/limits.ts"
+      And the user publishes the review of #12
+      Then #12 gets the finding badged low before its bold text
+
+    @mc
     Scenario: A review whose agent fails can be tried again
       Given the review of #12 failed
       When the user retries the review of #12

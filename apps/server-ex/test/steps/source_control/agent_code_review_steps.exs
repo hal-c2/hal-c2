@@ -627,6 +627,34 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     await_review!(context, number, &(&1["status"] == "published"))
   end
 
+  step "the agent reports a low finding starting with bold text on {string}",
+       %{args: [path]} = context do
+    context =
+      report(context, %{
+        "verdict" => "comment",
+        "summary" => "One small thing.",
+        "comments" => [
+          %{
+            "path" => path,
+            "line" => 1,
+            "body" => "**Order:** This always allows.",
+            "severity" => "low"
+          }
+        ]
+      })
+
+    await_review!(context, 12, &(&1["status"] == "waiting"))
+  end
+
+  step "\#{int} gets the finding badged low before its bold text", %{args: [number]} = context do
+    assert {:ok, _} = context.reply
+    assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
+    review = JSON.decode!(call["stdin"])
+    assert [%{"body" => body}] = review["comments"]
+    assert body == "🔵 **Low:** **Order:** This always allows."
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
   step "the new review's prompt includes {string}", %{args: [text]} = context do
     {review, context} = await_review(context, 12, &(&1["threadId"] != context.thread))
     prompt = prompt(review["threadId"])
