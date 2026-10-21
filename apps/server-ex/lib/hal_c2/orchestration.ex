@@ -21,6 +21,17 @@ defmodule HalC2.Orchestration do
   alias HalC2.Projection.{JS, PullRequests}
 
   @active_statuses ~w(preparing starting running waiting)
+
+  # The built-in runtimes' registries, in the order a release visits them. One
+  # list for stopping, releasing and checking: a registry missed by the check
+  # would have its live session's credential revoked on every release.
+  @session_registries [
+    HalC2.Codex.Registry,
+    HalC2.Claude.Registry,
+    HalC2.Acp.Registry,
+    HalC2.Pi.Registry,
+    HalC2.Muse.Registry
+  ]
   # The input of a prepared run's workspace preparation item.
   @preparing_workspace "Preparing workspace"
 
@@ -870,13 +881,7 @@ defmodule HalC2.Orchestration do
 
   # A runtime runs under its provider plugin's sessions supervisor (`HalC2.Plugins`).
   defp stop_runtimes(thread_id) do
-    for registry <- [
-          HalC2.Codex.Registry,
-          HalC2.Claude.Registry,
-          HalC2.Acp.Registry,
-          HalC2.Pi.Registry,
-          HalC2.Muse.Registry
-        ],
+    for registry <- @session_registries,
         Process.whereis(registry) != nil,
         {pid, _} <- Registry.lookup(registry, thread_id) do
       try do
@@ -893,13 +898,7 @@ defmodule HalC2.Orchestration do
   # message may have started a turn since; that runtime keeps it (`:busy`).
   defp release_runtimes(thread_id) do
     kept =
-      for registry <- [
-            HalC2.Codex.Registry,
-            HalC2.Claude.Registry,
-            HalC2.Acp.Registry,
-            HalC2.Pi.Registry,
-            HalC2.Muse.Registry
-          ],
+      for registry <- @session_registries,
           Process.whereis(registry) != nil,
           {pid, _} <- Registry.lookup(registry, thread_id),
           release(pid) == :busy,
@@ -943,7 +942,12 @@ defmodule HalC2.Orchestration do
   # credential (`HalC2.Mcp.server/2` reuses it by thread and instance). When a
   # runtime is again registered for the thread, the credential is the live
   # session's now and stays; revoking it would leave that session's tools
-  # unauthenticated until it restarts.
+  # unauthenticated until it restarts. Two edges of that trade-off: the check
+  # and the revoke are not atomic, so a replacement that registers and takes
+  # the credential between them still loses it (a microseconds-wide window the
+  # deterministic test cannot pin); and not revoking extends the dying
+  # session's own use of the shared token until the next release, since the
+  # token cannot tell the two sessions apart.
   defp stop_session(thread_id) do
     with :ok <- release_runtimes(thread_id) do
       if session_running?(thread_id), do: :ok, else: HalC2.Mcp.revoke(thread_id)
@@ -953,13 +957,7 @@ defmodule HalC2.Orchestration do
   # Whether any built-in runtime is registered for the thread right now.
   defp session_running?(thread_id) do
     Enum.any?(
-      [
-        HalC2.Codex.Registry,
-        HalC2.Claude.Registry,
-        HalC2.Acp.Registry,
-        HalC2.Pi.Registry,
-        HalC2.Muse.Registry
-      ],
+      @session_registries,
       &(Process.whereis(&1) != nil and Registry.lookup(&1, thread_id) != [])
     )
   end
@@ -1512,13 +1510,23 @@ defmodule HalC2.Orchestration do
 
   # An exit outside the ways a session stops is some other server's failure read as
   # "gone" (a call a runtime adapter makes in the caller's process); say so, so the
-  # misclassification stays diagnosable instead of dropping the reason.
-  defp log_unexpected_stop(why) when why in [:noproc, :normal, :shutdown, :killed], do: :ok
-  defp log_unexpected_stop({:shutdown, _}), do: :ok
+  # misclassification stays diagnosable instead of dropping the reason. The
+  # expected reasons can still be a nested call's, not the session's — the
+  # built-in closures are single calls, a plugin adapter's need not be — so
+  # they are logged at debug rather than dropped silently.
+  defp log_unexpected_stop(why) when why in [:noproc, :normal, :shutdown, :killed],
+    do: log_stop_at_debug(why)
+
+  defp log_unexpected_stop({:shutdown, _} = why), do: log_stop_at_debug(why)
 
   defp log_unexpected_stop(why) do
     require Logger
     Logger.warning("a session call read as stopped exited with #{inspect(why)}")
+  end
+
+  defp log_stop_at_debug(why) do
+    require Logger
+    Logger.debug("a session call read as stopped exited with #{inspect(why)}")
   end
 
   # Whether the running `run` took `message` into its turn. Only the call into the

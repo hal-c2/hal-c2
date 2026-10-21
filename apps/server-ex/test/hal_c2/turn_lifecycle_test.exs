@@ -213,7 +213,12 @@ defmodule HalC2.TurnLifecycleTest do
   # finishing. The credential is the live session's then: the release must not
   # revoke it from under the replacement. The stand-in below registers its
   # replacement in the Codex registry, which the release has already passed, as
-  # it answers its own release from the Claude registry.
+  # it answers its own release from the Claude registry. That "already passed"
+  # is the load-bearing assumption here, and it is `@session_registries` in
+  # Orchestration (Codex before Claude) that provably orders it: reorder that
+  # list and the release would call `:release` on the replacement stand-in,
+  # which only handles `:stop`, and this test would stall on the release
+  # timeout instead of testing the credential.
   test "a release does not revoke the credential a replacement runtime has taken",
        %{thread_id: thread_id} do
     start_supervised!(HalC2.Mcp)

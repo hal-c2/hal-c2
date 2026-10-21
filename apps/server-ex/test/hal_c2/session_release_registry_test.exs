@@ -44,6 +44,10 @@ defmodule HalC2.SessionReleaseRegistryTest do
             is_pid(child),
             do: child
 
+      # No partitions suspended would leave the assertion racing the Registry's
+      # own cleanup, no longer pinning the unregister: fail loudly instead if
+      # a Registry restructure ever stops reporting worker partitions.
+      assert partitions != []
       Enum.each(partitions, &:sys.suspend/1)
 
       try do

@@ -121,14 +121,29 @@ defmodule HalC2.OrchestrationTest do
     assert_received {:gone, :gone}
     assert log =~ "a session call read as stopped exited with :boom"
 
+    # The ways a session stops are logged only at debug: they can still be a
+    # nested call's exit, so they are not dropped silently either.
     for why <- [:noproc, :normal, :shutdown, :killed, {:shutdown, :released}] do
       log =
-        ExUnit.CaptureLog.capture_log(fn ->
+        ExUnit.CaptureLog.capture_log([level: :warning], fn ->
           send(self(), {:gone, Orchestration.session_call(call.(why), :gone)})
         end)
 
       assert_received {:gone, :gone}
       refute log =~ "read as stopped"
+
+      # The test logger runs at :warning; let the debug line through for this.
+      Logger.configure(level: :debug)
+
+      log =
+        ExUnit.CaptureLog.capture_log([level: :debug], fn ->
+          send(self(), {:gone, Orchestration.session_call(call.(why), :gone)})
+        end)
+
+      Logger.configure(level: :warning)
+
+      assert_received {:gone, :gone}
+      assert log =~ "a session call read as stopped exited with #{inspect(why)}"
     end
   end
 
