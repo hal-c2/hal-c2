@@ -692,13 +692,20 @@ defmodule HalC2.StreamsPropTest do
     end
   end
 
-  # What its idle timeout does: the stream stops, and starts again on next use.
+  # What its idle timeout does: the stream stops, and starts again on next use. The
+  # Registry can still list a stream that stopped a moment ago; monitoring it gives
+  # `:noproc`: already stopped, reason unknowable. That trades away crash evidence
+  # in the lookup-to-monitor window (a crash there also reports `:noproc`), so do
+  # not trust `idle_stop/1` as proof a stop was clean.
   def idle_stop(id) do
     case Registry.lookup(HalC2.Streams.Registry, id) do
       [{pid, _}] ->
         ref = Process.monitor(pid)
         send(pid, :timeout)
-        receive do: ({:DOWN, ^ref, _, _, reason} -> if(reason == :normal, do: :ok, else: reason))
+
+        receive do
+          {:DOWN, ^ref, _, _, reason} -> if(reason in [:normal, :noproc], do: :ok, else: reason)
+        end
 
       [] ->
         :ok

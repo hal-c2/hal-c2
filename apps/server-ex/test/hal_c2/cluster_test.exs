@@ -213,19 +213,19 @@ defmodule HalC2.ClusterTest do
     {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
     shape = %{"type" => "stream", "mc" => Atom.to_string(b), "stream" => "relayed-th"}
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
-    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"), 30_000)
 
     stream = :erpc.call(b, HalC2.Streams, :ensure, ["relayed-th"])
     [relay] = Map.values(:erpc.call(b, :sys, :get_state, [stream]).relays)
     true = :erpc.call(b, Process, :exit, [relay, :failed])
-    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"))
+    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"), 30_000)
     assert resync == %{"t" => "resync", "id" => 1}
     assert :erpc.call(b, HalC2.Streams, :ensure, ["relayed-th"]) == stream
 
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
-    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"), 30_000)
     {:ok, seq} = :erpc.call(b, HalC2.Streams, :commit, ["relayed-th", :thread, [note("n2")]])
-    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"))
+    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"), 30_000)
     assert [[^seq, "note", "n2", _, _at]] = events["events"]
   end
 
@@ -245,7 +245,7 @@ defmodule HalC2.ClusterTest do
     {:ok, _} = HalC2.Streams.commit("here-th", :thread, [note("n1")])
     here = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "here-th"}
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => here})
-    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"), 30_000)
     [socket] = Map.keys(:sys.get_state(HalC2.Streams.ensure("here-th")).subscribers)
 
     # The stream on c holds the follow until the socket waits for its answer.
@@ -271,13 +271,13 @@ defmodule HalC2.ClusterTest do
     true = :erlang.resume_process(socket)
     :erlang.trace(socket, false, [:receive])
 
-    {error, _, client} = WsClient.recv_until(client, &(&1["id"] == 2))
+    {error, _, client} = WsClient.recv_until(client, &(&1["id"] == 2), 30_000)
     assert %{"t" => "error", "id" => 2} = error
 
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
-    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"), 30_000)
     {:ok, seq} = :erpc.call(c, HalC2.Streams, :commit, ["split-th", :thread, [note("n2")]])
-    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"))
+    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"), 30_000)
     assert [[^seq, "note", "n2", _, _at]] = events["events"]
   end
 
@@ -316,7 +316,7 @@ defmodule HalC2.ClusterTest do
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
 
     {%{"t" => "live"}, _, client} =
-      WsClient.recv_until(client, &(&1["t"] == "live" and &1["id"] == 2))
+      WsClient.recv_until(client, &(&1["t"] == "live" and &1["id"] == 2), 30_000)
 
     {:ok, seq} =
       :erpc.call(b, HalC2.Streams, :commit, [
@@ -325,7 +325,9 @@ defmodule HalC2.ClusterTest do
         [{"turn-item", "i1", %{"s" => %{"text" => "from b"}}}]
       ])
 
-    {events, _, client} = WsClient.recv_until(client, &(&1["t"] == "events" and &1["id"] == 2))
+    {events, _, client} =
+      WsClient.recv_until(client, &(&1["t"] == "events" and &1["id"] == 2), 30_000)
+
     assert [[^seq, "turn-item", "i1", %{"s" => %{"text" => "from b"}}, _at]] = events["events"]
 
     # Node a describes the whole cluster and serves MC b's config by environment id.
@@ -345,7 +347,7 @@ defmodule HalC2.ClusterTest do
         "shape" => %{"type" => "config", "environment" => b_env}
       })
 
-    {config, _, client} = WsClient.recv_until(client, &(&1["t"] == "config"))
+    {config, _, client} = WsClient.recv_until(client, &(&1["t"] == "config"), 30_000)
 
     assert %{"mc" => ^b_name, "config" => %{"environment" => %{"environmentId" => ^b_env}}} =
              config
