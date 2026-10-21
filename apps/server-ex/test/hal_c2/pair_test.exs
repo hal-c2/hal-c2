@@ -49,6 +49,15 @@ defmodule HalC2.PairTest do
     refute File.exists?(Path.join(home, "hal-c2.sqlite"))
   end
 
+  test "a refused option is named, but echoed printable-only" do
+    assert {:error, message} = HalC2.Pair.command(["--tailscale-serve-port=foo"])
+    assert message =~ "--tailscale-serve-port=foo"
+
+    assert {:error, message} = HalC2.Pair.command(["--tailscale-serve-port=\e[31mred"])
+    assert message =~ "--tailscale-serve-port="
+    refute message =~ "\e"
+  end
+
   test "a refused address echoes neither scheme-less credentials nor a token in its query or fragment" do
     for {address, secret} <- [
           {"user:pass@127.0.0.1:3780", "user:pass"},
@@ -80,12 +89,22 @@ defmodule HalC2.PairTest do
     assert File.exists?(Path.join(installed.data, "hal-c2.sqlite"))
   end
 
+  test "a mapping is not blessed when neither side has an identity to check", %{tmp_dir: dir} do
+    # The installed MC's identity file is empty and it answers "" at its
+    # origin, as does the mapping's target: "" must not match "".
+    {installed, _port} = cross_profile(dir, &"http://127.0.0.2:#{&1}", "")
+
+    assert {:error, message} = HalC2.Pair.command(["--release", "--tailscale"])
+    assert message =~ "could not be verified as this one"
+    refute File.exists?(Path.join(installed.data, "hal-c2.sqlite"))
+  end
+
   # A caller in the dev profile (`HalC2.Environment.id/0` answers "caller-id")
   # and an installed MC under a fake user home: its runtime record, its
   # "installed-id" identity file, and a fake answering as it at its recorded
   # origin. Tailscale Serve on 443 already maps to `mapping_target` of the
   # installed MC's port. Returns the installed MC's dirs and port.
-  defp cross_profile(dir, mapping_target) do
+  defp cross_profile(dir, mapping_target, installed_id \\ "installed-id") do
     vars =
       ~w(HOME HAL_C2_HOME HAL_C2_MC_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME)
 
@@ -112,11 +131,11 @@ defmodule HalC2.PairTest do
     Application.put_env(:hal_c2, :home, :dev)
     :persistent_term.put({HalC2.Environment, :id}, "caller-id")
 
-    installed_port = fake_mc("installed-id")
+    installed_port = fake_mc(installed_id)
     dirs = HalC2.Paths.mc_dirs(nil, System.get_env(), HalC2.Paths.user_home())
     File.mkdir_p!(dirs.state)
     File.mkdir_p!(dirs.data)
-    File.write!(Path.join(dirs.data, "environment-id"), "installed-id\n")
+    File.write!(Path.join(dirs.data, "environment-id"), "#{installed_id}\n")
 
     record = %{
       "version" => 1,

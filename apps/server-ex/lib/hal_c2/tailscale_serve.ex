@@ -78,27 +78,51 @@ defmodule HalC2.TailscaleServe do
     end
   end
 
+  @doc """
+  The environment id an MC at `url` answers with at its well-known identity
+  endpoint: a non-empty id, or nil when it answers with none (or not at all).
+  The one probe behind every check of whose token a mapping or a link is
+  minted for (`check_existing/3`, `HalC2.Pair`'s located id).
+  """
+  @spec environment_id_at(String.t() | nil) :: String.t() | nil
+  def environment_id_at(url) when is_binary(url) do
+    request = {String.to_charlist(url <> "/.well-known/hal-c2/environment"), []}
+
+    with {:ok, {{_, 200, _}, _, body}} <-
+           :httpc.request(:get, request, [timeout: 2_000], body_format: :binary),
+         {:ok, %{"environmentId" => id}} when is_binary(id) and id != "" <- JSON.decode(body) do
+      id
+    else
+      _ -> nil
+    end
+  end
+
+  def environment_id_at(_url), do: nil
+
   # Another target on the port: fine only if it is the environment being published.
+  # An expected id of "" (a located MC whose id could be neither read nor asked
+  # for) matches nothing — notably not a target in the same degraded state
+  # answering "": the mapping is refused, not blessed.
   defp check_existing(target, port, expected_id) do
-    request = {String.to_charlist(target <> "/.well-known/hal-c2/environment"), []}
     expected = expected_id || HalC2.Environment.id()
 
-    case :httpc.request(:get, request, [timeout: 2_000], body_format: :binary) do
-      {:ok, {{_, 200, _}, _, body}} ->
-        case JSON.decode(body) do
-          {:ok, %{"environmentId" => id}} ->
-            if id == expected,
-              do: :ok,
-              else:
-                {:taken,
-                 "Tailscale Serve on HTTPS port #{port} already fronts a different HAL-C2 server. Pass --tailscale-serve-port to `#{HalC2.Pair.command_name()}` to publish this one on another port."}
+    cond do
+      expected == "" ->
+        {:taken,
+         "Tailscale Serve on HTTPS port #{port} already fronts a HAL-C2 server whose identity could not be verified as this one. Pass --tailscale-serve-port to `#{HalC2.Pair.command_name()}` to publish this one on another port."}
+
+      true ->
+        case environment_id_at(target) do
+          ^expected ->
+            :ok
+
+          nil ->
+            occupied(port)
 
           _ ->
-            occupied(port)
+            {:taken,
+             "Tailscale Serve on HTTPS port #{port} already fronts a different HAL-C2 server. Pass --tailscale-serve-port to `#{HalC2.Pair.command_name()}` to publish this one on another port."}
         end
-
-      _ ->
-        occupied(port)
     end
   end
 

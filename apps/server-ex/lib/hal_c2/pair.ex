@@ -156,12 +156,17 @@ defmodule HalC2.Pair do
   defp check_options(invalid, _rest, _opts) do
     options =
       Enum.map_join(invalid, ", ", fn
-        {option, nil} -> option
-        {option, value} -> "#{option}=#{value}"
+        {option, nil} -> printable(option)
+        {option, value} -> "#{printable(option)}=#{printable(value)}"
       end)
 
     {:error, "Not an option of `#{command_name()}`, or given a bad value: #{options}"}
   end
+
+  # Error text is where untrusted paste-ins get reflected, so it is
+  # printable-only everywhere, the way `redacted/1` keeps refused addresses
+  # from echoing credentials or raw escapes.
+  defp printable(text), do: String.replace(text, ~r/[^\x20-\x7E]/, "?")
 
   # With no home configured, a checkout pairs with the MC that is running, in the
   # installed profile or the development one: its store takes the token and its
@@ -237,21 +242,7 @@ defmodule HalC2.Pair do
     cond do
       file_id != "" -> file_id
       running == nil -> nil
-      true -> origin_id(running["origin"]) || ""
+      true -> HalC2.TailscaleServe.environment_id_at(running["origin"]) || ""
     end
   end
-
-  defp origin_id(origin) when is_binary(origin) do
-    request = {String.to_charlist(origin <> "/.well-known/hal-c2/environment"), []}
-
-    with {:ok, {{_, 200, _}, _, body}} <-
-           :httpc.request(:get, request, [timeout: 2_000], body_format: :binary),
-         {:ok, %{"environmentId" => id}} when is_binary(id) and id != "" <- JSON.decode(body) do
-      id
-    else
-      _ -> nil
-    end
-  end
-
-  defp origin_id(_origin), do: nil
 end
