@@ -33,13 +33,9 @@ Rectangle {
     // of it that still takes focus.
     readonly property int explorerMinimum: 72
     readonly property bool explorerShown: !fileOpen || (explorerOpen && explorerShare >= explorerMinimum)
-    // The open file's own minimum width (its header's buttons), for tests
-    // that size the tab from the panel's geometry instead of a pixel count.
-    readonly property real fileMinimumWidth: fileViewer.Layout.minimumWidth
-
     // True while keyboard focus sits inside the given item.
     function focusInside(item: Item): bool {
-        let focused = Window.activeFocusItem;
+        let focused = root.Window.activeFocusItem;
         while (focused) {
             if (focused === item)
                 return true;
@@ -58,8 +54,14 @@ Rectangle {
     // The reverse case: closing the file hides the viewer holding the
     // toggle or close button, so give focus to the tree that remains.
     onFileOpenChanged: {
-        if (!fileOpen && focusInside(fileViewer))
-            search.forceActiveFocus();
+        if (!fileOpen && focusInside(fileViewer)) {
+            if (search.enabled)
+                search.forceActiveFocus();
+            else if (filesRetryButton.visible)
+                filesRetryButton.forceActiveFocus();
+            // Else (no workspace, no error to retry) the explorer holds
+            // nothing focusable, so focus clearing to the window is intended.
+        }
     }
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
@@ -70,8 +72,6 @@ Rectangle {
 
     objectName: "filesPanel"
     color: Theme.palette.color("surface", "#0f0f11")
-    // A file whose header is wider than the tab overflows it; the panel's edge cuts it off.
-    clip: true
 
     TextMetrics {
         id: glyph
@@ -103,6 +103,9 @@ Rectangle {
             id: fileViewer
 
             objectName: "fileViewer"
+            // A file whose header is wider than the tab overflows this column;
+            // clip here so the tree column does not pay for an offscreen pass.
+            clip: true
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: root.fileOpen
@@ -633,6 +636,8 @@ Rectangle {
                         wrapMode: Text.Wrap
                     }
                     ShellButton {
+                        id: filesRetryButton
+
                         objectName: "filesRetry"
                         Layout.alignment: Qt.AlignHCenter
                         visible: root.rootStatus === "error"

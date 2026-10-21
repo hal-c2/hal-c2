@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import QtTest
 import HalC2.Shell
 import "../qml/HalC2/Bricks"
@@ -113,6 +114,24 @@ Item {
             property int closed: 0
             function closeFile() { closed += 1; }
             signal revealRequested
+        }
+    }
+
+    // A one-entry file tree for focus tests through a real delegate.
+    Component {
+        id: fakeTree
+        ListModel {
+            property string rootStatus: "ready"
+            property bool allExpanded: false
+            property string selectedPath: ""
+            function toggle(path) {}
+            function retry(path) {}
+            function collapseAll() { allExpanded = false; }
+            function expandAll() { allExpanded = true; }
+            function rowOf(path) { return path === "src/app.ts" ? 0 : -1; }
+            ListElement {
+                path: "src/app.ts"; name: "app.ts"; depth: 0; kind: "file"; expanded: false; ignored: false; problem: ""; selected: false
+            }
         }
     }
 
@@ -550,8 +569,9 @@ Item {
             tryVerify(() => viewer.visible);
             // A phone-wide tab derived from the header's own minimum, so the
             // width does not depend on today's label lengths or font.
-            tryVerify(() => files.fileMinimumWidth > 0);
-            files.width = Math.ceil(files.fileMinimumWidth) + 1 + files.explorerMinimum + 48;
+            tryVerify(() => viewer.Layout.minimumWidth > 0);
+            verify(viewer.Layout.minimumWidth > 50 && viewer.Layout.minimumWidth < 400, "the header minimum is a sane width, not inflated by a stray child: " + viewer.Layout.minimumWidth);
+            files.width = Math.ceil(viewer.Layout.minimumWidth) + 1 + files.explorerMinimum + 48;
             tryVerify(() => explorer.visible && viewer.x + viewer.width <= explorer.x + 0.5, 5000, "the file settles beside the tree");
             verify(files.explorerShare < files.width * 0.46 - 1, "the header, not the cap, limits the tree: share " + files.explorerShare + " of " + files.width);
             const names = ["fileRender", "fileEdit", "fileOpenInEditor", "fileWrap", "fileExplorerToggle", "fileClose"];
@@ -582,8 +602,8 @@ Item {
             // Just under the panel's own threshold (the file's minimum plus
             // the divider plus the tree's floor), independent of the header's
             // label lengths or the test font.
-            tryVerify(() => files.fileMinimumWidth > 0);
-            files.width = Math.floor(files.fileMinimumWidth) + files.explorerMinimum;
+            tryVerify(() => viewer.Layout.minimumWidth > 0);
+            files.width = Math.floor(viewer.Layout.minimumWidth) + files.explorerMinimum;
             tryVerify(() => !explorer.visible, 5000, "the tree gives way to the file");
             verify(files.explorerShare < files.explorerMinimum, "share " + files.explorerShare);
             const searchField = findChild(files, "filesSearch");
@@ -617,8 +637,8 @@ Item {
             tryVerify(() => viewer.visible && explorer.visible);
             mouseClick(toggle);
             verify(!explorer.visible && !toggle.checked && !files.explorerOpen, "a chosen hide unpresses the toggle");
-            tryVerify(() => files.fileMinimumWidth > 0);
-            files.width = Math.floor(files.fileMinimumWidth) + files.explorerMinimum;
+            tryVerify(() => viewer.Layout.minimumWidth > 0);
+            files.width = Math.floor(viewer.Layout.minimumWidth) + files.explorerMinimum;
             tryVerify(() => !explorer.visible, 5000, "the tree stays hidden as the tab narrows");
             mouseClick(toggle);
             verify(!toggle.checked && files.explorerOpen, "the click asks for the tree without presenting it as shown");
@@ -640,8 +660,28 @@ Item {
             tryVerify(() => viewer.visible && explorer.visible);
             search.forceActiveFocus();
             tryVerify(() => search.activeFocus, 5000, "the search field has focus before the tab narrows");
-            tryVerify(() => files.fileMinimumWidth > 0);
-            files.width = Math.floor(files.fileMinimumWidth) + files.explorerMinimum;
+            tryVerify(() => viewer.Layout.minimumWidth > 0);
+            files.width = Math.floor(viewer.Layout.minimumWidth) + files.explorerMinimum;
+            tryVerify(() => !explorer.visible, 5000, "the tree gives way to the file");
+            tryVerify(() => toggle.activeFocus, 5000, "focus lands on the toggle that brings the tree back");
+        }
+
+        // Same rescue when focus sits on a tree entry delegate, whose
+        // parent chain reaches the explorer through the ListView.
+        function test_narrowingTheTabMovesFocusFromATreeEntryToTheToggle() {
+            const source = createTemporaryObject(fakeFiles, root);
+            source.tree = createTemporaryObject(fakeTree, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const viewer = findChild(files, "fileViewer");
+            const explorer = findChild(files, "filesExplorer");
+            const entry = findChild(files, "filesEntry-src/app.ts");
+            const toggle = findChild(files, "fileExplorerToggle");
+            verify(viewer && explorer && entry && toggle);
+            tryVerify(() => viewer.visible && explorer.visible && entry.visible);
+            entry.forceActiveFocus();
+            tryVerify(() => entry.activeFocus, 5000, "the tree entry has focus before the tab narrows");
+            tryVerify(() => viewer.Layout.minimumWidth > 0);
+            files.width = Math.floor(viewer.Layout.minimumWidth) + files.explorerMinimum;
             tryVerify(() => !explorer.visible, 5000, "the tree gives way to the file");
             tryVerify(() => toggle.activeFocus, 5000, "focus lands on the toggle that brings the tree back");
         }
