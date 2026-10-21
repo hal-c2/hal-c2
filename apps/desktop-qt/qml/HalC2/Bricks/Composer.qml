@@ -33,7 +33,10 @@ Rectangle {
     // Claude's mark colour, as the provider icon draws it: its fill for a light or dark theme.
     // A missing variant falls back to the glyph's other fill; the literal is
     // only for a build without the glyph at all.
-    readonly property color claudeOrange: ProviderIcons.fill("claudeAgent", ProviderIcons.darkFor(foreground)) ?? ProviderIcons.fill("claudeAgent", false) ?? "#d97757"
+    readonly property color claudeOrange: {
+        const dark = ProviderIcons.darkFor(foreground);
+        return ProviderIcons.fill("claudeAgent", dark) ?? ProviderIcons.fill("claudeAgent", !dark) ?? "#d97757";
+    }
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color secondary: Theme.palette.color("secondaryLabel", "#a1a1aa")
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")

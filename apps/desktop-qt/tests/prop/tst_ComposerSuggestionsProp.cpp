@@ -158,6 +158,9 @@ bool menuIs(const Model& m, const Sut& sut) {
 
 void verify(const Model& m, Sut& sut) {
   RC_ASSERT(prop::until([&] { return menuIs(m, sut); }));
+  // Once the menu matches, the searches the MC received are exactly the ones
+  // the model asked for: a duplicate search for the same word fails here.
+  RC_ASSERT(fakeFiles(sut.mc).searches == m.asked);
 }
 
 using Command = rc::state::Command<Model, Sut>;
