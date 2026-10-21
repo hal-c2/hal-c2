@@ -192,19 +192,15 @@ defmodule HalC2.IssuesTest do
     assert [%{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
     assert [%{"assignees" => ["alice"]}] = rest_inputs(dir, "DELETE")
 
-    for bad <- [
-          [],
-          [" "],
-          ["da na"],
-          ["dana", 7],
-          Enum.map(1..11, &"user#{&1}"),
-          ["a/b"],
-          [".."],
-          ["-dana"],
-          ["dana-"],
-          ["da--na"],
-          [String.duplicate("a", 40)]
-        ],
+    # The shape cases are the planner suite's own (`HalC2.Test.LoginCases`),
+    # so a drift in either copy of the login shape fails both suites.
+    for bad <-
+          [
+            [],
+            [" "],
+            ["dana", 7],
+            Enum.map(1..11, &"user#{&1}")
+          ] ++ Enum.map(HalC2.Test.LoginCases.bad(), &[&1]),
         do: assert({:error, _} = Issues.handle("addAssignees", Map.put(input, "assignees", bad)))
 
     assert length(calls(dir)) == 2
@@ -226,12 +222,19 @@ defmodule HalC2.IssuesTest do
 
     assert [_, _, %{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
 
-    # No raw-count cap sits in front of the de-dup: any number of copies of one
-    # login is that one assignee.
+    # No realistic raw count is capped in front of the de-dup: many copies of
+    # one login are that one assignee.
     assert {:ok, _} =
              Issues.handle(
                "addAssignees",
                Map.put(input, "assignees", List.duplicate("dana", 101))
+             )
+
+    # Only a list far past any real assignee list is refused up front.
+    assert {:error, _} =
+             Issues.handle(
+               "addAssignees",
+               Map.put(input, "assignees", List.duplicate("dana", 301))
              )
 
     assert [_, _, _, %{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")

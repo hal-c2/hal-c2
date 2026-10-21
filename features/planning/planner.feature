@@ -1362,6 +1362,19 @@ Feature: Planner
       Then GitHub is asked to take "alice" off #7's assignees once and to add "dana" twice
       And #7's task is named "Rate limiting" and marked as synced
 
+    # The old owner stays on when taking them off is refused, so the retry takes
+    # them off before adding the new one.
+    @mc
+    Scenario: An owner GitHub refused to take off goes again with the task's next change
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      And GitHub refuses removing assignees from #7
+      And the user makes "dana" the owner of #7's task
+      And GitHub takes changes to #7 again
+      When the user renames #7's task to "Rate limiting"
+      Then GitHub is asked to take "alice" off #7's assignees twice and to add "dana" once
+      And #7's task is named "Rate limiting" and marked as synced
+
     @mc
     Scenario: An owner GitHub refused goes again with the task's next change
       Given "planner" syncs "acme/api" both ways

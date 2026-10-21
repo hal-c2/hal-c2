@@ -94,8 +94,9 @@ defmodule HalC2.PlannerTest do
       assert {:ok, %{"a" => %{"owner" => "dana"}}, _} =
                Plan.add(%{}, "a", %{"title" => "a", "owner" => " dana "}, @now)
 
-      # The rest of the host's login shape refuses it here too, not at every push.
-      for bad <- ["a/b", "-dana", "dana-", "da--na", "..", "dana!", String.duplicate("a", 40)] do
+      # The rest of the host's login shape refuses it here too, not at every
+      # push; the cases are the host suite's own (`HalC2.Test.LoginCases`).
+      for bad <- HalC2.Test.LoginCases.bad() do
         assert {:error, _} = Plan.add(%{}, "a", %{"title" => "a", "owner" => bad}, @now)
       end
 
@@ -812,6 +813,49 @@ defmodule HalC2.PlannerTest do
 
       ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
 
+      refute Enum.any?(ops, &(elem(&1, 0) in ["addAssignees", "removeAssignees"]))
+    end
+
+    test "a stored owner that is no login is never taken off, only the new one added" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      base = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "issue" => issue,
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "owner" => "Dana Smith",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue
+      }
+
+      new = Map.put(base, "owner", "dana")
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+      assert {"addAssignees", %{"number" => 7, "assignees" => ["dana"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
+
+      refute Enum.any?(ops, &(elem(&1, 0) == "removeAssignees"))
+
+      cleared = Map.put(base, "owner", nil)
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, cleared, %{"t" => cleared}, projects)
       refute Enum.any?(ops, &(elem(&1, 0) in ["addAssignees", "removeAssignees"]))
     end
   end

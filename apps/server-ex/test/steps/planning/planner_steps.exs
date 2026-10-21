@@ -2367,6 +2367,26 @@ defmodule HalC2.Steps.Planning.Planner do
     ])
   end
 
+  step "GitHub refuses removing assignees from \#{int}", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method DELETE", "repos/#{context.repository}/issues/#{number}/assignees"],
+        "exit" => 1,
+        "stderr" =>
+          "HTTP 422: Validation Failed (https://docs.github.com/rest/issues/assignees#remove-assignees-from-an-issue)\n"
+      }
+    ])
+  end
+
+  step "GitHub is asked to take {string} off \#{int}'s assignees twice and to add {string} once",
+       %{args: [old, number, owner]} = context do
+    assert_assignee_order(context, number, [
+      {"DELETE", old},
+      {"DELETE", old},
+      {"POST", owner}
+    ])
+  end
+
   step "GitHub takes changes to \#{int} again", %{args: [number]} = context do
     World.cli_rules(
       context,
