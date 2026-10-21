@@ -350,7 +350,8 @@ defmodule HalC2.ScheduledTasks do
               clean_up_prompt(thread_id, message_id)
               :ok
             catch
-              kind, reason when kind in [:exit, :throw, :error] -> {:error, {kind, reason}}
+              kind, reason when kind in [:exit, :throw, :error] ->
+                {:error, Exception.format(kind, reason, __STACKTRACE__)}
             end
           end)
 
@@ -391,6 +392,16 @@ defmodule HalC2.ScheduledTasks do
             "threadId" => thread_id,
             "runId" => run_id
           })
+
+        # The cancel only takes a run that is still queued; one promoted
+        # between the read above and the cancel is handled as active now.
+        case prompt_run(thread_id, message_id) do
+          %{"status" => status} when status in @active_statuses ->
+            clean_up_prompt(thread_id, message_id)
+
+          _ ->
+            :ok
+        end
 
       %{"id" => run_id, "status" => status} when status in @active_statuses ->
         _ =
@@ -436,6 +447,10 @@ defmodule HalC2.ScheduledTasks do
   # has the timeout's late-commit hazard, so a deleted run's own prompt is
   # cleaned up the same way (`interrupt_turn/2`): a prompt that lands after
   # its sender was killed does not run, or sit undriven, for a deleted task.
+  # That cleanup cannot tell landed-before from landed-after the kill, and
+  # does not try: deleting a task during its run ends that run's turn too,
+  # even one already running in its thread (pinned in
+  # `features/settings/scheduled-tasks.feature`).
   defp stop_runs(state, id) do
     {gone, runs} = Enum.split_with(state.runs, fn {_, run} -> run.id == id end)
 

@@ -931,6 +931,150 @@ defmodule HalC2.OrchestrationTest do
     assert attempts == ["completed", "interrupted", "completed"]
   end
 
+  # A fake fire that sends the task's prompt itself, reports it, then wedges
+  # (as the already-running test's inline fake does).
+  defp dispatching_fire(test_pid) do
+    fn task, fire_key ->
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "message.dispatch",
+          "commandId" => "scheduled-task:#{fire_key}",
+          "threadId" => task["threadId"],
+          "messageId" => "scheduled-task-message:#{fire_key}",
+          "scheduledTaskId" => task["id"],
+          "text" => task["prompt"],
+          "attachments" => [],
+          "modelSelection" => task["modelSelection"],
+          "createdBy" => task["createdBy"],
+          "creationSource" => task["creationSource"],
+          "dispatchMode" => %{"type" => "queue_after_active"}
+        })
+
+      send(test_pid, {:dispatched, self()})
+
+      receive do
+        :release -> {:ok, %{}}
+      end
+    end
+  end
+
+  # Holds a timed-out run's cleanup between its reading its prompt's run as
+  # queued and its cancelling it: the cleanup task's second call into the
+  # thread's stream (the streams_hook stage; the first is that read) waits
+  # until the test has let the queue promote the run.
+  def hold_cleanup(test, :ensured, _id) do
+    {:current_stacktrace, stack} = Process.info(self(), :current_stacktrace)
+
+    # The read is made from inside `clean_up_prompt/2`; the cancel that
+    # follows it is a tail call, so from there on this process is known by
+    # the count the read left in it.
+    if Process.get(:cleanup_ensures) != nil or
+         Enum.any?(stack, &match?({HalC2.ScheduledTasks, :clean_up_prompt, 2, _}, &1)) do
+      count = Process.get(:cleanup_ensures, 0) + 1
+      Process.put(:cleanup_ensures, count)
+
+      if count == 2 do
+        send(test, {:cleanup_held, self()})
+
+        receive do
+          :cleanup_go -> :ok
+        after
+          10_000 -> :ok
+        end
+      end
+    end
+
+    :ok
+  end
+
+  def hold_cleanup(_test, _stage, _id), do: :ok
+
+  # The cleanup reads its prompt's run as queued, the thread's active turn
+  # ends and the queue promotes exactly that run, and only then does the
+  # cleanup's cancel land — a no-op on a run that has started. The promoted
+  # run must still be interrupted, not left to run a turn unattended for a
+  # run already recorded as timed out.
+  test "a timed-out scheduled run promoted while its cleanup cancels is interrupted" do
+    start_supervised!(HalC2.ScheduledTasks)
+    start_supervised!(HalC2.Orchestration.TurnWatch)
+    Application.put_env(:hal_c2, :scheduled_tasks_run_timeout_ms, 5_000)
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :scheduled_tasks_run_timeout_ms)
+      Application.delete_env(:hal_c2, :scheduled_tasks_fire)
+      Application.delete_env(:hal_c2, :streams_hook)
+    end)
+
+    thread_id = launch("hello")
+    await_statuses(thread_id, ["completed"])
+    assert {:ok, _} = send_message(thread_id, "msg-user-2", "wait for me")
+    await_statuses(thread_id, ["completed", "running"])
+
+    task = scheduled_task(thread_id, "wait for me")
+    Application.put_env(:hal_c2, :scheduled_tasks_fire, dispatching_fire(self()))
+
+    caller = Task.async(fn -> HalC2.ScheduledTasks.run_now(%{"id" => task["id"]}) end)
+    assert_receive {:dispatched, _run_pid}, 5_000
+    await_statuses(thread_id, ["completed", "running", "queued"])
+
+    Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :hold_cleanup, [self()]})
+    assert_receive {:cleanup_held, cleanup}, 15_000
+
+    # The active turn ends while the cleanup is held, promoting the
+    # timed-out run's prompt into a running turn of its own.
+    assert {:ok, _} =
+             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    await_statuses(thread_id, ["completed", "interrupted", "running"])
+    send(cleanup, :cleanup_go)
+
+    assert {:ok,
+            %{
+              "task" => %{
+                "lastRunStatus" => "failed",
+                "lastRunError" => "The run timed out."
+              }
+            }} = Task.await(caller, 15_000)
+
+    state = await_statuses(thread_id, ["completed", "interrupted", "interrupted"])
+
+    attempts = state |> StreamState.list("run-attempt") |> Enum.map(& &1["status"])
+    assert attempts == ["completed", "interrupted", "interrupted"]
+  end
+
+  # Deleting a task ends the turn its in-flight run already started, not
+  # only a prompt that lands late: the prompt's turn is visibly running,
+  # driven by the runtime, when the task is deleted.
+  test "a scheduled run deleted while its prompt's turn is running has that turn interrupted" do
+    start_supervised!(HalC2.ScheduledTasks)
+    start_supervised!(HalC2.Orchestration.TurnWatch)
+
+    on_exit(fn -> Application.delete_env(:hal_c2, :scheduled_tasks_fire) end)
+
+    thread_id = launch("hello")
+    await_statuses(thread_id, ["completed"])
+    task = scheduled_task(thread_id, "wait for me")
+    Application.put_env(:hal_c2, :scheduled_tasks_fire, dispatching_fire(self()))
+
+    caller = Task.async(fn -> HalC2.ScheduledTasks.run_now(%{"id" => task["id"]}) end)
+    assert_receive {:dispatched, _run_pid}, 5_000
+
+    state = await_statuses(thread_id, ["completed", "running"])
+
+    [%{"id" => scheduled_run}] =
+      Enum.filter(runs(state), &(&1["userMessageId"] =~ "scheduled-task-message:"))
+
+    assert HalC2.Orchestration.TurnWatch.driven?(scheduled_run)
+
+    assert {:ok, %{"id" => _}} = HalC2.ScheduledTasks.delete(%{"id" => task["id"]})
+    assert {:error, %{"message" => "Schedule task not found."}} = Task.await(caller, 10_000)
+
+    state = await_statuses(thread_id, ["completed", "interrupted"])
+
+    attempts = state |> StreamState.list("run-attempt") |> Enum.map(& &1["status"])
+    assert attempts == ["completed", "interrupted"]
+  end
+
   # Holds a launch between its thread landing and its first message landing:
   # the launching process is suspended in its stream as it is about to make
   # the second of the launch's calls to it (the streams_hook stage).
