@@ -64,15 +64,26 @@ defmodule HalC2.Codex.ThreadRuntime do
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
       [{pid, _}] ->
         with {:error, _} = error <- GenServer.call(pid, {:steer, run_id, message}, 30_000) do
-          # Notifications that preceded the refusal sit in the runtime's mailbox ahead
-          # of this call.
-          GenServer.call(pid, :settle, 30_000)
+          settle(pid)
           error
         end
 
       [] ->
         {:error, "no running turn"}
     end
+  end
+
+  # Notifications that preceded a steer refusal sit in the runtime's mailbox
+  # ahead of this call, so they are applied before the refusal returns. A
+  # runtime that stops during it has still refused: its exit must not replace
+  # the refusal (and read, through `Orchestration.session_call/2`, as a session
+  # that stopped before answering at all).
+  defp settle(pid) do
+    GenServer.call(pid, :settle, 30_000)
+  catch
+    # A merely slow runtime still exits the caller, as everywhere else here.
+    :exit, {:timeout, _} = reason -> exit(reason)
+    :exit, _ -> :ok
   end
 
   @doc """

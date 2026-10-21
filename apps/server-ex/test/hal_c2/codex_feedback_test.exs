@@ -46,4 +46,31 @@ defmodule HalC2.Codex.FeedbackTest do
     assert {:timeout, {GenServer, :call, _}} =
              catch_exit(ThreadRuntime.upload_feedback("t1", "wrong answer"))
   end
+
+  # A steer refusal is followed by a `:settle` call so what preceded the refusal
+  # is applied before the caller looks. A session that stops during that second
+  # call has still refused: the refusal, not the settle's exit, is the answer.
+  test "a session that stops during the settle after refusing a steer still refuses it" do
+    test = self()
+
+    session =
+      spawn(fn ->
+        {:ok, _} = Registry.register(HalC2.Codex.Registry, "t1", nil)
+        send(test, :registered)
+
+        receive do
+          {:"$gen_call", from, {:steer, _, _}} -> GenServer.reply(from, {:error, "no such turn"})
+        end
+
+        receive do
+          {:"$gen_call", _from, :settle} -> exit(:killed)
+        end
+      end)
+
+    assert_receive :registered
+    on_exit(fn -> Process.exit(session, :kill) end)
+
+    assert {:error, "no such turn"} =
+             ThreadRuntime.steer("t1", "run1", %{"text" => "hi", "attachments" => []})
+  end
 end
