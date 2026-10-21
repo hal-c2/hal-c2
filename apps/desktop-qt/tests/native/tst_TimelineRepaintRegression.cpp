@@ -146,6 +146,35 @@ private slots:
     QCOMPARE(model.data(model.index(fold), TimelineModel::TitleRole).toString(), QStringLiteral("You stopped this response"));
   }
 
+  // Legacy runs stored without an ordinal both read 0: the tie goes to the
+  // later-starting run (its first item is later in timeline order), so the
+  // stopped turn still reads as the thread's latest.
+  void aStoppedTurnWithNoStoredOrdinalsSaysTheUserStoppedIt() {
+    TimelineModel model(QStringLiteral("thread"));
+    const QJsonObject first{{QStringLiteral("id"), QStringLiteral("run-1")}, {QStringLiteral("status"), QStringLiteral("completed")}};
+    const QJsonObject second{{QStringLiteral("id"), QStringLiteral("run-2")}, {QStringLiteral("status"), QStringLiteral("interrupted")}};
+    snapshot(model,
+             {row(QStringLiteral("run"), first), row(QStringLiteral("run"), second),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("ask-1"), QStringLiteral("user_message"), 1,
+                                                    {{QStringLiteral("text"), QStringLiteral("ask")}})),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("reas-1"), QStringLiteral("reasoning"), 2, {{QStringLiteral("text"), QStringLiteral("t")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("reply-1"), QStringLiteral("assistant_message"), 3, {{QStringLiteral("text"), QStringLiteral("a")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("ask-2"), QStringLiteral("user_message"), 4,
+                       {{QStringLiteral("text"), QStringLiteral("ask")}, {QStringLiteral("runId"), QStringLiteral("run-2")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("reas-2"), QStringLiteral("reasoning"), 5,
+                       {{QStringLiteral("text"), QStringLiteral("t")}, {QStringLiteral("runId"), QStringLiteral("run-2")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("reply-2"), QStringLiteral("assistant_message"), 6,
+                       {{QStringLiteral("text"), QStringLiteral("b")}, {QStringLiteral("runId"), QStringLiteral("run-2")}}))},
+             8);
+    const int fold = rowOf(model, QStringLiteral("fold:run-2"));
+    QVERIFY(fold >= 0);
+    QCOMPARE(model.data(model.index(fold), TimelineModel::TitleRole).toString(), QStringLiteral("You stopped this response"));
+  }
+
   // Every subagent row redrew its model whenever a run or command changed;
   // only a change to the subagent's model does that.
   void aSubagentRowRedrawsItsModelOnlyWhenItChanges() {

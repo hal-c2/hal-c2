@@ -873,8 +873,11 @@ QList<TimelineModel::Row> TimelineModel::project() const {
   // The thread's latest run, as the MC's (HalC2.Projection.Shell.latest_run/1): a
   // run held for the user that never started (still queued, or cancelled while
   // held) waits numbered above the run that passed it. Equal ordinals (legacy runs
-  // stored without one read 0) go to the newest made, as the MC's does, for runs
-  // with an item here: a run is as new as its first item in timeline order. Runs
+  // stored without one read 0) go to the later-starting run for runs with an item
+  // here: a run is as new as its first item in timeline order. That is start
+  // order, where the MC's tie-break is newest *made*; for legacy ties where a
+  // later-made run passed an earlier-made one the two can disagree on the pick.
+  // Runs
   // with no item here (none created yet, or outside the window) are settled by id
   // instead, where the MC would take the newest made; the pick never depends on
   // hash order either way. The item index is built only when the highest ordinal
