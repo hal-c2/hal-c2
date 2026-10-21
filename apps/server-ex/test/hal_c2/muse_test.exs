@@ -344,6 +344,7 @@ defmodule HalC2.MuseTest do
       assert ThreadRuntime.status(%{"status" => "completed"}) == "completed"
       assert ThreadRuntime.status(%{"status" => "cancelled"}) == "cancelled"
       assert ThreadRuntime.status(%{"status" => "canceled"}) == "cancelled"
+      assert ThreadRuntime.status(%{"status" => "failed"}) == "failed"
       assert ThreadRuntime.status(%{"status" => "declined"}) == "failed"
 
       assert ThreadRuntime.status(%{
@@ -400,6 +401,37 @@ defmodule HalC2.MuseTest do
       # A subagent a v3 runtime showed as a tool call still renders as one.
       assert {:tool, %{"title" => "Muse agent: boom", "output" => "boom"}} =
                ThreadRuntime.tool(%{"kind" => "subagent", "failureReason" => "boom"}, "failed")
+    end
+
+    # Every field `tool/2` reads may arrive in a shape Muse has not sent before;
+    # each degrades to its fallback instead of raising on the turn.
+    test "misshapen fields degrade the item, not the turn" do
+      assert {:tool,
+              %{
+                "title" => "Muse agent: Muse reported failed.",
+                "output" => "Muse reported failed.\nok"
+              }} =
+               ThreadRuntime.tool(
+                 %{
+                   "kind" => "subagent",
+                   "objective" => 123,
+                   "role" => %{},
+                   "summary" => ["ok", 5],
+                   "failureReason" => %{},
+                   "result" => "just text",
+                   "fallbackText" => 7
+                 },
+                 "failed"
+               )
+
+      assert {:tool, %{"title" => "Workflow", "output" => ""}} =
+               ThreadRuntime.tool(
+                 %{"kind" => "workflow", "entryId" => 42, "fallbackText" => %{}},
+                 "completed"
+               )
+
+      assert {:tool, %{"output" => ""}} =
+               ThreadRuntime.tool(%{"kind" => 7, "tool" => %{}}, "running")
     end
   end
 end

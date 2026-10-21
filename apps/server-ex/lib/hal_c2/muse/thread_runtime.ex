@@ -853,6 +853,7 @@ defmodule HalC2.Muse.ThreadRuntime do
 
     entry =
       cond do
+        # Settled: a later revision cannot reopen it (its answer came once).
         entry.done ->
           entry
 
@@ -1070,6 +1071,7 @@ defmodule HalC2.Muse.ThreadRuntime do
       do: "failed"
 
   def status(%{"status" => "completed"}), do: "completed"
+  def status(%{"status" => "failed"}), do: "failed"
   def status(_item), do: "failed"
 
   @doc false
