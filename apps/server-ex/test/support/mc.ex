@@ -4018,7 +4018,10 @@ defmodule HalC2.Test.Mc.Terminal do
         {:DOWN, ^mon, :process, ^pid, reason} ->
           flunk("the prompt reader died: #{inspect(reason)}")
       after
-        @prompt_caller_timeout -> flunk("the shell drew no prompt")
+        @prompt_caller_timeout ->
+          Process.exit(pid, :kill)
+          Process.demonitor(mon, [:flush])
+          flunk("the shell drew no prompt")
       end
     end
 
@@ -4031,7 +4034,13 @@ defmodule HalC2.Test.Mc.Terminal do
         try do
           deadline = System.monotonic_time(:millisecond) + @prompt_wait_timeout
           history = snapshot["history"] || ""
-          receive_prompt(String.replace_prefix(history, restored || "", ""), deadline)
+
+          if snapshot["status"] in [nil, "running"] do
+            receive_prompt(String.replace_prefix(history, restored || "", ""), deadline)
+          else
+            {:no_prompt,
+             "terminal status #{inspect(snapshot["status"])}; output ends #{inspect(output_tail(history))}"}
+          end
         after
           HalC2.Terminal.detach(input["threadId"], input["terminalId"], self())
         end
@@ -4078,6 +4087,9 @@ defmodule HalC2.Test.Mc.Terminal do
       receive do
         {:hal_c2_terminal, _key, %{"type" => "output", "data" => data}} ->
           receive_prompt(output <> data, deadline)
+
+        {:hal_c2_terminal, _key, %{"type" => type} = event} when type in ["exited", "error"] ->
+          {:no_prompt, "#{inspect(event)}; output ends #{inspect(output_tail(output))}"}
 
         {:hal_c2_terminal, _key, _event} ->
           receive_prompt(output, deadline)
@@ -4141,6 +4153,8 @@ defmodule HalC2.Test.Mc.Terminal do
   @doc """
   Output on the named client until it matches `pattern` (a string or regex);
   returns `{output so far, events seen, context}`.
+
+  `timeout` bounds the whole wait, not the gap between frames.
   """
   def await_output(context, name, pattern, timeout \\ 5_000) do
     await_output(context, name, pattern, timeout, pattern)
@@ -4163,6 +4177,9 @@ defmodule HalC2.Test.Mc.Terminal do
     )
   end
 
+  defp output_matches?(matcher, acc) when is_function(matcher, 1), do: matcher.(acc)
+  defp output_matches?(pattern, acc), do: acc =~ pattern
+
   # `deadline` is absolute: a terminal that keeps printing without matching ends the
   # wait on time, rather than renewing it with every frame.
   defp collect(client, id, pattern, deadline, acc, events, context, name, display_pattern) do
@@ -4173,7 +4190,7 @@ defmodule HalC2.Test.Mc.Terminal do
       %{"t" => "terminal", "id" => ^id, "event" => %{"type" => "output", "data" => data} = e} ->
         acc = acc <> data
 
-        if acc =~ pattern,
+        if output_matches?(pattern, acc),
           do: {acc, Enum.reverse([e | events]), World.put_client(context, name, client)},
           else:
             collect(
@@ -4235,19 +4252,17 @@ defmodule HalC2.Test.Mc.Terminal do
   match alone when the scenario runs a shell whose prompt is not known.
 
   `pattern` is any string or regex that does not end in `$` or `\\z` (the prompt
-  has to follow it); it is wrapped, so a top-level alternation stays whole.
+  has to follow it).
   """
   def await_output_idle(context, name, pattern, timeout \\ 5_000) do
     if prompt_known?() do
       pattern = if is_binary(pattern), do: Regex.compile!(Regex.escape(pattern)), else: pattern
 
-      idle =
-        Regex.compile!(
-          "(?:" <>
-            Regex.source(pattern) <>
-            ")(?:[^\\r\\n]*\\r?\\n)*[^\\r\\n]*" <> Regex.source(@prompt),
-          Regex.opts(pattern)
-        )
+      # Two separate checks instead of one composed regex: the caller's pattern
+      # (with its own options) matched somewhere, and the bounded prompt tail
+      # at the prompt. Composing them rescanned quadratically on repeated
+      # matches and leaked caller options (e.g. /x) into the prompt tail.
+      idle = fn acc -> acc =~ pattern and prompt_tail(acc) =~ @prompt end
 
       await_output(context, name, idle, timeout, pattern)
     else
