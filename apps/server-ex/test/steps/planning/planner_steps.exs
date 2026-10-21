@@ -1723,8 +1723,13 @@ defmodule HalC2.Steps.Planning.Planner do
     |> World.cli_rules([listing([], nil)])
   end
 
+  # Over a day has passed since the last full read, as `nearly a day passes`
+  # below ages it.
   step "the planner last read every closed issue alone over a day ago", context do
-    World.put_app_env(:planner_full_read_seconds, 0)
+    :sys.replace_state(Process.whereis(HalC2Plugins.Planner), fn state ->
+      %{state | full_at: state.full_at && DateTime.add(state.full_at, -90_000, :second)}
+    end)
+
     context
   end
 
@@ -1737,11 +1742,6 @@ defmodule HalC2.Steps.Planning.Planner do
         "stderr" => "HTTP 502: Bad Gateway\n"
       }
     ])
-  end
-
-  step "the planner reads every closed issue alone once a day", context do
-    World.put_app_env(:planner_full_read_seconds, 86_400)
-    context
   end
 
   # Time passes for the planner's copies of the closed issues: the last full read is
@@ -1786,6 +1786,13 @@ defmodule HalC2.Steps.Planning.Planner do
 
   step "that look read the closed \#{int} alone", %{args: [number]} = context do
     assert [%{"number" => ^number}] = reads(context) -- context.reads
+    context
+  end
+
+  step "that look read the closed \#{int} and \#{int} alone",
+       %{args: [one, other]} = context do
+    numbers = context |> reads() |> Kernel.--(context.reads) |> Enum.map(& &1["number"])
+    assert Enum.sort(numbers) == Enum.sort([one, other])
     context
   end
 

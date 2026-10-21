@@ -962,7 +962,6 @@ Feature: Planner
       And the planner last read every closed issue alone over a day ago
       And GitHub fails to read the closed #7 alone
       And the plugin looks at GitHub again, with nothing there changed since
-      And the planner reads every closed issue alone once a day
       When the closed #7 is renamed on GitHub to "Rate limiting" with the description "Shipped in 2.4", which GitHub does not count as an update
       And the plugin looks at GitHub again
       Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
@@ -975,7 +974,6 @@ Feature: Planner
       And the plugin looks at GitHub
       And the planner last read every closed issue alone over a day ago
       And the plugin looks at GitHub again, with nothing there changed since
-      And the planner reads every closed issue alone once a day
       When the plugin looks at GitHub again, with nothing there changed since
       Then that look read no issue alone
 
@@ -993,6 +991,29 @@ Feature: Planner
       When nearly a day passes since the planner last read every closed issue alone
       And the plugin looks at GitHub again, with nothing there changed since
       Then that look read no issue alone
+
+    # But a look inside the day whose alone-read of one issue failed is not the
+    # day's full read, though it read the others alone (the listing of changes
+    # having failed): their copies stand only until a day after the last full
+    # read, not a fresh day from this look.
+    @mc
+    Scenario: A day after the last full read, a closed issue is read alone again though a look inside the day read it alone while another's read failed
+      Given #7's task is in progress
+      And #8's task is in progress
+      And #7 is closed on GitHub
+      And #8 is closed on GitHub
+      And the plugin looks at GitHub
+      And nearly a day passes since the planner last read every closed issue alone
+      And GitHub fails to list the issues changed since
+      And GitHub fails to read the closed #7 alone
+      And the plugin looks at GitHub again
+      And nearly a day passes since the planner last read every closed issue alone
+      When the closed #7 is renamed on GitHub to "Rate limiting" with the description "Shipped in 2.4", which GitHub does not count as an update
+      And the closed #8 is renamed on GitHub to "Backpressure" with the description "Shipped in 2.5", which GitHub does not count as an update
+      And the plugin looks at GitHub again
+      Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
+      And #8's task is named "Backpressure" with the notes "Shipped in 2.5"
+      And that look read the closed #7 and #8 alone
 
     @mc
     Scenario: A closed issue reopened on GitHub without the planner label is to do again
