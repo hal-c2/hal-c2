@@ -633,7 +633,7 @@ defmodule HalC2.GitActions do
   # `HalC2.Git.use_gh_for_github/0`), but a token of the user's own as well, which gh
   # cannot widen.
   defp hint(["push" | _], err) do
-    if err =~ ~r/without `workflow` scope/,
+    if err =~ ~r/without `workflows?` (scope|permission)/,
       do:
         " If this machine pushes with the GitHub CLI's sign-in, run " <>
           "`gh auth refresh -s workflow` here, then try again; a token of your own " <>

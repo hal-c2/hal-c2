@@ -57,6 +57,7 @@ defmodule HalC2.GitHubRoutePropTest do
       answers) echo "Hi acme! You've successfully authenticated, but GitHub does not provide shell access." >&2; exit 1 ;;
       refused) echo 'git@github.com: Permission denied (publickey).' >&2; exit 255 ;;
       unreachable) echo 'ssh: Could not resolve hostname github.com' >&2; exit 255 ;;
+      hostkey) echo 'Host key verification failed.' >&2; exit 255 ;;
       hangs) exec sleep 600 ;;
     esac
     """)
@@ -135,7 +136,7 @@ defmodule HalC2.GitHubRoutePropTest do
           else: [
             {3,
              {:call, __MODULE__, :set_ssh,
-              [oneof([:answers, :refused, :unreachable, :hangs, :stalls])]}},
+              [oneof([:answers, :refused, :unreachable, :hostkey, :hangs, :stalls])]}},
             {2, {:call, __MODULE__, :stale_helper, []}}
           ]
         )
@@ -199,7 +200,10 @@ defmodule HalC2.GitHubRoutePropTest do
         do: after_call.routes ++ after_call.settles,
         else: after_call.routes
 
-    shape and route() in routes
+    # The provisional write refreshes the helper synchronously, so a gh
+    # that moved is named again even when the probe then cannot reach
+    # GitHub (unreachable/hostkey/hangs) and writes nothing itself.
+    shape and route() in routes and not stale_helper?()
   end
 
   def postcondition(state, {:call, _, :settle, _}, route), do: route in state.settles
@@ -250,6 +254,13 @@ defmodule HalC2.GitHubRoutePropTest do
       {:DOWN, ^ref, :process, ^pid, _} -> :ok
     after
       30_000 -> raise "the call asking SSH never ended"
+    end
+  end
+
+  defp stale_helper? do
+    case File.read(Path.join(HalC2.Paths.state_dir(), "github.gitconfig")) do
+      {:ok, text} -> text =~ "/stale/gh"
+      _ -> false
     end
   end
 

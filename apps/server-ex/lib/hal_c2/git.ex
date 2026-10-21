@@ -97,7 +97,14 @@ defmodule HalC2.Git do
      %{
        status: exit_code(status),
        out: binary_part(out, 0, min(byte_size(out), max)),
-       err: binary_part(err, 0, min(byte_size(err), max)),
+       # stderr keeps its tail: the lines a caller acts on (a refusal, the
+       # last lines of a failure) are at the end, not the start.
+       err:
+         binary_part(
+           err,
+           byte_size(err) - min(byte_size(err), max),
+           min(byte_size(err), max)
+         ),
        truncated: size > max
      }}
   rescue
@@ -246,11 +253,18 @@ defmodule HalC2.Git do
     stop_asking()
 
     case github_route() do
-      {:ask, ssh, %{https: https} = configs} ->
+      {:ask, ssh, %{https: https, ssh: on_ssh} = configs} ->
         # SSH the last call chose stands until SSH answers otherwise. Recognised by
         # its marker, not byte for byte: the file embeds the gh path of its day.
-        unless match?({:ok, "# GitHub answers SSH" <> _}, File.read(file)),
-          do: write_config(file, https)
+        # The provisional write is the fresh config of whichever route stands,
+        # so a moved gh is picked up at once even when the probe then cannot
+        # reach GitHub and writes nothing itself.
+        provisional =
+          if match?({:ok, "# GitHub answers SSH" <> _}, File.read(file)),
+            do: on_ssh,
+            else: https
+
+        write_config(file, provisional)
 
         # Bounded, so a caller that died before `:ask` leaves nothing waiting.
         {:ok, pid} =
@@ -385,7 +399,9 @@ defmodule HalC2.Git do
 
     case within(ms, fn -> stream("ssh", argv, Path.dirname(file), max_bytes: 65_536) end) do
       {:ok, {:ok, %{out: out, err: err}}} ->
-        said = String.trim(out <> err)
+        # ssh prints server banners and any ProxyCommand output verbatim;
+        # non-UTF-8 bytes must not crash the asking before it can log why.
+        said = (out <> err) |> String.replace_invalid() |> String.trim()
 
         cond do
           # GitHub greets a key it knows and then exits 1, as it gives no shell.
@@ -400,6 +416,12 @@ defmodule HalC2.Git do
             )
 
             write_config(file, https)
+
+          said =~ "Host key verification failed" or said =~ "authenticity of host" ->
+            Logger.info(
+              "Git keeps its route to GitHub: SSH cannot verify GitHub's host key; " <>
+                "run `ssh -T git@github.com` once to trust it."
+            )
 
           true ->
             Logger.info(
@@ -418,7 +440,8 @@ defmodule HalC2.Git do
     end
   end
 
-  defp last_line(text), do: text |> String.split("\n") |> List.last()
+  defp last_line(text),
+    do: text |> String.split("\n") |> List.last() |> String.slice(0, 200)
 
   # Read from gh's hosts file rather than asked of gh, which would open the keyring
   # holding the token at boot.
