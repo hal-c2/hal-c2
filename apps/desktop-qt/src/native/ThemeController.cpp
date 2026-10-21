@@ -515,7 +515,10 @@ bool ThemeController::cycleAppearance() {
 }
 
 QVariantMap ThemeController::draft(const QString& id) const {
-  const auto definition = find(id.isEmpty() ? m_resolvedId : id);
+  // With no id asked for and no theme chosen, the standard look is drawn, so
+  // its draft is the standard look itself -- not a legacy saved theme that
+  // holds the standard id (an explicit id still finds that theme).
+  const auto definition = id.isEmpty() && themeId().isEmpty() ? std::nullopt : find(id.isEmpty() ? m_resolvedId : id);
   const QString appearance = definition && !colorsFor(*definition, m_appearance).isEmpty()
                                  ? m_appearance
                                  : (definition ? definition->appearance : m_appearance);

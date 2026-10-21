@@ -15,6 +15,7 @@ QtObject {
     property var families: [{ title: "Foundation", roles: ["canvas"] }, { title: "Brand & content", roles: ["accent"] }]
     // The editor's draft, and what an import waits on.
     property var editing: ({})
+    property var opened: ({})
     property bool inspecting: false
     property var picked: ({})
     property string importError: ""
@@ -46,15 +47,24 @@ QtObject {
     }
     function edit(next) {
         editing = next;
+        opened = next;
         editorOpen = true;
         return record("edit", [next]);
     }
+    // Like the controller: a change with the editor closed is dropped.
     function setEditing(next) {
+        if (!editorOpen)
+            return;
         editing = next;
     }
-    // The close a press outside is: the draft stays.
+    // The close a press outside is: the draft stays only when it differs
+    // from what the editor opened on, as in the controller.
     function hideEditor() {
+        if (!editorOpen)
+            return;
         editorOpen = false;
+        if (JSON.stringify(editing) === JSON.stringify(opened))
+            editing = {};
         record("hideEditor", []);
     }
     function derive(canvas, accent) {
@@ -75,12 +85,8 @@ QtObject {
         importConflicts = [];
     }
     function resolveImport(choice) {
-        // Like the controller: safe with nothing pending, and then it
-        // settles nothing, so a close after a choice records no second call.
-        const pending = importConflicts.length > 0 || importError.length > 0;
+        // Records every call faithfully; the brick guards its own cancel.
         clearImport();
-        if (!pending)
-            return true;
         return record("resolveImport", [choice]);
     }
     function saveCustom(theme) {
@@ -114,6 +120,7 @@ QtObject {
         resolvedId = "hal-c2";
         available = [];
         editing = {};
+        opened = {};
         editorOpen = false;
         calls = [];
     }

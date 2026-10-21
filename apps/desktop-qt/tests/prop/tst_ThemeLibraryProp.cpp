@@ -237,6 +237,14 @@ struct Imposter : Command {
                              {QStringLiteral("colors"), QJsonObject{{QStringLiteral("canvas"), QStringLiteral("#112233")}}}});
     device.insert(QStringLiteral("customThemes"), saved);
     sut.settings()->setDeviceSettings(device);
+    // With no theme chosen, the no-id draft is the standard look drawn, not the imposter.
+    sut.themes()->choose(QString());
+    {
+      const QVariantMap noId = sut.themes()->draft(QString());
+      RC_ASSERT(noId.value(QStringLiteral("id")).toString().isEmpty());
+      RC_ASSERT(noId.value(QStringLiteral("colors")).toMap() ==
+                sut.standard.value(sut.themes()->appearance() == QLatin1String("dark")));
+    }
     Model expected = m0;
     apply(expected);
     verify(expected, sut);

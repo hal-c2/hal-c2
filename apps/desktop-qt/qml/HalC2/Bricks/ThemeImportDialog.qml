@@ -34,9 +34,9 @@ Popup {
         json.forceActiveFocus();
     }
     // Escape, a press outside and Cancel all leave the same way: whatever
-    // waited on a choice, or just an error, is dropped. resolveImport is
-    // safe with nothing pending, so a choice already made is not re-settled.
-    onClosed: Themes.resolveImport("cancel")
+    // still waits on a choice, or just an error, is dropped. A choice
+    // already made settled it, so closing after it cancels nothing.
+    onClosed: if (conflicted || Themes.importError.length > 0) Themes.resolveImport("cancel")
 
     background: Rectangle {
         radius: Theme.radius
