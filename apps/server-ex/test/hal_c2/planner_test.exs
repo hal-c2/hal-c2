@@ -902,5 +902,67 @@ defmodule HalC2.PlannerTest do
                  Enum.find(ops, &(elem(&1, 0) == "removeAssignees"))
       end
     end
+
+    test "a push takes a stored owner off exactly for the logins Plan takes" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      new = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "erin",
+        "issue" => issue,
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue
+      }
+
+      # The same cases `Plan` makes an owner by and the host suite runs, so the
+      # push's own gate cannot drift from either.
+      for bad <- HalC2.Test.LoginCases.bad() do
+        ops =
+          Sync.pushes(
+            %{"sync" => "twoWay"},
+            Map.put(synced, "owner", bad),
+            new,
+            %{"t" => new},
+            projects
+          )
+
+        refute Enum.any?(ops, &(elem(&1, 0) == "removeAssignees")),
+               "expected no removal for #{inspect(bad)}"
+      end
+
+      for good <- HalC2.Test.LoginCases.good() do
+        ops =
+          Sync.pushes(
+            %{"sync" => "twoWay"},
+            Map.put(synced, "owner", good),
+            new,
+            %{"t" => new},
+            projects
+          )
+
+        assert {"removeAssignees", %{"number" => 7, "assignees" => [^good]}, _} =
+                 Enum.find(ops, &(elem(&1, 0) == "removeAssignees")),
+               "expected a removal for #{inspect(good)}"
+      end
+    end
   end
 end

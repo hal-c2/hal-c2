@@ -838,7 +838,7 @@ defmodule HalC2Plugins.Planner.Sync do
       synced
       |> Map.merge(Map.take(sent, ~w(title notes labels)))
       # Only the owner GitHub was actually asked to assign is one it has.
-      |> Map.put("owner", if(login_shaped?(sent["owner"]), do: sent["owner"]))
+      |> Map.put("owner", if(Plan.login?(sent["owner"]), do: sent["owner"]))
       |> Map.merge(%{"state" => "open", "start" => nil, "due" => nil})
 
   defp fields(item),
@@ -1001,14 +1001,14 @@ defmodule HalC2Plugins.Planner.Sync do
     # no GitHub assignee under that string, so there is nothing to take off, and
     # asking would be refused before GitHub and wedge every later push.
     off =
-      if changed? and login_shaped?(old) and not is_nil(on_was),
+      if changed? and Plan.login?(old) and not is_nil(on_was),
         do: [
           {"removeAssignees", Map.put(on_was, "assignees", [old]), &Map.put(&1, "owner", nil)}
         ],
         else: []
 
     on =
-      if changed? and login_shaped?(login),
+      if changed? and Plan.login?(login),
         do: [{"addAssignees", Map.put(base, "assignees", [login]), &Map.put(&1, "owner", login)}],
         else: []
 
@@ -1264,7 +1264,7 @@ defmodule HalC2Plugins.Planner.Sync do
            "body" => item["notes"] || ""
          },
          input =
-           if(login_shaped?(item["owner"]),
+           if(Plan.login?(item["owner"]),
              do: Map.put(input, "assignees", [item["owner"]]),
              else: input
            ),
@@ -1308,17 +1308,6 @@ defmodule HalC2Plugins.Planner.Sync do
   # Logins also compare without the blanks a stored owner may have around it.
   defp login?(a, b) when is_binary(a) and is_binary(b), do: same?(String.trim(a), String.trim(b))
   defp login?(_, _), do: false
-
-  # The login shape `Plan.field("owner")` and the host enforce, duplicated here
-  # because neither is callable from the plugin.
-  defp login_shaped?(login) when is_binary(login),
-    do:
-      String.match?(
-        String.trim(login),
-        ~r/\A(?:[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}|[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,33}\[bot\]|(?=.{1,39}\z)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*_[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)\z/
-      )
-
-  defp login_shaped?(_), do: false
 
   defp key(%{"repository" => repo, "number" => number}), do: {String.downcase(repo || ""), number}
 
