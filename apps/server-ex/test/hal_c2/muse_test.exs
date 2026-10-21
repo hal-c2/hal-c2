@@ -193,6 +193,45 @@ defmodule HalC2.MuseTest do
              StreamState.list(stream, "subagent")
   end
 
+  # The started item names no objective and says nothing yet: the first
+  # progress Muse reports fills the child's prompt it was started without.
+  @tag :tmp_dir
+  test "a subagent started with a blank objective is tasked by its first progress",
+       %{tmp_dir: dir} do
+    start_streams(dir)
+    state = runtime_state()
+
+    {:noreply, state} =
+      item_event(state, "item/started", %{"status" => "inProgress", "objective" => "   "})
+
+    {:noreply, state} =
+      item_event(state, "item/updated", %{
+        "status" => "inProgress",
+        "revision" => 2,
+        "objective" => "   ",
+        "fallbackText" => "Reading the diff"
+      })
+
+    {:noreply, _state} =
+      item_event(state, "item/completed", %{
+        "revision" => 3,
+        "objective" => "   ",
+        "fallbackText" => "Reading the diff"
+      })
+
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("thread-1"))
+
+    assert [%{"status" => "completed", "prompt" => "Reading the diff"} = subagent] =
+             StreamState.list(stream, "subagent")
+
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(subagent["childThreadId"]))
+
+    assert [%{"role" => "user", "text" => "Reading the diff"}] =
+             child
+             |> StreamState.list("message")
+             |> Enum.filter(&(&1["role"] == "user"))
+  end
+
   # A field in a shape Muse has not sent before degrades the one subagent (its role
   # for a title, no answer to read), not the turn carrying it.
   @tag :tmp_dir
@@ -256,13 +295,12 @@ defmodule HalC2.MuseTest do
     )
   end
 
-  defp item_completed(state, fields) do
+  defp item_completed(state, fields), do: item_event(state, "item/completed", fields)
+
+  defp item_event(state, method, fields) do
     params = %{"sessionId" => "session-1", "item" => subagent_item(fields)}
 
-    ThreadRuntime.handle_info(
-      {:json_rpc, self(), {:notification, "item/completed", params}},
-      state
-    )
+    ThreadRuntime.handle_info({:json_rpc, self(), {:notification, method, params}}, state)
   end
 
   describe "approvals" do

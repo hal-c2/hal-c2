@@ -845,11 +845,16 @@ defmodule HalC2.Muse.ThreadRuntime do
     # thread's title and prompt from it too).
     entry =
       entry ||
-        %{
-          sub: NativeSubagent.start(state.turn.ids, native(state, item), subagent_task(item)),
-          progress: nil,
-          done: false
-        }
+        (
+          task = subagent_task(item)
+
+          %{
+            sub: NativeSubagent.start(state.turn.ids, native(state, item), task),
+            progress: nil,
+            prompt: task["prompt"],
+            done: false
+          }
+        )
 
     entry =
       cond do
@@ -874,6 +879,13 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   defp progressed(entry, item) do
     progress = subagent_progress(item)
+
+    # Started without a task (the started item named no objective and said
+    # nothing yet): the first thing Muse says it is doing becomes it.
+    entry =
+      if progress != nil and Map.get(entry, :prompt) == "",
+        do: %{entry | sub: NativeSubagent.prompt(entry.sub, progress), prompt: progress},
+        else: entry
 
     if progress != nil and progress != entry.progress,
       do: %{entry | sub: NativeSubagent.progress(entry.sub, progress), progress: progress},
