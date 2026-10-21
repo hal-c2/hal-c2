@@ -42,6 +42,7 @@ import * as React from "react";
 import { derivePendingApprovals } from "../approvals.ts";
 import {
   type ComposerImageAttachment,
+  type ImageDecoder,
   findPromptImagePathLines,
   imageExtensionForMimeType,
   imageMimeTypeForPath,
@@ -182,9 +183,12 @@ type ThreadRow = Extract<Row, { kind: "thread" }>;
 export function ChatView({
   client,
   onExit,
+  decodeImage,
 }: {
   readonly client: TuiClient;
   readonly onExit: () => void;
+  /** Replaces the native image decoder; tests use it to control when a pasted image finishes. */
+  readonly decodeImage?: ImageDecoder;
 }): React.ReactNode {
   const { width, height } = useTerminalDimensions();
   const renderer = useRenderer();
@@ -2213,7 +2217,7 @@ export function ChatView({
         .readFileBase64(composerCwd, row.path)
         .then((file) => {
           if (!file) throw new Error("Could not read the image.");
-          return prepareComposerImage(row.path, file);
+          return prepareComposerImage(row.path, file, decodeImage);
         })
         .then((image) => {
           updateActiveComposerImages((current) => [...current, image]);
@@ -2278,7 +2282,7 @@ export function ChatView({
     const name = `clipboard-image-${clipboardImageSequenceRef.current}.${extension}`;
     clipboardImageLoadsRef.current += 1;
     store.setStatus("Adding pasted image…", "busy");
-    void prepareComposerImageBytes(name, paste.mimeType, paste.bytes)
+    void prepareComposerImageBytes(name, paste.mimeType, paste.bytes, decodeImage)
       .then((image) => {
         updateActiveComposerImages((current) =>
           current.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS ? current : [...current, image],
@@ -2350,12 +2354,13 @@ export function ChatView({
                 imagePath,
                 mimeType,
                 await NodeFSP.readFile(imagePath),
+                decodeImage,
               );
             })()
           : await (async () => {
               const file = await client.readFileBase64(composerCwd, imagePath);
               if (!file) throw new Error("Could not read the pasted image path.");
-              return prepareComposerImage(imagePath, file);
+              return prepareComposerImage(imagePath, file, decodeImage);
             })();
         updateActiveComposerImages((current) => {
           if (
