@@ -977,7 +977,9 @@ Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, co
 // same separator, so both are replaced. The stamp and the snooze labels built
 // from it are short labels where a break at that space costs nothing, so they
 // give up the no-break property; this is why it is done here and not in the
-// timeline's stamp alone.
+// timeline's stamp alone. The two QML stamps that cannot call this helper
+// (ComposerUsageLimits.qml, ConnectionsSettings.qml) repeat the same
+// character set in a regex; extend both if this set ever grows.
 QString plainSpaces(QString text) {
   return text.replace(QChar(0x202F), QLatin1Char(' ')).replace(QChar(0x00A0), QLatin1Char(' '));
 }

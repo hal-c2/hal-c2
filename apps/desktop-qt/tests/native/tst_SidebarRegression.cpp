@@ -94,8 +94,9 @@ private slots:
     QCOMPARE(english, QStringLiteral("6:05 PM"));
   }
 
-  // The helper the usage labels (hourName, hourly heading, window label) wrap:
-  // dropping plainSpaces there or here must fail loudly.
+  // The helper itself, pinned directly: the usage labels' explicit en-US
+  // patterns carry a literal space today, so no call-site test could tell
+  // wrapped from unwrapped there.
   void plainSpacesReplacesEveryNoBreakSpace() {
     QCOMPARE(sidebar::plainSpaces(QStringLiteral("6\u202FPM\u00A0x")), QStringLiteral("6 PM x"));
     QCOMPARE(sidebar::plainSpaces(QStringLiteral("6:05 PM")), QStringLiteral("6:05 PM"));

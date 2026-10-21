@@ -15,7 +15,6 @@
 #include "NavigationController.h"
 #include "McClient.h"
 #include "SettingsController.h"
-#include "SidebarModel.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
 
@@ -89,10 +88,11 @@ int placeOf(const QJsonObject& bucket, const QJsonObject& window, bool hourly) {
 }
 
 // `2 PM` in `zone`. An hour the clocks repeat when they fall back says its
-// zone too.
+// zone too. The explicit "h AP" pattern carries a literal ASCII space, so
+// unlike timeOfDay's ShortFormat branch it cannot gain a no-break space.
 QString hourName(const QDateTime& instant, const QTimeZone& zone) {
   const QDateTime local = instant.toTimeZone(zone);
-  const QString name = sidebar::plainSpaces(english().toString(local.time(), QStringLiteral("h AP")));
+  const QString name = english().toString(local.time(), QStringLiteral("h AP"));
   for (const int away : {-60 * 60, 60 * 60}) {
     const QDateTime other = instant.addSecs(away).toTimeZone(zone);
     if (other.date() == local.date() && other.time().hour() == local.time().hour()) {
@@ -575,7 +575,7 @@ QVariantMap UsageController::summary(QStringList& notices) const {
       const qint64 daysAgo = hour.date().daysTo(today);
       heading = daysAgo == 0   ? QStringLiteral("%1 today").arg(label)
                 : daysAgo == 1 ? QStringLiteral("%1 yesterday").arg(label)
-                               : sidebar::plainSpaces(english().toString(hour, QStringLiteral("MMM d, h AP")));
+                               : english().toString(hour, QStringLiteral("MMM d, h AP"));
     }
     chartRows.append(QVariantMap{{QStringLiteral("key"), period},
                                  {QStringLiteral("label"), label},
@@ -881,8 +881,8 @@ void UsageController::publish() {
   const QDateTime now = m_now().toTimeZone(m_zone());
   QString windowLabel;
   if (m_windowDays == 1) {
-    windowLabel = QStringLiteral("%1 to %2").arg(sidebar::plainSpaces(english().toString(now.addSecs(-24 * 60 * 60), QStringLiteral("MMM d, h AP"))),
-                                                 sidebar::plainSpaces(english().toString(now, QStringLiteral("MMM d, h AP"))));
+    windowLabel = QStringLiteral("%1 to %2").arg(english().toString(now.addSecs(-24 * 60 * 60), QStringLiteral("MMM d, h AP")),
+                                                 english().toString(now, QStringLiteral("MMM d, h AP")));
   } else {
     windowLabel = QStringLiteral("%1 to %2").arg(english().toString(now.date().addDays(-(m_windowDays - 1)), QStringLiteral("MMM d")),
                                                  english().toString(now.date(), QStringLiteral("MMM d")));
