@@ -815,4 +815,74 @@ defmodule HalC2.Steps.Orchestration.Projections do
     {reply, context} = World.call(context, method, %{})
     Map.put(context, :reply, World.normalize_reply(reply))
   end
+
+  # --- subagent text on the wire --------------------------------------------------------
+
+  step ~r/^a subagent in "(?<thread>[^"]+)" has progress that grows by appends past 32,768 bytes$/,
+       %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    item = %{
+      "id" => "sub-item",
+      "type" => "subagent",
+      "runId" => "run-1",
+      "progress" => "Reading"
+    }
+
+    {:ok, _} = HalC2.Streams.commit(id, :thread, [{"turn-item", item["id"], %{"s" => item}}])
+    Map.put(context, :thread, thread)
+  end
+
+  # The client is following when the progress grows: two appends in one commit take it
+  # past the limit, and a third is to text already past it.
+  step ~r/^a client follows "(?<thread>[^"]+)" while the progress grows past the limit$/,
+       %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    {frames, client} = context |> World.client() |> Mc.sub(41, shape(id)) |> until_live([])
+    append = {"turn-item", "sub-item", %{"a" => %{"progress" => String.duplicate("x", 20_000)}}}
+    {:ok, _} = HalC2.Streams.commit(id, :thread, [append, append])
+    {:ok, past} = HalC2.Streams.commit(id, :thread, [append])
+    title = {"thread", id, %{"s" => %{"title" => "Followed"}}}
+    {:ok, last} = HalC2.Streams.commit(id, :thread, [title])
+    {events, client} = events_until(client, last, [])
+
+    context
+    |> World.put_client(client)
+    |> Map.merge(%{frames: frames, events: events, past: past})
+  end
+
+  step ~r/^the progress it holds is the cut text a fresh read of "(?<thread>[^"]+)" shows$/,
+       %{args: [thread]} = context do
+    held =
+      Enum.reduce(context.events, row(context.frames, "sub-item"), fn
+        [_seq, "turn-item", "sub-item", patch, _at], item -> HalC2.Patch.apply(item, patch)
+        _event, item -> item
+      end)
+
+    id = World.thread_id(context, thread)
+    {fresh, client} = context |> World.client("fresh") |> Mc.sub(41, shape(id)) |> until_live([])
+    assert held["progress"] == row(fresh, "sub-item")["progress"]
+    assert String.ends_with?(held["progress"], "… output truncated for transport")
+    World.put_client(context, "fresh", client)
+  end
+
+  step "the appends past the limit are not sent", context do
+    refute Enum.any?(context.events, &(hd(&1) == context.past))
+    context
+  end
+
+  defp shape(stream),
+    do: %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => stream}
+
+  defp row(frames, id),
+    do: hd(for frame <- frames, ["turn-item", ^id, entity] <- frame["rows"] || [], do: entity)
+
+  defp events_until(client, seq, acc) do
+    {frame, client} = Mc.await(client, &(&1["t"] == "events" and &1["id"] == 41))
+    acc = acc ++ frame["events"]
+
+    if Enum.any?(frame["events"], &(hd(&1) == seq)),
+      do: {acc, client},
+      else: events_until(client, seq, acc)
+  end
 end

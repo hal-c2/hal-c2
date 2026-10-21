@@ -324,8 +324,64 @@ Feature: Follow-ups while the agent is working
     Then the queue marks "fix typo" as being edited and offers to cancel the edit
     And the composer shows the message's image, which the user can remove
 
-  @backlog @desktop
+  @desktop
   Scenario: A held queue says its messages are safe
     Given "later" was queued when the MC restarted
     When the MC comes back
-    Then the queue is headed "Queue held after restart" and says "Messages stay saved until you resume."
+    Then the queue is headed "Queue held" and says "Messages stay saved until you resume."
+
+  @desktop
+  Scenario: A held queue is resumed from the composer
+    Given "later" was queued when the MC restarted
+    And the MC comes back
+    When the user resumes the queue
+    Then the MC is asked to resume the queue
+
+  @desktop
+  Scenario: A resume that the MC refuses is reported
+    Given "later" was queued when the MC restarted
+    And the MC comes back
+    And the MC refuses "queue.resume" with "thread is archived"
+    When the user resumes the queue
+    Then the user sees an "error" toast "Failed to resume the queue." saying "thread is archived"
+
+  @desktop
+  Scenario: A resume while reconnecting is refused with a warning
+    Given "later" was queued when the MC restarted
+    And the MC comes back
+    And the MC stops accepting connections
+    And the MC drops the connection
+    When the user resumes the queue
+    Then the user sees a "warning" toast "Not connected: queue not resumed" saying "Reconnecting to the environment. Try again once it is connected."
+    And the MC is not asked to resume the queue
+    When the user resumes the queue
+    Then the user sees the toast "Not connected: queue not resumed" once
+
+  @desktop
+  Scenario: A resume warning dismissed and shown again is one fresh warning
+    Given "later" was queued when the MC restarted
+    And the MC comes back
+    And the MC stops accepting connections
+    And the MC drops the connection
+    When the user resumes the queue
+    Then the user sees the toast "Not connected: queue not resumed" once
+    When the user dismisses the toast "Not connected: queue not resumed"
+    And the user resumes the queue
+    Then the user sees the toast "Not connected: queue not resumed" once
+    And the MC is not asked to resume the queue
+
+  @desktop
+  Scenario: A held queue that only waits on the provider can be resumed
+    Given a provider wake was queued when the MC restarted
+    When the MC comes back
+    Then the queue is headed "Queue held" and says "Messages stay saved until you resume."
+    When the user resumes the queue
+    Then the MC is asked to resume the queue
+
+  @backlog @tui
+  Scenario: A held queue is resumed from the terminal
+    Given "later" was queued when the MC restarted
+    When the MC comes back
+    Then the queue is shown as held
+    When the user resumes the queue
+    Then the MC is asked to resume the queue

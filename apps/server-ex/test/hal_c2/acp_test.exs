@@ -6,6 +6,9 @@ defmodule HalC2.AcpTest do
   setup %{tmp_dir: dir} do
     Application.put_env(:hal_c2, :home, dir)
     start_supervised!(HalC2.Settings)
+    # What a test makes it load or fail to load is kept in :persistent_term.
+    HalC2.Acp.forget("antigravity")
+    on_exit(fn -> HalC2.Acp.forget("antigravity") end)
     :ok
   end
 
@@ -136,5 +139,44 @@ defmodule HalC2.AcpTest do
 
     assert %{"status" => "disabled", "installed" => false, "version" => nil} =
              HalC2.Acp.entry("antigravity")
+  end
+
+  test "a disabled Antigravity with its runtime on this machine is installed but not launched", %{
+    tmp_dir: dir
+  } do
+    {exe, harness} = HalC2.Acp.Antigravity.names()
+    marker = Path.join(dir, "launched")
+
+    # Either script, if run, leaves this behind: no marker is the behavioural
+    # proof that nothing was launched, whatever the loader keeps.
+    for name <- [exe, harness] do
+      File.write!(Path.join(dir, name), "#!/bin/sh\ntouch '#{marker}'\n")
+      File.chmod!(Path.join(dir, name), 0o755)
+    end
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "antigravity" => %{
+              "driver" => "antigravity",
+              "enabled" => false,
+              "config" => %{"binaryPath" => Path.join(dir, exe)}
+            }
+          }
+        },
+        0
+      )
+
+    assert %{"status" => "disabled", "installed" => true, "version" => nil} =
+             HalC2.Acp.entry("antigravity")
+
+    refute File.exists?(marker)
+
+    # Belt and braces: launching starts a loader, which sets its flag before
+    # anything else, and what it keeps (models or a failure) comes later.
+    assert :persistent_term.get({HalC2.Acp, "antigravity", :loading}, false) == false
+    assert :persistent_term.get({HalC2.Acp, "antigravity", :models}, nil) == nil
+    assert :persistent_term.get({HalC2.Acp, "antigravity", :error}, nil) == nil
   end
 end

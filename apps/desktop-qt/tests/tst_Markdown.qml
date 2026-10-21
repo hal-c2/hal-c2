@@ -118,6 +118,41 @@ Item {
             compare(linkSpy.count, 0);
         }
 
+        // The Files viewer draws a file's task boxes as links to be ticked with
+        // a plain click; only a text it marks trusted keeps them.
+        readonly property string checklist: "- [☐](task:0) Ship cart\n- [☑](task:1) Plan"
+
+        function test_aTrustedTextsTaskBoxesTickOnAPlainClick() {
+            const md = make(checklist, { trusted: true });
+            clickWord(md, "☐", "task:0", Qt.NoModifier);
+            compare(linkSpy.count, 1);
+            compare(linkSpy.signalArguments[0][0], "task:0");
+            clickWord(md, "☑", "task:1", Qt.NoModifier);
+            compare(linkSpy.count, 1);
+            compare(linkSpy.signalArguments[0][0], "task:1");
+        }
+
+        // A reply is not the user's file: a link it writes must not tick a box in it.
+        function test_aRepliesTaskLinksAreNotLinks() {
+            const md = make(checklist);
+            linkSpy.target = md;
+            linkSpy.clear();
+            const edit = prose(segmentsOf(md)[0]);
+            const rect = edit.positionToRectangle(plain(edit).indexOf("☐"));
+            compare(edit.linkAt(rect.x + 1, rect.y + rect.height / 2), "");
+            mouseClick(edit, rect.x + 1, rect.y + rect.height / 2);
+            compare(linkSpy.count, 0);
+            verify(plain(edit).indexOf("task:") < 0);
+            verify(Md.segments(checklist, {})[0].html.indexOf("task:") < 0);
+        }
+
+        // Only a task's own link passes, and not for a text that is not trusted.
+        function test_aTrustedTextKeepsOnlyTaskLinksOfBoxes() {
+            const html = Md.segments("[a](task:0) [b](task:x) [c](task:1/../2) [d](javascript:alert(1))", { tasks: true })[0].html;
+            verify(html.indexOf("href=\"task:0\"") >= 0, html);
+            verify(html.indexOf("task:x") < 0 && html.indexOf("task:1") < 0 && html.indexOf("javascript:") < 0, html);
+        }
+
         function test_codeCopiesItsSource() {
             const source = "const a = 1 < 2;\n  indented();";
             const md = make("```js\n" + source + "\n```");

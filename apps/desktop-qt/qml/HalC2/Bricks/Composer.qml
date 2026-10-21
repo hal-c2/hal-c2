@@ -468,7 +468,6 @@ Rectangle {
                             color: composer.foreground
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                             elide: Text.ElideMiddle
                             Layout.maximumWidth: parent.width * 0.5
                         }
@@ -478,7 +477,6 @@ Rectangle {
                             text: suggestion.modelData.description
                             color: composer.muted
                             font.pixelSize: Math.round(12 * Theme.fontScale)
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                             elide: Text.ElideMiddle
                         }
                     }
@@ -501,7 +499,6 @@ Rectangle {
                 text: composer.ready && composer.model.suggestionsEmptyText ? composer.model.suggestionsEmptyText : ""
                 color: composer.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
-                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
             }
         }
 
@@ -548,7 +545,6 @@ Rectangle {
                     text: qsTr("Stash")
                     color: composer.muted
                     font.pixelSize: Math.round(12 * Theme.fontScale)
-                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                 }
 
                 Text {
@@ -619,7 +615,6 @@ Rectangle {
                             text: stashRow.modelData.snippet
                             color: composer.foreground
                             font.pixelSize: Math.round(12 * Theme.fontScale)
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                             elide: Text.ElideRight
                             Accessible.name: qsTr("Restore stashed prompt: %1").arg(text)
                         }
@@ -696,7 +691,6 @@ Rectangle {
                         text: qsTr("Editing a queued message")
                         color: composer.muted
                         font.pixelSize: Math.round(12 * Theme.fontScale)
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                     }
 
                     ShellButton {
@@ -835,7 +829,6 @@ Rectangle {
                                         elide: Text.ElideRight
                                         color: composer.muted
                                         font.pixelSize: Math.round(12 * Theme.fontScale)
-                                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                                     }
 
                                     ShellTextField {
@@ -1205,7 +1198,6 @@ Rectangle {
                         text: vim.modeLabel
                         color: composer.muted
                         font.pixelSize: Math.round(11 * Theme.fontScale)
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                         Accessible.name: qsTr("Vim mode: %1").arg(text)
                     }
 
@@ -1419,7 +1411,6 @@ Rectangle {
                         color: composer.secondary
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                     }
                 }
 
@@ -1454,7 +1445,6 @@ Rectangle {
                         color: parent.prColor
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                         font.weight: Font.Medium
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                     }
                 }
 
@@ -1648,7 +1638,6 @@ Rectangle {
                                             text: branchRow.modelData.name
                                             color: branchRow.modelData.isRemote ? composer.muted : composer.foreground
                                             font.pixelSize: Math.round(13 * Theme.fontScale)
-                                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                                             elide: Text.ElideMiddle
                                         }
 
@@ -1657,7 +1646,6 @@ Rectangle {
                                             text: branchRow.badge
                                             color: Qt.alpha(composer.muted, 0.45)
                                             font.pixelSize: Math.round(10 * Theme.fontScale)
-                                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                                         }
                                     }
                                 }

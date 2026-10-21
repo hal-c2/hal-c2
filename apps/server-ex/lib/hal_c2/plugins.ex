@@ -436,7 +436,7 @@ defmodule HalC2.Plugins do
   `status`, unless a client has the thread in the foreground
   (`HalC2.BackgroundPolicy.watched?/1`).
   """
-  def turn_finished(thread_id, status) do
+  def turn_finished(thread_id, status, failure \\ nil) do
     channels = running("notificationChannel")
     thread = fn -> thread(thread_id) end
 
@@ -453,12 +453,16 @@ defmodule HalC2.Plugins do
     with %{"plugin" => %{"id" => owner} = mark} <- thread.(),
          {^owner, module, settings, sup} <- List.keyfind(runs("extension"), owner, 0),
          true <- function_exported?(module, :handle_event, 2) do
-      event = %{
-        "type" => "turn.finished",
-        "threadId" => thread_id,
-        "status" => status,
-        "plugin" => mark
-      }
+      # The failure rides along so the owner can tell a usage limit (wait for its
+      # reset) from a turn that simply failed.
+      event =
+        %{
+          "type" => "turn.finished",
+          "threadId" => thread_id,
+          "status" => status,
+          "plugin" => mark
+        }
+        |> Map.merge(failure_event(failure))
 
       context = %{id: owner, settings: settings, thread_id: thread_id}
 
@@ -471,6 +475,14 @@ defmodule HalC2.Plugins do
 
     :ok
   end
+
+  defp failure_event(%{"class" => class} = failure) when is_binary(class) do
+    %{"errorClass" => class, "error" => failure["message"], "resetAt" => failure["resetAt"]}
+  end
+
+  defp failure_event(%{"message" => message}) when is_binary(message), do: %{"error" => message}
+  defp failure_event(message) when is_binary(message), do: %{"error" => message}
+  defp failure_event(_failure), do: %{}
 
   @doc """
   Hands a Slack event (`HalC2.Slack.Bot`, `HalC2.Slack`) to every running extension
@@ -1144,12 +1156,38 @@ defmodule HalC2.Plugins do
     end
   end
 
-  # A module that fails to compile is unloaded, though its processes still run the
-  # old code; the file's last good modules are loaded again.
+  # The file's last good modules are loaded again wherever the code now loaded is not
+  # theirs: a module that failed to compile is unloaded, and one a refused update loaded
+  # is current (`unload/1` cannot delete it while the last good code, now the module's old
+  # code, is still being run). Loading needs the old code gone, so a process still in it is
+  # killed: running the last good version is worth more than finishing a call in it, and
+  # its supervisor starts it again.
   defp restore([%{file: file, binaries: binaries} | _]) do
-    for {module, binary} <- binaries, :code.is_loaded(module) == false do
-      :code.soft_purge(module)
+    for {module, binary} <- binaries, not current?(module, binary) do
+      purge(module, file)
       :code.load_binary(module, String.to_charlist(file), binary)
+      # The refused version is now the old code; a process still in it would keep the
+      # next update from loading.
+      purge(module, file)
+    end
+  end
+
+  defp purge(module, file) do
+    unless :code.soft_purge(module) do
+      Logger.warning(
+        "plugin #{Path.basename(file)}: stopping processes still in #{inspect(module)}"
+      )
+
+      :code.purge(module)
+    end
+  end
+
+  defp current?(module, binary) do
+    with true <- :code.is_loaded(module) != false,
+         {:ok, {^module, md5}} <- :beam_lib.md5(binary) do
+      md5 == module.module_info(:md5)
+    else
+      _ -> false
     end
   end
 

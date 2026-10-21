@@ -17,9 +17,6 @@ const ALERTS: Partial<Record<AlertKind, Pick<ShellNotification, "type" | "title"
   error: { type: "error", title: "Thread failed" },
 };
 
-/** Alerts kept on screen; older ones drop off. */
-const MAX_ALERTS = 3;
-
 export interface ThreadAlert extends ShellNotification {
   readonly threadId: string;
 }
@@ -53,7 +50,9 @@ export function threadTransitions(
 
 /**
  * Fold new transitions into the alert list: a newer alert for a thread
- * replaces its older one, the viewed thread never alerts, newest first.
+ * replaces its older one, the viewed thread never alerts, newest first. None is
+ * dropped for room: the list leaves only by opening or dismissing, and the
+ * view decides how many rows to show.
  */
 export function nextThreadAlerts(
   alerts: ReadonlyArray<ThreadAlert>,
@@ -77,5 +76,5 @@ export function nextThreadAlerts(
       ...next.filter((existing) => existing.threadId !== thread.id),
     ];
   }
-  return next.slice(0, MAX_ALERTS);
+  return next;
 }

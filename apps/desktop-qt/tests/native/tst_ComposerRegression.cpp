@@ -217,17 +217,64 @@ private slots:
   void aQueuedRunWithoutItsMessageIsNotListed() {
     const QJsonObject run{{QStringLiteral("id"), QStringLiteral("run-a")},
                           {QStringLiteral("status"), QStringLiteral("queued")},
+                          {QStringLiteral("queueHeld"), true},
                           {QStringLiteral("queuePosition"), 0},
                           {QStringLiteral("userMessageId"), QStringLiteral("message:a")}};
     const composer::Queued early = composer::queued({run}, {});
     QVERIFY(early.queue.isEmpty());
     QVERIFY(early.waiting.isEmpty());
+    // The queue is held all the same; the turn shows it only with a run listed.
+    QVERIFY(early.held);
 
     const composer::Queued later = composer::queued(
         {run}, {{QStringLiteral("message:a"),
                  {{QStringLiteral("id"), QStringLiteral("message:a")}, {QStringLiteral("text"), QStringLiteral("also update docs")}}}});
     QCOMPARE(later.queue.size(), 1);
     QCOMPARE(later.queue.first().toMap().value(QStringLiteral("text")).toString(), QStringLiteral("also update docs"));
+    QVERIFY(later.held);
+  }
+
+  // A held run whose message has not landed yet, beside a listed run that is
+  // not held: the queue is held, so the card offers "Resume" at once.
+  void aHeldRunWithoutItsMessageHoldsTheListedQueue() {
+    const QJsonObject early{{QStringLiteral("id"), QStringLiteral("run-a")}, {QStringLiteral("status"), QStringLiteral("queued")},
+                            {QStringLiteral("queueHeld"), true}, {QStringLiteral("queuePosition"), 0},
+                            {QStringLiteral("userMessageId"), QStringLiteral("message:a")}};
+    const QJsonObject listed{{QStringLiteral("id"), QStringLiteral("run-b")}, {QStringLiteral("status"), QStringLiteral("queued")},
+                             {QStringLiteral("queueHeld"), false}, {QStringLiteral("queuePosition"), 1},
+                             {QStringLiteral("userMessageId"), QStringLiteral("message:b")}};
+    const composer::Queued queued = composer::queued(
+        {early, listed}, {{QStringLiteral("message:b"),
+                           {{QStringLiteral("id"), QStringLiteral("message:b")}, {QStringLiteral("text"), QStringLiteral("then this")}}}});
+    QCOMPARE(queued.queue.size(), 1);
+    QVERIFY(queued.held);
+  }
+
+  // A held queue whose only listed runs wait on a notification or a provider
+  // wake (no user message) is held all the same: those runs have no other way
+  // on, so `queued()` lists them as waiting and turnState offers the resume.
+  void aHeldWaitingOnlyQueueIsHeld() {
+    const QJsonObject wake{{QStringLiteral("id"), QStringLiteral("run-a")}, {QStringLiteral("status"), QStringLiteral("queued")},
+                           {QStringLiteral("queueHeld"), true}, {QStringLiteral("queuePosition"), 0},
+                           {QStringLiteral("userMessageId"), QStringLiteral("message:a")}};
+    const composer::Queued woken = composer::queued(
+        {wake}, {{QStringLiteral("message:a"),
+                  {{QStringLiteral("id"), QStringLiteral("message:a")}, {QStringLiteral("providerWake"), true}}}});
+    QVERIFY(woken.queue.isEmpty());
+    QCOMPARE(woken.waiting.size(), 1);
+    QVERIFY(woken.held);
+
+    const QJsonObject note{{QStringLiteral("id"), QStringLiteral("run-b")}, {QStringLiteral("status"), QStringLiteral("queued")},
+                           {QStringLiteral("queueHeld"), true}, {QStringLiteral("queuePosition"), 0},
+                           {QStringLiteral("userMessageId"), QStringLiteral("message:b")}};
+    const composer::Queued notified = composer::queued(
+        {note}, {{QStringLiteral("message:b"),
+                  {{QStringLiteral("id"), QStringLiteral("message:b")},
+                   {QStringLiteral("notification"),
+                    QJsonObject{{QStringLiteral("summary"), QStringLiteral("Task done")}, {QStringLiteral("outcome"), QStringLiteral("success")}}}}}});
+    QVERIFY(notified.queue.isEmpty());
+    QCOMPARE(notified.waiting.size(), 1);
+    QVERIFY(notified.held);
   }
 
   // A send the MC refused came back only into an empty draft: when the user

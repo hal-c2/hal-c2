@@ -144,7 +144,10 @@ defmodule HalC2.Orchestration.DelegationTest do
     test "is interrupted, with its timeline item, when the project does not continue it" do
       :ok = HalC2.Shell.subscribe(self())
       delegate("running")
-      assert_receive {:hal_c2_shell, {:rows, _, [{"c", {"thread", _}}]}}, 1_000
+      # Recovery reads the sidebar rows: both threads' must be there, the parent's for
+      # its task to be reconciled and the child's for its run to be settled.
+      for id <- ["p", "c"],
+          do: assert_receive({:hal_c2_shell, {:rows, _, [{^id, {"thread", _}}]}}, 1_000)
 
       assert "c" in Recovery.run()
       assert task()["status"] == "running"
@@ -305,6 +308,38 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       assert kinds == [:message, :delivered]
       assert woken?()
+    end
+  end
+
+  describe "a delegation without a task" do
+    # An agent that names the prompt `prompt` instead of `task` (hal-c2/hal-c2#258) started
+    # a child that was sent an empty message and answered that it came through empty.
+    test "is refused instead of starting a child with an empty prompt" do
+      {:ok, _} =
+        HalC2.Streams.commit("p", :thread, [
+          thread("p", %{"modelSelection" => %{"instanceId" => "codex", "model" => "m"}}),
+          run("pr", 1, "running", %{"providerInstanceId" => "codex"})
+        ])
+
+      for input <- [
+            %{"prompt" => "look", "title" => "Look"},
+            %{"task" => "", "title" => "Look"},
+            %{"task" => "  \n", "title" => "Look"}
+          ] do
+        assert {:error, "invalid_task", message} =
+                 Delegation.delegate(%{"id" => "p"}, "codex", input)
+
+        assert message =~ "`task`"
+      end
+
+      assert {:error, "Delegated tasks need a `task`" <> _} =
+               Delegation.request(%{
+                 "parentThreadId" => "p",
+                 "parentRunId" => "pr",
+                 "task" => nil
+               })
+
+      assert StreamState.list(HalC2.Streams.state("p"), "subagent") == []
     end
   end
 

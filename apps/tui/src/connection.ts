@@ -134,7 +134,7 @@ import * as Socket from "effect/unstable/socket/Socket";
 
 import { createAttachmentImageCache } from "./attachmentImages.ts";
 import { makeTuiSettingsClient, type TuiSettingsClient } from "./settingsClient.ts";
-import { hostedHere, thisMachineId } from "./thisMachine.ts";
+import { FILES_ELSEWHERE, hostedHere, type LocalPath, thisMachineId } from "./thisMachine.ts";
 import type { ImagePreview } from "@hal-c2/opentui-image";
 import {
   presentTuiShell,
@@ -642,15 +642,19 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly getFullThreadDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
   /** The selectable models reported by the server's configured providers. */
   readonly listModels: () => Promise<ModelOption[]>;
-  /** Current server settings, including new-thread workspace defaults. */
-  readonly getServerConfig: () => Promise<ServerConfig>;
   /**
-   * `path` of the MC that has it as a path on this machine, or null when its
-   * files cannot be reached from here. An editor starts only on a path it gives
-   * (filesState.ts): this is where another machine's files, mounted here, will
-   * become one.
+   * Current server settings, including new-thread workspace defaults. With `cwd`, those
+   * of the cluster member whose workspace it is (clusterClient.ts), this MC's otherwise.
    */
-  readonly localPathFor: (path: string) => Promise<string | null>;
+  readonly getServerConfig: (cwd?: string) => Promise<ServerConfig>;
+  /**
+   * `path` of the MC that has it as a path on this machine, or why its files
+   * cannot be reached from here. An editor starts only on a path it gives
+   * (filesState.ts). With `environmentId`, `path` is that cluster member's, and
+   * this MC, when it runs here, says where in the folder it keeps for the member
+   * it is (`files.localPath`).
+   */
+  readonly localPathFor: (path: string, environmentId?: string) => Promise<LocalPath>;
   /** Git refs available as base branches for a project's new worktree. */
   readonly listRefs: (cwd: string) => Promise<VcsListRefsResult>;
   /** Switch the selected checkout to a ref before creating a thread in it. */
@@ -1246,16 +1250,28 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
 
     getServerConfig: () => runtime.runPromise(request(WS_METHODS.serverGetConfig, {})),
 
-    // Nothing is mounted yet: only an MC's own files, when it runs here. An
-    // MC that does not describe itself is not taken to run here.
-    localPathFor: async (path) => {
+    // An MC elsewhere mounts nothing here, and one that does not describe
+    // itself is not taken to run here.
+    localPathFor: async (path, environmentId) => {
       const [config, ours] = await Promise.all([
         runtime.runPromise(request(WS_METHODS.serverGetConfig, {})).catch(() => null),
         thisMachineId(),
       ]);
-      if (!config) return null;
+      if (!config) return { problem: FILES_ELSEWHERE };
       const theirs = config.environment.platform.machineId;
-      return hostedHere({ ours, theirs, own, origin }) ? path : null;
+      if (!hostedHere({ ours, theirs, own, origin })) return { problem: FILES_ELSEWHERE };
+      if (environmentId === undefined) return { path };
+      const answer = await runtime
+        .runPromise(
+          request(WS_METHODS.filesLocalPath, {
+            environmentId: TrimmedNonEmptyString.make(environmentId),
+            path: TrimmedNonEmptyString.make(path),
+          }),
+        )
+        // An MC from before files.localPath has no folders to offer.
+        .catch(() => null);
+      if (answer === null) return { problem: FILES_ELSEWHERE };
+      return "path" in answer ? { path: answer.path } : { problem: answer.message };
     },
 
     listRefs: (cwd) =>
