@@ -37,13 +37,13 @@ Rectangle {
     // that size the tab from the panel's geometry instead of a pixel count.
     readonly property real fileMinimumWidth: fileViewer.Layout.minimumWidth
 
-    // True while keyboard focus sits inside the explorer column.
-    function explorerHoldsFocus(): bool {
-        let item = Window.activeFocusItem;
-        while (item) {
-            if (item === filesExplorerColumn)
+    // True while keyboard focus sits inside the given item.
+    function focusInside(item: Item): bool {
+        let focused = Window.activeFocusItem;
+        while (focused) {
+            if (focused === item)
                 return true;
-            item = item.parent;
+            focused = focused.parent;
         }
         return false;
     }
@@ -51,25 +51,14 @@ Rectangle {
     // When the explorer goes away under the focused item, focus would be
     // cleared to nowhere; give it to the toggle that brings the tree back.
     onExplorerShownChanged: {
-        if (!explorerShown && fileOpen && explorerHoldsFocus())
+        if (!explorerShown && fileOpen && focusInside(filesExplorerColumn))
             fileExplorerToggleButton.forceActiveFocus();
-    }
-
-    // True while keyboard focus sits inside the file viewer.
-    function viewerHoldsFocus(): bool {
-        let item = Window.activeFocusItem;
-        while (item) {
-            if (item === fileViewer)
-                return true;
-            item = item.parent;
-        }
-        return false;
     }
 
     // The reverse case: closing the file hides the viewer holding the
     // toggle or close button, so give focus to the tree that remains.
     onFileOpenChanged: {
-        if (!fileOpen && viewerHoldsFocus())
+        if (!fileOpen && focusInside(fileViewer))
             search.forceActiveFocus();
     }
 
@@ -201,15 +190,14 @@ Rectangle {
                     // verb stays on the explicit tooltip above.
                     Accessible.name: qsTr("File explorer")
                     onClicked: {
-                        // Auto-hidden: checked was flipped by the click but
-                        // explorerShown cannot follow; snap it back by
-                        // restoring the binding instead of writing the
-                        // preference (a second click would clear it).
-                        if (root.explorerOpen && !root.explorerShown) {
-                            checked = Qt.binding(() => root.explorerShown);
-                            return;
-                        }
                         root.explorerOpen = checked;
+                        // Auto-hidden: explorerShown cannot follow the flip
+                        // (and may not even re-notify), so snap checked back
+                        // to what is on screen. This covers both entry
+                        // states: shown-by-preference (preference kept, since
+                        // checked flipped to true) and hidden-by-preference.
+                        if (checked !== root.explorerShown)
+                            checked = Qt.binding(() => root.explorerShown);
                     }
                 }
                 ShellButton {

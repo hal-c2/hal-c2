@@ -546,6 +546,7 @@ Item {
             const files = createTemporaryObject(filesComponent, root, { source: source });
             const viewer = findChild(files, "fileViewer");
             const explorer = findChild(files, "filesExplorer");
+            verify(viewer && explorer);
             tryVerify(() => viewer.visible);
             // A phone-wide tab derived from the header's own minimum, so the
             // width does not depend on today's label lengths or font.
@@ -604,6 +605,28 @@ Item {
             verify(toggle.checked, "the toggle presents the tree again once it is back");
         }
 
+        // Hiding by choice first, then narrowing: clicking the toggle while
+        // auto-hidden must not leave it pressed over a hidden tree.
+        function test_clickingTheToggleWhileAutoHiddenFromAChosenHideStaysHonest() {
+            const source = createTemporaryObject(fakeFiles, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const viewer = findChild(files, "fileViewer");
+            const explorer = findChild(files, "filesExplorer");
+            const toggle = findChild(files, "fileExplorerToggle");
+            verify(viewer && explorer && toggle);
+            tryVerify(() => viewer.visible && explorer.visible);
+            mouseClick(toggle);
+            verify(!explorer.visible && !toggle.checked && !files.explorerOpen, "a chosen hide unpresses the toggle");
+            tryVerify(() => files.fileMinimumWidth > 0);
+            files.width = Math.floor(files.fileMinimumWidth) + files.explorerMinimum;
+            tryVerify(() => !explorer.visible, 5000, "the tree stays hidden as the tab narrows");
+            mouseClick(toggle);
+            verify(!toggle.checked && files.explorerOpen, "the click asks for the tree without presenting it as shown");
+            files.width = 600;
+            tryVerify(() => explorer.visible && explorer.width >= files.explorerMinimum, 5000, "a wider tab brings the tree back");
+            verify(toggle.checked, "the toggle presents the tree again once it is back");
+        }
+
         // Narrowing the tab under the focused search field gives focus to
         // the toggle that brings the tree back, not to nowhere.
         function test_narrowingTheTabMovesFocusFromTheTreeToTheToggle() {
@@ -613,6 +636,7 @@ Item {
             const explorer = findChild(files, "filesExplorer");
             const search = findChild(files, "filesSearch");
             const toggle = findChild(files, "fileExplorerToggle");
+            verify(viewer && explorer && search && toggle);
             tryVerify(() => viewer.visible && explorer.visible);
             search.forceActiveFocus();
             tryVerify(() => search.activeFocus, 5000, "the search field has focus before the tab narrows");
@@ -630,6 +654,7 @@ Item {
             const explorer = findChild(files, "filesExplorer");
             const search = findChild(files, "filesSearch");
             const toggle = findChild(files, "fileExplorerToggle");
+            verify(explorer && search && toggle);
             tryVerify(() => findChild(files, "fileViewer").visible && explorer.visible);
             search.forceActiveFocus();
             tryVerify(() => search.activeFocus, 5000, "the search field has focus before the tree hides");
@@ -647,6 +672,7 @@ Item {
             const explorer = findChild(files, "filesExplorer");
             const search = findChild(files, "filesSearch");
             const toggle = findChild(files, "fileExplorerToggle");
+            verify(viewer && explorer && search && toggle);
             tryVerify(() => viewer.visible && explorer.visible);
             files.explorerOpen = false;
             tryVerify(() => !explorer.visible, 5000, "the tree hides for this file");
@@ -668,6 +694,7 @@ Item {
             const viewer = findChild(files, "fileViewer");
             const search = findChild(files, "filesSearch");
             const toggle = findChild(files, "fileExplorerToggle");
+            verify(viewer && search && toggle);
             tryVerify(() => viewer.visible);
             toggle.forceActiveFocus();
             tryVerify(() => toggle.activeFocus, 5000, "the toggle has focus before the file closes");
