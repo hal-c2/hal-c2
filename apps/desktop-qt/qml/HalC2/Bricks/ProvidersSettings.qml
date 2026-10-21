@@ -18,6 +18,32 @@ Rectangle {
     readonly property var model: Shell.state.providerSettings ?? null
     readonly property var environments: model ? model.environments : []
     readonly property var providers: model ? model.providers : []
+    // The provider whose advisory popover is open, kept on the page: a
+    // republish recreates every card delegate, so the open state cannot live
+    // in the delegate or the popover would vanish on Update itself.
+    property string openAdvisory: ""
+    // A close is forgotten only once the event loop turns: a republish closes
+    // the old delegate's popover before destroying it, and the replacement
+    // reopening (a new generation) cancels the forget.
+    property int advisoryGeneration: 0
+    property string pendingForget: ""
+    property int pendingForgetGen: -1
+
+    function forgetAdvisory(inst, gen) {
+        pendingForget = inst;
+        pendingForgetGen = gen;
+        forgetAdvisoryTimer.restart();
+    }
+
+    Timer {
+        id: forgetAdvisoryTimer
+
+        interval: 1
+        onTriggered: {
+            if (page.openAdvisory === page.pendingForget && page.advisoryGeneration === page.pendingForgetGen)
+                page.openAdvisory = "";
+        }
+    }
     // The session may only view this environment: nothing on it can be changed.
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
@@ -597,7 +623,16 @@ Rectangle {
                     // from onToggled so a click toggles it exactly once.
                     checkable: true
                     checked: advisoryPopover.opened
-                    onToggled: checked ? advisoryPopover.open() : advisoryPopover.close()
+                    onToggled: {
+                        if (checked) {
+                            page.openAdvisory = card.provider.instanceId;
+                            advisoryPopover.open();
+                        } else {
+                            if (page.openAdvisory === card.provider.instanceId)
+                                page.openAdvisory = "";
+                            advisoryPopover.close();
+                        }
+                    }
 
                     Popup {
                         id: advisoryPopover
@@ -642,7 +677,21 @@ Rectangle {
                             const drawnWidth = width * scale;
                             shift = Math.max((8 - iconBottom.x) / scale, Math.min(0, (windowWidth - 8 - drawnWidth - iconBottom.x) / scale));
                         }
+                        // A recreated delegate (a republish, e.g. Update flipping
+                        // to Updating…) reopens the popover it replaces.
+                        Component.onCompleted: Qt.callLater(() => {
+                            if (page.openAdvisory === card.provider.instanceId && card.advisory)
+                                advisoryPopover.open();
+                        })
+                        onClosed: {
+                            page.forgetAdvisory(card.provider.instanceId, page.advisoryGeneration);
+                            // Qt hands focus back to the icon itself on close; a
+                            // moved close clears that instead of parking it there.
+                            if (movedClose && advisoryButton.activeFocus)
+                                advisoryButton.focus = false;
+                        }
                         onAboutToShow: {
+                            page.advisoryGeneration++;
                             movedClose = false;
                             place();
                         }
@@ -682,9 +731,6 @@ Rectangle {
                         // advisory is going away. A press on some other control
                         // has already moved the focus there.
                         onAboutToHide: if (activeFocus && !movedClose && advisoryButton.visible) advisoryButton.forceActiveFocus(Qt.PopupFocusReason)
-                        // Qt hands focus back to the icon itself on close; a moved
-                        // close clears that instead of parking it there.
-                        onClosed: if (movedClose && advisoryButton.activeFocus) advisoryButton.focus = false
 
                         background: Rectangle {
                             color: Theme.palette.color("surfaceOverlay", "#18181b")
@@ -694,6 +740,16 @@ Rectangle {
 
                         contentItem: Flickable {
                             id: advisoryScroll
+
+                            // Tab can focus a control below the fold; scroll it
+                            // into view so it is never activatable unseen.
+                            function ensureVisible(item) {
+                                const top = item.mapToItem(contentItem, 0, 0).y;
+                                if (top + item.height > contentY + height)
+                                    contentY = top + item.height - height;
+                                else if (top < contentY)
+                                    contentY = top;
+                            }
 
                             clip: true
                             contentWidth: width
@@ -729,18 +785,24 @@ Rectangle {
                                     spacing: 8
 
                                     ShellButton {
+                                        id: updateButton
+
                                         objectName: "update"
                                         readonly property bool install: (card.provider.installLabel ?? "").length > 0
                                         visible: card.provider.canUpdate || install || card.provider.updating
                                         enabled: !card.provider.updating
                                         text: card.provider.updating ? qsTr("Updating…") : install ? card.provider.installLabel : qsTr("Update now")
+                                        onActiveFocusChanged: if (activeFocus) advisoryScroll.ensureVisible(updateButton)
                                         onClicked: page.act(install ? "install" : "update", card.provider)
                                     }
 
                                     // The command is a filesystem path on most installs: copy it, show it only on hover.
                                     ShellButton {
+                                        id: copyButton
+
                                         objectName: "copyUpdateCommand"
                                         visible: !!(card.advisory && card.advisory.updateCommand)
+                                        onActiveFocusChanged: if (activeFocus) advisoryScroll.ensureVisible(copyButton)
                                         subtle: true
                                         iconName: "copy"
                                         Accessible.name: qsTr("Copy the update command")

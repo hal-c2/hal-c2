@@ -428,7 +428,58 @@ Item {
             }
         }
 
-        // Qt closes a popup whose icon is hidden; this pins that it stays so.
+        // A republish recreates every card: the open popover is reopened on the
+        // new delegate (Update flipping to Updating… must not make it vanish).
+        function test_the_advisory_popover_survives_a_republish_while_updating() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "advisoryButton"));
+            tryCompare(findChild(card, "advisory"), "opened", true);
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, updating: true })] }) };
+            const newCard = findChild(page, "provider_claudeAgent_work");
+            const popover = findChild(newCard, "advisory");
+            tryCompare(popover, "opened", true);
+            const update = findChild(newCard, "update");
+            verify(!update.enabled, "the reopened popover shows Updating disabled");
+            compare(update.text, "Updating…");
+        }
+
+        // At a small window and high zoom the popover scrolls: Tab focus is
+        // scrolled into view, never left activatable below the fold.
+        function test_the_advisory_popover_scrolls_tab_focus_into_view() {
+            const advisory = { title: "Update available", detail: "This version of the provider is outside the range HAL-C2 supports. " +
+                "Update it to v0.51.0 or newer so new threads keep working, or keep using the version you have and accept that some features may fail.",
+                updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            const win = root.Window.window;
+            const full = { width: win.width, height: win.height };
+            try {
+                win.width = 640;
+                win.height = 400;
+                Shell.state = { layout: { zoom: 3 }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+                const body = createTemporaryObject(zoomedBodyComponent, root, { zoom: 3 });
+                const card = findChild(body.page, "provider_claudeAgent_work");
+                const button = findChild(card, "advisoryButton");
+                const popover = findChild(card, "advisory");
+                button.forceActiveFocus();
+                keyClick(Qt.Key_Space);
+                tryCompare(popover, "opened", true);
+                const update = findChild(card, "update");
+                for (let i = 0; i < 6 && !update.activeFocus; i++)
+                    keyClick(Qt.Key_Tab);
+                verify(update.activeFocus, "Tab reaches Update now");
+                const at = update.mapToItem(popover.contentItem, 0, 0);
+                verify(at.y >= -1 && at.y + update.height <= popover.contentItem.height + 1,
+                       "the focused control is inside the scrolled view " + at.y + "/" + popover.contentItem.height);
+                body.destroy();
+            } finally {
+                win.width = full.width;
+                win.height = full.height;
+            }
+        }
+
+        // A republish without the advisory keeps it closed; this pins that it stays so.
         function test_the_advisory_popover_closes_when_the_advisory_goes_away() {
             const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
             Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
