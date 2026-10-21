@@ -3,6 +3,7 @@
 #   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, submitReview through gh)
+#   apps/server-ex/lib/hal_c2/plugins/host.ex (providers with model options, organizing review threads)
 #   plugins/code-review/mc/checkout.ex (the plugin's own clone, a pull request's worktree of it)
 #   docs/user/code-review.md
 
@@ -104,6 +105,22 @@ Feature: Agent code review
       And #12 is listed as changed since its review
 
     @mc
+    Scenario: A new push to a pull request the user asked for is reviewed again in selective mode
+      Given "code-review" watches "acme/api" selectively
+      And "code-review" reviews new pushes
+      And #12 was reviewed at an older head commit after the user asked for it
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+
+    @mc
+    Scenario: A followed pull request is followed after its repository stops being watched
+      Given "code-review" watches "acme/api" selectively
+      And #12 was reviewed at an older head commit after the user asked for it
+      And "code-review" stops watching "acme/api"
+      When "code-review" looks at "acme/api" again
+      Then #12 is listed as changed since its review
+
+    @mc
     Scenario Outline: Filters keep some pull requests out of automatic review
       Given "code-review" watches "acme/api" automatically and <filter>
       When <pull request> is opened on "acme/api"
@@ -136,6 +153,13 @@ Feature: Agent code review
       Then its thread runs Claude with that model and mode
 
     @mc
+    Scenario: A review runs with the effort picked for its model
+      Given "code-review" reviews with Claude on "claude-sonnet-5-5" in the "auto-accept-edits" mode
+      And "code-review" reviews with the effort "high"
+      When #12 is reviewed
+      Then its thread runs with the effort "high"
+
+    @mc
     Scenario: The review prompt is the user's template filled in for the pull request
       Given the review prompt template is "Review {{pr.title}} against {{pr.base}}. Focus on security."
       When #12 "Add rate limits" into "main" is reviewed
@@ -147,6 +171,21 @@ Feature: Agent code review
       Given "acme/api" has extra review instructions "Never approve schema changes"
       When #12 is reviewed
       Then the agent's prompt includes "Never approve schema changes"
+
+    @mc
+    Scenario: The pull request's description is added to the prompt
+      Given #12 says "Ship the limit change behind a flag" in its description
+      When #12 is reviewed
+      Then the agent's prompt includes "Ship the limit change behind a flag"
+
+    @mc
+    Scenario: A re-review is told the previous review's findings
+      Given "code-review" reviews new pushes
+      And #12 was reviewed at an older head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the new review's prompt includes "You reviewed this pull request before"
+      And the new review's prompt includes "Finding 1."
 
     @mc
     Scenario: The repository's REVIEW.md is followed when the user wants that
@@ -208,6 +247,21 @@ Feature: Agent code review
       Given a review of #12 is running
       When the agent's turn ends without a report
       Then the review of #12 is failed saying the agent gave no findings
+
+    @mc
+    Scenario: A review stopped by the agent's usage limit waits instead of failing
+      Given a review of #12 is running
+      When the agent's turn ends because its usage limit is reached
+      Then the review of #12 waits in the queue
+      And "code-review" says reviews are paused until the limit resets
+
+    @mc
+    Scenario: A finding carries its severity and a suggested fix
+      Given a review of #12 is running
+      When the agent reports a blocking finding with a suggested fix on "src/limits.ts"
+      Then the review of #12 is finished with that verdict, summary and comments
+      When the user publishes the review of #12
+      Then #12 gets the finding marked blocking with the suggested fix
 
     @mc
     Scenario: A review whose agent fails can be tried again
@@ -372,6 +426,21 @@ Feature: Agent code review
         | display | listed                        |
         | page    | not listed with the threads   |
         | threads | listed with the threads       |
+
+    @mc
+    Scenario: Changing where reviews show moves review threads there already are
+      Given "code-review" shows reviews as "threads"
+      When #12 is reviewed
+      Then its thread is listed with the threads
+      When "code-review" shows reviews as "page"
+      Then its thread is no longer listed with the threads
+
+    @mc
+    Scenario: A finished review's thread is settled in the sidebar
+      Given a review of #12 is running
+      When the agent reports the verdict "changes requested" with two comments on "src/limits.ts"
+      Then the review of #12 is finished with that verdict, summary and comments
+      And its thread is settled
         | both    | listed with the threads       |
 
     @mc
