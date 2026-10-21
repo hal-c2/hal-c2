@@ -338,6 +338,10 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   # --- where the release comes from ---------------------------------------------------------
 
   step "a cluster peer already downloaded {string}", %{args: [version]} = context do
+    a_peer_with(context, version)
+  end
+
+  defp a_peer_with(context, version) do
     # Connected first: once the peer is up this process also hears of its MC, which
     # the client's upgrade handshake cannot tell from socket messages.
     context = World.put_client(context, World.client(context))
@@ -346,6 +350,15 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     :ok = :erpc.call(peer, Source, :put, [version, Upgrade.platform(), archive])
     World.put_env("HAL_C2_UPGRADE_URL", @unreachable)
     Map.merge(context, %{peers: [peer], build: archive})
+  end
+
+  step "a cluster peer already downloaded {string}, its web port out of this MC's reach",
+       %{args: [version]} = context do
+    context = a_peer_with(context, version)
+    # The peer offers its link on the port it listened on, where nothing listens now.
+    [peer] = context.peers
+    :ok = :erpc.call(peer, Supervisor, :terminate_child, [HalC2.Supervisor, HalC2.Web])
+    context
   end
 
   step "the MC fetches the release from the peer instead of the internet", context do

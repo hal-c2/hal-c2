@@ -6,8 +6,9 @@ defmodule HalC2.Upgrade.Source do
     1. its own cache, `<home>/upgrades/<version>/`, where `mix hal_c2.upgrade` also
        leaves bundles it built;
     2. a cluster peer that already has it, over the peer's HTTP port with a
-       one-time link the peer hands out over distribution (bundles never travel
-       over distribution itself, which a large message would stall);
+       one-time link the peer hands out over distribution, or, when that port is out
+       of reach (an MC that listens on loopback behind Tailscale Serve), in small
+       pieces over distribution (never in one message, which would stall it);
     3. the release artifact at `HAL_C2_UPGRADE_URL` (`{version}` and `{platform}` are
        filled in), with its `.sha256` beside it;
     4. its cache or a peer again, for a bundle of any platform.
@@ -19,6 +20,7 @@ defmodule HalC2.Upgrade.Source do
 
   require Logger
 
+  @part 256 * 1024
   @default_url "https://github.com/hal-c2/hal-c2/releases/download/mc-v{version}/hal-c2-mc-{version}-{platform}.tar.gz"
   @link_ttl_ms :timer.minutes(10)
 
@@ -115,6 +117,21 @@ defmodule HalC2.Upgrade.Source do
     end
   end
 
+  @doc """
+  Up to `length` bytes from `offset` of this MC's copy of a bundle, for a peer that
+  cannot reach its HTTP port: `{:ok, data}`, or `:eof` past its end.
+  """
+  def read_part(version, platform, offset, length) do
+    case File.open(
+           archive_path(version, platform),
+           [:read, :binary],
+           &:file.pread(&1, offset, length)
+         ) do
+      {:ok, result} -> result
+      error -> error
+    end
+  end
+
   @doc "The file a one-time link names, once (`GET /api/upgrade/:token`)."
   def take(token) do
     case :persistent_term.get({__MODULE__, token}, nil) do
@@ -162,8 +179,7 @@ defmodule HalC2.Upgrade.Source do
              safe_erpc(peer, __MODULE__, :offer, [version, platform]),
            platform when is_binary(platform) <- offer["platform"] || platform,
            archive = archive_path(version, platform),
-           host = peer_host(peer),
-           :ok <- download("http://#{host}:#{port}#{path}", archive),
+           :ok <- from_peer(peer, "http://#{peer_host(peer)}:#{port}#{path}", version, platform),
            true <- sha256(archive) == sum || {:error, "the copy from #{peer} does not match"} do
         File.write!(archive <> ".sha256", sum)
         Logger.info("upgrade bundle #{version} came from #{peer}")
@@ -177,6 +193,44 @@ defmodule HalC2.Upgrade.Source do
           {:cont, acc}
       end
     end)
+  end
+
+  defp from_peer(peer, url, version, platform) do
+    archive = archive_path(version, platform)
+
+    with {:error, reason} <- download(url, archive) do
+      Logger.info("upgrade bundle over HTTP failed (#{reason}); taking it from #{peer} in pieces")
+      pull(peer, version, platform, archive)
+    end
+  end
+
+  defp pull(peer, version, platform, archive) do
+    part = archive <> ".part"
+    File.write!(part, "")
+
+    case pull(peer, version, platform, part, 0) do
+      :ok ->
+        File.rename!(part, archive)
+        :ok
+
+      error ->
+        File.rm(part)
+        error
+    end
+  end
+
+  defp pull(peer, version, platform, part, offset) do
+    case safe_erpc(peer, __MODULE__, :read_part, [version, platform, offset, @part]) do
+      {:ok, data} ->
+        File.write!(part, data, [:append])
+        pull(peer, version, platform, part, offset + byte_size(data))
+
+      :eof ->
+        :ok
+
+      _ ->
+        {:error, "#{peer} stopped handing out the bundle"}
+    end
   end
 
   defp from_url(version, platform) do

@@ -52,6 +52,13 @@ Feature: Hot code upgrade
     When the user updates the MC to "1.4.0"
     Then the MC fetches the release from the peer instead of the internet
 
+  # A peer's web port can listen on loopback alone, behind Tailscale Serve.
+  @mc
+  Scenario: A peer whose web port is out of reach hands the release over the cluster link
+    Given a cluster peer already downloaded "1.4.0", its web port out of this MC's reach
+    When the user updates the MC to "1.4.0"
+    Then the MC fetches the release from the peer instead of the internet
+
   @mc
   Scenario: A downloaded release that fails its checksum is not installed
     Given the downloaded "1.4.0" release does not match its checksum
