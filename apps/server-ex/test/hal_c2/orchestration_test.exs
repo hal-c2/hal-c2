@@ -862,6 +862,183 @@ defmodule HalC2.OrchestrationTest do
     assert attempts == ["completed", "interrupted"]
   end
 
+  # The prompt landed and its turn is running, driven by the runtime, when
+  # the run times out (the fake fire dispatches the prompt itself, then
+  # wedges): the cleanup interrupts that run through the runtime — it is
+  # not the undriven kind to abandon — and a user run queued behind it is
+  # untouched: it runs next and completes.
+  test "a timed-out scheduled run whose prompt is already running is interrupted, its queue left alone" do
+    start_supervised!(HalC2.ScheduledTasks)
+    start_supervised!(HalC2.Orchestration.TurnWatch)
+    Application.put_env(:hal_c2, :scheduled_tasks_run_timeout_ms, 5_000)
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :scheduled_tasks_run_timeout_ms)
+      Application.delete_env(:hal_c2, :scheduled_tasks_fire)
+    end)
+
+    thread_id = launch("hello")
+    await_statuses(thread_id, ["completed"])
+    task = scheduled_task(thread_id, "wait for me")
+    test_pid = self()
+
+    Application.put_env(:hal_c2, :scheduled_tasks_fire, fn task, fire_key ->
+      {:ok, _} =
+        Orchestration.dispatch(%{
+          "type" => "message.dispatch",
+          "commandId" => "scheduled-task:#{fire_key}",
+          "threadId" => task["threadId"],
+          "messageId" => "scheduled-task-message:#{fire_key}",
+          "scheduledTaskId" => task["id"],
+          "text" => task["prompt"],
+          "attachments" => [],
+          "modelSelection" => task["modelSelection"],
+          "createdBy" => task["createdBy"],
+          "creationSource" => task["creationSource"],
+          "dispatchMode" => %{"type" => "queue_after_active"}
+        })
+
+      send(test_pid, {:dispatched, self()})
+
+      receive do
+        :release -> {:ok, %{}}
+      end
+    end)
+
+    caller = Task.async(fn -> HalC2.ScheduledTasks.run_now(%{"id" => task["id"]}) end)
+    assert_receive {:dispatched, _run_pid}, 5_000
+
+    state = await_statuses(thread_id, ["completed", "running"])
+
+    [%{"id" => scheduled_run}] =
+      Enum.filter(runs(state), &(&1["userMessageId"] =~ "scheduled-task-message:"))
+
+    assert HalC2.Orchestration.TurnWatch.driven?(scheduled_run)
+
+    assert {:ok, _} = send_message(thread_id, "msg-user-2", "hello again")
+
+    assert {:ok,
+            %{
+              "task" => %{
+                "lastRunStatus" => "failed",
+                "lastRunError" => "The run timed out."
+              }
+            }} = Task.await(caller, 15_000)
+
+    state = await_statuses(thread_id, ["completed", "interrupted", "completed"])
+
+    attempts = state |> StreamState.list("run-attempt") |> Enum.map(& &1["status"])
+    assert attempts == ["completed", "interrupted", "completed"]
+  end
+
+  # Holds a launch between its thread landing and its first message landing:
+  # the launching process is suspended in its stream as it is about to make
+  # the second of the launch's calls to it (the streams_hook stage).
+  def hold_launch(test, :ensured, id) do
+    count = Process.get({:ensured, id}, 0) + 1
+    Process.put({:ensured, id}, count)
+
+    if count == 2 do
+      server = HalC2.Streams.ensure(id)
+      :ok = :sys.suspend(server)
+      send(test, {:launch_held, id, server})
+    end
+
+    :ok
+  end
+
+  def hold_launch(_test, _stage, _id), do: :ok
+
+  # A task that starts a new thread per run, timed out mid-launch: the
+  # thread id minted when the run started is where the launch was heading,
+  # so when the stream opens and the late dispatch lands there undriven,
+  # the cleanup ends that run instead of leaving it in a thread nobody
+  # knows.
+  test "a new-thread scheduled run that times out mid-launch still has its thread cleaned up" do
+    start_supervised!(HalC2.ScheduledTasks)
+    start_supervised!(HalC2.Orchestration.TurnWatch)
+    Application.put_env(:hal_c2, :scheduled_tasks_run_timeout_ms, 2_000)
+    Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :hold_launch, [self()]})
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :scheduled_tasks_run_timeout_ms)
+      Application.delete_env(:hal_c2, :streams_hook)
+    end)
+
+    {:ok, %{"task" => task}} =
+      HalC2.ScheduledTasks.upsert(%{
+        "title" => "Nightly",
+        "prompt" => "wait for me",
+        "enabled" => false,
+        "schedule" => %{"type" => "fixed_time", "timeOfDay" => "03:00"},
+        "projectId" => "project-1",
+        "workspaceStrategy" => %{"type" => "root"},
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default"
+      })
+
+    caller = Task.async(fn -> HalC2.ScheduledTasks.run_now(%{"id" => task["id"]}) end)
+    assert_receive {:launch_held, thread_id, server}, 5_000
+    Application.delete_env(:hal_c2, :streams_hook)
+
+    assert {:ok,
+            %{
+              "task" => %{
+                "lastRunStatus" => "failed",
+                "lastRunError" => "The run timed out."
+              }
+            }} = Task.await(caller, 15_000)
+
+    :ok = :sys.resume(server)
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+    state = await_statuses(thread_id, ["interrupted"])
+
+    assert StreamState.get(state, "thread")[thread_id]
+    assert [%{"userMessageId" => "scheduled-task-message:" <> _}] = runs(state)
+
+    attempts = state |> StreamState.list("run-attempt") |> Enum.map(& &1["status"])
+    assert attempts == ["interrupted"]
+  end
+
+  def notify_ensured(test, :ensured, id) do
+    send(test, {:ensured_stream, id})
+    :ok
+  end
+
+  def notify_ensured(_test, _stage, _id), do: :ok
+
+  # Deleting a task mid-dispatch is the timeout's hazard with another cause:
+  # the killed run's dispatch can still commit. It cleans up its own prompt
+  # the same way, so nothing runs — or sits undriven — for the deleted task.
+  test "a scheduled run deleted mid-dispatch ends the prompt it lands late" do
+    start_supervised!(HalC2.ScheduledTasks)
+    start_supervised!(HalC2.Orchestration.TurnWatch)
+
+    thread_id = launch("hello")
+    await_statuses(thread_id, ["completed"])
+    task = scheduled_task(thread_id, "wait for me")
+
+    server = HalC2.Streams.ensure(thread_id)
+    :ok = :sys.suspend(server)
+    Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :notify_ensured, [self()]})
+    on_exit(fn -> Application.delete_env(:hal_c2, :streams_hook) end)
+    caller = Task.async(fn -> HalC2.ScheduledTasks.run_now(%{"id" => task["id"]}) end)
+
+    # The run is on its way into the held stream with its dispatch.
+    assert_receive {:ensured_stream, ^thread_id}, 5_000
+    Application.delete_env(:hal_c2, :streams_hook)
+
+    assert {:ok, %{"id" => _}} = HalC2.ScheduledTasks.delete(%{"id" => task["id"]})
+    assert {:error, %{"message" => "Schedule task not found."}} = Task.await(caller, 10_000)
+
+    :ok = :sys.resume(server)
+    state = await_statuses(thread_id, ["completed", "interrupted"])
+
+    attempts = state |> StreamState.list("run-attempt") |> Enum.map(& &1["status"])
+    assert attempts == ["completed", "interrupted"]
+  end
+
   test "an agent's MCP credential reads its own project's threads, and nothing else" do
     start_supervised!(HalC2.Mcp)
     thread_id = launch("hello")

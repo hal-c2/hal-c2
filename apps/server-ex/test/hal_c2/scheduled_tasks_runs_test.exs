@@ -243,6 +243,76 @@ defmodule HalC2.ScheduledTasksRunsTest do
              Task.await(caller, @wait)
   end
 
+  # A run started before the cap existed has no timer of its own and none of
+  # what its cleanup needs; an upgrade in place arms it for the time left
+  # (never more than the cap, even if the clock moved backwards meanwhile)
+  # and fills those in, and the armed timer then ends it like any other.
+  test "an upgrade in place arms a pre-cap run, which then times out" do
+    scheduler = Process.whereis(ScheduledTasks)
+    blocking_fire()
+
+    {:ok, _} =
+      ScheduledTasks.upsert(%{
+        "id" => "t1",
+        "title" => "t1",
+        "prompt" => "go",
+        "enabled" => true,
+        "schedule" => %{"type" => "interval", "everyMs" => 60_000},
+        "projectId" => "p1",
+        "threadId" => "th-old"
+      })
+
+    caller = Task.async(fn -> ScheduledTasks.run_now(%{"id" => "t1"}) end)
+    assert_receive {:started, run}, @wait
+    ref = monitor_started(run)
+
+    old_shape = fn state ->
+      Map.update!(state, :runs, fn runs ->
+        Map.new(runs, fn {pid, run} ->
+          if run[:timer], do: Process.cancel_timer(run.timer)
+          Process.unlink(pid)
+          {pid, Map.drop(run, [:timer, :thread_id, :message_id])}
+        end)
+      end)
+    end
+
+    upgrade = fn ->
+      :ok = :sys.suspend(scheduler)
+      :ok = :sys.change_code(scheduler, ScheduledTasks, nil, :hot)
+      :ok = :sys.resume(scheduler)
+    end
+
+    :sys.replace_state(scheduler, old_shape)
+    upgrade.()
+
+    assert %{^run => backfilled} = :sys.get_state(scheduler).runs
+    assert backfilled.thread_id == "th-old"
+    assert backfilled.message_id =~ "scheduled-task-message:t1:"
+    assert backfilled.message_id =~ ":manual"
+    assert is_reference(backfilled.timer)
+
+    # Again, now with a short cap and a clock that moved backwards in
+    # flight: the re-armed timer is at most the cap, and firing it fails
+    # the task and answers the waiting caller.
+    :sys.replace_state(scheduler, old_shape)
+    :persistent_term.put(@clock, ~U[2026-06-01 07:00:00.000Z])
+    Application.put_env(:hal_c2, :scheduled_tasks_run_timeout_ms, 50)
+    upgrade.()
+
+    assert %{^run => rearmed} = :sys.get_state(scheduler).runs
+    assert (left = Process.read_timer(rearmed.timer)) == false or left <= 50
+
+    assert {:ok,
+            %{
+              "task" => %{
+                "lastRunStatus" => "failed",
+                "lastRunError" => "The run timed out."
+              }
+            }} = Task.await(caller, @wait)
+
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}, @wait
+  end
+
   test "a timeout for a run that already finished is ignored" do
     Application.put_env(:hal_c2, :scheduled_tasks_fire, fn _, _ -> {:ok, %{}} end)
     interval_task()
