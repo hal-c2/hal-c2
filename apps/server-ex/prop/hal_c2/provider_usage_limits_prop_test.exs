@@ -8,7 +8,8 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
   omits), a probe redraws exactly its instance, an `unsupported` instance is
   frozen against turn updates while its neighbours are not, the overage
   bucket takes each instance's own probed name, and a hot upgrade from the
-  single-name state keeps that name for the built-in instance only.
+  single-name state keeps that name for the built-in instance only. A cast
+  in the pre-instance shape (queued across that upgrade) is the built-in's.
   """
 
   use ExUnit.Case, async: false
@@ -129,6 +130,9 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
           oneof(~w(five_hour seven_day seven_day_overage_included)),
           integer(0, 100)
         ]}},
+      {1,
+       {:call, __MODULE__, :legacy_claude_event,
+        [oneof(~w(five_hour seven_day seven_day_overage_included)), integer(0, 100)]}},
       {2, {:call, __MODULE__, :probe, [oneof(@instances)]}},
       {1, {:call, __MODULE__, :unsupported_probe, []}},
       {1, {:call, __MODULE__, :code_change_old, []}},
@@ -163,6 +167,9 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
         end
     end
   end
+
+  def next_state(state, result, {:call, mod, :legacy_claude_event, [type, percent]}),
+    do: next_state(state, result, {:call, mod, :claude_event, ["claudeAgent", type, percent]})
 
   def next_state(state, _result, {:call, _, :probe, [instance]}) do
     state
@@ -228,6 +235,17 @@ defmodule HalC2.ProviderUsageLimitsPropTest do
       "rateLimitType" => type,
       "utilization" => percent / 100,
       "resetsAt" => 1_790_000_000
+    })
+
+    settle()
+  end
+
+  # The cast `claude_event/1` sent before instances were routed; one can sit
+  # in the mailbox across the upgrade that replaces it.
+  def legacy_claude_event(type, percent) do
+    GenServer.cast(Limits, {
+      :claude_event,
+      %{"rateLimitType" => type, "utilization" => percent / 100, "resetsAt" => 1_790_000_000}
     })
 
     settle()

@@ -448,6 +448,10 @@ defmodule HalC2.ProviderUsageLimits do
     {:noreply, state}
   end
 
+  # A cast queued across a hot upgrade, from when every event was the built-in's.
+  def handle_cast({:claude_event, info}, state),
+    do: handle_cast({:claude_event, "claudeAgent", info}, state)
+
   def handle_cast({:claude_event, instance, info}, state) do
     case Claude.event_window(info, claude_names(state)[instance]) do
       nil -> :ok

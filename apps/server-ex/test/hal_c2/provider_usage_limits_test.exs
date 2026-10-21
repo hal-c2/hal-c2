@@ -463,6 +463,29 @@ defmodule HalC2.ProviderUsageLimitsTest do
     assert round(claude["five_hour"]["usedPercent"]) == 30
   end
 
+  # A cast in the mailbox across a hot upgrade still has the pre-instance
+  # shape, from when every Claude event was the built-in's. It must land
+  # there, not crash the process (and its ETS table with it).
+  test "a pre-upgrade claude_event cast queued across the upgrade lands on the built-in" do
+    start()
+    pid = Process.whereis(Limits)
+    :ok = :sys.suspend(pid)
+
+    GenServer.cast(
+      pid,
+      {:claude_event,
+       %{"rateLimitType" => "five_hour", "utilization" => 0.77, "resetsAt" => 1_790_000_000}}
+    )
+
+    :ok = :sys.change_code(pid, Limits, nil, :hot)
+    :ok = :sys.resume(pid)
+    _ = :sys.get_state(Limits)
+
+    assert Process.whereis(Limits) == pid
+    claude = Map.new(Limits.get("claudeAgent")["windows"], &{&1["id"], &1})
+    assert claude["five_hour"]["usedPercent"] == 77.0
+  end
+
   # A removed instance's bucket name goes with its published limits, so the
   # id being reused later cannot write under the old account's model name.
   test "a probe drops the bucket names of instances settings no longer have" do
