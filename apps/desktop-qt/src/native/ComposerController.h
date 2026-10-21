@@ -428,6 +428,7 @@ private:
   // shared state (Kept) the others show too.
   static void publishEverywhere(NativeShell* shell);
   QVariantMap turnState() const;
+  bool queueHeld() const;
   QVariant composerState(const QVariantMap& turn) const;
   QVariantMap pickerState() const;
 

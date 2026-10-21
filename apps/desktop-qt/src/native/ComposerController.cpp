@@ -2078,7 +2078,7 @@ bool ComposerController::queueCommand(const QString& type, const QString& runId)
 // is told in the window that asked, else in the one the user is in.
 bool ComposerController::resumeQueue() {
   const auto thread = m_store->thread(m_thread);
-  if (!thread || m_kept.resuming.contains(m_thread) || !turnState().value(QStringLiteral("queueHeld")).toBool()) return true;
+  if (!thread || m_kept.resuming.contains(m_thread) || !queueHeld()) return true;
   if (!m_client->isReady() || !m_store->synchronized() || !m_store->threadOnline(m_thread) || !m_timeline ||
       m_timeline->threadKey() != m_thread || m_timeline->status() != QLatin1String("live")) {
     // One warning however often the button is pressed while reconnecting: a toast
@@ -2302,6 +2302,15 @@ void ComposerController::publish() {
   if (!m_draftId.isEmpty()) {
     for (const auto& window : NativeShell::of(this)->shell()->windows()) window->sidebar()->draftEdited(m_draftId);
   }
+}
+
+// Whether the MC holds this thread's queue, with something listed to resume:
+// the one fact resumeQueue needs, without rebuilding the whole turn state.
+bool ComposerController::queueHeld() const {
+  if (!m_draftId.isEmpty() || !m_store->thread(m_thread) || !m_timeline) return false;
+  const composer::Queued queued =
+      composer::queued(m_timeline->entities(QStringLiteral("run")).values(), m_timeline->entities(QStringLiteral("message")));
+  return queued.held && (!queued.queue.isEmpty() || !queued.waiting.isEmpty());
 }
 
 QVariantMap ComposerController::turnState() const {
