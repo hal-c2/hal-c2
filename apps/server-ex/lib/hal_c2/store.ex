@@ -167,7 +167,11 @@ defmodule HalC2.Store do
   # `init/1` traps exits), wrote nothing, so it is made again once the store is back.
   # Nothing says when that is, so it looks every few milliseconds. A call the store
   # took and then crashed on may have landed, and fails as it did. (A checkpoint the
-  # checkpointer answers may run twice, which does no harm.)
+  # checkpointer answers may run twice, which does no harm.) A stop for the
+  # checkpointer's crash is deliberately not waited out either, though it too
+  # lands between calls so its queued writes wrote nothing: they exit with the
+  # crash reason, which a caller cannot tell from a crash inside the call it
+  # took, so retrying it could replay a write that landed.
   defp write(store, request, deadline \\ nil) do
     GenServer.call(store, request, @write_timeout)
   catch
@@ -652,7 +656,12 @@ defmodule HalC2.Store do
   def handle_info(message, state), do: unexpected(message, state)
 
   defp unexpected(message, state) do
-    Logger.warning("the store ignored an unexpected message: #{inspect(message)}")
+    # Bounded: a stray message can carry an arbitrarily large term, and the
+    # diagnostic is not worth a multi-megabyte log line in the store process.
+    Logger.warning(
+      "the store ignored an unexpected message: #{inspect(message, limit: 10, printable_limit: 200)}"
+    )
+
     {:noreply, state}
   end
 

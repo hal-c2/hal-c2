@@ -79,7 +79,11 @@ defmodule HalC2.StoreTest do
 
     store = Process.whereis(Store)
     # Another connection holds the write lock, so the store's append waits inside its
-    # BEGIN IMMEDIATE until this test lets it go.
+    # BEGIN IMMEDIATE until this test lets it go. That wait is bounded by the
+    # store's `busy_timeout = 5000`: the gap between the `:call` trace below
+    # and the ROLLBACK is the whole budget, so on a loaded box this test can
+    # fail with the store crashing on the timed-out BEGIN instead — if it
+    # flakes, that is the first place to look.
     {:ok, db} = Sqlite3.open(path)
     :ok = Sqlite3.execute(db, "BEGIN IMMEDIATE")
     :erlang.trace(store, true, [:call, :receive])
