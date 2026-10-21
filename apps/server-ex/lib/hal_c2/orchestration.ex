@@ -1076,8 +1076,10 @@ defmodule HalC2.Orchestration do
             else: %{}
 
         false ->
+          # A plugin unsettling is not the user holding the thread active: the
+          # override clears, as a wake clears it, so the thread can settle again.
           if thread["settledOverride"] == "settled",
-            do: thread_fields("thread.unsettle", %{}, thread, at),
+            do: %{"settledOverride" => nil, "settledAt" => nil, "unsettledAt" => at},
             else: %{}
 
         _ ->
