@@ -2991,9 +2991,14 @@ defmodule HalC2.Orchestration do
                 state,
                 "run",
                 ids.run,
+                # Started, so no longer held, whatever path brought it here:
+                # `Shell.held_never_started?/1` reads a started-then-cancelled
+                # run's stale hold as never-started.
                 &Map.merge(
                   &1,
-                  Map.drop(Entities.run(ids, ordinal, selection, at), ["requestedAt"])
+                  Entities.run(ids, ordinal, selection, at)
+                  |> Map.drop(["requestedAt"])
+                  |> Map.put("queueHeld", false)
                 )
               ),
             else: create("run", ids.run, Entities.run(ids, ordinal, selection, at))

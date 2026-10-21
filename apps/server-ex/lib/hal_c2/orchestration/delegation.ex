@@ -35,7 +35,7 @@ defmodule HalC2.Orchestration.Delegation do
       parent
       |> StreamState.list("run")
       |> Enum.filter(&(&1["status"] in @active))
-      |> Enum.max_by(& &1["ordinal"], fn -> nil end)
+      |> Enum.max_by(&(&1["ordinal"] || 0), fn -> nil end)
 
     with :ok <- task_given(input["task"]),
          :ok <- if(run && run["providerInstanceId"] == instance, do: :ok, else: not_active()),
@@ -623,7 +623,7 @@ defmodule HalC2.Orchestration.Delegation do
   defp status(thread_id, task_id) do
     with %{} = task <- subagent(thread_id, task_id) do
       child = stream(task["childThreadId"])
-      runs = StreamState.list(child, "run") |> Enum.sort_by(& &1["ordinal"])
+      runs = StreamState.list(child, "run") |> Enum.sort_by(&(&1["ordinal"] || 0))
       terminal = task["status"] in @terminal
 
       %{
