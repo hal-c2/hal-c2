@@ -175,19 +175,27 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
         'check-sqlite-driver.sh" "${app_dir}/usr/plugins/sqldrivers" libqsqlite.so',
       );
       // After Qt's plugins are deployed, before the AppImage is written.
-      expect(linux.indexOf("check-sqlite-driver.sh")).toBeGreaterThan(linux.indexOf("--plugin qt"));
-      expect(linux.indexOf("check-sqlite-driver.sh")).toBeLessThan(
-        linux.indexOf("--output appimage"),
-      );
+      const linuxCheck = linux.indexOf("check-sqlite-driver.sh");
+      const linuxDeploy = linux.indexOf("--plugin qt");
+      const linuxOutput = linux.indexOf("--output appimage");
+      expect(linuxCheck).toBeGreaterThanOrEqual(0);
+      expect(linuxDeploy).toBeGreaterThanOrEqual(0);
+      expect(linuxOutput).toBeGreaterThanOrEqual(0);
+      expect(linuxCheck).toBeGreaterThan(linuxDeploy);
+      expect(linuxCheck).toBeLessThan(linuxOutput);
       const macos = read("package-macos.sh");
       expect(macos).toContain(
         'check-sqlite-driver.sh" "${app}/Contents/PlugIns/sqldrivers" libqsqlite.dylib',
       );
       // After the pruning loop that can remove the driver, before signing.
-      expect(macos.indexOf("check-sqlite-driver.sh")).toBeGreaterThan(
-        macos.indexOf("-name '*.dylib'"),
-      );
-      expect(macos.indexOf("check-sqlite-driver.sh")).toBeLessThan(macos.indexOf("codesign"));
+      const macosCheck = macos.indexOf("check-sqlite-driver.sh");
+      const macosPrune = macos.indexOf("-name '*.dylib'");
+      const macosSign = macos.indexOf("codesign");
+      expect(macosCheck).toBeGreaterThanOrEqual(0);
+      expect(macosPrune).toBeGreaterThanOrEqual(0);
+      expect(macosSign).toBeGreaterThanOrEqual(0);
+      expect(macosCheck).toBeGreaterThan(macosPrune);
+      expect(macosCheck).toBeLessThan(macosSign);
     });
 
     it("runs directly, as the packagers invoke it", () => {
