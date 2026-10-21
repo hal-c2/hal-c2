@@ -1522,7 +1522,7 @@ defmodule HalC2Plugins.CodeReview do
   defp severity_prefix(%{"body" => body} = comment) do
     case @badges[severity(comment["severity"])] do
       nil -> body
-      badge -> if String.starts_with?(body, ["🔴", "🟡", "🔵", "**"]), do: body, else: "#{badge} #{body}"
+      badge -> if String.starts_with?(body, [badge, "🔴", "🟡", "🔵"]), do: body, else: "#{badge} #{body}"
     end
   end
 
