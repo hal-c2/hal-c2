@@ -2575,7 +2575,7 @@ defmodule HalC2.Orchestration do
     state
     |> StreamState.list("run")
     |> Enum.filter(&(&1["status"] == "queued"))
-    |> Enum.sort_by(&{&1["queuePosition"] || 0, &1["ordinal"]})
+    |> Enum.sort_by(&{&1["queuePosition"] || 0, &1["ordinal"] || 0})
   end
 
   defp renumber(state) do
@@ -2823,8 +2823,11 @@ defmodule HalC2.Orchestration do
     queued = queued_runs(state)
     position = if restart_of, do: 0, else: length(queued) + 1
 
+    # Above every other run until it starts (`start_ordinal/3`).
+    ordinal = Enum.max(Enum.map(runs, &(&1["ordinal"] || 0)), fn -> 0 end) + 1
+
     run =
-      Entities.run(ids, length(runs) + 1, selection, at)
+      Entities.run(ids, ordinal, selection, at)
       |> Map.merge(%{"status" => "queued", "queuePosition" => position})
 
     message =
@@ -2854,11 +2857,11 @@ defmodule HalC2.Orchestration do
   end
 
   # Starts a run for a message: a new one, or a queued run (with its stored message
-  # as `command`), which keeps its ordinal and ids.
+  # as `command`), which keeps its ids and takes the next ordinal (`start_ordinal/3`).
   defp new_run(state, thread, runs, command, queued \\ nil) do
     at = Entities.now()
     thread_id = thread["id"]
-    ordinal = if queued, do: queued["ordinal"], else: length(runs) + 1
+    {ordinal, renumbered} = start_ordinal(state, runs, queued)
 
     selection =
       (queued && queued["modelSelection"]) || command["modelSelection"] ||
@@ -2979,6 +2982,7 @@ defmodule HalC2.Orchestration do
 
     changes =
       Enum.reject(provider_changes ++ [scope_change, switch_change], &is_nil/1)
+      |> Kernel.++(renumbered)
       |> Kernel.++(
         [
           if(queued,
@@ -2987,9 +2991,14 @@ defmodule HalC2.Orchestration do
                 state,
                 "run",
                 ids.run,
+                # Started, so no longer held, whatever path brought it here:
+                # `Shell.held_never_started?/1` reads a started-then-cancelled
+                # run's stale hold as never-started.
                 &Map.merge(
                   &1,
-                  Map.drop(Entities.run(ids, ordinal, selection, at), ["requestedAt"])
+                  Entities.run(ids, ordinal, selection, at)
+                  |> Map.drop(["requestedAt"])
+                  |> Map.put("queueHeld", false)
                 )
               ),
             else: create("run", ids.run, Entities.run(ids, ordinal, selection, at))
@@ -3072,6 +3081,36 @@ defmodule HalC2.Orchestration do
     }
 
     {changes ++ handoff.changes, {:ok, turn}}
+  end
+
+  # Runs are numbered in the order they leave the queue, which is what checkpoints (ref
+  # `ordinal - 1` is a run's baseline), handoff deltas and windows count by: a run
+  # takes the ordinal after every run that left the queue, and the runs still waiting
+  # (a held queue a newer message passed, say) move up behind it in queue order.
+  # Without a hold nothing moves: the queue's first run already has the next ordinal.
+  # A run cancelled while queued left it too, so it keeps its number, and the run after
+  # it has no checkpoint at `ordinal - 1` to start from. Dense numbering is a
+  # conscious cost: every pass over a waiting queue of N renumbers all N (each
+  # shifted ordinal is a real diff, so the unchanged-diff filter does not help),
+  # which is fine for realistic queue sizes; numbering waiting runs with
+  # headroom would trade that for gaps in queued ordinals.
+  defp start_ordinal(state, runs, run) do
+    own = run && run["id"]
+
+    {waiting, left} =
+      runs |> Enum.reject(&(&1["id"] == own)) |> Enum.split_with(&(&1["status"] == "queued"))
+
+    ordinal = Enum.max(Enum.map(left, &(&1["ordinal"] || 0)), fn -> 0 end) + 1
+
+    renumbered =
+      for {queued, next} <-
+            waiting
+            |> Enum.sort_by(&{&1["queuePosition"] || 0, &1["ordinal"] || 0})
+            |> Enum.with_index(ordinal + 1),
+          change = upsert(state, "run", queued["id"], &Map.put(&1, "ordinal", next)),
+          do: change
+
+    {ordinal, renumbered}
   end
 
   # A message that implements a proposed plan completes it, whether the plan is this

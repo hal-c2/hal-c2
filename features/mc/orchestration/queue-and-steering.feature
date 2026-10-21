@@ -154,7 +154,7 @@ Feature: Queueing, steering and restarting
       | claudeAgent |
 
   @mc
-  Scenario: Queued messages keep their own run ids and ordinals when they start
+  Scenario: A queued message keeps its own run id and takes the next ordinal when it starts
     Given "t1" has a running turn and a queued message "Next" with ordinal 3
     When the running turn completes
     Then the run for "Next" starts with ordinal 3
@@ -250,6 +250,17 @@ Feature: Queueing, steering and restarting
     Given "t1" has a held queued message "A"
     When another run of "t1" ends
     Then "A" is still queued
+
+  # Runs are numbered in the order they start: checkpoints, handoffs and windowed
+  # history count by it.
+  @mc
+  Scenario: A held queued message that a newer message passed starts after it
+    Given "t1" has a held queued message "A"
+    And another run of "t1" ends
+    When the user resumes the queue of "t1"
+    Then the run for "A" starts with ordinal 3
+    And the run for "Something else" has ordinal 2
+    And the thread's latest run is the run for "A"
 
   @mc @backlog
   Scenario: A queued delegated task result runs before the user's queued messages

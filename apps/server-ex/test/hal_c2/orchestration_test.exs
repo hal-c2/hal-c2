@@ -1645,6 +1645,51 @@ defmodule HalC2.OrchestrationTest do
                ]
     end
 
+    # A held queue that a newer run passed is numbered above it, and has no attempt
+    # yet, cancelled while held no more than still queued.
+    for status <- ["queued", "cancelled"] do
+      test "a fresh runtime records a subagent under the run that ran, not a held #{status} run's" do
+        :ok = HalC2.Shell.subscribe(self())
+        thread_id = launch("hello", "claudeAgent")
+        [%{"id" => run_id}] = StreamState.list(await_run(thread_id, "completed"), "run")
+
+        {:ok, _} =
+          HalC2.Streams.commit(thread_id, :thread, [
+            {"run", "held",
+             %{
+               "s" => %{
+                 "id" => "held",
+                 "threadId" => thread_id,
+                 "ordinal" => 2,
+                 "status" => unquote(status),
+                 "queuePosition" => 1,
+                 "queueHeld" => true
+               }
+             }}
+          ])
+
+        # A runtime that started after that turn: no latest turn ids.
+        [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+        :sys.replace_state(pid, &%{&1 | last_ids: nil})
+
+        claude_says(thread_id, %{
+          "type" => "system",
+          "subtype" => "task_progress",
+          "task_id" => "task-unseen",
+          "tool_use_id" => "agent-unseen",
+          "description" => "Review the diff",
+          "summary" => "Reading lib"
+        })
+
+        await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+
+        assert %{"runId" => ^run_id} =
+                 StreamState.get(current(thread_id), "subagent")[
+                   "node:subagent:claudeAgent:agent-unseen"
+                 ]
+      end
+    end
+
     test "ambient tasks between turns are not background work" do
       :ok = HalC2.Shell.subscribe(self())
       thread_id = launch("hello", "claudeAgent")
@@ -2328,6 +2373,47 @@ defmodule HalC2.OrchestrationTest do
 
       assert [%{"status" => "consumed", "resolution" => %{"strategy" => "native_fork"}}] =
                StreamState.list(state, "context-transfer")
+    end
+
+    # Fork history is selected by ordinal (start order): a held queued run a
+    # newer run passed was renumbered above the fork point when the passer
+    # started, so it and its queued message stay in the source — the same
+    # rule the ledger states for messages queued after the fork point.
+    test "a fork at a run that passed a held queue does not copy the held run" do
+      source_id = launch("hello")
+      [run] = runs(await_statuses(source_id, ["completed"]))
+
+      {:ok, _} =
+        HalC2.Streams.commit(source_id, :thread, [
+          {"run", "held",
+           %{
+             "s" => %{
+               "id" => "held",
+               "threadId" => source_id,
+               "ordinal" => run["ordinal"] + 1,
+               "status" => "queued",
+               "queuePosition" => 1,
+               "queueHeld" => true
+             }
+           }},
+          {"message", "held-msg",
+           %{
+             "s" => %{
+               "id" => "held-msg",
+               "threadId" => source_id,
+               "runId" => "held",
+               "role" => "user",
+               "text" => "held ask"
+             }
+           }}
+        ])
+
+      fork_id = fork(source_id, run["id"])
+      state = current(fork_id)
+
+      assert [%{"status" => "completed", "threadId" => ^fork_id}] = runs(state)
+      texts = for m <- StreamState.list(state, "message"), do: m["text"]
+      refute "held ask" in texts
     end
 
     test "a fork on another provider gets the history as a transcript" do

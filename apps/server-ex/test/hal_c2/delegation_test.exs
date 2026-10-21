@@ -188,6 +188,25 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a task whose child passed a held run that was then cancelled" do
+    # The held run is numbered above the run that passed it, but it never
+    # started: the child ended with the passed run, answer and all.
+    test "settles from the run that passed it, not the cancelled held run" do
+      :ok = delegate("failed")
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          run("cr2", 2, "completed", %{"completedAt" => @at}),
+          {"message", "m2",
+           %{"s" => %{"id" => "m2", "runId" => "cr2", "role" => "assistant", "text" => "done"}}},
+          run("cr3", 3, "cancelled", %{"completedAt" => @at, "queueHeld" => true})
+        ])
+
+      assert Delegation.reconcile("p") == 1
+      assert %{"status" => "completed", "result" => "done"} = task()
+    end
+  end
+
   describe "a request the provider instance refuses" do
     test "ends the task failed instead of leaving it running" do
       delegate("running")

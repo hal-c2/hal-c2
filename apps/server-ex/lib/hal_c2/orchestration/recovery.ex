@@ -106,8 +106,7 @@ defmodule HalC2.Orchestration.Recovery do
   # The background commands of the thread's finished latest run that are still marked
   # active: they ran in the provider process, which is gone.
   defp ended_background(state) do
-    with %{"status" => "completed"} = run <-
-           state |> StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> nil end),
+    with %{"status" => "completed"} = run <- latest_run(state),
          %{"nativeThreadRef" => %{}} <-
            StreamState.get(state, "provider-thread")[run["providerThreadId"]],
          [_ | _] = commands <-
@@ -213,15 +212,32 @@ defmodule HalC2.Orchestration.Recovery do
         Enum.map_join(commands, ", ", &"`#{&1}`") <>
         ". Start them again if you still need them, then continue where you left off."
 
-  # A message the user sent since takes precedence.
+  # A message the user sent since takes precedence; a held one does not when it
+  # was made before `run` (a run that passed a held queue was sent after it, and
+  # is numbered below it since the renumbering). A held run made after `run` —
+  # a message queued behind it, held by this very settle — still counts as
+  # newer-sent, so no continuation jumps it: creation order (the order of
+  # `StreamState.list/2`) tells the two apart where the ordinal no longer can.
   defp latest?(thread_id, run) do
     state = HalC2.Streams.state(thread_id)
-    Enum.all?(StreamState.list(state, "run"), &(&1["ordinal"] <= run["ordinal"]))
+    runs = StreamState.list(state, "run")
+    made = Map.new(Enum.with_index(runs, &{&1["id"], &2}))
+
+    Enum.all?(runs, fn other ->
+      (HalC2.Projection.Shell.held_never_started?(other) and
+         made[other["id"]] <= made[run["id"]]) or
+        (other["ordinal"] || 0) <= (run["ordinal"] || 0)
+    end)
   end
 
+  # The thread's latest run, passing over held queued runs: a run that passed a held
+  # queue is numbered below the held run it passed (`Orchestration.start_ordinal/3`). A
+  # queue that is not held was sent after the latest run that began, and is latest.
+  defp latest_run(state),
+    do: state |> StreamState.list("run") |> HalC2.Projection.Shell.latest_run()
+
   defp continuable(state) do
-    with %{"status" => "running"} = run <-
-           state |> StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> nil end),
+    with %{"status" => "running"} = run <- latest_run(state),
          %{"nativeThreadRef" => %{}} <-
            StreamState.get(state, "provider-thread")[run["providerThreadId"]] do
       run

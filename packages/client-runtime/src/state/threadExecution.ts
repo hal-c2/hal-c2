@@ -19,9 +19,11 @@ function latestMatchingRun(
   projection: OrchestrationV2ThreadProjection,
   predicate: (run: OrchestrationV2ThreadProjection["runs"][number]) => boolean,
 ): OrchestrationV2ThreadProjection["runs"][number] | null {
+  // `>=`: of equal ordinals (legacy runs stored without one) the newest made wins,
+  // as the MC's pick does; `runs` are in the order they were made.
   return projection.runs.reduce<OrchestrationV2ThreadProjection["runs"][number] | null>(
     (latest, candidate) =>
-      predicate(candidate) && (latest === null || candidate.ordinal > latest.ordinal)
+      predicate(candidate) && (latest === null || candidate.ordinal >= latest.ordinal)
         ? candidate
         : latest,
     null,
@@ -46,16 +48,32 @@ function summarizeThreadRun(
   };
 }
 
+/**
+ * The run with the highest ordinal, passing over runs held for the user that never
+ * started (still queued, or cancelled while held): a run that passed a held queue is
+ * numbered below the held run it passed. As the MC's
+ * `HalC2.Projection.Shell.latest_run/1`.
+ */
+export function latestUnheldRun(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection["runs"][number] | null {
+  return latestMatchingRun(
+    projection,
+    (run) => !((run.status === "queued" || run.status === "cancelled") && run.queueHeld),
+  );
+}
+
+/** The thread's latest run, as `latestUnheldRun`. */
 export function deriveLatestThreadRun(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRunSummary | null {
-  const run = latestMatchingRun(projection, () => true);
+  const run = latestUnheldRun(projection);
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
 /**
- * Returns the run that owns live provider work, falling back to the newest run
- * once the thread is idle. A newer queued run must not make an older executing
+ * Returns the run that owns live provider work, falling back to the latest run
+ * (`latestUnheldRun`) once the thread is idle. A newer queued run must not make an older executing
  * run look settled in clients that render per-run activity.
  */
 export function deriveThreadActivityRun(
@@ -63,7 +81,7 @@ export function deriveThreadActivityRun(
 ): ThreadRunSummary | null {
   const run =
     latestMatchingRun(projection, (candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ??
-    latestMatchingRun(projection, () => true);
+    latestUnheldRun(projection);
   return run === null ? null : summarizeThreadRun(projection, run);
 }
 
@@ -71,7 +89,7 @@ export function deriveThreadRuntime(
   projection: OrchestrationV2ThreadProjection,
 ): ThreadRuntimeSummary | null {
   const latestRun = deriveLatestThreadRun(projection);
-  const latestRunProjection = latestMatchingRun(projection, () => true);
+  const latestRunProjection = latestUnheldRun(projection);
   const activityRun = deriveThreadActivityRun(projection);
   const providerSession = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === projection.thread.providerInstanceId,
