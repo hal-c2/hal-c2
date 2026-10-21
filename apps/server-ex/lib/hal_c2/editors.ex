@@ -125,8 +125,9 @@ defmodule HalC2.Editors do
   # The shell parameters of a registered command line. `%1`, `%L` and `%l` stand for the
   # file, and so does `%*` (all arguments), as the file is the only one given. The others
   # get what the shell gives a program started without them: `%S` the show command
-  # (normal), `%H` and `%I` no window or DDE handle, `%W` the working directory (there is
-  # none per call) and `%2` to `%9` the extra parameters (there are none). The values are
+  # (normal), `%H` and `%I` no window or DDE handle, `%W` the file's directory (the
+  # working directory Explorer would start the editor in) and `%2` to `%9` the extra
+  # parameters (there are none). The values are
   # put in by a function because a replacement string would read the backslashes of a
   # Windows path (`\\2`) as group references.
   defp file_placeholder, do: ~r/%[1lL*SHIW2-9]/
@@ -134,7 +135,9 @@ defmodule HalC2.Editors do
   defp placeholder_value("%S", _file), do: "1"
   defp placeholder_value("%" <> parameter, _file) when parameter in ["H", "I"], do: "0"
 
-  defp placeholder_value("%" <> parameter, _file) when parameter in ["W" | ~w(2 3 4 5 6 7 8 9)],
+  defp placeholder_value("%W", file), do: Path.dirname(file)
+
+  defp placeholder_value("%" <> parameter, _file) when parameter in ~w(2 3 4 5 6 7 8 9),
     do: ""
 
   defp placeholder_value(_file_parameter, file), do: file
@@ -255,6 +258,13 @@ defmodule HalC2.Editors do
   defp editor_of_class(_reg, nil), do: nil
 
   defp editor_of_class(reg, class) do
+    # A ProgId is a single key name: a class with a path separator in it would
+    # walk the lookup to an unrelated key, so it names no editor (and the
+    # extension's class gets its chance, as with any unusable choice).
+    if String.contains?(class, ["\\", "/"]), do: nil, else: editor_of_named_class(reg, class)
+  end
+
+  defp editor_of_named_class(reg, class) do
     case reg_value(reg, ["HKCR\\#{class}\\shell\\open\\command", "/ve"]) do
       nil ->
         nil
@@ -431,8 +441,12 @@ defmodule HalC2.Editors do
   # failure. The close is isolated from that rescue: a program that exits before the
   # close runs still counts as started, never as failed.
   # Accepted divergences from Explorer, unverified on a real Windows host (tracked in
-  # #397): `:spawn_executable` is CreateProcess-backed and cannot run `.cmd`/`.bat`
-  # shims (those need `%ComSpec% /c`), so a default resolving to one starts nothing;
+  # #397): these apply to every Windows launch through `launch/2`, not just the
+  # default editor — named editors and the file manager go through here too.
+  # `:spawn_executable` is CreateProcess-backed and cannot run `.cmd`/`.bat`
+  # shims (those need `%ComSpec% /c`), so a default or a named editor (VS Code,
+  # Cursor and friends typically resolve through PATHEXT to a `.cmd` shim)
+  # resolving to one starts nothing;
   # `:hide` with `:nouse_stdio` suits a GUI program, while a registered console editor
   # gets no console and no standard streams; and `:spawn_executable` builds the
   # CreateProcess command line from `args`, so a spaced target path or an embedded

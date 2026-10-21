@@ -242,7 +242,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   # A Windows host whose `reg` answers for the .txt association: the user's choice
-  # (`user_choice`, else the class registered for .txt) names `txtfile`, whose open
+  # (the ProgId in the answers, else the class registered for .txt) names `txtfile`, whose open
   # command is the `notepad` that reports to this test.
   defp windows_host(context, answers, line \\ ~s("NOTEPAD" %1), type \\ "REG_EXPAND_SZ") do
     World.put_app_env(:os_type, {:win32, :nt})
@@ -257,9 +257,9 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     body =
       ~s|case "$2" in\n| <>
         Enum.map_join(answers, fn {key, value} ->
-          ~s|  *'#{key}'*) printf '\\nHKEY\\n#{value}\\n' ;;\n|
+          ~s|  *'#{key}'*) printf '\\r\\nHKEY\\r\\n#{value}\\r\\n' ;;\n|
         end) <>
-        ~s|  *'HKCR\\txtfile\\shell\\open\\command'*) printf '\\nHKEY\\n%s\\n' '#{command}' ;;\n| <>
+        ~s|  *'HKCR\\txtfile\\shell\\open\\command'*) printf '\\r\\nHKEY\\r\\n%s\\r\\n' '#{command}' ;;\n| <>
         ~s|  *) exit 1 ;;\nesac|
 
     install_script(context, "reg", body)
@@ -309,8 +309,8 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     body =
       """
       case "$2" in
-        *UserChoice*) printf '\\nHKEY\\n    ProgId    REG_SZ    txtfile\\n' ;;
-        *'HKCR\\txtfile\\shell\\open\\command'*) printf '\\nHKEY\\n    (Default)    REG_SZ    "#{path}" %%1\\n' ;;
+        *UserChoice*) printf '\\r\\nHKEY\\r\\n    ProgId    REG_SZ    txtfile\\r\\n' ;;
+        *'HKCR\\txtfile\\shell\\open\\command'*) printf '\\r\\nHKEY\\r\\n    (Default)    REG_SZ    "#{path}" %%1\\r\\n' ;;
         *) exit 1 ;;
       esac
       """
@@ -379,8 +379,16 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   step ~r/^Windows opens "[^"]+" in Notepad with the other parameters filled in$/, context do
     assert {:ok, nil} = context.reply
     {conn, argv} = launched(context)
-    # %S is "1", %2 and %W leave nothing (a bare %2 is dropped), %H and %I are "0".
-    assert argv == ["notepad", context.target, "1", "--dir=", "0", "0"]
+    # %S is "1", a bare %2 is dropped, %W is the file's directory, %H and %I are "0".
+    assert argv == [
+             "notepad",
+             context.target,
+             "1",
+             "--dir=#{Path.dirname(context.target)}",
+             "0",
+             "0"
+           ]
+
     :gen_tcp.close(conn)
     context
   end

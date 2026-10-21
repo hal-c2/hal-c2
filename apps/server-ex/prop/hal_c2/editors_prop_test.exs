@@ -13,7 +13,7 @@ defmodule HalC2.EditorsPropTest do
 
   # Characters that make quoting matter: white space, quotes and the backslashes before them.
   defp argument do
-    let chars <- resize(8, list(oneof([?a, ?b, ?=, ?\s, ?\t, ?\\, ?\\, ?"]))) do
+    let chars <- resize(8, list(oneof([?a, ?b, ?=, ?\s, ?\t, ?\\, ?\\, ?", ?ü]))) do
       List.to_string(chars)
     end
   end
