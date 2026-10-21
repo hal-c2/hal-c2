@@ -1903,7 +1903,7 @@ defmodule HalC2.Orchestration do
   defp ask_steer(instance, thread_id, run_id, input) do
     case runtime(instance).steer(thread_id, run_id, input) do
       :ok -> :ok
-      {:error, _} = refused -> refused
+      {:error, reason} when is_binary(reason) -> {:error, String.slice(reason, 0, 200)}
       other -> {:error, "its runtime answered #{inspect(other, limit: 3, printable_limit: 80)}"}
     end
   catch

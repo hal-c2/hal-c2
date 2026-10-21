@@ -261,7 +261,7 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
 
     second = HalC2.Orchestration.dispatch(command)
     File.rm!(hold)
-    replies = [Task.await(first), second]
+    replies = [Task.await(first, 15_000), second]
 
     context |> Map.put(:thread, thread) |> Map.put(:replies, replies) |> Map.put(:sent, text)
   end

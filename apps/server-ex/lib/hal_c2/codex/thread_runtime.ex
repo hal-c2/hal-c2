@@ -70,7 +70,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   # `HalC2.RuntimeSteer` owns which timeout means held. A refusal is always the
   # refusal: settling the runtime so the caller sees whether the turn still runs
   # is best-effort, and a settle that itself times out or finds the runtime gone
-  # must not turn it into a delivery.
+  # must not turn it into a delivery. The two budgets stack: a wedged runtime
+  # blocks the dispatching process for the steer budget plus the settle budget
+  # (30s + 30s by default) before the sender hears the refusal, so tune them
+  # together, not one in isolation.
   defp steer_call(pid, run_id, message) do
     timeout = Application.get_env(:hal_c2, :codex_steer_timeout_ms, 30_000)
 

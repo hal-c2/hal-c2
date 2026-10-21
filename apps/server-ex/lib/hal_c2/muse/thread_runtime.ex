@@ -59,7 +59,12 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   # `HalC2.RuntimeSteer` owns which timeout means held; the budget stays the
-  # public calls' 35s, so a command never outlives its caller.
+  # public calls' 35s, so a command never outlives its caller. One divergence
+  # from `RuntimeSteer`'s model: the handler's `command/5` catches a nested
+  # `Connection.call` timeout itself, closes the connection and answers a
+  # refusal (`{:error, "Muse Code did not answer turn/steer"}`) instead of
+  # propagating the exit, so a steer that may still land is taken back out of
+  # the turn while its session drops — the host is out of step either way.
   defp steer_call(pid, run_id, message) do
     timeout = Application.get_env(:hal_c2, :muse_steer_timeout_ms, 35_000)
     HalC2.RuntimeSteer.call(pid, run_id, message, timeout)
