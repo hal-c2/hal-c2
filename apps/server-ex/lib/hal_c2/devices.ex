@@ -459,10 +459,12 @@ defmodule HalC2.Devices do
   defp os_type, do: Application.get_env(:hal_c2, :os_type) || :os.type()
 
   defp android_sdk do
-    # Not HalC2.Paths.user_home/0: that raises when no home is set (e.g. a
-    # system service), and platform_reason/1's contract is to return a reason
-    # string. A missing or empty home simply contributes no candidates (an
-    # empty home would make them cwd-relative).
+    # Not HalC2.Paths.user_home/0: that raises when no home can be determined
+    # (e.g. a system service), and platform_reason/1's contract is to return
+    # a reason string. With `HOME` unset the OS account's home below stands
+    # in and does contribute candidates; only an empty `HOME` (truthy, so no
+    # fallback) or an undeterminable OS home contributes none — an empty home
+    # used as a candidate would make the paths cwd-relative.
     home_candidates =
       case System.get_env("HOME") || System.user_home() do
         home when is_binary(home) and home != "" ->
@@ -474,9 +476,17 @@ defmodule HalC2.Devices do
 
     explicit =
       Enum.find_value(["ANDROID_HOME", "ANDROID_SDK_ROOT"], fn name ->
+        # Trim first: a whitespace-only value trimmed to "" would otherwise
+        # become a cwd-relative candidate like an empty home would.
         case System.get_env(name) do
-          value when is_binary(value) and value != "" -> String.trim(value)
-          _ -> nil
+          value when is_binary(value) ->
+            case String.trim(value) do
+              "" -> nil
+              trimmed -> trimmed
+            end
+
+          _ ->
+            nil
         end
       end)
 

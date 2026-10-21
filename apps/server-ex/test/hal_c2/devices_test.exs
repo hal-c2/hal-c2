@@ -65,6 +65,12 @@ defmodule HalC2.DevicesTest do
 
     File.cd!(dir, fn ->
       assert HalC2.Devices.platform_reason("android") =~ "Android SDK was not found"
+
+      # A whitespace-only explicit SDK home is no home either, not a
+      # cwd-relative candidate that finds the trap.
+      System.put_env("ANDROID_HOME", "   ")
+      assert HalC2.Devices.platform_reason("android") =~ "Android SDK was not found"
+      System.delete_env("ANDROID_HOME")
     end)
   end
 
