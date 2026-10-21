@@ -605,25 +605,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     assert File.read!(cookie) =~ ~r/^[0-9a-f]{64}$/
     assert Bitwise.band(File.stat!(cookie).mode, 0o077) == 0
     # Nothing is left half-unpacked beside it.
-    assert Enum.sort(File.ls!(Path.join(context.single_home, "data"))) == ["release", "upgrades"]
-    context
-  end
-
-  step "the bundle is kept where cluster members that move to its version fetch it", context do
-    version = HalC2.Upgrade.version()
-    cache = Path.join([context.single_home, "data", "upgrades", version])
-    bundle = HalC2.Upgrade.Source.file_name(version, HalC2.Upgrade.platform())
-
-    sum =
-      :crypto.hash(:sha256, File.read!(Path.join(cache, bundle))) |> Base.encode16(case: :lower)
-
-    # What the single file carries, with the checksum HalC2.Upgrade.Source checks it by.
-    assert String.trim(File.read!(Path.join(cache, bundle <> ".sha256"))) == sum
-
-    assert [^sum | _] =
-             String.split(File.read!(context.single <> ".tar.gz.sha256"))
-
-    assert File.ls!(cache) |> Enum.sort() == [bundle, bundle <> ".sha256"]
+    assert File.ls!(Path.join(context.single_home, "data")) == ["release"]
     context
   end
 

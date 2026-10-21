@@ -57,7 +57,7 @@ QString updated(Cluster& cluster) {
       it->version = kVersion;
     }
   }
-  if (lines.isEmpty()) lines.append(QStringLiteral("Every machine already runs %1.").arg(kVersion));
+  if (lines.isEmpty()) lines.append(QStringLiteral("No connected machine needs an update to %1.").arg(kVersion));
   return lines.join(QLatin1Char(' '));
 }
 

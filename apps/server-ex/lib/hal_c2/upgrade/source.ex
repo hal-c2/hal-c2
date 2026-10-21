@@ -118,6 +118,43 @@ defmodule HalC2.Upgrade.Source do
   end
 
   @doc """
+  Packs the release at `root` into the bundle of the version it starts, at `path`:
+  its `bin`, `lib`, that version's `releases/` and its ERTS (`mix hal_c2.bundle`, and
+  `ensure_own/0`).
+  """
+  def pack(root, path) do
+    [erts, version] =
+      root |> Path.join("releases/start_erl.data") |> File.read!() |> String.split()
+
+    files =
+      for entry <- ["bin", "lib", Path.join("releases", version), "erts-#{erts}"],
+          File.exists?(Path.join(root, entry)),
+          do: {String.to_charlist(entry), String.to_charlist(Path.join(root, entry))}
+
+    File.mkdir_p!(Path.dirname(path))
+    :ok = :erl_tar.create(String.to_charlist(path), files, [:compressed])
+  end
+
+  @doc """
+  Puts the bundle of the version this MC runs in its cache, packed from its release
+  when it has none (an MC installed without one, or started from a desktop app's
+  copy of the release), so members moving to that version can take it.
+  """
+  def ensure_own do
+    version = HalC2.Upgrade.version()
+    platform = HalC2.Upgrade.platform()
+
+    with {:error, _} <- cached(version, platform) do
+      path = archive_path(version, platform)
+      pack(HalC2.Upgrade.release_root(), path <> ".packing")
+      File.rename!(path <> ".packing", path)
+      File.write!(path <> ".sha256", sha256(path))
+    end
+
+    :ok
+  end
+
+  @doc """
   Up to `length` bytes from `offset` of this MC's copy of a bundle, for a peer that
   cannot reach its HTTP port: `{:ok, data}`, or `:eof` past its end.
   """

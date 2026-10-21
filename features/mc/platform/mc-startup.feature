@@ -334,7 +334,6 @@ Feature: Starting the MC
     Given the single-file MC of a release
     When a user runs it with "--flag"
     Then the release and its runtime are unpacked in the MC's data directory
-    And the bundle is kept where cluster members that move to its version fetch it
     And the service wrapper starts the release with "--flag"
 
   @mc

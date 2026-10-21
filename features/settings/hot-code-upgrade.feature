@@ -81,7 +81,7 @@ Feature: Hot code upgrade
   # can hand the release it runs to the others (`cluster.update`).
   @mc
   Scenario: A client sends the version its MC runs to the other machines of the cluster
-    Given a client of the first of three connected MCs, the first on a build the others do not run
+    Given a client of the first of three connected MCs, the first on a build the others do not run and no bundle of it kept
     When the client asks the first to send its version to the other machines
     Then the other MCs fetch it from the first and run it
     And the client is told each of them updated from "1.3.0"

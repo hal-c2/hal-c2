@@ -485,13 +485,15 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     context
   end
 
-  step "a client of the first of three connected MCs, the first on a build the others do not run",
+  step "a client of the first of three connected MCs, the first on a build the others do not run and no bundle of it kept",
        context do
     # Connected first: once the peers are up this process also hears of their MCs,
     # which the client's upgrade handshake cannot tell from socket messages.
     context = World.put_client(context, World.client(context))
     context = cached_bundle(context, "1.3.1", :hot) |> update_to("1.3.1")
     assert {:ok, _} = context.reply
+    # As an MC installed without its bundle, or started from a desktop app's release.
+    File.rm_rf!(Source.cache_dir("1.3.1"))
     peers = for name <- ["b", "c"], do: start_peer(context, name)
     # Peers reach this MC's HTTP port for the build.
     World.put_app_env(:port, context.mc.port)

@@ -166,7 +166,7 @@ void ClusterController::update() {
         lines.append(QStringLiteral("%1 could not update: %2").arg(label, outcome));
       }
     }
-    if (lines.isEmpty()) lines.append(QStringLiteral("Every machine already runs %1.").arg(version));
+    if (lines.isEmpty()) lines.append(QStringLiteral("No connected machine needs an update to %1.").arg(version));
     setNotice(failed ? QStringLiteral("error") : QStringLiteral("success"), lines.join(QLatin1Char(' ')));
     refresh();
   });

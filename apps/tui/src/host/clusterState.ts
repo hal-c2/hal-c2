@@ -42,7 +42,7 @@ export function updateSummary(result: ClusterUpdateResult): { text: string; fail
     failed = true;
     return `${label} could not update: ${outcome}`;
   });
-  if (lines.length === 0) lines.push(`Every machine already runs ${result.version}.`);
+  if (lines.length === 0) lines.push(`No connected machine needs an update to ${result.version}.`);
   return { text: lines.join(" "), failed };
 }
 
