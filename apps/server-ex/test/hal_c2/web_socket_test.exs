@@ -528,8 +528,55 @@ defmodule HalC2.Web.SocketTest do
        %{"type" => "restarted", "sequence" => 6, "snapshot" => %{"sequence" => 6}}}
 
     assert {:ok, ^state} = HalC2.Web.Socket.handle_info(restarted, state)
-    assert {:push, [{:text, frame}], _} = HalC2.Web.Socket.handle_info(nested.(7), state)
+    assert {:push, [{:text, frame}], state} = HalC2.Web.Socket.handle_info(nested.(7), state)
     assert %{"t" => "terminal", "id" => 2} = frame |> IO.iodata_to_binary() |> JSON.decode!()
+
+    # A snapshot below the floor is a recreated terminal (its sequence
+    # restarted): the subscription restarts from it instead of being
+    # starved until the sequence climbs back past the old floor.
+    assert {:push, [{:text, frame}], state} = HalC2.Web.Socket.handle_info(nested.(2), state)
+    assert %{"t" => "terminal", "id" => 2} = frame |> IO.iodata_to_binary() |> JSON.decode!()
+
+    after_reopen = {:hal_c2_terminal, key, %{"type" => "output", "data" => "z", "sequence" => 3}}
+
+    assert {:push, [{:text, frame}], _state} =
+             HalC2.Web.Socket.handle_info(after_reopen, state)
+
+    assert %{"t" => "terminal", "id" => 2} = frame |> IO.iodata_to_binary() |> JSON.decode!()
+  end
+
+  # A shell that fails to start while attaching explains itself once per
+  # subscription: the error is fanned out under the plain tag only.
+  test "a shell that cannot start sends one error frame to its subscription", %{
+    port: port,
+    tmp_dir: dir
+  } do
+    start_terminals()
+    previous_shell = System.get_env("SHELL")
+    System.put_env("SHELL", "/nonexistent/sh")
+    Application.put_env(:hal_c2, :terminal_shells, [])
+
+    on_exit(fn ->
+      if previous_shell, do: System.put_env("SHELL", previous_shell)
+      Application.delete_env(:hal_c2, :terminal_shells)
+    end)
+
+    input = %{"threadId" => "th-noshell", "terminalId" => "term-1", "cwd" => dir}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+
+    {snapshot, client} = terminal_snapshot(client, 1)
+    assert snapshot["status"] == "error"
+
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {_pong, frames, _client} = WsClient.recv_until(client, &(&1["t"] == "pong"))
+
+    errors =
+      for %{"t" => "terminal", "id" => 1, "event" => %{"type" => "error"}} <- frames, do: 1
+
+    assert errors == [1]
   end
 
   # Teardown threads each unsubscribe through the last one's state: of two
