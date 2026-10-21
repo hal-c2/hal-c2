@@ -8,10 +8,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 release_version="$(tr -d '[:space:]' <VERSION)"
-# What the release is built from: the MC, the packages it bundles (the Cursor sidecar)
-# and the native helpers. Work on the clients elsewhere in the checkout is no change.
-# Untracked files count whatever status.showUntrackedFiles says: Mix compiles them.
-inputs=(:/apps/server-ex :/packages :/native)
+# What the release is built from: the MC, the packages it bundles (the Cursor sidecar),
+# the native helpers and the toolchain mise pins. Work on the clients elsewhere in the
+# checkout is no change. Untracked files count whatever status.showUntrackedFiles says:
+# Mix compiles them.
+inputs=(:/apps/server-ex :/packages :/native :/mise.toml)
 if [[ -z "$(git status --porcelain --untracked-files=normal -- "${inputs[@]}")" ]]; then
   stamp="$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S)"
   # Cut here, not by git: --short grows with the checkout's other objects.

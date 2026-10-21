@@ -122,6 +122,55 @@ defmodule HalC2.UpgradeTest do
     assert {:error, _} = Source.receive_part("2.0.0", "darwin-arm64", {:finish, sum})
   end
 
+  test "a release with no bundle of its version packs one of its own applications, once",
+       %{tmp_dir: dir} do
+    root = Path.join(dir, "release")
+    rel = Path.join([root, "releases", "2.0.0"])
+    File.mkdir_p!(rel)
+    File.write!(Path.join(rel, "upgrade.json"), JSON.encode!(@manifest))
+    File.write!(Path.join([root, "releases", "start_erl.data"]), "17.0.5 2.0.0\n")
+
+    # The applications of 2.0.0, and one an earlier version left behind.
+    for app <- ~w(hal_c2-2.0.0 kernel-11.0.3 exqlite-0.41.0 hal_c2-1.9.0),
+        do: File.mkdir_p!(Path.join([root, "lib", app, "ebin"]))
+
+    File.mkdir_p!(Path.join([root, "erts-17.0.5", "bin"]))
+    System.put_env("RELEASE_ROOT", root)
+    :persistent_term.put({Upgrade, :version}, "2.0.0")
+
+    on_exit(fn ->
+      System.delete_env("RELEASE_ROOT")
+      :persistent_term.erase({Upgrade, :version})
+    end)
+
+    # Two `cluster.update`s at once pack it once and agree on it.
+    assert [:ok, :ok] =
+             1..2 |> Enum.map(fn _ -> Task.async(&Source.ensure_own/0) end) |> Task.await_many()
+
+    archive =
+      Path.join([Source.cache_dir("2.0.0"), Source.file_name("2.0.0", Upgrade.platform())])
+
+    sum = :crypto.hash(:sha256, File.read!(archive)) |> Base.encode16(case: :lower)
+    assert File.read!(archive <> ".sha256") == sum
+
+    assert File.ls!(Source.cache_dir("2.0.0")) |> Enum.sort() ==
+             Enum.sort([Path.basename(archive), Path.basename(archive) <> ".sha256"])
+
+    {:ok, entries} = :erl_tar.table(String.to_charlist(archive), [:compressed])
+
+    dirs =
+      entries
+      |> Enum.map(&to_string/1)
+      |> Enum.map(&(&1 |> Path.split() |> Enum.take(2) |> Path.join()))
+      |> Enum.uniq()
+
+    assert "lib/hal_c2-2.0.0" in dirs and "lib/kernel-11.0.3" in dirs and
+             "erts-17.0.5/bin" in dirs
+
+    assert "releases/2.0.0" in dirs
+    refute "lib/hal_c2-1.9.0" in dirs
+  end
+
   test "a code-only version's release is the running one with the bundle's own code", %{
     tmp_dir: dir
   } do

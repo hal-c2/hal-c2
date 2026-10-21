@@ -49,6 +49,14 @@ defmodule HalC2.LocalVersionTest do
     assert version(script) =~ ~r/^1\.2\.3-local\.\d{14}\.g#{String.slice(commit, 0, 12)}$/
   end
 
+  test "a changed toolchain pin is a change", %{root: root, script: script} do
+    File.write!(Path.join(root, "mise.toml"), "[tools]\nerlang = \"29\"\n")
+    git(root, ~w(add mise.toml))
+    git(root, ~w(-c user.name=t -c user.email=t@example.com commit --quiet -m tools))
+    File.write!(Path.join(root, "mise.toml"), "[tools]\nerlang = \"28\"\n")
+    assert version(script) =~ ~r/^1\.2\.3-local\.\d{14}$/
+  end
+
   test "an untracked file is a change, also when git is told not to list them", context do
     %{root: root, script: script} = context
     git(root, ~w(config status.showUntrackedFiles no))

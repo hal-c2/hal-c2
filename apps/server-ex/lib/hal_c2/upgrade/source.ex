@@ -119,15 +119,28 @@ defmodule HalC2.Upgrade.Source do
 
   @doc """
   Packs the release at `root` into the bundle of the version it starts, at `path`:
-  its `bin`, `lib`, that version's `releases/` and its ERTS (`mix hal_c2.bundle`, and
-  `ensure_own/0`).
+  its `bin`, `lib`, that version's `releases/` and its ERTS (`mix hal_c2.bundle`).
+  `lib: :listed` takes only the applications that version's `upgrade.json` lists: an
+  installed release (`ensure_own/0`) keeps those of the versions before it too.
   """
-  def pack(root, path) do
+  def pack(root, path, opts \\ []) do
     [erts, version] =
       root |> Path.join("releases/start_erl.data") |> File.read!() |> String.split()
 
+    manifest = Path.join([root, "releases", version, "upgrade.json"])
+
+    lib =
+      case opts[:lib] == :listed && File.read(manifest) do
+        {:ok, text} ->
+          for {name, vsn} <- JSON.decode!(text)["applications"] || %{},
+              do: Path.join("lib", "#{name}-#{vsn}")
+
+        _ ->
+          ["lib"]
+      end
+
     files =
-      for entry <- ["bin", "lib", Path.join("releases", version), "erts-#{erts}"],
+      for entry <- ["bin" | lib] ++ [Path.join("releases", version), "erts-#{erts}"],
           File.exists?(Path.join(root, entry)),
           do: {String.to_charlist(entry), String.to_charlist(Path.join(root, entry))}
 
@@ -144,9 +157,14 @@ defmodule HalC2.Upgrade.Source do
     version = HalC2.Upgrade.version()
     platform = HalC2.Upgrade.platform()
 
+    # One packing at a time: another `cluster.update` may be packing the same bundle.
+    :global.trans({{__MODULE__, version}, self()}, fn -> pack_own(version, platform) end, [node()])
+  end
+
+  defp pack_own(version, platform) do
     with {:error, _} <- cached(version, platform) do
       path = archive_path(version, platform)
-      pack(HalC2.Upgrade.release_root(), path <> ".packing")
+      pack(HalC2.Upgrade.release_root(), path <> ".packing", lib: :listed)
       File.rename!(path <> ".packing", path)
       File.write!(path <> ".sha256", sha256(path))
     end
