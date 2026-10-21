@@ -13,6 +13,10 @@ defmodule HalC2.ProviderUsageLimits do
   fill in between: the thread runtimes pass on the rate-limit updates their
   providers stream (`update/2`, `claude_event/2`), which merge by window id into the
   turn's own instance entry, so one account never overwrites another's quota.
+  Which instance an update belongs to is the runtimes' call — each resolves
+  its turn's instance against settings here, once, at capture — and this
+  service publishes what it is given; a probe sweep drops published entries
+  for instances settings no longer have.
 
   A probe that fails keeps the last good windows; `unsupported` (an API key account)
   replaces them. `HalC2.Environment.providers/0` reads the published limits from ETS, so

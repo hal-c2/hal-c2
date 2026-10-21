@@ -36,7 +36,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Orchestration.{Entities, NativeSubagent}
   alias HalC2.StreamState
 
-  @state_version 9
+  @state_version 10
 
   @signed_out "Claude could not authenticate. For subscription login, run `claude auth login` " <>
                 "on this environment's machine, then start a new thread. For API-key " <>
@@ -169,6 +169,9 @@ defmodule HalC2.Claude.ThreadRuntime do
        tasks: %{},
        # The latest turn's ids, which work Claude starts between turns joins.
        last_ids: nil,
+       # The instance the latest turn's quota is published under, resolved
+       # against settings once when the turn starts (or its ids are recovered).
+       usage_instance: nil,
        # A turn Claude runs by itself (`wake/2`) that no run follows yet:
        # `%{open: bool, buffer: [message] | nil}`, `open` until its `result`, `buffer` its
        # messages newest first, nil once the thread refused it a run.
@@ -198,6 +201,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         blocks: %{},
         interrupted: false,
         last_ids: ids,
+        usage_instance: resolved_instance(Entities.instance(ids)),
         wake: nil
     }
 
@@ -221,7 +225,17 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
     last_ids = state.last_ids
-    state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false, last_ids: ids}
+
+    state = %{
+      state
+      | turn: turn,
+        items: %{},
+        blocks: %{},
+        interrupted: false,
+        last_ids: ids,
+        usage_instance: resolved_instance(Entities.instance(ids))
+    }
+
     session = state.session
 
     # A model the installed CLI is too old for is refused here, naming the version.
@@ -456,6 +470,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:work, %{})
        |> Map.put_new(:tasks, %{})
        |> Map.put_new(:last_ids, nil)
+       |> Map.put_new(:usage_instance, nil)
        |> Map.put_new(:wake, nil)
        |> Map.put_new(:permission_mode, nil)
        |> Map.put_new(:steered, false)
@@ -924,7 +939,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp message(%{"type" => "rate_limit_event", "rate_limit_info" => %{} = info}, state) do
     # `with_ids/1` recovers the latest turn's ids when this runtime has not
     # run one, so between-turns quota joins that turn's instance too.
-    state = with_ids(state)
+    state = state |> with_ids() |> with_usage_instance()
     HalC2.ProviderUsageLimits.claude_event(usage_instance(state), info)
     rate_limit(info, state)
   end
@@ -1161,15 +1176,34 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp reset_at(_), do: nil
 
-  # The instance a turn's quota update belongs to: the running turn's, else the
-  # latest turn's (work Claude starts between turns joins it), else the driver.
-  defp usage_instance(state) do
-    ids = if state.turn, do: Map.get(state.turn, :ids), else: state.last_ids
-    instance = if is_map(ids), do: Entities.instance(ids), else: "claudeAgent"
+  # The instance quota is published under, resolved once when a turn starts
+  # (or its ids are recovered): a turn's own instance when settings here
+  # know it, or the driver when they do not. Resolving at capture pins a
+  # turn's attribution: settings changing mid-turn do not move the rest of
+  # it to another account.
+  defp resolved_instance(instance),
+    do:
+      if(HalC2.Settings.known_instance?(instance, "claudeAgent"),
+        do: instance,
+        else: "claudeAgent"
+      )
 
-    if HalC2.Settings.known_instance?(instance, "claudeAgent"),
-      do: instance,
-      else: "claudeAgent"
+  defp usage_instance(state), do: Map.get(state, :usage_instance) || "claudeAgent"
+
+  # A state from before quota attribution was pinned at capture (upgraded
+  # mid-turn) resolves it here, once, from the turn it is on: the running
+  # turn's instance, else the latest turn's (work Claude starts between
+  # turns joins it), else the driver.
+  defp with_usage_instance(state) do
+    case Map.get(state, :usage_instance) do
+      instance when is_binary(instance) ->
+        state
+
+      _ ->
+        ids = if state.turn, do: Map.get(state.turn, :ids), else: state.last_ids
+        instance = if is_map(ids), do: Entities.instance(ids)
+        Map.put(state, :usage_instance, resolved_instance(instance))
+    end
   end
 
   # A turn stopped by a usage limit fails with a structured `usage_limit` failure.
@@ -1640,7 +1674,9 @@ defmodule HalC2.Claude.ThreadRuntime do
           provider_thread: run["providerThreadId"]
         }
 
-        %{state | last_ids: ids}
+        state
+        |> Map.put(:last_ids, ids)
+        |> Map.put(:usage_instance, resolved_instance(Entities.instance(ids)))
     end
   end
 

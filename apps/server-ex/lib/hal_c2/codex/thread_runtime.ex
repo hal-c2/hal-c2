@@ -152,8 +152,24 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_call({:start_turn, turn}, _from, state) do
     # A thread saved under an older model name runs on the model it names today.
     turn = %{turn | model: HalC2.Codex.Provider.current_slug(turn.model)}
-    instance = if ids = turn[:ids], do: Entities.instance(ids)
-    state = %{state | turn: turn, instance: instance, items: %{}, failure: nil, running: %{}}
+
+    # The instance is resolved once, here: settings changing mid-turn (the
+    # instance removed, say) do not re-attribute the rest of the turn.
+    instance =
+      case turn[:ids] do
+        %{} = ids -> Entities.instance(ids)
+        _ -> nil
+      end
+
+    state = %{
+      state
+      | turn: turn,
+        instance: resolved_instance(instance),
+        items: %{},
+        failure: nil,
+        running: %{}
+    }
+
     # The threads this turn's subagents run in (`spawnAgent`): native thread id ->
     # `%{sub: NativeSubagent handle, done: bool}`.
     state = Map.put(state, :subagents, %{})
@@ -429,10 +445,14 @@ defmodule HalC2.Codex.ThreadRuntime do
   @impl true
   def code_change(_old, state, _extra) do
     # A runtime upgraded mid-turn derives the turn's instance, so the rest of
-    # that turn's quota still belongs to it; between turns there is none yet.
+    # that turn's quota still belongs to it; between turns there is none yet
+    # (the next quota update recovers the latest turn's from the thread —
+    # `with_instance/1`, not here: the streams may be mid-upgrade too).
+    # What is captured is resolved against settings once, as at turn start.
     instance =
       case state do
-        %{turn: %{ids: ids}} when is_map(ids) -> Entities.instance(ids)
+        %{instance: instance} when is_binary(instance) -> resolved_instance(instance)
+        %{turn: %{ids: ids}} when is_map(ids) -> resolved_instance(Entities.instance(ids))
         _ -> nil
       end
 
@@ -440,7 +460,7 @@ defmodule HalC2.Codex.ThreadRuntime do
      state
      |> Map.put_new(:running, %{})
      |> Map.put_new(:background, %{})
-     |> Map.put_new(:instance, instance)
+     |> Map.put(:instance, instance)
      |> Map.put(:v, @state_version)}
   end
 
@@ -789,8 +809,10 @@ defmodule HalC2.Codex.ThreadRuntime do
   # instance entry, so one account never overwrites another's quota.
   # The merged snapshot is kept to name the used-up window when a turn stops on it.
   defp notification("account/rateLimits/updated", %{"rateLimits" => snapshot}, state) do
+    state = with_instance(state)
+
     HalC2.ProviderUsageLimits.update(
-      usage_instance(state),
+      state.instance,
       HalC2.ProviderUsageLimits.Codex.windows(snapshot)
     )
 
@@ -1042,13 +1064,41 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp notification(_method, _params, state), do: state
 
-  # The instance a turn's quota update belongs to: the latest turn's own, or the
-  # driver when it names nothing this MC knows (a thread carried from another
-  # machine, say).
-  defp usage_instance(state) do
-    instance = Map.get(state, :instance) || "codex"
+  # The instance quota is published under, resolved once: a turn's own
+  # instance when settings here know it, or the driver when they do not (a
+  # thread carried from another machine, say — such a turn physically ran
+  # under the built-in configuration).
+  defp resolved_instance(instance),
+    do: if(HalC2.Settings.known_instance?(instance, "codex"), do: instance, else: "codex")
 
-    if HalC2.Settings.known_instance?(instance, "codex"), do: instance, else: "codex"
+  # Fills in the latest turn's instance from the thread when this runtime
+  # has captured none (it started, or was upgraded, between turns), so a
+  # late update from the still-connected app-server joins that turn's
+  # instance. Resolved once, here, and kept from then on.
+  defp with_instance(state) do
+    case Map.get(state, :instance) do
+      instance when is_binary(instance) ->
+        state
+
+      _ ->
+        Map.put(state, :instance, resolved_instance(latest_run_instance(state)))
+    end
+  end
+
+  defp latest_run_instance(state) do
+    case Map.get(state, :thread_id) do
+      thread_id when is_binary(thread_id) ->
+        run =
+          thread_id
+          |> HalC2.Streams.state()
+          |> HalC2.StreamState.list("run")
+          |> Enum.max_by(& &1["ordinal"], fn -> nil end)
+
+        if run, do: run["providerInstanceId"]
+
+      _ ->
+        nil
+    end
   end
 
   # Codex retries a failed request itself and reports each attempt: one work-log item
