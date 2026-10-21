@@ -122,8 +122,9 @@ defmodule HalC2.Upgrade do
     _, _ -> nil
   end
 
-  # A member that restarts to take the new version drops its connections, this one
-  # among them, so its going down counts as the end of its update too.
+  # A member that restarts to take the new version says so (`complete`) before it drops
+  # its connections; one that goes down without saying may have lost the network or
+  # crashed while installing, so its update is unconfirmed.
   #
   # They all get `@members_timeout` between them, which leaves this MC's own update
   # its time within what `mix hal_c2.upgrade --release` waits for an answer.
@@ -150,7 +151,7 @@ defmodule HalC2.Upgrade do
               reason
 
             {:nodedown, ^mc} ->
-              "restarting on it"
+              "the connection dropped before it finished"
           after
             max(deadline - System.monotonic_time(:millisecond), 0) -> "has not finished"
           end

@@ -68,7 +68,8 @@ export const ClusterMemberUpdate = Schema.Struct({
   from: Schema.NullOr(Schema.String),
   /**
    * `updated`, `restarting on it` (it restarts to take the version), `has not
-   * finished`, `cannot be updated from another machine`, or why its update failed.
+   * finished`, `the connection dropped before it finished` (unconfirmed), `cannot be
+   * updated from another machine`, or why its update failed.
    */
   outcome: Schema.String,
 });
