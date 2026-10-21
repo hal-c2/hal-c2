@@ -287,10 +287,39 @@ defmodule HalC2.PlannerTest do
       assert url.("https://ghe..example.com/acme/api/pull/4", "pullRequest") == nil
       assert url.("https://ghe.example.com%2f.evil.com/acme/api/pull/4", "pullRequest") == nil
 
+      # Nor does a label starting or ending with a hyphen, or an IPv6 literal
+      # with a zone, which `URI.parse/1` would mangle into another address.
+      assert url.("https://-ghe.example.com/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://ghe-.example.com/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://[fe80::1%25eth0]/acme/api/pull/4", "pullRequest") == nil
+
       # A repository that is no `owner/name` over GitHub's charset is no ref:
       # it would otherwise be interpolated verbatim into the stored address.
       assert :error = Plan.ref(%{"repository" => "../evil", "number" => 4}, "pullRequest")
       assert :error = Plan.ref(%{"repository" => "acme/api\n", "number" => 4}, "pullRequest")
+
+      # A leading dot or underscore is a repository name like any other
+      # (`owner/.github` is the conventional one), and links as one.
+      assert {:ok, %{"repository" => "acme/.github", "url" => ghe_github}} =
+               Plan.ref(
+                 %{
+                   "repository" => "acme/.github",
+                   "number" => 4,
+                   "url" => "https://ghe.example.com/acme/.github/pull/4"
+                 },
+                 "pullRequest"
+               )
+
+      assert ghe_github == "https://ghe.example.com/acme/.github/pull/4"
+
+      item =
+        plan([{"a", %{}}])["a"]
+        |> Plan.link(
+          %{"pullRequest" => %{"repository" => "acme/.github", "number" => 4}},
+          @now
+        )
+
+      assert [%{"repository" => "acme/.github", "number" => 4}] = item["pullRequests"]
     end
 
     test "a correcting link to another host forgets what the old host's look stored" do

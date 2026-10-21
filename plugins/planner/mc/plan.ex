@@ -450,9 +450,10 @@ defmodule HalC2Plugins.Planner.Plan do
   def ref(%{"repository" => repository, "number" => number} = value, kind)
       when is_binary(repository) and is_integer(number) do
     # A repository is `owner/name` over GitHub's small charset (the shape
-    # `HalC2.PullRequests.parse_remote/1` encodes); anything else would be
-    # interpolated verbatim into the rebuilt address.
-    if String.match?(repository, ~r/\A[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*\z/) do
+    # `HalC2.PullRequests.parse_remote/1` encodes, a leading dot or underscore
+    # included, as in `owner/.github`); anything else would be interpolated
+    # verbatim into the rebuilt address, and a `.` or `..` segment is no name.
+    if repository?(repository) do
       ref = %{"repository" => repository, "number" => number}
 
       case web_url(value["url"], repository, number, kind) do
@@ -466,9 +467,34 @@ defmodule HalC2Plugins.Planner.Plan do
 
   def ref(_value, _kind), do: :error
 
+  defp repository?(repository) do
+    case String.split(repository, "/") do
+      [owner, name] -> repository_segment?(owner) and repository_segment?(name)
+      _ -> false
+    end
+  end
+
+  defp repository_segment?(segment),
+    do: segment not in [".", ".."] and String.match?(segment, ~r/\A[A-Za-z0-9._-]+\z/)
+
+  # A host worth storing: a name of `[a-z0-9-]` labels (an IPv4 literal is
+  # one), or an IPv6 literal without a zone, which `URI.parse/1` would
+  # otherwise mangle. Anything else stays no address at all.
+  defp host?(host) when is_binary(host) do
+    if String.contains?(host, ":") do
+      String.match?(host, ~r/\A[0-9a-f.:]+\z/)
+    else
+      host
+      |> String.split(".")
+      |> Enum.all?(&String.match?(&1, ~r/\A[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\z/))
+    end
+  end
+
+  defp host?(_host), do: false
+
   defp web_url(url, repository, number, kind) when is_binary(url) do
     case URI.parse(url) do
-      %URI{scheme: scheme, host: host, port: port, path: path}
+      %URI{scheme: scheme, host: host, port: port, path: path} = uri
       when scheme in ["http", "https"] and host not in [nil, ""] and is_binary(path) and
              port in 1..65_535 ->
         name = Regex.escape(String.downcase(repository))
@@ -478,9 +504,7 @@ defmodule HalC2Plugins.Planner.Plan do
           [_, found | _] ->
             host = host |> String.downcase() |> String.trim_trailing(".")
 
-            if host != "" and not String.match?(host, ~r/\s/) and
-                 not String.contains?(host, "%") and
-                 not Enum.any?(String.split(host, "."), &(&1 == "")) do
+            if host?(host) and not String.contains?(uri.authority || "", "%") do
               URI.to_string(%URI{
                 scheme: scheme,
                 host: host,
