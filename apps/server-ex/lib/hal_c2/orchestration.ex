@@ -954,12 +954,15 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # Whether any built-in runtime is registered for the thread right now.
+  # Whether any built-in runtime is live for the thread right now. A crashed
+  # runtime never unregisters itself (only `:release` does), so its entry can
+  # outlive it until the Registry handles its own DOWN: only a live pid counts,
+  # or a dead session would keep its credential from being revoked above.
   defp session_running?(thread_id) do
-    Enum.any?(
-      @session_registries,
-      &(Process.whereis(&1) != nil and Registry.lookup(&1, thread_id) != [])
-    )
+    Enum.any?(@session_registries, fn registry ->
+      Process.whereis(registry) != nil and
+        Enum.any?(Registry.lookup(registry, thread_id), fn {pid, _} -> Process.alive?(pid) end)
+    end)
   end
 
   # The built-in runtimes, and the plugin adapters that can take a runtime call.
@@ -1511,9 +1514,14 @@ defmodule HalC2.Orchestration do
   # An exit outside the ways a session stops is some other server's failure read as
   # "gone" (a call a runtime adapter makes in the caller's process); say so, so the
   # misclassification stays diagnosable instead of dropping the reason. The
-  # expected reasons can still be a nested call's, not the session's — the
-  # built-in closures are single calls, a plugin adapter's need not be — so
-  # they are logged at debug rather than dropped silently.
+  # expected reasons can still be a nested call's, not the session's: most
+  # built-in closures are single calls (respond, the Claude/ACP rollback inner
+  # calls, Codex feedback), but Codex's steer calls twice (its `:settle` keeps
+  # its own semantics and no longer exits here) and the Codex/ACP/Pi rollback
+  # closures run `ensure()` — a sessions-supervisor call — before the session
+  # call, so a supervisor exit there is logged at debug as an expected stop.
+  # A plugin adapter's closure need not be a single call either. They are
+  # logged at debug rather than dropped silently.
   defp log_unexpected_stop(why) when why in [:noproc, :normal, :shutdown, :killed],
     do: log_stop_at_debug(why)
 
