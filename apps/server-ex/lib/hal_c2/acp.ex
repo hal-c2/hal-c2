@@ -520,7 +520,17 @@ defmodule HalC2.Acp do
       error = error_message(id, result)
       locked(id, fn -> publish(id, generation, result, error) end)
     catch
-      _, _ -> :ok
+      _, _ ->
+        # This read published nothing. While its generation is still current,
+        # clear `:loading` so the next `entry/1` starts another read instead
+        # of leaving the instance with neither models nor an error until a
+        # forget. (A superseded read leaves `:loading` to its successor.)
+        locked(id, fn ->
+          if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation,
+            do: :persistent_term.erase({__MODULE__, id, :loading})
+        end)
+
+        :ok
     after
       Process.delete(staged_key(id))
       File.rm_rf(dir)
@@ -1313,19 +1323,20 @@ defmodule HalC2.Acp do
           |> put_text("description", command["description"])
         end
 
+      # Lock-free fast path for the common unchanged update; the lock (with a
+      # re-check) is only taken when something appears to have changed.
       changed =
-        locked(id, fn ->
-          changed =
-            :persistent_term.get({__MODULE__, id, :commands}, []) != slash or
-              :persistent_term.get({__MODULE__, id, :skills}, []) != skills
+        commands_changed?(id, slash, skills) and
+          locked(id, fn ->
+            changed = commands_changed?(id, slash, skills)
 
-          if changed do
-            :persistent_term.put({__MODULE__, id, :commands}, slash)
-            :persistent_term.put({__MODULE__, id, :skills}, skills)
-          end
+            if changed do
+              :persistent_term.put({__MODULE__, id, :commands}, slash)
+              :persistent_term.put({__MODULE__, id, :skills}, skills)
+            end
 
-          changed
-        end)
+            changed
+          end)
 
       if changed, do: HalC2.Settings.notify_providers()
     end
@@ -1334,6 +1345,11 @@ defmodule HalC2.Acp do
   end
 
   def put_commands(_id, _commands), do: :ok
+
+  defp commands_changed?(id, slash, skills),
+    do:
+      :persistent_term.get({__MODULE__, id, :commands}, []) != slash or
+        :persistent_term.get({__MODULE__, id, :skills}, []) != skills
 
   # Model ids the user added (`config.customModels`, slugs or `%{"slug", "name",
   # "capabilities"}`) follow the agent's own, skipping any the agent already offers.
