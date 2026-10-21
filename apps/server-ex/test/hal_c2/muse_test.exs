@@ -173,6 +173,26 @@ defmodule HalC2.MuseTest do
              StreamState.list(stream, "turn-item")
   end
 
+  # No objective to name the task with: what Muse says it is doing is the
+  # child's prompt instead of a blank message, its role still the title
+  # (upstream's `objective ?? fallbackText ?? ""`).
+  @tag :tmp_dir
+  test "a subagent whose objective is blank is tasked with what Muse says it is doing",
+       %{tmp_dir: dir} do
+    start_streams(dir)
+
+    {:noreply, _state} =
+      item_completed(runtime_state(), %{
+        "objective" => "   ",
+        "fallbackText" => "Reading the diff"
+      })
+
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("thread-1"))
+
+    assert [%{"status" => "completed", "title" => "reviewer", "prompt" => "Reading the diff"}] =
+             StreamState.list(stream, "subagent")
+  end
+
   # A field in a shape Muse has not sent before degrades the one subagent (its role
   # for a title, no answer to read), not the turn carrying it.
   @tag :tmp_dir

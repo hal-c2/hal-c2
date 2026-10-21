@@ -899,7 +899,7 @@ defmodule HalC2.Muse.ThreadRuntime do
   # The item's fields are Muse's shape of the day: a value of some other shape than
   # the text it has been so far degrades this subagent, not the turn.
   defp subagent_task(item) do
-    objective = if is_binary(item["objective"]), do: item["objective"]
+    objective = non_empty(item["objective"], nil)
 
     title =
       case objective && String.trim(objective) do
@@ -907,7 +907,9 @@ defmodule HalC2.Muse.ThreadRuntime do
         text -> text |> String.split("\n") |> hd() |> String.slice(0, 80)
       end
 
-    %{"prompt" => objective, "title" => title}
+    # Upstream's `objective ?? fallbackText ?? ""`: without an objective, what
+    # Muse says the subagent is doing is the child's task, not a blank prompt.
+    %{"prompt" => objective || subagent_progress(item) || "", "title" => title}
   end
 
   # What the running subagent is doing: Muse's one-line summary. Its control state
