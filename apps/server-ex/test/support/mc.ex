@@ -3968,7 +3968,8 @@ defmodule HalC2.Test.Mc.Terminal do
   @prompt ~r/[$#] (\e\[\?2004h)?\z/
 
   # One deadline budget for `await_prompt/2`: the attach GenServer call can take
-  # 15s, the prompt wait itself 5s, and the caller must outlive both.
+  # 15s (the hard-coded timeout in `HalC2.Terminal.call/2`), the prompt wait
+  # itself 5s, and the caller must outlive both.
   @prompt_attach_timeout 15_000
   @prompt_wait_timeout 5_000
   @prompt_caller_timeout @prompt_attach_timeout + @prompt_wait_timeout + 5_000
@@ -3988,9 +3989,13 @@ defmodule HalC2.Test.Mc.Terminal do
 
   Callers: `open!/3`, the attach-restart step, and the `terminal.restart` step.
   Attach-with-cwd creating a terminal does not wait here; a step that types
-  right after such an attach should call this first.
+  right after such an attach must call this first and pass the attach
+  snapshot's history as `restored` (as `open!/3` does), so the restored
+  scrollback's stale prompt cannot satisfy the wait. `restored` has no
+  default: the choice is explicit at every call site (pass `""` only for a
+  shell known to start with no restored scrollback, e.g. after a restart).
   """
-  def await_prompt(input, restored \\ "") do
+  def await_prompt(input, restored) do
     if prompt_known?() do
       session = Map.take(input, ["threadId", "terminalId"])
       parent = self()
@@ -4213,9 +4218,13 @@ defmodule HalC2.Test.Mc.Terminal do
     end
   rescue
     error in RuntimeError ->
-      flunk(
-        "#{Exception.message(error)}; no #{inspect(display_pattern)}; output ends #{inspect(output_tail(acc))}"
-      )
+      shown =
+        case display_pattern do
+          {:preformatted, text} -> text
+          other -> inspect(other)
+        end
+
+      flunk("#{Exception.message(error)}; no #{shown}; output ends #{inspect(output_tail(acc))}")
   end
 
   @doc "Sends keystrokes to the scenario's terminal from the named client, not waiting for the reply."
@@ -4264,7 +4273,13 @@ defmodule HalC2.Test.Mc.Terminal do
       # matches and leaked caller options (e.g. /x) into the prompt tail.
       idle = fn acc -> acc =~ pattern and prompt_tail(acc) =~ @prompt end
 
-      await_output(context, name, idle, timeout, pattern)
+      await_output(
+        context,
+        name,
+        idle,
+        timeout,
+        {:preformatted, "#{inspect(pattern)} followed by a prompt"}
+      )
     else
       await_output(context, name, pattern, timeout)
     end

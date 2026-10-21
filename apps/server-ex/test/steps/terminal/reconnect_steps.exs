@@ -83,7 +83,7 @@ defmodule HalC2.Steps.Terminal.Reconnect do
   step "a new shell starts", context do
     assert %{"status" => "running", "pid" => pid, "exitCode" => nil} = context.snapshot
     assert File.read_link!("/proc/#{pid}/cwd") == context.terminal["cwd"]
-    Terminal.await_prompt(context.terminal)
+    Terminal.await_prompt(context.terminal, "")
     context
   end
 
