@@ -448,7 +448,15 @@ defmodule HalC2Plugins.Planner.Sync do
           "projectId" => project && project["id"]
         }
 
-        case Plan.add(items, new_id.(), fields, now) do
+        # GitHub's own first assignee may be no login `Plan` takes; it must not
+        # veto the task the issue otherwise makes, so it is made ownerless then.
+        added =
+          case Plan.add(items, new_id.(), fields, now) do
+            {:error, _} -> Plan.add(items, new_id.(), Map.delete(fields, "owner"), now)
+            added -> added
+          end
+
+        case added do
           {:ok, items, item} ->
             item = item |> Map.put("issue", link["issue"]) |> prs_of(issue, now)
             Map.put(items, item["id"], item)
@@ -494,14 +502,22 @@ defmodule HalC2Plugins.Planner.Sync do
           Map.merge(status, %{
             "title" => issue["title"],
             "notes" => issue["body"] || "",
-            "owner" => List.first(issue["assignees"] || []),
+            "owner" => owner(item, issue),
             "labels" => issue["labels"] || []
           })
 
+        # As where an issue is first linked: GitHub's own assignee may be no
+        # login `Plan` takes, and must not veto the rest of what GitHub says.
         items =
           case Plan.update(items, item["id"], fields, now) do
-            {:ok, items, _old, _new} -> items
-            {:error, _} -> items
+            {:ok, items, _old, _new} ->
+              items
+
+            {:error, _} ->
+              case Plan.update(items, item["id"], Map.delete(fields, "owner"), now) do
+                {:ok, items, _old, _new} -> items
+                {:error, _} -> items
+              end
           end
 
         # The task now has GitHub's, so what a push left it of GitHub's goes.
@@ -515,6 +531,13 @@ defmodule HalC2Plugins.Planner.Sync do
 
         Map.put(items, item["id"], prs_of(item, issue, now))
     end
+  end
+
+  # The task's owner is one of the issue's assignees: the one it has while the issue
+  # still lists them, as a push adds the new owner after the others, else the first.
+  defp owner(item, issue) do
+    assignees = issue["assignees"] || []
+    Enum.find(assignees, &login?(&1, item["owner"])) || List.first(assignees)
   end
 
   # The pull requests GitHub says close the issue, linked and marked as the issue's.
@@ -813,7 +836,9 @@ defmodule HalC2Plugins.Planner.Sync do
   def created(synced, sent),
     do:
       synced
-      |> Map.merge(Map.take(sent, ~w(title notes owner labels)))
+      |> Map.merge(Map.take(sent, ~w(title notes labels)))
+      # Only the owner GitHub was actually asked to assign is one it has.
+      |> Map.put("owner", if(Plan.login?(sent["owner"]), do: sent["owner"]))
       |> Map.merge(%{"state" => "open", "start" => nil, "due" => nil})
 
   defp fields(item),
@@ -857,7 +882,9 @@ defmodule HalC2Plugins.Planner.Sync do
   @doc """
   What GitHub is asked when the plan syncs both ways and `new` (in `items`) differs
   from what GitHub has of it (`synced`, see `synced/3`): the issue's title, body,
-  state, assignee and labels, its blocking issues and sub-issues, its dates on the
+  state, assignees (the new owner added and the old one removed, one login at a time,
+  so the issue's other assignees stay) and labels, its
+  blocking issues and sub-issues, its dates on the
   board, and a milestone's title, date and the issues it holds. Each op is
   `{method, input, took}` for `HalC2.Plugins.Host.issues/3`, the method `:board`
   putting the issue on the board before its dates are set, and `took` what GitHub has
@@ -889,9 +916,6 @@ defmodule HalC2Plugins.Planner.Sync do
       %{}
       |> put_if(differs.("title"), "title", new["title"])
       |> put_if(differs.("notes"), "body", new["notes"])
-      # The task holds one of the issue's assignees: sent when it did not change, it
-      # would drop the rest.
-      |> put_if(differs.("owner"), "assignees", List.wrap(new["owner"]))
       |> put_if(differs.("labels"), "labels", new["labels"])
       |> Map.merge(if(synced["state"] == state, do: %{}, else: state(state)))
 
@@ -899,7 +923,7 @@ defmodule HalC2Plugins.Planner.Sync do
       if patch != %{},
         do: [
           {"update", Map.merge(base, patch),
-           &Map.merge(&1, Map.take(fields(new), ~w(title notes owner labels state)))}
+           &Map.merge(&1, Map.take(fields(new), ~w(title notes labels state)))}
         ],
         else: []
 
@@ -914,6 +938,10 @@ defmodule HalC2Plugins.Planner.Sync do
     moved? = not Plan.same_ref?(was, me)
     on_was = was && Map.put(was, "projectId", project_id(Map.put(new, "issue", was), projects))
     pushed = is_binary(on_was["projectId"]) && was
+
+    # The old owner comes off the issue they were synced to (`was`), the new one goes
+    # on the task's own: a relink and an owner change can land in one chained push.
+    update = update ++ owner_pushes(base, if(pushed, do: on_was), synced, new)
     kept? = &(not moved? and Plan.same_ref?(had(synced, items, &1), ref(items, &1)))
     kept = Enum.filter(synced["after"], &(&1 in new["after"] and kept?.(&1)))
     onto = &Map.put(&1, "issue", me)
@@ -958,6 +986,33 @@ defmodule HalC2Plugins.Planner.Sync do
     {unsub, sub} = Enum.split_with(parent, &(elem(&1, 0) == "removeSubIssue"))
 
     update ++ unblock ++ unsub ++ block ++ sub ++ board_pushes(settings, base, differs, new)
+  end
+
+  # The task holds one of the issue's assignees, so a new owner replaces only the old
+  # one: the old comes off first, then the new goes on, and GitHub has the owner it took
+  # last, so a refusal in between sends only what is left.
+  defp owner_pushes(base, on_was, synced, new) do
+    old = synced["owner"]
+    login = new["owner"]
+    # GitHub reads a login whatever its case, so a change of case alone pushes nothing.
+    changed? = old != login and not login?(old, login)
+
+    # A stored owner from before owners had to be logins can be free text; it is
+    # no GitHub assignee under that string, so there is nothing to take off, and
+    # asking would be refused before GitHub and wedge every later push.
+    off =
+      if changed? and Plan.login?(old) and not is_nil(on_was),
+        do: [
+          {"removeAssignees", Map.put(on_was, "assignees", [old]), &Map.put(&1, "owner", nil)}
+        ],
+        else: []
+
+    on =
+      if changed? and Plan.login?(login),
+        do: [{"addAssignees", Map.put(base, "assignees", [login]), &Map.put(&1, "owner", login)}],
+        else: []
+
+    off ++ on
   end
 
   defp board_pushes(settings, base, differs, new) do
@@ -1208,7 +1263,11 @@ defmodule HalC2Plugins.Planner.Sync do
            "title" => item["title"],
            "body" => item["notes"] || ""
          },
-         input = if(item["owner"], do: Map.put(input, "assignees", [item["owner"]]), else: input),
+         input =
+           if(Plan.login?(item["owner"]),
+             do: Map.put(input, "assignees", [item["owner"]]),
+             else: input
+           ),
          input = if(labels?(item), do: Map.put(input, "labels", item["labels"]), else: input),
          {:ok, issue} <- Host.issues(@id, "create", input) do
       {:ok, Map.take(issue, ~w(repository number url state title))}
@@ -1245,6 +1304,10 @@ defmodule HalC2Plugins.Planner.Sync do
     do: String.downcase(a) == String.downcase(b)
 
   defp same?(_, _), do: false
+
+  # Logins also compare without the blanks a stored owner may have around it.
+  defp login?(a, b) when is_binary(a) and is_binary(b), do: same?(String.trim(a), String.trim(b))
+  defp login?(_, _), do: false
 
   defp key(%{"repository" => repo, "number" => number}), do: {String.downcase(repo || ""), number}
 

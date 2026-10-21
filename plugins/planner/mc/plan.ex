@@ -173,10 +173,25 @@ defmodule HalC2Plugins.Planner.Plan do
 
   defp field("progress", _), do: {:error, "progress is a number from 0 to 100."}
 
+  # An owner is a login, which GitHub reads whatever its case and has no blanks in it or
+  # around it; the blanks around are trimmed, the rest refuse the owner here, where
+  # it is made, instead of every push of the task failing at the host.
+  defp field("owner", value) when is_binary(value) do
+    case String.trim(value) do
+      "" ->
+        {:ok, nil}
+
+      login ->
+        if login?(login),
+          do: {:ok, login},
+          else: {:error, "owner: #{inspect(login)} is not a login."}
+    end
+  end
+
   defp field(id, value) when id in ~w(parent owner projectId) and value in [nil, ""],
     do: {:ok, nil}
 
-  defp field(id, value) when id in ~w(parent owner projectId) and is_binary(value),
+  defp field(id, value) when id in ~w(parent projectId) and is_binary(value),
     do: {:ok, value}
 
   defp field(list, value) when list in ~w(after labels) and is_list(value) do
@@ -750,6 +765,22 @@ defmodule HalC2Plugins.Planner.Plan do
         a["number"] == b["number"]
 
   def same_ref?(_, _), do: false
+
+  @doc """
+  Whether `value`, trimmed, has GitHub's shape for a login (a user, a `[bot]`,
+  or a managed user with its one underscore). The shape is the host's (`@login`
+  in `HalC2.Issues`, which the plugin cannot call), duplicated once here for
+  the whole plugin: `field("owner", _)` refuses what is not one, and `Sync`
+  sends assignee changes only for what is.
+  """
+  def login?(value) when is_binary(value),
+    do:
+      String.match?(
+        String.trim(value),
+        ~r/\A(?:[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}|[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,33}\[bot\]|(?=.{1,39}\z)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*_[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)\z/
+      )
+
+  def login?(_value), do: false
 
   # --- views --------------------------------------------------------------------------------
 

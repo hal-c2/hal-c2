@@ -1300,13 +1300,89 @@ Feature: Planner
       Then #7's task is marked as synced
 
     @mc
+    Scenario: A new owner replaces only the old owner among an issue's assignees
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      When the user makes "dana" the owner of #7's task
+      Then GitHub is asked to take "alice" off #7's assignees and to add "dana"
+      And GitHub is never asked to set #7's assignees outright
+      And #7's task is marked as synced
+
+    # A push adds the new owner after the assignees the issue has, so GitHub does not list
+    # them first.
+    @mc
+    Scenario: A task's owner stays while GitHub lists them among the issue's assignees
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      And the user makes "dana" the owner of #7's task
+      When GitHub lists #7 as assigned to "bob" and "dana"
+      And the plugin looks at GitHub
+      Then #7's task is owned by "dana"
+
+    # Clearing the owner takes only them off the issue, as a new owner replaces only the
+    # old one, so an issue others are assigned to stays assigned to them and the task
+    # follows the first of them again.
+    @mc
+    Scenario: Clearing a task's owner takes only them off the issue's assignees
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      When the user clears the owner of #7's task
+      Then GitHub is asked to take "alice" off #7's assignees and nothing else
+      When GitHub lists #7 as assigned to "bob"
+      And the plugin looks at GitHub
+      Then #7's task is owned by "bob"
+
+    # An owner is a login, so one with a blank inside is refused where it is made, rather
+    # than refusing every push of the task.
+    @mc
+    Scenario: An owner with a blank inside is refused
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      When the user tries to make "da na" the owner of #7's task
+      Then the change is refused saying "da na" is not a login
+      And #7's task is owned by "alice"
+
+    @mc
+    Scenario: An owner that is not a login is refused
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      When the user tries to make "a/b" the owner of #7's task
+      Then the change is refused saying "a/b" is not a login
+      And #7's task is owned by "alice"
+
+    # The old owner comes off first and stays off, so the retry adds only the new one.
+    @mc
+    Scenario: An owner GitHub refused to add goes again without taking the old owner off again
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      And GitHub refuses adding assignees to #7
+      And the user makes "dana" the owner of #7's task
+      And GitHub takes changes to #7 again
+      When the user renames #7's task to "Rate limiting"
+      Then GitHub is asked to take "alice" off #7's assignees once and to add "dana" twice
+      And #7's task is named "Rate limiting" and marked as synced
+
+    # The old owner stays on when taking them off is refused, so the retry takes
+    # them off before adding the new one.
+    @mc
+    Scenario: An owner GitHub refused to take off goes again with the task's next change
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      And GitHub refuses removing assignees from #7
+      And the user makes "dana" the owner of #7's task
+      And GitHub takes changes to #7 again
+      When the user renames #7's task to "Rate limiting"
+      Then GitHub is asked to take "alice" off #7's assignees twice and to add "dana" once
+      And #7's task is named "Rate limiting" and marked as synced
+
+    @mc
     Scenario: An owner GitHub refused goes again with the task's next change
       Given "planner" syncs "acme/api" both ways
       And GitHub refuses changes to #7
       And the user makes "dana" the owner of #7's task
       And GitHub takes changes to #7 again
       When the user renames #7's task to "Rate limiting"
-      Then GitHub is asked to rename #7 to "Rate limiting" and assign it to "dana" at once
+      Then GitHub is asked to rename #7 to "Rate limiting" and to add "dana" to its assignees
       And #7's task is named "Rate limiting" and marked as synced
 
     @mc
@@ -1323,7 +1399,7 @@ Feature: Planner
       Given "planner" syncs "acme/api" both ways
       And GitHub answers renaming #7 to "Rate limiting" late, refusing it
       When the user renames #7's task to "Rate limiting", then makes "dana" its owner before GitHub answers
-      Then GitHub is asked to rename #7 to "Rate limiting" and assign it to "dana" at once
+      Then GitHub is asked to rename #7 to "Rate limiting" and to add "dana" to its assignees
       And #7's task is named "Rate limiting" and marked as synced
 
     # GitHub keeps the change that reaches it last, so a change waits for GitHub to answer

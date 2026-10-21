@@ -1,4 +1,4 @@
-for file <- ~w(plan slack),
+for file <- ~w(plan slack sync),
     do: Code.require_file("../../../../plugins/planner/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.PlannerTest do
@@ -11,7 +11,7 @@ defmodule HalC2.PlannerTest do
   """
   use ExUnit.Case, async: true
 
-  alias HalC2Plugins.Planner.{Plan, Slack}
+  alias HalC2Plugins.Planner.{Plan, Slack, Sync}
 
   @now "2026-10-15T09:00:00Z"
   @today "2026-10-15"
@@ -86,6 +86,27 @@ defmodule HalC2.PlannerTest do
 
       assert {:error, "late is not a field a change can set."} =
                Plan.add(%{}, "a", %{"title" => "a", "late" => true}, @now)
+
+      # An owner is a login: the blanks around it go, those inside refuse it.
+      assert {:error, "owner: \"da na\" is not a login."} =
+               Plan.add(%{}, "a", %{"title" => "a", "owner" => " da na "}, @now)
+
+      assert {:ok, %{"a" => %{"owner" => "dana"}}, _} =
+               Plan.add(%{}, "a", %{"title" => "a", "owner" => " dana "}, @now)
+
+      # The rest of the host's login shape refuses it here too, not at every
+      # push; the cases are the host suite's own (`HalC2.Test.LoginCases`).
+      for bad <- HalC2.Test.LoginCases.bad() do
+        assert {:error, _} = Plan.add(%{}, "a", %{"title" => "a", "owner" => bad}, @now)
+      end
+
+      for good <- HalC2.Test.LoginCases.good() do
+        assert {:ok, %{"a" => %{"owner" => ^good}}, _} =
+                 Plan.add(%{}, "a", %{"title" => "a", "owner" => good}, @now)
+      end
+
+      assert {:ok, %{"a" => %{"owner" => "copilot[bot]"}}, _} =
+               Plan.add(%{}, "a", %{"title" => "a", "owner" => "copilot[bot]"}, @now)
 
       items = plan([{"a", %{}}])
 
@@ -720,6 +741,228 @@ defmodule HalC2.PlannerTest do
 
       assert Slack.actions("", actions, "/planner") =~
                ~r"^Name the action to run\..*\n/planner run status — Write status update\n"
+    end
+  end
+
+  describe "pushes" do
+    test "a relink and an owner change in one push take the old owner off the old issue" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = fn n -> %{"repository" => "acme/api", "number" => n} end
+
+      new = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "dana",
+        "issue" => issue.(8),
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "owner" => "alice",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue.(7)
+      }
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+      assert {"removeAssignees", %{"number" => 7, "assignees" => ["alice"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "removeAssignees"))
+
+      assert {"addAssignees", %{"number" => 8, "assignees" => ["dana"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
+    end
+
+    test "a case-only owner change pushes no assignee ops" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      new = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "Alice",
+        "issue" => issue,
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "owner" => "alice",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue
+      }
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+      refute Enum.any?(ops, &(elem(&1, 0) in ["addAssignees", "removeAssignees"]))
+    end
+
+    test "a stored owner that is no login is never taken off, only the new one added" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      base = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "issue" => issue,
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "owner" => "Dana Smith",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue
+      }
+
+      new = Map.put(base, "owner", "dana")
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+      assert {"addAssignees", %{"number" => 7, "assignees" => ["dana"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
+
+      refute Enum.any?(ops, &(elem(&1, 0) == "removeAssignees"))
+
+      cleared = Map.put(base, "owner", nil)
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, cleared, %{"t" => cleared}, projects)
+      refute Enum.any?(ops, &(elem(&1, 0) in ["addAssignees", "removeAssignees"]))
+    end
+
+    test "a bot or managed user as the old owner is taken off like any login" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      for old <- ["copilot[bot]", "dana_acme"] do
+        new = %{
+          "id" => "t",
+          "title" => "T",
+          "notes" => nil,
+          "labels" => [],
+          "status" => "todo",
+          "owner" => "dana",
+          "issue" => issue,
+          "after" => [],
+          "parent" => nil,
+          "projectId" => "p"
+        }
+
+        synced = %{
+          "title" => "T",
+          "notes" => nil,
+          "labels" => [],
+          "state" => "open",
+          "owner" => old,
+          "start" => nil,
+          "due" => nil,
+          "after" => [],
+          "parent" => nil,
+          "refs" => %{},
+          "issue" => issue
+        }
+
+        ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+        assert {"removeAssignees", %{"number" => 7, "assignees" => [^old]}, _} =
+                 Enum.find(ops, &(elem(&1, 0) == "removeAssignees"))
+      end
+    end
+
+    test "a push takes a stored owner off exactly for the logins Plan takes" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      new = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "erin",
+        "issue" => issue,
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue
+      }
+
+      # The same cases `Plan` makes an owner by and the host suite runs, so the
+      # push's own gate cannot drift from either.
+      for bad <- HalC2.Test.LoginCases.bad() do
+        ops =
+          Sync.pushes(
+            %{"sync" => "twoWay"},
+            Map.put(synced, "owner", bad),
+            new,
+            %{"t" => new},
+            projects
+          )
+
+        refute Enum.any?(ops, &(elem(&1, 0) == "removeAssignees")),
+               "expected no removal for #{inspect(bad)}"
+      end
+
+      for good <- HalC2.Test.LoginCases.good() do
+        ops =
+          Sync.pushes(
+            %{"sync" => "twoWay"},
+            Map.put(synced, "owner", good),
+            new,
+            %{"t" => new},
+            projects
+          )
+
+        assert {"removeAssignees", %{"number" => 7, "assignees" => [^good]}, _} =
+                 Enum.find(ops, &(elem(&1, 0) == "removeAssignees")),
+               "expected a removal for #{inspect(good)}"
+      end
     end
   end
 end
