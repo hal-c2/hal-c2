@@ -595,7 +595,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
-  step "the agent reports a blocking finding with a suggested fix on {string}",
+  step "the agent reports a high finding with a suggested fix on {string}",
        %{args: [path]} = context do
     report(context, %{
       "verdict" => "request-changes",
@@ -605,7 +605,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
           "path" => path,
           "line" => 1,
           "body" => "Make the limit configurable.",
-          "severity" => "blocking",
+          "severity" => "high",
           "suggestion" => "export const limit = configured();"
         },
         %{"path" => path, "line" => 4, "body" => "This always allows."}
@@ -613,13 +613,15 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     })
   end
 
-  step "\#{int} gets the finding marked blocking with the suggested fix",
+  step "\#{int} gets the finding badged high with the suggested fix and the findings at a glance",
        %{args: [number]} = context do
     assert {:ok, _} = context.reply
     assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
     review = JSON.decode!(call["stdin"])
     assert [%{"body" => first} | _] = review["comments"]
-    assert first =~ "**blocking:** Make the limit configurable."
+    assert first =~ "🔴 **High:** Make the limit configurable."
+    assert review["body"] =~ "### Findings (2)"
+    assert review["body"] =~ "🔴 **High:** `src/limits.ts:1`"
     assert first =~ "```suggestion\nexport const limit = configured();\n```"
     assert review["body"] =~ "<!-- hal-c2-code-review:"
     await_review!(context, number, &(&1["status"] == "published"))

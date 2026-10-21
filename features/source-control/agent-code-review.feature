@@ -258,10 +258,10 @@ Feature: Agent code review
     @mc
     Scenario: A finding carries its severity and a suggested fix
       Given a review of #12 is running
-      When the agent reports a blocking finding with a suggested fix on "src/limits.ts"
+      When the agent reports a high finding with a suggested fix on "src/limits.ts"
       Then the review of #12 is finished with that verdict, summary and comments
       When the user publishes the review of #12
-      Then #12 gets the finding marked blocking with the suggested fix
+      Then #12 gets the finding badged high with the suggested fix and the findings at a glance
 
     @mc
     Scenario: A review whose agent fails can be tried again

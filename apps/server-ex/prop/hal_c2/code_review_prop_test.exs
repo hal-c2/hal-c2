@@ -10,7 +10,8 @@ defmodule HalC2.CodeReviewPropTest do
   checkout fails, hold checkouts at the fetch and posts at GitHub, refuse posts, look
   for pull requests, start, retry, report, dismiss, discard and publish reviews, end
   turns (one of them stopped by the provider's usage limit, which parks its review
-  in the queue and starts nothing else until the plugin restarts), answer a
+  in the queue and starts nothing else until the limit resets, restarts included,
+  unless the user asks for a review), answer a
   superseded post late, change settings, turn the plugin off and on,
   and crash it. After every step:
 
@@ -640,15 +641,9 @@ defmodule HalC2.CodeReviewPropTest do
         end
       end)
 
-    look(%{
-      m
-      | reviews: reviews,
-        held_runs: [],
-        held_pubs: [],
-        paused: false,
-        failures: 0,
-        pause_text: nil
-    })
+    # A pause is saved with the reviews, so it stands across the restart; the
+    # run of failures that may have led to it is not.
+    look(%{m | reviews: reviews, held_runs: [], held_pubs: [], failures: 0})
   end
 
   defp view(%{enabled: false}), do: :off
@@ -803,7 +798,7 @@ defmodule HalC2.CodeReviewPropTest do
       "status" => "failed",
       "errorClass" => "usage_limit",
       "error" => "Subscription quota exhausted.",
-      # No case runs this long: the pause stands until the plugin restarts.
+      # No case runs this long: the pause stands until the user asks for a review.
       "resetAt" => "2999-01-01T00:00:00Z"
     }
 
