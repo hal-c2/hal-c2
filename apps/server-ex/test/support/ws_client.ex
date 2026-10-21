@@ -81,14 +81,13 @@ defmodule HalC2.Test.WsClient do
     end
   end
 
-  @doc "Receives the next decoded JSON frame."
-  def recv(%{inbox: [frame | rest]} = client, _timeout), do: {frame, %{client | inbox: rest}}
-
   @doc """
   Receives the next decoded JSON frame. `timeout` bounds the whole wait: a
   TCP chunk that completes no frame re-checks the same deadline instead of
   re-arming it, so a fragmented-frame trickle cannot extend the wait.
   """
+  def recv(%{inbox: [frame | rest]} = client, _timeout), do: {frame, %{client | inbox: rest}}
+
   def recv(client, timeout) do
     recv_by(client, System.monotonic_time(:millisecond) + timeout, timeout)
   end
