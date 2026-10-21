@@ -51,9 +51,20 @@ defmodule HalC2.Subprocess.Orphans do
   read, the MC still boots, but `track/2` returns an error for the whole boot, so
   `HalC2.Subprocess.start` refuses to run a program no later boot could find —
   the same answer a failed record write gets, given before the program is
-  started at all when the failure is already known. A single program whose start
+  started at all when the failure is already known. That refusal covers every
+  program `HalC2.Subprocess` runs, not only provider CLIs: the Claude session
+  and every JSON-RPC provider connection, and the device hub alike, so a
+  broken state dir refuses all of them for the boot. A single program whose start
   time cannot be read (as against one already gone) is refused the same way, and
   so is a start in a running MC before this service has started.
+
+  The boot-time reap is synchronous, in `init/1`, before Recovery resumes
+  anything. Its cost is bounded per orphan, not in total: a program that does
+  not leave at once (in uninterruptible sleep, or a zombie whose parent never
+  reaps it — that one pays in full at every boot until it does) is awaited up
+  to about half a second, so N such records hold the boot for about N times
+  that. Genuinely stuck orphans are rare; a total budget would leave the rest
+  for the next boot at the price of resuming a session ahead of its reap.
   """
 
   use GenServer
@@ -135,15 +146,34 @@ defmodule HalC2.Subprocess.Orphans do
         # one that does not parse.
         tmp = path <> ".tmp"
 
-        with :ok <- File.write(tmp, JSON.encode!(record)),
-             :ok <- File.rename(tmp, path) do
-          GenServer.cast(__MODULE__, {:watch, proc, path})
-        else
+        case write_record(tmp, path, record) do
+          :ok ->
+            GenServer.cast(__MODULE__, {:watch, proc, path})
+
+          # The dir was removed under a running MC (cleanup tooling, a user
+          # tidying state): tracking is still marked on, so make it again and
+          # write once more rather than refuse every start for the boot.
+          {:error, :enoent} ->
+            with :ok <- mkdir(dir),
+                 :ok <- write_record(tmp, path, record) do
+              GenServer.cast(__MODULE__, {:watch, proc, path})
+            else
+              error ->
+                File.rm(tmp)
+                if error == :error, do: {:error, :no_records_dir}, else: error
+            end
+
           error ->
             File.rm(tmp)
             error
         end
     end
+  end
+
+  defp write_record(tmp, path, record) do
+    with :ok <- File.write(tmp, JSON.encode!(record)),
+         :ok <- File.rename(tmp, path),
+         do: :ok
   end
 
   defp untracked do
@@ -257,17 +287,23 @@ defmodule HalC2.Subprocess.Orphans do
   end
 
   # A boot of the machine, so ticks since boot from an earlier one never match.
-  # Immutable for the life of the VM, so a successful read is cached. A failed one
-  # is not: caching "" would stamp every record this VM writes with no boot id, and
-  # no later boot (reading the file fine) would ever match one of them.
+  # Immutable for the life of the VM, so a successful read is cached. A failed
+  # or empty one is not: caching "" would stamp every record this VM writes
+  # with no boot id (and read every process `:unknown` for its life), and no
+  # later boot (reading the file fine) would ever match one of them.
   defp boot_id do
     case :persistent_term.get({__MODULE__, :boot_id}, nil) do
       nil ->
         case File.read("/proc/sys/kernel/random/boot_id") do
           {:ok, id} ->
-            id = String.trim(id)
-            :persistent_term.put({__MODULE__, :boot_id}, id)
-            id
+            case String.trim(id) do
+              "" ->
+                ""
+
+              id ->
+                :persistent_term.put({__MODULE__, :boot_id}, id)
+                id
+            end
 
           {:error, _} ->
             ""
@@ -287,22 +323,32 @@ defmodule HalC2.Subprocess.Orphans do
   # says something, output that does not parse, and a `ps` that cannot run at
   # all are failures, not proof of absence: `:unknown`.
   defp ps_process_result(pid) do
-    case System.cmd("ps", ["-o", "state=,pgid=,lstart=", "-p", "#{pid}"],
-           stderr_to_stdout: true,
-           env: [{"LC_ALL", "C"}, {"TZ", "UTC"}]
-         ) do
-      {out, 0} ->
-        case parse_ps(out) do
-          nil -> :unknown
-          process -> {:ok, process}
-        end
-
-      {out, _} ->
-        if String.trim(out) == "", do: :gone, else: :unknown
-    end
+    ps_outcome(
+      System.cmd("ps", ps_args(pid),
+        stderr_to_stdout: true,
+        env: [{"LC_ALL", "C"}, {"TZ", "UTC"}]
+      )
+    )
   rescue
     _ -> :unknown
   end
+
+  @doc false
+  # The argv BSD `ps` takes for one process with no headers, pinned in a test:
+  # the macOS commands themselves run in no test, so an edit here is otherwise
+  # invisible until a macOS-only bug report.
+  def ps_args(pid), do: ["-o", "state=,pgid=,lstart=", "-p", "#{pid}"]
+
+  @doc false
+  # What a finished `ps` run proves: as `ps_process_result/1` reads it.
+  def ps_outcome({out, 0}) do
+    case parse_ps(out) do
+      nil -> :unknown
+      process -> {:ok, process}
+    end
+  end
+
+  def ps_outcome({out, _status}), do: if(String.trim(out) == "", do: :gone, else: :unknown)
 
   @doc false
   # The state's first letter, the group, and the wall-clock start time to the second.
@@ -431,14 +477,19 @@ defmodule HalC2.Subprocess.Orphans do
       do: Logger.warning("killed #{length(killed)} programs an earlier MC left running")
   end
 
-  # The group first, when the program still leads it: the leader's pid names it. A
-  # program that survives keeps its record, so the next boot tries again.
-  defp kill(path, pid, started, leader?) do
+  @doc false
+  # `-KILL`, not `-s KILL`: the one-dash form is the one both GNU and BSD `kill`
+  # take as separate argv entries, with `--` before a negative (group) pid.
+  # The group first, when the program still leads it: the leader's pid names
+  # it. Pinned in a test, like `ps_args/1`.
+  def kill_args(pid, leader?) do
     targets = if leader?, do: ["-#{pid}", "#{pid}"], else: ["#{pid}"]
+    ["-KILL", "--" | targets]
+  end
 
-    # `-KILL`, not `-s KILL`: the one-dash form is the one both GNU and BSD `kill`
-    # take as separate argv entries, with `--` before a negative (group) pid.
-    case System.cmd("kill", ["-KILL", "--" | targets], stderr_to_stdout: true) do
+  # A program that survives keeps its record, so the next boot tries again.
+  defp kill(path, pid, started, leader?) do
+    case System.cmd("kill", kill_args(pid, leader?), stderr_to_stdout: true) do
       {_, 0} ->
         # Exit 0 proves the signal was delivered, not that the program died:
         # one in uninterruptible sleep takes SIGKILL only when it wakes. The

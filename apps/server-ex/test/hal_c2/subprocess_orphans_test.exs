@@ -346,6 +346,31 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert {:ok, 0} = Subprocess.stop(sub)
   end
 
+  test "a records dir removed mid-boot is made again for the next program" do
+    boot(:mc)
+    File.rm_rf!(Orphans.dir())
+
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    alive!(sub)
+    assert [_record] = File.ls!(Orphans.dir())
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
+  # The macOS commands themselves run in no test, so their argv and the
+  # empty-output-means-gone rule are pinned where they are built.
+  test "the macOS ps and kill argv are the ones BSD takes" do
+    assert Orphans.ps_args(123) == ["-o", "state=,pgid=,lstart=", "-p", "123"]
+    assert Orphans.kill_args(123, true) == ["-KILL", "--", "-123", "123"]
+    assert Orphans.kill_args(123, false) == ["-KILL", "--", "123"]
+
+    assert Orphans.ps_outcome({"Ss 123 Sat Oct 18 12:00:00 2026\n", 0}) ==
+             {:ok, {"S", "Sat Oct 18 12:00:00 2026", 123}}
+
+    assert Orphans.ps_outcome({"", 1}) == :gone
+    assert Orphans.ps_outcome({"ps: no such process\n", 1}) == :unknown
+    assert Orphans.ps_outcome({"garbage", 0}) == :unknown
+  end
+
   test "a program that ends takes its record with it" do
     tracker = boot(:mc)
     {:ok, sub} = Subprocess.start(["sh", "-c", @echo])

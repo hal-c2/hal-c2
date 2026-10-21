@@ -60,7 +60,8 @@ defmodule HalC2.Subprocess do
   end
 
   # A failure to track that is already known refuses before anything is
-  # started, so no provider CLI is run up just to be killed. `track/1` after
+  # started, so no program (a provider CLI, a JSON-RPC connection, the device
+  # hub: every caller here) is run up just to be killed. `track/1` after
   # the start stays the check that decides, for what races past this one.
   defp trackable do
     case HalC2.Subprocess.Orphans.available?() do
@@ -164,7 +165,19 @@ defmodule HalC2.Subprocess do
         end
     end
   catch
-    :exit, _ -> :ok
+    # The kill or the wait itself exiting (a wedged Exile process timing out)
+    # must not silence the outcome this function exists to announce: unless
+    # the program is provably gone, say it may run untracked.
+    :exit, reason ->
+      if os_pid != nil and HalC2.Subprocess.Orphans.gone?(os_pid) do
+        :ok
+      else
+        Logger.warning(
+          "program #{os_pid} may run untracked: stopping it exited #{inspect(reason)}"
+        )
+
+        :ok
+      end
   end
 
   # A program that does exit on its closed stdin needs a moment to, so "gone" is
