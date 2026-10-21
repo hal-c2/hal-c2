@@ -73,25 +73,29 @@ function gatedImageDecoder() {
   };
 }
 
-// Wait on the decode-started event itself. `waitFor` is bounded by frame
-// passes (20 by default in @opentui/core), so give it a generous 200-pass
-// budget: the preceding read does real IO and can span many frames on a
-// loaded runner. On timeout, fail with the last frame so a paste that never
-// reaches the decode is diagnosable.
+// Wait on the decode-started event itself: `waitFor` would break out as soon
+// as the scheduler goes idle (its frame passes are never spent while the
+// preceding read does real IO), so it cannot bound this wait. The race's
+// timeout is only a diagnostic fallback — it fails with the last frame, and
+// Bun's per-test timeout bounds a decode that never starts.
 async function awaitDecodeStarted(
   setup: Awaited<ReturnType<typeof testRender>>,
   decoder: ReturnType<typeof gatedImageDecoder>,
 ) {
-  let started = false;
-  void decoder.started.then(() => {
-    started = true;
-  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await setup.waitFor(() => started, { maxPasses: 200 });
-  } catch (error) {
-    throw new Error(`the decode never started; last frame:\n${setup.captureCharFrame()}`, {
-      cause: error,
-    });
+    await Promise.race([
+      decoder.started,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(new Error(`the decode never started; last frame:\n${setup.captureCharFrame()}`)),
+          4_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
