@@ -120,23 +120,28 @@ defmodule HalC2.Upgrade.Source do
   @doc """
   Packs the release at `root` into the bundle of the version it starts, at `path`:
   its `bin`, `lib`, that version's `releases/` and its ERTS (`mix hal_c2.bundle`).
-  `lib: :listed` takes only the applications that version's `upgrade.json` lists: an
-  installed release (`ensure_own/0`) keeps those of the versions before it too.
+  `version:` packs that version instead, with the ERTS its `upgrade.json` names, and
+  `lib: :listed` only the applications that lists: an installed release
+  (`ensure_own/1`) keeps those of other versions too, and may start another next.
   """
   def pack(root, path, opts \\ []) do
-    [erts, version] =
+    [start_erts, start_version] =
       root |> Path.join("releases/start_erl.data") |> File.read!() |> String.split()
 
-    manifest = Path.join([root, "releases", version, "upgrade.json"])
+    version = opts[:version] || start_version
+
+    manifest =
+      case File.read(Path.join([root, "releases", version, "upgrade.json"])) do
+        {:ok, text} -> JSON.decode!(text)
+        _ -> %{}
+      end
+
+    erts = if opts[:version], do: manifest["erts"] || start_erts, else: start_erts
 
     lib =
-      case opts[:lib] == :listed && File.read(manifest) do
-        {:ok, text} ->
-          for {name, vsn} <- JSON.decode!(text)["applications"] || %{},
-              do: Path.join("lib", "#{name}-#{vsn}")
-
-        _ ->
-          ["lib"]
+      case {opts[:lib], manifest["applications"]} do
+        {:listed, %{} = apps} -> for {name, vsn} <- apps, do: Path.join("lib", "#{name}-#{vsn}")
+        _ -> ["lib"]
       end
 
     files =
@@ -149,12 +154,11 @@ defmodule HalC2.Upgrade.Source do
   end
 
   @doc """
-  Puts the bundle of the version this MC runs in its cache, packed from its release
-  when it has none (an MC installed without one, or started from a desktop app's
+  Puts the bundle of `version`, the one this MC runs, in its cache, packed from its
+  release when it has none (an MC installed without one, or started from a desktop app's
   copy of the release), so members moving to that version can take it.
   """
-  def ensure_own do
-    version = HalC2.Upgrade.version()
+  def ensure_own(version) do
     platform = HalC2.Upgrade.platform()
 
     # One packing at a time: another `cluster.update` may be packing the same bundle.
@@ -164,7 +168,7 @@ defmodule HalC2.Upgrade.Source do
   defp pack_own(version, platform) do
     with {:error, _} <- cached(version, platform) do
       path = archive_path(version, platform)
-      pack(HalC2.Upgrade.release_root(), path <> ".packing", lib: :listed)
+      pack(HalC2.Upgrade.release_root(), path <> ".packing", version: version, lib: :listed)
       File.rename!(path <> ".packing", path)
       File.write!(path <> ".sha256", sha256(path))
     end

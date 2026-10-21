@@ -125,16 +125,28 @@ defmodule HalC2.UpgradeTest do
   test "a release with no bundle of its version packs one of its own applications, once",
        %{tmp_dir: dir} do
     root = Path.join(dir, "release")
-    rel = Path.join([root, "releases", "2.0.0"])
-    File.mkdir_p!(rel)
-    File.write!(Path.join(rel, "upgrade.json"), JSON.encode!(@manifest))
-    File.write!(Path.join([root, "releases", "start_erl.data"]), "17.0.5 2.0.0\n")
 
-    # The applications of 2.0.0, and one an earlier version left behind.
-    for app <- ~w(hal_c2-2.0.0 kernel-11.0.3 exqlite-0.41.0 hal_c2-1.9.0),
+    staged = %{
+      @manifest
+      | "version" => "2.1.0",
+        "erts" => "17.1",
+        "applications" => %{"hal_c2" => "2.1.0"}
+    }
+
+    for manifest <- [@manifest, staged] do
+      rel = Path.join([root, "releases", manifest["version"]])
+      File.mkdir_p!(rel)
+      File.write!(Path.join(rel, "upgrade.json"), JSON.encode!(manifest))
+    end
+
+    # 2.0.0 runs, and 2.1.0 is staged for the next start.
+    File.write!(Path.join([root, "releases", "start_erl.data"]), "17.1 2.1.0\n")
+
+    # The applications of 2.0.0, one an earlier version left behind, and 2.1.0's.
+    for app <- ~w(hal_c2-2.0.0 kernel-11.0.3 exqlite-0.41.0 hal_c2-1.9.0 hal_c2-2.1.0),
         do: File.mkdir_p!(Path.join([root, "lib", app, "ebin"]))
 
-    File.mkdir_p!(Path.join([root, "erts-17.0.5", "bin"]))
+    for erts <- ~w(17.0.5 17.1), do: File.mkdir_p!(Path.join([root, "erts-#{erts}", "bin"]))
     System.put_env("RELEASE_ROOT", root)
     :persistent_term.put({Upgrade, :version}, "2.0.0")
 
@@ -145,7 +157,9 @@ defmodule HalC2.UpgradeTest do
 
     # Two `cluster.update`s at once pack it once and agree on it.
     assert [:ok, :ok] =
-             1..2 |> Enum.map(fn _ -> Task.async(&Source.ensure_own/0) end) |> Task.await_many()
+             1..2
+             |> Enum.map(fn _ -> Task.async(fn -> Source.ensure_own("2.0.0") end) end)
+             |> Task.await_many()
 
     archive =
       Path.join([Source.cache_dir("2.0.0"), Source.file_name("2.0.0", Upgrade.platform())])
@@ -169,6 +183,7 @@ defmodule HalC2.UpgradeTest do
 
     assert "releases/2.0.0" in dirs
     refute "lib/hal_c2-1.9.0" in dirs
+    refute "lib/hal_c2-2.1.0" in dirs or "releases/2.1.0" in dirs or "erts-17.1/bin" in dirs
   end
 
   test "a code-only version's release is the running one with the bundle's own code", %{

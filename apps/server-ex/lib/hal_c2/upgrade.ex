@@ -103,7 +103,7 @@ defmodule HalC2.Upgrade do
     if release_root() do
       target = version()
       others = for mc <- Node.list(), (from = version_of(mc)) != target, do: {mc, from}
-      if others != [], do: :ok = HalC2.Upgrade.Source.ensure_own()
+      if others != [], do: :ok = HalC2.Upgrade.Source.ensure_own(target)
       outcomes = update_members(Enum.map(others, &elem(&1, 0)), %{"targetVersion" => target})
 
       {:ok, target,
