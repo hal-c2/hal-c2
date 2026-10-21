@@ -29,7 +29,12 @@ defmodule HalC2.Subprocess.Orphans do
   Nor is the last identity read atomic with the signal: a pid reused in the moment
   between that read and the external `kill` running would be signalled instead;
   closing that needs a pidfd (`pidfd_open` + `pidfd_send_signal`), which no helper
-  here provides.
+  here provides. Nor is a program recorded before it runs: its pid is only known
+  once it is spawned, so it executes — argv and all — between the spawn and its
+  record landing, and a VM that dies in that moment leaves an orphan no boot can
+  find. Closing that would take spawning it held until tracked; the fail-closed
+  checks below refuse the failures known before the spawn, and a failed record
+  write kills the program, but neither un-runs those first moments.
 
   The kernel's parent-death signal (`PR_SET_PDEATHSIG`) is not used. It would kill
   the program but leave its background commands with no leader to check the group
@@ -167,28 +172,36 @@ defmodule HalC2.Subprocess.Orphans do
   @doc """
   Whether the process `pid` runs no more code: no such process, or one that
   exited and waits to be reaped. An identity that cannot be read counts as
-  gone, as in `started/1`.
+  not gone: the callers are deciding whether a program whose kill may have
+  failed can be left, where unreadable must not read as dead.
   """
   def gone?(pid) do
-    case process(pid) do
-      {state, _started, _group} -> state in ["Z", "X"]
-      nil -> true
+    case process_result(pid) do
+      {:ok, {state, _started, _group}} -> state in ["Z", "X"]
+      :gone -> true
+      :unknown -> false
     end
   end
 
   # Whether the process a record names (a program, or the MC that ran it) is still that
   # process and alive. One that exited but that its parent has not reaped yet keeps its
-  # pid and start time, as a zombie.
+  # pid and start time, as a zombie. An identity that cannot be read counts as
+  # still running: an owner only momentarily unreadable must not read as a dead
+  # MC whose programs may be killed.
   defp running?(%{"pid" => pid, "started" => started}) do
-    case process(pid) do
-      {state, ^started, _group} -> state not in ["Z", "X"]
-      _ -> false
+    case process_result(pid) do
+      {:ok, {state, ^started, _group}} -> state not in ["Z", "X"]
+      {:ok, _other} -> false
+      :gone -> false
+      :unknown -> true
     end
   end
 
-  # `{state, started, process group}` of the process `pid`, or nil. The reap
-  # paths only need "not provably that process", so gone and unreadable both
-  # read as nil there; `record/4` tells them apart through `process_result/1`.
+  # `{state, started, process group}` of the process `pid`, or nil. Only
+  # `started/1` collapses the tri-state this way, where nil fails closed (a
+  # start time that cannot be read tracks nothing); every path that decides a
+  # kill or a record's fate reads `process_result/1` itself, so unreadable is
+  # never taken for gone there.
   defp process(pid) do
     case process_result(pid) do
       {:ok, process} -> process
@@ -260,8 +273,10 @@ defmodule HalC2.Subprocess.Orphans do
     end
   end
 
-  # macOS. `lstart` is written in the locale's words, so the locale is pinned: an MC
-  # read under another one would look like a different process, and be taken for gone.
+  # macOS. `lstart` is written in the locale's words in local time, so both are
+  # pinned: an MC read under another locale, or after the machine's timezone
+  # changed (a laptop that travels), would look like a different process, and
+  # be taken for gone.
   # For a pid with no process `ps` exits non-zero saying nothing (the headers are
   # suppressed), and only that silence is read as `:gone`; a non-zero exit that
   # says something, output that does not parse, and a `ps` that cannot run at
@@ -269,7 +284,7 @@ defmodule HalC2.Subprocess.Orphans do
   defp ps_process_result(pid) do
     case System.cmd("ps", ["-o", "state=,pgid=,lstart=", "-p", "#{pid}"],
            stderr_to_stdout: true,
-           env: [{"LC_ALL", "C"}]
+           env: [{"LC_ALL", "C"}, {"TZ", "UTC"}]
          ) do
       {out, 0} ->
         case parse_ps(out) do
@@ -308,7 +323,9 @@ defmodule HalC2.Subprocess.Orphans do
 
     # Tracking still on is a restart inside this MC, after a crash: a program may be
     # being recorded right now, so its record's `.tmp` is not this reap's to drop.
-    restart? = :persistent_term.get(__MODULE__, nil) != nil
+    # Only the tracking mark means that: after an unavailable boot no record
+    # write can be in flight, so its restart reaps `.tmp` records like a boot.
+    restart? = match?(%{}, :persistent_term.get(__MODULE__, nil))
     dir = dir()
 
     # Nothing here may stop the MC from booting (cf. `reap_one/1`): a records dir
@@ -423,15 +440,27 @@ defmodule HalC2.Subprocess.Orphans do
       # "not running" before any signal, while its group may have survived this one,
       # so its record is kept for the next boot rather than counted killed.
       {out, status} ->
-        if match?({_state, ^started, _group}, process(pid)) do
-          Logger.warning(
-            "could not kill #{pid}, which an earlier MC left running: #{status} #{out}"
-          )
+        case process_result(pid) do
+          # Still that process, or unreadable either way: not provably gone,
+          # so the record stays for the next boot.
+          {:ok, {_state, ^started, _group}} ->
+            Logger.warning(
+              "could not kill #{pid}, which an earlier MC left running: #{status} #{out}"
+            )
 
-          :kept
-        else
-          File.rm(path)
-          :killed
+            :kept
+
+          :unknown ->
+            Logger.warning(
+              "could not kill #{pid}, which an earlier MC left running: #{status} #{out}" <>
+                " (and its identity cannot be read, kept for the next boot)"
+            )
+
+            :kept
+
+          _gone_or_reused ->
+            File.rm(path)
+            :killed
         end
     end
   end
@@ -482,11 +511,16 @@ defmodule HalC2.Subprocess.Orphans do
       true ->
         # Read again right before the signal, with the group the program leads now.
         # Not atomic with the external `kill` (see the moduledoc's pidfd limit).
-        case process(pid) do
-          {_state, ^started, group} ->
+        # Unreadable is not gone: the record stays for the next boot, as an
+        # unreadable record does; dropping it would spare the orphan forever.
+        case process_result(pid) do
+          {:ok, {_state, ^started, group}} ->
             kill(path, pid, started, group == pid)
 
-          _ ->
+          :unknown ->
+            :kept
+
+          _gone_or_reused ->
             File.rm(path)
             :gone
         end

@@ -360,7 +360,9 @@ defmodule HalC2.Subprocess.OrphansTest do
   end
 
   @tag skip: @chmod_skip
-  test "a program whose record cannot be written is not run" do
+  # It has necessarily started by then (its pid is only known once spawned);
+  # it is stopped again rather than left running untracked.
+  test "a program whose record cannot be written is stopped again" do
     boot(:mc)
     File.chmod!(Orphans.dir(), 0o500)
     on_exit(fn -> File.chmod(Orphans.dir(), 0o700) end)

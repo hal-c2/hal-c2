@@ -283,12 +283,16 @@ defmodule HalC2.SubprocessOrphansPropTest do
   def restart_service do
     kill_service()
     # After a dirless boot the records dir was never made; the restart is what
-    # tracking coming back looks like, with the dir restored.
+    # tracking coming back looks like, with the dir restored. No record write
+    # can be in flight then (every start was refused), so the half-written
+    # record is only planted when tracking was on.
     File.mkdir_p!(Orphans.dir())
     in_flight = Path.join(Orphans.dir(), "#{System.pid()}-0.json.tmp")
-    File.write!(in_flight, ~s({"pid": ))
+
+    planted? = match?(%{}, :persistent_term.get(Orphans, nil))
+    if planted?, do: File.write!(in_flight, ~s({"pid": ))
     start_service()
-    :ok = File.rm(in_flight)
+    if planted?, do: :ok = File.rm(in_flight)
     killed = killed()
     {killed, for({id, sub} <- subs(), alive?(sub), do: id) |> Enum.sort(), records()}
   end
