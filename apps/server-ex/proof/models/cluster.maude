@@ -291,14 +291,14 @@ mod CLUSTER is
   eq running(N, mc(N, true, Tb, V) C) = true .
   eq running(N, C) = false [owise] .
 
-  --- handle_cast :version_changed: refresh_own and commit, connections kept, then the
-  --- table to every connected member.
+  --- handle_cast :version_changed: refresh_own and commit, connections kept. The table
+  --- it then tells its members is the one its next gossip carries: merge is a join, so
+  --- the earlier copy adds nothing, and it differs only in this MC's own entry, which
+  --- decides no membership. The gossip rule stands for it.
   rl [version-changed] :
     { mc(N, true, Tb, V) upgrades(s F) time(T) skew(N, K) at(N, D) C }
-    => { announce(N, commit(N, mc(N, true, refresh(N, D, s V, stamp(T + K, Tb), Tb), s V)
-                                upgrades(F) time(T) skew(N, K) at(N, D) C)) } .
-  op announce : Id Conf -> Conf .
-  eq announce(N, mc(N, true, Tb, V) C) = tell(N, Tb, mc(N, true, Tb, V) C) .
+    => { commit(N, mc(N, true, refresh(N, D, s V, stamp(T + K, Tb), Tb), s V)
+                   upgrades(F) time(T) skew(N, K) at(N, D) C) } .
 
   --- init/1 after a crash: the table as saved, refresh_own and commit. Connections
   --- outlived the process, so no nodeup comes for them.

@@ -133,7 +133,12 @@ defmodule HalC2.ClusterProofTest do
   # One search per start refutes all five: a removal no admission came after is never
   # undone, nor an admission after every removal; a change outranks everything its MC
   # had heard of; a non-member is never kept connected, nor sent the table.
-  for init <- ["two(1, 1, 2, 1, 2, 1)", "three(1, 1, 1, 1, 0, 0)"] do
+  #
+  # A version change keeps an MC connected, so every step after it interleaves with the
+  # other members: the two-MC start takes one, with one clock step (two take past the
+  # timeout), and the three-MC start takes none. A version change only changes what an
+  # MC says of itself, which the two-MC start and the agreement below cover.
+  for init <- ["two(1, 1, 2, 1, 1, 1)", "three(1, 1, 1, 0, 0, 0)"] do
     test "no change is undone or misordered, and no non-member kept or told, from #{init}",
          %{proof: proof} do
       refute_reachable(proof, unquote(init), "unsafe", [])
