@@ -201,7 +201,7 @@ defmodule HalC2.UpgradeTest do
     end
   end
 
-  test "a put that stopped mid-copy leaves the previous bundle fetchable", %{tmp_dir: dir} do
+  test "a leftover temp beside the archive does not affect fetch", %{tmp_dir: dir} do
     first = tarball(dir, "first", %{"version" => "2.0.0", "marker" => "first"})
     :ok = Source.put("2.0.0", "darwin-arm64", first)
     assert {:ok, unpacked} = Source.fetch("2.0.0", "darwin-arm64")

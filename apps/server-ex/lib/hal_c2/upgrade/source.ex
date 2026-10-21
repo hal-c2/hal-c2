@@ -56,8 +56,19 @@ defmodule HalC2.Upgrade.Source do
     # drops the good unpack, and fails until retried. A stopped copy leaves
     # only the temp file; the previous archive stays whole.
     temp = target <> ".put-#{System.unique_integer([:positive])}"
-    File.cp!(source_path, temp)
-    File.rename!(temp, target)
+
+    try do
+      File.cp!(source_path, temp)
+      File.rename!(temp, target)
+    rescue
+      error ->
+        # A failed copy must not leak a bundle-sized temp per retry (the
+        # disk-full copy that failed is the likeliest retry); a hard kill
+        # can still leave one, which fetch ignores.
+        File.rm(temp)
+        reraise error, __STACKTRACE__
+    end
+
     File.write!(target <> ".sha256", sha256(target))
     :ok
   end
