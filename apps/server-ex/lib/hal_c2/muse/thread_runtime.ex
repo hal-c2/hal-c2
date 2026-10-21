@@ -937,13 +937,20 @@ defmodule HalC2.Muse.ThreadRuntime do
     end
   end
 
-  # Muse's subagents still running when the turn ends end with it, unanswered: as
-  # interrupted when the turn completed, so none reads as finished work. Their answer,
-  # should Muse send one later, belongs to no turn. (ACP keeps a running subagent as
-  # background work instead: its agents report them past the turn.) The exception is
-  # a subagent last seen in a status Muse is not known to run or end one with: that
-  # status may have been a new way of ending it, and no later revision is coming, so
-  # an answer already on that item is kept (progress still never is one).
+  # Interim (#447): Muse's subagents still running when the turn ends end with
+  # it, unanswered — as interrupted when the turn completed, so none reads as
+  # finished work, and an answer Muse sends later is dropped. That is not the
+  # behaviour HAL-C2 wants: upstream's Muse adapter keeps a subagent that
+  # outlives a *completed* turn as the thread's background work and publishes
+  # its answer when it lands (only failed/cancelled/interrupted endings settle
+  # it), as the MC's Claude adapter does. The ledger records that as the
+  # `@backlog` scenario "A Muse Code subagent still running when its turn
+  # completes answers afterwards" (`features/providers/muse.feature`); until it
+  # lands, "interrupted" is the honest label for work shown as stopped. The
+  # exception is a subagent last seen in a status Muse is not known to run or
+  # end one with: that status may have been a new way of ending it, and no
+  # later revision is coming, so an answer already on that item is kept
+  # (progress still never is one).
   defp end_subagents(state, status) do
     status = if status == "completed", do: "interrupted", else: status
 

@@ -18,7 +18,8 @@ defmodule HalC2.MuseRuntimePropTest do
   reached the point the fake stops at (a reply, a pending request, or the end of the
   runs the command ended) and compares the runs, the pending request, the replies and
   the thread's subagents with the model: a subagent a turn started ends with that turn,
-  whatever ended it.
+  whatever ended it (the interim #447 records changing for completed turns, whose
+  subagents upstream keeps as background work; the model changes with it).
   """
 
   use ExUnit.Case, async: false
@@ -293,9 +294,9 @@ defmodule HalC2.MuseRuntimePropTest do
   def next_state(%{turn: nil} = state, _result, {:call, _, :host_exit, _}), do: state
   def next_state(state, _result, {:call, _, :host_exit, _}), do: end_turn(state, "failed")
 
-  # A subagent the turn ends before it answers is interrupted, even by a turn that
-  # completed; one that already answered keeps its completed status whatever ends
-  # the turn (a steer after it, an interrupt, a crash, the host going).
+  # Interim (#447): a subagent the turn ends before it answers is interrupted, even
+  # by a turn that completed; one that already answered keeps its completed status
+  # whatever ends the turn (a steer after it, an interrupt, a crash, the host going).
   defp end_turn(%{turn: %{msg: msg}} = state, status) do
     ended = fn status -> fn {m, s} -> if m == msg, do: {m, status}, else: {m, s} end end
     sub_status = if status == "completed", do: "interrupted", else: status

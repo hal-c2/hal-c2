@@ -188,9 +188,16 @@ Feature: Muse Code
     Given Muse Code delegates a review to a subagent it ends with a status HAL-C2 has not seen
     Then the subagent is shown as stopped with the turn, with the answer it had already sent
 
-  Scenario: A Muse Code subagent still running when the turn ends stops with it
-    Given Muse Code delegates a review to a subagent and the turn ends first
-    Then the subagent is shown as stopped with the turn, without an answer
+  # Upstream's Muse adapter keeps a subagent that outlives a completed turn as
+  # the thread's background work and publishes its answer when it lands; only
+  # failed, cancelled or interrupted endings settle it. Until the MC does that
+  # (#447), such a subagent is settled as interrupted at turn end — so work
+  # shown as stopped never reads as finished — and a later answer is dropped.
+  @backlog
+  Scenario: A Muse Code subagent still running when its turn completes answers afterwards
+    Given Muse Code delegates a review to a subagent and the turn completes first
+    When the subagent answers after the turn has ended
+    Then the subagent is shown with its answer in its own thread
 
   Scenario: Muse Code offers only supervised and full access
     When the user opens the permission mode choices in a Muse Code thread

@@ -220,13 +220,6 @@ defmodule HalC2.Steps.Providers.Muse do
       ]
     },
     %{
-      "match" => "delegate and move on",
-      "steps" => [
-        %{"subagent" => %{"objective" => "Review the diff", "progress" => "Reading the diff"}},
-        %{"text" => "Moving on."}
-      ]
-    },
-    %{
       "match" => "a workflow command",
       "steps" => [%{"childShell" => "rm -rf build"}, %{"text" => "Done."}]
     },
@@ -965,19 +958,6 @@ defmodule HalC2.Steps.Providers.Muse do
              }
            ] = context |> state() |> StreamState.list("subagent")
 
-    assert [%{"status" => "interrupted"}] = items(context, "subagent")
-    context
-  end
-
-  step "Muse Code delegates a review to a subagent and the turn ends first", context do
-    context |> install() |> FakeAcp.thread() |> turn("delegate and move on")
-  end
-
-  step "the subagent is shown as stopped with the turn, without an answer", context do
-    assert [%{"status" => "interrupted", "progress" => "Reading the diff"} = subagent] =
-             context |> state() |> StreamState.list("subagent")
-
-    assert subagent["result"] in [nil, ""]
     assert [%{"status" => "interrupted"}] = items(context, "subagent")
     context
   end
