@@ -30,6 +30,13 @@ if [ ! -f "$installed" ]; then
     (umask 077 && od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$tmp/COOKIE")
     mv "$tmp/COOKIE" "$root/releases/COOKIE"
   fi
+  # The bundle itself, kept where this MC hands it to cluster members that move to
+  # its version (HalC2.Upgrade.Source).
+  cache="$hal_c2_data/upgrades/$version"
+  mkdir -p "$cache"
+  tail -n +@PAYLOAD_LINE@ "$0" >"$cache/.@BUNDLE@"
+  mv -f "$cache/.@BUNDLE@" "$cache/@BUNDLE@"
+  printf '%s\n' "@SHA256@" >"$cache/@BUNDLE@.sha256"
   printf '%s %s\n' "$erts" "$version" >"$tmp/start_erl.data"
   mv -f "$tmp/start_erl.data" "$root/releases/start_erl.data"
   : >"$installed"

@@ -95,8 +95,9 @@ defmodule HalC2.Upgrade do
 
   @doc """
   `cluster.update`: has every connected member on another version update to the one
-  this MC runs, taking the bundle from it. `{:ok, [%{"mc", "from", "outcome"}]}`, or
-  `{:error, :not_a_release}` when this MC runs from a checkout and has no bundle.
+  this MC runs, taking the bundle from it. `{:ok, version, [%{"mc", "from", "outcome"}]}`
+  with the version sent, or `{:error, :not_a_release}` when this MC runs from a checkout
+  and has no bundle.
   """
   def update_members do
     if release_root() do
@@ -104,7 +105,7 @@ defmodule HalC2.Upgrade do
       others = for mc <- Node.list(), (from = version_of(mc)) != target, do: {mc, from}
       outcomes = update_members(Enum.map(others, &elem(&1, 0)), %{"targetVersion" => target})
 
-      {:ok,
+      {:ok, target,
        for(
          {{_mc, from}, outcome} <- Enum.zip(others, outcomes),
          do: Map.put(outcome, "from", from)
@@ -139,9 +140,16 @@ defmodule HalC2.Upgrade do
       outcome =
         with {:ok, :ok} <- reply do
           receive do
-            {:hal_c2_server_update, ^mc, %{"type" => "complete"}} -> "updated"
-            {:hal_c2_server_update, ^mc, {:error, %{"reason" => reason}}} -> reason
-            {:nodedown, ^mc} -> "restarting on it"
+            # A restart is complete before it happens: only a member that loaded the
+            # version in place runs it already.
+            {:hal_c2_server_update, ^mc, %{"type" => "complete"}} ->
+              if version_of(mc) == input["targetVersion"], do: "updated", else: "restarting on it"
+
+            {:hal_c2_server_update, ^mc, {:error, %{"reason" => reason}}} ->
+              reason
+
+            {:nodedown, ^mc} ->
+              "restarting on it"
           after
             max(deadline - System.monotonic_time(:millisecond), 0) -> "has not finished"
           end
@@ -423,6 +431,7 @@ defmodule HalC2.Upgrade do
         set_start_version(root, target)
         :persistent_term.put({__MODULE__, :version}, target)
         HalC2.Cluster.version_changed()
+        HalC2.Shell.announce()
         record(Map.put(outcome, "status", "committed"))
         announce()
         Logger.info("upgraded in place to #{target} (#{length(modules)} modules)")

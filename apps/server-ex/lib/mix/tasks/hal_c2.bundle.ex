@@ -51,23 +51,26 @@ defmodule Mix.Tasks.HalC2.Bundle do
           do: {String.to_charlist(Path.relative_to(entry, root)), String.to_charlist(entry)}
 
     :ok = :erl_tar.create(String.to_charlist(path), files, [:compressed])
-    write_sum(path)
+    sum = write_sum(path)
 
     single = String.replace_suffix(path, ".tar.gz", "")
-    File.write!(single, [stub(root, version, erts), File.read!(path)])
+    File.write!(single, [stub(root, version, erts, Path.basename(path), sum), File.read!(path)])
     File.chmod!(single, 0o755)
     write_sum(single)
     path
   end
 
-  # The script the single-file MC starts with; the bundle follows its last line.
-  defp stub(root, version, erts) do
+  # The script the single-file MC starts with; the bundle (`bundle`, whose SHA-256 is
+  # `sum`) follows its last line.
+  defp stub(root, version, erts, bundle, sum) do
     data_dir = File.read!(Path.join([root, "bin", "hal-c2-data-dir"]))
 
     script =
       @stub
       |> String.replace("@VERSION@", version)
       |> String.replace("@ERTS@", erts)
+      |> String.replace("@BUNDLE@", bundle)
+      |> String.replace("@SHA256@", sum)
       |> String.replace("@DATA_DIR@\n", data_dir)
 
     lines = length(String.split(script, "\n")) - 1
@@ -77,5 +80,6 @@ defmodule Mix.Tasks.HalC2.Bundle do
   defp write_sum(path) do
     sum = :crypto.hash(:sha256, File.read!(path)) |> Base.encode16(case: :lower)
     File.write!(path <> ".sha256", "#{sum}  #{Path.basename(path)}\n")
+    sum
   end
 end

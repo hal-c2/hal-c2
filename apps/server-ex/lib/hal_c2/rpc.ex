@@ -258,8 +258,9 @@ defmodule HalC2.Rpc do
   end
 
   def handle("cluster.update", _input) do
-    with {:ok, updates} <- cluster(HalC2.Upgrade.update_members()) do
-      {:ok, %{"version" => HalC2.Upgrade.version(), "members" => members_of(updates)}}
+    case HalC2.Upgrade.update_members() do
+      {:ok, version, updates} -> {:ok, %{"version" => version, "members" => members_of(updates)}}
+      error -> cluster(error)
     end
   end
 

@@ -375,6 +375,7 @@ defmodule HalC2.Steps.Connections.Cluster do
     before = connection_id(a, b)
     :peer.call(a.peer, :persistent_term, :put, [{HalC2.Upgrade, :version}, @other_version])
     :ok = :peer.call(a.peer, HalC2.Cluster, :version_changed, [])
+    :ok = :peer.call(a.peer, HalC2.Shell, :announce, [])
     Map.put(context, :connection, before)
   end
 
@@ -395,6 +396,17 @@ defmodule HalC2.Steps.Connections.Cluster do
     assert [%{"connected" => true, "version" => @other_version}] =
              remote_status(a, b)["members"]
 
+    # Its sidebar descriptor too, which clients read the server's version from.
+    :peer.call(a.peer, HalC2.Shell, :version, [])
+
+    :peer.call(a.peer, GenServer, :call, [{HalC2.Shell, HalC2.Cluster.mc_name(b.id)}, :sync])
+
+    descriptor =
+      :peer.call(b.peer, HalC2.Shell, :environments, [])
+      |> List.keyfind(HalC2.Cluster.mc_name(a.id), 0)
+      |> elem(1)
+
+    assert descriptor["serverVersion"] == @other_version
     context
   end
 

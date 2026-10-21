@@ -109,7 +109,8 @@ defmodule HalC2.ShellPropTest do
           do: [
             {1, {:call, __MODULE__, :peer_down, [oneof(connected)]}},
             {1, {:call, __MODULE__, :peer_put_lost, [oneof(connected), stream_id(), title()]}},
-            {1, {:call, __MODULE__, :peer_other_version, [oneof(connected), other_message()]}}
+            {1, {:call, __MODULE__, :peer_other_version, [oneof(connected), other_message()]}},
+            {1, {:call, __MODULE__, :announce, []}}
           ],
           else: []
         ) ++
@@ -306,6 +307,12 @@ defmodule HalC2.ShellPropTest do
       when cmd in [:restart, :peer_up, :peer_restart],
       do: ok?(reader == %{missing: [], crashes: 0}, {:reader, reader})
 
+  # Every connected member is told this MC's environment again, and no one else.
+  def postcondition(state, {:call, _, :announce, []}, told) do
+    connected = for {p, %{connected: true}} <- state.peers, do: p
+    ok?(Enum.sort(told) == Enum.sort(connected), {:announced, told, connected})
+  end
+
   def postcondition(_state, {:call, _, :peer_other_version, _}, result),
     do: ok?(result == :ignored, {:other_version, result})
 
@@ -448,6 +455,23 @@ defmodule HalC2.ShellPropTest do
             )
 
         settle()
+    end
+  end
+
+  # This MC moved to another version in place and tells its members its environment.
+  def announce do
+    Shell.announce()
+    Shell.version()
+    told = collect_environments([])
+    settle()
+    told
+  end
+
+  defp collect_environments(told) do
+    receive do
+      {:wire, p, {:peer_environment, _mc, _descriptor}} -> collect_environments([p | told])
+    after
+      0 -> told
     end
   end
 

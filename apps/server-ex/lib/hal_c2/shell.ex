@@ -117,6 +117,13 @@ defmodule HalC2.Shell do
   @spec forget(String.t()) :: :ok
   def forget(environment_id), do: GenServer.cast(__MODULE__, {:forget, environment_id})
 
+  @doc """
+  Tells every reachable member this MC's environment again: after it moved to another
+  version in place (`HalC2.Upgrade`), when no member connects anew to ask for it.
+  """
+  @spec announce() :: :ok
+  def announce, do: GenServer.cast(__MODULE__, :announce)
+
   @spec subscribe(pid) :: :ok
   def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
 
@@ -406,6 +413,16 @@ defmodule HalC2.Shell do
         hello(peer, false)
         {:noreply, state}
     end
+  end
+
+  def handle_cast(:announce, state) do
+    descriptor = HalC2.Environment.descriptor()
+
+    for peer <- state.online,
+        peer != node(),
+        do: cast(peer, {:peer_environment, node(), descriptor})
+
+    {:noreply, state}
   end
 
   # From a member on another HAL-C2 version, whose messages this one does not know.
