@@ -83,6 +83,19 @@ describe("status log", () => {
     expect(picks[0]!.options).toHaveLength(1);
   });
 
+  it("does not duplicate the head entry when the same error is re-raised after dismissal", () => {
+    const { log, picks } = setup();
+    log.note(error("boom"));
+    log.dispatch("status.dismiss");
+    log.note(error("boom"));
+    log.dispatch("status.history");
+    expect(picks[0]!.options).toHaveLength(1);
+    log.note(error("other"));
+    log.note(error("boom"));
+    log.dispatch("status.history");
+    expect(picks[1]!.options).toHaveLength(3);
+  });
+
   it("lists the errors newest first, keeps the last few, and reading them dismisses the pinned one", () => {
     const { log, picks, state } = setup();
     for (let n = 0; n < STATUS_HISTORY_LIMIT + 5; n += 1) log.note(error(`error ${n}`));

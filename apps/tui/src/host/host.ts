@@ -1422,6 +1422,9 @@ export function createHost(options: HostOptions): Host {
             (state.get("composer") as { isRunning?: boolean } | undefined)?.isRunning === true,
           draft: page?.kind === "draft",
           pinnedError: (state.get("statusError") as { text: string } | null)?.text ?? null,
+          paletteAvailable:
+            (KEYMAP_LAYERS as Record<string, Record<string, string>>)[mode]?.["ctrl+k"] ===
+            "palette.open",
         }),
       );
     });

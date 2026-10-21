@@ -1898,7 +1898,7 @@ export function ChatView({
       branch: newBranch,
     });
     if (validationError) {
-      store.setStatus(newThreadValidationMessage(validationError), "error");
+      store.setStatus(newThreadValidationMessage(validationError), "warning");
       return;
     }
     if (!project || !resolvedNewModelSelection) return;
@@ -2213,9 +2213,21 @@ export function ChatView({
         .readFileBase64(composerCwd, row.path)
         .then((file) => {
           if (!file) throw new Error("Could not read the image.");
-          return prepareComposerImage(row.path, file);
+          // Decode/validation failures warn; only the read above pins as an
+          // error (composerState.ts makes the same split).
+          return prepareComposerImage(row.path, file).catch((error: unknown) => {
+            store.setStatus(
+              error instanceof Error ? error.message : "Could not attach image.",
+              "warning",
+            );
+            return null;
+          });
         })
         .then((image) => {
+          if (!image) {
+            setFilesStatus("ready");
+            return;
+          }
           updateActiveComposerImages((current) => [...current, image]);
           closeFiles();
           store.setStatus(`Attached ${image.upload.name}.`, "success");
@@ -2285,11 +2297,10 @@ export function ChatView({
         );
         store.setStatus(`Attached ${image.upload.name}.`, "success");
       })
-      .catch((error) => {
-        store.setStatus(
-          error instanceof Error ? error.message : "Could not attach pasted image.",
-          "error",
-        );
+      // A decoder/validation failure means the bytes are not an image we can
+      // show (composerState.ts makes the same call); there is no read here.
+      .catch(() => {
+        store.setStatus("Paste a supported image format.", "warning");
       })
       .finally(() => {
         clipboardImageLoadsRef.current = Math.max(0, clipboardImageLoadsRef.current - 1);
@@ -2337,26 +2348,38 @@ export function ChatView({
       store.setStatus(`Adding ${imageName}…`, "busy");
       try {
         const platformPath = client.hostPlatform === "win32" ? NodePath.win32 : NodePath.posix;
-        const image = platformPath.isAbsolute(imagePath)
-          ? await (async () => {
-              const stat = await NodeFSP.stat(imagePath);
-              if (!stat.isFile()) throw new Error("The pasted image path is not a file.");
-              if (stat.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-                throw new Error("Image exceeds the 10MB attachment limit.");
-              }
-              const mimeType = imageMimeTypeForPath(imagePath);
-              if (!mimeType) throw new Error("Paste a supported image format.");
-              return prepareComposerImageBytes(
-                imagePath,
-                mimeType,
-                await NodeFSP.readFile(imagePath),
-              );
-            })()
-          : await (async () => {
-              const file = await client.readFileBase64(composerCwd, imagePath);
-              if (!file) throw new Error("Could not read the pasted image path.");
-              return prepareComposerImage(imagePath, file);
-            })();
+        // Reads pin as errors; validation and decode failures warn
+        // (composerState.ts makes the same split for the live host).
+        let prepare: () => ReturnType<typeof prepareComposerImage>;
+        if (platformPath.isAbsolute(imagePath)) {
+          const stat = await NodeFSP.stat(imagePath);
+          if (!stat.isFile()) throw new Error("The pasted image path is not a file.");
+          if (stat.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+            store.setStatus("Image exceeds the 10MB attachment limit.", "warning");
+            return failed;
+          }
+          const mimeType = imageMimeTypeForPath(imagePath);
+          if (!mimeType) {
+            store.setStatus("Paste a supported image format.", "warning");
+            return failed;
+          }
+          const bytes = await NodeFSP.readFile(imagePath);
+          prepare = () => prepareComposerImageBytes(imagePath, mimeType, bytes);
+        } else {
+          const file = await client.readFileBase64(composerCwd, imagePath);
+          if (!file) throw new Error("Could not read the pasted image path.");
+          prepare = () => prepareComposerImage(imagePath, file);
+        }
+        let image: Awaited<ReturnType<typeof prepareComposerImage>>;
+        try {
+          image = await prepare();
+        } catch (error) {
+          store.setStatus(
+            error instanceof Error ? error.message : "Could not attach the pasted image path.",
+            "warning",
+          );
+          return failed;
+        }
         updateActiveComposerImages((current) => {
           if (
             current.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS ||

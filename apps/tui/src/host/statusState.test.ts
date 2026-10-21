@@ -62,6 +62,16 @@ describe("status row beside a pinned error", () => {
     }
   });
 
+  it("promises only the click where the active layer binds no ^K palette", () => {
+    const state = row({
+      status: { kind: "error", text: "Offline" },
+      pinnedError: "Offline",
+      paletteAvailable: false,
+    });
+    expect(state.hint).toContain("click error to dismiss");
+    expect(state.hint).not.toContain("^K to dismiss");
+  });
+
   it("keeps the dismiss hint visible beside a long pinned error", () => {
     const state = row({
       mainWidth: 100,

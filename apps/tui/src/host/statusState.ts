@@ -19,6 +19,8 @@ export interface TuiStatusRowInput {
   readonly draft: boolean;
   /** The error the user has not acknowledged yet (statusLog.ts), or null. */
   readonly pinnedError: string | null;
+  /** Whether ^K opens the palette in the active keymap layer (host.ts). */
+  readonly paletteAvailable?: boolean;
 }
 
 /**
@@ -79,6 +81,7 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
   // The ^K half is only promised where the compose hint is in effect: the
   // terminal drawer and image preview bind no ctrl+k there.
   const composeInEffect =
+    (input.paletteAvailable ?? true) &&
     !input.imagePreview &&
     !input.addingProject &&
     !(!input.draft && input.questionBanner !== null) &&

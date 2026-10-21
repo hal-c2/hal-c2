@@ -63,7 +63,11 @@ export function createStatusLog(ctx: {
     note: (status: { readonly kind: StatusKind; readonly text: string }) => {
       if (status.kind !== "error" || status.text === pinned) return;
       pinned = status.text;
-      history.unshift({ text: status.text, at: ctx.now() });
+      // One entry per distinct consecutive error: re-raising the head error
+      // after a dismissal re-pins it without evicting older distinct errors.
+      if (history[0]?.text !== status.text) {
+        history.unshift({ text: status.text, at: ctx.now() });
+      }
       history.length = Math.min(history.length, STATUS_HISTORY_LIMIT);
       publish();
     },
