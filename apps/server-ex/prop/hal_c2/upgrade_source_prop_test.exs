@@ -2,7 +2,8 @@ defmodule HalC2.UpgradeSourcePropTest do
   @moduledoc """
   The bundle cache of `HalC2.Upgrade.Source`: however a version's archive is replaced,
   by `put/3`, by a download from a peer or the release URL (an archive and its checksum
-  written, nothing else), by a put that stopped before its checksum, beside an unpack
+  written, nothing else), by a put that stopped mid-copy (its torn temp left beside a
+  whole previous archive), beside an unpack
   that stopped midway, with its checksum taken away again, or with a wrong stamp left
   beside the unpacked bundle, fetching the version unpacks the archive last written
   whole, and nothing when there is none. No peer or release URL answers here.
@@ -76,8 +77,9 @@ defmodule HalC2.UpgradeSourcePropTest do
   def next_state(_state, _result, {:call, _, name, [marker]}) when name in [:put, :downloaded],
     do: %{archive: marker, sum: marker}
 
-  def next_state(state, _result, {:call, _, :stopped_put, [marker]}),
-    do: %{state | archive: marker}
+  # A stopped put never reaches the archive (copy-then-rename), so the
+  # previous archive and its checksum stand.
+  def next_state(state, _result, {:call, _, :stopped_put, [_marker]}), do: state
 
   def next_state(state, _result, {:call, _, :rm_checksum, []}), do: %{state | sum: nil}
 
@@ -113,11 +115,12 @@ defmodule HalC2.UpgradeSourcePropTest do
     File.write!(target <> ".sha256", sha256(target))
   end
 
-  # A put that stopped after copying the archive, before writing its checksum.
+  # A put that stopped mid-copy: a torn temp beside the archive, never on
+  # it, so the previous archive stays whole and fetchable.
   def stopped_put(marker) do
     target = cached_archive()
     File.mkdir_p!(Path.dirname(target))
-    File.cp!(archive(marker), target)
+    File.write!(target <> ".put-stopped", File.read!(archive(marker)) |> binary_part(0, 4))
   end
 
   # An unpack that stopped after some of an archive's files were out: one with another

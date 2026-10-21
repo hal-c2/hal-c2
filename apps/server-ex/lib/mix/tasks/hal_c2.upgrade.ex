@@ -51,6 +51,9 @@ defmodule Mix.Tasks.HalC2.Upgrade do
       opts[:root] && !(opts[:release] && mcs == []) ->
         Mix.raise("--root names the root of the installed MC: use it with --release alone")
 
+      opts[:release] && mcs != [] ->
+        Mix.raise("--release updates the installed MC on this machine; name no MCs with it")
+
       opts[:release] && mcs == [] ->
         # Before the build, so a root that names no installed MC fails at once.
         Mix.Task.run("app.config")
@@ -209,7 +212,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   end
 
   defp inside_resolved_legacy?(checked, user_home) do
-    Enum.any?([".hal-c2", ".t3"], fn name ->
+    Enum.any?(HalC2.Paths.legacy_names(), fn name ->
       case HalC2.Paths.real(Path.join(user_home, name)) do
         {:ok, legacy} -> at_or_under?(checked, legacy)
         _ -> false
@@ -227,7 +230,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   # reads it the same way (`file:consult/1`); change both together.
   def built_version(lib) do
     case :file.consult(Path.join([lib, "ebin", "#{Path.basename(lib)}.app"])) do
-      {:ok, [{:application, _, props}]} -> to_string(props[:vsn])
+      {:ok, [{:application, _, props}]} -> props[:vsn] && to_string(props[:vsn])
       _ -> nil
     end
   end

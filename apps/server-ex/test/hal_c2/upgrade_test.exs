@@ -190,6 +190,31 @@ defmodule HalC2.UpgradeTest do
 
     assert Mix.Tasks.HalC2.Upgrade.built_version(lib) == "1.2.3"
     assert Mix.Tasks.HalC2.Upgrade.built_version(Path.join(dir, "missing")) == nil
+
+    File.write!(Path.join([lib, "ebin", "hal_c2.app"]), ~s({application, hal_c2, []}.\n))
+    assert Mix.Tasks.HalC2.Upgrade.built_version(lib) == nil
+  end
+
+  test "--release with named MCs is refused, as the mise wrapper refuses it" do
+    assert_raise Mix.Error, ~r/name no MCs/, fn ->
+      Mix.Tasks.HalC2.Upgrade.run(["--release", "hal_c2@host"])
+    end
+  end
+
+  test "a put that stopped mid-copy leaves the previous bundle fetchable", %{tmp_dir: dir} do
+    first = tarball(dir, "first", %{"version" => "2.0.0", "marker" => "first"})
+    :ok = Source.put("2.0.0", "darwin-arm64", first)
+    assert {:ok, unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "first"
+
+    # A stopped put's torn copy sits beside the archive under its temp name,
+    # never on it: the previous bundle is still the one fetched.
+    target =
+      Path.join(Source.cache_dir("2.0.0"), Source.file_name("2.0.0", "darwin-arm64"))
+
+    File.write!(target <> ".put-stopped", "torn")
+    assert {:ok, ^unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "first"
   end
 
   test "--root is refused, before any build, unless it comes with --release alone" do

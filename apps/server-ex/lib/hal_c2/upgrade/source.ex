@@ -51,7 +51,13 @@ defmodule HalC2.Upgrade.Source do
   def put(version, platform, source_path) do
     target = archive_path(version, platform)
     File.mkdir_p!(Path.dirname(target))
-    File.cp!(source_path, target)
+    # Copy beside the archive and rename, like `receive_part/3` and
+    # `download/2`: a fetch hashing mid-copy otherwise sees a torn archive,
+    # drops the good unpack, and fails until retried. A stopped copy leaves
+    # only the temp file; the previous archive stays whole.
+    temp = target <> ".put-#{System.unique_integer([:positive])}"
+    File.cp!(source_path, temp)
+    File.rename!(temp, target)
     File.write!(target <> ".sha256", sha256(target))
     :ok
   end
