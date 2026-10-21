@@ -143,6 +143,9 @@ struct Queued {
   QVariantList queue;
   QVariantList waiting;
   bool held = false;
+  // Held with something listed: the card shows and the resume is offered.
+  // Held with nothing listed shows no card, so it offers no resume either.
+  bool shownHeld() const { return held && (!queue.isEmpty() || !waiting.isEmpty()); }
 };
 Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>& messages);
 

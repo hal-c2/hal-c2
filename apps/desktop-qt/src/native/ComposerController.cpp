@@ -2310,7 +2310,7 @@ bool ComposerController::queueHeld() const {
   if (!m_draftId.isEmpty() || !m_store->thread(m_thread) || !m_timeline) return false;
   const composer::Queued queued =
       composer::queued(m_timeline->entities(QStringLiteral("run")).values(), m_timeline->entities(QStringLiteral("message")));
-  return queued.held && (!queued.queue.isEmpty() || !queued.waiting.isEmpty());
+  return queued.shownHeld();
 }
 
 QVariantMap ComposerController::turnState() const {
@@ -2430,7 +2430,7 @@ QVariantMap ComposerController::turnState() const {
   // comes with its message in the one transaction that queues it (the MC's `queue_run`),
   // so a run without its message on a live stream is the moment before the two events
   // are read, not a state that lasts; an empty card in that moment would only flash.
-  state.insert(QStringLiteral("queueHeld"), queued.held && (!queued.queue.isEmpty() || !queued.waiting.isEmpty()));
+  state.insert(QStringLiteral("queueHeld"), queued.shownHeld());
   return state;
 }
 
