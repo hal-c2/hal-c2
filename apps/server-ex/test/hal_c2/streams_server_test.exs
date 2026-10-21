@@ -42,6 +42,58 @@ defmodule HalC2.StreamsServerTest do
     assert_receive {:hal_c2_stream, "th-1", {:live, ^last, _handle}}
   end
 
+  # The second append is cut from what the first left, not from the text before them.
+  test "appends to a subagent in one commit reach a client as the snapshot has them" do
+    item = %{"type" => "subagent", "runId" => "r1", "progress" => ""}
+    {:ok, _} = Streams.commit("th-1", :thread, [{"turn-item", "i1", %{"s" => item}}])
+    :ok = Streams.subscribe("th-1", self(), nil, %{kinds: nil})
+    assert_receive {:hal_c2_stream, "th-1", {:live, _, _handle}}
+    chunk = String.duplicate("x", 20_000)
+
+    {:ok, last} =
+      Streams.commit("th-1", :thread, [
+        {"turn-item", "i1", %{"a" => %{"progress" => chunk}}},
+        {"turn-item", "i1", %{"a" => %{"progress" => chunk}}}
+      ])
+
+    assert_receive {:hal_c2_stream, "th-1", {:events, events, ^last}}
+    client = Enum.reduce(events, item, &HalC2.Patch.apply(&2, &1.patch))
+    server = HalC2.Patch.apply(item, %{"a" => %{"progress" => chunk <> chunk}})
+    assert client == HalC2.Web.Wire.entity("turn-item", server)
+  end
+
+  # A client resuming from an offset is sent one merged patch per item, from text it
+  # holds cut or whole: what it folds is the snapshot, whether the text went past the
+  # limit since or went past it and was reset below.
+  test "a client resuming over subagent appends past the limit holds what a snapshot shows" do
+    item = %{"type" => "subagent", "runId" => "r1", "progress" => "Reading"}
+    {:ok, start} = Streams.commit("th-1", :thread, [{"turn-item", "i1", %{"s" => item}}])
+    append = {"turn-item", "i1", %{"a" => %{"progress" => String.duplicate("x", 20_000)}}}
+    {:ok, _} = Streams.commit("th-1", :thread, [append])
+    {:ok, past} = Streams.commit("th-1", :thread, [append])
+    held = wire_item("i1")
+    assert resumed(item, start) == held
+
+    reset = {"turn-item", "i1", %{"s" => %{"progress" => "Again"}}}
+    {:ok, _} = Streams.commit("th-1", :thread, [reset, append])
+    assert resumed(held, past) == wire_item("i1")
+    {:ok, _} = Streams.commit("th-1", :thread, [reset, append, append])
+    assert resumed(held, past) == wire_item("i1")
+  end
+
+  defp resumed(held, offset) do
+    :ok = Streams.subscribe("th-1", self(), offset, %{kinds: nil})
+    assert_receive {:hal_c2_stream, "th-1", {:events, events, last}}
+    assert_receive {:hal_c2_stream, "th-1", {:live, ^last, _handle}}
+    :ok = Streams.unsubscribe("th-1", self())
+    Enum.reduce(events, held, &HalC2.Patch.apply(&2, &1.patch))
+  end
+
+  defp wire_item(id) do
+    state = HalC2.Streams.Server.state(Streams.ensure("th-1"))
+    HalC2.Web.Wire.entity("turn-item", HalC2.StreamState.get(state, "turn-item")[id])
+  end
+
   test "a transaction that raises fails its caller and leaves the stream serving" do
     :ok = Streams.subscribe("th-1", self(), nil)
     pid = Streams.ensure("th-1")

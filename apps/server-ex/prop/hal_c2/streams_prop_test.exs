@@ -14,6 +14,10 @@ defmodule HalC2.StreamsPropTest do
   tag no subscription has, which pages nothing), crash
   subscribers, stop streams idle, crash them, restart the stream supervisor and the
   store, and append enough at once to push a subscriber past what a replay carries.
+  Some turn items are subagents whose prompt, progress and result grow by long appends, past
+  the limit `HalC2.Web.Wire` cuts them at, or are emptied and grown again in one
+  patch, so a client that folds the appends must hold the cut text a snapshot shows,
+  for each of the wire's cut keys and for an item growing both in one commit.
   """
 
   use ExUnit.Case, async: false
@@ -150,6 +154,9 @@ defmodule HalC2.StreamsPropTest do
       {:run, oneof(@runs), oneof(["queued", "running", "done", "rolled_back"])},
       {:item, oneof(@items), text},
       {:append, oneof(@items), oneof(["a", "bc", "é"])},
+      {:subagent, oneof(@items), cut_key(), progress()},
+      {:grow, oneof(@items), cut_key(), progress()},
+      {:reset, oneof(@items), cut_key(), progress(), oneof([:unset, :delete])},
       {:message, oneof(@messages)},
       {:delete, oneof(Enum.map(@items, &{"turn-item", &1}) ++ Enum.map(@notes, &{"note", &1}))},
       {:delete, oneof(Enum.map(@messages, &{"message", &1}))},
@@ -157,6 +164,24 @@ defmodule HalC2.StreamsPropTest do
       {:void, oneof(@items)}
     ])
   end
+
+  # The wire's cut keys a subagent's text grows under here: all three, `prompt`
+  # included. The adapters set it once, but `HalC2.Patch.diff/2` turns any string
+  # field that grows by a prefix into an append, so an adapter that ever re-emits
+  # a longer prompt crosses by appends the same way.
+  defp cut_key, do: oneof(~w(prompt progress result))
+
+  # A subagent text, set or grown by: mostly short, sometimes sized to land the
+  # text just under, on and over the limit (32 KiB), in the middle of a character too.
+  defp progress do
+    frequency([
+      {6, oneof(["", "x", "bc", "é"])},
+      {1, oneof([16_000, 16_383, 16_384, 16_385]) |> let_dup("é")},
+      {1, oneof([20_000, 32_767, 32_768, 40_000]) |> let_dup("x")}
+    ])
+  end
+
+  defp let_dup(sizes, char), do: let(n <- sizes, do: String.duplicate(char, n))
 
   @doc false
   def resolve(intents, st) do
@@ -200,6 +225,47 @@ defmodule HalC2.StreamsPropTest do
     case StreamState.get(st, "turn-item")[id] do
       %{"text" => text} when is_binary(text) -> {"turn-item", id, %{"a" => %{"text" => suffix}}}
       _ -> nil
+    end
+  end
+
+  # A subagent with each of its cut texts there to grow, the intent's holding `text`.
+  defp change({:subagent, id, key, text}, st) do
+    item =
+      %{
+        "id" => id,
+        "type" => "subagent",
+        "text" => "",
+        "prompt" => "",
+        "progress" => "",
+        "result" => ""
+      }
+      |> Map.put(key, text)
+
+    with %{} = item <- with_run(item, st), do: {"turn-item", id, %{"d" => true, "s" => item}}
+  end
+
+  defp change({:grow, id, key, suffix}, st) do
+    case StreamState.get(st, "turn-item")[id] do
+      %{"type" => "subagent"} = item ->
+        if is_binary(item[key]), do: {"turn-item", id, %{"a" => %{key => suffix}}}
+
+      _ ->
+        nil
+    end
+  end
+
+  # A subagent text emptied and grown again in one patch, by an unset or by a
+  # delete that replaces the item.
+  defp change({:reset, id, key, suffix, form}, st) do
+    case StreamState.get(st, "turn-item")[id] do
+      %{"type" => "subagent"} when form == :unset ->
+        {"turn-item", id, %{"u" => [key], "a" => %{key => suffix}}}
+
+      %{"type" => "subagent"} = item ->
+        {"turn-item", id, %{"d" => true, "s" => Map.delete(item, key), "a" => %{key => suffix}}}
+
+      _ ->
+        nil
     end
   end
 
