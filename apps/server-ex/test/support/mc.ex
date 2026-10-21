@@ -3968,9 +3968,9 @@ defmodule HalC2.Test.Mc.Terminal do
   @prompt ~r/[$#] (\e\[\?2004h)?\z/
 
   # One deadline budget for `await_prompt/2`: the attach GenServer call can take
-  # 15s (the hard-coded timeout in `HalC2.Terminal.call/2`), the prompt wait
-  # itself 5s, and the caller must outlive both.
-  @prompt_attach_timeout 15_000
+  # `HalC2.Terminal.call_timeout/0`, the prompt wait itself 5s, and the caller
+  # must outlive both.
+  @prompt_attach_timeout HalC2.Terminal.call_timeout()
   @prompt_wait_timeout 5_000
   @prompt_caller_timeout @prompt_attach_timeout + @prompt_wait_timeout + 5_000
 
