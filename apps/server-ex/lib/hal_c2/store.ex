@@ -99,8 +99,18 @@ defmodule HalC2.Store do
           at: integer
         }
 
+  # The shutdown is the write timeout, not the 5s default: a stop waits for the call
+  # in hand (`init/1` traps exits), and callers may wait `@write_timeout` for it, so a
+  # shorter cap would have the supervisor kill the store mid-transaction instead.
+  # The budget covers more than one call: the calls already queued ahead of the
+  # supervisor's exit signal are answered first, so a deep backlog can still spend
+  # it and be killed mid-queue; those callers exit `:killed` and are not retried.
   def child_spec(opts),
-    do: %{id: Keyword.get(opts, :name, __MODULE__), start: {__MODULE__, :start_link, [opts]}}
+    do: %{
+      id: Keyword.get(opts, :name, __MODULE__),
+      start: {__MODULE__, :start_link, [opts]},
+      shutdown: @write_timeout
+    }
 
   @spec start_link(keyword) :: GenServer.on_start()
   def start_link(opts) do
@@ -147,21 +157,32 @@ defmodule HalC2.Store do
   def put_shell(store \\ __MODULE__, stream_id, seq, {kind, row}),
     do: write(store, {:put_shell, stream_id, seq, kind, row})
 
-  # A write waits out a restart of a named store: a call that found no store wrote
-  # nothing, so it is made again once the store is back. Nothing says when that is, so
-  # it looks every few milliseconds. A call the store took and then crashed on may
-  # have landed, and fails as it did.
+  # The exits of a write the store never took: no store, or a stop.
+  defguardp restartable(reason)
+            when reason in [:noproc, :shutdown] or
+                   (is_tuple(reason) and tuple_size(reason) == 2 and elem(reason, 0) == :shutdown)
+
+  # A write waits out a restart of a named store: a call that found no store, or that
+  # was still queued when the store was stopped (`:shutdown` or `{:shutdown, _}`;
+  # `init/1` traps exits), wrote nothing, so it is made again once the store is back.
+  # Nothing says when that is, so it looks every few milliseconds. A call the store
+  # took and then crashed on may have landed, and fails as it did. (A checkpoint the
+  # checkpointer answers may run twice, which does no harm.) A stop for the
+  # checkpointer's crash is deliberately not waited out either, though it too
+  # lands between calls so its queued writes wrote nothing: they exit with the
+  # crash reason, which a caller cannot tell from a crash inside the call it
+  # took, so retrying it could replay a write that landed.
   defp write(store, request, deadline \\ nil) do
     GenServer.call(store, request, @write_timeout)
   catch
-    :exit, {:noproc, _} = reason when is_atom(store) ->
+    :exit, {reason, _} = exit when is_atom(store) and restartable(reason) ->
       deadline = deadline || System.monotonic_time(:millisecond) + @restart_wait
 
       if System.monotonic_time(:millisecond) < deadline do
         Process.sleep(@restart_poll)
         write(store, request, deadline)
       else
-        exit(reason)
+        exit(exit)
       end
   end
 
@@ -356,6 +377,11 @@ defmodule HalC2.Store do
 
   @impl true
   def init(path) do
+    # A stop (a supervisor restarting the store) then ends it between calls. The
+    # supervisor's exit signal queues as a message: the call in hand and any calls
+    # already queued ahead of it are answered first, and the ones queued behind it
+    # exit `:shutdown` having written nothing, which `write/3` makes again.
+    Process.flag(:trap_exit, true)
     # First, so a reader that finds this store by name finds its path too.
     :persistent_term.put(path_key(self()), path)
     File.mkdir_p!(Path.dirname(path))
@@ -612,8 +638,46 @@ defmodule HalC2.Store do
     {:noreply, state}
   end
 
+  # A linked process (the checkpointer) takes the store down as it did before the store
+  # trapped exits. An EXIT naming anyone else was not signalled by the checkpointer,
+  # and is ignored like any other message. One naming the checkpointer cannot be
+  # told from a signalled one, sent or not; within one node that is no boundary —
+  # any local process could exit the store directly — so it is taken as its death.
+  @impl true
+  def handle_info({:EXIT, pid, reason} = message, state) do
+    cond do
+      pid != state.checkpointer -> unexpected(message, state)
+      reason == :normal -> {:noreply, state}
+      true -> {:stop, reason, state}
+    end
+  end
+
+  # Anything else is ignored, as GenServer's default does.
+  def handle_info(message, state), do: unexpected(message, state)
+
+  defp unexpected(message, state) do
+    # Bounded: a stray message can carry an arbitrarily large term, and the
+    # diagnostic is not worth a multi-megabyte log line in the store process.
+    Logger.warning(
+      "the store ignored an unexpected message: #{inspect(message, limit: 10, printable_limit: 200)}"
+    )
+
+    {:noreply, state}
+  end
+
   @impl true
   def terminate(_reason, state), do: Sqlite3.close(state.db)
+
+  # A store updated in place (`HalC2.Hot`) does not run `init/1` again, and one from
+  # before it trapped exits does not trap them yet: callers already retry a
+  # `:shutdown` on the assumption that a taken call always finishes first. Only the
+  # trap arrives this way: the supervisor keeps the child spec it started the store
+  # with, so `child_spec/1`'s longer shutdown applies only from the next restart.
+  @impl true
+  def code_change(_old, state, _extra) do
+    Process.flag(:trap_exit, true)
+    {:ok, state}
+  end
 
   defp stream_key(state, kind, id) do
     case state.keys do
