@@ -364,12 +364,12 @@ defmodule HalC2.ScheduledTasks do
 
           {:ok, {:error, reason}} ->
             Logger.warning(
-              "scheduled run cleanup failed for thread #{thread_id} message #{message_id}: #{inspect(reason)}"
+              "scheduled run cleanup failed for thread #{thread_id} message #{message_id}: #{reason}"
             )
 
           {:exit, reason} ->
             Logger.warning(
-              "scheduled run cleanup exited for thread #{thread_id} message #{message_id}: #{inspect(reason)}"
+              "scheduled run cleanup exited for thread #{thread_id} message #{message_id}: #{reason}"
             )
 
           nil ->
