@@ -150,15 +150,33 @@ describe.skipIf(platform === "win32")("Qt tooling", () => {
       expect(result.stderr).toContain("is a symlink");
     });
 
-    it("is invoked by both packagers with their platform's driver", () => {
+    it("rejects a driver name that is not one of Qt's two", () => {
+      // The allowlist is what stops the name escaping the directory at the join.
+      expect(check(temporaryDirectory(), "../libqsqlite.so").status).toBe(1);
+      expect(check(temporaryDirectory(), "libqsqlite.so.bak").status).toBe(1);
+    });
+
+    it("is invoked by both packagers with their platform's driver, where it guards", () => {
       const read = (name: string) =>
         NodeFS.readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
-      expect(read("package-linux.sh")).toContain(
+      const linux = read("package-linux.sh");
+      expect(linux).toContain(
         'check-sqlite-driver.sh" "${app_dir}/usr/plugins/sqldrivers" libqsqlite.so',
       );
-      expect(read("package-macos.sh")).toContain(
+      // After Qt's plugins are deployed, before the AppImage is written.
+      expect(linux.indexOf("check-sqlite-driver.sh")).toBeGreaterThan(linux.indexOf("--plugin qt"));
+      expect(linux.indexOf("check-sqlite-driver.sh")).toBeLessThan(
+        linux.indexOf("--output appimage"),
+      );
+      const macos = read("package-macos.sh");
+      expect(macos).toContain(
         'check-sqlite-driver.sh" "${app}/Contents/PlugIns/sqldrivers" libqsqlite.dylib',
       );
+      // After the pruning loop that can remove the driver, before signing.
+      expect(macos.indexOf("check-sqlite-driver.sh")).toBeGreaterThan(
+        macos.indexOf('Contents/PlugIns" -name'),
+      );
+      expect(macos.indexOf("check-sqlite-driver.sh")).toBeLessThan(macos.indexOf("codesign"));
     });
 
     it("runs directly, as the packagers invoke it", () => {

@@ -19,7 +19,8 @@ case "${name}" in
 esac
 # Both packagers build the staging tree fresh and pass a literal path, so no
 # ancestor can be a symlink on the real path; what a deploy tool can produce is
-# a linked sqldrivers directory or driver file, and those are checked here.
+# a linked sqldrivers directory or driver file, checked here in the spelling
+# the packagers pass (no trailing slash, which would follow the link).
 if [ -L "${drivers}" ]; then
   echo "error: ${drivers} is a symlink; the bundle must carry the sqldrivers directory itself" >&2
   exit 1
