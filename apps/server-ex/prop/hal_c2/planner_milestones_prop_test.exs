@@ -25,6 +25,11 @@ defmodule HalC2.PlannerMilestonesPropTest do
   Which milestone asked is not known to the case, so a refusal stands until every
   milestone has changed since the last one: then GitHub ends with every issue where its
   task is, and nothing is marked, as if it had refused nothing.
+
+  Each task keeps the issue it starts with: relinking, unlinking or removing a
+  task is not generated, so what corrections do for a relinked task (one task
+  leaving two issues behind in a milestone) rests on the `Sync` unit tests in
+  `test/hal_c2/planner_test.exs`, not on this model.
   """
   use ExUnit.Case, async: false
   use PropCheck
@@ -124,7 +129,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
     at = next_state(m, observed, call).at
 
     observed.problems == [] and observed.at == at and
-      if(observed.refused and observed.changed != @milestones,
+      if(observed.refused and MapSet.new(observed.changed) != MapSet.new(@milestones),
         do: observed.github == at or observed.marked != [],
         else: observed.github == at and observed.marked == []
       )

@@ -549,7 +549,9 @@ defmodule HalC2.PlannerTest do
         "due" => nil,
         "after" => [],
         "refs" => %{},
-        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
       }
 
       milestone = fn id, number, after_ ->
@@ -583,13 +585,18 @@ defmodule HalC2.PlannerTest do
     test "is dropped once the milestone holds the task that still names the issue again" do
       synced = %{
         "after" => ["t"],
-        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
       }
 
       items = %{"t" => task(%{"repository" => @repo, "number" => 7})}
 
       assert %{"misplaced" => %{}} = Sync.settled(synced, %{"after" => ["t"]}, items)
-      assert %{"misplaced" => %{"t" => _}} = Sync.settled(synced, %{"after" => []}, items)
+
+      assert %{"misplaced" => %{"acme/api#7" => _}} =
+               Sync.settled(synced, %{"after" => []}, items)
+
       assert Sync.settled(nil, %{"after" => ["t"]}, items) == nil
     end
 
@@ -599,7 +606,9 @@ defmodule HalC2.PlannerTest do
         "due" => nil,
         "after" => [],
         "refs" => %{},
-        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
       }
 
       ms = %{
@@ -623,7 +632,7 @@ defmodule HalC2.PlannerTest do
       # The issue the task names now being in the milestone does not clear the mark of
       # the other, if its correction is refused; the correction's landing does, and the
       # task stays on the milestone.
-      assert %{"misplaced" => %{"t" => _}} = took_into.(synced)
+      assert %{"misplaced" => %{"acme/api#7" => _}} = took_into.(synced)
       landed = took_out.(took_into.(synced))
       assert %{"misplaced" => %{}, "after" => ["t"]} = landed
     end
@@ -639,7 +648,9 @@ defmodule HalC2.PlannerTest do
         "due" => nil,
         "after" => [],
         "refs" => %{},
-        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
       }
 
       milestone = fn id, number, after_ ->
@@ -680,7 +691,9 @@ defmodule HalC2.PlannerTest do
         "due" => nil,
         "after" => [],
         "refs" => %{},
-        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
       }
 
       milestone = fn id, number, after_ ->
@@ -715,23 +728,27 @@ defmodule HalC2.PlannerTest do
       assert took.(synced)["misplaced"] == %{}
     end
 
-    test "keeps one mark per task, the newer; the older issue still goes out by the task's remembered one" do
+    test "keeps a mark per issue, so a task that left two issues behind loses neither" do
       issue = fn n -> %{"repository" => @repo, "number" => n} end
       op = fn n -> {"t", {"update", issue.(n), nil}} end
 
-      # Two late pushes left #7, then #8, in the milestone "ms" after the task moved on;
-      # the refusals left the task on its `synced`, which remembers #7.
+      # Two late pushes left #7, then #8, in the milestone "ms" after the task
+      # was relinked and moved on; its `synced` remembers only #8 by then, so
+      # the #7 mark is the only thing still naming #7.
       synced =
         %{
           "title" => "Launch",
           "due" => nil,
           "after" => ["t"],
-          "refs" => %{"t" => issue.(7)}
+          "refs" => %{"t" => issue.(8)}
         }
         |> Sync.misplaced([op.(7)])
         |> Sync.misplaced([op.(8)])
 
-      assert synced["misplaced"] == %{"t" => issue.(8)}
+      assert synced["misplaced"] == %{
+               "acme/api#7" => %{"task" => "t", "issue" => issue.(7)},
+               "acme/api#8" => %{"task" => "t", "issue" => issue.(8)}
+             }
 
       milestone = fn id, number, after_ ->
         {id,
@@ -755,6 +772,52 @@ defmodule HalC2.PlannerTest do
       assert %{"number" => 8, "milestone" => 4} = into
     end
 
+    test "the older mark survives the newer correction taking, so its issue still goes out" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # As the mark-per-task shape left it: "t" was relinked from #7 to #8 in
+      # "ms", #8's correction took and #7's was refused, and `refs` names #8.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(8)},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => issue.(7)},
+          "acme/api#8" => %{"task" => "t", "issue" => issue.(8)}
+        }
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([milestone.("ms", 3, []), milestone.("mr", 4, ["t"]), {"t", task(issue.(8))}])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => n} = input, took} <- ops, do: {n, input, took}
+      assert [{7, _, _}, {8, _, _}] = Enum.sort_by(asks, &elem(&1, 0))
+
+      # #8's correction takes; #7 must still be asked out by the next push.
+      {_, _, took8} = Enum.find(asks, &(elem(&1, 0) == 8))
+      landed = took8.(synced)
+      assert landed["misplaced"] == %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, landed, items["ms"], items, @projects)
+
+      assert [{"update", %{"number" => 7, "milestone" => nil}, _}] =
+               for({"update", input, took} <- ops, do: {"update", input, took})
+    end
+
     test "asks the issue its task left once, though both its removal and its correction send it out" do
       issue = fn n -> %{"repository" => @repo, "number" => n} end
 
@@ -764,7 +827,7 @@ defmodule HalC2.PlannerTest do
         "due" => nil,
         "after" => ["t"],
         "refs" => %{"t" => issue.(7)},
-        "misplaced" => %{"t" => issue.(7)}
+        "misplaced" => %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
       }
 
       ms = %{
@@ -850,7 +913,9 @@ defmodule HalC2.PlannerTest do
         "due" => nil,
         "after" => [],
         "refs" => %{},
-        "misplaced" => %{"t" => %{"repository" => @repo, "number" => 7}}
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
       }
 
       milestone = %{
