@@ -33,6 +33,7 @@ defmodule HalC2.Terminal do
   @output_ms 8
   @persist_ms 500
   @stop_ms 5_000
+  @call_timeout 15_000
   @fallback_shells ~w(/bin/zsh /bin/bash /bin/sh)
   @excluded_env ~w(PORT ELECTRON_RENDERER_PORT ELECTRON_RUN_AS_NODE BINDIR ROOTDIR EMU PROGNAME)
   @excluded_env_prefixes ~w(HAL_C2_ VITE_ RELEASE_ ERL_)
@@ -193,9 +194,12 @@ defmodule HalC2.Terminal do
 
   defp via(thread_id, terminal_id), do: {:via, Registry, {@registry, {thread_id, terminal_id}}}
 
+  @doc "How long a call to a terminal waits for its reply, in milliseconds."
+  def call_timeout, do: @call_timeout
+
   # A terminal that just closed is not an error to a caller that raced it.
   defp call(pid, message) do
-    GenServer.call(pid, message, 15_000)
+    GenServer.call(pid, message, @call_timeout)
   catch
     :exit, {:noproc, _} ->
       {:error, %{"_tag" => "TerminalSessionLookupError", "message" => "terminal closed"}}

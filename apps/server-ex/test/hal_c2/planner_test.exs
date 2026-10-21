@@ -201,6 +201,192 @@ defmodule HalC2.PlannerTest do
                item["pullRequests"]
     end
 
+    test "a link keeps the address of the pull request it names, and a second one corrects it" do
+      ghe = "https://ghe.example.com/acme/api/pull/4"
+      ref = fn fields -> %{"repository" => "acme/api", "number" => 4} |> Map.merge(fields) end
+
+      for url <- [
+            "https://ghe.example.com/acme/tools/pull/4",
+            "https://ghe.example.com/acme/api",
+            "https://ghe.example.com/acme/api/pull/44",
+            "https://ghe.example.com/acme/api/pull/14",
+            "https://ghe.example.com/acme/api/issues/4"
+          ] do
+        assert {:ok, %{"repository" => "acme/api", "number" => 4} = given} =
+                 Plan.ref(ref.(%{"url" => url}), "pullRequest")
+
+        refute Map.has_key?(given, "url")
+      end
+
+      assert {:ok, %{"url" => ^ghe}} = Plan.ref(ref.(%{"url" => ghe}), "pullRequest")
+      assert {:ok, %{"url" => ^ghe}} = Plan.ref(ref.(%{"url" => ghe}))
+
+      item = plan([{"a", %{}}])["a"] |> Plan.link(%{"pullRequest" => ref.(%{})}, @now)
+      assert [%{"url" => "https://github.com/acme/api/pull/4"}] = item["pullRequests"]
+
+      item = Plan.link(item, %{"pullRequest" => ref.(%{"url" => ghe})}, @now)
+      assert [%{"number" => 4, "url" => ^ghe}] = item["pullRequests"]
+
+      # A link made again without an address does not take the corrected one back.
+      item = Plan.link(item, %{"pullRequest" => ref.(%{})}, @now)
+      assert [%{"number" => 4, "url" => ^ghe}] = item["pullRequests"]
+    end
+
+    test "an address keeps only its scheme, host, port and path, and names the kind it links" do
+      ref = %{"repository" => "acme/api", "number" => 4}
+
+      url = fn url, kind ->
+        with({:ok, given} <- Plan.ref(Map.put(ref, "url", url), kind), do: given["url"])
+      end
+
+      assert url.(
+               "https://user:token@ghe.example.com/acme/api/pull/4?token=abc#files",
+               "pullRequest"
+             ) ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      assert url.("https://github.com@evil.example/acme/api/pull/4", "pullRequest") ==
+               "https://evil.example/acme/api/pull/4"
+
+      # The path is made over, so the same pull request is one address however it was
+      # given, and nothing odd after the number stays.
+      for path <- ["/files", "/../../evil", "/", "/%2e%2e/x"] do
+        assert url.("https://ghe.example.com:8443/acme/api/pull/4#{path}", "pullRequest") ==
+                 "https://ghe.example.com:8443/acme/api/pull/4"
+      end
+
+      assert url.("https://ghe.example.com/ACME/Api/PULL/4", "pullRequest") ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      # A literal IPv6 host keeps its brackets, so the address reads back to that host.
+      stored = url.("https://[::1]:8443/acme/api/pull/4", "pullRequest")
+      assert stored == "https://[::1]:8443/acme/api/pull/4"
+      assert URI.parse(stored).host == "::1"
+
+      assert url.("https://ghe.example.com:443/acme/api/pull/4", "pullRequest") ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      assert url.("https://ghe.example.com/acme/api/issues/4", "issue") ==
+               "https://ghe.example.com/acme/api/issues/4"
+
+      assert url.("https://ghe.example.com/acme/api/pull/4", "issue") == nil
+
+      # The host is canonical, as everywhere else it is derived.
+      assert url.("https://GHE.Example.COM./acme/api/pull/4", "pullRequest") ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      assert url.("https://ghe.example.com:0/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://ghe.example.com:99999/acme/api/pull/4", "pullRequest") == nil
+
+      # A host that canonicalizes to nothing, or holds whitespace, names no host.
+      assert url.("https://./acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://../acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://exa mple.com/acme/api/pull/4", "pullRequest") == nil
+
+      # A host with an empty label or a `%` in it names no host either.
+      assert url.("https://ghe..example.com/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://ghe.example.com%2f.evil.com/acme/api/pull/4", "pullRequest") == nil
+
+      # Nor does a label starting or ending with a hyphen, or an IPv6 literal
+      # with a zone, which `URI.parse/1` would mangle into another address.
+      assert url.("https://-ghe.example.com/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://ghe-.example.com/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://[fe80::1%25eth0]/acme/api/pull/4", "pullRequest") == nil
+
+      # Nor does an IPv6-shaped string that is no address.
+      for host <- ["[:::]", "[....:]", "[1:2:3:4:5:6:7:8:9]", "[::ffff:999.999.999.999]"] do
+        assert url.("https://#{host}/acme/api/pull/4", "pullRequest") == nil
+      end
+
+      assert url.("https://[::ffff:1.2.3.4]/acme/api/pull/4", "pullRequest") ==
+               "https://[::ffff:1.2.3.4]/acme/api/pull/4"
+
+      # A repository that is no `owner/name` over GitHub's charset is no ref:
+      # it would otherwise be interpolated verbatim into the stored address.
+      assert :error = Plan.ref(%{"repository" => "../evil", "number" => 4}, "pullRequest")
+      assert :error = Plan.ref(%{"repository" => "acme/api\n", "number" => 4}, "pullRequest")
+
+      # A leading dot or underscore is a repository name like any other
+      # (`owner/.github` is the conventional one), and links as one.
+      assert {:ok, %{"repository" => "acme/.github", "url" => ghe_github}} =
+               Plan.ref(
+                 %{
+                   "repository" => "acme/.github",
+                   "number" => 4,
+                   "url" => "https://ghe.example.com/acme/.github/pull/4"
+                 },
+                 "pullRequest"
+               )
+
+      assert ghe_github == "https://ghe.example.com/acme/.github/pull/4"
+
+      item =
+        plan([{"a", %{}}])["a"]
+        |> Plan.link(
+          %{"pullRequest" => %{"repository" => "acme/.github", "number" => 4}},
+          @now
+        )
+
+      assert [%{"repository" => "acme/.github", "number" => 4}] = item["pullRequests"]
+    end
+
+    test "a correcting link to another host forgets what the old host's look stored" do
+      ghe = "https://ghe.example.com/acme/api/pull/4"
+      ref = fn fields -> %{"repository" => "acme/api", "number" => 4} |> Map.merge(fields) end
+
+      item = plan([{"a", %{}}])["a"] |> Plan.link(%{"pullRequest" => ref.(%{})}, @now)
+
+      item =
+        put_in(item["pullRequests"], [
+          %{
+            "repository" => "acme/api",
+            "number" => 4,
+            "url" => "https://github.com/acme/api/pull/4",
+            "title" => "Old",
+            "state" => "merged"
+          }
+        ])
+
+      item = Plan.link(item, %{"pullRequest" => ref.(%{"url" => ghe})}, @now)
+      assert [%{"url" => ^ghe, "state" => "open", "title" => nil}] = item["pullRequests"]
+    end
+
+    test "an issue linked again with the address of its host takes that address and keeps the rest" do
+      ghe = "https://ghe.example.com/acme/api/issues/7"
+      ref = fn fields -> %{"repository" => "acme/api", "number" => 7} |> Map.merge(fields) end
+      item = plan([{"a", %{}}])["a"] |> Plan.link(%{"issue" => ref.(%{})}, @now)
+      item = put_in(item["issue"]["state"], "closed")
+      assert item["issue"]["url"] == "https://github.com/acme/api/issues/7"
+
+      # A correction to another host forgets what the old host's look stored, as a
+      # pull request does: that closed state described a different issue, and so
+      # do the milestone, the board row, the failure and the synced snapshot.
+      item =
+        item
+        |> put_in(["issue", "milestone"], %{"number" => 3})
+        |> Map.merge(%{
+          "boardItemId" => "PVTI_1",
+          "syncError" => "refused",
+          "synced" => %{"title" => "T"}
+        })
+
+      item = Plan.link(item, %{"issue" => ref.(%{"url" => ghe})}, @now)
+
+      assert %{"url" => ^ghe, "state" => "open", "title" => nil, "milestone" => nil} =
+               item["issue"]
+
+      assert %{"boardItemId" => nil, "syncError" => nil, "synced" => nil} = item
+
+      # A same-host correction keeps the rest.
+      item = put_in(item["issue"]["state"], "closed")
+      ported = "https://ghe.example.com:8443/acme/api/issues/7"
+      item = Plan.link(item, %{"issue" => ref.(%{"url" => ported})}, @now)
+      assert %{"url" => ^ported, "state" => "closed"} = item["issue"]
+      ghe = ported
+
+      assert %{"url" => ^ghe} = Plan.link(item, %{"issue" => ref.(%{})}, @now)["issue"]
+    end
+
     test "a task linked to another issue leaves the old issue's board row and failure behind" do
       issue = fn repository, number ->
         %{"issue" => %{"repository" => repository, "number" => number}}
@@ -272,7 +458,7 @@ defmodule HalC2.PlannerTest do
       link = &%{"op" => "link", "itemId" => "api", "fields" => &1}
 
       refused =
-        "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number}."
+        "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number, url}."
 
       assert {:ok, [%{"fields" => %{"issue" => ^issue}}]} =
                Plan.check_changes(items, [link.(%{"issue" => issue, "pullRequest" => nil})])

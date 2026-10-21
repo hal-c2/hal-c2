@@ -3,7 +3,7 @@
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch dispatchMode and deliveryIntent,
 #     queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer,
 #     queue.resume, run.updated, message.updated, turn-item.updated)
-#   apps/server-ex/lib/hal_c2/orchestration.ex (decide_message, queue_run, steer, restart_promoted)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (decide_message, queue_run, steer, restart_promoted, session_call)
 #   apps/server/src/orchestration-v2/ (dispatch mode resolution)
 #   apps/server/src/orchestration-v2/Orchestrator.ts (dispatchSteerIntoRun; a steer for a
 #     completed run starts immediately)
@@ -131,6 +131,16 @@ Feature: Queueing, steering and restarting
     When the user tries to send "Also" to "t1" as a steer
     Then the send fails saying Codex did not take the message into its running turn
     And "Also" is neither queued nor added to the running turn
+
+  # The session stopped after the runtime was found, so the steer is refused
+  # as if no session had been found, instead of crashing the dispatch.
+  @mc
+  Scenario: A steer whose session stopped is refused while its turn runs
+    Given "t1" has a running turn on "codex"
+    And the session of "t1" stops as it is asked to steer
+    When the user tries to send "Also" to "t1" as a steer
+    Then the send fails saying its session stopped
+    And "Also" was not queued and the turn of "t1" is still running
 
   @mc
   Scenario Outline: A steer carries the message's files and images to the provider

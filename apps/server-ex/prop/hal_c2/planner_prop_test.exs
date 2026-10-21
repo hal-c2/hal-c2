@@ -43,6 +43,10 @@ defmodule HalC2.PlannerPropTest do
   launch exits, and its thread never launches. A client links a task to a pull request
   of that repository, or unlinks it, someone on GitHub names a pull request as closing an
   issue there, or stops, and GitHub merges a pull request; a merge alone closes no issue.
+  A task is also linked to a pull request of a repository no project has, by a link whose
+  url names a host the MC has a project on, a host it has none on, or no web address,
+  and GitHub merges it; only a host the MC has a project on is asked, the one the link
+  names when it names one.
   After every step:
 
   - nothing waits for itself, no task is its own ancestor, a removed task's subtasks move
@@ -138,6 +142,25 @@ defmodule HalC2.PlannerPropTest do
   @unplanned 4
   # The pull requests of `@repository`.
   @pulls [40, 41, 42]
+  # The pull requests of `@lone`'s repository, which no project on the MC has, by number:
+  # the kind of host a link to one names and the url it says. `:enterprise` is on
+  # `@enterprise`, where the MC has a project, and is read through that host; `:plain`
+  # names no web address a host can be taken from (none, not text, not a url, or a
+  # scheme the plan drops), so github.com, where the MC has a project too, reads it; the
+  # host of `:unknown` has no project, so it is never asked.
+  @lone "acme/other"
+  @enterprise "github.example.com"
+  @lone_pulls %{
+    50 => {:enterprise, "https://github.example.com/acme/other/pull/50"},
+    51 => {:enterprise, "http://github.example.com/acme/other/pull/51"},
+    52 => {:plain, "ftp://github.example.com/acme/other/pull/52"},
+    53 => {:plain, 53},
+    54 => {:plain, "not a url"},
+    55 => {:plain, nil},
+    56 => {:unknown, "https://ghe.elsewhere.example/acme/other/pull/56"},
+    # A deep link with credentials, a query and a fragment is stored as the plain address.
+    57 => {:enterprise, "https://user:token@github.example.com/acme/other/pull/57/files?x=1#y"}
+  }
   @bad_ref %{"repository" => 7, "number" => 1}
   @due "2026-10-30"
   @moved "2026-11-06"
@@ -497,6 +520,16 @@ defmodule HalC2.PlannerPropTest do
     unmerged = Enum.reject(@pulls, &MapSet.member?(m.merged, &1))
     pulling = for {slot, %{pulls: [_ | _]}} <- m.items, do: slot
 
+    # GitHub merges a pull request of `@lone` that a task is linked to and a host serves.
+    lone =
+      Enum.uniq(
+        for {_, item} <- m.items,
+            {n, _, :open} <- item.pulls,
+            is_map_key(@lone_pulls, n),
+            elem(@lone_pulls[n], 0) != :unknown,
+            do: n
+      )
+
     # A merge matters most for a pull request a task has or an issue names.
     wanted =
       for pr <- unmerged,
@@ -512,6 +545,7 @@ defmodule HalC2.PlannerPropTest do
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
        {6, {:call, __MODULE__, :link_pr, [item, elements(@pulls)]}},
+       {3, {:call, __MODULE__, :link_pr, [item, elements(Map.keys(@lone_pulls))]}},
        {4, {:call, __MODULE__, :wait, [item, item]}},
        {2, {:call, __MODULE__, :nest, [item, oneof([nil, item])]}},
        {2, {:call, __MODULE__, :move, [item, oneof([nil, item]), oneof([nil, item])]}},
@@ -624,8 +658,13 @@ defmodule HalC2.PlannerPropTest do
        if(theirs == [], do: [], else: [{100, {:call, __MODULE__, :merge, [elements(theirs)]}}]) ++
        if(pulling == [],
          do: [],
-         else: [{2, {:call, __MODULE__, :unlink_pr, [elements(pulling), elements(@pulls)]}}]
+         else: [
+           {2,
+            {:call, __MODULE__, :unlink_pr,
+             [elements(pulling), elements(@pulls ++ Map.keys(@lone_pulls))]}}
+         ]
        ) ++
+       if(lone == [], do: [], else: [{12, {:call, __MODULE__, :merge_lone, [elements(lone)]}}]) ++
        if(m.closed == %{},
          do: [],
          else: [{2, {:call, __MODULE__, :reopen, [elements(Map.keys(m.closed))]}}]
@@ -733,6 +772,7 @@ defmodule HalC2.PlannerPropTest do
 
   def precondition(m, {:call, _, :answer, [push]}), do: Map.has_key?(m.held, push)
   def precondition(m, {:call, _, :merge, [pr]}), do: not MapSet.member?(m.merged, pr)
+  def precondition(m, {:call, _, :merge_lone, [n]}), do: not MapSet.member?(m.merged, n)
 
   def precondition(m, {:call, _, :refer, [number, pr]}),
     do: here?(number) and pr not in Map.get(m.closing, number, [])
@@ -944,6 +984,7 @@ defmodule HalC2.PlannerPropTest do
   # GitHub merges a pull request, or names one as closing an issue, or no longer; the plan
   # hears of it at the next look.
   defp step(m, {:call, _, :merge, [pr]}), do: {%{m | merged: MapSet.put(m.merged, pr)}, :ok}
+  defp step(m, {:call, _, :merge_lone, [n]}), do: {%{m | merged: MapSet.put(m.merged, n)}, :ok}
 
   defp step(m, {:call, _, :refer, [number, pr]}),
     do: {%{m | closing: Map.update(m.closing, number, [pr], &(&1 ++ [pr]))}, :ok}
@@ -1873,7 +1914,51 @@ defmodule HalC2.PlannerPropTest do
     observe(:ok)
   end
 
+  # GitHub merges the pull request `n` of `@lone`, which only the host it is on answers.
+  def merge_lone(n) do
+    Process.put(:pl_merged, MapSet.put(Process.get(:pl_merged), n))
+    gh_rule(lone_view(n, "MERGED"))
+    observe(:ok)
+  end
+
+  # What a link to the pull request `pr` says: the repository and number, and the url of a
+  # pull request of `@lone`.
+  defp pull_ref(pr) when is_map_key(@lone_pulls, pr) do
+    ref = %{"repository" => @lone, "number" => pr}
+
+    case @lone_pulls[pr] do
+      {_, nil} -> ref
+      {_, url} -> Map.put(ref, "url", url)
+    end
+  end
+
   defp pull_ref(pr), do: %{"repository" => @repository, "number" => pr}
+
+  # `gh pr view` of the pull request `n` of `@lone` on the host that serves it (the arg ends
+  # in a space so that #5 does not match #55). No rule is made for `:unknown`, which
+  # nothing may ask: the call would fail, and `lone_routes/0` says it was made.
+  defp lone_view(n, state) do
+    host = if elem(@lone_pulls[n], 0) == :enterprise, do: @enterprise, else: "github.com"
+
+    pr = %{
+      "number" => n,
+      "title" => "Pull request #{n}",
+      "url" => "https://#{host}/#{@lone}/pull/#{n}",
+      "author" => %{"login" => "octocat"},
+      "headRefName" => "feature/#{n}",
+      "baseRefName" => "main",
+      "state" => state,
+      "isDraft" => false,
+      "createdAt" => "2026-09-01T00:00:00Z",
+      "updatedAt" => "2026-09-02T00:00:00Z",
+      "reviewRequests" => [],
+      "latestReviews" => [],
+      "statusCheckRollup" => [],
+      "labels" => []
+    }
+
+    %{"args" => ["pr view #{n} ", "#{host}/#{@lone}"], "stdout" => pr}
+  end
 
   # The pull requests of `@repository` as `gh pr list` answers them, merged or open.
   defp pr_list do
@@ -2466,6 +2551,7 @@ defmodule HalC2.PlannerPropTest do
     take_messages()
     # What the step put on a board, the next look reads.
     boarded("item-0")
+    lone_routes()
     board_reads()
     plan = plan()
     runs = runs()
@@ -2552,6 +2638,28 @@ defmodule HalC2.PlannerPropTest do
       {:error, :enoent} ->
         %{}
     end
+  end
+
+  # Every read of a pull request of `@lone` since the last, which the host its link names
+  # served if the MC has a project there and github.com otherwise, and was none for a host
+  # the MC has no project on.
+  defp lone_routes do
+    calls = gh_calls()
+
+    for line <- Enum.drop(calls, Process.get(:pl_lone_read)),
+        %{"args" => ["pr", "view", number | rest]} <- [JSON.decode!(line)],
+        {n, ""} <- [Integer.parse(number)],
+        is_map_key(@lone_pulls, n) do
+      repo = rest |> Enum.drop_while(&(&1 != "--repo")) |> Enum.at(1)
+
+      case elem(@lone_pulls[n], 0) do
+        :enterprise when repo == "#{@enterprise}/#{@lone}" -> :ok
+        :plain when repo == "github.com/#{@lone}" -> :ok
+        kind -> problem("##{n} (#{kind}) was read through #{inspect(repo)}")
+      end
+    end
+
+    Process.put(:pl_lone_read, length(calls))
   end
 
   # The gh calls so far, one JSON line each.
@@ -2854,6 +2962,7 @@ defmodule HalC2.PlannerPropTest do
       Path.join(gh, "rules.json"),
       JSON.encode!(
         [issue_list([]), board_item(0), pr_list()] ++
+          for({n, {kind, _}} <- @lone_pulls, kind != :unknown, do: lone_view(n, "OPEN")) ++
           pairs ++
           [%{"args" => ["api user"], "stdout" => %{"id" => 1, "login" => "octocat"}}] ++
           Enum.flat_map(here, fn number ->
@@ -2894,6 +3003,7 @@ defmodule HalC2.PlannerPropTest do
     Process.put(:pl_boards, %{})
     Process.put(:pl_full, false)
     Process.put(:pl_calls_read, 0)
+    Process.put(:pl_lone_read, 0)
     Process.put(:pl_ids, %{})
     Process.put(:pl_runs, [])
     Process.put(:pl_problems, [])
@@ -2930,7 +3040,22 @@ defmodule HalC2.PlannerPropTest do
         "workspaceRoot" => root
       })
 
+    # A project on `@enterprise`, which reads the pull requests of any repository there.
+    tools = Path.join(home, "tools")
+    File.mkdir_p!(tools)
+    git!(tools, ["init", "-q"])
+    git!(tools, ["remote", "add", "origin", "https://#{@enterprise}/acme/tools.git"])
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.create",
+        "projectId" => "tools",
+        "title" => "tools",
+        "workspaceRoot" => tools
+      })
+
     HalC2.Streams.flush_shell("api")
+    HalC2.Streams.flush_shell("tools")
     :sys.get_state(HalC2.Shell)
     File.mkdir_p!(Path.join(HalC2.Paths.data_dir(), "plugins"))
     File.cp_r!(@package, Path.join([HalC2.Paths.data_dir(), "plugins", @id]))

@@ -43,6 +43,62 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+const PNG_PREVIEW = {
+  source: Uint8Array.from(Buffer.from(PNG_BASE64, "base64")),
+  imageWidth: 1,
+  imageHeight: 1,
+} satisfies ImagePreview;
+
+// The native decode takes a varying time, and the staged image appears only once it
+// returns. A test that pastes an image injects this decoder: `started` resolves when the
+// paste reached the decode (everything before it, like reading the file, is done), and the
+// image stays unstaged until the test calls `release`. It gates one image: a second call
+// passes the already-released gate at once, so a multi-image test would need a per-call gate here.
+function gatedImageDecoder() {
+  const started = deferred<void>();
+  const gate = deferred<void>();
+  let encodedBytes: number | undefined;
+  return {
+    decodeImage: async (encoded: Uint8Array) => {
+      encodedBytes = encoded.byteLength;
+      started.resolve();
+      await gate.promise;
+      return PNG_PREVIEW;
+    },
+    started: started.promise,
+    release: () => gate.resolve(),
+    get encodedBytes() {
+      return encodedBytes;
+    },
+  };
+}
+
+// Wait on the decode-started event itself: `waitFor` would break out as soon
+// as the scheduler goes idle (its frame passes are never spent while the
+// preceding read does real IO), so it cannot bound this wait. The race's
+// timeout is only a diagnostic fallback — it fails with the last frame, and
+// Bun's per-test timeout bounds a decode that never starts.
+async function awaitDecodeStarted(
+  setup: Awaited<ReturnType<typeof testRender>>,
+  decoder: ReturnType<typeof gatedImageDecoder>,
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      decoder.started,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(new Error(`the decode never started; last frame:\n${setup.captureCharFrame()}`)),
+          4_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function containsId(root: Renderable, id: string): boolean {
   const queue = [root];
   while (queue.length > 0) {
@@ -1097,10 +1153,11 @@ describe("ChatView acknowledged submissions", () => {
         calls.push(args);
       },
     });
-    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
-      width: 110,
-      height: 28,
-    });
+    const decoder = gatedImageDecoder();
+    const setup = await testRender(
+      <ChatView client={fake.client} onExit={() => {}} decodeImage={decoder.decodeImage} />,
+      { width: 110, height: 28 },
+    );
 
     await selectThread(setup, fake.connect);
     await React.act(async () => {
@@ -1111,8 +1168,14 @@ describe("ChatView acknowledged submissions", () => {
       });
       await setup.renderOnce();
     });
+    await setup.waitForFrame((frame) => frame.includes("Adding pasted image"));
+    await awaitDecodeStarted(setup, decoder);
+    expect(decoder.encodedBytes).toBe(68);
+    await React.act(async () => {
+      decoder.release();
+    });
     await setup.waitForFrame(
-      (frame) => frame.includes("explain this screenshot") && frame.includes("clipboard-i"),
+      (frame) => frame.includes("explain this screenshot") && frame.includes("× clipboard-i"),
     );
     await React.act(async () => {
       setup.mockInput.pressEnter();
@@ -1150,10 +1213,11 @@ describe("ChatView acknowledged submissions", () => {
         calls.push(args);
       },
     });
-    const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
-      width: 110,
-      height: 28,
-    });
+    const decoder = gatedImageDecoder();
+    const setup = await testRender(
+      <ChatView client={fake.client} onExit={() => {}} decodeImage={decoder.decodeImage} />,
+      { width: 110, height: 28 },
+    );
 
     await selectThread(setup, fake.connect);
     await React.act(async () => {
@@ -1162,15 +1226,22 @@ describe("ChatView acknowledged submissions", () => {
       );
       await setup.renderOnce();
     });
-    await setup.waitForFrame(
-      (frame) =>
-        frame.includes("error screenshot.png") &&
-        !frame.includes("/workspace/project-one/docs/error"),
-    );
+    // The busy status shows first, so a paste that is never recognised fails with a frame.
+    await setup.waitForFrame((frame) => frame.includes("Adding error screenshot.png"));
+    // The decode starts once the workspace read resolved; the image is staged after it.
+    await awaitDecodeStarted(setup, decoder);
     expect(reads).toEqual([
       { cwd: "/workspace/project-one", relativePath: "docs/error screenshot.png" },
     ]);
 
+    await React.act(async () => {
+      decoder.release();
+    });
+    // The busy status also names the file, so wait for the staged chip itself.
+    await setup.waitForFrame(
+      (frame) =>
+        frame.includes("× error scree") && !frame.includes("/workspace/project-one/docs/error"),
+    );
     await React.act(async () => {
       await setup.mockInput.typeText("explain this image");
       await setup.renderOnce();
@@ -1203,10 +1274,11 @@ describe("ChatView acknowledged submissions", () => {
           return null;
         },
       });
-      const setup = await testRender(<ChatView client={fake.client} onExit={() => {}} />, {
-        width: 110,
-        height: 28,
-      });
+      const decoder = gatedImageDecoder();
+      const setup = await testRender(
+        <ChatView client={fake.client} onExit={() => {}} decodeImage={decoder.decodeImage} />,
+        { width: 110, height: 28 },
+      );
 
       await selectThread(setup, fake.connect);
       const escapedImagePath = imagePath.replaceAll(" ", "\\ ");
@@ -1214,9 +1286,16 @@ describe("ChatView acknowledged submissions", () => {
         await setup.mockInput.pasteBracketedText(`Please inspect ${escapedImagePath}`);
         await setup.renderOnce();
       });
+      // The busy status shows first, so a paste that is never recognised fails with a frame.
+      await setup.waitForFrame((frame) => frame.includes("Adding outside workspace.png"));
+      // The decode starts once the file is read from disk; the image is staged after it.
+      await awaitDecodeStarted(setup, decoder);
+      await React.act(async () => {
+        decoder.release();
+      });
       await setup.waitForFrame(
         (frame) =>
-          frame.includes("outside wor") &&
+          frame.includes("× outside wor") &&
           frame.includes("Please inspect") &&
           !frame.includes(directory),
       );

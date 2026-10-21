@@ -18,6 +18,30 @@ Item {
         }
     }
 
+    // The shell's body, which the page lives in: scaled by the zoom about its corner, so
+    // a popup positioned from the page has its local offsets multiplied by the zoom.
+    Component {
+        id: zoomedBodyComponent
+        Item {
+            property real zoom: 1
+            property real offsetX: 0
+            property real offsetY: 0
+            property alias page: inner
+            width: root.width / zoom
+            height: root.height / zoom
+            scale: zoom
+            transformOrigin: Item.TopLeft
+
+            ProvidersSettings {
+                id: inner
+                x: offsetX
+                y: offsetY
+                width: 880
+                height: 680
+            }
+        }
+    }
+
     function provider(overrides) {
         return Object.assign({
             instanceId: "claudeAgent_work", driver: "claudeAgent", name: "Claude Work", version: "v2.1.0",
@@ -128,9 +152,365 @@ Item {
                                targetVersion: null, strong: false };
             Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, updating: true })] }) };
             const page = createTemporaryObject(settingsComponent, root);
-            const update = findChild(findChild(page, "provider_claudeAgent_work"), "update");
+            const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "advisoryButton"));
+            const update = findChild(card, "update");
             verify(update.visible);
             verify(!update.enabled);
+        }
+
+        // The card shows an icon; the title, the detail and the actions open from it.
+        function test_an_update_advisory_opens_from_an_icon_on_the_card() {
+            const advisory = { title: "Update available", detail: "Update available: install v0.51.0.", updateCommand: "npm i -g codex",
+                               targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            verify(button.visible);
+            verify(button.iconOnly);
+            compare(button.Accessible.name, "Claude Work: Update available");
+            const popover = findChild(card, "advisory");
+            verify(!popover.visible, "the details stay closed until asked for");
+            mouseClick(button);
+            tryCompare(popover, "opened", true);
+            mouseClick(findChild(card, "update"));
+            compare(Shell.dispatchedActions[0].action, "providerSettings.update");
+        }
+
+        // Escape closes the popover the keyboard opened, and nothing else (it must
+        // not reach the page, whose host leaves Settings on it). The icon toggles it.
+        function test_the_advisory_popover_closes_on_escape_and_toggles_from_its_icon() {
+            const advisory = { title: "Update available", detail: "Update available: install v0.51.0.", updateCommand: "npm i -g codex",
+                               targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            const popover = findChild(card, "advisory");
+            button.forceActiveFocus();
+            keyClick(Qt.Key_Space);
+            tryCompare(popover, "opened", true);
+            verify(popover.activeFocus, "the popover takes the keyboard");
+            let leftThePage = false;
+            page.Keys.escapePressed.connect(() => leftThePage = true);
+            keyClick(Qt.Key_Escape);
+            tryCompare(popover, "opened", false);
+            verify(!leftThePage, "Escape stopped at the popover");
+
+            verify(!button.checked, "the icon reads as collapsed while the popover is closed");
+            mouseClick(button);
+            tryCompare(popover, "opened", true);
+            verify(button.checked, "the icon reads as expanded while the popover is open");
+            mouseClick(button);
+            tryCompare(popover, "opened", false);
+            verify(!button.checked, "the icon reads as collapsed again once the popover closes");
+            // Closing it with the press must not reopen it with the click that follows.
+            tryVerify(() => !popover.opened && !popover.visible);
+            verify(!popover.opened, "pressing the icon again closes it rather than reopening it");
+        }
+
+        // The popover is placed as it opens and does not follow the icon: the page scrolling,
+        // the window resizing or the zoom changing under it closes it instead.
+        function test_the_advisory_popover_closes_when_the_icon_moves_under_it() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            const win = root.Window.window;
+            const full = { width: win.width, height: win.height };
+            const many = [];
+            for (let i = 0; i < 12; i++)
+                many.push(root.provider({ instanceId: "claudeAgent_" + i, name: "Claude " + i, advisory: i === 0 ? advisory : null }));
+            Shell.state = { providerSettings: root.settings({ providers: many }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_0");
+            const button = findChild(card, "advisoryButton");
+            const popover = findChild(card, "advisory");
+            const open = () => {
+                mouseClick(button);
+                tryCompare(popover, "opened", true);
+            };
+            try {
+                open();
+                const flick = findChild(page, "providersScroll");
+                verify(flick, "the page's scroll area is found");
+                flick.contentY = 40;
+                tryCompare(popover, "opened", false);
+
+                open();
+                win.height = full.height - 60;
+                tryCompare(popover, "opened", false);
+                win.height = full.height;
+
+                open();
+                win.width = full.width - 60;
+                tryCompare(popover, "opened", false);
+                win.width = full.width;
+
+                open();
+                Shell.state = { layout: { zoom: 1.25 }, providerSettings: root.settings({ providers: many }) };
+                tryCompare(popover, "opened", false);
+            } finally {
+                win.width = full.width;
+                win.height = full.height;
+            }
+        }
+
+        // The keyboard opens it, reaches its actions, and gets the icon back when it closes.
+        function test_the_advisory_popover_is_keyboard_reachable_and_returns_focus() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            const popover = findChild(card, "advisory");
+            const update = findChild(card, "update");
+            button.forceActiveFocus();
+            keyClick(Qt.Key_Space);
+            tryCompare(popover, "opened", true);
+            for (let i = 0; i < 4 && !update.activeFocus; i++)
+                keyClick(Qt.Key_Tab);
+            verify(update.activeFocus, "Tab reaches Update now from inside the popover");
+            keyClick(Qt.Key_Space);
+            compare(Shell.dispatchedActions[0].action, "providerSettings.update");
+            keyClick(Qt.Key_Escape);
+            tryCompare(popover, "opened", false);
+            tryVerify(() => button.activeFocus, 1000);
+        }
+
+        // Focus leaving the popover (Tab cycles inside it, so this is focus
+        // moving to another control) closes it, instead of leaving it open
+        // over the page where Escape no longer reaches it.
+        function test_the_advisory_popover_closes_when_focus_leaves_it() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            const popover = findChild(card, "advisory");
+            button.forceActiveFocus();
+            keyClick(Qt.Key_Space);
+            tryCompare(popover, "opened", true);
+            verify(popover.activeFocus, "the popover holds focus while open");
+            findChild(card, "configure").forceActiveFocus();
+            tryCompare(popover, "opened", false);
+        }
+
+        function test_the_advisory_popover_keeps_the_settings_zoom() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { layout: { zoom: 1.5 }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "advisoryButton"));
+            const popover = findChild(card, "advisory");
+            tryCompare(popover, "opened", true);
+            compare(popover.scale, 1.5);
+            compare(popover.transformOrigin, Item.TopLeft);
+        }
+
+        // Where the popover opens, the drawn card is inside the window, however far
+        // down or to the right the icon is, however far the page is zoomed and however
+        // small the window is: ShellWindow's minimum is 640x400 and the zoom goes to 5.
+        // A long detail at a small window and a high zoom fits neither below nor above
+        // the icon, so the card is shorter than its text and scrolls.
+        function test_the_advisory_popover_stays_inside_the_window() {
+            const short = "Install v0.51.0.";
+            const long = "This version of the provider is outside the range HAL-C2 supports. Update it to v0.51.0 or newer " +
+                         "so new threads keep working, or keep using the version you have and accept that some features may fail.";
+            const win = root.Window.window;
+            const full = { width: win.width, height: win.height };
+            // [window width, window height, zoom, icon x, icon y, detail]: the icon's
+            // centre, as a fraction of the window.
+            const cases = [
+                [900, 700, 1, 0.1, 0.1, short], [900, 700, 1.5, 0.1, 0.1, short], [900, 700, 1, 0.1, 0.9, short],
+                [900, 700, 1.5, 0.1, 0.9, short], [900, 700, 1, 0.9, 0.1, short], [900, 700, 1.5, 0.7, 0.1, short],
+                [900, 700, 1.5, 0.7, 0.9, short], [900, 700, 1, 0.9, 0.9, long],
+                [640, 400, 1, 0.1, 0.1, long], [640, 400, 2, 0.1, 0.1, long], [640, 400, 2, 0.1, 0.5, long],
+                [640, 400, 2, 0.5, 0.3, long], [640, 400, 2, 0.95, 0.5, long], [640, 400, 3, 0.1, 0.1, long],
+                [640, 400, 3, 0.6, 0.6, long], [640, 400, 5, 0.2, 0.2, long]];
+            let exercised = 0, flipped = 0, shifted = 0, scrolled = 0;
+            try {
+                for (const [width, height, zoom, fractionX, fractionY, detail] of cases) {
+                    win.width = width;
+                    win.height = height;
+                    const advisory = { title: "Update available", detail: detail, updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+                    Shell.state = { layout: { zoom: zoom }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+                    const body = createTemporaryObject(zoomedBodyComponent, root, { zoom: zoom });
+                    const card = findChild(body.page, "provider_claudeAgent_work");
+                    const button = findChild(card, "advisoryButton");
+                    const label = `${width}x${height} zoom ${zoom} at ${fractionX},${fractionY}`;
+                    // Moves the page so that the icon's centre is where the case asks.
+                    const home = button.mapToItem(null, button.width / 2, button.height / 2);
+                    body.offsetX = (width * fractionX - home.x) / zoom;
+                    body.offsetY = (height * fractionY - home.y) / zoom;
+                    const at = button.mapToItem(null, button.width / 2, button.height / 2);
+                    verify(at.x > 0 && at.y > 0 && at.x < width && at.y < height, label + ": the icon is in the window");
+                    mouseClick(button);
+                    const popover = findChild(card, "advisory");
+                    tryCompare(popover, "opened", true);
+                    const topLeft = popover.background.mapToItem(null, 0, 0);
+                    const bottomRight = popover.background.mapToItem(null, popover.background.width, popover.background.height);
+                    verify(topLeft.x >= 7 && topLeft.y >= 7, label + ": the popover starts inside the window " + topLeft);
+                    verify(bottomRight.x <= width - 7 && bottomRight.y <= height - 7, label + ": the popover ends inside the window " + bottomRight);
+                    // Flipped or shifted, it stays against the icon and the window edge, not
+                    // a zoom-multiple away from them.
+                    const iconTop = button.mapToItem(null, 0, 0).y;
+                    if (popover.upward) {
+                        flipped++;
+                        if (popover.nudge === 0)
+                            verify(Math.abs(bottomRight.y - iconTop) <= 4 * zoom + 1, label + ": the flipped popover sits against the icon");
+                    }
+                    if (popover.shift !== 0) {
+                        shifted++;
+                        verify(Math.abs(bottomRight.x - (width - 8)) <= 1 || Math.abs(topLeft.x - 8) <= 1, label + ": the shifted popover sits against the window edge");
+                    }
+                    if (popover.contentItem.contentHeight > popover.contentItem.height + 1)
+                        scrolled++;
+                    exercised++;
+                    popover.close();
+                    body.destroy();
+                }
+            } finally {
+                win.width = full.width;
+                win.height = full.height;
+            }
+            compare(exercised, cases.length);
+            verify(flipped > 0, "a case opens upward");
+            verify(shifted > 0, "a case is shifted left");
+            verify(scrolled > 0, "a case is too tall for the window and scrolls");
+        }
+
+        // Placement is recomputed while open: taller content (here a larger
+        // font scale) cannot grow the popover past the window's edge.
+        function test_the_advisory_popover_stays_inside_when_its_content_grows() {
+            const advisory = { title: "Update available", detail: "This version is outside the supported range. " +
+                "Update to v0.51.0 or newer so new threads keep working.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { layout: { zoom: 1 }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+            const body = createTemporaryObject(zoomedBodyComponent, root, { zoom: 1 });
+            const card = findChild(body.page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            const home = button.mapToItem(null, button.width / 2, button.height / 2);
+            body.offsetX = (root.width * 0.1 - home.x);
+            body.offsetY = (root.height * 0.9 - home.y);
+            mouseClick(button);
+            const popover = findChild(card, "advisory");
+            tryCompare(popover, "opened", true);
+            try {
+                Theme.fontScale = 2;
+                tryVerify(() => popover.opened);
+                const topLeft = popover.background.mapToItem(null, 0, 0);
+                const bottomRight = popover.background.mapToItem(null, popover.background.width, popover.background.height);
+                verify(topLeft.x >= 7 && topLeft.y >= 7, "grown popover starts inside the window " + topLeft);
+                verify(bottomRight.x <= root.width - 7 && bottomRight.y <= root.height - 7, "grown popover ends inside the window " + bottomRight);
+            } finally {
+                Theme.fontScale = 1;
+            }
+        }
+
+        // A close because the window moved under it does not park keyboard
+        // focus on the icon.
+        function test_a_moved_close_does_not_return_focus_to_the_icon() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            const popover = findChild(card, "advisory");
+            const win = root.Window.window;
+            const fullHeight = win.height;
+            try {
+                mouseClick(button);
+                tryCompare(popover, "opened", true);
+                win.height = fullHeight - 60;
+                tryCompare(popover, "opened", false);
+                verify(popover.movedClose, "the resize close is marked as moved");
+                verify(!button.activeFocus, "closing does not park focus on the icon");
+            } finally {
+                win.height = fullHeight;
+            }
+        }
+
+        // A republish recreates every card: the open popover is reopened on the
+        // new delegate (Update flipping to Updating… must not make it vanish).
+        function test_the_advisory_popover_survives_a_republish_while_updating() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "advisoryButton"));
+            tryCompare(findChild(card, "advisory"), "opened", true);
+            const many = [root.provider({ advisory: advisory, updating: true })];
+            for (let i = 1; i < 12; i++)
+                many.push(root.provider({ instanceId: "claudeAgent_" + i, name: "Claude " + i }));
+            Shell.state = { providerSettings: root.settings({ providers: many }) };
+            const newCard = findChild(page, "provider_claudeAgent_work");
+            const popover = findChild(newCard, "advisory");
+            tryCompare(popover, "opened", true);
+            const update = findChild(newCard, "update");
+            verify(!update.enabled, "the reopened popover shows Updating disabled");
+            compare(update.text, "Updating…");
+        }
+
+        // At a small window and high zoom the popover scrolls: Tab focus is
+        // scrolled into view, never left activatable below the fold.
+        function test_the_advisory_popover_scrolls_tab_focus_into_view() {
+            const advisory = { title: "Update available", detail: "This version of the provider is outside the range HAL-C2 supports. " +
+                "Update it to v0.51.0 or newer so new threads keep working, or keep using the version you have and accept that some features may fail.",
+                updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            const win = root.Window.window;
+            const full = { width: win.width, height: win.height };
+            try {
+                win.width = 640;
+                win.height = 400;
+                Shell.state = { layout: { zoom: 3 }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, canUpdate: true })] }) };
+                const body = createTemporaryObject(zoomedBodyComponent, root, { zoom: 3 });
+                const card = findChild(body.page, "provider_claudeAgent_work");
+                const button = findChild(card, "advisoryButton");
+                const popover = findChild(card, "advisory");
+                button.forceActiveFocus();
+                keyClick(Qt.Key_Space);
+                tryCompare(popover, "opened", true);
+                const update = findChild(card, "update");
+                for (let i = 0; i < 6 && !update.activeFocus; i++)
+                    keyClick(Qt.Key_Tab);
+                verify(update.activeFocus, "Tab reaches Update now");
+                const at = update.mapToItem(popover.contentItem, 0, 0);
+                verify(at.y >= -1 && at.y + update.height <= popover.contentItem.height + 1,
+                       "the focused control is inside the scrolled view " + at.y + "/" + popover.contentItem.height);
+                body.destroy();
+            } finally {
+                win.width = full.width;
+                win.height = full.height;
+            }
+        }
+
+        // A republish without the advisory keeps it closed; this pins that it stays so.
+        function test_the_advisory_popover_closes_when_the_advisory_goes_away() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "advisoryButton"));
+            const popover = findChild(card, "advisory");
+            tryCompare(popover, "opened", true);
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: null })] }) };
+            tryCompare(popover, "opened", false);
+        }
+
+        // A version outside the supported range is told apart on the card itself.
+        function test_a_strong_advisory_is_a_warning_icon() {
+            const advisory = { title: "Unsupported version", detail: "Update to v0.51.0 or newer.", updateCommand: "npm i -g codex", targetVersion: null, strong: true };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            compare(button.iconName, "triangle-alert");
+            compare(button.tint, page.warning);
+            compare(button.Accessible.name, "Claude Work: Unsupported version");
+        }
+
+        function test_a_provider_without_an_advisory_has_no_icon() {
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({})] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            verify(!findChild(findChild(page, "provider_claudeAgent_work"), "advisoryButton").visible);
         }
 
         // The update command is copied from a button; its path is not printed on the card.
@@ -140,6 +520,7 @@ Item {
             Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
             const page = createTemporaryObject(settingsComponent, root);
             const card = findChild(page, "provider_claudeAgent_work");
+            mouseClick(findChild(card, "advisoryButton"));
             const copy = findChild(card, "copyUpdateCommand");
             verify(copy.visible);
             verify(copy.iconOnly);
@@ -148,7 +529,7 @@ Item {
                 if (item.visible && typeof item.text === "string") shown.push(item.text);
                 for (const child of item.children) visit(child);
             };
-            visit(findChild(card, "advisory"));
+            visit(findChild(card, "advisory").contentItem);
             verify(!shown.some(text => text.includes("/opt/mise")), shown.join("|"));
         }
 

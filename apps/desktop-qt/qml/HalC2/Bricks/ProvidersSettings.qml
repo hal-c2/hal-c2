@@ -13,9 +13,37 @@ Rectangle {
 
     objectName: "providersSettings"
 
+    // How far the page is scrolled: an open advisory popover closes when it changes.
+    readonly property real scrollY: pageScroll.contentY
     readonly property var model: Shell.state.providerSettings ?? null
     readonly property var environments: model ? model.environments : []
     readonly property var providers: model ? model.providers : []
+    // The provider whose advisory popover is open, kept on the page: a
+    // republish recreates every card delegate, so the open state cannot live
+    // in the delegate or the popover would vanish on Update itself.
+    property string openAdvisory: ""
+    // A close is forgotten only once the event loop turns: a republish closes
+    // the old delegate's popover before destroying it, and the replacement
+    // reopening (a new generation) cancels the forget.
+    property int advisoryGeneration: 0
+    property string pendingForget: ""
+    property int pendingForgetGen: -1
+
+    function forgetAdvisory(inst, gen) {
+        pendingForget = inst;
+        pendingForgetGen = gen;
+        forgetAdvisoryTimer.restart();
+    }
+
+    Timer {
+        id: forgetAdvisoryTimer
+
+        interval: 1
+        onTriggered: {
+            if (page.openAdvisory === page.pendingForget && page.advisoryGeneration === page.pendingForgetGen)
+                page.openAdvisory = "";
+        }
+    }
     // The session may only view this environment: nothing on it can be changed.
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
@@ -579,6 +607,220 @@ Rectangle {
                     font.family: "monospace"
                 }
 
+                // The version outside the supported range, or an update: an icon
+                // on the card, the details in a popover, as the web does.
+                ShellButton {
+                    id: advisoryButton
+
+                    objectName: "advisoryButton"
+                    visible: card.advisory !== null
+                    subtle: true
+                    iconName: card.advisory && card.advisory.strong ? "triangle-alert" : "circle-arrow-up"
+                    tint: card.advisory && card.advisory.strong ? page.warning : page.foreground
+                    Accessible.name: card.advisory ? qsTr("%1: %2").arg(card.provider.name).arg(card.advisory.title) : ""
+                    // Checkable, with checked bound to the popover, so assistive
+                    // tech can tell whether it is open; the popover is driven
+                    // from onToggled so a click toggles it exactly once.
+                    checkable: true
+                    checked: advisoryPopover.opened
+                    onToggled: {
+                        if (checked) {
+                            page.openAdvisory = card.provider.instanceId;
+                            advisoryPopover.open();
+                        } else {
+                            if (page.openAdvisory === card.provider.instanceId)
+                                page.openAdvisory = "";
+                            advisoryPopover.close();
+                        }
+                    }
+
+                    Popup {
+                        id: advisoryPopover
+
+                        objectName: "advisory"
+
+                        // Placed through the zoomed body, as the combo's popup is: the
+                        // overlay is outside it, so scaled about this corner the card
+                        // draws as the page's own content does.
+                        scale: Shell.state.layout?.zoom ?? 1
+                        transformOrigin: Item.TopLeft
+                        // Kept inside the window, set as it shows. It is not kept up as the
+                        // icon moves: the page scrolling, the window resizing or the zoom
+                        // changing while it is open closes it instead (a popover that
+                        // followed the icon could be carried off an edge it was nudged
+                        // away from). The window is measured in drawn pixels (the
+                        // size times the zoom), but x and y are local to the icon, which the
+                        // zoomed body scales, so the offsets given to them are in local
+                        // units. It is no wider or taller than the window leaves room for
+                        // (the text scrolls when it is taller), opens on the side of the icon
+                        // with more room, and is then slid to keep eight pixels from every
+                        // edge.
+                        readonly property real windowWidth: advisoryButton.Window.width
+                        readonly property real windowHeight: advisoryButton.Window.height
+                        property bool upward: false
+                        property real shift: 0
+                        property real nudge: 0
+                        // A close because the icon moved (scroll, resize, zoom)
+                        // must not return focus to the icon (below); other closes do.
+                        property bool movedClose: false
+                        x: shift
+                        y: (upward ? -implicitHeight - 4 : advisoryButton.height + 4) + nudge
+                        function place() {
+                            const iconBottom = advisoryButton.mapToItem(null, 0, advisoryButton.height);
+                            const iconTop = iconBottom.y - advisoryButton.height * scale;
+                            const drawnHeight = implicitHeight * scale;
+                            const gap = 4 * scale;
+                            const roomBelow = windowHeight - 8 - iconBottom.y;
+                            upward = drawnHeight + gap > roomBelow && iconTop - 8 > roomBelow;
+                            const top = upward ? iconTop - gap - drawnHeight : iconBottom.y + gap;
+                            nudge = (Math.max(8, Math.min(top, windowHeight - 8 - drawnHeight)) - top) / scale;
+                            const drawnWidth = width * scale;
+                            shift = Math.max((8 - iconBottom.x) / scale, Math.min(0, (windowWidth - 8 - drawnWidth - iconBottom.x) / scale));
+                        }
+                        // A recreated delegate (a republish, e.g. Update flipping
+                        // to Updating…) reopens the popover it replaces. The claim
+                        // is synchronous — creation happens inside the republish
+                        // that closed the old popover, before the forget timer
+                        // can fire — only the open is deferred to layout.
+                        Component.onCompleted: {
+                            if (page.openAdvisory === card.provider.instanceId && card.advisory) {
+                                page.advisoryGeneration++;
+                                Qt.callLater(() => advisoryPopover.open());
+                            }
+                        }
+                        onClosed: {
+                            page.forgetAdvisory(card.provider.instanceId, page.advisoryGeneration);
+                            // Qt hands focus back to the icon itself on close; a
+                            // moved close clears that instead of parking it there.
+                            if (movedClose && advisoryButton.activeFocus)
+                                advisoryButton.focus = false;
+                        }
+                        onAboutToShow: {
+                            page.advisoryGeneration++;
+                            movedClose = false;
+                            place();
+                        }
+                        // The content can change while it is open (a refresh swaps
+                        // the advisory, Updating flips the button row): place it
+                        // again so the inside-the-window promise holds throughout.
+                        onImplicitHeightChanged: if (opened) place()
+                        onWidthChanged: if (opened) place()
+                        // The most the content may be tall, in local units; never nothing,
+                        // for a window that is not laid out yet.
+                        readonly property real contentRoom: Math.max(24, (windowHeight - 16) / scale - topPadding - bottomPadding)
+                        width: windowWidth > 0 ? Math.max(24, Math.min(320, (windowWidth - 16) / scale)) : 320
+                        padding: 12
+                        // Focus is what lets Escape close it here instead of leaving
+                        // Settings. Pressing the icon again closes it through the
+                        // checkable button's onToggled, not a click handler.
+                        focus: true
+                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                        // Tabbing past its last control leaves it behind: without this it
+                        // stayed open over the page, beyond Escape's reach.
+                        onActiveFocusChanged: if (opened && !activeFocus && !advisoryButton.activeFocus) close()
+                        onWindowWidthChanged: { movedClose = true; close(); }
+                        onWindowHeightChanged: { movedClose = true; close(); }
+                        onScaleChanged: { movedClose = true; close(); }
+                        Connections {
+                            target: page
+
+                            function onScrollYChanged() {
+                                advisoryPopover.movedClose = true;
+                                advisoryPopover.close();
+                            }
+                        }
+
+                        // The user who opened it gets their place back, unless it
+                        // closed because the icon moved under it (a pointer user
+                        // then does not inherit the icon as their tab stop) or the
+                        // advisory is going away. A press on some other control
+                        // has already moved the focus there.
+                        onAboutToHide: if (activeFocus && !movedClose && advisoryButton.visible) advisoryButton.forceActiveFocus(Qt.PopupFocusReason)
+
+                        background: Rectangle {
+                            color: Theme.palette.color("surfaceOverlay", "#18181b")
+                            border.color: Qt.alpha(page.foreground, 0.1)
+                            radius: 10
+                        }
+
+                        contentItem: Flickable {
+                            id: advisoryScroll
+
+                            // Tab can focus a control below the fold; scroll it
+                            // into view so it is never activatable unseen.
+                            function ensureVisible(item) {
+                                const top = item.mapToItem(contentItem, 0, 0).y;
+                                if (top + item.height > contentY + height)
+                                    contentY = top + item.height - height;
+                                else if (top < contentY)
+                                    contentY = top;
+                            }
+
+                            clip: true
+                            contentWidth: width
+                            contentHeight: advisoryColumn.implicitHeight
+                            implicitHeight: Math.min(advisoryColumn.implicitHeight, advisoryPopover.contentRoom)
+                            boundsBehavior: Flickable.StopAtBounds
+                            ScrollBar.vertical: ScrollBar {
+                                policy: ScrollBar.AsNeeded
+                                Accessible.name: qsTr("Scroll the details")
+                            }
+
+                            ColumnLayout {
+                                id: advisoryColumn
+
+                                width: advisoryScroll.width
+                                spacing: 6
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: card.advisory ? card.advisory.title : ""
+                                    color: card.advisory && card.advisory.strong ? page.warning : page.foreground
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.weight: Font.DemiBold
+                                    wrapMode: Text.Wrap
+                                }
+
+                                Note {
+                                    text: card.advisory ? card.advisory.detail : ""
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+
+                                    ShellButton {
+                                        id: updateButton
+
+                                        objectName: "update"
+                                        readonly property bool install: (card.provider.installLabel ?? "").length > 0
+                                        visible: card.provider.canUpdate || install || card.provider.updating
+                                        enabled: !card.provider.updating
+                                        text: card.provider.updating ? qsTr("Updating…") : install ? card.provider.installLabel : qsTr("Update now")
+                                        onActiveFocusChanged: if (activeFocus) advisoryScroll.ensureVisible(updateButton)
+                                        onClicked: page.act(install ? "install" : "update", card.provider)
+                                    }
+
+                                    // The command is a filesystem path on most installs: copy it, show it only on hover.
+                                    ShellButton {
+                                        id: copyButton
+
+                                        objectName: "copyUpdateCommand"
+                                        visible: !!(card.advisory && card.advisory.updateCommand)
+                                        onActiveFocusChanged: if (activeFocus) advisoryScroll.ensureVisible(copyButton)
+                                        subtle: true
+                                        iconName: "copy"
+                                        Accessible.name: qsTr("Copy the update command")
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: card.advisory && card.advisory.updateCommand ? card.advisory.updateCommand : ""
+                                        onClicked: page.act("copyUpdateCommand", card.provider)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Item {
                     Layout.fillWidth: true
                 }
@@ -636,52 +878,6 @@ Rectangle {
                     font: email.font
                 }
                 background: null
-            }
-
-            // The version outside the supported range, or an update.
-            ColumnLayout {
-                objectName: "advisory"
-                Layout.fillWidth: true
-                visible: card.advisory !== null
-                spacing: 4
-
-                Label {
-                    Layout.fillWidth: true
-                    text: card.advisory ? card.advisory.title : ""
-                    color: card.advisory && card.advisory.strong ? page.warning : page.foreground
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
-                    font.weight: Font.DemiBold
-                }
-
-                Note {
-                    text: card.advisory ? card.advisory.detail : ""
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    ShellButton {
-                        objectName: "update"
-                        readonly property bool install: (card.provider.installLabel ?? "").length > 0
-                        visible: card.provider.canUpdate || install || card.provider.updating
-                        enabled: !card.provider.updating
-                        text: card.provider.updating ? qsTr("Updating…") : install ? card.provider.installLabel : qsTr("Update now")
-                        onClicked: page.act(install ? "install" : "update", card.provider)
-                    }
-
-                    // The command is a filesystem path on most installs: copy it, show it only on hover.
-                    ShellButton {
-                        objectName: "copyUpdateCommand"
-                        visible: !!(card.advisory && card.advisory.updateCommand)
-                        subtle: true
-                        iconName: "copy"
-                        Accessible.name: qsTr("Copy the update command")
-                        ToolTip.visible: hovered
-                        ToolTip.text: card.advisory && card.advisory.updateCommand ? card.advisory.updateCommand : ""
-                        onClicked: page.act("copyUpdateCommand", card.provider)
-                    }
-                }
             }
 
             // The runtime the environment installs itself (Antigravity).
@@ -1168,6 +1364,9 @@ Rectangle {
     }
 
     Flickable {
+        id: pageScroll
+
+        objectName: "providersScroll"
         anchors.fill: parent
         contentHeight: column.implicitHeight + 48
         clip: true

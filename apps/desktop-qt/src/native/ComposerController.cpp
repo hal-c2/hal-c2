@@ -431,6 +431,9 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     if (m_queuedEdit && m_queuedEdit->thread == target) endQueuedEdit();
     return true;
   }
+  if (action == QLatin1String("composer.queue.resume")) {
+    return resumeQueue();
+  }
   if (action == QLatin1String("composer.queue.steer")) {
     // Without a run, the first queued one (the steer key).
     QString runId = map.value(QStringLiteral("runId")).toString();
@@ -2070,6 +2073,69 @@ bool ComposerController::queueCommand(const QString& type, const QString& runId)
   return true;
 }
 
+// Lets the MC start a queue it holds (after a restart or a usage limit). One
+// request at a time per thread across every window, and only for a queue still
+// held: a click on a stale card, after another device resumed it, asks nothing.
+// The thread's stream has to be caught up too: the held flag a reconnected
+// window still shows may be one the MC has since cleared. The answer is
+// handled apart from this window, which may close before it comes: a refusal
+// is told in the window that asked, else in the one the user is in.
+bool ComposerController::resumeQueue() {
+  const auto thread = m_store->thread(m_thread);
+  if (!thread || m_kept.resuming.contains(m_thread) || !queueHeld()) return true;
+  if (!m_client->isReady() || !m_store->synchronized() || !m_store->threadOnline(m_thread) || !m_timeline ||
+      m_timeline->threadKey() != m_thread || m_timeline->status() != QLatin1String("live")) {
+    // One warning however often the button is pressed while reconnecting: a toast
+    // still showing is renewed rather than stacked.
+    auto* toasts = NativeShell::of(this)->controller<ToastController>();
+    const QString title = QStringLiteral("Not connected: queue not resumed");
+    const QString description = QStringLiteral("Reconnecting to the environment. Try again once it is connected.");
+    if (m_notConnectedToast.isEmpty() || !toasts->replace(m_notConnectedToast, QStringLiteral("warning"), title, description, {}, 5000)) {
+      m_notConnectedToast = toasts->show(QStringLiteral("warning"), title, description);
+    }
+    return true;
+  }
+  const QString key = m_thread;
+  NativeShell* shell = NativeShell::of(this)->shell();
+  const QString windowId = NativeShell::of(this)->id();
+  m_kept.resuming.insert(key);
+  // The client is the reply's context, not this controller: the answer has to
+  // clear `resuming` even when this window has closed (a client drop fails the call).
+  m_client->dispatchCommand(m_client, thread->environmentId,
+                            QJsonObject{{QStringLiteral("type"), QStringLiteral("queue.resume")}, {QStringLiteral("threadId"), thread->id}},
+                            [shell = QPointer<NativeShell>(shell), key, windowId](const QJsonValue&, const std::optional<QString>& error) {
+                              if (!shell) return;
+                              // Cleared by the answer alone, not by the held flag clearing on the
+                              // stream: the answer may come first, and until the event follows, the
+                              // button is enabled for a queue still shown as held. A click then
+                              // asks again, which is harmless: `queue.resume` only clears the
+                              // flag and starts the next run if none is active, so a second one
+                              // is a no-op. Holding `resuming` until the flag clears would
+                              // instead leave "Resuming…" stuck whenever the queue is held again
+                              // at once (the next run hitting the same usage limit).
+                              shell->common<Kept>().resuming.remove(key);
+                              if (error) {
+                                NativeWindow* window = shell->window(windowId);
+                                if (!window) window = shell->activeWindow();
+                                if (window) window->controller<ToastController>()->error(QStringLiteral("Failed to resume the queue."), *error);
+                              }
+                              publishEverywhere(shell);
+                            });
+  // This window greys the button now, so a second click cannot ask again; the
+  // others follow on the next turn of the loop, as a draft change does.
+  publish();
+  spread();
+  return true;
+}
+
+// The reply comes from the event loop, not from a command being handled, so
+// every window, this one gone or not, can republish at once.
+void ComposerController::publishEverywhere(NativeShell* shell) {
+  for (const auto& window : shell->windows()) {
+    if (auto* composer = window->controller<ComposerController>()) composer->publish();
+  }
+}
+
 bool ComposerController::editQueued(const QString& target, QString runId) {
   if (target.isEmpty() || !m_draftId.isEmpty() || (m_queuedEdit && m_queuedEdit->saving)) return true;
   const QVariantList queue = turnState().value(QStringLiteral("queue")).toList();
@@ -2242,6 +2308,15 @@ void ComposerController::publish() {
   }
 }
 
+// Whether the MC holds this thread's queue, with something listed to resume:
+// the one fact resumeQueue needs, without rebuilding the whole turn state.
+bool ComposerController::queueHeld() const {
+  if (!m_draftId.isEmpty() || !m_store->thread(m_thread) || !m_timeline) return false;
+  const composer::Queued queued =
+      composer::queued(m_timeline->entities(QStringLiteral("run")).values(), m_timeline->entities(QStringLiteral("message")));
+  return queued.shownHeld();
+}
+
 QVariantMap ComposerController::turnState() const {
   const auto thread = m_store->thread(m_thread);
   const bool isRunning = thread && thread->activeRunId.has_value();
@@ -2256,7 +2331,9 @@ QVariantMap ComposerController::turnState() const {
             {QStringLiteral("questions"), QVariantList()},
             {QStringLiteral("plan"), QVariant()},
             {QStringLiteral("queue"), QVariantList()},
-            {QStringLiteral("waiting"), QVariantList()}};
+            {QStringLiteral("waiting"), QVariantList()},
+            {QStringLiteral("queueHeld"), false},
+            {QStringLiteral("queueResuming"), false}};
   }
   QVariantMap state{{QStringLiteral("threadKey"), thread ? m_thread : QString()},
                     {QStringLiteral("kind"), QStringLiteral("thread")},
@@ -2265,7 +2342,9 @@ QVariantMap ComposerController::turnState() const {
                     {QStringLiteral("questions"), QVariantList()},
                     {QStringLiteral("plan"), QVariant()},
                     {QStringLiteral("queue"), QVariantList()},
-                    {QStringLiteral("waiting"), QVariantList()}};
+                    {QStringLiteral("waiting"), QVariantList()},
+                    {QStringLiteral("queueHeld"), false},
+                    {QStringLiteral("queueResuming"), m_kept.resuming.contains(m_thread)}};
   if (!thread || !m_timeline) return state;
 
   const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));
@@ -2351,6 +2430,11 @@ QVariantMap ComposerController::turnState() const {
   const composer::Queued queued = composer::queued(runs.values(), m_timeline->entities(QStringLiteral("message")));
   state.insert(QStringLiteral("queue"), queued.queue);
   state.insert(QStringLiteral("waiting"), queued.waiting);
+  // Held with nothing listed shows no card, so it offers no resume either. A queued run
+  // comes with its message in the one transaction that queues it (the MC's `queue_run`),
+  // so a run without its message on a live stream is the moment before the two events
+  // are read, not a state that lasts; an empty card in that moment would only flash.
+  state.insert(QStringLiteral("queueHeld"), queued.shownHeld());
   return state;
 }
 
