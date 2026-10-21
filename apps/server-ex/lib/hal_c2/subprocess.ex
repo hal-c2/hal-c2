@@ -81,10 +81,12 @@ defmodule HalC2.Subprocess do
     end
   end
 
+  # Exile answers a bare `:undefined` (not an error tuple) once the port is
+  # closed, which a program that exits at once can reach before this call.
   defp os_pid_of(proc) do
     case Proc.os_pid(proc) do
       {:ok, os_pid} -> {:ok, os_pid}
-      {:error, _} -> :gone
+      _ -> :gone
     end
   catch
     :exit, _ -> :gone
