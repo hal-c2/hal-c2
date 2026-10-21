@@ -57,25 +57,27 @@ const PNG_PREVIEW = {
 function gatedImageDecoder() {
   const started = deferred<void>();
   const gate = deferred<void>();
-  let decodedBytes: number | undefined;
+  let encodedBytes: number | undefined;
   return {
     decodeImage: async (encoded: Uint8Array) => {
-      decodedBytes = encoded.byteLength;
+      encodedBytes = encoded.byteLength;
       started.resolve();
       await gate.promise;
       return PNG_PREVIEW;
     },
     started: started.promise,
     release: () => gate.resolve(),
-    get decodedBytes() {
-      return decodedBytes;
+    get encodedBytes() {
+      return encodedBytes;
     },
   };
 }
 
-// Wait on the decode-started event itself, not on how many frames tick while
-// the preceding read does real IO. On timeout, fail with the last frame so a
-// paste that never reaches the decode is diagnosable.
+// Wait on the decode-started event itself. `waitFor` is bounded by frame
+// passes (20 by default in @opentui/core), so give it a generous 200-pass
+// budget: the preceding read does real IO and can span many frames on a
+// loaded runner. On timeout, fail with the last frame so a paste that never
+// reaches the decode is diagnosable.
 async function awaitDecodeStarted(
   setup: Awaited<ReturnType<typeof testRender>>,
   decoder: ReturnType<typeof gatedImageDecoder>,
@@ -85,7 +87,7 @@ async function awaitDecodeStarted(
     started = true;
   });
   try {
-    await setup.waitFor(() => started);
+    await setup.waitFor(() => started, { maxPasses: 200 });
   } catch (error) {
     throw new Error(`the decode never started; last frame:\n${setup.captureCharFrame()}`, {
       cause: error,
@@ -1164,7 +1166,7 @@ describe("ChatView acknowledged submissions", () => {
     });
     await setup.waitForFrame((frame) => frame.includes("Adding pasted image"));
     await awaitDecodeStarted(setup, decoder);
-    expect(decoder.decodedBytes).toBe(68);
+    expect(decoder.encodedBytes).toBe(68);
     await React.act(async () => {
       decoder.release();
     });
