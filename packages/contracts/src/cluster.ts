@@ -12,8 +12,12 @@ export const ClusterMember = Schema.Struct({
   label: Schema.String,
   /** Where it was last reported listening for members, `host:port`. */
   addresses: Schema.Array(Schema.String),
-  /** The HAL-C2 version it last reported. A member on another version does not connect. */
+  /** The HAL-C2 version it last reported. Release differences do not prevent compatible members from connecting. */
   version: Schema.optional(Schema.NullOr(Schema.String)),
+  protocol: Schema.optional(Schema.NullOr(Schema.Int)),
+  compatible: Schema.optional(Schema.Boolean),
+  /** Advise the user to update, without blocking compatible connections. */
+  updateRecommended: Schema.optional(Schema.Boolean),
   connected: Schema.Boolean,
 });
 export type ClusterMember = typeof ClusterMember.Type;
@@ -28,6 +32,7 @@ export const ClusterStatus = Schema.Union([
     addresses: Schema.Array(Schema.String),
     /** The HAL-C2 version this machine runs. */
     version: Schema.optional(Schema.String),
+    protocol: Schema.optional(Schema.Int),
     /** The other members. */
     members: Schema.Array(ClusterMember),
   }),
