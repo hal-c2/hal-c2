@@ -625,9 +625,12 @@ Rectangle {
                         property bool upward: false
                         property real shift: 0
                         property real nudge: 0
+                        // A close because the icon moved (scroll, resize, zoom)
+                        // must not return focus to the icon (below); other closes do.
+                        property bool movedClose: false
                         x: shift
                         y: (upward ? -implicitHeight - 4 : advisoryButton.height + 4) + nudge
-                        onAboutToShow: {
+                        function place() {
                             const iconBottom = advisoryButton.mapToItem(null, 0, advisoryButton.height);
                             const iconTop = iconBottom.y - advisoryButton.height * scale;
                             const drawnHeight = implicitHeight * scale;
@@ -639,32 +642,49 @@ Rectangle {
                             const drawnWidth = width * scale;
                             shift = Math.max((8 - iconBottom.x) / scale, Math.min(0, (windowWidth - 8 - drawnWidth - iconBottom.x) / scale));
                         }
+                        onAboutToShow: {
+                            movedClose = false;
+                            place();
+                        }
+                        // The content can change while it is open (a refresh swaps
+                        // the advisory, Updating flips the button row): place it
+                        // again so the inside-the-window promise holds throughout.
+                        onImplicitHeightChanged: if (opened) place()
+                        onWidthChanged: if (opened) place()
                         // The most the content may be tall, in local units; never nothing,
                         // for a window that is not laid out yet.
                         readonly property real contentRoom: Math.max(24, (windowHeight - 16) / scale - topPadding - bottomPadding)
                         width: windowWidth > 0 ? Math.max(24, Math.min(320, (windowWidth - 16) / scale)) : 320
                         padding: 12
                         // Focus is what lets Escape close it here instead of leaving
-                        // Settings. Pressing the icon again closes it through onClicked.
+                        // Settings. Pressing the icon again closes it through the
+                        // checkable button's onToggled, not a click handler.
                         focus: true
                         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
                         // Tabbing past its last control leaves it behind: without this it
                         // stayed open over the page, beyond Escape's reach.
                         onActiveFocusChanged: if (opened && !activeFocus && !advisoryButton.activeFocus) close()
-                        onWindowWidthChanged: close()
-                        onWindowHeightChanged: close()
-                        onScaleChanged: close()
+                        onWindowWidthChanged: { movedClose = true; close(); }
+                        onWindowHeightChanged: { movedClose = true; close(); }
+                        onScaleChanged: { movedClose = true; close(); }
                         Connections {
                             target: page
 
                             function onScrollYChanged() {
+                                advisoryPopover.movedClose = true;
                                 advisoryPopover.close();
                             }
                         }
 
-                        // The keyboard user who opened it gets their place back; a press on
-                        // some other control has already moved the focus there.
-                        onAboutToHide: if (activeFocus) advisoryButton.forceActiveFocus(Qt.PopupFocusReason)
+                        // The user who opened it gets their place back, unless it
+                        // closed because the icon moved under it (a pointer user
+                        // then does not inherit the icon as their tab stop) or the
+                        // advisory is going away. A press on some other control
+                        // has already moved the focus there.
+                        onAboutToHide: if (activeFocus && !movedClose && advisoryButton.visible) advisoryButton.forceActiveFocus(Qt.PopupFocusReason)
+                        // Qt hands focus back to the icon itself on close; a moved
+                        // close clears that instead of parking it there.
+                        onClosed: if (movedClose && advisoryButton.activeFocus) advisoryButton.focus = false
 
                         background: Rectangle {
                             color: Theme.palette.color("surfaceOverlay", "#18181b")

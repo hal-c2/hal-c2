@@ -33,7 +33,7 @@ SettingsPage {
     // font face, so the span carries it as CSS).
     function withCode(text) {
         const escape = value => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-        const face = escape((Theme.fontMono.length > 0 ? Theme.fontMono : "monospace").replace(/['"\\]/g, ""));
+        const face = escape((Theme.fontMono.length > 0 ? Theme.fontMono : "monospace").replace(/['"\\;{}<>\u0000-\u001f\u007f]/g, ""));
         return escape(text ?? "").replace(/`([^`\n]+)`/g, (match, code) => "<span style=\"font-family:'" + face + "'\">" + code + "</span>");
     }
 

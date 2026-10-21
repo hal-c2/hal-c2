@@ -66,6 +66,7 @@ Item {
 
         function init() {
             Shell.reset();
+            Theme.fontMono = "";
         }
 
         function test_a_hidden_account_is_revealed_on_request() {
@@ -118,6 +119,27 @@ Item {
             verify(!summary.text.includes("`"), summary.text);
             verify(summary.text.includes(">gh</span>"), summary.text);
             compare(summary.Accessible.name, hint.replace(/`/g, ""));
+        }
+
+        // A real theme face (multi-word, or carrying declaration metacharacters)
+        // still lands in the span, with the metacharacters stripped.
+        function test_an_install_hint_uses_a_real_monospace_face() {
+            const hint = "Sign in using the `gh` tool on the server host.";
+            const state = () => ({ settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [],
+                             providers: [root.github({ summary: hint, hasAccount: false })] } }) });
+            Theme.fontMono = "JetBrains Mono";
+            Shell.state = state();
+            let page = createTemporaryObject(pageComponent, root);
+            let summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            verify(summary.text.includes("font-family:'JetBrains Mono'"), summary.text);
+            verify(summary.text.includes(">gh</span>"), summary.text);
+            Theme.fontMono = "Mono;{}<x>'\"";
+            Shell.state = state();
+            page = createTemporaryObject(pageComponent, root);
+            summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            verify(summary.text.includes("font-family:'Monox'"), summary.text);
+            verify(!/[;{}<>]/.test(summary.text.match(/font-family:'[^']*'/)?.[0] ?? ";"), summary.text);
         }
 
         // A stray backtick in a hint pairs only within its line: it cannot mono-format the prose after it.

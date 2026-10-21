@@ -378,6 +378,56 @@ Item {
             verify(scrolled > 0, "a case is too tall for the window and scrolls");
         }
 
+        // Placement is recomputed while open: taller content (here a larger
+        // font scale) cannot grow the popover past the window's edge.
+        function test_the_advisory_popover_stays_inside_when_its_content_grows() {
+            const advisory = { title: "Update available", detail: "This version is outside the supported range. " +
+                "Update to v0.51.0 or newer so new threads keep working.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { layout: { zoom: 1 }, providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+            const body = createTemporaryObject(zoomedBodyComponent, root, { zoom: 1 });
+            const card = findChild(body.page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            const home = button.mapToItem(null, button.width / 2, button.height / 2);
+            body.offsetX = (root.width * 0.1 - home.x);
+            body.offsetY = (root.height * 0.9 - home.y);
+            mouseClick(button);
+            const popover = findChild(card, "advisory");
+            tryCompare(popover, "opened", true);
+            try {
+                Theme.fontScale = 2;
+                tryVerify(() => popover.opened);
+                const topLeft = popover.background.mapToItem(null, 0, 0);
+                const bottomRight = popover.background.mapToItem(null, popover.background.width, popover.background.height);
+                verify(topLeft.x >= 7 && topLeft.y >= 7, "grown popover starts inside the window " + topLeft);
+                verify(bottomRight.x <= root.width - 7 && bottomRight.y <= root.height - 7, "grown popover ends inside the window " + bottomRight);
+            } finally {
+                Theme.fontScale = 1;
+            }
+        }
+
+        // A close because the window moved under it does not park keyboard
+        // focus on the icon.
+        function test_a_moved_close_does_not_return_focus_to_the_icon() {
+            const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
+            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory })] }) };
+            const page = createTemporaryObject(settingsComponent, root);
+            const card = findChild(page, "provider_claudeAgent_work");
+            const button = findChild(card, "advisoryButton");
+            const popover = findChild(card, "advisory");
+            const win = root.Window.window;
+            const fullHeight = win.height;
+            try {
+                mouseClick(button);
+                tryCompare(popover, "opened", true);
+                win.height = fullHeight - 60;
+                tryCompare(popover, "opened", false);
+                verify(popover.movedClose, "the resize close is marked as moved");
+                verify(!button.activeFocus, "closing does not park focus on the icon");
+            } finally {
+                win.height = fullHeight;
+            }
+        }
+
         // Qt closes a popup whose icon is hidden; this pins that it stays so.
         function test_the_advisory_popover_closes_when_the_advisory_goes_away() {
             const advisory = { title: "Update available", detail: "Install v0.51.0.", updateCommand: "npm i -g codex", targetVersion: null, strong: false };
