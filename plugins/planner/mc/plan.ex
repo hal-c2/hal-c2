@@ -478,11 +478,11 @@ defmodule HalC2Plugins.Planner.Plan do
     do: segment not in [".", ".."] and String.match?(segment, ~r/\A[A-Za-z0-9._-]+\z/)
 
   # A host worth storing: a name of `[a-z0-9-]` labels (an IPv4 literal is
-  # one), or an IPv6 literal without a zone, which `URI.parse/1` would
-  # otherwise mangle. Anything else stays no address at all.
+  # one), or an IPv6 literal that parses as an address, without a zone, which
+  # `URI.parse/1` would otherwise mangle. Anything else stays no address at all.
   defp host?(host) when is_binary(host) do
     if String.contains?(host, ":") do
-      String.match?(host, ~r/\A[0-9a-f.:]+\z/)
+      match?({:ok, {_, _, _, _, _, _, _, _}}, :inet.parse_address(String.to_charlist(host)))
     else
       host
       |> String.split(".")

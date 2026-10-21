@@ -293,6 +293,14 @@ defmodule HalC2.PlannerTest do
       assert url.("https://ghe-.example.com/acme/api/pull/4", "pullRequest") == nil
       assert url.("https://[fe80::1%25eth0]/acme/api/pull/4", "pullRequest") == nil
 
+      # Nor does an IPv6-shaped string that is no address.
+      for host <- ["[:::]", "[....:]", "[1:2:3:4:5:6:7:8:9]", "[::ffff:999.999.999.999]"] do
+        assert url.("https://#{host}/acme/api/pull/4", "pullRequest") == nil
+      end
+
+      assert url.("https://[::ffff:1.2.3.4]/acme/api/pull/4", "pullRequest") ==
+               "https://[::ffff:1.2.3.4]/acme/api/pull/4"
+
       # A repository that is no `owner/name` over GitHub's charset is no ref:
       # it would otherwise be interpolated verbatim into the stored address.
       assert :error = Plan.ref(%{"repository" => "../evil", "number" => 4}, "pullRequest")
