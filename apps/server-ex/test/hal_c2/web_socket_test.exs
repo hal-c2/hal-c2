@@ -282,6 +282,134 @@ defmodule HalC2.Web.SocketTest do
     assert patch == %{"s" => %{"exitCode" => 1, "outputIndicatesFailure" => true}}
   end
 
+  # A client changing a thread's window asks for a page, leaves, and follows again,
+  # in one packet: the page answers the subscription that asked, so the new one
+  # starts with its snapshot and no page, and pages from its own floor when asked.
+  test "a more, unsub and sub in one packet do not page the new subscription", %{port: port} do
+    run = fn n ->
+      {"run", "run-#{n}",
+       %{"s" => %{"id" => "run-#{n}", "ordinal" => n, "status" => "completed"}}}
+    end
+
+    item = fn n, r ->
+      {"turn-item", "item-#{n}",
+       %{
+         "s" => %{
+           "id" => "item-#{n}",
+           "ordinal" => n,
+           "runId" => "run-#{r}",
+           "type" => "assistant_message"
+         }
+       }}
+    end
+
+    changes = for r <- 1..3, change <- [run.(r), item.(r * 2 - 1, r), item.(r * 2, r)], do: change
+    {:ok, seq} = HalC2.Streams.commit("th-page", :thread, changes)
+    shape = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "th-page"}
+    window = %{"items" => 2}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape, "window" => window})
+
+    {%{"t" => "live", "id" => 1, "offset" => ^seq}, [%{"t" => "snapshot", "floor" => 3}], client} =
+      WsClient.recv_until(client, &(&1["t"] == "live"))
+
+    # The stale ask differs from the fresh one below (1 item against 3), so a
+    # stale page — item-3 and item-4 under a non-nil floor — cannot pass as
+    # the fresh page this test awaits if the bad interleaving happens.
+    client =
+      WsClient.send_json_many(client, [
+        %{"t" => "more", "id" => 1, "items" => 1},
+        %{"t" => "unsub", "id" => 1},
+        %{"t" => "sub", "id" => 2, "shape" => shape, "window" => window}
+      ])
+
+    {%{"t" => "live", "id" => 2, "offset" => ^seq}, before_live, client} =
+      WsClient.recv_until(client, &(&1["t"] == "live" and &1["id"] == 2))
+
+    assert [%{"t" => "snapshot", "id" => 2, "floor" => 3}] = before_live
+
+    client = WsClient.send_json(client, %{"t" => "more", "id" => 2, "items" => 3})
+    {page, _, _client} = WsClient.recv_until(client, &(&1["t"] == "page"))
+
+    assert %{"id" => 2, "offset" => ^seq, "floor" => nil, "rows" => rows} = page
+    assert for(["turn-item", id, _] <- rows, do: id) == ~w(item-1 item-2 item-3 item-4)
+  end
+
+  # A page can only answer a `more` sent once live: while a subscription is still
+  # replaying what it starts from, a page is the one before it's and is dropped.
+  test "a page arriving before live is dropped, and one after it is sent" do
+    {:push, _hello, state} = HalC2.Web.Socket.init([])
+    tag = {node(), make_ref()}
+
+    state = %{
+      state
+      | subs: %{2 => {:stream, node(), "th-x"}},
+        by_stream: %{"th-x" => {2, tag}},
+        buffers: %{2 => %{events: [], bytes: 0, replay: true}}
+    }
+
+    page = {:hal_c2_stream, {"th-x", tag}, {:page, 1, [], nil, :done}}
+    assert {:ok, ^state} = HalC2.Web.Socket.handle_info(page, state)
+
+    assert {:push, [{:text, live}], state} =
+             HalC2.Web.Socket.handle_info(
+               {:hal_c2_stream, {"th-x", tag}, {:live, 1, "h"}},
+               state
+             )
+
+    assert %{"t" => "live", "id" => 2} = live |> IO.iodata_to_binary() |> JSON.decode!()
+    assert {:push, [{:text, frame}], _state} = HalC2.Web.Socket.handle_info(page, state)
+    assert %{"t" => "page", "id" => 2} = frame |> IO.iodata_to_binary() |> JSON.decode!()
+  end
+
+  # The other half of the drop above: no `more` is forwarded while the
+  # subscription is replaying, so its floor never moves for a page that
+  # would be dropped — but the ask is held and forwarded at `live`, since
+  # the client asks once and waits (it does not re-ask on `live`). The
+  # stream server here is the test itself, so a forwarded ask lands in
+  # this mailbox as its cast.
+  test "a more while replaying is held and forwarded on live" do
+    {:push, _hello, state} = HalC2.Web.Socket.init([])
+    tag = {node(), make_ref()}
+
+    state = %{
+      state
+      | subs: %{2 => {:stream, node(), "th-x"}},
+        by_stream: %{"th-x" => {2, tag}},
+        monitors: %{make_ref() => {2, self()}},
+        buffers: %{2 => %{events: [], bytes: 0, replay: true}}
+    }
+
+    me = self()
+    ask = {JSON.encode!(%{"t" => "more", "id" => 2, "items" => 3}), [opcode: :text]}
+    assert {:ok, state} = HalC2.Web.Socket.handle_in(ask, state)
+    refute_received {:"$gen_cast", {:more, _, _, _}}
+
+    # A snapshot part in between resets the buffer but keeps the held ask.
+    assert {:push, _snapshot, state} =
+             HalC2.Web.Socket.handle_info(
+               {:hal_c2_stream, {"th-x", tag}, {:snapshot, 1, "at", [], :done, %{handle: "h"}}},
+               state
+             )
+
+    refute_received {:"$gen_cast", {:more, _, _, _}}
+
+    assert {:push, [{:text, live}], state} =
+             HalC2.Web.Socket.handle_info(
+               {:hal_c2_stream, {"th-x", tag}, {:live, 1, "h"}},
+               state
+             )
+
+    assert %{"t" => "live", "id" => 2} = live |> IO.iodata_to_binary() |> JSON.decode!()
+    assert_received {:"$gen_cast", {:more, ^me, 3, ^tag}}
+
+    # Once live, an ask goes straight out, as before.
+    assert {:ok, _} = HalC2.Web.Socket.handle_in(ask, state)
+    assert_received {:"$gen_cast", {:more, ^me, 3, ^tag}}
+  end
+
   defp collect_events(client, last, acc) do
     {frame, client} = WsClient.recv(client, 1_000)
     acc = [frame | acc]

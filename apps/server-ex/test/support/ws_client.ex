@@ -36,6 +36,26 @@ defmodule HalC2.Test.WsClient do
     %{client | conn: conn, ws: ws}
   end
 
+  @doc """
+  Sends every message as its own frame but in one write, so they travel in one
+  packet: the server handles every frame of a packet before it reads its mailbox.
+  """
+  def send_json_many(client, messages) do
+    {data, ws} =
+      Enum.map_reduce(messages, client.ws, fn message, ws ->
+        {:ok, ws, data} =
+          Mint.WebSocket.encode(
+            ws,
+            {:text, IO.iodata_to_binary(JSON.encode_to_iodata!(message))}
+          )
+
+        {IO.iodata_to_binary(data), ws}
+      end)
+
+    {:ok, conn} = Mint.WebSocket.stream_request_body(client.conn, client.ref, Enum.join(data))
+    %{client | conn: conn, ws: ws}
+  end
+
   @doc "Receives the next decoded JSON frame."
   def recv(%{inbox: [frame | rest]} = client, _timeout), do: {frame, %{client | inbox: rest}}
 

@@ -5,7 +5,7 @@ defmodule HalC2.StreamRelayProofTest do
   # the order the runtime gives (`nodes`).
   @other "not a thread's stream"
   @plain "the MC's own subscribers, untagged; no socket follows a thread so"
-  @more "pages a subscriber's window; what it sends goes the way commit's events go"
+  @more "pages a subscriber's window, by its tag when it carries one (a tag no subscription has pages nothing); what it sends goes the way commit's events go"
   @shell "the sidebar row, which no subscription is sent"
 
   use HalC2.Proof,
@@ -56,14 +56,16 @@ defmodule HalC2.StreamRelayProofTest do
       "HalC2.Streams.Server.start_link/1" => "starts the stream, which the model has running",
       "HalC2.Streams.Server.subscribe/3" => @plain,
       "HalC2.Streams.Server.watch/2" => @plain,
-      "HalC2.Streams.Server.more/3" => @more,
+      "HalC2.Streams.Server.more/4" => @more,
       "HalC2.Streams.Server.handle/1" => "names a log; sends nothing",
       "HalC2.Streams.Server.idle_stop/0" => "a constant; the idle stop is another model's",
       "HalC2.Streams.Server.state/1" => "reads the state; changes nothing",
       "HalC2.Streams.Server.flush_shell/1" => @shell,
       "HalC2.Streams.Server handle_call {:commit, _, []}" => "commits nothing, sends nothing",
       "HalC2.Streams.Server handle_call {:more, _, _}" => @more,
+      "HalC2.Streams.Server handle_call {:more, _, _, _}" => @more,
       "HalC2.Streams.Server handle_cast {:more, _, _}" => @more,
+      "HalC2.Streams.Server handle_cast {:more, _, _, _}" => @more,
       "HalC2.Streams.Server handle_call :state" => "reads the state; changes nothing",
       "HalC2.Streams.Server handle_call :flush_shell" => @shell,
       "HalC2.Streams.Server handle_info :shell" => @shell,
