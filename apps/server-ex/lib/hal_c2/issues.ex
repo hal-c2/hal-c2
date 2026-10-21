@@ -481,6 +481,11 @@ defmodule HalC2.Issues do
   # GitHub allows ten assignees on an issue; a login is trimmed, then is letters, digits,
   # hyphens and underscores (managed users have them) from 1 to 39 long, or a bot's `[bot]`.
   # GitHub reads logins whatever their case, so the case-variants of one are one.
+  # A raw list far past any real assignee list is refused before it is trimmed
+  # and de-duplicated, so the work below stays bounded however it was sent.
+  defp logins(logins) when is_list(logins) and length(logins) > 300,
+    do: {:error, "assignees must be a list of logins."}
+
   defp logins([_ | _] = logins) do
     trimmed = for login <- logins, is_binary(login), do: String.trim(login)
     unique = Enum.uniq_by(trimmed, &String.downcase/1)

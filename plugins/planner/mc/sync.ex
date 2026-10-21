@@ -979,15 +979,18 @@ defmodule HalC2Plugins.Planner.Sync do
     # GitHub reads a login whatever its case, so a change of case alone pushes nothing.
     changed? = old != login and not login?(old, login)
 
+    # A stored owner from before owners had to be logins can be free text; it is
+    # no GitHub assignee under that string, so there is nothing to take off, and
+    # asking would be refused before GitHub and wedge every later push.
     off =
-      if changed? and not is_nil(old) and not is_nil(on_was),
+      if changed? and login_shaped?(old) and not is_nil(on_was),
         do: [
           {"removeAssignees", Map.put(on_was, "assignees", [old]), &Map.put(&1, "owner", nil)}
         ],
         else: []
 
     on =
-      if changed? and login,
+      if changed? and login_shaped?(login),
         do: [{"addAssignees", Map.put(base, "assignees", [login]), &Map.put(&1, "owner", login)}],
         else: []
 
@@ -1283,6 +1286,17 @@ defmodule HalC2Plugins.Planner.Sync do
   # Logins also compare without the blanks a stored owner may have around it.
   defp login?(a, b) when is_binary(a) and is_binary(b), do: same?(String.trim(a), String.trim(b))
   defp login?(_, _), do: false
+
+  # The login shape `Plan.field("owner")` and the host enforce, duplicated here
+  # because neither is callable from the plugin.
+  defp login_shaped?(login) when is_binary(login),
+    do:
+      String.match?(
+        String.trim(login),
+        ~r/^[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}(\[bot\])?$/
+      )
+
+  defp login_shaped?(_), do: false
 
   defp key(%{"repository" => repo, "number" => number}), do: {String.downcase(repo || ""), number}
 
