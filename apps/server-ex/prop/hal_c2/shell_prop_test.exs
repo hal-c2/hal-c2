@@ -409,7 +409,7 @@ defmodule HalC2.ShellPropTest do
 
   # An import of the stream stopped partway, or a retry made it whole: the store's
   # mark `HalC2.Import.PreviousInstall` keeps.
-  def import_unfinished(id), do: Store.put_meta("import.thread." <> id, "files")
+  def import_unfinished(id), do: Store.put_meta("import.thread." <> id, "files:project-1")
   def import_finished(id), do: Store.delete_meta("import.thread." <> id)
 
   # The server alone stops and starts again, as a crash would.

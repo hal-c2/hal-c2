@@ -30,7 +30,10 @@ defmodule HalC2.Import.V2 do
   read again just before the first changes after the skipped ones are stored, and at
   the end of the stream when there are none, so a write during the replay itself
   (which re-reads the whole history first) raises too instead of being appended over
-  or silently kept. And so does
+  or silently kept — checked immediately before the append, not atomically with
+  it: a write landing between that re-read and the store call is still possible,
+  though in practice the thread is hidden and its family's imports are locked,
+  so a writer would need its id by another route. And so does
   one holding more changes than the source now gives, including one the source no
   longer has at all. Determinism needs the same
   `:rewrite` as the stopped import: the caller resumes a stream only into the project
@@ -341,8 +344,9 @@ defmodule HalC2.Import.V2 do
 
   # A change a stopped import already stored; the last of them must be the stored one.
   # The replay is deterministic, so a write here after the stop moves that last change.
-  # That checks the snapshot the resume was given; a write during the replay is caught
-  # by the tail re-read before the first post-skip flush (`verify_tail/3`). The patch
+  # That checks the snapshot the resume was given; a write during the replay is
+  # checked for by the tail re-read before the first post-skip flush (`verify_tail/3`
+  # — immediately before the append, not atomically with it). The patch
   # goes through JSON to compare in the form the store keeps it (string keys, lists
   # for tuples).
   defp push(%{skip: 1} = acc, {kind, entity, patch, at}) do
@@ -360,7 +364,11 @@ defmodule HalC2.Import.V2 do
   # Just before the first changes after the skipped ones are stored, and again at
   # the end of the stream, the stream must still end where the resume snapshotted
   # it: a write during the replay would otherwise have this import's diffs,
-  # computed without it, appended over it, or be kept as imported history.
+  # computed without it, appended over it, or be kept as imported history. The
+  # re-read is on a reader connection and the append goes through the store
+  # writer after it, so the check narrows the window to between the two calls
+  # rather than closing it (the thread is hidden and family imports are locked
+  # meanwhile; a conditional append inside the writer would close it).
   defp verify_tail(%{check_tail: nil} = acc, _store, _stream_id), do: acc
 
   defp verify_tail(acc, store, stream_id) do

@@ -74,6 +74,20 @@ Feature: Carrying threads and context across servers and agents
     And "Alpha" has its messages, its subagent's thread, its attachment and its terminal scrollback
     And that install offers "Alpha" as imported
 
+  # A newer MC's extra stage, say: finishing from the partial state and
+  # clearing the mark would make truncated history permanent.
+  @mc
+  Scenario: A thread partway imported in a way this MC does not know is not continued
+    Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+    And the attachment of "Alpha" cannot be read
+    And the user imported "Alpha" from that install
+    And the user is told "Alpha" could not be imported
+    And the partway mark of "Alpha" is one this MC does not know
+    When the user imports "Alpha" from that install
+    Then the user is told "Alpha" was partly imported in a way this MC does not know
+    And that install does not offer "Alpha" as imported
+    And the partway mark of "Alpha" is left in place
+
   @mc
   Scenario: A thread whose import stopped partway through its history is imported whole
     Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"

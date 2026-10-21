@@ -2893,6 +2893,29 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
+  # As a newer MC would leave it: same mark, a stage this one has no name for.
+  step "the partway mark of {string} is one this MC does not know",
+       %{args: [title]} = context do
+    key = "import.thread." <> context.t3.ids[title]
+    %{} = marks = HalC2.Store.metas(HalC2.Store.path(), "import.thread.")
+    [_stage, project] = String.split(marks[key], ":", parts: 2)
+    :ok = HalC2.Store.put_meta(key, "future:" <> project)
+    context
+  end
+
+  step "the user is told {string} was partly imported in a way this MC does not know",
+       %{args: [title]} = context do
+    assert t3_failure(context, title) =~ "in a way this MC does not know"
+    context
+  end
+
+  step "the partway mark of {string} is left in place", %{args: [title]} = context do
+    key = "import.thread." <> context.t3.ids[title]
+    marks = HalC2.Store.metas(HalC2.Store.path(), "import.thread.")
+    assert String.starts_with?(marks[key], "future:")
+    context
+  end
+
   step "the user is told {string} could not be imported", %{args: [title]} = context do
     id = context.t3.ids[title]
 
