@@ -1246,6 +1246,7 @@ export function makeV3Session(input: {
           WS_METHODS.clusterInvite,
           WS_METHODS.clusterJoin,
           WS_METHODS.clusterRemove,
+          WS_METHODS.clusterUpdate,
         ].map((tag) => [tag, clusterCommand(tag)]),
       ),
       [WS_METHODS.scheduledTasksList]: scheduledTaskCommand(WS_METHODS.scheduledTasksList),

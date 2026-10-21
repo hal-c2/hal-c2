@@ -9,7 +9,8 @@
 #   apps/server-ex/lib/hal_c2/shell.ex (cluster-wide sidebar, offline peers)
 #   apps/server-ex/lib/hal_c2/environment.ex (descriptor cluster list)
 #   apps/server-ex/lib/hal_c2/web/router.ex (/api/cluster, /.well-known/hal-c2/environment, forwarded uploads)
-#   apps/server-ex/lib/hal_c2/rpc.ex, packages/contracts/src/cluster.ts (cluster.status/invite/join/remove)
+#   apps/server-ex/lib/hal_c2/rpc.ex, packages/contracts/src/cluster.ts (cluster.status/invite/join/remove/update)
+#   apps/server-ex/lib/hal_c2/upgrade.ex (update_members: members take this MC's version from it)
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.createPairingLink), apps/server-ex/lib/hal_c2/web.ex (address/1:
 #     the address an invite or a pairing link names)
 #   apps/tui/src/host/clusterState.ts, apps/tui/src/host/settingsState.ts (the terminal's cluster)
@@ -160,26 +161,30 @@ Feature: Clustering one person's machines
       | the tailnet  |
       | HAL_C2_PEERS |
 
+  # Members connect whatever HAL-C2 version they run, a build from a checkout with
+  # uncommitted changes included: a sidebar that loses a machine, and a member nobody
+  # can reach to update, are worse than a message the other version does not know,
+  # which its receiver ignores.
   @mc
-  Scenario: Members on different HAL-C2 versions do not connect
+  Scenario: Members on different HAL-C2 versions connect
     Given a cluster of two members
     When the second restarts on another HAL-C2 version
-    Then the second cannot connect to the first
-    And the second lists the first as not connected, with the version the first runs
+    Then the two are connected
+    And each lists the other as connected, with the version it runs
 
   @mc
-  Scenario: Members connect again once they run the same version
+  Scenario: A member that moves to another version in place stays connected
     Given a cluster of two members
-    And the second restarts on another HAL-C2 version
-    When the first moves to that version in place
-    Then the two are connected again
+    When the first moves to another HAL-C2 version in place
+    Then the two stay connected
+    And the second lists the first as connected, with the version the first moved to
 
   @mc
-  Scenario: A machine on another HAL-C2 version cannot join
+  Scenario: A machine on another HAL-C2 version can join
     Given two MCs that are not clustered, the second on another HAL-C2 version
     When the user joins the second to the first with a pairing link from the first
-    Then the join is refused because the machines run different versions
-    And neither lists the other
+    Then each lists the other as a member
+    And they are connected without restarting
 
   @mc
   Scenario: A member removed from the cluster can no longer connect
@@ -337,6 +342,19 @@ Feature: Clustering one person's machines
     And the status line says "Removed laptop from the cluster."
 
   @tui
+  Scenario: A user sends this machine's version to the other machines from the terminal
+    Given this machine runs "1.4.0" and is clustered with "studio", which is connected on "1.3.0"
+    When the user picks "Send this version to the other machines" in the command palette
+    Then the MC is asked to update the other machines
+    And the status line says "studio updated to 1.4.0."
+
+  @tui
+  Scenario: A machine that cannot take the version says why in the terminal
+    Given this machine runs "1.4.0" and is clustered with "studio", which is connected on "1.3.0" and cannot update saying "This MC cannot update itself."
+    When the user picks "Send this version to the other machines" in the command palette
+    Then the status line says "studio could not update: This MC cannot update itself."
+
+  @tui
   Scenario: A cluster read that lands after a removal does not bring the member back in the terminal
     Given this machine is clustered with "laptop", which is connected
     And the terminal has read the cluster
@@ -425,6 +443,23 @@ Feature: Clustering one person's machines
     And the cluster page says "Removed laptop from the cluster."
 
   @desktop
+  Scenario: A user sends this machine's version to the other machines from the desktop
+    Given this machine runs "1.4.0" and is clustered with "studio", which is connected on "1.3.0"
+    And the desktop shell is connected to its MC
+    When the user opens Cluster in the desktop's settings
+    And the user sends this machine's version to the other machines
+    Then the MC is asked to update the other machines
+    And the cluster page says "studio updated to 1.4.0."
+
+  @desktop
+  Scenario: A machine that cannot take the version says why on the desktop
+    Given this machine runs "1.4.0" and is clustered with "studio", which is connected on "1.3.0" and cannot update saying "This MC cannot update itself."
+    And the desktop shell is connected to its MC
+    When the user opens Cluster in the desktop's settings
+    And the user sends this machine's version to the other machines
+    Then the cluster page says "studio could not update: This MC cannot update itself."
+
+  @desktop
   Scenario: A cluster read that lands after a removal does not bring the member back
     Given this machine is clustered with "laptop", which is connected
     And the desktop shell is connected to its MC
@@ -489,10 +524,8 @@ Feature: Clustering one person's machines
     Then the app asks the first for a pairing link that grants access and gives it to the second
     And the two machines join without the command line
 
-  # Not built. Members on different versions do not connect at all, so updating one member
-  # cuts it off from the rest until each of them is updated on the machine itself or by a
-  # client paired with it; a client that reaches a member only through the cluster cannot
-  # update it. That is acceptable while HAL-C2 has one user; it is not after that.
+  # Not built. Members on different versions stay connected, but each is still updated on
+  # the machine itself or by a client paired with it.
   @backlog @mc
   Scenario: Updating one member of a cluster updates the others
     Given a cluster of two members
@@ -510,10 +543,10 @@ Feature: Clustering one person's machines
 
   @backlog @shared
   Scenario: A member on another version says so where the cluster is listed
-    Given the cluster lists a member that last reported another HAL-C2 version
+    Given the cluster lists a connected member that runs another HAL-C2 version
     When the user looks at the cluster in settings
-    Then the member shows as not connected with the version it runs
-    And the user is told both machines must run the same version to connect
+    Then the member shows as connected with the version it runs
+    And the user is told the two run different versions
 
   # The hardened join, not built. Today the invite's token and the joining machine's
   # description cross the network the way the link's origin carries them. Over HTTPS or a
