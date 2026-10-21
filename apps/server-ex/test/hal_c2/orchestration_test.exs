@@ -235,6 +235,53 @@ defmodule HalC2.OrchestrationTest do
     _ = await_run(thread_id, "interrupted")
   end
 
+  # Pending provider requests are a turn's (every request handler needs a turn,
+  # and ending one cancels them), so none is live when a turn on another instance
+  # replaces the app-server. One somehow left is settled there, not carried: its
+  # rpc id belongs to the stopped connection.
+  test "a turn on another Codex instance settles requests the old app-server left" do
+    start_supervised!(HalC2.Settings)
+    {_, version} = HalC2.Settings.get()
+    work = %{"codex-work" => %{"driver" => "codex", "enabled" => true}}
+    {:ok, _} = HalC2.Settings.put(%{"providerInstances" => work}, version)
+
+    thread_id = launch("hello")
+    _ = await_statuses(thread_id, ["completed"])
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    # A call behind the turn's last notification: the runtime has ended it.
+    :ok = GenServer.call(pid, :settle)
+    %{conn: conn, turn: nil} = :sys.get_state(pid)
+
+    :sys.replace_state(pid, &%{&1 | requests: %{"runtime-request:codex:stale" => 99}})
+    assert %{"runtime-request:codex:stale" => 99} = :sys.get_state(pid).requests
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"runtime-request", "runtime-request:codex:stale",
+         %{"s" => %{"id" => "runtime-request:codex:stale", "status" => "pending"}}},
+        {"turn-item", "turn-item:approval:stale",
+         %{"s" => %{"id" => "turn-item:approval:stale", "status" => "running", "ordinal" => 0}}},
+        {"node", "node:approval:stale",
+         %{"s" => %{"id" => "node:approval:stale", "status" => "running"}}}
+      ])
+
+    elsewhere = %{"modelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-5.4"}}
+    {:ok, _} = send_message(thread_id, "msg-user-2", "wait for me", elsewhere)
+    state = await_statuses(thread_id, ["completed", "running"])
+
+    assert %{conn: renewed, instance: "codex-work", requests: requests} = :sys.get_state(pid)
+    assert requests == %{}
+    refute renewed == conn
+
+    assert %{"status" => "cancelled"} =
+             StreamState.get(state, "runtime-request")["runtime-request:codex:stale"]
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    _ = await_statuses(thread_id, ["completed", "interrupted"])
+  end
+
   # A turn on another instance stops the CLI the runtime had; what it had sent by
   # then is still in the runtime's mailbox.
   test "what a Claude CLI the runtime no longer runs sent belongs to no turn" do

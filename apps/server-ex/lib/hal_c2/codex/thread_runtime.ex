@@ -633,7 +633,14 @@ defmodule HalC2.Codex.ThreadRuntime do
     if state.instance == Entities.instance(ids) do
       {:ok, state}
     else
-      state = end_background(state, "interrupted")
+      # Pending requests are a turn's: every request handler needs a running
+      # turn and `end_turn/3` cancels and clears them, so none is live here.
+      # Settle any that somehow remain anyway — their rpc ids belong to the
+      # app-server being stopped, never to the new instance's.
+      state =
+        Enum.reduce(Map.keys(state.requests), state, &resolve_request(&2, &1, nil, "cancelled"))
+
+      state = end_background(%{state | requests: %{}}, "interrupted")
       Process.unlink(state.conn)
       stop_conn(state.conn)
       connect(%{state | conn: nil, native_thread_id: nil}, turn)
