@@ -186,6 +186,15 @@ defmodule HalC2.ProviderUsageLimitsTest do
   test "an update from an instance settings do not know lands on the built-in driver" do
     start()
 
+    # Attribution is resolved once, where the instance is captured: a turn
+    # naming an unknown instance is captured as the built-in driver.
+    assert {:ok, %{instance: "codex"} = codex_state} =
+             HalC2.Codex.ThreadRuntime.code_change(
+               0,
+               %{turn: %{ids: %{instance: "codex-gone"}}, v: 0},
+               nil
+             )
+
     assert {:noreply, _} =
              HalC2.Codex.ThreadRuntime.handle_info(
                {:json_rpc, nil,
@@ -196,7 +205,7 @@ defmodule HalC2.ProviderUsageLimitsTest do
                      "primary" => %{"usedPercent" => 88, "windowDurationMins" => 300}
                    }
                  }}},
-               %{instance: "codex-gone"}
+               codex_state
              )
 
     assert {:noreply, _} =
@@ -318,6 +327,140 @@ defmodule HalC2.ProviderUsageLimitsTest do
 
     work = Map.new(Limits.get("claude-work")["windows"], &{&1["id"], &1})
     assert work["five_hour"]["usedPercent"] == 66.0
+  end
+
+  # The same recovery on Codex's side: upgraded between turns there is no
+  # captured instance yet, and a late update from the still-connected
+  # app-server recovers the latest turn's instance from the thread.
+  test "Codex quota after a between-turns upgrade joins the latest turn's instance",
+       %{dir: dir} do
+    start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
+    start_supervised!(HalC2.Streams)
+    start_supervised!(HalC2.Shell)
+    start()
+
+    {:ok, _} =
+      HalC2.Settings.update(
+        &put_in(&1, [Access.key("providerInstances", %{}), "codex-work"], %{
+          "driver" => "codex"
+        })
+      )
+
+    run = %{
+      "id" => "run-1",
+      "ordinal" => 1,
+      "providerInstanceId" => "codex-work",
+      "activeAttemptId" => "att-1",
+      "rootNodeId" => "root-1",
+      "providerThreadId" => "pth-1"
+    }
+
+    {:ok, _} =
+      HalC2.Streams.commit("th-limits", :thread, [
+        {"thread", "th-limits", HalC2.Patch.diff(nil, %{"id" => "th-limits", "title" => "t"})},
+        {"run", "run-1", HalC2.Patch.diff(nil, run)}
+      ])
+
+    assert {:ok, %{instance: nil} = upgraded} =
+             HalC2.Codex.ThreadRuntime.code_change(
+               0,
+               %{turn: nil, thread_id: "th-limits", v: 0},
+               nil
+             )
+
+    assert {:noreply, %{instance: "codex-work"}} =
+             HalC2.Codex.ThreadRuntime.handle_info(
+               {:json_rpc, nil,
+                {:notification, "account/rateLimits/updated",
+                 %{
+                   "rateLimits" => %{
+                     "limitId" => "codex",
+                     "primary" => %{"usedPercent" => 88, "windowDurationMins" => 300}
+                   }
+                 }}},
+               upgraded
+             )
+
+    :sys.get_state(Limits)
+
+    assert [%{"id" => "primary", "usedPercent" => 88} | _] =
+             Limits.get("codex-work")["windows"]
+
+    assert [%{"id" => "primary", "usedPercent" => 42} | _] = Limits.get("codex")["windows"]
+  end
+
+  # Attribution is pinned where the instance is captured: removing the
+  # instance from settings while its turn runs does not move the rest of
+  # that turn's quota onto the built-in account.
+  test "an instance removed mid-turn does not re-attribute the turn" do
+    start()
+
+    add = fn id, driver ->
+      {:ok, _} =
+        HalC2.Settings.update(
+          &put_in(&1, [Access.key("providerInstances", %{}), id], %{"driver" => driver})
+        )
+    end
+
+    add.("codex-work", "codex")
+    add.("claude-work", "claudeAgent")
+
+    assert {:ok, %{instance: "codex-work"} = codex_state} =
+             HalC2.Codex.ThreadRuntime.code_change(
+               0,
+               %{turn: %{ids: %{instance: "codex-work"}}, v: 0},
+               nil
+             )
+
+    claude_event = fn used ->
+      {:claude, nil,
+       {:message,
+        %{
+          "type" => "rate_limit_event",
+          "rate_limit_info" => %{
+            "rateLimitType" => "five_hour",
+            "utilization" => used,
+            "resetsAt" => 1_790_000_000
+          }
+        }}}
+    end
+
+    assert {:noreply, claude_state} =
+             HalC2.Claude.ThreadRuntime.handle_info(
+               claude_event.(0.5),
+               %{turn: %{ids: %{instance: "claude-work"}}, wake: nil, last_ids: nil}
+             )
+
+    {:ok, _} = HalC2.Settings.update(&Map.put(&1, "providerInstances", %{}))
+
+    assert {:noreply, _} =
+             HalC2.Codex.ThreadRuntime.handle_info(
+               {:json_rpc, nil,
+                {:notification, "account/rateLimits/updated",
+                 %{
+                   "rateLimits" => %{
+                     "limitId" => "codex",
+                     "primary" => %{"usedPercent" => 88, "windowDurationMins" => 300}
+                   }
+                 }}},
+               codex_state
+             )
+
+    assert {:noreply, _} =
+             HalC2.Claude.ThreadRuntime.handle_info(claude_event.(0.66), claude_state)
+
+    :sys.get_state(Limits)
+
+    assert [%{"id" => "primary", "usedPercent" => 88} | _] =
+             Limits.get("codex-work")["windows"]
+
+    assert [%{"id" => "primary", "usedPercent" => 42} | _] = Limits.get("codex")["windows"]
+
+    work = Map.new(Limits.get("claude-work")["windows"], &{&1["id"], &1})
+    assert work["five_hour"]["usedPercent"] == 66.0
+
+    claude = Map.new(Limits.get("claudeAgent")["windows"], &{&1["id"], &1})
+    assert round(claude["five_hour"]["usedPercent"]) == 30
   end
 
   # A removed instance's bucket name goes with its published limits, so the
