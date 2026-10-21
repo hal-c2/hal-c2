@@ -129,9 +129,16 @@ const setupTerminal = CliRenderer.prototype.setupTerminal;
 if (typeof setupTerminal !== "function") {
   throw new Error("orderPreload: @opentui/core's CliRenderer no longer has setupTerminal; update the order patch");
 }
-CliRenderer.prototype.setupTerminal = async function (...args: unknown[]) {
-  const result = await setupTerminal.apply(this, args);
-  appendFileSync(process.env.HAL_C2_TEST_ORDER!, "alt-screen\\n");
+CliRenderer.prototype.setupTerminal = function (...args: unknown[]) {
+  const result = setupTerminal.apply(this, args);
+  const note = () => appendFileSync(process.env.HAL_C2_TEST_ORDER!, "alt-screen\\n");
+  if (result && typeof result.then === "function") {
+    return result.then((value: unknown) => {
+      note();
+      return value;
+    });
+  }
+  note();
   return result;
 };
 `,
@@ -219,11 +226,15 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
     stdout: "pipe",
     stderr: "pipe",
   });
+  // The drained promise (process dead and both streams read to the end, so
+  // every queued terminal write has fired) is built below; the kill cleanup
+  // awaits it through this late-bound variable so dispose cannot race writes.
+  let drained: Promise<number> | undefined;
   ctx.cleanups.push(async () => {
     if (proc.exitCode === null && proc.signalCode === null) {
       proc.kill("SIGKILL");
-      await proc.exited;
     }
+    await (drained ?? proc.exited);
   });
   const output = { stdout: "", stderr: "" };
   let markDrawn: (drew: boolean) => void = () => {};
@@ -263,6 +274,7 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
     markDrawn(false);
     return code;
   })();
+  drained = exited;
   const screen = {
     text: screenText,
     statusLine,
@@ -289,12 +301,17 @@ function spawn(ctx: LaunchWorld, cmd: string[], env: Record<string, string>): Sp
         // If the client dies first, fail at once with its complete stderr
         // (`exited` only resolves once both streams are drained).
         void exited.then((code) => {
-          settle();
-          reject(
-            new Error(
-              `the client exited (${code}) before the screen showed ${JSON.stringify(text)}; the screen shows:\n${screenText()}\nstderr:\n${output.stderr}`,
-            ),
-          );
+          // Flush the parser first: the final chunk may be queued but not yet
+          // parsed, and an empty write's callback runs after every prior one.
+          terminal.write(new Uint8Array(0), () => {
+            waiter();
+            settle();
+            reject(
+              new Error(
+                `the client exited (${code}) before the screen showed ${JSON.stringify(text)}; the screen shows:\n${screenText()}\nstderr:\n${output.stderr}`,
+              ),
+            );
+          });
         });
         screenWaiters.add(waiter);
         waiter();
