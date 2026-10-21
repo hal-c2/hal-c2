@@ -173,18 +173,21 @@ defmodule HalC2.Streams.View do
   # What a subagent item was just before an event of the commit, for the wire to tell
   # how much of its text the client holds. Only that kind of item needs the commit's
   # earlier events folded into `before`, and an event's patch is applied only when a
-  # later event of the commit is to the same item. What is folded is the item's
-  # `Wire.cut_basis/1` and the patch's (`Wire.cut_basis_patch/1`), so each view's fold
-  # stays within the wire's limit however long the text or an append is.
+  # later event of the commit is to the same item (kept raw until then; its
+  # `Wire.cut_basis_patch/1` is taken at the fold). What is folded is the item's
+  # `Wire.cut_basis/1` and the patch's, so each view's fold stays within the wire's
+  # limit however long the text or an append is.
   # It goes by the item's type at the end of the commit or the type a patch in it
   # sets, as `Wire.patch/4` does. The two agree for everything the item's writers
   # make today because an item's type is fixed at creation: it is set once by
   # `HalC2.Orchestration.TurnWriter.ensure_item/4`, a no-op for an item already known
-  # (`HalC2.Orchestration.NativeSubagent` creates its item typed and merges fields
-  # other than `type` after), so a set of `"type"` alone never re-types one. An
-  # adapter that ever did re-type an item mid-commit must revisit this; matching a
-  # patch that sets the type (the second clause) keeps the fold on the wire's side
-  # of that change in the meantime.
+  # (`HalC2.Orchestration.NativeSubagent` and `HalC2.Orchestration.Delegation` each
+  # create their item typed — Delegation's by its `Entities.turn_item/7` with
+  # `"subagent"` — and merge fields other than `type` after, Delegation in its
+  # `settle/8`), so a set of `"type"` alone never re-types one. An adapter that
+  # ever did re-type an item mid-commit must revisit this; matching a patch that
+  # sets the type (the second clause) keeps the fold on the wire's side of that
+  # change in the meantime.
   defp running_at(running, "turn-item", id, was, %{"type" => "subagent"}, patch),
     do: subagent_at(running, id, was, patch)
 
@@ -200,11 +203,17 @@ defmodule HalC2.Streams.View do
     if Wire.changes_cut_text?(patch) do
       at =
         case running do
-          %{^id => {base, last}} -> Wire.cut_basis(HalC2.Patch.apply(base, last))
-          _ -> Wire.cut_basis(was)
+          %{^id => {base, last}} ->
+            Wire.cut_basis(HalC2.Patch.apply(base, Wire.cut_basis_patch(last)))
+
+          _ ->
+            Wire.cut_basis(was)
         end
 
-      {at, Map.put(running, id, {at, Wire.cut_basis_patch(patch)})}
+      # The raw patch is kept (the events list already retains it for the fold);
+      # its cut basis is taken only if a later event to this item folds it, which
+      # a commit's common one event per item never does.
+      {at, Map.put(running, id, {at, patch})}
     else
       {was, running}
     end

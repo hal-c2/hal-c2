@@ -56,7 +56,12 @@ defmodule HalC2.Web.Wire do
   # Whether `patch` appends to a subagent text that `entity`, the item as it is now,
   # holds past the limit. A client that has not followed the item's appends one by one
   # (a replay) cannot be handed them cut; it is sent the item whole instead. Only
-  # `replay_patch/3` decides that, so the check stays in here with it.
+  # `replay_patch/3` decides that, so the check stays in here with it. Deliberately
+  # conservative: a key the patch itself resets (its `s`/`u`/`d`) still counts,
+  # though `patch/4` could trim that append exactly from the reset — production
+  # patches almost never carry reset and append for one field (`Patch.diff/2`
+  # never emits it, `Patch.compose/2` folds it into a set), so the whole-item
+  # replacement that costs stays the rare path, kept for simplicity.
   defp appends_past_limit?("turn-item", %{"a" => appended}, %{"type" => "subagent"} = entity)
        when is_map(appended),
        do:
