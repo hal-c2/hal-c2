@@ -49,7 +49,10 @@ defmodule HalC2.Muse.ThreadRuntime do
     end
   end
 
-  @doc "A `turn/steer` into the running turn, built from `%{text, attachments}` like a turn's."
+  @doc """
+  A `turn/steer` into the running turn, built from `%{text, attachments}` like a turn's.
+  Non-timeout exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
+  """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do

@@ -21,6 +21,14 @@ defmodule HalC2.RuntimeSteer do
   reply goes to a caller that already answered `:ok`, so the message
   stays in the turn unread and nobody learns — the accepted loss the
   orchestration layer documents at `reserve_steer/3`.
+
+  This call is not total, `call/4`'s spec notwithstanding: any exit other
+  than this call's own timeout — the runtime dying mid-call, a nested-call
+  timeout that takes it down — propagates to the caller, who must treat it
+  as a refusal. The same holds for every runtime's `steer/3` built on it.
+  Budgets must be ordered for that to work: where a handler blocks in a
+  nested call, the outer budget must outlive the inner one, or the outer
+  timeout (answered `:ok`) always fires first.
   """
 
   @spec call(pid, String.t(), map, timeout) :: :ok | {:error, String.t()}

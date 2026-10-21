@@ -43,7 +43,8 @@ defmodule HalC2.Pi.ThreadRuntime do
   @doc """
   A `prompt` with `streamingBehavior: "steer"`, built from `%{text, attachments}`
   like a turn's: Pi delivers it before the running turn's next model call, or
-  starts a run if the turn settled meanwhile.
+  starts a run if the turn settled meanwhile. Non-timeout exits propagate and
+  must be treated as a refusal; see `HalC2.RuntimeSteer`.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do

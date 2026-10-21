@@ -39,6 +39,17 @@ defmodule HalC2.CodexSteerTest do
     assert catch_exit(ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []}))
   end
 
+  # The nested provider call's exit arriving near (but before) this call's own
+  # deadline is still a refusal, not held: the outer budget must outlive the
+  # inner one (35s over `Connection.call`'s 30s by default), or a provider
+  # that never answers `turn/steer` would always trip the outer timeout first.
+  test "a steer whose runtime dies on its nested call near the deadline is not held" do
+    Application.put_env(:hal_c2, :codex_steer_timeout_ms, 500)
+    stand_in("thread-1", {:inner_timeout_after, 400})
+
+    assert catch_exit(ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []}))
+  end
+
   # A process standing in for the runtime in its registry: it answers the steer
   # with `steer_reply` (`:hold` never answers it) and never answers `:settle`, as
   # a runtime busy with the notifications ahead of that call would not.
@@ -61,9 +72,18 @@ defmodule HalC2.CodexSteerTest do
     receive do
       {:"$gen_call", from, {:steer, _run_id, _message}} ->
         case steer_reply do
-          :hold -> :ok
-          :inner_timeout -> exit({:timeout, {GenServer, :call, [:provider_conn, :call, 30_000]}})
-          reply -> GenServer.reply(from, reply)
+          :hold ->
+            :ok
+
+          :inner_timeout ->
+            exit({:timeout, {GenServer, :call, [:provider_conn, :call, 30_000]}})
+
+          {:inner_timeout_after, ms} ->
+            Process.sleep(ms)
+            exit({:timeout, {GenServer, :call, [:provider_conn, :call, 30_000]}})
+
+          reply ->
+            GenServer.reply(from, reply)
         end
 
         loop(steer_reply)

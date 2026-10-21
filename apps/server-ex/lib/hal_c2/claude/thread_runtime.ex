@@ -72,7 +72,10 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  @doc "Adds a message (`%{text, attachments}`) to the running turn of `run_id`; Claude takes it at once."
+  @doc """
+  Adds a message (`%{text, attachments}`) to the running turn of `run_id`; Claude takes it at once.
+  Non-timeout exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
+  """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Claude.Registry, thread_id) do

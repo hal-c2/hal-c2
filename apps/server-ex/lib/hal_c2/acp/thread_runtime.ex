@@ -68,7 +68,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   @doc """
   ACP has no way to add to a running prompt, but OpenCode's running loop takes a
   second `session/prompt` (`%{text, attachments}`, built like a turn's) into the
-  turn; both answer when the turn ends.
+  turn; both answer when the turn ends. Non-timeout exits propagate and must
+  be treated as a refusal; see `HalC2.RuntimeSteer`.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do

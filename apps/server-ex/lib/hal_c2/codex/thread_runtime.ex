@@ -58,6 +58,9 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   When Codex refuses, whatever it said before refusing (a `turn/completed`, say) is
   applied before this returns, so the caller sees whether the turn is still running.
+  Non-timeout exits (the runtime stopping mid-call, its nested provider call
+  timing out) propagate: the caller must treat them as a refusal. See
+  `HalC2.RuntimeSteer`.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
@@ -67,15 +70,22 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
-  # `HalC2.RuntimeSteer` owns which timeout means held. A refusal is always the
-  # refusal: settling the runtime so the caller sees whether the turn still runs
-  # is best-effort, and a settle that itself times out or finds the runtime gone
-  # must not turn it into a delivery. The two budgets stack: a wedged runtime
-  # blocks the dispatching process for the steer budget plus the settle budget
-  # (30s + 30s by default) before the sender hears the refusal, so tune them
-  # together, not one in isolation.
+  # `HalC2.RuntimeSteer` owns which timeout means held. The handler blocks in
+  # a nested `Connection.call` (30s by default), so this outer budget defaults
+  # above it (35s, like Muse's): with equal budgets the outer deadline —
+  # started strictly before the handler starts the inner call — would always
+  # win, and a provider that never answers `turn/steer` would be reported as a
+  # delivery. Ordered this way, a promptly started handler whose provider
+  # hangs is decided by the inner exit (a refusal), while a steer stuck behind
+  # mailbox backlog past the outer budget still falls through to `:ok`. A
+  # refusal is always the refusal: settling the runtime so the caller sees
+  # whether the turn still runs is best-effort, and a settle that itself times
+  # out or finds the runtime gone must not turn it into a delivery. The two
+  # budgets stack: a wedged runtime blocks the dispatching process for the
+  # steer budget plus the settle budget (35s + 30s by default) before the
+  # sender hears the refusal, so tune them together, not one in isolation.
   defp steer_call(pid, run_id, message) do
-    timeout = Application.get_env(:hal_c2, :codex_steer_timeout_ms, 30_000)
+    timeout = Application.get_env(:hal_c2, :codex_steer_timeout_ms, 35_000)
 
     with {:error, _} = error <- HalC2.RuntimeSteer.call(pid, run_id, message, timeout) do
       # Notifications that preceded the refusal sit in the runtime's mailbox ahead
