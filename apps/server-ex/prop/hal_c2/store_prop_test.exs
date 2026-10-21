@@ -60,8 +60,8 @@ defmodule HalC2.StorePropTest do
   @doc """
   The commands a state allows. Concurrent callers (`:parallel`) leave out the one that
   stops the store; concurrent callers around restarts (`:restarting`, which restarts the
-  store itself) leave out the calls that rightly fail while no store runs: a cast to it
-  and asking it for its id.
+  store itself) leave out the calls that rightly fail while no store runs: a cast to it,
+  asking it for its id, and resolving its file through it (`Store.path/0`).
   """
   def commands_for(state, mode) do
     frequency(
@@ -89,6 +89,7 @@ defmodule HalC2.StorePropTest do
           do: [],
           else: [
             {1, {:call, __MODULE__, :store_id, []}},
+            {1, {:call, __MODULE__, :store_path, []}},
             {3, {:call, __MODULE__, :index_messages, [stream_id(), messages(), state.clock]}}
           ]
         ) ++ if(mode == :sequential, do: [{1, {:call, __MODULE__, :restart, []}}], else: [])
@@ -251,6 +252,11 @@ defmodule HalC2.StorePropTest do
       else: is_binary(result) and byte_size(result) == 16
   end
 
+  # Resolved through the running store, unlike the reads above, so the model
+  # keeps pinning that readers find the live store's file.
+  def postcondition(_state, {:call, _, :store_path, []}, result),
+    do: result == Store.home_path()
+
   def postcondition(_state, {:call, _, :checkpoint, []}, result) do
     # A checkpoint that finds another one running does nothing and says so.
     result == {:error, :busy} or
@@ -329,6 +335,7 @@ defmodule HalC2.StorePropTest do
   def meta(key), do: Store.meta(Store.home_path(), key)
   def list_streams, do: Store.list_streams(Store.home_path())
   def store_id, do: Store.id()
+  def store_path, do: Store.path()
   def checkpoint, do: Store.checkpoint()
 
   # Stopping and starting again must keep everything acknowledged.

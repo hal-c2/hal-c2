@@ -133,7 +133,7 @@ defmodule HalC2.StoreTest do
     assert Store.child_spec(path: "hal-c2.sqlite").shutdown == 60_000
   end
 
-  test "an EXIT-shaped message that was sent, not signalled, leaves the store running",
+  test "an EXIT-shaped message naming another process leaves the store running",
        %{path: path} do
     store = Process.whereis(Store)
 

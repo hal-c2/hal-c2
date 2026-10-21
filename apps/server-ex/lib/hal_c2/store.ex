@@ -635,8 +635,10 @@ defmodule HalC2.Store do
   end
 
   # A linked process (the checkpointer) takes the store down as it did before the store
-  # trapped exits. Only its EXITs are link signals: an EXIT-shaped message from
-  # anything else was sent, not signalled, and is ignored like any other message.
+  # trapped exits. An EXIT naming anyone else was not signalled by the checkpointer,
+  # and is ignored like any other message. One naming the checkpointer cannot be
+  # told from a signalled one, sent or not; within one node that is no boundary —
+  # any local process could exit the store directly — so it is taken as its death.
   @impl true
   def handle_info({:EXIT, pid, reason} = message, state) do
     cond do
