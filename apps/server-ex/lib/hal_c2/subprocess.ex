@@ -76,20 +76,34 @@ defmodule HalC2.Subprocess do
   # `Orphans.track/2`.
   defp track(proc) do
     case os_pid_of(proc) do
-      {:ok, os_pid} -> track(proc, os_pid)
-      :gone -> :ok
+      {:ok, os_pid} ->
+        track(proc, os_pid)
+
+      :gone ->
+        :ok
+
+      # Not provably gone, and no pid to record it under: stop it, as a
+      # failed record stops it, rather than let it run untracked.
+      {:error, reason} ->
+        stop_untracked(proc, nil)
+        {:error, {:untracked, reason}}
     end
   end
 
-  # Exile answers a bare `:undefined` (not an error tuple) once the port is
-  # closed, which a program that exits at once can reach before this call.
+  # Only the documented gone signals read as gone: Exile answering a bare
+  # `:undefined` (not an error tuple) once the port is closed, which a
+  # program that exits at once can reach before this call, and a `:noproc`
+  # exit once its Exile process has ended. Anything else — another return, a
+  # timeout exit — leaves the program possibly alive with no pid read.
   defp os_pid_of(proc) do
     case Proc.os_pid(proc) do
       {:ok, os_pid} -> {:ok, os_pid}
-      _ -> :gone
+      :undefined -> :gone
+      other -> {:error, {:os_pid, other}}
     end
   catch
-    :exit, _ -> :gone
+    :exit, {:noproc, _} -> :gone
+    :exit, reason -> {:error, {:os_pid, {:exit, reason}}}
   end
 
   defp track(proc, os_pid) do
@@ -112,7 +126,7 @@ defmodule HalC2.Subprocess do
       :ok
     else
       failed ->
-        if HalC2.Subprocess.Orphans.gone?(os_pid) do
+        if os_pid != nil and HalC2.Subprocess.Orphans.gone?(os_pid) do
           :ok
         else
           Logger.warning(
@@ -126,12 +140,20 @@ defmodule HalC2.Subprocess do
 
           receive do
             {:DOWN, ^ref, :process, _, _} ->
-              if await_gone(os_pid) do
-                :ok
-              else
-                Logger.warning(
-                  "program #{os_pid} runs untracked: it stayed after its port process ended"
-                )
+              cond do
+                os_pid == nil ->
+                  Logger.warning(
+                    "a program whose pid could not be read may run untracked: " <>
+                      "its port process ended, which closes its stdin"
+                  )
+
+                await_gone(os_pid) ->
+                  :ok
+
+                true ->
+                  Logger.warning(
+                    "program #{os_pid} runs untracked: it stayed after its port process ended"
+                  )
               end
           after
             2_000 ->

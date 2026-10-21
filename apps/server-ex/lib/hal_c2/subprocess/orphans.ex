@@ -241,8 +241,13 @@ defmodule HalC2.Subprocess.Orphans do
   def parse_stat(stat, boot) do
     case stat |> String.split(")") |> List.last() |> String.split() do
       [state, _parent, group | rest] when length(rest) >= 17 ->
-        case Integer.parse(group) do
-          {group, ""} -> {:ok, {state, "#{boot}:#{Enum.at(rest, 16)}", group}}
+        # The ticks are validated like the group: a non-numeric field stamped
+        # into a record could never be reproduced by a later boot, silently
+        # sparing that program's orphans instead of refusing the start.
+        with {group, ""} <- Integer.parse(group),
+             {_ticks, ""} <- Integer.parse(Enum.at(rest, 16)) do
+          {:ok, {state, "#{boot}:#{Enum.at(rest, 16)}", group}}
+        else
           _ -> :unknown
         end
 
@@ -356,7 +361,11 @@ defmodule HalC2.Subprocess.Orphans do
         end
 
       :error ->
-        :persistent_term.put(__MODULE__, {:unavailable, :no_records_dir})
+        # As the no-start-time branch: on Windows programs run untracked by
+        # design, so an unmakeable dir is not a reason to refuse every start.
+        if HalC2.Paths.platform() == :windows,
+          do: :persistent_term.erase(__MODULE__),
+          else: :persistent_term.put(__MODULE__, {:unavailable, :no_records_dir})
     end
 
     {:ok, %{programs: %{}}}
@@ -431,8 +440,22 @@ defmodule HalC2.Subprocess.Orphans do
     # take as separate argv entries, with `--` before a negative (group) pid.
     case System.cmd("kill", ["-KILL", "--" | targets], stderr_to_stdout: true) do
       {_, 0} ->
-        File.rm(path)
-        :killed
+        # Exit 0 proves the signal was delivered, not that the program died:
+        # one in uninterruptible sleep takes SIGKILL only when it wakes. The
+        # record goes only once the pid no longer holds that process (a
+        # zombie keeping its start time keeps the record, as below, since its
+        # group may have survived); nothing signals an outside process's
+        # death, so that is awaited bounded rather than read once.
+        if await_left(pid, started) do
+          File.rm(path)
+          :killed
+        else
+          Logger.warning(
+            "kill of #{pid}, which an earlier MC left running, was delivered but it is still there"
+          )
+
+          :kept
+        end
 
       # One target failed (the group, when the program led none; a member it may not
       # signal), and the program may yet show as running for a moment after SIGKILL.
@@ -463,6 +486,21 @@ defmodule HalC2.Subprocess.Orphans do
             :killed
         end
     end
+  end
+
+  defp await_left(pid, started, tries \\ 50) do
+    case process_result(pid) do
+      {:ok, {_state, ^started, _group}} -> await_left_again(pid, started, tries)
+      :unknown -> await_left_again(pid, started, tries)
+      _gone_or_reused -> true
+    end
+  end
+
+  defp await_left_again(_pid, _started, 0), do: false
+
+  defp await_left_again(pid, started, tries) do
+    Process.sleep(10)
+    await_left(pid, started, tries - 1)
   end
 
   # Nothing here may stop the MC from booting: a record that cannot be dealt with now

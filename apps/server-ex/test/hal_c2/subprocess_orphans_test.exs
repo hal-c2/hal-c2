@@ -402,6 +402,9 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert String.ends_with?(started, ":999")
     assert Orphans.parse_stat("123 (sh) S 1") == :unknown
     assert Orphans.parse_stat("123 (sh) S 1 x " <> rest) == :unknown
+    # Non-numeric ticks stamped into a record could never be reproduced.
+    garbage = Enum.join(List.duplicate("0", 16) ++ ["soon"], " ")
+    assert Orphans.parse_stat("123 (sh) S 1 123 " <> garbage) == :unknown
     # Without the boot it started in, the ticks are no identity at all.
     assert Orphans.parse_stat("123 (sh) S 1 123 " <> rest, "") == :unknown
   end
