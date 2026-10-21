@@ -678,11 +678,16 @@ Rectangle {
                             shift = Math.max((8 - iconBottom.x) / scale, Math.min(0, (windowWidth - 8 - drawnWidth - iconBottom.x) / scale));
                         }
                         // A recreated delegate (a republish, e.g. Update flipping
-                        // to Updating…) reopens the popover it replaces.
-                        Component.onCompleted: Qt.callLater(() => {
-                            if (page.openAdvisory === card.provider.instanceId && card.advisory)
-                                advisoryPopover.open();
-                        })
+                        // to Updating…) reopens the popover it replaces. The claim
+                        // is synchronous — creation happens inside the republish
+                        // that closed the old popover, before the forget timer
+                        // can fire — only the open is deferred to layout.
+                        Component.onCompleted: {
+                            if (page.openAdvisory === card.provider.instanceId && card.advisory) {
+                                page.advisoryGeneration++;
+                                Qt.callLater(() => advisoryPopover.open());
+                            }
+                        }
                         onClosed: {
                             page.forgetAdvisory(card.provider.instanceId, page.advisoryGeneration);
                             // Qt hands focus back to the icon itself on close; a

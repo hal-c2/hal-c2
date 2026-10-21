@@ -359,6 +359,9 @@ SettingsPage {
                     subtle: true
                     iconName: "refresh-cw"
                     Accessible.name: parent.scanning ? qsTr("Scanning server environment") : qsTr("Rescan server environment")
+                    // The wrapper carries the tooltip; an icon-only ShellButton
+                    // would otherwise add its own from the accessible name.
+                    ToolTip.visible: false
                     onClicked: page.send("scan")
                 }
 

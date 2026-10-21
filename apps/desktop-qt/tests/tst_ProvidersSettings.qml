@@ -437,7 +437,10 @@ Item {
             const card = findChild(page, "provider_claudeAgent_work");
             mouseClick(findChild(card, "advisoryButton"));
             tryCompare(findChild(card, "advisory"), "opened", true);
-            Shell.state = { providerSettings: root.settings({ providers: [root.provider({ advisory: advisory, updating: true })] }) };
+            const many = [root.provider({ advisory: advisory, updating: true })];
+            for (let i = 1; i < 12; i++)
+                many.push(root.provider({ instanceId: "claudeAgent_" + i, name: "Claude " + i }));
+            Shell.state = { providerSettings: root.settings({ providers: many }) };
             const newCard = findChild(page, "provider_claudeAgent_work");
             const popover = findChild(newCard, "advisory");
             tryCompare(popover, "opened", true);

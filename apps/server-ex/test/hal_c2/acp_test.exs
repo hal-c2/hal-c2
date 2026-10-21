@@ -150,7 +150,7 @@ defmodule HalC2.AcpTest do
     # Either script, if run, leaves this behind: no marker is the behavioural
     # proof that nothing was launched, whatever the loader keeps.
     for name <- [exe, harness] do
-      File.write!(Path.join(dir, name), "#!/bin/sh\ntouch #{marker}\n")
+      File.write!(Path.join(dir, name), "#!/bin/sh\ntouch '#{marker}'\n")
       File.chmod!(Path.join(dir, name), 0o755)
     end
 
