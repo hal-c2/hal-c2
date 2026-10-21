@@ -100,6 +100,11 @@ defmodule HalC2.PlannerTest do
         assert {:error, _} = Plan.add(%{}, "a", %{"title" => "a", "owner" => bad}, @now)
       end
 
+      for good <- HalC2.Test.LoginCases.good() do
+        assert {:ok, %{"a" => %{"owner" => ^good}}, _} =
+                 Plan.add(%{}, "a", %{"title" => "a", "owner" => good}, @now)
+      end
+
       assert {:ok, %{"a" => %{"owner" => "copilot[bot]"}}, _} =
                Plan.add(%{}, "a", %{"title" => "a", "owner" => "copilot[bot]"}, @now)
 
@@ -857,6 +862,45 @@ defmodule HalC2.PlannerTest do
       cleared = Map.put(base, "owner", nil)
       ops = Sync.pushes(%{"sync" => "twoWay"}, synced, cleared, %{"t" => cleared}, projects)
       refute Enum.any?(ops, &(elem(&1, 0) in ["addAssignees", "removeAssignees"]))
+    end
+
+    test "a bot or managed user as the old owner is taken off like any login" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      for old <- ["copilot[bot]", "dana_acme"] do
+        new = %{
+          "id" => "t",
+          "title" => "T",
+          "notes" => nil,
+          "labels" => [],
+          "status" => "todo",
+          "owner" => "dana",
+          "issue" => issue,
+          "after" => [],
+          "parent" => nil,
+          "projectId" => "p"
+        }
+
+        synced = %{
+          "title" => "T",
+          "notes" => nil,
+          "labels" => [],
+          "state" => "open",
+          "owner" => old,
+          "start" => nil,
+          "due" => nil,
+          "after" => [],
+          "parent" => nil,
+          "refs" => %{},
+          "issue" => issue
+        }
+
+        ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+        assert {"removeAssignees", %{"number" => 7, "assignees" => [^old]}, _} =
+                 Enum.find(ops, &(elem(&1, 0) == "removeAssignees"))
+      end
     end
   end
 end

@@ -41,7 +41,7 @@ defmodule HalC2.Issues do
 
   @page 100
   @repository ~r/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
-  @login ~r/^[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}(\[bot\])?$/
+  @login ~r/\A(?:[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}|[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,33}\[bot\]|(?=.{1,39}\z)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*_[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)\z/
   @date ~r/^\d{4}-\d{2}-\d{2}$/
   @scope "gh may not read boards with its current login. Run `gh auth refresh -s project` and try again."
 
@@ -478,8 +478,9 @@ defmodule HalC2.Issues do
     end
   end
 
-  # GitHub allows ten assignees on an issue; a login is trimmed, then is letters, digits,
-  # hyphens and underscores (managed users have them) from 1 to 39 long, or a bot's `[bot]`.
+  # GitHub allows ten assignees on an issue; a login is trimmed, then is 1 to 39
+  # of letters, digits and single hyphens, or a managed user's one underscore
+  # before its shortcode, or either with a bot's `[bot]` inside the 39.
   # GitHub reads logins whatever their case, so the case-variants of one are one.
   # A raw list far past any real assignee list is refused before it is trimmed
   # and de-duplicated, so the work below stays bounded however it was sent.

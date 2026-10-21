@@ -8,7 +8,9 @@ defmodule HalC2.Test.LoginCases do
   """
 
   # Shape cases only: a blank login is refused by the host but clears a
-  # task's owner, so each suite keeps that case of its own.
+  # task's owner, so each suite keeps that case of its own. Underscores are a
+  # managed user's one separator before its shortcode, never GitHub's at an
+  # end, doubled, or next to a hyphen, and `[bot]` counts inside the 39.
   def bad,
     do: [
       "da na",
@@ -18,8 +20,14 @@ defmodule HalC2.Test.LoginCases do
       "dana-",
       "da--na",
       "dana!",
-      String.duplicate("a", 40)
+      "dana_",
+      "da__na",
+      "da-_na",
+      "da_-na",
+      "dana_[bot]",
+      String.duplicate("a", 40),
+      String.duplicate("a", 39) <> "[bot]"
     ]
 
-  def good, do: ["dana", "Dana", "copilot[bot]", String.duplicate("a", 39)]
+  def good, do: ["dana", "Dana", "dana_acme", "copilot[bot]", String.duplicate("a", 39)]
 end

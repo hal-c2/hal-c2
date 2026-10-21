@@ -243,7 +243,13 @@ defmodule HalC2.IssuesTest do
     assert {:ok, _} = Issues.handle("addAssignees", Map.put(input, "assignees", ["dana", "erin"]))
     assert [_, _, _, _, %{"assignees" => ["dana", "erin"]}] = rest_inputs(dir, "POST")
 
-    # Managed users' underscores, a bot's suffix and the longest login are logins.
+    # Managed users' underscores, a bot's suffix and the longest login are
+    # logins: the planner suite's own good cases (`HalC2.Test.LoginCases`).
+    for good <- HalC2.Test.LoginCases.good() do
+      assert {:ok, _} =
+               Issues.handle("addAssignees", Map.put(input, "assignees", [good]))
+    end
+
     longest = String.duplicate("a", 39)
 
     assert {:ok, _} =
@@ -252,7 +258,19 @@ defmodule HalC2.IssuesTest do
                Map.put(input, "assignees", ["dana_acme", "copilot[bot]", longest])
              )
 
-    assert [_, _, _, _, _, %{"assignees" => ["dana_acme", "copilot[bot]", ^longest]}] =
+    assert [
+             _,
+             _,
+             _,
+             _,
+             _,
+             _,
+             _,
+             _,
+             _,
+             _,
+             %{"assignees" => ["dana_acme", "copilot[bot]", ^longest]}
+           ] =
              rest_inputs(dir, "POST")
   end
 

@@ -448,7 +448,15 @@ defmodule HalC2Plugins.Planner.Sync do
           "projectId" => project && project["id"]
         }
 
-        case Plan.add(items, new_id.(), fields, now) do
+        # GitHub's own first assignee may be no login `Plan` takes; it must not
+        # veto the task the issue otherwise makes, so it is made ownerless then.
+        added =
+          case Plan.add(items, new_id.(), fields, now) do
+            {:error, _} -> Plan.add(items, new_id.(), Map.delete(fields, "owner"), now)
+            added -> added
+          end
+
+        case added do
           {:ok, items, item} ->
             item = item |> Map.put("issue", link["issue"]) |> prs_of(issue, now)
             Map.put(items, item["id"], item)
@@ -498,10 +506,18 @@ defmodule HalC2Plugins.Planner.Sync do
             "labels" => issue["labels"] || []
           })
 
+        # As where an issue is first linked: GitHub's own assignee may be no
+        # login `Plan` takes, and must not veto the rest of what GitHub says.
         items =
           case Plan.update(items, item["id"], fields, now) do
-            {:ok, items, _old, _new} -> items
-            {:error, _} -> items
+            {:ok, items, _old, _new} ->
+              items
+
+            {:error, _} ->
+              case Plan.update(items, item["id"], Map.delete(fields, "owner"), now) do
+                {:ok, items, _old, _new} -> items
+                {:error, _} -> items
+              end
           end
 
         # The task now has GitHub's, so what a push left it of GitHub's goes.
@@ -820,7 +836,9 @@ defmodule HalC2Plugins.Planner.Sync do
   def created(synced, sent),
     do:
       synced
-      |> Map.merge(Map.take(sent, ~w(title notes owner labels)))
+      |> Map.merge(Map.take(sent, ~w(title notes labels)))
+      # Only the owner GitHub was actually asked to assign is one it has.
+      |> Map.put("owner", if(login_shaped?(sent["owner"]), do: sent["owner"]))
       |> Map.merge(%{"state" => "open", "start" => nil, "due" => nil})
 
   defp fields(item),
@@ -1245,7 +1263,11 @@ defmodule HalC2Plugins.Planner.Sync do
            "title" => item["title"],
            "body" => item["notes"] || ""
          },
-         input = if(item["owner"], do: Map.put(input, "assignees", [item["owner"]]), else: input),
+         input =
+           if(login_shaped?(item["owner"]),
+             do: Map.put(input, "assignees", [item["owner"]]),
+             else: input
+           ),
          input = if(labels?(item), do: Map.put(input, "labels", item["labels"]), else: input),
          {:ok, issue} <- Host.issues(@id, "create", input) do
       {:ok, Map.take(issue, ~w(repository number url state title))}
@@ -1293,7 +1315,7 @@ defmodule HalC2Plugins.Planner.Sync do
     do:
       String.match?(
         String.trim(login),
-        ~r/^[A-Za-z0-9](?:[A-Za-z0-9_]|-(?=[A-Za-z0-9_])){0,38}(\[bot\])?$/
+        ~r/\A(?:[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}|[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,33}\[bot\]|(?=.{1,39}\z)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*_[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)\z/
       )
 
   defp login_shaped?(_), do: false
