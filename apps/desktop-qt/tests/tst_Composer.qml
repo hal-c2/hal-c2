@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import "../qml/HalC2/Bricks"
+import "../qml/HalC2/Bricks/js/providerIcons.js" as ProviderIcons
 import HalC2.Shell
 
 Item {
@@ -145,6 +146,20 @@ Item {
             Shell.state = state(false);
             compare(toggle.iconName, "");
             verify(toggle.Accessible.name.indexOf("Fast Mode, off") >= 0);
+        }
+
+        // A two-path glyph's second fill is its own (ProviderIcon renders
+        // multi-path glyphs through fill(..., 1)), and a glyph with no
+        // paths answers null instead of throwing.
+        function test_providerGlyphFillsByPath() {
+            compare(ProviderIcons.fill("opencode", false, 0), "#CFCECD");
+            compare(ProviderIcons.fill("opencode", false, 1), "#211E1E");
+            compare(ProviderIcons.fill("opencode", true, 1), "#F1ECEC");
+            compare(ProviderIcons.fill("noSuchDriver", false, 1), null);
+            ProviderIcons.glyphs.noPathsEntry = {};
+            const missing = ProviderIcons.fill("noPathsEntry", false, 0);
+            delete ProviderIcons.glyphs.noPathsEntry;
+            compare(missing, null);
         }
 
         // The bolt is filled; it is Claude's orange on a Claude model and the

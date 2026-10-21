@@ -346,7 +346,7 @@ Feature: Referencing files, skills, commands and context
       | a Claude thread                            |
       | a Codex draft that carries an image        |
 
-  @desktop
+  @desktop @mobile @backlog-mobile
   Scenario: A bare @ opens the menu and says nothing matches
     Given a project with an open thread
     When the user types "@" into the composer

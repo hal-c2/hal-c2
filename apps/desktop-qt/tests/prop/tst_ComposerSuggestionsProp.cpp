@@ -3,6 +3,11 @@
 // text moved on. A bare `@` is never searched, so its menu opens at once and
 // says nothing matches; a word after it says nothing until the search for that
 // word has answered, and an older word's answer (landing late) never counts.
+// Scope: the caret is at the end of the text, on one thread, with a workspace
+// present and online. Not modelled: the no-place/offline case (searchPaths
+// returns early, so a non-empty query stays waiting with no menu) and
+// switching target between issuing a search and its answer; the claim above
+// is proven only inside this envelope.
 
 #include "Prop.h"
 
