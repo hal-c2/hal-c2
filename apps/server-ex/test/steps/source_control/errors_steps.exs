@@ -67,6 +67,20 @@ defmodule HalC2.Steps.SourceControl.Errors do
     context
   end
 
+  step "GitHub refuses the push because the token lacks the workflows permission", context do
+    hook = Path.join([context.bare, "hooks", "pre-receive"])
+
+    File.write!(hook, """
+    #!/bin/sh
+    echo 'refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission' >&2
+    exit 1
+    """)
+
+    File.chmod!(hook, 0o755)
+    File.write!(Path.join(context.cwd, "cart.ts"), "export const cart = []\n")
+    context
+  end
+
   step "the failure tells a user pushing with the GitHub CLI's sign-in to run {string}",
        %{args: [command]} = context do
     assert World.failure(context) =~

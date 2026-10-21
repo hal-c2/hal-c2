@@ -78,6 +78,12 @@ Feature: When source control goes wrong
     Then the failure tells a user pushing with the GitHub CLI's sign-in to run "gh auth refresh -s workflow"
 
   @mc
+  Scenario: A push refused for a missing workflows permission says how to give it
+    Given GitHub refuses the push because the token lacks the workflows permission
+    When the user runs "Commit & push"
+    Then the failure tells a user pushing with the GitHub CLI's sign-in to run "gh auth refresh -s workflow"
+
+  @mc
   Scenario: A failed git command keeps its command and exit code
     Given git exits with an error while initializing "shop"
     When the user initializes Git for "shop"

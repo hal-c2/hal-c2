@@ -80,11 +80,11 @@ defmodule HalC2.Git do
         {:stdout, data}, {out, err, size, status} ->
           {out, err, size + IO.iodata_length(data), status}
 
-        {:stderr, data}, {out, err, size, status} when size < max ->
-          {out, [err, data], size + IO.iodata_length(data), status}
-
         {:stderr, data}, {out, err, size, status} ->
-          {out, err, size + IO.iodata_length(data), status}
+          # A rolling tail, not a head that fills and then discards: the
+          # lines a caller acts on are at the end of a long stderr. Total
+          # size is still counted for `truncated`.
+          {out, tail_bytes([err, data], max), size + IO.iodata_length(data), status}
 
         {:exit, status}, {out, err, size, _} ->
           {out, err, size, status}
@@ -464,6 +464,17 @@ defmodule HalC2.Git do
       {:ok, out} -> String.trim(out)
       _ -> nil
     end
+  end
+
+  # The last `max` bytes of a stream, however it arrived in chunks.
+  defp tail_bytes(iodata, max) do
+    binary = IO.iodata_to_binary(iodata)
+
+    binary_part(
+      binary,
+      byte_size(binary) - min(byte_size(binary), max),
+      min(byte_size(binary), max)
+    )
   end
 
   defp exit_code({:status, code}), do: code
