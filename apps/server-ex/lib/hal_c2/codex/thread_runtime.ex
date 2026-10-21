@@ -64,15 +64,26 @@ defmodule HalC2.Codex.ThreadRuntime do
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
       [{pid, _}] ->
         with {:error, _} = error <- GenServer.call(pid, {:steer, run_id, message}, 30_000) do
-          # Notifications that preceded the refusal sit in the runtime's mailbox ahead
-          # of this call.
-          GenServer.call(pid, :settle, 30_000)
+          settle(pid)
           error
         end
 
       [] ->
         {:error, "no running turn"}
     end
+  end
+
+  # Notifications that preceded a steer refusal sit in the runtime's mailbox
+  # ahead of this call, so they are applied before the refusal returns. A
+  # runtime that stops during it has still refused: its exit must not replace
+  # the refusal (and read, through `Orchestration.session_call/2`, as a session
+  # that stopped before answering at all).
+  defp settle(pid) do
+    GenServer.call(pid, :settle, 30_000)
+  catch
+    # A merely slow runtime still exits the caller, as everywhere else here.
+    :exit, {:timeout, _} = reason -> exit(reason)
+    :exit, _ -> :ok
   end
 
   @doc """
@@ -97,9 +108,19 @@ defmodule HalC2.Codex.ThreadRuntime do
   thread's provider thread. Needs the thread's session to be running.
   """
   def upload_feedback(thread_id, reason) do
+    gone = {:error, "The provider session is no longer running. Send a message first."}
+
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
-      [{pid, _}] -> GenServer.call(pid, {:upload_feedback, reason}, 60_000)
-      [] -> {:error, "The provider session is no longer running. Send a message first."}
+      # A session that stopped after the lookup, however it stopped, is as gone as one
+      # the lookup did not find. One that is only slow still exits the caller.
+      [{pid, _}] ->
+        Orchestration.session_call(
+          fn -> GenServer.call(pid, {:upload_feedback, reason}, 60_000) end,
+          gone
+        )
+
+      [] ->
+        gone
     end
   end
 
@@ -192,8 +213,18 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
-  def handle_call(:release, _from, %{turn: nil} = state),
-    do: {:stop, {:shutdown, :released}, :ok, state}
+  # It leaves the registry before it answers: the registry drops a dead runtime's key
+  # only when it gets to its exit, so a lookup right after the release would find a pid
+  # that is gone. `terminate/2` runs after that, with the key free: a turn may start a
+  # new runtime meanwhile, so for a moment two run for the thread, and nothing in
+  # `terminate/2` may count on having the thread to itself. What it ends there is
+  # named by ids from this runtime's own state (its work, background commands and
+  # subagents), which a replacement runtime never reuses, so its writes to the shared
+  # thread stream cannot touch the new runtime's work.
+  def handle_call(:release, _from, %{turn: nil} = state) do
+    Registry.unregister(HalC2.Codex.Registry, state.thread_id)
+    {:stop, {:shutdown, :released}, :ok, state}
+  end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
 

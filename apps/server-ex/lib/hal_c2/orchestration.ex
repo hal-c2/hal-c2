@@ -21,6 +21,17 @@ defmodule HalC2.Orchestration do
   alias HalC2.Projection.{JS, PullRequests}
 
   @active_statuses ~w(preparing starting running waiting)
+
+  # The built-in runtimes' registries, in the order a release visits them. One
+  # list for stopping, releasing and checking: a registry missed by the check
+  # would have its live session's credential revoked on every release.
+  @session_registries [
+    HalC2.Codex.Registry,
+    HalC2.Claude.Registry,
+    HalC2.Acp.Registry,
+    HalC2.Pi.Registry,
+    HalC2.Muse.Registry
+  ]
   # The input of a prepared run's workspace preparation item.
   @preparing_workspace "Preparing workspace"
 
@@ -546,11 +557,7 @@ defmodule HalC2.Orchestration do
 
       message && target && target["status"] in @active_statuses &&
         steerable?(target, queued["providerInstanceId"]) &&
-          runtime(target["providerInstanceId"]).steer(
-            thread_id,
-            target["id"],
-            steer_input(message)
-          ) == :ok ->
+          steered?(thread_id, target, message) ->
         promoted(thread_id, queued, target, message)
 
       true ->
@@ -874,13 +881,7 @@ defmodule HalC2.Orchestration do
 
   # A runtime runs under its provider plugin's sessions supervisor (`HalC2.Plugins`).
   defp stop_runtimes(thread_id) do
-    for registry <- [
-          HalC2.Codex.Registry,
-          HalC2.Claude.Registry,
-          HalC2.Acp.Registry,
-          HalC2.Pi.Registry,
-          HalC2.Muse.Registry
-        ],
+    for registry <- @session_registries,
         Process.whereis(registry) != nil,
         {pid, _} <- Registry.lookup(registry, thread_id) do
       try do
@@ -897,13 +898,7 @@ defmodule HalC2.Orchestration do
   # message may have started a turn since; that runtime keeps it (`:busy`).
   defp release_runtimes(thread_id) do
     kept =
-      for registry <- [
-            HalC2.Codex.Registry,
-            HalC2.Claude.Registry,
-            HalC2.Acp.Registry,
-            HalC2.Pi.Registry,
-            HalC2.Muse.Registry
-          ],
+      for registry <- @session_registries,
           Process.whereis(registry) != nil,
           {pid, _} <- Registry.lookup(registry, thread_id),
           release(pid) == :busy,
@@ -941,8 +936,33 @@ defmodule HalC2.Orchestration do
   # The stopped session's agent loses its HAL-C2 tools; the next session gets new ones.
   # A deleted thread only stops its runtimes: its agent's credential still reaches
   # the tools, which answer that the calling thread is gone.
+  #
+  # A released runtime leaves its registry before it stops, so a message in that
+  # window starts a replacement whose first turn may already hold the thread's
+  # credential (`HalC2.Mcp.server/2` reuses it by thread and instance). When a
+  # runtime is again registered for the thread, the credential is the live
+  # session's now and stays; revoking it would leave that session's tools
+  # unauthenticated until it restarts. Two edges of that trade-off: the check
+  # and the revoke are not atomic, so a replacement that registers and takes
+  # the credential between them still loses it (a microseconds-wide window the
+  # deterministic test cannot pin); and not revoking extends the dying
+  # session's own use of the shared token until the next release, since the
+  # token cannot tell the two sessions apart.
   defp stop_session(thread_id) do
-    with :ok <- release_runtimes(thread_id), do: HalC2.Mcp.revoke(thread_id)
+    with :ok <- release_runtimes(thread_id) do
+      if session_running?(thread_id), do: :ok, else: HalC2.Mcp.revoke(thread_id)
+    end
+  end
+
+  # Whether any built-in runtime is live for the thread right now. A crashed
+  # runtime never unregisters itself (only `:release` does), so its entry can
+  # outlive it until the Registry handles its own DOWN: only a live pid counts,
+  # or a dead session would keep its credential from being revoked above.
+  defp session_running?(thread_id) do
+    Enum.any?(@session_registries, fn registry ->
+      Process.whereis(registry) != nil and
+        Enum.any?(Registry.lookup(registry, thread_id), fn {pid, _} -> Process.alive?(pid) end)
+    end)
   end
 
   # The built-in runtimes, and the plugin adapters that can take a runtime call.
@@ -969,7 +989,9 @@ defmodule HalC2.Orchestration do
         runtimes(:respond, 3),
         {:error, "no pending request"},
         fn runtime ->
-          if runtime.respond(thread_id, request_id, response) == :ok, do: :ok
+          if session_call(fn -> runtime.respond(thread_id, request_id, response) end, :gone) ==
+               :ok,
+             do: :ok
         end
       )
 
@@ -1555,6 +1577,67 @@ defmodule HalC2.Orchestration do
     end) || interrupt_undriven(thread_id, run_id)
   end
 
+  @doc """
+  Runs `call`, a runtime's call into a thread's session. A session that stopped after
+  the runtime looked it up, however it stopped (released as idle, crashed), answers
+  `gone`, as one the lookup did not find would; one that is only slow still exits the
+  caller. Only the exit of a `GenServer.call` reads as a stopped session, which covers
+  every built-in runtime; a runtime that exits any other way still exits the caller.
+
+  "Stopped" is not an explicit refusal: a session that took the call's work (a steer
+  into its turn, an answer sent to the provider) and then died before replying reads
+  the same as one that died before taking it. Callers that retry or re-dispatch on
+  `gone` (a steered message, an answer) can therefore deliver twice, or report an
+  answer that landed as missing; for the built-in runtimes the provider connection
+  dies with the runtime, so a taken-but-unacknowledged call is lost with it.
+
+  `start_turn/2` is deliberately not a caller: its retry re-dispatches the turn, so
+  it retries only where the work provably never started (`{:shutdown, :released}`
+  and `:noproc`); a runtime killed or crashing as a turn starts fails the run
+  rather than risking the turn starting twice.
+  """
+  def session_call(call, gone) do
+    call.()
+  catch
+    :exit, {why, {GenServer, :call, _}} when why != :timeout ->
+      log_unexpected_stop(why)
+      gone
+  end
+
+  # An exit outside the ways a session stops is some other server's failure read as
+  # "gone" (a call a runtime adapter makes in the caller's process); say so, so the
+  # misclassification stays diagnosable instead of dropping the reason. The
+  # expected reasons can still be a nested call's, not the session's: most
+  # built-in closures are single calls (respond, the Claude/ACP rollback inner
+  # calls, Codex feedback), but Codex's steer calls twice (its `:settle` keeps
+  # its own semantics and no longer exits here) and the Codex/ACP/Pi rollback
+  # closures run `ensure()` — a sessions-supervisor call — before the session
+  # call, so a supervisor exit there is logged at debug as an expected stop.
+  # A plugin adapter's closure need not be a single call either. They are
+  # logged at debug rather than dropped silently.
+  defp log_unexpected_stop(why) when why in [:noproc, :normal, :shutdown, :killed],
+    do: log_stop_at_debug(why)
+
+  defp log_unexpected_stop({:shutdown, _} = why), do: log_stop_at_debug(why)
+
+  defp log_unexpected_stop(why) do
+    require Logger
+    Logger.warning("a session call read as stopped exited with #{inspect(why)}")
+  end
+
+  defp log_stop_at_debug(why) do
+    require Logger
+    Logger.debug("a session call read as stopped exited with #{inspect(why)}")
+  end
+
+  # Whether the running `run` took `message` into its turn. Only the call into the
+  # session is `session_call/2`'s: resolving the runtime and the input is not.
+  defp steered?(thread_id, run, message) do
+    runtime = runtime(run["providerInstanceId"])
+    input = steer_input(message)
+    session_call(fn -> runtime.steer(thread_id, run["id"], input) end, :gone) == :ok
+  end
+
   # A runtime that dies as it is asked leaves its turn to `interrupt_undriven/2`.
   defp interrupted?(runtime, thread_id, run_id) do
     runtime.interrupt(thread_id, run_id) == :ok
@@ -1787,10 +1870,17 @@ defmodule HalC2.Orchestration do
   # newer run). A steer that lost the race with the turn's
   # end is handled the same way. A provider that refuses while its turn still runs is an error for the sender:
   # the message was not delivered, so it is neither shown in the turn nor queued.
+  # "Its session stopped" carries no such no-delivery guarantee (see `session_call/2`):
+  # it reaches the re-dispatch below only once the run is no longer active, where the
+  # message going out as a new turn is the right outcome either way.
   defp steer(thread_id, run, command) do
     instance = run["providerInstanceId"] || "codex"
 
-    case runtime(instance).steer(thread_id, run["id"], steer_input(command)) do
+    runtime = runtime(instance)
+    input = steer_input(command)
+    steer = fn -> runtime.steer(thread_id, run["id"], input) end
+
+    case session_call(steer, {:error, "its session stopped"}) do
       :ok ->
         HalC2.Streams.transact(thread_id, :thread, fn state ->
           at = Entities.now()

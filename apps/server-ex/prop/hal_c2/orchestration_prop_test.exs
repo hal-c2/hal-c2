@@ -846,8 +846,18 @@ defmodule HalC2.OrchestrationPropTest do
 
   def release(tid) do
     case Orchestration.release_session(tid) do
-      :ok -> reply({:ok, %{}}, [])
-      :busy -> reply({:error, :busy}, [])
+      :ok ->
+        # Released means gone from the registry too, not only dead: the next message
+        # looks the session up first.
+        case Registry.lookup(HalC2.Codex.Registry, tid) do
+          [] -> :ok
+          held -> raise("the released session of #{tid} is still registered: #{inspect(held)}")
+        end
+
+        reply({:ok, %{}}, [])
+
+      :busy ->
+        reply({:error, :busy}, [])
     end
   end
 

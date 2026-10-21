@@ -144,7 +144,10 @@ defmodule HalC2.Orchestration.DelegationTest do
     test "is interrupted, with its timeline item, when the project does not continue it" do
       :ok = HalC2.Shell.subscribe(self())
       delegate("running")
-      assert_receive {:hal_c2_shell, {:rows, _, [{"c", {"thread", _}}]}}, 1_000
+      # Recovery reads the sidebar rows: both threads' must be there, the parent's for
+      # its task to be reconciled and the child's for its run to be settled.
+      for id <- ["p", "c"],
+          do: assert_receive({:hal_c2_shell, {:rows, _, [{^id, {"thread", _}}]}}, 1_000)
 
       assert "c" in Recovery.run()
       assert task()["status"] == "running"

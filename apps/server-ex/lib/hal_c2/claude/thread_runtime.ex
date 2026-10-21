@@ -102,8 +102,12 @@ defmodule HalC2.Claude.ThreadRuntime do
   def rollback(thread_id, %{head: head}) do
     reply =
       case Registry.lookup(HalC2.Claude.Registry, thread_id) do
-        [{pid, _}] -> GenServer.call(pid, :rollback, 30_000)
-        [] -> :ok
+        # One that stops as it is asked is as gone as one not found.
+        [{pid, _}] ->
+          HalC2.Orchestration.session_call(fn -> GenServer.call(pid, :rollback, 30_000) end, :ok)
+
+        [] ->
+          :ok
       end
 
     with :ok <- reply do
@@ -272,8 +276,18 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
-  def handle_call(:release, _from, %{turn: nil} = state),
-    do: {:stop, {:shutdown, :released}, :ok, state}
+  # It leaves the registry before it answers: the registry drops a dead runtime's key
+  # only when it gets to its exit, so a lookup right after the release would find a pid
+  # that is gone. `terminate/2` runs after that, with the key free: a turn may start a
+  # new runtime meanwhile, so for a moment two run for the thread, and nothing in
+  # `terminate/2` may count on having the thread to itself. What it ends there is
+  # named by ids from this runtime's own state (its work, background commands and
+  # subagents), which a replacement runtime never reuses, so its writes to the shared
+  # thread stream cannot touch the new runtime's work.
+  def handle_call(:release, _from, %{turn: nil} = state) do
+    Registry.unregister(HalC2.Claude.Registry, state.thread_id)
+    {:stop, {:shutdown, :released}, :ok, state}
+  end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
 
