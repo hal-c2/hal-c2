@@ -427,14 +427,22 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   @impl true
-  def code_change(_old, state, _extra),
-    do:
-      {:ok,
-       state
-       |> Map.put_new(:running, %{})
-       |> Map.put_new(:background, %{})
-       |> Map.put_new(:instance, nil)
-       |> Map.put(:v, @state_version)}
+  def code_change(_old, state, _extra) do
+    # A runtime upgraded mid-turn derives the turn's instance, so the rest of
+    # that turn's quota still belongs to it; between turns there is none yet.
+    instance =
+      case state do
+        %{turn: %{ids: ids}} when is_map(ids) -> Entities.instance(ids)
+        _ -> nil
+      end
+
+    {:ok,
+     state
+     |> Map.put_new(:running, %{})
+     |> Map.put_new(:background, %{})
+     |> Map.put_new(:instance, instance)
+     |> Map.put(:v, @state_version)}
+  end
 
   # The message, with where its files are, and its images inline.
   defp codex_input(turn) do
@@ -1040,7 +1048,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp usage_instance(state) do
     instance = Map.get(state, :instance) || "codex"
 
-    if HalC2.Settings.known_instance?("codex", instance), do: instance, else: "codex"
+    if HalC2.Settings.known_instance?(instance, "codex"), do: instance, else: "codex"
   end
 
   # Codex retries a failed request itself and reports each attempt: one work-log item

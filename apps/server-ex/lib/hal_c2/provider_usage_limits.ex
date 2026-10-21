@@ -517,6 +517,10 @@ defmodule HalC2.ProviderUsageLimits do
       HalC2.Settings.notify_providers()
     end
 
+    # Its probed bucket name goes too, so a later instance reusing the id
+    # never writes under the previous account's model name.
+    state = %{state | claude_names: Map.take(claude_names(state), all)}
+
     probes =
       for instance <- instances, probed?(instance) do
         {instance, Task.async(fn -> probe_instance(instance, checked_at) end)}
@@ -574,7 +578,7 @@ defmodule HalC2.ProviderUsageLimits do
 
   # Codex or Claude for their built-in instance and the ones settings add; nil for an ACP agent.
   defp driver(instance),
-    do: Enum.find(@instances, &HalC2.Settings.known_instance?(&1, instance))
+    do: Enum.find(@instances, &HalC2.Settings.known_instance?(instance, &1))
 
   # Codex and Claude with the instances settings add for them, and the enabled ACP
   # agents whose vendors publish quota.

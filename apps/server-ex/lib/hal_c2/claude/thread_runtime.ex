@@ -922,6 +922,9 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp take_wake(state, _session), do: {state, []}
 
   defp message(%{"type" => "rate_limit_event", "rate_limit_info" => %{} = info}, state) do
+    # `with_ids/1` recovers the latest turn's ids when this runtime has not
+    # run one, so between-turns quota joins that turn's instance too.
+    state = with_ids(state)
     HalC2.ProviderUsageLimits.claude_event(usage_instance(state), info)
     rate_limit(info, state)
   end
@@ -1164,7 +1167,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     ids = if state.turn, do: Map.get(state.turn, :ids), else: state.last_ids
     instance = if is_map(ids), do: Entities.instance(ids), else: "claudeAgent"
 
-    if HalC2.Settings.known_instance?("claudeAgent", instance),
+    if HalC2.Settings.known_instance?(instance, "claudeAgent"),
       do: instance,
       else: "claudeAgent"
   end
