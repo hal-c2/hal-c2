@@ -215,9 +215,10 @@ Item {
             const scan = findChild(page, "scan");
             const area = findChild(page, "scanArea");
             verify(scan.enabled);
-            verify(!scan.ToolTip.visible, "the wrapper is the only tooltip owner");
             mouseMove(area, area.width / 2, area.height / 2);
             tryVerify(() => scan.hovered);
+            wait(600);
+            verify(!scan.ToolTip.visible, "the wrapper is the only tooltip owner");
             tryCompare(area.ToolTip, "visible", true);
             compare(area.ToolTip.text, "Rescan Git and hosting integrations");
             mouseClick(area);
