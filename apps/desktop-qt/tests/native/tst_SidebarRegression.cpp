@@ -84,12 +84,21 @@ private slots:
                qPrintable(format + QStringLiteral(": the locale no longer writes a no-break space: ") + raw));
       const QString time = sidebar::timeOfDay(evening, format, spanish);
       QVERIFY2(!time.contains(QChar(0x00A0)) && !time.contains(QChar(0x202F)), qPrintable(format + QStringLiteral(": ") + time));
-      // Exact, so deleting the separator ("6:05p. m.") fails too, not only leaving it.
-      QCOMPARE(time, format == QLatin1String("12-hour") ? QStringLiteral("6:05 P. M.") : QStringLiteral("6:05 p. m."));
+      // Derived from raw, so deleting the separator ("6:05p. m.") fails too, not only
+      // leaving it, without pinning this CLDR revision's marker casing/punctuation.
+      const QString wanted = QString(raw).replace(QChar(0x202F), QLatin1Char(' ')).replace(QChar(0x00A0), QLatin1Char(' '));
+      QCOMPARE(time, wanted);
     }
     // en-US puts U+202F before PM on newer CLDR data, and a plain space before it on older.
     const QString english = sidebar::timeOfDay(evening, QStringLiteral("locale"), QLocale(QLocale::English, QLocale::UnitedStates));
     QCOMPARE(english, QStringLiteral("6:05 PM"));
+  }
+
+  // The helper the usage labels (hourName, hourly heading, window label) wrap:
+  // dropping plainSpaces there or here must fail loudly.
+  void plainSpacesReplacesEveryNoBreakSpace() {
+    QCOMPARE(sidebar::plainSpaces(QStringLiteral("6\u202FPM\u00A0x")), QStringLiteral("6 PM x"));
+    QCOMPARE(sidebar::plainSpaces(QStringLiteral("6:05 PM")), QStringLiteral("6:05 PM"));
   }
 
   // Two threads snoozed until the same time read in the same order whichever
