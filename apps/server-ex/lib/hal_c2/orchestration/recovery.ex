@@ -212,15 +212,22 @@ defmodule HalC2.Orchestration.Recovery do
         Enum.map_join(commands, ", ", &"`#{&1}`") <>
         ". Start them again if you still need them, then continue where you left off."
 
-  # A message the user sent since takes precedence; a held one does not (the restart
-  # held the queue, and a run that passed a held queue was sent after it).
+  # A message the user sent since takes precedence; a held one does not when it
+  # was made before `run` (a run that passed a held queue was sent after it, and
+  # is numbered below it since the renumbering). A held run made after `run` —
+  # a message queued behind it, held by this very settle — still counts as
+  # newer-sent, so no continuation jumps it: creation order (the order of
+  # `StreamState.list/2`) tells the two apart where the ordinal no longer can.
   defp latest?(thread_id, run) do
     state = HalC2.Streams.state(thread_id)
+    runs = StreamState.list(state, "run")
+    made = Map.new(Enum.with_index(runs, &{&1["id"], &2}))
 
-    Enum.all?(
-      StreamState.list(state, "run"),
-      &(held?(&1) or (&1["ordinal"] || 0) <= (run["ordinal"] || 0))
-    )
+    Enum.all?(runs, fn other ->
+      (HalC2.Projection.Shell.held_never_started?(other) and
+         made[other["id"]] <= made[run["id"]]) or
+        (other["ordinal"] || 0) <= (run["ordinal"] || 0)
+    end)
   end
 
   # The thread's latest run, passing over held queued runs: a run that passed a held
@@ -228,10 +235,6 @@ defmodule HalC2.Orchestration.Recovery do
   # queue that is not held was sent after the latest run that began, and is latest.
   defp latest_run(state),
     do: state |> StreamState.list("run") |> HalC2.Projection.Shell.latest_run()
-
-  # Held for the user and never started, as `HalC2.Projection.Shell.latest_run/1`
-  # passes over: still queued, or cancelled while held.
-  defp held?(run), do: run["status"] in ["queued", "cancelled"] and run["queueHeld"] == true
 
   defp continuable(state) do
     with %{"status" => "running"} = run <- latest_run(state),

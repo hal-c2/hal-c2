@@ -166,16 +166,29 @@ defmodule HalC2.Projection.Shell do
   def latest_run(runs) do
     runs
     |> Enum.reverse()
-    |> Enum.reject(
-      &(get(&1, "status") in ["queued", "cancelled"] and get(&1, "queueHeld") == true)
-    )
+    |> Enum.reject(&held_never_started?/1)
     # The first of equals: of runs stored without an ordinal, the newest.
     |> Enum.max_by(&(get(&1, "ordinal") || 0), fn -> nil end)
   end
 
+  @doc """
+  Held for the user and never started, as `latest_run/1` passes over: still
+  queued, or cancelled while held (resuming clears the hold before a run starts,
+  so a run cancelled after it started is not held). The one spelling in the MC;
+  the clients keep their own per language.
+  """
+  @spec held_never_started?(map) :: boolean
+  def held_never_started?(run),
+    do: get(run, "status") in ["queued", "cancelled"] and get(run, "queueHeld") == true
+
   defp interruptible?(run), do: get(run, "status") in @interruptible
 
   # The first element with the greatest key, as a stable descending sort's head.
+  # Of equal keys that is the oldest made, unlike `latest_run/1` above (and the
+  # clients' latest picks), which take the newest made: for legacy runs stored
+  # without an ordinal the activity/active picks here can name an older run than
+  # a client's. Ordinals are unique for every run made since, so only the
+  # latest-run pick was aligned.
   defp latest_by([], _key), do: nil
   defp latest_by(list, key), do: Enum.max_by(list, key)
 

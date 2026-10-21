@@ -297,11 +297,15 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  # How a child's work ended: its latest run that was not rolled back, or, when the
-  # user rolled back every one, cancelled when the last was. Nil for a status no
-  # task takes.
+  # How a child's work ended: its latest run that was not rolled back, by the
+  # same pick as everywhere else (`Shell.latest_run/1` — a held run cancelled
+  # while held never started, so the run that passed it is how it ended), or,
+  # when the user rolled back every one, cancelled when the last was. Nil for a
+  # status no task takes.
   defp last_end(runs) do
-    case runs |> Enum.reject(&(&1["status"] == "rolled_back")) |> latest() do
+    case runs
+         |> Enum.reject(&(&1["status"] == "rolled_back"))
+         |> HalC2.Projection.Shell.latest_run() do
       %{"status" => ended} = run when ended in @terminal -> {ended, run, end_of(run)}
       nil -> {"cancelled", nil, end_of(latest(runs))}
       _ -> nil
@@ -321,7 +325,9 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp working?(runs), do: Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued"))
 
-  defp latest(runs), do: Enum.max_by(runs, & &1["ordinal"], fn -> nil end)
+  # Runs stored without an ordinal read 0, as in `Shell.latest_run/1`; a bare
+  # `max_by` would let `nil` win outright (it sorts above integers).
+  defp latest(runs), do: Enum.max_by(runs, &(&1["ordinal"] || 0), fn -> nil end)
   defp end_of(run), do: run["completedAt"] || run["updatedAt"]
 
   # --- tasks -------------------------------------------------------------------------
