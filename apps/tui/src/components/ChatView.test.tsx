@@ -57,14 +57,19 @@ const PNG_PREVIEW = {
 function gatedImageDecoder() {
   const started = deferred<void>();
   const gate = deferred<void>();
+  let decodedBytes: number | undefined;
   return {
-    decodeImage: async () => {
+    decodeImage: async (encoded: Uint8Array) => {
+      decodedBytes = encoded.byteLength;
       started.resolve();
       await gate.promise;
       return PNG_PREVIEW;
     },
     started: started.promise,
     release: () => gate.resolve(),
+    get decodedBytes() {
+      return decodedBytes;
+    },
   };
 }
 
@@ -81,8 +86,10 @@ async function awaitDecodeStarted(
   });
   try {
     await setup.waitFor(() => started);
-  } catch {
-    throw new Error(`the decode never started; last frame:\n${setup.captureCharFrame()}`);
+  } catch (error) {
+    throw new Error(`the decode never started; last frame:\n${setup.captureCharFrame()}`, {
+      cause: error,
+    });
   }
 }
 
@@ -1157,6 +1164,7 @@ describe("ChatView acknowledged submissions", () => {
     });
     await setup.waitForFrame((frame) => frame.includes("Adding pasted image"));
     await awaitDecodeStarted(setup, decoder);
+    expect(decoder.decodedBytes).toBe(68);
     await React.act(async () => {
       decoder.release();
     });
