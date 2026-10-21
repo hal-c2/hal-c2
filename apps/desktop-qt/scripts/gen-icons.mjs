@@ -28,6 +28,7 @@ const ICONS = [
   "chevrons-down-up",
   "chevrons-up-down",
   "circle-alert",
+  "circle-arrow-up",
   "circle-check",
   "circle-dashed",
   "circle-x",
