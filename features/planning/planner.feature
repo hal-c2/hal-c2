@@ -66,7 +66,7 @@ Feature: Planner
     Scenario: A pull request or issue that is not a repository and a number is neither linked nor unlinked
       Given "Rate limits" is linked to #12 of "acme/api"
       When a client links "Rate limits" to a pull request and to an issue whose repository is not text
-      Then the planner answers "link gives just one of: a pullRequest or an issue as {repository, number}, or a threadId."
+      Then the planner answers "link gives just one of: a pullRequest or an issue as {repository, number, url}, or a threadId."
       When a client unlinks from "Rate limits" a pull request whose repository is not text
       Then the planner answers "unlink gives the pull request as {repository, number}."
       When a client unlinks from "Rate limits" an issue it does not name
@@ -77,7 +77,7 @@ Feature: Planner
     Scenario: A link to two things at once is refused rather than half made
       Given the plan has the task "Rate limits"
       When a client links "Rate limits" to the pull request #12 and the issue #7 of "acme/api" at once
-      Then the planner answers "link gives just one of: a pullRequest or an issue as {repository, number}, or a threadId."
+      Then the planner answers "link gives just one of: a pullRequest or an issue as {repository, number, url}, or a threadId."
       And "Rate limits" is linked to no pull request and no issue
 
     @mc
@@ -427,7 +427,7 @@ Feature: Planner
     Scenario: A proposal that links a task to two things at once goes back to the agent
       Given the run of "Reschedule" is running
       When its agent reports linking "API" to the pull request #12 and the issue #7 of "acme/api" at once
-      Then the agent is told "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number}."
+      Then the agent is told "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number, url}."
       And the run is still running
 
     @mc

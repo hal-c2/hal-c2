@@ -282,6 +282,15 @@ defmodule HalC2.PlannerTest do
       assert url.("https://./acme/api/pull/4", "pullRequest") == nil
       assert url.("https://../acme/api/pull/4", "pullRequest") == nil
       assert url.("https://exa mple.com/acme/api/pull/4", "pullRequest") == nil
+
+      # A host with an empty label or a `%` in it names no host either.
+      assert url.("https://ghe..example.com/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://ghe.example.com%2f.evil.com/acme/api/pull/4", "pullRequest") == nil
+
+      # A repository that is no `owner/name` over GitHub's charset is no ref:
+      # it would otherwise be interpolated verbatim into the stored address.
+      assert :error = Plan.ref(%{"repository" => "../evil", "number" => 4}, "pullRequest")
+      assert :error = Plan.ref(%{"repository" => "acme/api\n", "number" => 4}, "pullRequest")
     end
 
     test "a correcting link to another host forgets what the old host's look stored" do
@@ -313,9 +322,23 @@ defmodule HalC2.PlannerTest do
       assert item["issue"]["url"] == "https://github.com/acme/api/issues/7"
 
       # A correction to another host forgets what the old host's look stored, as a
-      # pull request does: that closed state described a different issue.
+      # pull request does: that closed state described a different issue, and so
+      # do the milestone, the board row, the failure and the synced snapshot.
+      item =
+        item
+        |> put_in(["issue", "milestone"], %{"number" => 3})
+        |> Map.merge(%{
+          "boardItemId" => "PVTI_1",
+          "syncError" => "refused",
+          "synced" => %{"title" => "T"}
+        })
+
       item = Plan.link(item, %{"issue" => ref.(%{"url" => ghe})}, @now)
-      assert %{"url" => ^ghe, "state" => "open", "title" => nil} = item["issue"]
+
+      assert %{"url" => ^ghe, "state" => "open", "title" => nil, "milestone" => nil} =
+               item["issue"]
+
+      assert %{"boardItemId" => nil, "syncError" => nil, "synced" => nil} = item
 
       # A same-host correction keeps the rest.
       item = put_in(item["issue"]["state"], "closed")
@@ -398,7 +421,7 @@ defmodule HalC2.PlannerTest do
       link = &%{"op" => "link", "itemId" => "api", "fields" => &1}
 
       refused =
-        "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number}."
+        "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number, url}."
 
       assert {:ok, [%{"fields" => %{"issue" => ^issue}}]} =
                Plan.check_changes(items, [link.(%{"issue" => issue, "pullRequest" => nil})])

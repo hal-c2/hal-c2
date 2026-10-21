@@ -383,7 +383,7 @@ defmodule HalC2Plugins.Planner.Plan do
 
       link == :error ->
         {:error,
-         "link gives in fields just one of: a pullRequest or an issue as {repository, number}."}
+         "link gives in fields just one of: a pullRequest or an issue as {repository, number, url}."}
 
       bad = op in ~w(update add) && Enum.find(Map.keys(fields), &(&1 not in @change_fields)) ->
         {:error, "#{bad} is not a field a change can set."}
@@ -449,11 +449,18 @@ defmodule HalC2Plugins.Planner.Plan do
 
   def ref(%{"repository" => repository, "number" => number} = value, kind)
       when is_binary(repository) and is_integer(number) do
-    ref = %{"repository" => repository, "number" => number}
+    # A repository is `owner/name` over GitHub's small charset (the shape
+    # `HalC2.PullRequests.parse_remote/1` encodes); anything else would be
+    # interpolated verbatim into the rebuilt address.
+    if String.match?(repository, ~r/\A[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*\z/) do
+      ref = %{"repository" => repository, "number" => number}
 
-    case web_url(value["url"], repository, number, kind) do
-      nil -> {:ok, ref}
-      url -> {:ok, Map.put(ref, "url", url)}
+      case web_url(value["url"], repository, number, kind) do
+        nil -> {:ok, ref}
+        url -> {:ok, Map.put(ref, "url", url)}
+      end
+    else
+      :error
     end
   end
 
@@ -471,7 +478,9 @@ defmodule HalC2Plugins.Planner.Plan do
           [_, found | _] ->
             host = host |> String.downcase() |> String.trim_trailing(".")
 
-            if host != "" and not String.match?(host, ~r/\s/) do
+            if host != "" and not String.match?(host, ~r/\s/) and
+                 not String.contains?(host, "%") and
+                 not Enum.any?(String.split(host, "."), &(&1 == "")) do
               URI.to_string(%URI{
                 scheme: scheme,
                 host: host,
@@ -628,18 +637,6 @@ defmodule HalC2Plugins.Planner.Plan do
     end
   end
 
-  defp host_of(url) when is_binary(url) do
-    case URI.parse(url) do
-      %URI{host: host} when is_binary(host) ->
-        host |> String.downcase() |> String.trim_trailing(".")
-
-      _ ->
-        nil
-    end
-  end
-
-  defp host_of(_url), do: nil
-
   # The issue a task has already keeps what its looks last saw of it, so a closed one
   # linked again does not read as newly closed — unless the correcting address moves
   # it to another host, where that state described a different issue.
@@ -649,13 +646,28 @@ defmodule HalC2Plugins.Planner.Plan do
 
       if url && item["issue"]["url"] != url do
         # As with a pull request: another host names a different issue, so what the
-        # old host's look stored of it does not carry over.
-        corrected =
-          if host_of(url) != host_of(item["issue"]["url"]),
-            do: %{"url" => url, "state" => "open", "stateReason" => nil, "title" => nil},
-            else: %{"url" => url}
+        # old host's look stored of it does not carry over — the issue's own state
+        # and milestone, and the item's board row, failure and synced snapshot.
+        if host_of(url) != host_of(item["issue"]["url"]) do
+          corrected = %{
+            "url" => url,
+            "state" => "open",
+            "stateReason" => nil,
+            "title" => nil,
+            "milestone" => nil
+          }
 
-        %{item | "issue" => Map.merge(item["issue"], corrected), "updatedAt" => now}
+          stale = %{"boardItemId" => nil, "syncError" => nil, "synced" => nil}
+
+          item
+          |> Map.merge(stale)
+          |> Map.merge(%{
+            "issue" => Map.merge(item["issue"], corrected),
+            "updatedAt" => now
+          })
+        else
+          %{item | "issue" => Map.merge(item["issue"], %{"url" => url}), "updatedAt" => now}
+        end
       else
         item
       end
@@ -675,6 +687,18 @@ defmodule HalC2Plugins.Planner.Plan do
   end
 
   def link(item, _fields, _now), do: item
+
+  defp host_of(url) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{host: host} when is_binary(host) ->
+        host |> String.downcase() |> String.trim_trailing(".")
+
+      _ ->
+        nil
+    end
+  end
+
+  defp host_of(_url), do: nil
 
   @doc """
   `:ok` when the task `id` of `items` may be linked as `fields` say, or `{:error, message}`

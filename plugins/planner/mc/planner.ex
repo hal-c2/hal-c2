@@ -260,7 +260,7 @@ defmodule HalC2Plugins.Planner do
 
         :error ->
           {:error,
-           "link gives just one of: a pullRequest or an issue as {repository, number}, or a threadId."}
+           "link gives just one of: a pullRequest or an issue as {repository, number, url}, or a threadId."}
       end
 
     with {:ok, fields} <- fields, do: change({:link, id, fields}, context.settings)
@@ -527,7 +527,7 @@ defmodule HalC2Plugins.Planner do
         {:error, "note is text."}
 
       pr == :error ->
-        {:error, "pullRequest is {repository, number}."}
+        {:error, "pullRequest is {repository, number, url}."}
 
       Map.drop(taken, ["itemId"]) == %{} ->
         {:error, "Report a progress, a status, a note or a pull request."}
