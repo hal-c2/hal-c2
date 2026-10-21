@@ -408,11 +408,9 @@ defmodule HalC2.Shell do
     end
   end
 
-  # From a member still on a version before rows had versions, in the moment before
-  # this MC drops it for that (`HalC2.Cluster.version_changed/0`). It says hello
-  # again once it runs this version.
-  def handle_cast({:peer_rows, _peer, _rows}, state), do: {:noreply, state}
-  def handle_cast({:peer_hello, _peer}, state), do: {:noreply, state}
+  # From a member on another HAL-C2 version, whose messages this one does not know.
+  # Members on other versions stay connected (`HalC2.Cluster`), so this must not crash.
+  def handle_cast(_other, state), do: {:noreply, state}
 
   @impl true
   def handle_info({:nodeup, peer}, state) do

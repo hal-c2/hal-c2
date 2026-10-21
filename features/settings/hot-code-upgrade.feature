@@ -4,6 +4,7 @@
 #   apps/server-ex/lib/hal_c2/hot.ex (in-place load, code_change, reload_cluster)
 #   apps/server-ex/lib/hal_c2/recovery.ex (continuing cut-off turns)
 #   apps/server-ex/lib/mix/tasks/hal_c2.upgrade.ex
+#   apps/server-ex/lib/hal_c2/rpc.ex (cluster.update)
 #   apps/server-ex/rel/overlays/bin/hal-c2-service
 #   docs/internals/server-updates.md
 
@@ -68,6 +69,15 @@ Feature: Hot code upgrade
       | the MC runs from a source checkout          | 1.4.0   | a checkout updates with mix hal_c2.upgrade   |
       | the MC already runs "1.3.0"                 | 1.3.0   | it already runs that version             |
       | the MC was not started by its service       | 1.4.0   | nothing would restart it                 |
+
+  # Members on other versions stay connected, so the machine a client is paired with
+  # can hand the release it runs to the others (`cluster.update`).
+  @mc
+  Scenario: A client sends the version its MC runs to the other machines of the cluster
+    Given a client of the first of three connected MCs, the first on a build the others do not run
+    When the client asks the first to send its version to the other machines
+    Then the other MCs fetch it from the first and run it
+    And the client is told each of them updated from "1.3.0"
 
   @mc
   Scenario: A developer upgrades every MC in a cluster from one build

@@ -8,6 +8,7 @@ import {
   type ClusterInvite,
   type ClusterInviteInput,
   type ClusterStatus,
+  type ClusterUpdateResult,
   EnvironmentId,
   type MessageId,
   MessageId as MessageIdSchema,
@@ -514,6 +515,8 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly clusterInvite: (input: ClusterInviteInput) => Promise<ClusterInvite>;
   readonly clusterJoin: (link: string) => Promise<ClusterStatus>;
   readonly clusterRemove: (id: string) => Promise<ClusterStatus>;
+  /** Has every connected member on another version take the one this machine runs. */
+  readonly clusterUpdate: () => Promise<ClusterUpdateResult>;
   /** The other machines of the cluster a thread could move to, and their projects. */
   readonly moveDestinations: (threadId: string) => Promise<ReadonlyArray<ThreadMoveDestination>>;
   /**
@@ -917,6 +920,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
     clusterInvite: (input) => runtime.runPromise(request(WS_METHODS.clusterInvite, input)),
     clusterJoin: (link) => runtime.runPromise(request(WS_METHODS.clusterJoin, { link })),
     clusterRemove: (id) => runtime.runPromise(request(WS_METHODS.clusterRemove, { id })),
+    clusterUpdate: () => runtime.runPromise(request(WS_METHODS.clusterUpdate, {})),
     moveDestinations: (threadId) =>
       runtime
         .runPromise(mcRequest("hal-c2.moveDestinations", { threadId }))

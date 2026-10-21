@@ -90,8 +90,12 @@ hal-c2-service cluster invite      # prints the link
 hal-c2-service cluster join LINK   # on the machine that joins
 ```
 
-Every machine of a cluster runs the same HAL-C2 version. A machine on another version
-stays listed but does not connect until it is updated. Removing a machine from the
+Machines of a cluster connect whatever HAL-C2 versions they run, but keep them on one
+version: features that span machines, such as moving a thread, can fail between
+versions. The Cluster page shows the version of each machine that runs another one, and
+**Send this version to the other machines** (in the terminal client, the command palette
+entry of that name) has each of them update to the version of the machine you are on,
+which hands them its release. Removing a machine from the
 Cluster page stops every member from admitting it, and its projects and threads leave
 the sidebar.
 

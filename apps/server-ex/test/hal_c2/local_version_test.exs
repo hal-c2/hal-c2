@@ -40,6 +40,15 @@ defmodule HalC2.LocalVersionTest do
     assert version(script) =~ ~r/^1\.2\.3-local\.\d{14}$/
   end
 
+  test "changes outside what the MC is built from keep the commit's version", context do
+    %{root: root, script: script, commit: commit} = context
+    File.mkdir_p!(Path.join(root, "apps/desktop-new"))
+    File.write!(Path.join(root, "apps/desktop-new/main.qml"), "")
+    File.write!(Path.join(root, "README.md"), "")
+
+    assert version(script) =~ ~r/^1\.2\.3-local\.\d{14}\.g#{String.slice(commit, 0, 12)}$/
+  end
+
   test "an untracked file is a change, also when git is told not to list them", context do
     %{root: root, script: script} = context
     git(root, ~w(config status.showUntrackedFiles no))

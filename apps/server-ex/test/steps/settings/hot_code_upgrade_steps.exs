@@ -472,6 +472,52 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     context
   end
 
+  step "a client of the first of three connected MCs, the first on a build the others do not run",
+       context do
+    # Connected first: once the peers are up this process also hears of their MCs,
+    # which the client's upgrade handshake cannot tell from socket messages.
+    context = World.put_client(context, World.client(context))
+    context = cached_bundle(context, "1.3.1", :hot) |> update_to("1.3.1")
+    assert {:ok, _} = context.reply
+    peers = for name <- ["b", "c"], do: start_peer(context, name)
+    # Peers reach this MC's HTTP port for the build.
+    World.put_app_env(:port, context.mc.port)
+    Map.put(context, :peers, peers)
+  end
+
+  step "the client asks the first to send its version to the other machines", context do
+    {reply, context} = World.call(context, "cluster.update", %{})
+    Map.put(context, :reply, reply)
+  end
+
+  # Each peer knows only the first MC, and the release download is unreachable.
+  step "the other MCs fetch it from the first and run it", context do
+    sum = cached_sha256("1.3.1")
+
+    for peer <- context.peers do
+      assert :erpc.call(peer, Upgrade, :version, []) == "1.3.1"
+      assert :erpc.call(peer, @probe, :version, []) == "1.3.1"
+      home = :erpc.call(peer, Application, :fetch_env!, [:hal_c2, :home])
+
+      archive =
+        Path.join([home, "upgrades", "1.3.1", Source.file_name("1.3.1", Upgrade.platform())])
+
+      assert sha256(archive) == sum
+    end
+
+    context
+  end
+
+  step "the client is told each of them updated from {string}", %{args: [from]} = context do
+    assert {:ok, %{"version" => "1.3.1", "members" => members}} = context.reply
+
+    assert Enum.sort(for m <- members, do: m["label"]) ==
+             Enum.sort(Enum.map(context.peers, &to_string/1))
+
+    assert Enum.all?(members, &match?(%{"from" => ^from, "outcome" => "updated"}, &1))
+    context
+  end
+
   # --- helpers ------------------------------------------------------------------------------
 
   defp release_root(root, version) do

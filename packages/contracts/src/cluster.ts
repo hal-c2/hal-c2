@@ -12,7 +12,7 @@ export const ClusterMember = Schema.Struct({
   label: Schema.String,
   /** Where it was last reported listening for members, `host:port`. */
   addresses: Schema.Array(Schema.String),
-  /** The HAL-C2 version it last reported. A member on another version does not connect. */
+  /** The HAL-C2 version it last reported. Members connect whatever versions they run. */
   version: Schema.optional(Schema.NullOr(Schema.String)),
   connected: Schema.Boolean,
 });
@@ -58,6 +58,28 @@ export type ClusterJoinInput = typeof ClusterJoinInput.Type;
 
 export const ClusterRemoveInput = Schema.Struct({ id: Schema.String });
 export type ClusterRemoveInput = typeof ClusterRemoveInput.Type;
+
+/** How one member's update to the version the asked MC runs went. */
+export const ClusterMemberUpdate = Schema.Struct({
+  /** The member's environment id, null when the cluster no longer lists it. */
+  id: Schema.NullOr(Schema.String),
+  label: Schema.String,
+  /** The version it ran before, null when it did not say. */
+  from: Schema.NullOr(Schema.String),
+  /**
+   * `updated`, `restarting on it` (it restarts to take the version), `has not
+   * finished`, `cannot be updated from another machine`, or why its update failed.
+   */
+  outcome: Schema.String,
+});
+export type ClusterMemberUpdate = typeof ClusterMemberUpdate.Type;
+
+/** `cluster.update`: the version sent, and each connected member that ran another. */
+export const ClusterUpdateResult = Schema.Struct({
+  version: Schema.String,
+  members: Schema.Array(ClusterMemberUpdate),
+});
+export type ClusterUpdateResult = typeof ClusterUpdateResult.Type;
 
 /**
  * Moving a thread to another machine of the cluster (apps/server-ex

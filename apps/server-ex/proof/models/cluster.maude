@@ -237,9 +237,6 @@ mod CLUSTER is
   eq lose(N, ch(M, N, I ; Q) C) = lose(N, ch(M, N, nothing) C) .
   eq lose(N, C) = C [owise] .
 
-  op severAll : Id Conf -> Conf .
-  eq severAll(N, C) = sever(N, a, sever(N, b, sever(N, c, C))) .
-
   --- Nothing in flight: no cast and no nodeup waits anywhere.
   op quiet : Conf -> Bool .
   eq quiet(ch(X, Y, I ; Q) C) = false .
@@ -294,12 +291,14 @@ mod CLUSTER is
   eq running(N, mc(N, true, Tb, V) C) = true .
   eq running(N, C) = false [owise] .
 
-  --- handle_cast :version_changed: a new cookie drops every connection, then
-  --- refresh_own and commit.
+  --- handle_cast :version_changed: refresh_own and commit, connections kept, then the
+  --- table to every connected member.
   rl [version-changed] :
     { mc(N, true, Tb, V) upgrades(s F) time(T) skew(N, K) at(N, D) C }
-    => { commit(N, mc(N, true, refresh(N, D, s V, stamp(T + K, Tb), Tb), s V)
-                   upgrades(F) time(T) skew(N, K) at(N, D) severAll(N, C)) } .
+    => { announce(N, commit(N, mc(N, true, refresh(N, D, s V, stamp(T + K, Tb), Tb), s V)
+                                upgrades(F) time(T) skew(N, K) at(N, D) C)) } .
+  op announce : Id Conf -> Conf .
+  eq announce(N, mc(N, true, Tb, V) C) = tell(N, Tb, mc(N, true, Tb, V) C) .
 
   --- init/1 after a crash: the table as saved, refresh_own and commit. Connections
   --- outlived the process, so no nodeup comes for them.
@@ -309,11 +308,11 @@ mod CLUSTER is
                    time(T) skew(N, K) at(N, D) C) } .
 
   --- Discovery connects members it does not reach; the handshake (verify_peer/3) passes
-  --- only if each side's running cluster process has the other pinned, and the cookie
-  --- only between MCs on one version. Both sides get a nodeup.
+  --- only if each side's running cluster process has the other pinned, whatever
+  --- versions they run. Both sides get a nodeup.
   crl [connect] :
-    { mc(N, true, Tb, V) mc(M, true, Tb', V) C }
-    => { link(N, M) up(N, M) up(M, N) mc(N, true, Tb, V) mc(M, true, Tb', V) C }
+    { mc(N, true, Tb, V) mc(M, true, Tb', V') C }
+    => { link(N, M) up(N, M) up(M, N) mc(N, true, Tb, V) mc(M, true, Tb', V') C }
     if N << M /\ not linked(N, M, C) /\ member(Tb[M]) /\ member(Tb'[N]) .
 
   --- environment ----------------------------------------------------------------------
@@ -445,9 +444,10 @@ mod CLUSTER-PROPS is
     if not agree(N, Tb, M, Tb') .
   eq { C } |= agreed = true [owise] .
 
-  --- Every two running MCs on one version that hold each other members are connected.
+  --- Every two running MCs that hold each other members are connected, whatever
+  --- versions they run.
   op meshed : -> Prop [ctor] .
-  ceq { mc(N, true, Tb, V) mc(M, true, Tb', V) C } |= meshed = false
+  ceq { mc(N, true, Tb, V) mc(M, true, Tb', V') C } |= meshed = false
     if N << M /\ member(Tb[M]) /\ member(Tb'[N]) /\ not linked(N, M, C) .
   eq { C } |= meshed = true [owise] .
 

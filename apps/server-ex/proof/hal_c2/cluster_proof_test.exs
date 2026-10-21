@@ -118,8 +118,8 @@ defmodule HalC2.ClusterProofTest do
         "An MC that is not a member is turned away",
         "Members find each other again after restarting",
         "A member whose cluster process restarted learns of a removal it missed",
-        "Members connect again once they run the same version",
-        "Members on different HAL-C2 versions do not connect"
+        "Members on different HAL-C2 versions connect",
+        "A member that moves to another version in place stays connected"
       ]
     }
 
@@ -140,7 +140,7 @@ defmodule HalC2.ClusterProofTest do
     end
   end
 
-  test "connected members' tables come to agree, and members on one version connect",
+  test "connected members' tables come to agree, and members connect whatever their versions",
        %{proof: proof} do
     assert_ltl(proof, "two(1, 1, 1, 1, 1, 1)", "<> [] (agreed /\\ meshed)", fair: @fair)
   end

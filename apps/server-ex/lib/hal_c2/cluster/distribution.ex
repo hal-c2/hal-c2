@@ -12,6 +12,10 @@ defmodule HalC2.Cluster.Distribution do
   alias HalC2.Cluster
   alias HalC2.Cluster.Epmd
 
+  # No secret: the pinned certificates admit members. Members on other versions
+  # connect, so one can be told what to update to and the sidebar stays whole.
+  @cookie :hal_c2
+
   @doc """
   Starts distribution as the MC `Cluster.mc_name(id)` and reports members coming and
   going to the caller: `:ok`, or `{:off, reason}` when the VM was not booted for it.
@@ -32,14 +36,14 @@ defmodule HalC2.Cluster.Distribution do
   def send(mc, message), do: GenServer.cast({Cluster, mc}, message)
 
   @doc """
-  Takes up the version this MC moved to in place: keeps the port and changes the
-  cookie, which names the version, and drops every member to find them again.
+  Takes up the version this MC moved to in place. Members stay connected: the cookie
+  is the same on every version.
   """
   def version_changed(dir) do
     # An MC updated in place from a version that kept no port has not kept its own yet.
     keep_port(dir)
-    Node.set_cookie(cookie())
-    for mc <- Node.list(), do: Node.disconnect(mc)
+    # One from a version whose cookie named the version still has that cookie.
+    Node.set_cookie(@cookie)
     :ok
   end
 
@@ -67,7 +71,7 @@ defmodule HalC2.Cluster.Distribution do
 
           if Enum.any?(Enum.uniq([Cluster.dist_port(), kept_port(dir), 0]), &listen(name, &1)) do
             keep_port(dir)
-            Node.set_cookie(cookie())
+            Node.set_cookie(@cookie)
             :ok
           else
             {:off, :distribution_failed}
@@ -93,8 +97,6 @@ defmodule HalC2.Cluster.Distribution do
 
   defp keep_port(dir),
     do: File.write!(Path.join(dir, "port"), Integer.to_string(Epmd.listen_port()))
-
-  defp cookie, do: :"hal_c2_#{HalC2.Upgrade.version()}"
 
   # The boot flags arrive in ELIXIR_ERL_OPTIONS, which programs the MC starts (an
   # agent's `mix test`) would inherit and boot with.

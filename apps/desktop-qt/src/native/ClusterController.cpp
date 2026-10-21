@@ -2,6 +2,7 @@
 
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QQmlPropertyMap>
 
@@ -77,6 +78,8 @@ bool ClusterController::handle(const QString& action, const QVariant& payload) {
       change(QStringLiteral("cluster.join"), {{QStringLiteral("link"), link}}, QStringLiteral("Joined the cluster."),
              QStringLiteral("Join failed"));
     }
+  } else if (action == QLatin1String("cluster.update")) {
+    update();
   } else if (action == QLatin1String("cluster.remove")) {
     const QString id = input.value(QStringLiteral("id")).toString();
     if (id.isEmpty()) return true;
@@ -128,6 +131,44 @@ void ClusterController::invite(bool tailscale) {
     QString text = QStringLiteral("Invite link copied; join with it on the other machine.");
     if (localOnly) text += QLatin1Char(' ') + kLocalOnlyHint;
     setNotice(localOnly ? QStringLiteral("error") : QStringLiteral("success"), text);
+  });
+}
+
+// Each connected member on another version takes the one this machine runs from it.
+// Members restart or load it in place, so the cluster is read again afterwards.
+void ClusterController::update() {
+  ++m_generation;
+  set(QStringLiteral("busy"), true);
+  call(QStringLiteral("cluster.update"), {}, [this](const QJsonValue& result, const std::optional<QString>& error) {
+    m_state.insert(QStringLiteral("busy"), false);
+    if (error) {
+      setNotice(QStringLiteral("error"), QStringLiteral("Update failed: %1").arg(*error));
+      refresh();
+      return;
+    }
+    const QJsonObject answer = result.toObject();
+    const QString version = answer.value(QLatin1String("version")).toString();
+    const QJsonArray members = answer.value(QLatin1String("members")).toArray();
+    QStringList lines;
+    bool failed = false;
+    for (const QJsonValue& value : members) {
+      const QJsonObject member = value.toObject();
+      const QString label = member.value(QLatin1String("label")).toString();
+      const QString outcome = member.value(QLatin1String("outcome")).toString();
+      if (outcome == QLatin1String("updated")) {
+        lines.append(QStringLiteral("%1 updated to %2.").arg(label, version));
+      } else if (outcome == QLatin1String("restarting on it")) {
+        lines.append(QStringLiteral("%1 is restarting on %2.").arg(label, version));
+      } else if (outcome == QLatin1String("has not finished")) {
+        lines.append(QStringLiteral("%1 is still updating.").arg(label));
+      } else {
+        failed = true;
+        lines.append(QStringLiteral("%1 could not update: %2").arg(label, outcome));
+      }
+    }
+    if (lines.isEmpty()) lines.append(QStringLiteral("Every machine already runs %1.").arg(version));
+    setNotice(failed ? QStringLiteral("error") : QStringLiteral("success"), lines.join(QLatin1Char(' ')));
+    refresh();
   });
 }
 
