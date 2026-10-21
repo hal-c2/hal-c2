@@ -383,7 +383,7 @@ defmodule HalC2Plugins.Planner.Plan do
 
       link == :error ->
         {:error,
-         "link gives in fields just one of: a pullRequest or an issue as {repository, number}."}
+         "link gives in fields just one of: a pullRequest or an issue as {repository, number, url}."}
 
       bad = op in ~w(update add) && Enum.find(Map.keys(fields), &(&1 not in @change_fields)) ->
         {:error, "#{bad} is not a field a change can set."}
@@ -425,19 +425,104 @@ defmodule HalC2Plugins.Planner.Plan do
 
   defp target("threadId", value) when is_binary(value), do: {:ok, %{"threadId" => value}}
   defp target("threadId", _value), do: :error
-  defp target(kind, value), do: with({:ok, ref} <- ref(value), do: {:ok, %{kind => ref}})
+  defp target(kind, value), do: with({:ok, ref} <- ref(value, kind), do: {:ok, %{kind => ref}})
 
   @doc """
   `{:ok, ref}` with what the plan takes of a pull request or an issue a client or an
   agent names as {repository, number}, or `:error`. The rest it gives is dropped: the
   state is GitHub's, so a link starts open and the next look reads it, and a pull
-  request linked once it merged moves its task as one seen to merge.
+  request linked once it merged moves its task as one seen to merge. A `url` stays when
+  it is a web address of that very pull request (`kind` "pullRequest") or issue
+  ("issue"; any `kind` else takes either), as it names the host a lone pull request
+  (one of a repository the MC has no checkout of) is read through (`Sync.lone_pr/2`,
+  by host alone, the port left out as the remotes of a project leave it out); whether
+  that host is one of the MC's is that read's to say. Listed pull requests and all
+  issue reads still route by repository name alone, so the same `owner/repo` on two
+  hosts is conflated there — the remaining gap. What stays is rebuilt from the
+  scheme, host and any port that is not the scheme's own, with the path made over
+  from the repository, kind and number (a deep link like `/files`, dot segments and
+  odd characters do not stay), so credentials, a
+  query and a fragment do not either, and the same pull request is always the same
+  address. A host that is an IPv6 literal keeps its brackets.
   """
-  def ref(%{"repository" => repository, "number" => number})
-      when is_binary(repository) and is_integer(number),
-      do: {:ok, %{"repository" => repository, "number" => number}}
+  def ref(value, kind \\ nil)
 
-  def ref(_value), do: :error
+  def ref(%{"repository" => repository, "number" => number} = value, kind)
+      when is_binary(repository) and is_integer(number) do
+    # A repository is `owner/name` over GitHub's small charset (the shape
+    # `HalC2.PullRequests.parse_remote/1` encodes, a leading dot or underscore
+    # included, as in `owner/.github`); anything else would be interpolated
+    # verbatim into the rebuilt address, and a `.` or `..` segment is no name.
+    if repository?(repository) do
+      ref = %{"repository" => repository, "number" => number}
+
+      case web_url(value["url"], repository, number, kind) do
+        nil -> {:ok, ref}
+        url -> {:ok, Map.put(ref, "url", url)}
+      end
+    else
+      :error
+    end
+  end
+
+  def ref(_value, _kind), do: :error
+
+  defp repository?(repository) do
+    case String.split(repository, "/") do
+      [owner, name] -> repository_segment?(owner) and repository_segment?(name)
+      _ -> false
+    end
+  end
+
+  defp repository_segment?(segment),
+    do: segment not in [".", ".."] and String.match?(segment, ~r/\A[A-Za-z0-9._-]+\z/)
+
+  # A host worth storing: a name of `[a-z0-9-]` labels (an IPv4 literal is
+  # one), or an IPv6 literal that parses as an address, without a zone, which
+  # `URI.parse/1` would otherwise mangle. Anything else stays no address at all.
+  defp host?(host) when is_binary(host) do
+    if String.contains?(host, ":") do
+      match?({:ok, {_, _, _, _, _, _, _, _}}, :inet.parse_address(String.to_charlist(host)))
+    else
+      host
+      |> String.split(".")
+      |> Enum.all?(&String.match?(&1, ~r/\A[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\z/))
+    end
+  end
+
+  defp host?(_host), do: false
+
+  defp web_url(url, repository, number, kind) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host, port: port, path: path} = uri
+      when scheme in ["http", "https"] and host not in [nil, ""] and is_binary(path) and
+             port in 1..65_535 ->
+        name = Regex.escape(String.downcase(repository))
+        segment = %{"pullRequest" => "pull", "issue" => "issues"}[kind] || "pull|issues"
+
+        case Regex.run(~r{\A/#{name}/(#{segment})/#{number}(/|\z)}, String.downcase(path)) do
+          [_, found | _] ->
+            host = host |> String.downcase() |> String.trim_trailing(".")
+
+            if host?(host) and not String.contains?(uri.authority || "", "%") do
+              URI.to_string(%URI{
+                scheme: scheme,
+                host: host,
+                port: port,
+                path: "/#{repository}/#{found}/#{number}"
+              })
+            end
+
+          nil ->
+            nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp web_url(_url, _repository, _number, _kind), do: nil
 
   @doc """
   `{items, changes}` with the changes the user kept applied in order, each marked
@@ -538,26 +623,78 @@ defmodule HalC2Plugins.Planner.Plan do
   def link(item, %{"pullRequest" => %{"repository" => repository, "number" => number} = ref}, now) do
     prs = item["pullRequests"] || []
 
-    if Enum.any?(prs, &same_ref?(&1, ref)) do
-      item
-    else
-      pr = %{
-        "repository" => repository,
-        "number" => number,
-        "url" => ref["url"] || "https://github.com/#{repository}/pull/#{number}",
-        "title" => ref["title"],
-        "state" => ref["state"] || "open"
-      }
+    # A link made again with the address of the host serving it corrects the address
+    # stored before links kept it, which is github.com's whatever the host.
+    case Enum.find_index(prs, &same_ref?(&1, ref)) do
+      nil ->
+        pr = %{
+          "repository" => repository,
+          "number" => number,
+          "url" => ref["url"] || "https://github.com/#{repository}/pull/#{number}",
+          "title" => ref["title"],
+          "state" => ref["state"] || "open"
+        }
 
-      %{item | "pullRequests" => prs ++ [pr], "updatedAt" => now}
+        %{item | "pullRequests" => prs ++ [pr], "updatedAt" => now}
+
+      at ->
+        url = ref["url"]
+        stored = Enum.at(prs, at)
+
+        if url && stored["url"] != url do
+          # A correcting address on another host names a different pull request, so
+          # what the old host's look stored of it does not carry over: the next look
+          # reads it again on the host that serves it now.
+          corrected =
+            if host_of(url) != host_of(stored["url"]),
+              do: %{"url" => url, "state" => "open", "title" => nil},
+              else: %{"url" => url}
+
+          %{
+            item
+            | "pullRequests" => List.update_at(prs, at, &Map.merge(&1, corrected)),
+              "updatedAt" => now
+          }
+        else
+          item
+        end
     end
   end
 
   # The issue a task has already keeps what its looks last saw of it, so a closed one
-  # linked again does not read as newly closed.
+  # linked again does not read as newly closed — unless the correcting address moves
+  # it to another host, where that state described a different issue.
   def link(item, %{"issue" => %{"repository" => repository, "number" => number} = ref}, now) do
     if same_ref?(item["issue"], ref) do
-      item
+      url = ref["url"]
+
+      if url && item["issue"]["url"] != url do
+        # As with a pull request: another host names a different issue, so what the
+        # old host's look stored of it does not carry over — the issue's own state
+        # and milestone, and the item's board row, failure and synced snapshot.
+        if host_of(url) != host_of(item["issue"]["url"]) do
+          corrected = %{
+            "url" => url,
+            "state" => "open",
+            "stateReason" => nil,
+            "title" => nil,
+            "milestone" => nil
+          }
+
+          stale = %{"boardItemId" => nil, "syncError" => nil, "synced" => nil}
+
+          item
+          |> Map.merge(stale)
+          |> Map.merge(%{
+            "issue" => Map.merge(item["issue"], corrected),
+            "updatedAt" => now
+          })
+        else
+          %{item | "issue" => Map.merge(item["issue"], %{"url" => url}), "updatedAt" => now}
+        end
+      else
+        item
+      end
     else
       issue = %{
         "repository" => repository,
@@ -574,6 +711,18 @@ defmodule HalC2Plugins.Planner.Plan do
   end
 
   def link(item, _fields, _now), do: item
+
+  defp host_of(url) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{host: host} when is_binary(host) ->
+        host |> String.downcase() |> String.trim_trailing(".")
+
+      _ ->
+        nil
+    end
+  end
+
+  defp host_of(_url), do: nil
 
   @doc """
   `:ok` when the task `id` of `items` may be linked as `fields` say, or `{:error, message}`
