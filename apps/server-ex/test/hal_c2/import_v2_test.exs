@@ -181,6 +181,41 @@ defmodule HalC2.Import.V2Test do
     assert count == elem(tail, 0) + 2_000 + 1
   end
 
+  # A clean resume with more than a batch left after the skip re-checks the tail
+  # before each later batch, so it must expect the tail its own batches left.
+  @tag :tmp_dir
+  test "a resume with several batches left stores what one import stores", %{tmp_dir: dir} do
+    events = many_events(5_000)
+    whole = Path.join(dir, "whole.sqlite")
+    write_node_log(whole, events)
+
+    one =
+      start_supervised!({HalC2.Store, path: Path.join(dir, "one.sqlite"), name: nil}, id: :one)
+
+    assert {:ok, _} = HalC2.Import.V2.run(whole, one, only: ["thread-1"])
+
+    source = Path.join(dir, "node.sqlite")
+    write_node_log(source, Enum.take(events, 10))
+
+    store =
+      start_supervised!({HalC2.Store, path: Path.join(dir, "resumed.sqlite"), name: nil},
+        id: :resumed
+      )
+
+    assert {:ok, _} = HalC2.Import.V2.run(source, store, only: ["thread-1"])
+    tail = HalC2.Store.stream_tail(HalC2.Store.path(store), "thread-1")
+    append_node_log(source, Enum.drop(events, 10))
+
+    assert {:ok, _} =
+             HalC2.Import.V2.run(source, store,
+               only: ["thread-1"],
+               resume: %{"thread-1" => tail}
+             )
+
+    assert changes(HalC2.Store.path(store), "thread-1") ==
+             changes(HalC2.Store.path(one), "thread-1")
+  end
+
   @tag :tmp_dir
   test "a resume naming a stream the source no longer has at all is refused", %{tmp_dir: dir} do
     source = Path.join(dir, "node.sqlite")
