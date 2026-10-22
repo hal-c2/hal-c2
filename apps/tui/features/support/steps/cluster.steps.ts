@@ -152,7 +152,7 @@ step("settings show the invite link", async (ctx: World) => {
 step("the user is warned that only this machine can open the invite", async (ctx: World) => {
   await settle(ctx);
   const status = ctx.host!.state.get("status") as { kind: string; text: string };
-  expect(status.kind).toBe("error");
+  expect(status.kind).toBe("warning");
   expect(status.text).toContain(LOCAL_ONLY_HINT);
 });
 

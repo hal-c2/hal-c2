@@ -679,7 +679,7 @@ export function createTerminalController(options: TerminalControllerOptions): Te
       }
       if (options.copyToClipboard(text))
         store.setStatus("Terminal copied to clipboard.", "success");
-      else store.setStatus("Clipboard not supported by this terminal.", "error");
+      else store.setStatus("Clipboard not supported by this terminal.", "warning");
     },
     input: (data) => {
       const pane = activePane();
@@ -699,7 +699,7 @@ export function createTerminalController(options: TerminalControllerOptions): Te
       let tabs = updateTabs(thread.threadId, (current) => current ?? initialTabs())!;
       if (busy.has(paneKey(thread.threadId, tabs.activeId))) {
         if (tabs.ids.length >= MAX_TERMINALS_PER_THREAD) {
-          store.setStatus(`At most ${MAX_TERMINALS_PER_THREAD} terminals per thread.`, "error");
+          store.setStatus(`At most ${MAX_TERMINALS_PER_THREAD} terminals per thread.`, "warning");
           return true;
         }
         tabs = updateTabs(thread.threadId, (current) => addTab(current))!;

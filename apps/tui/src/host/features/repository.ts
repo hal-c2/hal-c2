@@ -293,7 +293,7 @@ export function createRepositoryFeature(kit: FeatureKit): Feature {
           (provider) => provider.status === "available" && provider.auth.status === "authenticated",
         );
         if (signedIn.length === 0) {
-          kit.status("No source provider is signed in on the server.", "error");
+          kit.status("No source provider is signed in on the server.", "warning");
           return;
         }
         const askRepository = (provider: SourceControlProviderKind) =>
