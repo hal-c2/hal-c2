@@ -57,10 +57,11 @@ defmodule HalC2.HomeLock do
   MC updated in place takes it now. Refused, the service fails to start, which asks
   for a restart; the restarted MC waits for the lock at boot.
   """
-  def child_spec(_opts), do: %{id: __MODULE__, start: {__MODULE__, :start_link, []}}
+  def child_spec(opts), do: %{id: __MODULE__, start: {__MODULE__, :start_link, [opts]}}
 
-  def start_link do
-    case acquire() do
+  @doc false
+  def start_link(opts \\ []) do
+    case acquire(Keyword.take(opts, [:path])) do
       :ok -> :ignore
       {:error, :held} -> {:error, :home_held}
     end
