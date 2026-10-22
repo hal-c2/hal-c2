@@ -1,0 +1,127 @@
+// What tests/prop/tst_PairingExchangeProp.cpp could not reach in readInvitation.
+
+#include <QtTest>
+
+#include "PairingExchange.h"
+
+namespace {
+
+QString wrapped(const QString& link) { return QStringLiteral("hal-c2://pair?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(link)); }
+
+// A pairing link of `size` characters or a little over.
+QString linkOf(qsizetype size) {
+  QString link = QStringLiteral("https://mc.example.test:8443/pair?");
+  while (link.size() < size) link += QStringLiteral("&a=b");
+  return link + QStringLiteral("#token=abc");
+}
+
+// A pairing link of exactly `size` UTF-16 units.
+QString linkOfExactly(qsizetype size, QChar padding = QLatin1Char('a')) {
+  const QString head = QStringLiteral("https://mc.example.test/pair?p=");
+  const QString tail = QStringLiteral("#token=abc");
+  return head + QString(size - head.size() - tail.size(), padding) + tail;
+}
+
+}  // namespace
+
+class PairingExchangeRegression : public QObject {
+  Q_OBJECT
+
+private slots:
+  // The cap on an invitation's length counted the app's own link, which holds
+  // the pairing link percent-encoded: a link of 1500 characters is some 3000
+  // wrapped, and was turned away for being too long.
+  void aLinkWithinTheCapIsReadWrappedToo() {
+    const QString link = linkOf(1500);
+    QVERIFY(wrapped(link).size() > 2048);
+    const auto plain = pairing::readInvitation(link);
+    QVERIFY(plain);
+    QCOMPARE(plain->link, link);
+    const auto carried = pairing::readInvitation(wrapped(link));
+    QVERIFY(carried);
+    QCOMPARE(carried->link, link);
+    QCOMPARE(carried->address, plain->address);
+  }
+
+  // The cap counts UTF-16 units of the link, and percent-encoding runs on its
+  // UTF-8 bytes: a link of 847 units is some 7,300 wrapped.
+  void aLinkOfWideCharactersIsReadWrappedToo() {
+    const QString link = QStringLiteral("https://mc.example.test/pair?padding=") + QString(800, QChar(0x754C)) + QStringLiteral("#token=abc");
+    QVERIFY(link.size() < 2048);
+    QVERIFY(wrapped(link).size() > 3 * 2048 + 64);
+    const auto plain = pairing::readInvitation(link);
+    QVERIFY(plain);
+    const auto carried = pairing::readInvitation(wrapped(link));
+    QVERIFY(carried);
+    QCOMPARE(carried->link, link);
+  }
+
+  // Both caps meet: a link at the cap whose every character is three UTF-8
+  // bytes wraps to some 18,000 characters, which the wrapper's cap still reads.
+  void aLinkAtTheCapOfWideCharactersIsReadWrappedToo() {
+    const QString link = linkOfExactly(2048, QChar(0x754C));
+    QCOMPARE(link.size(), 2048);
+    QVERIFY(wrapped(link).size() > 8 * 2048);
+    const auto carried = pairing::readInvitation(wrapped(link));
+    QVERIFY(carried);
+    QCOMPARE(carried->link, link);
+  }
+
+  // Surrogate pairs cost two units and twelve characters once encoded, so six
+  // a unit, under the nine the longest wrapped link allows for.
+  void aLinkOfSurrogatePairsIsReadWrappedToo() {
+    QString padding;
+    for (int i = 0; i < 1000; ++i) padding += QStringLiteral("\U0001F600");
+    const QString link = QStringLiteral("https://mc.example.test/pair?padding=") + padding + QStringLiteral("#token=abc");
+    QVERIFY(link.size() > 2000 && link.size() <= 2048);
+    QVERIFY(pairing::readInvitation(link));
+    const auto carried = pairing::readInvitation(wrapped(link));
+    QVERIFY(carried);
+    QCOMPARE(carried->link, link);
+  }
+
+  // The cap is on the link's length in UTF-16 units: exactly the cap is read,
+  // plain or wrapped, and one unit over is turned away either way.
+  void theCapIsExact() {
+    const QString atCap = linkOfExactly(2048);
+    QCOMPARE(atCap.size(), 2048);
+    QVERIFY(pairing::readInvitation(atCap));
+    QVERIFY(pairing::readInvitation(wrapped(atCap)));
+    const QString overCap = linkOfExactly(2049);
+    QCOMPARE(overCap.size(), 2049);
+    QVERIFY(!pairing::readInvitation(overCap));
+    QVERIFY(!pairing::readInvitation(wrapped(overCap)));
+  }
+
+  // The cap on the link itself holds whether or not it is wrapped.
+  void aLinkOverTheCapIsTurnedAwayWrappedOrNot() {
+    const QString link = linkOf(2100);
+    QVERIFY(!pairing::readInvitation(link));
+    QVERIFY(!pairing::readInvitation(wrapped(link)));
+  }
+
+  // The wrapper's cap is exact too: 9 * 2048 + 64 characters are read, one more is
+  // turned away. The padding is a query item beside the carried link, so the link
+  // is within its cap either way and only the wrapper's cap can tell them apart.
+  void theWrapperCapIsExact() {
+    constexpr qsizetype kLongestWrapped = 9 * 2048 + 64;
+    const QString head = wrapped(linkOf(1500)) + QStringLiteral("&pad=");
+    QVERIFY(head.size() < kLongestWrapped);
+    const QString atCap = head + QString(kLongestWrapped - head.size(), QLatin1Char('a'));
+    QCOMPARE(atCap.size(), kLongestWrapped);
+    QVERIFY(pairing::readInvitation(atCap));
+    QVERIFY(!pairing::readInvitation(atCap + QLatin1Char('a')));
+  }
+
+  // The wrapper has a cap of its own, so that nothing is decoded however long.
+  // The padding is outside the carried link, which stays within its cap, so
+  // only the wrapper's cap can turn it away.
+  void aWrapperBeyondAnyLinkIsTurnedAway() {
+    const QString link = linkOf(1500);
+    QVERIFY(pairing::readInvitation(wrapped(link)));
+    QVERIFY(!pairing::readInvitation(wrapped(link) + QStringLiteral("&pad=") + QString(20000, QLatin1Char('a'))));
+  }
+};
+
+QTEST_GUILESS_MAIN(PairingExchangeRegression)
+#include "tst_PairingExchangeRegression.moc"

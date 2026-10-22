@@ -97,6 +97,7 @@ const FakeMc::Extension extension([](FakeMc& mc) {
   });
   // By name; `kind` narrows to files or folders.
   mc.onRpc(QStringLiteral("projects.searchEntries"), [&mc](const FakeMc::Rpc& rpc) {
+    ++fakeFiles(mc).searches;
     const auto answer = [&mc, rpc] {
       FakeFiles& fake = fakeFiles(mc);
       const QString query = rpc.payload.value(QLatin1String("query")).toString();

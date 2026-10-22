@@ -2,8 +2,11 @@ defmodule HalC2.MuseRuntimePropTest do
   @moduledoc """
   A state machine over one supervised Muse Code thread (`HalC2.Muse.ThreadRuntime`)
   driven through the orchestration commands a client sends: send a message whose turn
-  replies, runs until stopped, asks to run a command (once, or for two requirements in
-  turn) or asks a question; steer the running turn; approve or decline the command;
+  replies, runs until stopped, starts a subagent (reported in progress, in a state of
+  Muse's own the runtime does not know, or finishing before the turn does) and runs
+  until stopped, asks to run a
+  command (once, or for two requirements in turn) or asks a question; steer the running
+  turn; approve or decline the command;
   answer the question; interrupt the
   turn; crash the runtime mid-turn; have `muse serve` exit under it, idle or mid-turn;
   release the idle thread's session as IdleSessions does.
@@ -13,8 +16,10 @@ defmodule HalC2.MuseRuntimePropTest do
   seen, so the model checks the thread continues one Muse session across crashes and
   releases. After each command the test waits on the thread's stream until the turn
   reached the point the fake stops at (a reply, a pending request, or the end of the
-  runs the command ended) and compares the runs, the pending request and the replies
-  with the model.
+  runs the command ended) and compares the runs, the pending request, the replies and
+  the thread's subagents with the model: a subagent a turn started ends with that turn,
+  whatever ended it (the interim #447 records changing for completed turns, whose
+  subagents upstream keeps as background work; the model changes with it).
   """
 
   use ExUnit.Case, async: false
@@ -32,6 +37,51 @@ defmodule HalC2.MuseRuntimePropTest do
 
   @turns [
     %{"match" => "wait", "steps" => [%{"text" => "Working on it."}, %{"waitInterrupt" => true}]},
+    %{
+      "match" => "delegate",
+      "steps" => [
+        # Muse names items within a turn: every turn's subagent has the same id.
+        %{
+          "subagent" => %{
+            "objective" => "Look around",
+            "progress" => "Looking",
+            "itemId" => "item-look"
+          }
+        },
+        %{"text" => "Working on it."},
+        %{"waitInterrupt" => true}
+      ]
+    },
+    %{
+      "match" => "finish",
+      "steps" => [
+        %{
+          "subagent" => %{
+            "objective" => "Look around",
+            "progress" => "Looking",
+            "answer" => "All clear.",
+            "itemId" => "item-look"
+          }
+        },
+        %{"text" => "Working on it."},
+        %{"waitInterrupt" => true}
+      ]
+    },
+    %{
+      "match" => "hold",
+      "steps" => [
+        %{
+          "subagent" => %{
+            "objective" => "Look around",
+            "progress" => "Waiting for a slot",
+            "progressStatus" => "queued",
+            "itemId" => "item-look"
+          }
+        },
+        %{"text" => "Working on it."},
+        %{"waitInterrupt" => true}
+      ]
+    },
     %{"match" => "shell", "steps" => [%{"shell" => "npm test"}, %{"text" => "Ran it."}]},
     %{
       "match" => "guarded",
@@ -110,21 +160,32 @@ defmodule HalC2.MuseRuntimePropTest do
   # --- model ----------------------------------------------------------------------
 
   # runs: [{msg, status}] in the order they were made;
-  # turn: the running turn's %{msg, kind}, kind :wait | :shell | :ask, :guarded for a
+  # subs: [{msg, status}] the subagent each :delegate, :hold or :finish turn started,
+  # with its status (a :finish turn's already completed while the turn runs on);
+  # turn: the running turn's %{msg, kind}, kind :wait | :delegate | :hold | :finish | :shell | :ask, :guarded for a
   # command with two requirements (:shell once the first is approved), or :workflow for a
   # workflow child's :guarded command;
   # mode: the thread's runtime mode; full access runs every command without asking;
   # history: what Muse's session has been sent, oldest first;
   # replies: the replies naming that history, in order.
   def initial_state,
-    do: %{runs: [], turn: nil, history: [], replies: [], next: 1, mode: "approval-required"}
+    do: %{
+      runs: [],
+      subs: [],
+      turn: nil,
+      history: [],
+      replies: [],
+      next: 1,
+      mode: "approval-required"
+    }
 
   def command(%{turn: turn, next: next}) do
     msg = "m#{next}"
 
     idle = [
       {6,
-       {:call, __MODULE__, :send, [msg, oneof([:say, :wait, :shell, :guarded, :workflow, :ask])]}},
+       {:call, __MODULE__, :send,
+        [msg, oneof([:say, :wait, :delegate, :hold, :finish, :shell, :guarded, :workflow, :ask])]}},
       {1, {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access))]}},
       {1, {:call, __MODULE__, :release, []}},
       {1, {:call, __MODULE__, :host_exit, []}}
@@ -140,7 +201,7 @@ defmodule HalC2.MuseRuntimePropTest do
           nil ->
             []
 
-          :wait ->
+          kind when kind in [:wait, :delegate, :hold, :finish] ->
             [{3, {:call, __MODULE__, :steer, [msg]}}]
 
           kind when kind in [:shell, :guarded, :workflow] ->
@@ -162,7 +223,8 @@ defmodule HalC2.MuseRuntimePropTest do
   def precondition(%{turn: turn}, {:call, _, fun, _}) when fun in [:send, :release, :set_mode],
     do: turn == nil
 
-  def precondition(%{turn: turn}, {:call, _, :steer, _}), do: match?(%{kind: :wait}, turn)
+  def precondition(%{turn: turn}, {:call, _, :steer, _}),
+    do: match?(%{kind: k} when k in [:wait, :delegate, :hold, :finish], turn)
 
   def precondition(%{turn: turn}, {:call, _, :approve, [last?]}),
     do:
@@ -190,6 +252,24 @@ defmodule HalC2.MuseRuntimePropTest do
         reply = "Reply to #{text} after [#{Enum.join(state.history -- [text], " | ")}]"
         %{state | runs: state.runs ++ [{msg, "completed"}], replies: state.replies ++ [reply]}
 
+      kind when kind in [:delegate, :hold] ->
+        %{
+          state
+          | runs: state.runs ++ [{msg, "running"}],
+            subs: state.subs ++ [{msg, "running"}],
+            turn: %{msg: msg, kind: kind}
+        }
+
+      # Its subagent answered before the turn settled where the fake waits, so it is
+      # already completed while the turn runs on.
+      :finish ->
+        %{
+          state
+          | runs: state.runs ++ [{msg, "running"}],
+            subs: state.subs ++ [{msg, "completed"}],
+            turn: %{msg: msg, kind: kind}
+        }
+
       _ ->
         %{state | runs: state.runs ++ [{msg, "running"}], turn: %{msg: msg, kind: kind}}
     end
@@ -214,9 +294,24 @@ defmodule HalC2.MuseRuntimePropTest do
   def next_state(%{turn: nil} = state, _result, {:call, _, :host_exit, _}), do: state
   def next_state(state, _result, {:call, _, :host_exit, _}), do: end_turn(state, "failed")
 
+  # Interim (#447): a subagent the turn ends before it answers is interrupted, even
+  # by a turn that completed; one that already answered keeps its completed status
+  # whatever ends the turn (a steer after it, an interrupt, a crash, the host going).
   defp end_turn(%{turn: %{msg: msg}} = state, status) do
-    runs = Enum.map(state.runs, fn {m, s} -> if m == msg, do: {m, status}, else: {m, s} end)
-    %{state | runs: runs, turn: nil}
+    ended = fn status -> fn {m, s} -> if m == msg, do: {m, status}, else: {m, s} end end
+    sub_status = if status == "completed", do: "interrupted", else: status
+
+    sub_ended = fn
+      {m, "running"} when m == msg -> {m, sub_status}
+      entry -> entry
+    end
+
+    %{
+      state
+      | runs: Enum.map(state.runs, ended.(status)),
+        subs: Enum.map(state.subs, sub_ended),
+        turn: nil
+    }
   end
 
   def postcondition(state, call, {reply, projection}) do
@@ -230,7 +325,8 @@ defmodule HalC2.MuseRuntimePropTest do
           %{kind: :ask} -> "user_input"
           _ -> nil
         end,
-      replies: model.replies
+      replies: model.replies,
+      subs: model.subs
     }
 
     reply == :ok and projection == expected
@@ -398,8 +494,18 @@ defmodule HalC2.MuseRuntimePropTest do
 
   def release do
     case Orchestration.release_session(@tid) do
-      :ok -> reply({:ok, %{}}, [])
-      :busy -> reply({:error, :busy}, [])
+      :ok ->
+        # Released means gone from the registry too, not only dead: the next message
+        # looks the session up first.
+        case Registry.lookup(HalC2.Muse.Registry, @tid) do
+          [] -> :ok
+          held -> raise("the released session of #{@tid} is still registered: #{inspect(held)}")
+        end
+
+        reply({:ok, %{}}, [])
+
+      :busy ->
+        reply({:error, :busy}, [])
     end
   end
 
@@ -501,6 +607,13 @@ defmodule HalC2.MuseRuntimePropTest do
           m <- state |> StreamState.list("message") |> Enum.sort_by(& &1["createdAt"]),
           m["role"] == "assistant" and String.starts_with?(m["text"] || "", "Reply to"),
           do: m["text"]
+        ),
+      subs:
+        for(
+          run <- runs(state),
+          sub <- StreamState.list(state, "subagent"),
+          sub["runId"] == run["id"],
+          do: {run["userMessageId"], sub["status"]}
         )
     }
   end

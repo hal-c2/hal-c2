@@ -25,8 +25,18 @@ defmodule HalC2.Pi.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
-  @state_version 1
+  @state_version 3
   @registry HalC2.Pi.Registry
+
+  # How long a call to Pi waits on its answer; the session's stats, read as a turn
+  # settles, wait less, so a slow Pi does not hold the turn's end.
+  @call_ms 60_000
+  @stats_ms 2_000
+  # Pi does not bound its answer to a steer, so the runtime gives it this long and
+  # then takes it as taken (`steer_timeout/2`): a little over the 30s Codex gives a
+  # steer, so one Pi is merely slow to answer is not cut off sooner than another
+  # provider's would be.
+  @steer_answer_ms 33_000
 
   @spec start_turn(String.t(), map) :: :ok
   def start_turn(thread_id, turn),
@@ -43,15 +53,30 @@ defmodule HalC2.Pi.ThreadRuntime do
   @doc """
   A `prompt` with `streamingBehavior: "steer"`, built from `%{text, attachments}`
   like a turn's: Pi delivers it before the running turn's next model call, or
-  starts a run if the turn settled meanwhile.
+  starts a run if the turn settled meanwhile. Either way the turn ends at the
+  `agent_settled` after Pi's answer to the steer, so new work it started is the turn's.
+  Returns once Pi answered: its refusal is the error. A refusal that ends the turn
+  returns once the turn is recorded (`settle/1`), so the wait covers Pi's answer and that.
+  A steer Pi has not answered in its answer budget is taken as taken: Pi still holds it,
+  and may act on it, so the message is the turn's.
+
+  The wait has no budget of its own. A refusal can be held behind steers sent
+  after this one (`steered/3`), each with its own answer budget, and then
+  behind the turn's settling, so no fixed caller timeout can outlast every
+  staggered pair — one that expired would report a refused steer as taken.
+  Every steer is eventually replied (answered, taken on its answer timer,
+  released with the held refusals, or answered as the turn ends), and a
+  runtime that stops surfaces as this call's exit, as it did before.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active Pi turn in this thread"}
-      pid -> GenServer.call(pid, {:steer, run_id, message})
+      pid -> GenServer.call(pid, {:steer, run_id, message}, :infinity)
     end
   end
+
+  defp steer_answer_ms, do: Application.get_env(:hal_c2, :pi_steer_answer_ms, @steer_answer_ms)
 
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def respond(thread_id, request_id, response) do
@@ -125,7 +150,16 @@ defmodule HalC2.Pi.ThreadRuntime do
        # Open dialogs: request id -> {:confirm, ui id, key} | {:question, ui id, native}.
        requests: %{},
        # Confirmations the user allowed for the session.
-       allowed: MapSet.new()
+       allowed: MapSet.new(),
+       # Steers Pi has not answered yet (`Connection.request/5`), labelled
+       # `{caller, timer}` (`steer_timeout/2`), and whether Pi settled while one was out
+       # and nothing it took has started since.
+       steers: :gen_server.reqids_new(),
+       settled: false,
+       # Callers of steers Pi refused while that settle waits on other steers, or left
+       # unanswered as it exited, with their answers: they hear once the turn ends, or
+       # runs on (`steered/3`).
+       refused: []
      }}
   end
 
@@ -163,8 +197,15 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
-  def handle_call(:release, _from, %{turn: nil} = state),
-    do: {:stop, {:shutdown, :released}, :ok, state}
+  # It leaves the registry before it answers: the registry drops a dead runtime's key
+  # only when it gets to its exit, so a lookup right after the release would find a pid
+  # that is gone. `terminate/2` runs after that, with the key free: a turn may start a
+  # new runtime meanwhile, so for a moment two run for the thread, and nothing in
+  # `terminate/2` may count on having the thread to itself.
+  def handle_call(:release, _from, %{turn: nil} = state) do
+    Registry.unregister(@registry, state.thread_id)
+    {:stop, {:shutdown, :released}, :ok, state}
+  end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
 
@@ -176,19 +217,18 @@ defmodule HalC2.Pi.ThreadRuntime do
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
 
   # A `/compact` turn is not a prompt Pi can steer.
-  def handle_call({:steer, run_id, steer}, _from, %{turn: turn, compact: nil} = state)
+  # Its caller hears once Pi answered (`steered/3`).
+  def handle_call({:steer, run_id, steer}, from, %{turn: turn, compact: nil} = state)
       when turn != nil and not state.interrupted and turn.ids.run == run_id do
     message =
       steer.text
       |> HalC2.Pi.expand_skills(state.skills)
       |> HalC2.Attachments.prompt_text(steer.attachments)
 
-    Connection.notify(state.conn, "prompt", %{
-      "message" => message,
-      "streamingBehavior" => "steer"
-    })
-
-    {:reply, :ok, state}
+    params = %{"message" => message, "streamingBehavior" => "steer"}
+    label = {from, Process.send_after(self(), {:steer_timeout, from}, steer_answer_ms())}
+    steers = Connection.request(state.conn, "prompt", params, label, state.steers)
+    {:noreply, %{state | steers: steers}}
   end
 
   def handle_call({:steer, _run_id, _message}, _from, state),
@@ -288,12 +328,30 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
-    state = if state.turn, do: end_turn(state, "failed", "Pi exited unexpectedly"), else: state
+    # With a turn open, `end_turn/3` already answered every outstanding steer;
+    # without one there should be none, but answer any left rather than drop them.
+    state =
+      if state.turn,
+        do: end_turn(state, "failed", "Pi exited unexpectedly"),
+        else: %{state | steers: unanswered(state.steers, "failed")}
+
     {:noreply, %{state | conn: nil, compact: nil}}
   end
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
-  def handle_info(_other, state), do: {:noreply, state}
+
+  def handle_info({:steer_timeout, from}, state), do: {:noreply, steer_timeout(state, from)}
+
+  def handle_info(message, state) do
+    case :gen_server.check_response(message, state.steers, true) do
+      {reply, {from, timer}, steers} ->
+        Process.cancel_timer(timer)
+        {:noreply, steered(%{state | steers: steers}, from, reply)}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
 
   @impl true
   def terminate(_reason, state) do
@@ -306,6 +364,22 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # Every older state shape migrates forward here.
   defp migrate(%{v: @state_version} = state), do: state
+
+  defp migrate(%{v: 1} = state),
+    do: state |> Map.merge(%{v: 2, steers: :gen_server.reqids_new(), settled: false}) |> migrate()
+
+  # Steers out at the upgrade get their answer budget from now.
+  defp migrate(%{v: 2} = state) do
+    steers =
+      for {request, from} <- :gen_server.reqids_to_list(state.steers),
+          reduce: :gen_server.reqids_new() do
+        steers ->
+          timer = Process.send_after(self(), {:steer_timeout, from}, steer_answer_ms())
+          :gen_server.reqids_add(request, {from, timer}, steers)
+      end
+
+    Map.merge(state, %{v: 3, steers: steers, refused: []})
+  end
 
   # --- session -------------------------------------------------------------------
 
@@ -344,7 +418,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp fork_first(_state, turn), do: {:ok, turn}
 
   defp cut(_conn, nil), do: {:ok, nil}
-  defp cut(conn, entry), do: Connection.call(conn, "fork", %{"entryId" => entry}, 60_000)
+  defp cut(conn, entry), do: Connection.call(conn, "fork", %{"entryId" => entry}, @call_ms)
 
   # HAL-C2's extension reads the access mode when Pi starts, so a new mode is a new Pi.
   defp open(%{conn: conn, instance: instance, mode: mode} = state, turn)
@@ -414,7 +488,7 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   defp remember_model(state, _model), do: state
 
-  defp call(state, type, params), do: Connection.call(state.conn, type, params, 60_000)
+  defp call(state, type, params), do: Connection.call(state.conn, type, params, @call_ms)
 
   # "Pi default" leaves the model to the user's own Pi settings.
   defp select_model(state, model)
@@ -631,7 +705,13 @@ defmodule HalC2.Pi.ThreadRuntime do
     dialog(method, ui_id, request, state)
   end
 
-  defp event("agent_settled", _event, %{compact: nil} = state), do: settle(state)
+  # A steer Pi has not answered may have reached it after this settle, and start new
+  # work: the turn waits for the answer (`steered/3`). An interrupted turn ends here.
+  defp event("agent_settled", _event, %{compact: nil} = state) do
+    if state.interrupted or :gen_server.reqids_size(state.steers) == 0,
+      do: settle(state),
+      else: %{state | settled: true}
+  end
 
   defp event(_type, _event, state), do: state
 
@@ -815,6 +895,96 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # --- end of turn -----------------------------------------------------------------
 
+  # Pi's answer to a steer, which its caller hears. One it took joins the running work,
+  # or starts new work that settles after this answer, so the refusals held for that
+  # settle are heard now, while the turn runs. One it refused starts nothing, so a settle
+  # that waited on it alone ends the turn now, before the caller hears the refusal: it
+  # finds the turn over and sends the message on its own (`HalC2.Orchestration`). A
+  # refusal while the settle waits on other steers is held until they are answered, and
+  # a steer Pi exited without answering until its exit ends the turn (`:EXIT`).
+  defp steered(state, from, reply) do
+    {answer, gone?} =
+      case reply do
+        {:reply, {:ok, _}} -> {:ok, false}
+        {:reply, {:error, :closed}} -> {{:error, "Pi exited"}, true}
+        {:reply, {:error, reason}} -> {{:error, format(reason)}, false}
+        # The connection itself is gone.
+        {:error, _down} -> {{:error, "Pi exited"}, true}
+      end
+
+    held? =
+      state.turn != nil and
+        (gone? or (state.settled and :gen_server.reqids_size(state.steers) > 0))
+
+    cond do
+      answer == :ok ->
+        GenServer.reply(from, :ok)
+        refusals(%{state | settled: false})
+
+      held? ->
+        %{state | refused: [{from, answer} | state.refused]}
+
+      true ->
+        state = settle_held(state)
+        # A turn the user stopped keeps the message, as `unanswered/2` keeps an
+        # unanswered steer's: an error here would find the run interrupted (the
+        # settle above may have recorded it) and send the message on its own.
+        GenServer.reply(from, if(state.interrupted, do: :ok, else: answer))
+        state
+    end
+  end
+
+  # A steer Pi has not answered in its budget is taken as taken, as a Codex steer whose
+  # answer is late is (`HalC2.Orchestration`): Pi still holds it and may act on it, so
+  # its message is the turn's. A settle that waited on it alone ends the turn now, and
+  # Pi's late answer is dropped. Unlike an answered steer (`steered/3`), a timed-out
+  # one does not clear `settled` or release the held refusals while other steers are
+  # still out. Dropping it here also abandons its entry in the connection's pending
+  # map (and the `send_request` monitor on it) until Pi answers or its process
+  # exits — one entry per timed-out steer for the connection's lifetime, the same
+  # deliberate cost the ACP runtime spells out above its `answer/3`. An answer
+  # proves Pi took the steer into work that settles again; a timeout proves
+  # nothing, so the owed settle stays. The held refusals then hear
+  # once the last steer out resolves (each bounded by its own answer timer, an
+  # answer, or Pi's exit), which is the first moment it is known whether the turn
+  # ended — releasing them sooner would tell a declined steer's sender it was
+  # refused while the run still shows active, and it would not be sent on its own.
+  defp steer_timeout(state, from) do
+    {late, others} =
+      state.steers
+      |> :gen_server.reqids_to_list()
+      |> Enum.split_with(&match?({_, {^from, _}}, &1))
+
+    if late == [] do
+      state
+    else
+      GenServer.reply(from, :ok)
+
+      steers =
+        for {request, label} <- others,
+            reduce: :gen_server.reqids_new(),
+            do: (steers -> :gen_server.reqids_add(request, label, steers))
+
+      settle_held(%{state | steers: steers})
+    end
+  end
+
+  defp settle_held(state) do
+    if state.turn != nil and state.settled and :gen_server.reqids_size(state.steers) == 0,
+      do: settle(state),
+      else: state
+  end
+
+  # The held refusals' callers hear them, once the turn ended or runs on — except
+  # from a turn the user stopped, whose callers hear `:ok` so their messages stay
+  # in the stopped turn instead of being sent on their own (`unanswered/2`).
+  defp refusals(state) do
+    for {from, answer} <- Enum.reverse(state.refused),
+        do: GenServer.reply(from, if(state.interrupted, do: :ok, else: answer))
+
+    %{state | refused: []}
+  end
+
   # The session's entries since the turn started name the turn (its user message)
   # and the conversation's new head; the session's stats give its context usage.
   defp settle(state) do
@@ -855,7 +1025,7 @@ defmodule HalC2.Pi.ThreadRuntime do
       end
 
     state =
-      case Connection.call(state.conn, "get_session_stats", %{}, 2_000) do
+      case Connection.call(state.conn, "get_session_stats", %{}, @stats_ms) do
         {:ok, %{"contextUsage" => %{"tokens" => used, "contextWindow" => window}} = stats}
         when is_integer(used) and is_integer(window) and window > 0 ->
           totals = stats["tokens"] || %{}
@@ -884,7 +1054,25 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp end_turn(state, status, failure) do
     state = state |> flush() |> close_open_items(status) |> cancel_requests()
     finish(state, status, failure)
-    %{state | turn: nil, items: %{}}
+    state = refusals(state)
+    %{state | turn: nil, items: %{}, steers: unanswered(state.steers, status), settled: false}
+  end
+
+  # Steers whose turn ended before Pi answered them: their callers hear the turn is
+  # gone, and send the message on its own. A turn the user stopped is the exception:
+  # the message was handed to Pi for that turn, so it stays in the stopped turn,
+  # unanswered — sending it on its own would start new work the moment the user
+  # asked for none. (Before the steer was a tracked request it had already been
+  # answered `:ok` when an interrupt landed, and stayed the same way.)
+  defp unanswered(steers, status) do
+    answer = if status == "interrupted", do: :ok, else: {:error, "the turn ended"}
+
+    for {_request, {from, timer}} <- :gen_server.reqids_to_list(steers) do
+      Process.cancel_timer(timer)
+      GenServer.reply(from, answer)
+    end
+
+    :gen_server.reqids_new()
   end
 
   defp put_present(map, _key, nil), do: map

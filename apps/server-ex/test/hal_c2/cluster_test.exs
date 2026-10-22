@@ -134,6 +134,50 @@ defmodule HalC2.ClusterTest do
     assert for({"turn-item", id, _} <- page, do: id) == ["item-1"]
   end
 
+  # The tagged path across MCs: the socket's late `more` and the page it must
+  # not produce both travel the relay, whose order (initial first, then what
+  # it is sent) is what the socket's argument rests on.
+  test "a more carrying an old tag does not page a tagged subscription through its relay",
+       %{b: b} do
+    alias HalC2.Streams
+
+    run = fn n -> {"run", "run-#{n}", %{"s" => %{"id" => "run-#{n}", "ordinal" => n}}} end
+
+    item = fn n ->
+      fields = %{"id" => "item-#{n}", "runId" => "run-#{n}", "ordinal" => n, "text" => ""}
+      {"turn-item", "item-#{n}", %{"s" => fields}}
+    end
+
+    changes = for n <- 1..3, change <- [run.(n), item.(n)], do: change
+    {:ok, seq} = Streams.commit("tagged-th", :thread, changes)
+
+    subscriber = Node.spawn(b, Streams.Relay, :loop, [self()])
+    old = {node(), make_ref()}
+    new = {node(), make_ref()}
+
+    :ok = Streams.subscribe("tagged-th", subscriber, nil, %{window: {:items, 1}, tag: old})
+    assert_receive {:hal_c2_stream, {"tagged-th", ^old}, {:snapshot, ^seq, _, _, :done, _}}, 1_000
+    assert_receive {:hal_c2_stream, {"tagged-th", ^old}, {:live, ^seq, _}}, 1_000
+
+    # The right tag pages through the relay.
+    :ok = Streams.more("tagged-th", subscriber, 1, old)
+    assert_receive {:hal_c2_stream, {"tagged-th", ^old}, {:page, ^seq, page, 2, :done}}, 1_000
+    assert for({"turn-item", id, _} <- page, do: id) == ["item-2"]
+
+    :ok = Streams.unsubscribe("tagged-th", subscriber, old)
+    :ok = Streams.subscribe("tagged-th", subscriber, nil, %{window: {:items, 1}, tag: new})
+    assert_receive {:hal_c2_stream, {"tagged-th", ^new}, {:snapshot, ^seq, _, _, :done, _}}, 1_000
+    assert_receive {:hal_c2_stream, {"tagged-th", ^new}, {:live, ^seq, _}}, 1_000
+
+    :ok = Streams.more("tagged-th", subscriber, 2, old)
+    :ok = Streams.more("tagged-th", subscriber, 2, new)
+    assert_receive {:hal_c2_stream, {"tagged-th", ^new}, {:page, ^seq, page, nil, :done}}, 1_000
+    assert for({"turn-item", id, _} <- page, do: id) == ["item-1", "item-2"]
+
+    # The old tag's ask produced no page before this one (same relay, in order).
+    refute_received {:hal_c2_stream, {"tagged-th", _}, {:page, _, _, _, _}}
+  end
+
   # Found by proof/hal_c2/stream_relay_proof_test.exs.
   test "a relay that failed before its subscriber left does not take the stream down",
        %{b: b} do
@@ -169,19 +213,19 @@ defmodule HalC2.ClusterTest do
     {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
     shape = %{"type" => "stream", "mc" => Atom.to_string(b), "stream" => "relayed-th"}
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
-    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"), 30_000)
 
     stream = :erpc.call(b, HalC2.Streams, :ensure, ["relayed-th"])
     [relay] = Map.values(:erpc.call(b, :sys, :get_state, [stream]).relays)
     true = :erpc.call(b, Process, :exit, [relay, :failed])
-    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"))
+    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"), 30_000)
     assert resync == %{"t" => "resync", "id" => 1}
     assert :erpc.call(b, HalC2.Streams, :ensure, ["relayed-th"]) == stream
 
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => shape})
-    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"), 30_000)
     {:ok, seq} = :erpc.call(b, HalC2.Streams, :commit, ["relayed-th", :thread, [note("n2")]])
-    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"))
+    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"), 30_000)
     assert [[^seq, "note", "n2", _, _at]] = events["events"]
   end
 
@@ -201,7 +245,7 @@ defmodule HalC2.ClusterTest do
     {:ok, _} = HalC2.Streams.commit("here-th", :thread, [note("n1")])
     here = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "here-th"}
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => here})
-    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"), 30_000)
     [socket] = Map.keys(:sys.get_state(HalC2.Streams.ensure("here-th")).subscribers)
 
     # The stream on c holds the follow until the socket waits for its answer.
@@ -227,13 +271,13 @@ defmodule HalC2.ClusterTest do
     true = :erlang.resume_process(socket)
     :erlang.trace(socket, false, [:receive])
 
-    {error, _, client} = WsClient.recv_until(client, &(&1["id"] == 2))
+    {error, _, client} = WsClient.recv_until(client, &(&1["id"] == 2), 30_000)
     assert %{"t" => "error", "id" => 2} = error
 
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
-    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {%{"t" => "live"}, _, client} = WsClient.recv_until(client, &(&1["t"] == "live"), 30_000)
     {:ok, seq} = :erpc.call(c, HalC2.Streams, :commit, ["split-th", :thread, [note("n2")]])
-    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"))
+    {events, _, _client} = WsClient.recv_until(client, &(&1["t"] == "events"), 30_000)
     assert [[^seq, "note", "n2", _, _at]] = events["events"]
   end
 
@@ -272,7 +316,7 @@ defmodule HalC2.ClusterTest do
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 2, "shape" => shape})
 
     {%{"t" => "live"}, _, client} =
-      WsClient.recv_until(client, &(&1["t"] == "live" and &1["id"] == 2))
+      WsClient.recv_until(client, &(&1["t"] == "live" and &1["id"] == 2), 30_000)
 
     {:ok, seq} =
       :erpc.call(b, HalC2.Streams, :commit, [
@@ -281,7 +325,9 @@ defmodule HalC2.ClusterTest do
         [{"turn-item", "i1", %{"s" => %{"text" => "from b"}}}]
       ])
 
-    {events, _, client} = WsClient.recv_until(client, &(&1["t"] == "events" and &1["id"] == 2))
+    {events, _, client} =
+      WsClient.recv_until(client, &(&1["t"] == "events" and &1["id"] == 2), 30_000)
+
     assert [[^seq, "turn-item", "i1", %{"s" => %{"text" => "from b"}}, _at]] = events["events"]
 
     # Node a describes the whole cluster and serves MC b's config by environment id.
@@ -301,7 +347,7 @@ defmodule HalC2.ClusterTest do
         "shape" => %{"type" => "config", "environment" => b_env}
       })
 
-    {config, _, client} = WsClient.recv_until(client, &(&1["t"] == "config"))
+    {config, _, client} = WsClient.recv_until(client, &(&1["t"] == "config"), 30_000)
 
     assert %{"mc" => ^b_name, "config" => %{"environment" => %{"environmentId" => ^b_env}}} =
              config

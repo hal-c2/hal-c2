@@ -6,7 +6,8 @@ import HalC2.Shell
 
 // This machine's cluster, a native settings page (ClusterController publishes
 // `cluster`): its members, an invite link for another machine, joining another
-// machine's cluster with its link, and removing a member.
+// machine's cluster with its link, removing a member, and sending the version
+// this machine runs to the members on another one.
 Rectangle {
     id: page
 
@@ -19,6 +20,8 @@ Rectangle {
     // The session cannot manage the cluster: the page explains and locks what it would do.
     readonly property bool needsAdmin: model !== null && model.needsAdmin === true
     readonly property bool canChange: !busy && !needsAdmin
+    // Connected members that run another version than this machine.
+    readonly property var behind: clustered ? status.members.filter(m => m.connected && m.version && m.version !== status.version) : []
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
 
@@ -141,9 +144,26 @@ Rectangle {
                 delegate: MemberRow {
                     required property var modelData
                     label: modelData.label
-                    detail: modelData.connected ? qsTr("connected") : qsTr("offline")
+                    detail: {
+                        const state = modelData.connected ? qsTr("connected") : qsTr("offline");
+                        const other = modelData.version && modelData.version !== page.status.version;
+                        return other ? qsTr("%1, on %2").arg(state).arg(modelData.version) : state;
+                    }
                     memberId: modelData.id
                 }
+            }
+
+            Note {
+                visible: page.behind.length > 0
+                text: qsTr("This machine runs %1. The others can take it from here.").arg(page.clustered ? page.status.version : "")
+            }
+
+            ShellButton {
+                objectName: "clusterUpdate"
+                visible: page.behind.length > 0
+                enabled: page.canChange
+                text: qsTr("Send this version to the other machines")
+                onClicked: Shell.dispatch("cluster.update")
             }
 
             Note {

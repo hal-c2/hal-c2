@@ -43,6 +43,7 @@ import {
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2ThreadLaunchError,
+  type OrchestrationV2ThreadStreamItem,
   ORCHESTRATION_V2_WS_METHODS,
   type ResolvedKeybindingsConfig,
   DeviceError,
@@ -110,9 +111,15 @@ import {
   type ConnectionAttemptError,
   type PreparedConnection,
 } from "../connection/model.ts";
-import type { RpcSession } from "../rpc/session.ts";
+import { EarlierTurnsUnavailableError, type RpcSession } from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { ClusterRpcError, ClusterSocket, type Shape, type ShapeFrame } from "./clusterSocket.ts";
+import {
+  ClusterRpcError,
+  ClusterSocket,
+  type Shape,
+  type ShapeFrame,
+  type WindowedSubscription,
+} from "./clusterSocket.ts";
 import { ShellShapeFold, type ShellRow } from "./shellShape.ts";
 import { ThreadShapeFold, type ShapeEvent, type ShapeRow } from "./threadShape.ts";
 
@@ -270,6 +277,41 @@ const decodeAgentSessionError = Schema.decodeUnknownOption(
   ]),
 );
 
+// A thread opens as its newest runs holding about this many turn items, and each
+// page adds as many (the Qt desktop's window).
+const THREAD_WINDOW_ITEMS = 200;
+
+/** A thread stream's frame as the stream items the thread state consumes. */
+function foldThreadFrame(
+  fold: ThreadShapeFold,
+  frame: ShapeFrame,
+): ReadonlyArray<OrchestrationV2ThreadStreamItem> {
+  switch (frame.t) {
+    case "snapshot":
+      return fold.snapshot({
+        rows: frame.rows as ReadonlyArray<ShapeRow>,
+        part: Number(frame.part),
+        done: frame.done === true,
+        offset: Number(frame.offset),
+        at: typeof frame.at === "number" ? frame.at : null,
+        ...(typeof frame.floor === "number" || frame.floor === null ? { floor: frame.floor } : {}),
+      });
+    case "page":
+      return fold.page({
+        rows: frame.rows as ReadonlyArray<ShapeRow>,
+        done: frame.done === true,
+        offset: Number(frame.offset),
+        floor: typeof frame.floor === "number" ? frame.floor : null,
+      });
+    case "events":
+      return fold.events(frame.events as ReadonlyArray<ShapeEvent>);
+    case "live":
+      return [{ kind: "synchronized" as const }];
+    default:
+      return [];
+  }
+}
+
 /**
  * Streams one shape's frames, folded into items, for as long as it is consumed. An
  * `error` frame fails the stream when `toError` is given.
@@ -396,27 +438,56 @@ export function makeV3Session(input: {
       });
     };
 
-    const thread = (request: { readonly threadId: string }) => {
+    // A thread opens as its newest turns, as the Qt clients' does; `loadEarlier` adds
+    // the ones before, through the thread's open subscription.
+    const earlier = new Map<string, WindowedSubscription["more"]>();
+    const thread = (request: {
+      readonly threadId: string;
+      readonly historyCursor?: string | null | undefined;
+    }) => {
+      // The window the client held before this session replaced the last one.
+      const floor =
+        request.historyCursor === undefined
+          ? undefined
+          : request.historyCursor === null
+            ? null
+            : Number(request.historyCursor);
       const fold = new ThreadShapeFold(ThreadId.make(request.threadId));
-      return shapeStream(socket, { type: "stream", mc, stream: request.threadId }, (frame) => {
-        switch (frame.t) {
-          case "snapshot":
-            return fold.snapshot({
-              rows: frame.rows as ReadonlyArray<ShapeRow>,
-              part: Number(frame.part),
-              done: frame.done === true,
-              offset: Number(frame.offset),
-              at: typeof frame.at === "number" ? frame.at : null,
-            });
-          case "events":
-            return fold.events(frame.events as ReadonlyArray<ShapeEvent>);
-          case "live":
-            return [{ kind: "synchronized" as const }];
-          default:
-            return [];
-        }
-      });
+      return Stream.callback<OrchestrationV2ThreadStreamItem>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            const subscription = socket.subscribeWindow(
+              { type: "stream", mc, stream: request.threadId },
+              THREAD_WINDOW_ITEMS,
+              (frame) => {
+                Queue.offerAllUnsafe(queue, foldThreadFrame(fold, frame));
+              },
+              Number.isInteger(floor) || floor === null ? floor : undefined,
+            );
+            earlier.set(request.threadId, subscription.more);
+            return subscription;
+          }),
+          (subscription) =>
+            Effect.sync(() => {
+              if (earlier.get(request.threadId) === subscription.more) {
+                earlier.delete(request.threadId);
+              }
+              subscription.unsubscribe();
+            }),
+        ),
+      );
     };
+
+    // Asks the MC for the turns before the open thread's window. They arrive as
+    // a snapshot of the longer thread on the thread's stream.
+    const loadEarlierThread = (threadId: string) =>
+      Effect.suspend(() =>
+        earlier.get(threadId)?.(THREAD_WINDOW_ITEMS) === true
+          ? Effect.void
+          : Effect.fail(
+              new EarlierTurnsUnavailableError({ message: "Environment is not connected." }),
+            ),
+      );
 
     // The MC's config, then its settings and providers whenever they change.
     const serverConfig = (request: {
@@ -1246,6 +1317,7 @@ export function makeV3Session(input: {
           WS_METHODS.clusterInvite,
           WS_METHODS.clusterJoin,
           WS_METHODS.clusterRemove,
+          WS_METHODS.clusterUpdate,
         ].map((tag) => [tag, clusterCommand(tag)]),
       ),
       [WS_METHODS.scheduledTasksList]: scheduledTaskCommand(WS_METHODS.scheduledTasksList),
@@ -1450,6 +1522,7 @@ export function makeV3Session(input: {
       probe: Effect.void,
       closed: Effect.never,
       mcCall,
+      loadEarlierThread,
       callEnvironment: (environmentId, method, payload) =>
         Effect.tryPromise({
           try: () => socket.call(environmentId, method, payload),

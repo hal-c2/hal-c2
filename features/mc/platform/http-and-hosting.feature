@@ -91,8 +91,20 @@ Feature: The MC's HTTP surface and what it hosts
     Then it receives <answer> and the sequence it is at
 
     Examples:
+      | route                                | answer           |
+      | /api/orchestration/threads/:threadId | the whole thread |
+
+  # Clients page a long thread over the thread subscription (a window, and `more` for the
+  # runs before it; features/parity/ and features/tui/reconnect.feature), so the MC serves
+  # no HTTP route for it.
+  @mc @dropped
+  Scenario Outline: A client pages a thread over HTTP
+    Given a client with orchestration:read
+    When it asks for "<route>" of an existing thread
+    Then it receives <answer> and the sequence it is at
+
+    Examples:
       | route                                        | answer                                                     |
-      | /api/orchestration/threads/:threadId         | the whole thread                                           |
       | /api/orchestration/threads/:threadId/bounded | its newest turns, a history cursor and whether more exists |
       | /api/orchestration/threads/:threadId/history | the page of turns before the cursor it sent                |
 

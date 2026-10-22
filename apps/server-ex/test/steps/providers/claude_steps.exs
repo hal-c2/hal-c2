@@ -922,6 +922,36 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- one quota per account -----------------------------------------------------------
+
+  step "both Claude instances' usage has been checked", context do
+    Mc.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["claudeAgent", @work])
+    # The account arrives as a cast the probe sent; this call lands after it.
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "a turn on the second Claude instance reports its usage", context do
+    context = World.launch_on(context, "Work", @work, "rate limit")
+    World.await_runs(context, "Work", ["completed"])
+    # The turn's update is a cast; this call lands after it.
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    context
+  end
+
+  step "each Claude account keeps its own usage limits", context do
+    me = HalC2.ProviderUsageLimits.get("claudeAgent")
+    work = HalC2.ProviderUsageLimits.get(@work)
+
+    assert %{"usedPercent" => used} = Enum.find(me["windows"], &(&1["id"] == "five_hour"))
+    assert round(used) == 30
+    assert %{"usedPercent" => used} = Enum.find(work["windows"], &(&1["id"] == "five_hour"))
+    assert round(used) == 91
+    context
+  end
+
   # --- the fetched manifest --------------------------------------------------------------
 
   @new_model "claude-nova-9"

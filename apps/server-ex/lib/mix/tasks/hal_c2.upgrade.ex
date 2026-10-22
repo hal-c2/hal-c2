@@ -45,7 +45,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     cond do
       opts[:release] && mcs == [] ->
         # The commit's version, as `mise run release:mc` builds it: an MC refuses the
-        # version it already runs, and clusters only with MCs on its own.
+        # version it already runs.
         {version, 0} = System.cmd(Path.expand("scripts/local-version"), [])
         build(String.trim(version))
         local_release(Mix.Tasks.HalC2.Bundle.bundle())

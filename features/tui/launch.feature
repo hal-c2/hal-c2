@@ -7,6 +7,7 @@
 #   apps/server-ex/test/hal_c2/features_backlog_test.exs (TUI launch against the MC)
 #   apps/tui/src/mcDiscovery.ts (runtime record, access token, pairing link, saved credentials)
 #   apps/tui/src/socketTicket.ts (socket tickets over HTTP without a launcher)
+#   packages/client-runtime/src/authorization/remote.ts (the 10s authorization request timeout)
 #   apps/server-ex/lib/hal_c2/runtime_record.ex, lib/hal_c2/auth.ex (access token as bearer)
 #   mise-tasks/tui/_default (mise run tui)
 #   Shared domain: connections/ owns pairing and remote access; this file holds the terminal twist.
@@ -19,7 +20,8 @@ Feature: Launching and leaving the terminal client
   through the MC's runtime record and signs in with the MC's access token; with --url it
   pairs with a remote MC instead.
 
-  # The Node server's "hal-c2 tui" launcher is gone; "The terminal client launches against an MC" is the MC start.
+  # The Node server's "hal-c2 tui" launcher is gone; "The terminal client launches against an MC" is the MC start and
+  # "The terminal client opens in the alternate screen saying it is connecting" checks the screen.
   @dropped @tui
   Scenario: The terminal client opens against the running local server
     Given a HAL-C2 server is running on this machine
@@ -89,7 +91,7 @@ Feature: Launching and leaving the terminal client
     Given the terminal client is started directly without an origin or bearer credential
     Then it exits with an error naming the missing value
 
-  # The Node server's "hal-c2 tui" launcher is gone; it set COLORTERM for the client's renderer.
+  # The Node server's "hal-c2 tui" launcher is gone; the client sets COLORTERM itself ("A terminal known to draw truecolor gets full colour even when it does not advertise it").
   @dropped @tui
   Scenario Outline: Known truecolor terminals get full colour even when they do not advertise it
     Given the user's terminal is <terminal>
@@ -109,14 +111,14 @@ Feature: Launching and leaving the terminal client
       | iTerm     |
       | VS Code   |
 
-  # The Node server's "hal-c2 tui" launcher is gone; it set COLORTERM for the client's renderer.
+  # The Node server's "hal-c2 tui" launcher is gone; the client's own start checks this ("A colour setting the shell already made is left alone").
   @dropped @tui
   Scenario: A colour setting the shell already made is left alone
     Given the shell already set COLORTERM
     When the user runs "hal-c2 tui"
     Then the terminal client keeps the shell's COLORTERM
 
-  # The Node server's "hal-c2 tui" launcher is gone; it set COLORTERM for the client's renderer.
+  # The Node server's "hal-c2 tui" launcher is gone; the client's own start checks this ("An unrecognised terminal is not promised truecolor").
   @dropped @tui
   Scenario: An unrecognised terminal is not promised truecolor
     Given the user's terminal is not one the client recognises
@@ -124,19 +126,86 @@ Feature: Launching and leaving the terminal client
     When the user runs "hal-c2 tui"
     Then the client does not claim truecolor support
 
-  # The Node server's "hal-c2 tui" launcher is gone; "mise run tui" starts the client.
+  # The Node server's "hal-c2 tui" launcher is gone; the client's own start checks this ("Starting outside tmux never calls tmux").
   @dropped @tui
   Scenario: Starting outside tmux never calls tmux
     Given the user is not inside tmux
     When the user runs "hal-c2 tui"
     Then the client does not run any tmux command
 
-  # The Node server's "hal-c2 tui" launcher is gone; "mise run tui" starts the client.
+  # The Node server's "hal-c2 tui" launcher is gone; the client's own start checks this ("Starting inside a tmux pane in copy mode leaves copy mode first").
   @dropped @tui
   Scenario: Starting inside a tmux pane in copy mode leaves copy mode first
     Given the user is inside a tmux pane that is in copy mode
     When the user runs "hal-c2 tui"
     Then the pane leaves copy mode before the terminal client draws
+
+  # The client sets COLORTERM itself before its renderer reads the environment
+  # (apps/tui/src/terminalStartup.ts); these start it against a fake MC.
+  # The live scenarios below deliberately reuse the @dropped scenario names
+  # above: same behaviour, now checked by the client's own start against a
+  # fake MC instead of the gone launcher. Name searches will hit both; the
+  # @dropped ones are the launcher-era record, these are the live checks.
+  @tui
+  Scenario Outline: A terminal known to draw truecolor gets full colour even when it does not advertise it
+    Given an MC is running on this machine
+    And the user's terminal is <terminal>
+    And the terminal does not set COLORTERM
+    When the user starts the terminal client
+    Then the client advertises truecolor to its renderer
+
+    Examples:
+      | terminal  |
+      | ghostty   |
+      | kitty     |
+      | wezterm   |
+      | alacritty |
+      | foot      |
+      | rio       |
+      | contour   |
+      | iTerm     |
+      | vscode    |
+      | xterm-direct |
+
+  @tui
+  Scenario: A colour setting the shell already made is left alone
+    Given an MC is running on this machine
+    And the user's terminal is ghostty
+    And the shell set COLORTERM to "24bit"
+    When the user starts the terminal client
+    Then the client keeps the shell's COLORTERM of "24bit"
+
+  @tui
+  Scenario: An unrecognised terminal is not promised truecolor
+    Given an MC is running on this machine
+    And the user's terminal is not one the client recognises
+    And the terminal does not set COLORTERM
+    When the user starts the terminal client
+    Then the client does not claim truecolor support
+
+  @tui
+  Scenario: Starting outside tmux never calls tmux
+    Given an MC is running on this machine
+    And the user is not inside tmux
+    When the user starts the terminal client
+    Then the client does not run any tmux command
+
+  @tui
+  Scenario: Starting inside a tmux pane in copy mode leaves copy mode first
+    Given an MC is running on this machine
+    And the user is inside a tmux pane that is in copy mode
+    When the user starts the terminal client
+    Then the pane leaves copy mode before the terminal client draws
+
+  @tui
+  Scenario: The terminal client opens in the alternate screen saying it is connecting
+    Given an MC is running on this machine that has not sent its first snapshot
+    When the user starts the terminal client
+    Then the terminal client opens in the alternate screen
+    And the MC is holding the client's request for its first snapshot
+    And its status line says "Connecting…"
+    When the MC sends its first snapshot
+    Then its status line counts the projects and threads
 
   @tui
   Scenario: Terminal identity survives an SSH session
@@ -220,6 +289,15 @@ Feature: Launching and leaving the terminal client
     When the user starts the terminal client
     Then the client buys a socket ticket from the MC over HTTP
     And the socket URL carries only that ticket
+
+  # Client-runtime's authorization requests give up after 10 seconds, and the
+  # client waits 2 more before it asks again, so this one takes about 12 seconds.
+  @tui
+  Scenario: A socket ticket request that gets no answer fails after ten seconds and the client keeps trying
+    Given an MC is running on this machine that does not answer socket ticket requests
+    When the user starts the terminal client
+    Then the client asks that MC for another socket ticket
+    And the first ticket request was given up on only after 10 seconds
 
   @tui
   Scenario: Without a launcher a dropped connection reconnects with a fresh ticket

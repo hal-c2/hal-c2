@@ -165,8 +165,11 @@ defmodule HalC2.Orchestration.Rollback do
     provider = HalC2.Plugins.declared(plan.driver)
 
     if provider == nil or :rollback in (provider[:capabilities] || []) do
+      runtime = Orchestration.runtime(plan.instance)
+      rollback = fn -> runtime.rollback(plan.thread_id, plan) end
+
       with {:error, reason} <-
-             Orchestration.runtime(plan.instance).rollback(plan.thread_id, plan),
+             Orchestration.session_call(rollback, {:error, "its session stopped"}),
            do:
              {:error,
               "Failed to roll back #{plan.driver} provider thread #{plan.provider_thread["id"]}: #{reason}"}
