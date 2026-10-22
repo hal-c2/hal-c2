@@ -970,10 +970,26 @@ Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, co
   return formatIso(wake);
 }
 
+// Newer CLDR data puts a narrow no-break space (U+202F) before AM and PM. It
+// all but vanishes in the monospace meta lines ("8:46AM"), so the stamp
+// carries a plain space. Every such space in the stamp becomes one, not only
+// the one before AM/PM. Some locales use a no-break space (U+00A0) for the
+// same separator, so both are replaced. The stamp and the snooze labels built
+// from it are short labels where a break at that space costs nothing, so they
+// give up the no-break property; this is why it is done here and not in the
+// timeline's stamp alone. The two QML stamps that cannot call this helper
+// (ComposerUsageLimits.qml, ConnectionsSettings.qml) repeat the same
+// character set in a regex; extend both if this set ever grows.
+QString plainSpaces(QString text) {
+  return text.replace(QChar(0x202F), QLatin1Char(' ')).replace(QChar(0x00A0), QLatin1Char(' '));
+}
+
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale) {
-  if (timestampFormat == QLatin1String("12-hour")) return locale.toString(local.time(), QStringLiteral("h:mm AP"));
-  if (timestampFormat == QLatin1String("24-hour")) return locale.toString(local.time(), QStringLiteral("HH:mm"));
-  return locale.toString(local.time(), QLocale::ShortFormat);
+  QString time;
+  if (timestampFormat == QLatin1String("12-hour")) time = locale.toString(local.time(), QStringLiteral("h:mm AP"));
+  else if (timestampFormat == QLatin1String("24-hour")) time = locale.toString(local.time(), QStringLiteral("HH:mm"));
+  else time = locale.toString(local.time(), QLocale::ShortFormat);
+  return plainSpaces(time);
 }
 
 QList<SnoozePreset> snoozePresets(const QDateTime& now, const QString& timestampFormat,

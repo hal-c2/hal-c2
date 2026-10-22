@@ -220,6 +220,69 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     context
   end
 
+  # --- one MC per home ---------------------------------------------------------------------
+
+  # The other MC is an OS process of its own holding the lock as an MC does
+  # (`HalC2.HomeLock`): the lock belongs to a process, and goes with it.
+  step "an MC holds its HAL-C2 home", context do
+    path = HalC2.HomeLock.path(Mc.tmp_dir(context.mc, "held-home"))
+    Map.merge(context, %{lock: path, holder: hold_lock(path)})
+  end
+
+  step "an MC held its HAL-C2 home and was killed", context do
+    path = HalC2.HomeLock.path(Mc.tmp_dir(context.mc, "held-home"))
+    kill_holder(hold_lock(path))
+    Map.put(context, :lock, path)
+  end
+
+  step "another MC starts on that home", context do
+    Map.put(context, :claimed, HalC2.HomeLock.acquire(path: context.lock))
+  end
+
+  step "it is refused the home", context do
+    assert context.claimed == {:error, :held}
+    context
+  end
+
+  step "it takes the home", context do
+    assert context.claimed == :ok
+    context
+  end
+
+  step "the background service starts an MC on that home", context do
+    Map.put(
+      context,
+      :waiter,
+      Task.async(fn -> HalC2.HomeLock.acquire(path: context.lock, wait: true) end)
+    )
+  end
+
+  step "the service's MC waits without opening the files", context do
+    assert Task.yield(context.waiter, 1_500) == nil
+    refute File.exists?(Path.join(Path.dirname(context.lock), "hal-c2.sqlite"))
+    context
+  end
+
+  step "it takes the home once the other MC stops", context do
+    kill_holder(context.holder)
+    assert Task.await(context.waiter, 10_000) == :ok
+    context
+  end
+
+  defp hold_lock(path) do
+    sqlite3 = System.find_executable("sqlite3") || flunk("these steps need sqlite3")
+    port = Port.open({:spawn_executable, sqlite3}, [:binary, :exit_status, args: [path]])
+    Port.command(port, "BEGIN EXCLUSIVE;\nSELECT 'held';\n")
+    assert_receive {^port, {:data, "held" <> _}}, 5_000
+    port
+  end
+
+  defp kill_holder(port) do
+    {:os_pid, os_pid} = Port.info(port, :os_pid)
+    System.cmd("kill", ["-9", Integer.to_string(os_pid)])
+    assert_receive {^port, {:exit_status, _}}, 5_000
+  end
+
   # --- the runtime record -----------------------------------------------------------------
 
   # The scenario's MC is up once its listener is bound (`HalC2.Test.Mc.start/3`).

@@ -106,6 +106,7 @@ defmodule HalC2.Rpc do
 
   def handle("filesystem.browse", input), do: HalC2.Projects.browse(input)
   def handle("shell.openInEditor", input), do: HalC2.Editors.open(input)
+  def handle("files.localPath", input), do: HalC2.MachineFiles.handle_rpc(input)
   def handle("server.discoverSourceControl", input), do: HalC2.SourceControl.discover(input)
   def handle("sourceControl.lookupRepository", input), do: HalC2.SourceControl.lookup(input)
   def handle("sourceControl.cloneRepository", input), do: HalC2.SourceControl.clone(input)
@@ -256,6 +257,13 @@ defmodule HalC2.Rpc do
     end
   end
 
+  def handle("cluster.update", _input) do
+    case HalC2.Upgrade.update_members() do
+      {:ok, version, updates} -> {:ok, %{"version" => version, "members" => members_of(updates)}}
+      error -> cluster(error)
+    end
+  end
+
   def handle(method, _payload), do: {:error, "#{method} is not served by this MC yet"}
 
   @doc """
@@ -295,6 +303,25 @@ defmodule HalC2.Rpc do
          "message" => HalC2.Cluster.describe(reason)
        }}
 
+  # Each member's update with the id and label the cluster knows it by.
+  defp members_of(updates) do
+    known =
+      try do
+        HalC2.Cluster.status()["members"] || []
+      catch
+        :exit, _ -> []
+      end
+      |> Map.new(&{Atom.to_string(HalC2.Cluster.mc_name(&1["id"])), &1})
+
+    for %{"mc" => mc} = update <- updates do
+      member = known[mc] || %{}
+
+      update
+      |> Map.delete("mc")
+      |> Map.merge(%{"id" => member["id"], "label" => member["label"] || mc})
+    end
+  end
+
   # Methods a session with `orchestration:read` alone may call; every other method
   # changes something.
   @reads ~w(
@@ -308,7 +335,8 @@ defmodule HalC2.Rpc do
     server.reportClientActivity server.getBackgroundPolicy server.searchAcpRegistry
     server.listAcpRegistrySessions server.listAcpRegistryProviders scheduledTasks.list
     sourceControl.lookupRepository projects.listEntries projects.readFile
-    projects.searchContents projects.searchEntries filesystem.browse agentSessions.scan
+    projects.searchContents projects.searchEntries filesystem.browse files.localPath
+    agentSessions.scan
     assets.createUrl vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
     slack.status slack.manifest
   )

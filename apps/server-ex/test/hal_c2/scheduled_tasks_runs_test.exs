@@ -6,6 +6,11 @@ defmodule HalC2.ScheduledTasksRunsTest do
   @moduletag :tmp_dir
   @clock {__MODULE__, :clock}
 
+  # Every wait here is for a message the scheduler or a run sends, so this only bounds
+  # how long a failing test takes to say so. ExUnit's 100 ms default is shorter than a
+  # loaded runner may take to schedule the process that sends it.
+  @wait 5_000
+
   setup %{tmp_dir: dir} do
     Application.put_env(:hal_c2, :home, dir)
     :persistent_term.put(@clock, ~U[2026-06-01 08:00:00.000Z])
@@ -47,7 +52,7 @@ defmodule HalC2.ScheduledTasksRunsTest do
 
   defp await_idle do
     if task()["lastRunStatus"] == "running" do
-      assert_receive {:hal_c2_scheduled_tasks, _, _}
+      assert_receive {:hal_c2_scheduled_tasks, _, _}, @wait
       await_idle()
     end
   end
@@ -77,7 +82,7 @@ defmodule HalC2.ScheduledTasksRunsTest do
 
     interval_task()
     advance(60_000)
-    assert_receive {:started, run}
+    assert_receive {:started, run}, @wait
 
     # Answers while the run is out, and is not waiting on the due time it already met.
     assert %{"lastRunStatus" => "running"} = task()
@@ -112,31 +117,37 @@ defmodule HalC2.ScheduledTasksRunsTest do
     blocking_fire()
     interval_task()
     caller = Task.async(fn -> ScheduledTasks.run_now(%{"id" => "t1"}) end)
-    assert_receive {:started, run}
+    assert_receive {:started, run}, @wait
     ref = Process.monitor(run)
 
     assert {:ok, %{"id" => "t1"}} = ScheduledTasks.delete(%{"id" => "t1"})
     assert {:error, %{"message" => "Schedule task not found."}} = Task.await(caller)
-    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}, @wait
 
     interval_task()
     assert %{"lastRunStatus" => "never", "runCount" => 0} = task()
 
     # Nothing of the old run is left to block the new task.
     Task.async(fn -> ScheduledTasks.run_now(%{"id" => "t1"}) end)
-    assert_receive {:started, _}
+    assert_receive {:started, _}, @wait
   end
 
   test "a run does not outlive the scheduler that started it" do
     blocking_fire()
     interval_task()
     advance(60_000)
-    assert_receive {:started, run}
+    assert_receive {:started, run}, @wait
     ref = Process.monitor(run)
 
-    Process.exit(Process.whereis(ScheduledTasks), :kill)
+    # The run is linked to the scheduler from the moment it exists, so the kill below
+    # reaches it however late the exit signal is delivered.
+    scheduler = Process.whereis(ScheduledTasks)
+    assert {:links, links} = Process.info(run, :links)
+    assert scheduler in links
 
-    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+    Process.exit(scheduler, :kill)
+
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}, @wait
   end
 
   test "a scheduler updated in place from before runs were linked outlives a run it ends" do
@@ -157,11 +168,11 @@ defmodule HalC2.ScheduledTasksRunsTest do
     blocking_fire()
     interval_task()
     caller = Task.async(fn -> ScheduledTasks.run_now(%{"id" => "t1"}) end)
-    assert_receive {:started, run}
+    assert_receive {:started, run}, @wait
     ref = Process.monitor(run)
     assert {:ok, _} = ScheduledTasks.delete(%{"id" => "t1"})
     Task.await(caller)
-    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}, @wait
 
     _ = :sys.get_state(scheduler)
     refute_received {:DOWN, ^down, _, _, _}
@@ -172,7 +183,7 @@ defmodule HalC2.ScheduledTasksRunsTest do
     blocking_fire()
     interval_task()
     advance(60_000)
-    assert_receive {:started, run}
+    assert_receive {:started, run}, @wait
     ref = Process.monitor(run)
 
     # What the version before was: a scheduler that did not trap exits, nor link its runs.
@@ -188,6 +199,6 @@ defmodule HalC2.ScheduledTasksRunsTest do
 
     Process.exit(scheduler, :kill)
 
-    assert_receive {:DOWN, ^ref, :process, ^run, :killed}
+    assert_receive {:DOWN, ^ref, :process, ^run, :killed}, @wait
   end
 end

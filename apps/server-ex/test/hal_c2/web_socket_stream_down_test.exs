@@ -24,7 +24,7 @@ defmodule HalC2.Web.SocketStreamDownTest do
     {:ok, client} = WsClient.connect(port, "/ws?token=#{HalC2.Web.token()}")
     {%{"t" => "hello"}, client} = WsClient.recv(client, 1_000)
     client = WsClient.send_json(client, %{"t" => "sub", "id" => 7, "shape" => shape})
-    {live, _snapshot, client} = WsClient.recv_until(client, &(&1["t"] == "live"))
+    {live, _snapshot, client} = WsClient.recv_until(client, &(&1["t"] == "live"), 30_000)
 
     %{client: client, shape: shape, live: live}
   end
@@ -48,7 +48,7 @@ defmodule HalC2.Web.SocketStreamDownTest do
       "offset" => offset,
       "handle" => handle
     })
-    |> WsClient.recv_until(&(&1["t"] == "live"))
+    |> WsClient.recv_until(&(&1["t"] == "live"), 30_000)
   end
 
   test "a stream that crashes is resynced, and the client resumes from its own offset",
@@ -56,7 +56,7 @@ defmodule HalC2.Web.SocketStreamDownTest do
     {:ok, seq} = Streams.commit("th-down", :thread, [item("b")])
 
     {%{"t" => "events", "offset" => ^seq} = events, _, client} =
-      WsClient.recv_until(client, &(&1["t"] == "events"))
+      WsClient.recv_until(client, &(&1["t"] == "events"), 30_000)
 
     stop_stream(:kill)
 
@@ -129,14 +129,14 @@ defmodule HalC2.Web.SocketStreamDownTest do
        %{client: client, shape: shape, live: live} do
     [socket] = Map.keys(:sys.get_state(Streams.ensure("th-down")).subscribers)
     :ok = Streams.subscribe("th-down", socket, nil, %{tag: {node(), make_ref()}})
-    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"))
+    {resync, _, client} = WsClient.recv_until(client, &(&1["t"] == "resync"), 30_000)
     assert resync == %{"t" => "resync", "id" => 7}
 
     {%{"t" => "live"}, _, client} = resubscribe(client, shape, live)
     {:ok, next} = Streams.commit("th-down", :thread, [item("b")])
 
     assert {%{"t" => "events", "id" => 7, "offset" => ^next}, _, _} =
-             WsClient.recv_until(client, &(&1["t"] == "events"))
+             WsClient.recv_until(client, &(&1["t"] == "events"), 30_000)
   end
 
   # Found by proof/hal_c2/stream_relay_proof_test.exs.

@@ -42,6 +42,7 @@ import * as React from "react";
 import { derivePendingApprovals } from "../approvals.ts";
 import {
   type ComposerImageAttachment,
+  type ImageDecoder,
   findPromptImagePathLines,
   imageExtensionForMimeType,
   imageMimeTypeForPath,
@@ -182,9 +183,12 @@ type ThreadRow = Extract<Row, { kind: "thread" }>;
 export function ChatView({
   client,
   onExit,
+  decodeImage,
 }: {
   readonly client: TuiClient;
   readonly onExit: () => void;
+  /** Replaces the native image decoder; tests use it to control when a pasted image finishes. */
+  readonly decodeImage?: ImageDecoder;
 }): React.ReactNode {
   const { width, height } = useTerminalDimensions();
   const renderer = useRenderer();
@@ -2215,7 +2219,7 @@ export function ChatView({
           if (!file) throw new Error("Could not read the image.");
           // Decode/validation failures warn; only the read above pins as an
           // error (composerState.ts makes the same split).
-          return prepareComposerImage(row.path, file).catch((error: unknown) => {
+          return prepareComposerImage(row.path, file, decodeImage).catch((error: unknown) => {
             store.setStatus(
               error instanceof Error ? error.message : "Could not attach image.",
               "warning",
@@ -2290,7 +2294,7 @@ export function ChatView({
     const name = `clipboard-image-${clipboardImageSequenceRef.current}.${extension}`;
     clipboardImageLoadsRef.current += 1;
     store.setStatus("Adding pasted image…", "busy");
-    void prepareComposerImageBytes(name, paste.mimeType, paste.bytes)
+    void prepareComposerImageBytes(name, paste.mimeType, paste.bytes, decodeImage)
       .then((image) => {
         updateActiveComposerImages((current) =>
           current.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS ? current : [...current, image],
@@ -2364,11 +2368,11 @@ export function ChatView({
             return failed;
           }
           const bytes = await NodeFSP.readFile(imagePath);
-          prepare = () => prepareComposerImageBytes(imagePath, mimeType, bytes);
+          prepare = () => prepareComposerImageBytes(imagePath, mimeType, bytes, decodeImage);
         } else {
           const file = await client.readFileBase64(composerCwd, imagePath);
           if (!file) throw new Error("Could not read the pasted image path.");
-          prepare = () => prepareComposerImage(imagePath, file);
+          prepare = () => prepareComposerImage(imagePath, file, decodeImage);
         }
         let image: Awaited<ReturnType<typeof prepareComposerImage>>;
         try {

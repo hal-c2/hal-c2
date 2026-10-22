@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls
 import QtTest
 import "../qml/HalC2/Bricks"
 import HalC2.Shell
@@ -65,6 +66,7 @@ Item {
 
         function init() {
             Shell.reset();
+            Theme.fontMono = "";
         }
 
         function test_a_hidden_account_is_revealed_on_request() {
@@ -102,6 +104,126 @@ Item {
             const scan = findChild(page, "scan");
             verify(scan.iconOnly, "Rescan has no text beside its icon");
             compare(scan.iconName, "refresh-cw");
+        }
+
+        // The tool an install hint names is set in the monospace face, its backticks gone.
+        function test_an_install_hint_formats_the_command_it_names() {
+            const hint = "GitHub is not authenticated on this server. Sign in using the `gh` tool on the server host.";
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [],
+                             providers: [root.github({ summary: hint, hasAccount: false })] } }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            compare(summary.textFormat, Text.RichText);
+            verify(summary.text.includes("font-family:"), summary.text);
+            verify(!summary.text.includes("`"), summary.text);
+            verify(summary.text.includes(">gh</span>"), summary.text);
+            compare(summary.Accessible.name, hint.replace(/`/g, ""));
+        }
+
+        // A real theme face (multi-word, or carrying declaration metacharacters)
+        // still lands in the span, with the metacharacters stripped.
+        function test_an_install_hint_uses_a_real_monospace_face() {
+            const hint = "Sign in using the `gh` tool on the server host.";
+            const state = () => ({ settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [],
+                             providers: [root.github({ summary: hint, hasAccount: false })] } }) });
+            Theme.fontMono = "JetBrains Mono";
+            Shell.state = state();
+            let page = createTemporaryObject(pageComponent, root);
+            let summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            verify(summary.text.includes("font-family:'JetBrains Mono'"), summary.text);
+            verify(summary.text.includes(">gh</span>"), summary.text);
+            Theme.fontMono = "Mono;{}<x>'\"";
+            Shell.state = state();
+            page = createTemporaryObject(pageComponent, root);
+            summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            verify(summary.text.includes("font-family:'Monox'"), summary.text);
+            verify(!/[;{}<>]/.test(summary.text.match(/font-family:'[^']*'/)?.[0] ?? ";"), summary.text);
+        }
+
+        // A stray backtick in a hint pairs only within its line: it cannot mono-format the prose after it.
+        function test_a_stray_backtick_does_not_span_lines() {
+            const hint = "Sign in with `gh.\nThen run `gh auth login` on the server host.";
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [],
+                             providers: [root.github({ summary: hint, hasAccount: false })] } }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            compare((summary.text.match(/<span /g) ?? []).length, 1);
+            verify(summary.text.includes(">gh auth login</span>"), summary.text);
+            verify(summary.text.includes("`gh."), "the unpaired backtick stays as it was written");
+        }
+
+        // A summary the server leaves out renders empty, as the plain label it replaced did.
+        function test_a_tool_without_a_summary_renders_empty() {
+            const tool = root.github({ hasAccount: false });
+            delete tool.summary;
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [],
+                             providers: [tool] } }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            compare(summary.text, "");
+            compare(summary.Accessible.name, "");
+        }
+
+        // The hints come from the server and name commands with placeholders, several
+        // to a sentence: only the generated spans may be markup.
+        function test_an_install_hint_escapes_everything_but_its_command_spans() {
+            const hint = "Sign in with `fj --host <server-url> auth add-token` or `fj login` & retry <b>now</b>, 5 > 3.";
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [],
+                             providers: [root.github({ summary: hint, hasAccount: false })] } }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const summary = findChild(findChild(page, "sourceControlTool:github"), "summary");
+            verify(summary.text.includes(">fj --host &lt;server-url&gt; auth add-token</span>"), summary.text);
+            verify(summary.text.includes(">fj login</span>"), summary.text);
+            verify(summary.text.includes("&amp; retry &lt;b&gt;now&lt;/b&gt;, 5 &gt; 3."), summary.text);
+            // Without the two spans' own tags there is no markup left.
+            compare(summary.text.replace(/<span style="[^"]*">/g, "").replace(/<\/span>/g, "").search(/[<>]/), -1);
+            compare((summary.text.match(/<span /g) ?? []).length, 2);
+        }
+
+        // While it scans the button is disabled (dimmed, out of the tab order and
+        // announced as such); the wrapper around it carries the hover tooltip.
+        function test_rescan_while_scanning_shows_its_tooltip_and_ignores_clicks() {
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: true, title: "", detail: "", suffix: "", versionControl: [root.github({})],
+                             providers: [] } }) };
+            const page = createTemporaryObject(hostedComponent, root).page;
+            const scan = findChild(page, "scan");
+            const area = findChild(page, "scanArea");
+            verify(!scan.enabled, "disabled while it scans");
+            compare(scan.Accessible.name, "Scanning server environment");
+            verify(scan.opacity < 1, "dimmed while disabled");
+            mouseMove(area, area.width / 2, area.height / 2);
+            tryCompare(area.ToolTip, "visible", true);
+            compare(area.ToolTip.text, "Scanning…");
+            mouseClick(area);
+            compare(Shell.dispatchedActions.length, 0);
+        }
+
+        // While enabled the wrapper's hover is passive: the button itself is
+        // hovered (so its fill paints), its tooltip reads Rescan, and a click
+        // through the wrapper still dispatches the scan.
+        function test_rescan_while_enabled_keeps_the_buttons_hover_and_click() {
+            Shell.state = { settingsScope: { editable: true }, sourceControlSettings: root.state({
+                discovery: { status: "ready", scanning: false, title: "", detail: "", suffix: "", versionControl: [root.github({})],
+                             providers: [] } }) };
+            const page = createTemporaryObject(hostedComponent, root).page;
+            const scan = findChild(page, "scan");
+            const area = findChild(page, "scanArea");
+            verify(scan.enabled);
+            mouseMove(area, area.width / 2, area.height / 2);
+            tryVerify(() => scan.hovered);
+            wait(600);
+            verify(!scan.ToolTip.visible, "the wrapper is the only tooltip owner");
+            tryCompare(area.ToolTip, "visible", true);
+            compare(area.ToolTip.text, "Rescan Git and hosting integrations");
+            mouseClick(area);
+            compare(Shell.dispatchedActions.length, 1);
+            compare(Shell.dispatchedActions[0].action, "sourceControlSettings.scan");
         }
 
         // Git's fetch interval is behind a details toggle, collapsed until it is used.
@@ -142,7 +264,8 @@ Item {
             const page = createTemporaryObject(hostedComponent, root).page;
             waitForRendering(page);
             const summary = findChild(findChild(page, "sourceControlTool:gitlab"), "summary");
-            verify(summary.lineCount > 1);
+            // lineCount is not kept for rich text: the wrapped height says so.
+            verify(summary.contentHeight > summary.font.pixelSize * 2, "the summary wraps: " + summary.contentHeight);
             verify(summary.mapToItem(page, summary.width, 0).x <= page.width, "the summary stays on the page");
             const control = findChild(findChild(page, "autoPull"), "control");
             verify(control.mapToItem(page, control.width, 0).x <= page.width, "the page's controls stay on it");

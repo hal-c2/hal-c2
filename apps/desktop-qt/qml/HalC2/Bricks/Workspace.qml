@@ -117,7 +117,6 @@ Rectangle {
                 color: projectHover.hovered ? strip.foreground : strip.projectColor
                 font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.weight: Font.Medium
-                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                 elide: Text.ElideRight
                 Accessible.role: Accessible.Button
                 Accessible.name: qsTr("New thread in project")
@@ -148,7 +147,6 @@ Rectangle {
                 text: "/"
                 color: strip.iconMuted
                 font.pixelSize: Math.round(14 * Theme.fontScale)
-                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
             }
 
             Item {
@@ -239,7 +237,6 @@ Rectangle {
                         color: strip.foreground
                         font.pixelSize: Math.round(14 * Theme.fontScale)
                         font.weight: Font.Medium
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                         elide: Text.ElideRight
                     }
 
@@ -287,7 +284,6 @@ Rectangle {
                 color: strip.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 font.weight: Font.Medium
-                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                 Layout.alignment: Qt.AlignVCenter
             }
         }

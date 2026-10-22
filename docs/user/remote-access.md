@@ -90,8 +90,12 @@ hal-c2-service cluster invite      # prints the link
 hal-c2-service cluster join LINK   # on the machine that joins
 ```
 
-Every machine of a cluster runs the same HAL-C2 version. A machine on another version
-stays listed but does not connect until it is updated. Removing a machine from the
+Machines of a cluster connect whatever HAL-C2 versions they run, but keep them on one
+version: features that span machines, such as moving a thread, can fail between
+versions. The Cluster page shows the version of each machine that runs another one, and
+**Send this version to the other machines** (in the terminal client, the command palette
+entry of that name) has each of them update to the version of the machine you are on,
+which hands them its release. Removing a machine from the
 Cluster page stops every member from admitting it, and its projects and threads leave
 the sidebar.
 
@@ -127,6 +131,21 @@ when the other machine stops answering.
 This needs the desktop app connected to the machine it runs on, which reaches the rest of the
 cluster for it. Connected straight to another machine, a `localhost` link opens as it is, on
 your own machine.
+
+### Open another machine's files here
+
+When your client is connected to the HAL-C2 on the machine in front of you, opening a
+file of a thread on another machine of the cluster (in an editor, in the file manager,
+or from a path in a terminal) opens it with this machine's apps. HAL-C2 shows each other
+machine as a folder, named after it, under
+`~/.local/state/hal-c2/elixir/machines`, holding that machine's projects and worktrees at
+their own paths. Saving there saves on the other machine, and nothing is started there.
+
+This needs FUSE 3 on Linux (the `fuse3` package). macOS and Windows do not have it yet.
+A machine that is offline keeps its folder, but what is read through it fails until the
+machine is back. Only your user can open the folder. A client paired with a HAL-C2 on
+another computer, or reaching one through an SSH port forward, still can't open its
+files here.
 
 ### Balance new threads across machines
 

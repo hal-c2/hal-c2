@@ -16,7 +16,6 @@ import {
   type ThreadEnvMode,
   type VcsRef,
 } from "@hal-c2/contracts";
-import type { ImagePreview } from "@hal-c2/opentui-image";
 import { formatComposerContextReference } from "@hal-c2/shared/composerContextReferences";
 import { resolveProjectSettings } from "@hal-c2/shared/projectSettings";
 import {
@@ -43,6 +42,7 @@ import {
   prepareComposerImageBytes,
   replacePromptLines,
   type ComposerImageAttachment,
+  type ImageDecoder,
 } from "../composerAttachments.ts";
 import {
   COMPOSER_MAX_EDITOR_ROWS,
@@ -103,8 +103,6 @@ export const IMAGE_ONLY_PROMPT =
 const COMPACT_SURFACE_WIDTH = 64;
 /** ChatComposer's attachment chip width (plus one cell between chips). */
 const ATTACHMENT_CHIP_WIDTH = 14;
-
-export type ImageDecoder = (encoded: Uint8Array) => Promise<ImagePreview>;
 
 export interface ComposerOptions {
   readonly client: TuiClient;

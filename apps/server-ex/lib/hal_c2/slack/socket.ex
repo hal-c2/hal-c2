@@ -10,7 +10,11 @@ defmodule HalC2.Slack.Socket do
   them on the next connection. Active, it acks every envelope, in the order they came, but
   hands `HalC2.Slack.Bot` only those for the bot's app and workspace, each in a task. An
   ack can be lost with the connection, and Slack then delivers the event again, on the
-  next connection too; `HalC2.Slack.Bot` hands it on once. It never reconnects: when it
+  next connection too; `HalC2.Slack.Bot` hands it on once. When the owner is about to
+  forget the identity (a connect or disconnect replaces the connection) it
+  `deactivate/1`s the socket first, which answers once the socket holds envelopes unacked
+  again, so none is acked into a bot that no longer knows who it is; the socket ends soon
+  after, and Slack delivers them on the next connection. It never reconnects: when it
   ends, `HalC2.Slack` makes a new one.
   """
 
@@ -41,6 +45,31 @@ defmodule HalC2.Slack.Socket do
 
   @doc "Acks and hands on the envelopes held so far, and every one after; the owner's call."
   def activate(socket), do: send(socket, :activate)
+
+  @doc """
+  Makes the socket hold envelopes unacked again, and answers once it does: none it had
+  begun to handle is left to ack afterwards. The owner's call, before it forgets the
+  identity; `:ok` too when the socket has ended. One that does not answer in time is
+  killed, as it could still ack: its connection ends and Slack delivers its events again.
+  """
+  def deactivate(socket, timeout \\ 5_000) do
+    ref = Process.monitor(socket)
+    send(socket, {:deactivate, self(), ref})
+
+    receive do
+      {^ref, :deactivated} ->
+        Process.demonitor(ref, [:flush])
+        :ok
+
+      {:DOWN, ^ref, :process, _, _} ->
+        :ok
+    after
+      timeout ->
+        Process.demonitor(ref, [:flush])
+        Process.exit(socket, :kill)
+        :ok
+    end
+  end
 
   @impl true
   def handle_connect(_conn, state) do
@@ -98,7 +127,12 @@ defmodule HalC2.Slack.Socket do
     {:ok, %{state | active: true}}
   end
 
-  def handle_info(:drain, %{held: [envelope | rest]} = state) do
+  def handle_info({:deactivate, from, ref}, state) do
+    send(from, {ref, :deactivated})
+    {:ok, %{state | active: false}}
+  end
+
+  def handle_info(:drain, %{held: [envelope | rest], active: true} = state) do
     if rest != [], do: send(self(), :drain)
     {:reply, take(envelope, state.identity), %{state | held: rest}}
   end

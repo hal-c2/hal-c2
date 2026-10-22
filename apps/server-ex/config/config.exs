@@ -19,4 +19,7 @@ else
   config :hal_c2, home: home, migrate: false, start_mc: true
 end
 
+# The other members of the cluster as folders on this machine (`HalC2.MachineFiles`).
+config :hal_c2, machine_files: true
+
 import_config "#{config_env()}.exs"

@@ -187,6 +187,32 @@ export function findRunningMc(input: {
 }
 
 /**
+ * The exit status of an MC that found its files held by another MC
+ * (`HalC2.HomeLock`, apps/server-ex/lib/hal_c2/application.ex).
+ */
+export const MC_HOME_IN_USE = 73;
+
+/**
+ * The MC that holds the files this launch would use, once its runtime record names
+ * it. That MC may still be booting, such as a background service started at login
+ * beside the desktop app, so this waits for the record until `timeoutMs`.
+ */
+export async function waitForRunningMc(
+  input: Parameters<typeof findRunningMc>[0],
+  timeoutMs: number,
+): Promise<{ readonly origin: string; readonly token: string }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const running = findRunningMc(input);
+    if (running !== undefined) return running;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new HostError(
+    `Another MC holds ${mcDirs(input).data}, but it did not start within ${timeoutMs / 1000} s.`,
+  );
+}
+
+/**
  * The MC's own access token (`HalC2.Web.token/0`, written at boot), which the
  * shell's native client puts on its socket. Undefined when the file is not there.
  */

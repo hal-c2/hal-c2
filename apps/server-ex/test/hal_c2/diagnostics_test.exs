@@ -2,8 +2,12 @@ defmodule HalC2.DiagnosticsTest do
   use ExUnit.Case, async: true
 
   test "the MC's own processes are listed and can be signalled, but no others" do
-    port = Port.open({:spawn_executable, "/bin/sleep"}, [:binary, args: ["30"]])
+    port = Port.open({:spawn_executable, "/bin/cat"}, [:binary])
     {:os_pid, pid} = Port.info(port, :os_pid)
+    # Until the child execs, ps shows the kernel's placeholder name; an echo comes from
+    # cat itself, so it has exec'd by then.
+    Port.command(port, "ready\n")
+    assert_receive {^port, {:data, "ready\n"}}, 10_000
 
     {:ok, %{"processes" => processes, "error" => %{"_tag" => "None"}}} =
       HalC2.Diagnostics.processes()
@@ -11,7 +15,7 @@ defmodule HalC2.DiagnosticsTest do
     assert [root | _] = processes
     assert root["depth"] == 0
 
-    assert %{"startTimeMs" => started, "command" => "/bin/sleep 30"} =
+    assert %{"startTimeMs" => started, "command" => "/bin/cat"} =
              Enum.find(processes, &(&1["pid"] == pid))
 
     # Not the process that was seen: it restarted, or never was ours.

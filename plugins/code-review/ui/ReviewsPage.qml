@@ -624,7 +624,7 @@ Item {
 
                                     Text {
                                         Layout.fillWidth: true
-                                        text: comment.modelData.path + ":" + comment.modelData.line + (comment.modelData.side === "old" ? " " + qsTr("(removed)") : "")
+                                        text: comment.modelData.path + ":" + comment.modelData.line + (comment.modelData.side === "old" ? " " + qsTr("(removed)") : "") + (comment.modelData.severity ? " · " + (({ high: "🔴 High", medium: "🟡 Medium", low: "🔵 Low", blocking: "🔴 High", suggestion: "🟡 Medium", nit: "🔵 Low" })[comment.modelData.severity] ?? comment.modelData.severity) : "")
                                         color: page.muted
                                         elide: Text.ElideMiddle
                                         font.family: Theme.fontMono

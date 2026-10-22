@@ -40,7 +40,14 @@ defmodule HalC2.PlannerPropTest do
   around the dependency between two, and a client nests a task while a look at GitHub is
   on its way, holding GitHub's list as it was before the nest. Work on a task starts on
   a project the MC does not have, or on one whose worktree setup is not running so the
-  launch exits, and its thread never launches. After every step:
+  launch exits, and its thread never launches. A client links a task to a pull request
+  of that repository, or unlinks it, someone on GitHub names a pull request as closing an
+  issue there, or stops, and GitHub merges a pull request; a merge alone closes no issue.
+  A task is also linked to a pull request of a repository no project has, by a link whose
+  url names a host the MC has a project on, a host it has none on, or no web address,
+  and GitHub merges it; only a host the MC has a project on is asked, the one the link
+  names when it names one.
+  After every step:
 
   - nothing waits for itself, no task is its own ancestor, a removed task's subtasks move
     up to its parent and nothing waits for it any more;
@@ -93,6 +100,13 @@ defmodule HalC2.PlannerPropTest do
     a reason changed on a closed issue counts as a move, a reason on an open one does
     not; none of it when GitHub refused its last change, a push to it is on the way, or
     it changed while the look was on its way;
+  - a look links a task to the pull requests GitHub names as closing its issue, in the
+    state GitHub has them, and drops the ones linked so that its issue, or the issue it
+    had before, no longer names, while one a client linked stays; it brings every task's
+    pull requests to GitHub's states, and a task whose last open one merged is done,
+    unless it was done or dropped already, or that pull request closes its issue and
+    the look read the issue open: the issue has the say; none of it for a task a push
+    to is on the way or that changed while the look was on its way;
   - a linked task's board item is the one a push of its chain added, or, with no push of
     it on the way, the one a look found for its issue on the board, whether or not the
     task had one: a push answered after the task was unlinked or relinked leaves it
@@ -107,6 +121,14 @@ defmodule HalC2.PlannerPropTest do
     thread;
   - the `plan` and `runs` the plugin answers match the model, and the topics clients
     follow match what it answers.
+
+  Task owners are deliberately not modelled here — an exemption, not an
+  equivalence claim: the owner-push ordering and retry semantics (remove old,
+  add new, retry only what a refusal left, relink and case-only changes pushing
+  nothing, a stored owner that is no login never being taken off) are pinned by
+  the planner Gherkin scenarios and the `Sync.pushes/5` unit tests in
+  `test/hal_c2/planner_test.exs`. Modelling owners here stays open if the
+  maintainer wants the interleavings explored too.
   """
   use ExUnit.Case, async: false
   use PropCheck
@@ -126,6 +148,27 @@ defmodule HalC2.PlannerPropTest do
   @issues %{"a" => 1, "b" => 2, "c" => 3}
   # An issue of `@repository` no task is ever linked to.
   @unplanned 4
+  # The pull requests of `@repository`.
+  @pulls [40, 41, 42]
+  # The pull requests of `@lone`'s repository, which no project on the MC has, by number:
+  # the kind of host a link to one names and the url it says. `:enterprise` is on
+  # `@enterprise`, where the MC has a project, and is read through that host; `:plain`
+  # names no web address a host can be taken from (none, not text, not a url, or a
+  # scheme the plan drops), so github.com, where the MC has a project too, reads it; the
+  # host of `:unknown` has no project, so it is never asked.
+  @lone "acme/other"
+  @enterprise "github.example.com"
+  @lone_pulls %{
+    50 => {:enterprise, "https://github.example.com/acme/other/pull/50"},
+    51 => {:enterprise, "http://github.example.com/acme/other/pull/51"},
+    52 => {:plain, "ftp://github.example.com/acme/other/pull/52"},
+    53 => {:plain, 53},
+    54 => {:plain, "not a url"},
+    55 => {:plain, nil},
+    56 => {:unknown, "https://ghe.elsewhere.example/acme/other/pull/56"},
+    # A deep link with credentials, a query and a fragment is stored as the plain address.
+    57 => {:enterprise, "https://user:token@github.example.com/acme/other/pull/57/files?x=1#y"}
+  }
   @bad_ref %{"repository" => 7, "number" => 1}
   @due "2026-10-30"
   @moved "2026-11-06"
@@ -266,6 +309,10 @@ defmodule HalC2.PlannerPropTest do
   # it, :completed or :not_planned; one not in it is open. `parents`: issue of
   # `@repository` → the issue GitHub has it as a sub-issue of. `blockers`: issue of
   # `@repository` → the issues GitHub has it blocked by, in the order GitHub lists them.
+  # `merged`: the pull requests GitHub merged; the others are open. `closing`: issue of
+  # `@repository` → the pull requests GitHub names as closing it, in its order. An item's
+  # `pulls`: its pull requests, `[{number, from_issue (linked as one its issue names),
+  # state (:open or :merged, as the plugin last read it)}]` in the order linked.
   def initial_state,
     do: %{
       board: @board,
@@ -274,6 +321,8 @@ defmodule HalC2.PlannerPropTest do
       closed: %{},
       parents: %{},
       blockers: %{},
+      merged: MapSet.new(),
+      closing: %{},
       items: %{},
       gens: %{},
       runs: %{},
@@ -345,9 +394,13 @@ defmodule HalC2.PlannerPropTest do
     # Or once GitHub has issues blocked by others, and relations the tasks do not.
     unheard = m.blockers != %{} and Enum.any?(pushed, &(related(m, &1) != m.items[&1]))
 
+    # Or once GitHub merged a task's pull request, or names others as closing its issue.
+    behind = Enum.any?(m.items, fn {_, item} -> pulled(m, item) != item end)
+
     look =
       cond do
         unboarded -> 30
+        behind -> 40
         moved or unheard -> 10
         m.held != %{} -> 4
         true -> 1
@@ -463,8 +516,44 @@ defmodule HalC2.PlannerPropTest do
           parent = slot_of(m, parent),
           do: {:call, __MODULE__, :nest_while_looking, [parent, sub]}
 
+    # GitHub naming a pull request as closing a task's issue, or no longer, and merging one.
+    refer =
+      for slot <- pushed,
+          n = issue_of(m, slot),
+          pr <- @pulls,
+          pr not in Map.get(m.closing, n, []),
+          do: {:call, __MODULE__, :refer, [n, pr]}
+
+    unrefer = for {n, prs} <- m.closing, pr <- prs, do: {:call, __MODULE__, :unrefer, [n, pr]}
+    unmerged = Enum.reject(@pulls, &MapSet.member?(m.merged, &1))
+    pulling = for {slot, %{pulls: [_ | _]}} <- m.items, do: slot
+
+    # GitHub merges a pull request of `@lone` that a task is linked to and a host serves.
+    lone =
+      Enum.uniq(
+        for {_, item} <- m.items,
+            {n, _, :open} <- item.pulls,
+            is_map_key(@lone_pulls, n),
+            elem(@lone_pulls[n], 0) != :unknown,
+            do: n
+      )
+
+    # A merge matters most for a pull request a task has or an issue names.
+    wanted =
+      for pr <- unmerged,
+          Enum.any?(m.items, fn {_, item} -> Enum.any?(item.pulls, &(elem(&1, 0) == pr)) end) or
+            Enum.any?(m.closing, fn {_, prs} -> pr in prs end),
+          do: pr
+
+    # Most of all one a task took from its issue: whether its issue is open says whether
+    # the task is done.
+    theirs =
+      Enum.uniq(for {_, item} <- m.items, {pr, true, :open} <- item.pulls, pr in unmerged, do: pr)
+
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
+       {6, {:call, __MODULE__, :link_pr, [item, elements(@pulls)]}},
+       {3, {:call, __MODULE__, :link_pr, [item, elements(Map.keys(@lone_pulls))]}},
        {4, {:call, __MODULE__, :wait, [item, item]}},
        {2, {:call, __MODULE__, :nest, [item, oneof([nil, item])]}},
        {2, {:call, __MODULE__, :move, [item, oneof([nil, item]), oneof([nil, item])]}},
@@ -570,6 +659,20 @@ defmodule HalC2.PlannerPropTest do
          ]
        ) ++
        if(against == [], do: [], else: [{40, oneof(against)}]) ++
+       if(refer == [], do: [], else: [{if(m.closing == %{}, do: 24, else: 6), oneof(refer)}]) ++
+       if(unrefer == [], do: [], else: [{4, oneof(unrefer)}]) ++
+       if(unmerged == [], do: [], else: [{1, {:call, __MODULE__, :merge, [elements(unmerged)]}}]) ++
+       if(wanted == [], do: [], else: [{8, {:call, __MODULE__, :merge, [elements(wanted)]}}]) ++
+       if(theirs == [], do: [], else: [{100, {:call, __MODULE__, :merge, [elements(theirs)]}}]) ++
+       if(pulling == [],
+         do: [],
+         else: [
+           {2,
+            {:call, __MODULE__, :unlink_pr,
+             [elements(pulling), elements(@pulls ++ Map.keys(@lone_pulls))]}}
+         ]
+       ) ++
+       if(lone == [], do: [], else: [{12, {:call, __MODULE__, :merge_lone, [elements(lone)]}}]) ++
        if(m.closed == %{},
          do: [],
          else: [{2, {:call, __MODULE__, :reopen, [elements(Map.keys(m.closed))]}}]
@@ -615,7 +718,17 @@ defmodule HalC2.PlannerPropTest do
     do: not Map.has_key?(m.items, slot) and (parent == nil or Map.has_key?(m.items, parent))
 
   def precondition(m, {:call, _, cmd, [slot | _]})
-      when cmd in [:remove, :wait, :nest, :nest_while_looking, :move, :work, :redate],
+      when cmd in [
+             :remove,
+             :wait,
+             :nest,
+             :nest_while_looking,
+             :move,
+             :work,
+             :redate,
+             :link_pr,
+             :unlink_pr
+           ],
       do: Map.has_key?(m.items, slot)
 
   # GitHub refuses a sub-issue under its own sub-issue.
@@ -666,6 +779,15 @@ defmodule HalC2.PlannerPropTest do
         flying == Map.has_key?(m.flights, slot)
 
   def precondition(m, {:call, _, :answer, [push]}), do: Map.has_key?(m.held, push)
+  def precondition(m, {:call, _, :merge, [pr]}), do: not MapSet.member?(m.merged, pr)
+  def precondition(m, {:call, _, :merge_lone, [n]}), do: not MapSet.member?(m.merged, n)
+
+  def precondition(m, {:call, _, :refer, [number, pr]}),
+    do: here?(number) and pr not in Map.get(m.closing, number, [])
+
+  def precondition(m, {:call, _, :unrefer, [number, pr]}),
+    do: pr in Map.get(m.closing, number, [])
+
   def precondition(_m, {:call, _, :close, [number, _reason]}), do: here?(number)
   def precondition(m, {:call, _, :reopen, [number]}), do: Map.has_key?(m.closed, number)
   def precondition(m, {:call, _, :switch_board, [board]}), do: board != m.board
@@ -768,7 +890,8 @@ defmodule HalC2.PlannerPropTest do
       sync: nil,
       board: nil,
       status: :todo,
-      state: nil
+      state: nil,
+      pulls: []
     }
 
     {%{put_in(m.items[slot], item) | synced: Map.delete(m.synced, slot)}, :ok}
@@ -846,6 +969,37 @@ defmodule HalC2.PlannerPropTest do
     {Enum.reduce(touched, %{m | items: items}, &changed(&2, &1, before)), :ok}
   end
 
+  # A client links the task to a pull request it does not have, open until a look reads
+  # it, whatever GitHub has, or unlinks one it has; either is a change of the task, which
+  # pushes what GitHub lacks of it.
+  defp step(m, {:call, _, :link_pr, [slot, pr]}) do
+    if Enum.any?(m.items[slot].pulls, &(elem(&1, 0) == pr)),
+      do: {m, :ok},
+      else:
+        {m
+         |> update_in([:items, slot, :pulls], &(&1 ++ [{pr, false, :open}]))
+         |> changed(slot, m), :ok}
+  end
+
+  defp step(m, {:call, _, :unlink_pr, [slot, pr]}) do
+    pulls = Enum.reject(m.items[slot].pulls, &(elem(&1, 0) == pr))
+
+    if pulls == m.items[slot].pulls,
+      do: {m, :ok},
+      else: {m |> put_in([:items, slot, :pulls], pulls) |> changed(slot, m), :ok}
+  end
+
+  # GitHub merges a pull request, or names one as closing an issue, or no longer; the plan
+  # hears of it at the next look.
+  defp step(m, {:call, _, :merge, [pr]}), do: {%{m | merged: MapSet.put(m.merged, pr)}, :ok}
+  defp step(m, {:call, _, :merge_lone, [n]}), do: {%{m | merged: MapSet.put(m.merged, n)}, :ok}
+
+  defp step(m, {:call, _, :refer, [number, pr]}),
+    do: {%{m | closing: Map.update(m.closing, number, [pr], &(&1 ++ [pr]))}, :ok}
+
+  defp step(m, {:call, _, :unrefer, [number, pr]}),
+    do: {%{m | closing: Map.update!(m.closing, number, &List.delete(&1, pr))}, :ok}
+
   defp step(m, {:call, _, :run, [action, slot]}), do: {ask(m, action, slot), :ok}
   defp step(m, {:call, _, :work, [slot, _project]}), do: {ask(m, "work", slot), :ok}
 
@@ -863,19 +1017,11 @@ defmodule HalC2.PlannerPropTest do
   # it to the board with the task's due date. The plugin takes it to be as the push left
   # it until a look reads it, so GitHub reopening it since moves the task.
   defp step(before, {:call, _, :create, [slot]}) do
-    n = @issues[slot]
+    item = %{before.items[slot] | issue: @issues[slot], state: :open}
+    made = %{baseline(before, slot) | due: nil, state: :open}
 
-    state =
-      case before.items[slot].status do
-        :done -> :completed
-        :dropped -> :not_planned
-        _ -> :open
-      end
-
-    item = %{before.items[slot] | issue: n, state: state}
-    made = %{baseline(before, slot) | due: nil}
-    m = before |> put_in([:items, slot], item) |> push_now(slot, made) |> ties_moved(slot, before)
-    {if(state == :open, do: m, else: put_in(m.closed[n], state)), :ok}
+    {before |> put_in([:items, slot], item) |> push_now(slot, made) |> ties_moved(slot, before),
+     :ok}
   end
 
   # Linking a task to the issue it has changes nothing: the plugin keeps what it last
@@ -1208,10 +1354,10 @@ defmodule HalC2.PlannerPropTest do
   # left it, or else what it has.
   defp baseline(m, slot), do: m.synced[slot] || own(m, slot)
 
-  # The task in `slot` of `m` as GitHub is taken to have it: its name, due date, the tasks
-  # it waits for and its parent (`{slot, gen}`), of those with an issue, all GitHub can
-  # have, the issues those had then (`refs`), and the issue it has them on, none when it
-  # has no issue.
+  # The task in `slot` of `m` as GitHub is taken to have it: its name, due date, state
+  # (`state_of/1`), the tasks it waits for and its parent (`{slot, gen}`), of those with
+  # an issue, all GitHub can have, the issues those had then (`refs`), and the issue it
+  # has them on, none when it has no issue.
   defp own(m, slot) do
     item = m.items[slot]
     after_keys = Enum.map(item.after, &key(m, &1))
@@ -1222,12 +1368,22 @@ defmodule HalC2.PlannerPropTest do
     %{
       name: item.name,
       due: item.due,
+      state: state_of(item.status),
       after: Enum.filter(after_keys, &is_map_key(refs, &1)),
       parent: if(is_map_key(refs, parent), do: parent),
       refs: refs,
       issue: item.issue
     }
   end
+
+  # The state a task's issue has on GitHub when it has the task whole.
+  defp state_of(status) when status in [:done, :dropped], do: status
+  defp state_of(_status), do: :open
+
+  # The state the plugin keeps of an issue a push gave `state`.
+  defp stated_as(:done), do: :completed
+  defp stated_as(:dropped), do: :not_planned
+  defp stated_as(:open), do: :open
 
   defp key(_m, nil), do: nil
   defp key(m, slot), do: {slot, m.gens[slot]}
@@ -1238,7 +1394,7 @@ defmodule HalC2.PlannerPropTest do
   end
 
   # What a push of the task in `slot` asks GitHub, of which GitHub has `b`, in order: its
-  # name; the relations it drops, from the issue it had them on (`b.issue`) when that is
+  # name and state, in one change, the parts GitHub lacks; the relations it drops, from the issue it had them on (`b.issue`) when that is
   # of `@repository`, by the issue it had for the other task when it can: the issues it
   # no longer waits for, the parent it leaves; then the relations it makes on its issue:
   # the issues it waits for and the parent it joins, of `@repository` only; the board,
@@ -1253,7 +1409,14 @@ defmodule HalC2.PlannerPropTest do
     had = &(b.refs[&1] || issue_at(m, &1))
     kept? = &(was == n and had.(&1) != nil and had.(&1) == issue_at(m, &1))
     kept = Enum.filter(b.after, &(&1 in now_after and kept?.(&1)))
-    title = if b.name != item.name, do: [{:title, n, item.name}], else: []
+    state = state_of(item.status)
+
+    title =
+      if b.name != item.name or b.state != state,
+        do: [
+          {:update, n, if(b.name != item.name, do: item.name), if(b.state != state, do: state)}
+        ],
+        else: []
 
     unblocks =
       for k <- b.after -- kept, here?(was), r = had.(k), do: {:unblock, {was, r}, k}
@@ -1283,15 +1446,24 @@ defmodule HalC2.PlannerPropTest do
 
   # GitHub takes `ops` in order, of which it had `b`, until it refuses a name, a board
   # item it adds to the board `on` named after `board`: `{m with what GitHub has, %{error,
-  # b, board}}`, `b` with what took and `board` set when it added one. Once a relation is
-  # made on the task's issue, GitHub has all of them there.
+  # b, board, stated}}`, `b` with what took, `board` set when it added one and `stated`
+  # when it gave the issue a state. A change GitHub refuses the name of gives it no state
+  # either. Once a relation is made on the task's issue, GitHub has all of them there.
   defp land(m, ops, b, board, on) do
-    Enum.reduce_while(ops, {m, %{error: nil, b: b, board: nil}}, fn op, {m, took} ->
+    Enum.reduce_while(ops, {m, %{error: nil, b: b, board: nil, stated: nil}}, fn op, {m, took} ->
       case op do
-        {:title, n, name} ->
-          case m.outcomes[name] do
-            {push, :refused} -> {:halt, {m, %{took | error: {:refused, push}}}}
-            _ -> {:cont, {put_in(m.github[n], name), put_in(took.b.name, name)}}
+        {:update, n, name, state} ->
+          case name && m.outcomes[name] do
+            {push, :refused} ->
+              {:halt, {m, %{took | error: {:refused, push}}}}
+
+            _ ->
+              {m, took} =
+                if name,
+                  do: {put_in(m.github[n], name), put_in(took.b.name, name)},
+                  else: {m, took}
+
+              {:cont, if(state, do: stated(m, took, n, state), else: {m, took})}
           end
 
         {:block, {n, r} = pair, k} ->
@@ -1325,6 +1497,16 @@ defmodule HalC2.PlannerPropTest do
     end)
   end
 
+  # GitHub closes the issue `n` for a task done or dropped, or opens it, as a push asks.
+  defp stated(m, took, n, state) do
+    closed =
+      if state == :open,
+        do: Map.delete(m.closed, n),
+        else: Map.put(m.closed, n, stated_as(state))
+
+    {%{m | closed: closed}, %{took | b: %{took.b | state: state}, stated: stated_as(state)}}
+  end
+
   # The task in `slot` pushes `ops`, to the board the settings name, and hears how it went.
   defp land_on(m, slot, ops, b, board) do
     {m, took} = land(m, ops, b, board, m.board)
@@ -1332,9 +1514,11 @@ defmodule HalC2.PlannerPropTest do
   end
 
   # The task in `slot` hears how its push went: the sync error, the board item it added,
-  # and what GitHub has of it, which it keeps when GitHub refused some of it.
-  defp settle(m, slot, %{error: error, b: b, board: board}) do
+  # the state it gave its issue, and what GitHub has of it, which it keeps when GitHub
+  # refused some of it.
+  defp settle(m, slot, %{error: error, b: b, board: board, stated: stated}) do
     item = %{m.items[slot] | sync: error}
+    item = if stated, do: %{item | state: stated}, else: item
     m = put_in(m.items[slot], if(board, do: %{item | board: board}, else: item))
     if error, do: put_in(m.synced[slot], b), else: %{m | synced: Map.delete(m.synced, slot)}
   end
@@ -1386,7 +1570,44 @@ defmodule HalC2.PlannerPropTest do
         %{put_in(acc.items[slot], item) | synced: Map.delete(acc.synced, slot)}
       end)
 
-    relations(m, Enum.sort_by(synced, &{Map.has_key?(m.closed, m.items[&1].issue), &1}))
+    m = relations(m, Enum.sort_by(synced, &{Map.has_key?(m.closed, m.items[&1].issue), &1}))
+
+    %{
+      m
+      | items:
+          Map.new(m.items, fn {slot, i} ->
+            {slot, if(whole?.(slot), do: i, else: pulled(m, i))}
+          end)
+    }
+  end
+
+  # The task `item` once a look reads its pull requests. One linked to an issue of
+  # `@repository`, sync error or not, drops those it took from its issue that the issue
+  # no longer names, and takes the ones it names anew, in the state GitHub has them; then
+  # each takes GitHub's state, and the task is done when the last open one merged, unless
+  # it was done or dropped, or that one is its issue's and its issue is open.
+  defp pulled(m, item) do
+    state = &if(MapSet.member?(m.merged, &1), do: :merged, else: :open)
+
+    old =
+      if here?(item.issue) do
+        named = Map.get(m.closing, item.issue, [])
+        kept = Enum.reject(item.pulls, fn {pr, from, _} -> from and pr not in named end)
+        had = Enum.map(kept, &elem(&1, 0))
+        kept ++ for(pr <- named, pr not in had, do: {pr, true, state.(pr)})
+      else
+        item.pulls
+      end
+
+    new = for {pr, from, _} <- old, do: {pr, from, state.(pr)}
+    open? = here?(item.issue) and not Map.has_key?(m.closed, item.issue)
+
+    newly =
+      new != [] and Enum.all?(new, &(elem(&1, 2) == :merged)) and
+        Enum.any?(old, fn {_, from, was} -> was != :merged and not (open? and from) end)
+
+    status = if newly and item.status not in [:done, :dropped], do: :done, else: item.status
+    %{item | pulls: new, status: status}
   end
 
   # The tasks in `slots` take their relations all at once when the plan they make has no
@@ -1664,6 +1885,110 @@ defmodule HalC2.PlannerPropTest do
     observe(reply)
   end
 
+  # A client links the task to the pull request `pr` of `@repository`, or unlinks it.
+  def link_pr(slot, pr) do
+    input = %{"itemId" => item_id(slot), "pullRequest" => pull_ref(pr)}
+    observe(elem(call("link", input), 0))
+  end
+
+  def unlink_pr(slot, pr) do
+    input = %{"itemId" => item_id(slot), "kind" => "pullRequest", "ref" => pull_ref(pr)}
+    observe(elem(call("unlink", input), 0))
+  end
+
+  # GitHub merges the pull request `pr`: its list has it merged, as do the issues that
+  # name it as closing them, which it changes, but closes none.
+  def merge(pr) do
+    Process.put(:pl_merged, MapSet.put(Process.get(:pl_merged), pr))
+    gh_rule(pr_list())
+    naming = for {number, prs} <- Process.get(:pl_closing), pr in prs, do: number
+    touch(naming)
+    Enum.each(naming, &issue_read/1)
+    observe(:ok)
+  end
+
+  # Someone on GitHub names the pull request `pr` as closing issue `number`, or no longer.
+  def refer(number, pr) do
+    Process.put(:pl_closing, Map.update(Process.get(:pl_closing), number, [pr], &(&1 ++ [pr])))
+    touch([number])
+    issue_read(number)
+    observe(:ok)
+  end
+
+  def unrefer(number, pr) do
+    Process.put(:pl_closing, Map.update!(Process.get(:pl_closing), number, &List.delete(&1, pr)))
+    touch([number])
+    issue_read(number)
+    observe(:ok)
+  end
+
+  # GitHub merges the pull request `n` of `@lone`, which only the host it is on answers.
+  def merge_lone(n) do
+    Process.put(:pl_merged, MapSet.put(Process.get(:pl_merged), n))
+    gh_rule(lone_view(n, "MERGED"))
+    observe(:ok)
+  end
+
+  # What a link to the pull request `pr` says: the repository and number, and the url of a
+  # pull request of `@lone`.
+  defp pull_ref(pr) when is_map_key(@lone_pulls, pr) do
+    ref = %{"repository" => @lone, "number" => pr}
+
+    case @lone_pulls[pr] do
+      {_, nil} -> ref
+      {_, url} -> Map.put(ref, "url", url)
+    end
+  end
+
+  defp pull_ref(pr), do: %{"repository" => @repository, "number" => pr}
+
+  # `gh pr view` of the pull request `n` of `@lone` on the host that serves it (the arg ends
+  # in a space so that #5 does not match #55). No rule is made for `:unknown`, which
+  # nothing may ask: the call would fail, and `lone_routes/0` says it was made.
+  defp lone_view(n, state) do
+    host = if elem(@lone_pulls[n], 0) == :enterprise, do: @enterprise, else: "github.com"
+
+    pr = %{
+      "number" => n,
+      "title" => "Pull request #{n}",
+      "url" => "https://#{host}/#{@lone}/pull/#{n}",
+      "author" => %{"login" => "octocat"},
+      "headRefName" => "feature/#{n}",
+      "baseRefName" => "main",
+      "state" => state,
+      "isDraft" => false,
+      "createdAt" => "2026-09-01T00:00:00Z",
+      "updatedAt" => "2026-09-02T00:00:00Z",
+      "reviewRequests" => [],
+      "latestReviews" => [],
+      "statusCheckRollup" => [],
+      "labels" => []
+    }
+
+    %{"args" => ["pr view #{n} ", "#{host}/#{@lone}"], "stdout" => pr}
+  end
+
+  # The pull requests of `@repository` as `gh pr list` answers them, merged or open.
+  defp pr_list do
+    rows =
+      for pr <- @pulls do
+        %{
+          "number" => pr,
+          "title" => "Pull request #{pr}",
+          "url" => "https://github.com/#{@repository}/pull/#{pr}",
+          "author" => %{"login" => "octocat"},
+          "headRefName" => "feature/#{pr}",
+          "baseRefName" => "main",
+          "state" => if(MapSet.member?(Process.get(:pl_merged), pr), do: "MERGED", else: "OPEN"),
+          "isDraft" => false,
+          "createdAt" => "2026-09-01T00:00:00Z",
+          "updatedAt" => "2026-09-02T00:00:00Z"
+        }
+      end
+
+    %{"args" => ["pr list"], "stdout" => rows}
+  end
+
   defp link_to(slot, number, state \\ nil) do
     issue = %{"repository" => repository_of(number), "number" => number}
     issue = if state, do: Map.put(issue, "state", state), else: issue
@@ -1786,7 +2111,7 @@ defmodule HalC2.PlannerPropTest do
   end
 
   # GitHub makes an issue for the task in `slot`, numbered as the one it links to, open,
-  # and closes it with the reason the push for the task asks.
+  # and closes it with the reason the push for the task asks (`states_taken/0`).
   def create(slot) do
     number = @issues[slot]
 
@@ -1795,27 +2120,10 @@ defmodule HalC2.PlannerPropTest do
       "stdout" => %{"number" => number}
     })
 
-    gh_rule(%{
-      "args" => ["--method PATCH", "repos/#{@repository}/issues/#{number} "],
-      "stdin" => [~s("state":"closed")],
-      "stdout" => "{}"
-    })
-
     issue_read(number)
-    seen = length(gh_calls())
     input = %{"itemId" => item_id(slot), "repository" => @repository}
     {reply, _} = call("createIssue", input)
     if reply == :ok, do: Process.put({:pl_issue, slot}, number)
-
-    for line <- Enum.drop(gh_calls(), seen),
-        %{"args" => args, "stdin" => stdin} = JSON.decode!(line),
-        "repos/#{@repository}/issues/#{number}" in args,
-        {:ok, %{"state" => "closed", "state_reason" => reason}} <- [JSON.decode(stdin)] do
-      Process.put(:pl_closed, Map.put(Process.get(:pl_closed), number, String.to_atom(reason)))
-      touch([number])
-      issue_read(number)
-    end
-
     listed()
     observe(reply)
   end
@@ -1892,7 +2200,20 @@ defmodule HalC2.PlannerPropTest do
       "stateReason" => reason,
       "url" => "https://github.com/#{@repository}/issues/#{number}",
       "repository" => %{"nameWithOwner" => @repository},
-      "updatedAt" => Map.get(Process.get(:pl_updated), number, "2026-10-01T00:00:00Z")
+      "updatedAt" => Map.get(Process.get(:pl_updated), number, "2026-10-01T00:00:00Z"),
+      "closedByPullRequestsReferences" => %{
+        "nodes" =>
+          for pr <- Map.get(Process.get(:pl_closing), number, []) do
+            %{
+              "number" => pr,
+              "title" => "Pull request #{pr}",
+              "url" => "https://github.com/#{@repository}/pull/#{pr}",
+              "state" =>
+                if(MapSet.member?(Process.get(:pl_merged), pr), do: "MERGED", else: "OPEN"),
+              "repository" => repo_ref()
+            }
+          end
+      }
     }
   end
 
@@ -1971,7 +2292,7 @@ defmodule HalC2.PlannerPropTest do
   # holds that push until `answer/1` lets it answer. The push is held on a fifo, whose
   # opening tells the case GitHub has it.
   def rename(slot, outcome, push, true) do
-    gh_rule(name_rule(slot, push, outcome, ""))
+    Enum.each(name_rules(slot, push, outcome, ""), &gh_rule/1)
     input = %{"id" => item_id(slot), "fields" => renamed(slot, push)}
     observe(elem(call("updateItem", input), 0))
   end
@@ -1981,7 +2302,7 @@ defmodule HalC2.PlannerPropTest do
     gate = gate(push)
     {_, 0} = System.cmd("mkfifo", [gate])
     hold = "if mkdir '#{gate}.held' 2>/dev/null; then read _ < '#{gate}' || :; fi; "
-    gh_rule(name_rule(slot, push, outcome, hold))
+    Enum.each(name_rules(slot, push, outcome, hold), &gh_rule/1)
 
     case_pid = self()
 
@@ -2026,8 +2347,9 @@ defmodule HalC2.PlannerPropTest do
   defp renamed(slot, push), do: %{"title" => "#{slot}#{push}", "due" => renamed_due(push)}
 
   # GitHub's answer to every push naming the task's issue `slot<push>`: `outcome`, after
-  # running `hold`, writing the name down as the issue's when it takes it.
-  defp name_rule(slot, push, outcome, hold) do
+  # running `hold`, writing the name down as the issue's when it takes it, and the state
+  # the push gives the issue (`state_rules/2`). The rules go to `gh_rule/1` in order.
+  defp name_rules(slot, push, outcome, hold) do
     number = Process.get({:pl_issue, slot})
     title = "#{slot}#{push}"
 
@@ -2036,7 +2358,7 @@ defmodule HalC2.PlannerPropTest do
         do: "echo '#{number} #{title}' >> '#{Path.join(Process.get(:pl_gh), "named")}'",
         else: ":"
 
-    %{
+    rule = %{
       "args" => ["--method PATCH", "repos/#{@repository}/issues/#{number} "],
       "stdin" => [~s("title":#{JSON.encode!(title)})],
       "run" => hold <> took,
@@ -2044,6 +2366,56 @@ defmodule HalC2.PlannerPropTest do
       "exit" => if(outcome == :ok, do: 0, else: 1),
       "stderr" => if(outcome == :ok, do: "", else: "HTTP 422: refused push #{push}\n")
     }
+
+    if outcome == :ok, do: state_rules(rule, number), else: [rule]
+  end
+
+  # `rule`, a change to issue `number`, and then the same rule for each state it can give
+  # the issue, which also writes the state down (`states_taken/0`): the latter match first.
+  defp state_rules(rule, number) do
+    states = Path.join(Process.get(:pl_gh), "states")
+
+    variants =
+      for {state, stdin} <- [
+            {"completed", [~s("state":"closed"), ~s("state_reason":"completed")]},
+            {"not_planned", [~s("state":"closed"), ~s("state_reason":"not_planned")]},
+            {"open", [~s("state":"open")]}
+          ] do
+        Map.merge(rule, %{
+          "stdin" => Map.get(rule, "stdin", []) ++ stdin,
+          "run" => rule["run"] <> "; echo '#{number} #{state}' >> '#{states}'"
+        })
+      end
+
+    [rule | variants]
+  end
+
+  # The states pushes gave issues since the last step: a closed one leaves the listing of
+  # open issues and is read alone as closed, and an opened one is listed again.
+  defp states_taken do
+    lines =
+      case File.read(Path.join(Process.get(:pl_gh), "states")) do
+        {:ok, text} -> String.split(text, "\n", trim: true)
+        {:error, :enoent} -> []
+      end
+
+    for line <- Enum.drop(lines, Process.get(:pl_states_read)) do
+      [number, state] = String.split(line, " ")
+      number = String.to_integer(number)
+      closed = Process.get(:pl_closed)
+
+      if state == "open" do
+        Process.put(:pl_closed, Map.delete(closed, number))
+        Process.put({:pl_reopened, number}, true)
+      else
+        Process.put(:pl_closed, Map.put(closed, number, String.to_existing_atom(state)))
+      end
+
+      touch([number])
+      issue_read(number)
+    end
+
+    Process.put(:pl_states_read, length(lines))
   end
 
   # GitHub answers the push, naming a board item it adds after it, and its caller tells
@@ -2181,11 +2553,13 @@ defmodule HalC2.PlannerPropTest do
   # Waits for the plugin to settle, then reads what the model checks.
   defp observe(reply) do
     drain()
+    states_taken()
     # The plugin publishes through a cast to the host, which sends to watchers.
     :sys.get_state(HalC2.Plugins)
     take_messages()
     # What the step put on a board, the next look reads.
     boarded("item-0")
+    lone_routes()
     board_reads()
     plan = plan()
     runs = runs()
@@ -2213,7 +2587,11 @@ defmodule HalC2.PlannerPropTest do
            sync: sync_error(item["syncError"]),
            board: board_push(item["boardItemId"]),
            status: String.to_atom(item["status"]),
-           state: issue_state(item["issue"])
+           state: issue_state(item["issue"]),
+           pulls:
+             for pr <- item["pullRequests"] || [] do
+               {pr["number"], pr["fromIssue"] == true, String.to_existing_atom(pr["state"])}
+             end
          }}
       end
 
@@ -2268,6 +2646,28 @@ defmodule HalC2.PlannerPropTest do
       {:error, :enoent} ->
         %{}
     end
+  end
+
+  # Every read of a pull request of `@lone` since the last, which the host its link names
+  # served if the MC has a project there and github.com otherwise, and was none for a host
+  # the MC has no project on.
+  defp lone_routes do
+    calls = gh_calls()
+
+    for line <- Enum.drop(calls, Process.get(:pl_lone_read)),
+        %{"args" => ["pr", "view", number | rest]} <- [JSON.decode!(line)],
+        {n, ""} <- [Integer.parse(number)],
+        is_map_key(@lone_pulls, n) do
+      repo = rest |> Enum.drop_while(&(&1 != "--repo")) |> Enum.at(1)
+
+      case elem(@lone_pulls[n], 0) do
+        :enterprise when repo == "#{@enterprise}/#{@lone}" -> :ok
+        :plain when repo == "github.com/#{@lone}" -> :ok
+        kind -> problem("##{n} (#{kind}) was read through #{inspect(repo)}")
+      end
+    end
+
+    Process.put(:pl_lone_read, length(calls))
   end
 
   # The gh calls so far, one JSON line each.
@@ -2454,25 +2854,26 @@ defmodule HalC2.PlannerPropTest do
   # --- settling -------------------------------------------------------------------------
 
   # Returns once the plugin has no thread start or look in flight, and has heard from
-  # everything that ended.
-  defp drain, do: drain(System.monotonic_time(:millisecond) + 15_000, false)
+  # everything that ended. It waits on those processes ending however long a loaded
+  # machine takes, so a planner that never settles hangs the case rather than failing it.
+  defp drain, do: drain(false)
 
-  defp drain(deadline, settled_once) do
+  defp drain(settled_once) do
     with pid when is_pid(pid) <- Process.whereis(@server),
          {:ok, state} <- get_state(pid) do
-      kids = kids(pid)
-
-      cond do
-        System.monotonic_time(:millisecond) > deadline ->
-          problem("planner never settled: #{length(kids)} processes")
-
-        kids == [] and state.polling == nil ->
+      case kids(pid) do
+        [] when state.polling == nil ->
           # Once more, for what the processes that just ended told it.
-          if settled_once, do: :ok, else: drain(deadline, true)
+          if settled_once, do: :ok, else: drain(true)
 
-        true ->
-          await_any(kids)
-          drain(deadline, false)
+        # A look that ended between the state read and the links read: its `:DOWN` is
+        # already queued ahead of the next state read, so this goes round once, not forever.
+        [] ->
+          drain(false)
+
+        kids ->
+          await(kids)
+          drain(false)
       end
     else
       _ -> problem("planner is not running")
@@ -2480,7 +2881,7 @@ defmodule HalC2.PlannerPropTest do
   end
 
   defp get_state(pid) do
-    {:ok, :sys.get_state(pid)}
+    {:ok, :sys.get_state(pid, :infinity)}
   catch
     :exit, _ -> :gone
   end
@@ -2491,12 +2892,12 @@ defmodule HalC2.PlannerPropTest do
     Enum.filter(links, &(is_pid(&1) and &1 != parent))
   end
 
-  defp await_any([]), do: :ok
+  # Waits for the first of `kids` to end. A look that has ended leaves `polling` set
+  # until the planner reads its `:DOWN`, which the next state read queues behind.
 
-  defp await_any(kids) do
-    refs = Enum.map(kids, &Process.monitor/1)
-    receive do: ({:DOWN, ref, :process, _, _} when is_reference(ref) -> :ok)
-    for ref <- refs, do: Process.demonitor(ref, [:flush])
+  defp await([kid | _]) do
+    ref = Process.monitor(kid)
+    receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
   end
 
   # --- one case ----------------------------------------------------------------------------
@@ -2531,6 +2932,8 @@ defmodule HalC2.PlannerPropTest do
     gh = Path.join(home, "gh")
     File.mkdir_p!(gh)
     Process.put(:pl_gh, gh)
+    Process.put(:pl_merged, MapSet.new())
+    Process.put(:pl_closing, %{})
     System.put_env("FAKE_GH_LOG", Path.join(gh, "calls.jsonl"))
     System.put_env("FAKE_GH_RULES", Path.join(gh, "rules.json"))
     issue = %{"number" => 1, "state" => "OPEN", "repository" => %{"nameWithOwner" => @repository}}
@@ -2566,8 +2969,19 @@ defmodule HalC2.PlannerPropTest do
     File.write!(
       Path.join(gh, "rules.json"),
       JSON.encode!(
-        [issue_list([]), board_item(0)] ++
+        [issue_list([]), board_item(0), pr_list()] ++
+          for({n, {kind, _}} <- @lone_pulls, kind != :unknown, do: lone_view(n, "OPEN")) ++
           pairs ++
+          [%{"args" => ["api user"], "stdout" => %{"id" => 1, "login" => "octocat"}}] ++
+          Enum.flat_map(here, fn number ->
+            rule = %{
+              "args" => ["--method PATCH", "repos/#{@repository}/issues/#{number} "],
+              "run" => ":",
+              "stdout" => "{}"
+            }
+
+            Enum.reverse(state_rules(rule, number))
+          end) ++
           [
             %{
               "args" => ["api graphql"],
@@ -2589,6 +3003,7 @@ defmodule HalC2.PlannerPropTest do
 
     Process.put(:pl_items, %{})
     Process.put(:pl_closed, %{})
+    Process.put(:pl_states_read, 0)
     Process.put(:pl_updated, %{})
     Process.put(:pl_parents, %{})
     Process.put(:pl_blockers, %{})
@@ -2596,6 +3011,7 @@ defmodule HalC2.PlannerPropTest do
     Process.put(:pl_boards, %{})
     Process.put(:pl_full, false)
     Process.put(:pl_calls_read, 0)
+    Process.put(:pl_lone_read, 0)
     Process.put(:pl_ids, %{})
     Process.put(:pl_runs, [])
     Process.put(:pl_problems, [])
@@ -2632,7 +3048,22 @@ defmodule HalC2.PlannerPropTest do
         "workspaceRoot" => root
       })
 
+    # A project on `@enterprise`, which reads the pull requests of any repository there.
+    tools = Path.join(home, "tools")
+    File.mkdir_p!(tools)
+    git!(tools, ["init", "-q"])
+    git!(tools, ["remote", "add", "origin", "https://#{@enterprise}/acme/tools.git"])
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.create",
+        "projectId" => "tools",
+        "title" => "tools",
+        "workspaceRoot" => tools
+      })
+
     HalC2.Streams.flush_shell("api")
+    HalC2.Streams.flush_shell("tools")
     :sys.get_state(HalC2.Shell)
     File.mkdir_p!(Path.join(HalC2.Paths.data_dir(), "plugins"))
     File.cp_r!(@package, Path.join([HalC2.Paths.data_dir(), "plugins", @id]))

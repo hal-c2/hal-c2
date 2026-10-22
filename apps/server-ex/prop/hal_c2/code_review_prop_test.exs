@@ -9,7 +9,10 @@ defmodule HalC2.CodeReviewPropTest do
   commits to push between. The commands open and close them, push, break a head so its
   checkout fails, hold checkouts at the fetch and posts at GitHub, refuse posts, look
   for pull requests, start, retry, report, dismiss, discard and publish reviews, end
-  turns, answer a superseded post late, change settings, turn the plugin off and on,
+  turns (one of them stopped by the provider's usage limit, which parks its review
+  in the queue and starts nothing else until the limit resets, restarts included,
+  unless the user asks for a review), answer a
+  superseded post late, change settings, turn the plugin off and on,
   and crash it. After every step:
 
   - one review runs per pull request: each run has a thread of its own once it starts
@@ -166,7 +169,10 @@ defmodule HalC2.CodeReviewPropTest do
       held_runs: [],
       held_pubs: [],
       crashes: 0,
-      seq: 0
+      seq: 0,
+      paused: false,
+      failures: 0,
+      pause_text: nil
     })
   end
 
@@ -212,7 +218,8 @@ defmodule HalC2.CodeReviewPropTest do
              {:call, __MODULE__, :report,
               [run, oneof([:findings, :findings, :approve, :nothing])]}},
             {1,
-             {:call, __MODULE__, :turn_finished, [run, oneof(~w(completed failed interrupted))]}}
+             {:call, __MODULE__, :turn_finished, [run, oneof(~w(completed failed interrupted))]}},
+            {1, {:call, __MODULE__, :limited, [run]}}
           ],
           else: []
         ) ++
@@ -245,13 +252,14 @@ defmodule HalC2.CodeReviewPropTest do
     frequency(if(m.enabled, do: on, else: off) ++ always)
   end
 
-  @plugin_commands ~w(refresh poll start retry dismiss discard publish disable report turn_finished late_published)a
+  @plugin_commands ~w(refresh poll start retry dismiss discard publish disable report turn_finished limited late_published)a
 
   def precondition(m, {:call, _, :enable, _}), do: not m.enabled
   def precondition(m, {:call, _, :crash, _}), do: m.enabled and m.crashes < 2
 
-  def precondition(m, {:call, _, cmd, [{key, k} | _]}) when cmd in [:report, :turn_finished],
-    do: m.enabled and Enum.at(m.runs[key] || [], k - 1) == true
+  def precondition(m, {:call, _, cmd, [{key, k} | _]})
+      when cmd in [:report, :turn_finished, :limited],
+      do: m.enabled and Enum.at(m.runs[key] || [], k - 1) == true
 
   def precondition(m, {:call, _, :late_published, [{key, k}]}),
     do: m.enabled and k < length(m.runs[key] || [])
@@ -272,7 +280,7 @@ defmodule HalC2.CodeReviewPropTest do
       checkouts: checkouts(m),
       orphans: [],
       posts: Enum.sort(m.posts),
-      problems: []
+      problems: if(m.paused, do: ["code-review reports: #{m.pause_text}"], else: [])
     }
 
     observed = %{observed | posts: Enum.sort(observed.posts)}
@@ -295,20 +303,32 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :poll, []}), do: {look(m), nil}
 
   # An ask reads the pull request first, so one closed since the last look is refused.
+  # Asking also follows the pull request: later pushes count as the ask standing.
   defp step(m, {:call, _, :start, [key]}) do
     cond do
-      not m.prs[key].open -> {m, :error}
-      m.reviews[key] == nil -> {m |> put_review(key, fresh(m, key)) |> queue(key) |> pump(), :ok}
-      m.reviews[key].status in [:queued, :running] -> {m, :ok}
-      true -> {m |> queue(key) |> pump(), :ok}
+      not m.prs[key].open ->
+        {m, :error}
+
+      m.reviews[key] == nil ->
+        {m
+         |> unpause()
+         |> put_review(key, %{fresh(m, key) | followed: true})
+         |> queue(key)
+         |> pump(), :ok}
+
+      m.reviews[key].status in [:queued, :running] ->
+        {m |> unpause() |> pump(), :ok}
+
+      true ->
+        {m |> unpause() |> follow(key) |> queue(key) |> pump(), :ok}
     end
   end
 
   defp step(m, {:call, _, :retry, [key]}) do
     case m.reviews[key] do
       nil -> {m, :error}
-      %{status: s} when s in [:queued, :running] -> {m, :ok}
-      _ -> {m |> queue(key) |> pump(), :ok}
+      %{status: s} when s in [:queued, :running] -> {m |> unpause() |> pump(), :ok}
+      _ -> {m |> unpause() |> follow(key) |> queue(key) |> pump(), :ok}
     end
   end
 
@@ -355,7 +375,7 @@ defmodule HalC2.CodeReviewPropTest do
             ]
 
           r = %{r | status: status, verdict: verdict, comments: comments, publish_error: false}
-          m = put_review(m, key, r)
+          m = %{put_review(m, key, r) | failures: 0}
 
           # The agent is told how an automatic post went once GitHub has answered.
           if status == :publishing do
@@ -374,7 +394,25 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :turn_finished, [{key, k}, _status]}) do
     case m.reviews[key] do
       %{run: ^k, status: :running} = r ->
-        {m |> put_review(key, %{r | status: :failed}) |> pump(), nil}
+        {m |> put_review(key, %{r | status: :failed}) |> fail() |> pump(), nil}
+
+      _ ->
+        {m, nil}
+    end
+  end
+
+  # A turn the provider's usage limit stopped: the review waits in the queue
+  # and nothing else starts until the plugin does.
+  defp step(m, {:call, _, :limited, [{key, k}]}) do
+    case m.reviews[key] do
+      %{run: ^k, status: :running} ->
+        {%{
+           queue(m, key)
+           | paused: true,
+             failures: 0,
+             pause_text:
+               "Reviews are paused: the agent hit its usage limit, which resets at 2999-01-01T00:00:00Z. Queued reviews wait instead of failing one by one."
+         }, nil}
 
       _ ->
         {m, nil}
@@ -428,6 +466,24 @@ defmodule HalC2.CodeReviewPropTest do
     {Enum.reduce(held, m, fn {key, k}, m -> resolve(m, key, k) end), :ok}
   end
 
+  defp follow(m, key), do: put_review(m, key, %{m.reviews[key] | followed: true})
+
+  # The user's own ask ends a pause.
+  defp unpause(m), do: %{m | paused: false, pause_text: nil}
+
+  # Three failed runs in a row pause the queue the same way a usage limit does.
+  defp fail(m) do
+    if m.failures + 1 >= 3,
+      do: %{
+        m
+        | failures: 0,
+          paused: true,
+          pause_text:
+            "Reviews are paused after repeated failures; they start again at the next look."
+      },
+      else: %{m | failures: m.failures + 1}
+  end
+
   defp put_review(m, key, review), do: %{m | reviews: Map.put(m.reviews, key, review)}
   defp update_pr(m, key, fun), do: %{m | prs: Map.update!(m.prs, key, fun)}
 
@@ -441,7 +497,8 @@ defmodule HalC2.CodeReviewPropTest do
       verdict: nil,
       comments: [],
       publish_error: false,
-      seq: nil
+      seq: nil,
+      followed: false
     }
   end
 
@@ -483,12 +540,12 @@ defmodule HalC2.CodeReviewPropTest do
 
           known == nil or known.reviewed == nil ->
             m = put_review(m, key, %{(known || fresh(m, key)) | seen: pr.head})
-            if automatic, do: queue(m, key), else: m
+            if automatic or (known != nil and known.followed), do: queue(m, key), else: m
 
           known.reviewed == pr.head ->
             put_review(m, key, %{known | seen: pr.head, changed: false})
 
-          automatic and m.settings.new_pushes ->
+          m.settings.new_pushes and (automatic or known.followed) ->
             m |> put_review(key, %{known | seen: pr.head}) |> queue(key)
 
           true ->
@@ -500,7 +557,10 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # Starts queued reviews, oldest first, while fewer than `concurrency` run; each
-  # start is a new run, held at the fetch while the hold is on.
+  # start is a new run, held at the fetch while the hold is on. A paused queue
+  # (a usage limit, or failed runs in a row) starts nothing.
+  defp pump(%{paused: true} = m), do: m
+
   defp pump(m) do
     running = Enum.count(m.reviews, fn {_, r} -> r.status == :running end)
 
@@ -531,7 +591,7 @@ defmodule HalC2.CodeReviewPropTest do
     case m.reviews[key] do
       %{status: :running, run: ^k} = r ->
         if m.prs[key].broken do
-          m |> put_review(key, %{r | status: :failed}) |> pump()
+          m |> put_review(key, %{r | status: :failed}) |> fail() |> pump()
         else
           m = put_review(m, key, %{r | reviewed: m.prs[key].head})
           %{m | runs: Map.update!(m.runs, key, &List.replace_at(&1, k - 1, true))}
@@ -581,7 +641,9 @@ defmodule HalC2.CodeReviewPropTest do
         end
       end)
 
-    look(%{m | reviews: reviews, held_runs: [], held_pubs: []})
+    # A pause is saved with the reviews, so it stands across the restart; the
+    # run of failures that may have led to it is not.
+    look(%{m | reviews: reviews, held_runs: [], held_pubs: [], failures: 0})
   end
 
   defp view(%{enabled: false}), do: :off
@@ -725,6 +787,21 @@ defmodule HalC2.CodeReviewPropTest do
   def turn_finished({key, k}, status) do
     event = %{"type" => "turn.finished", "threadId" => tid(key, k), "status" => status}
     # Compiled when the plugin starts, so unknown to the compiler here.
+    apply(@server, :handle_event, [event, %{}])
+    observe(nil)
+  end
+
+  def limited({key, k}) do
+    event = %{
+      "type" => "turn.finished",
+      "threadId" => tid(key, k),
+      "status" => "failed",
+      "errorClass" => "usage_limit",
+      "error" => "Subscription quota exhausted.",
+      # No case runs this long: the pause stands until the user asks for a review.
+      "resetAt" => "2999-01-01T00:00:00Z"
+    }
+
     apply(@server, :handle_event, [event, %{}])
     observe(nil)
   end

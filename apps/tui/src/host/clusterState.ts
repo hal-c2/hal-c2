@@ -1,4 +1,4 @@
-import type { ClusterInvite, ClusterStatus } from "@hal-c2/contracts";
+import type { ClusterInvite, ClusterStatus, ClusterUpdateResult } from "@hal-c2/contracts";
 
 import type { TuiClient } from "../connection.ts";
 import type { Store } from "../store.ts";
@@ -32,10 +32,24 @@ export const LOCAL_ONLY_HINT =
 const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/** What `cluster.update` did, one sentence per member, and whether any could not update. */
+export function updateSummary(result: ClusterUpdateResult): { text: string; failed: boolean } {
+  let failed = false;
+  const lines = result.members.map(({ label, outcome }) => {
+    if (outcome === "updated") return `${label} updated to ${result.version}.`;
+    if (outcome === "restarting on it") return `${label} is restarting on ${result.version}.`;
+    if (outcome === "has not finished") return `${label} is still updating.`;
+    failed = true;
+    return `${label} could not update: ${outcome}`;
+  });
+  if (lines.length === 0) lines.push(`No connected machine needs an update to ${result.version}.`);
+  return { text: lines.join(" "), failed };
+}
+
 /**
- * The cluster from the terminal: status in settings, and invite, join and
- * remove from the palette. The MC does the work (`cluster.*`); this reads
- * the status again when the MC says a machine came or went, when settings
+ * The cluster from the terminal: status in settings, and invite, join,
+ * remove and sending this machine's version to the others from the
+ * palette. The MC does the work (`cluster.*`); this reads the status again when the MC says a machine came or went, when settings
  * or the palette open, and after each change.
  */
 export function createClusterController(ctx: {
@@ -118,6 +132,32 @@ export function createClusterController(ctx: {
   };
 
   const members = () => (current.status?.clustered ? current.status.members : []);
+  // Connected members that run another version than this machine.
+  const behind = () => {
+    const status = current.status;
+    if (!status?.clustered) return [];
+    return status.members.filter(
+      (member) => member.connected && member.version && member.version !== status.version,
+    );
+  };
+
+  // Members restart or load the version in place, so the cluster is read again after.
+  const update = () => {
+    store.setStatus("Sending this version to the other machines…");
+    void track(
+      client.clusterUpdate().then(
+        (result) => {
+          const { text, failed } = updateSummary(result);
+          store.setStatus(text, failed ? "error" : "success");
+          void refresh();
+        },
+        (error: unknown) => {
+          store.setStatus(`Update failed: ${errorText(error)}`, "error");
+          void refresh();
+        },
+      ),
+    );
+  };
 
   return {
     state: () => current,
@@ -146,6 +186,16 @@ export function createClusterController(ctx: {
         keywords: "cluster invite link",
         action: "cluster.join.open",
       },
+      ...(behind().length > 0
+        ? [
+            {
+              id: "cluster.update",
+              title: "Send this version to the other machines",
+              keywords: "cluster update upgrade release members",
+              action: "cluster.update",
+            },
+          ]
+        : []),
       ...members().map((member) => ({
         id: `cluster.remove.${member.id}`,
         title: `Remove ${member.label} from the cluster`,
@@ -184,6 +234,9 @@ export function createClusterController(ctx: {
           change(client.clusterJoin(link), "Joined the cluster.", "Join failed");
           return true;
         }
+        case "cluster.update":
+          update();
+          return true;
         case "cluster.remove": {
           const id = field("id");
           if (typeof id !== "string") return true;
