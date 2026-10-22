@@ -96,7 +96,14 @@ defmodule HalC2.Steps.Connections.Pairing do
 
     out = String.trim(out)
 
-    case {status, Enum.reject(args, &String.starts_with?(&1, "--"))} do
+    # The positionals as `HalC2.Pair` parses them, so an option's value is not
+    # taken for a BASE_URL.
+    {_, positionals, _} =
+      OptionParser.parse(args,
+        strict: [release: :boolean, tailscale: :boolean, tailscale_serve_port: :integer]
+      )
+
+    case {status, positionals} do
       {0, [base | _]} ->
         context |> Map.put(:base, base) |> Map.put(:printed, out) |> Map.put(:pair_output, [out])
 
