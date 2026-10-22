@@ -31,6 +31,8 @@ defmodule HalC2.Application do
   """
   def children do
     [
+      # Boot took the home's lock (`lock_home/0`); an MC updated in place takes it here.
+      HalC2.HomeLock,
       # Distribution starts here, before anything reads `node()`.
       HalC2.Cluster,
       {HalC2.Store, path: HalC2.Store.home_path()},
@@ -112,12 +114,15 @@ defmodule HalC2.Application do
   # (apps/desktop-qt/host/elixirMc.ts) then uses the MC already running there.
   @home_in_use 73
 
-  # One MC per home (`HalC2.HomeLock`). The background service waits its turn, since
-  # its supervisor would only start it again; anything else stops at once.
+  # One MC per home (`HalC2.HomeLock`). A background service waits its turn, since
+  # its supervisor would only start it again; anything else stops at once. The release
+  # service's wrapper says so with HAL_C2_SERVICE, a unit run from a checkout with
+  # HAL_C2_WAIT_FOR_HOME (`HalC2.Service`).
   defp lock_home do
     HalC2.Paths.mkdir_private!(HalC2.Paths.data_dir())
+    wait = "1" in [System.get_env("HAL_C2_SERVICE"), System.get_env("HAL_C2_WAIT_FOR_HOME")]
 
-    case HalC2.HomeLock.acquire(wait: System.get_env("HAL_C2_SERVICE") == "1") do
+    case HalC2.HomeLock.acquire(wait: wait) do
       :ok ->
         :ok
 

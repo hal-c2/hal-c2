@@ -133,6 +133,12 @@ async function standalone(home: string | undefined, dev: boolean): Promise<McAcc
   }
   void started.exited.then(({ code, signal }) => {
     if (stopping) return;
+    // Refused the files after the MC holding them answered on this port: that MC,
+    // with the same files' token, is the one the shell has, so it carries on.
+    if (code === MC_HOME_IN_USE) {
+      mc = undefined;
+      return;
+    }
     emit({ type: "exit", code, signal });
     process.exit(code ?? 1);
   });

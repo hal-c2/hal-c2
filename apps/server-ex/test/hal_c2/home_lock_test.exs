@@ -39,7 +39,25 @@ defmodule HalC2.HomeLockTest do
     assert Task.yield(waiter, 1_500) == nil
     Sqlite3.close(holder)
     assert Task.await(waiter, 5_000) == :ok
-    assert HomeLock.acquire(path: path) == {:error, :held}
+    {:ok, other} = Sqlite3.open(path)
+    assert {:error, _locked} = Sqlite3.execute(other, "BEGIN EXCLUSIVE")
+    Sqlite3.close(other)
+  end
+
+  test "a lock file that is not a database is made again", %{tmp_dir: dir} do
+    path = Path.join(dir, "mc.lock")
+    File.write!(path, String.duplicate("not a database ", 100))
+
+    assert HomeLock.acquire(path: path) == :ok
+    assert HomeLock.acquire(path: path, wait: true) == :ok
+  end
+
+  test "the MC that holds its home takes it again without waiting", %{tmp_dir: dir} do
+    path = Path.join(dir, "mc.lock")
+    :ok = HomeLock.acquire(path: path)
+
+    assert HomeLock.held?(path)
+    assert HomeLock.acquire(path: path, wait: true) == :ok
   end
 
   test "the lock leaves the database beside it readable", %{tmp_dir: dir} do

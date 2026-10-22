@@ -29,7 +29,10 @@ defmodule HalC2.HomeLock do
     path = Keyword.get(opts, :path, path())
     wait = Keyword.get(opts, :wait, false)
 
-    case try_lock(path) do
+    case if(held?(path), do: :mine, else: try_lock(path)) do
+      :mine ->
+        :ok
+
       {:ok, db} ->
         # Held for the life of the node: the term keeps the connection from being
         # collected, and with it the lock.
@@ -42,6 +45,24 @@ defmodule HalC2.HomeLock do
 
       :held ->
         {:error, :held}
+    end
+  end
+
+  @doc "Whether this node holds the lock at `path`."
+  def held?(path \\ path()), do: :persistent_term.get({__MODULE__, path}, nil) != nil
+
+  @doc """
+  The lock as a service of the MC (`HalC2.Application.children/0`), so an MC that
+  moved to this version by a hot update takes it too: boot took it already, and an
+  MC updated in place takes it now. Refused, the service fails to start, which asks
+  for a restart; the restarted MC waits for the lock at boot.
+  """
+  def child_spec(_opts), do: %{id: __MODULE__, start: {__MODULE__, :start_link, []}}
+
+  def start_link do
+    case acquire() do
+      :ok -> :ignore
+      {:error, :held} -> {:error, :home_held}
     end
   end
 
@@ -58,16 +79,30 @@ defmodule HalC2.HomeLock do
     end
   end
 
-  defp try_lock(path) do
+  # Only a busy database is another MC's lock. A file that is not a database at all
+  # (damaged, or written by something else) holds nothing: it is made again.
+  defp try_lock(path, retry \\ true) do
     {:ok, db} = Sqlite3.open(path)
 
     case Sqlite3.execute(db, "BEGIN EXCLUSIVE") do
       :ok ->
         {:ok, db}
 
-      {:error, _busy} ->
+      {:error, reason} ->
         Sqlite3.close(db)
-        :held
+
+        cond do
+          reason =~ ~r/locked|busy/i ->
+            :held
+
+          retry ->
+            Logger.warning("#{path} is not a lock (#{reason}); making it again")
+            File.rm!(path)
+            try_lock(path, false)
+
+          true ->
+            raise "cannot lock #{path}: #{reason}"
+        end
     end
   end
 end
