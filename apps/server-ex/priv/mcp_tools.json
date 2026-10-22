@@ -3795,7 +3795,7 @@
   },
   {
     "name": "task_status",
-    "description": "Read a HAL-C2-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState distinguishes working, waiting_for_children, and result_available; a completed turn with live nested work is not a completed task. summary is the final task result, including provider errors on failure, and remains stable after publication. hasPendingChildRuns reports later queued or executing turns; latestTerminal* provides later non-monitor turn results. Reading a terminal result acknowledges its automatic parent delivery.",
+    "description": "Read a HAL-C2-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState is working until the task ends, then result_available. summary is the final task result, including provider errors on failure, and remains stable after publication. hasPendingChildRuns reports whether the child thread still has queued or executing runs. Reading a terminal result acknowledges its automatic parent delivery.",
     "inputSchema": {
       "type": "object",
       "properties": {

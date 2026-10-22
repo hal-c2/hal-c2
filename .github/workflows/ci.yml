@@ -81,6 +81,12 @@ jobs:
       - name: Git identity for test repositories
         run: git config --global user.name CI && git config --global user.email ci@example.com
 
+      # The tests that mount another machine's folder skip without it (HalC2.MachineFiles).
+      - name: Build the machine-files helper
+        run: |
+          sudo apt-get update && sudo apt-get install -y fuse3
+          cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
+
       - name: Test
         run: mix test
 
@@ -234,6 +240,13 @@ jobs:
       - name: Install zsh
         if: matrix.dir == 'terminal'
         run: sudo apt-get update && sudo apt-get install -y zsh
+
+      # Files on another machine mount them with FUSE; they skip without the helper.
+      - name: Build the machine-files helper
+        if: matrix.dir == 'files'
+        run: |
+          sudo apt-get update && sudo apt-get install -y fuse3
+          cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
       - name: Scenarios
         env:

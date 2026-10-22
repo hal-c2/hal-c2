@@ -149,6 +149,129 @@ defmodule HalC2.IssuesTest do
              rest_inputs(dir, "PATCH")
 
     refute Map.has_key?(patch, "title")
+
+    # Assignees set outright are checked as logins too, before GitHub is asked.
+    assert {:error, "assignees must be a list of logins."} =
+             Issues.handle("create", Map.merge(@input, %{"title" => "x", "assignees" => ["a/b"]}))
+
+    assert {:error, "assignees must be a list of logins."} =
+             Issues.handle(
+               "update",
+               Map.merge(@input, %{"number" => 9, "assignees" => "dana"})
+             )
+
+    assert length(calls(dir)) == 4
+
+    # An empty assignee list on update clears the list at GitHub, unlike an absent one.
+    assert {:ok, %{"number" => 9}} =
+             Issues.handle("update", Map.merge(@input, %{"number" => 9, "assignees" => []}))
+
+    assert [_, %{"assignees" => []}] = rest_inputs(dir, "PATCH")
+  end
+
+  test "assignees are added and removed by login, the others kept", %{dir: dir} do
+    rules!(dir, [
+      %{
+        "args" => ["--method POST", "repos/acme/widgets/issues/9/assignees"],
+        "stdout" => %{"number" => 9, "assignees" => [%{"login" => "alice"}, %{"login" => "dana"}]}
+      },
+      %{
+        "args" => ["--method DELETE", "repos/acme/widgets/issues/9/assignees"],
+        "stdout" => %{"number" => 9, "assignees" => [%{"login" => "bob"}]}
+      }
+    ])
+
+    input = Map.merge(@input, %{"number" => 9, "assignees" => ["dana"]})
+
+    assert {:ok, %{"number" => 9, "assignees" => ["alice", "dana"]}} =
+             Issues.handle("addAssignees", input)
+
+    input = Map.put(input, "assignees", ["alice"])
+    assert {:ok, %{"assignees" => ["bob"]}} = Issues.handle("removeAssignees", input)
+
+    assert [%{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
+    assert [%{"assignees" => ["alice"]}] = rest_inputs(dir, "DELETE")
+
+    # The shape cases are the planner suite's own (`HalC2.Test.LoginCases`),
+    # so a drift in either copy of the login shape fails both suites.
+    for bad <-
+          [
+            [],
+            [" "],
+            ["dana", 7],
+            Enum.map(1..11, &"user#{&1}")
+          ] ++ Enum.map(HalC2.Test.LoginCases.bad(), &[&1]),
+        do: assert({:error, _} = Issues.handle("addAssignees", Map.put(input, "assignees", bad)))
+
+    assert length(calls(dir)) == 2
+
+    # A login is trimmed, and named once whatever its case, even by more than ten copies.
+    assert {:ok, _} =
+             Issues.handle(
+               "addAssignees",
+               Map.put(input, "assignees", [" dana ", "dana", "Dana"])
+             )
+
+    assert [_, %{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
+
+    assert {:ok, _} =
+             Issues.handle(
+               "addAssignees",
+               Map.put(input, "assignees", List.duplicate("dana", 11))
+             )
+
+    assert [_, _, %{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
+
+    # No realistic raw count is capped in front of the de-dup: many copies of
+    # one login are that one assignee.
+    assert {:ok, _} =
+             Issues.handle(
+               "addAssignees",
+               Map.put(input, "assignees", List.duplicate("dana", 101))
+             )
+
+    # Only a list far past any real assignee list is refused up front.
+    assert {:error, _} =
+             Issues.handle(
+               "addAssignees",
+               Map.put(input, "assignees", List.duplicate("dana", 301))
+             )
+
+    assert [_, _, _, %{"assignees" => ["dana"]}] = rest_inputs(dir, "POST")
+
+    # The endpoint takes several logins in one request.
+    assert {:ok, _} = Issues.handle("addAssignees", Map.put(input, "assignees", ["dana", "erin"]))
+    assert [_, _, _, _, %{"assignees" => ["dana", "erin"]}] = rest_inputs(dir, "POST")
+
+    # Managed users' underscores, a bot's suffix and the longest login are
+    # logins: the planner suite's own good cases (`HalC2.Test.LoginCases`).
+    for good <- HalC2.Test.LoginCases.good() do
+      assert {:ok, _} =
+               Issues.handle("addAssignees", Map.put(input, "assignees", [good]))
+    end
+
+    longest = String.duplicate("a", 39)
+
+    assert {:ok, _} =
+             Issues.handle(
+               "addAssignees",
+               Map.put(input, "assignees", ["dana_acme", "copilot[bot]", longest])
+             )
+
+    assert [
+             _,
+             _,
+             _,
+             _,
+             _,
+             _,
+             _,
+             _,
+             _,
+             _,
+             %{"assignees" => ["dana_acme", "copilot[bot]", ^longest]}
+           ] =
+             rest_inputs(dir, "POST")
   end
 
   test "a change GitHub made is answered as made when reading it back fails", %{dir: dir} do
@@ -550,6 +673,7 @@ defmodule HalC2.IssuesTest do
     assert File.read!(Path.join(dir, "gh.log")) == ""
 
     assert Issues.write?("setBoardField") and Issues.write?("comment")
+    assert Issues.write?("addAssignees") and Issues.write?("removeAssignees")
     refute Issues.write?("board") or Issues.write?("list")
   end
 

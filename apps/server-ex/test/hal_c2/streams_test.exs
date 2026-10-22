@@ -390,6 +390,31 @@ defmodule HalC2.StreamsTest do
     assert {:snapshot, ^seq, _at, _rows, :done, %{floor: _}} = first
   end
 
+  # A socket's `more` for a subscription it has since replaced, arriving late:
+  # only the tag it carries tells the stream it is not the new one's.
+  test "a more carrying an old subscription's tag does not page the new one" do
+    seq = long_thread("th-22")
+    old = {node(), make_ref()}
+    new = {node(), make_ref()}
+
+    :ok = Streams.subscribe("th-22", self(), nil, %{window: {:items, 2}, tag: old})
+    assert_receive {:hal_c2_stream, {"th-22", ^old}, {:snapshot, ^seq, _, _, :done, _}}
+    assert_receive {:hal_c2_stream, {"th-22", ^old}, {:live, ^seq, _}}
+
+    GenServer.cast(Streams.ensure("th-22"), {:unsubscribe, self(), old})
+    :ok = Streams.subscribe("th-22", self(), nil, %{window: {:items, 2}, tag: new})
+    assert_receive {:hal_c2_stream, {"th-22", ^new}, {:snapshot, ^seq, _, _, :done, _}}
+    assert_receive {:hal_c2_stream, {"th-22", ^new}, {:live, ^seq, _}}
+
+    :ok = Streams.more("th-22", self(), 3, old)
+    refute_received {:hal_c2_stream, {"th-22", ^new}, {:page, _, _, _, _}}
+
+    # The new subscription's own `more` still pages, from its own floor.
+    :ok = Streams.more("th-22", self(), 3, new)
+    assert_receive {:hal_c2_stream, {"th-22", ^new}, {:page, ^seq, page, nil, :done}}
+    assert ids(page, "turn-item") == ~w(item-1 item-2 item-3 item-4)
+  end
+
   test "a window never holds a rolled-back run" do
     _ = long_thread("th-13")
 

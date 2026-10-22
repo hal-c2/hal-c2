@@ -42,15 +42,7 @@ defmodule Mix.Tasks.HalC2.Bundle do
     File.mkdir_p!(out_dir)
     path = Path.join(out_dir, HalC2.Upgrade.Source.file_name(version, platform))
 
-    entries =
-      [Path.join(root, "bin"), Path.join(root, "lib"), Path.join([root, "releases", version])] ++
-        [Path.join(root, "erts-#{erts}")]
-
-    files =
-      for entry <- entries,
-          do: {String.to_charlist(Path.relative_to(entry, root)), String.to_charlist(entry)}
-
-    :ok = :erl_tar.create(String.to_charlist(path), files, [:compressed])
+    :ok = HalC2.Upgrade.Source.pack(root, path)
     write_sum(path)
 
     single = String.replace_suffix(path, ".tar.gz", "")

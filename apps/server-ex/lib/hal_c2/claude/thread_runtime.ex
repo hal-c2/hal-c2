@@ -102,8 +102,12 @@ defmodule HalC2.Claude.ThreadRuntime do
   def rollback(thread_id, %{head: head}) do
     reply =
       case Registry.lookup(HalC2.Claude.Registry, thread_id) do
-        [{pid, _}] -> GenServer.call(pid, :rollback, 30_000)
-        [] -> :ok
+        # One that stops as it is asked is as gone as one not found.
+        [{pid, _}] ->
+          HalC2.Orchestration.session_call(fn -> GenServer.call(pid, :rollback, 30_000) end, :ok)
+
+        [] ->
+          :ok
       end
 
     with :ok <- reply do
@@ -169,6 +173,9 @@ defmodule HalC2.Claude.ThreadRuntime do
        tasks: %{},
        # The latest turn's ids, which work Claude starts between turns joins.
        last_ids: nil,
+       # The instance the latest turn's quota is published under, resolved
+       # against settings once when the turn starts (or its ids are recovered).
+       usage_instance: nil,
        # A turn Claude runs by itself (`wake/2`) that no run follows yet:
        # `%{open: bool, buffer: [message] | nil}`, `open` until its `result`, `buffer` its
        # messages newest first, nil once the thread refused it a run.
@@ -198,6 +205,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         blocks: %{},
         interrupted: false,
         last_ids: ids,
+        usage_instance: resolved_instance(Entities.instance(ids)),
         wake: nil
     }
 
@@ -223,7 +231,17 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
     last_ids = state.last_ids
-    state = %{state | turn: turn, items: %{}, blocks: %{}, interrupted: false, last_ids: ids}
+
+    state = %{
+      state
+      | turn: turn,
+        items: %{},
+        blocks: %{},
+        interrupted: false,
+        last_ids: ids,
+        usage_instance: resolved_instance(Entities.instance(ids))
+    }
+
     session = state.session
 
     # A model the installed CLI is too old for is refused here, naming the version.
@@ -260,8 +278,18 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
-  def handle_call(:release, _from, %{turn: nil} = state),
-    do: {:stop, {:shutdown, :released}, :ok, state}
+  # It leaves the registry before it answers: the registry drops a dead runtime's key
+  # only when it gets to its exit, so a lookup right after the release would find a pid
+  # that is gone. `terminate/2` runs after that, with the key free: a turn may start a
+  # new runtime meanwhile, so for a moment two run for the thread, and nothing in
+  # `terminate/2` may count on having the thread to itself. What it ends there is
+  # named by ids from this runtime's own state (its work, background commands and
+  # subagents), which a replacement runtime never reuses, so its writes to the shared
+  # thread stream cannot touch the new runtime's work.
+  def handle_call(:release, _from, %{turn: nil} = state) do
+    Registry.unregister(HalC2.Claude.Registry, state.thread_id)
+    {:stop, {:shutdown, :released}, :ok, state}
+  end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
 
@@ -464,6 +492,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:work, %{})
        |> Map.put_new(:tasks, %{})
        |> Map.put_new(:last_ids, nil)
+       |> Map.put_new(:usage_instance, nil)
        |> Map.put_new(:wake, nil)
        |> Map.put_new(:permission_mode, nil)
        |> Map.put_new(:steered, false)
@@ -851,7 +880,8 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     Task.start(fn ->
       stream = HalC2.Streams.state(thread_id)
-      latest = stream |> StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> %{} end)
+      # Not a held queue's run, which waits with a higher ordinal behind the one that ran.
+      latest = HalC2.Projection.Shell.latest_run(StreamState.list(stream, "run")) || %{}
       message_id = Entities.new_id("message")
 
       with {:error, reason} <-
@@ -937,7 +967,10 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp take_wake(state, _session), do: {state, []}
 
   defp message(%{"type" => "rate_limit_event", "rate_limit_info" => %{} = info}, state) do
-    HalC2.ProviderUsageLimits.claude_event(info)
+    # `with_ids/1` recovers the latest turn's ids when this runtime has not
+    # run one, so between-turns quota joins that turn's instance too.
+    state = state |> with_ids() |> with_usage_instance()
+    HalC2.ProviderUsageLimits.claude_event(usage_instance(state), info)
     rate_limit(info, state)
   end
 
@@ -1172,6 +1205,36 @@ defmodule HalC2.Claude.ThreadRuntime do
     do: HalC2.Projection.JS.iso(trunc(seconds * 1000))
 
   defp reset_at(_), do: nil
+
+  # The instance quota is published under, resolved once when a turn starts
+  # (or its ids are recovered): a turn's own instance when settings here
+  # know it, or the driver when they do not. Resolving at capture pins a
+  # turn's attribution: settings changing mid-turn do not move the rest of
+  # it to another account.
+  defp resolved_instance(instance),
+    do:
+      if(HalC2.Settings.known_instance?(instance, "claudeAgent"),
+        do: instance,
+        else: "claudeAgent"
+      )
+
+  defp usage_instance(state), do: Map.get(state, :usage_instance) || "claudeAgent"
+
+  # A state from before quota attribution was pinned at capture (upgraded
+  # mid-turn) resolves it here, once, from the turn it is on: the running
+  # turn's instance, else the latest turn's (work Claude starts between
+  # turns joins it), else the driver.
+  defp with_usage_instance(state) do
+    case Map.get(state, :usage_instance) do
+      instance when is_binary(instance) ->
+        state
+
+      _ ->
+        ids = if state.turn, do: Map.get(state.turn, :ids), else: state.last_ids
+        instance = if is_map(ids), do: Entities.instance(ids)
+        Map.put(state, :usage_instance, resolved_instance(instance))
+    end
+  end
 
   # A turn stopped by a usage limit fails with a structured `usage_limit` failure.
   defp failure(result, turn) do
@@ -1620,13 +1683,15 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp work_ids(state), do: state.last_ids
 
   # Fills in the latest turn's ids from the thread when this runtime has not run one
-  # (it started, or was upgraded, after that turn).
+  # (it started, or was upgraded, after that turn): the latest run that began, not a
+  # queued one, which has no attempt yet (a held one is numbered above the run that ran).
   defp with_ids(%{turn: nil, last_ids: nil} = state) do
     stream = HalC2.Streams.state(state.thread_id)
 
     case stream
          |> StreamState.list("run")
-         |> Enum.max_by(& &1["ordinal"], fn -> nil end) do
+         |> Enum.reject(&(&1["status"] == "queued"))
+         |> HalC2.Projection.Shell.latest_run() do
       nil ->
         state
 
@@ -1641,7 +1706,9 @@ defmodule HalC2.Claude.ThreadRuntime do
           provider_thread: run["providerThreadId"]
         }
 
-        %{state | last_ids: ids}
+        state
+        |> Map.put(:last_ids, ids)
+        |> Map.put(:usage_instance, resolved_instance(Entities.instance(ids)))
     end
   end
 

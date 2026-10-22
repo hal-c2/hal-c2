@@ -35,9 +35,10 @@ defmodule HalC2.Orchestration.Delegation do
       parent
       |> StreamState.list("run")
       |> Enum.filter(&(&1["status"] in @active))
-      |> Enum.max_by(& &1["ordinal"], fn -> nil end)
+      |> Enum.max_by(&(&1["ordinal"] || 0), fn -> nil end)
 
-    with :ok <- if(run && run["providerInstanceId"] == instance, do: :ok, else: not_active()),
+    with :ok <- task_given(input["task"]),
+         :ok <- if(run && run["providerInstanceId"] == instance, do: :ok, else: not_active()),
          {:ok, selection} <- target(thread, input["target"]),
          {:ok, runtime} <- mode(thread["runtimeMode"], input["runtimeMode"], :runtime),
          {:ok, interaction} <-
@@ -76,6 +77,7 @@ defmodule HalC2.Orchestration.Delegation do
     run = StreamState.get(parent, "run")[run_id]
 
     with %{} <- thread || {:error, "Thread #{parent_id} was not found."},
+         :ok <- task_given(command["task"]),
          :ok <- if(run && run["status"] in @active, do: :ok, else: not_active()),
          {:ok, runtime} <- mode(thread["runtimeMode"], command["runtimeMode"], :runtime),
          {:ok, interaction} <-
@@ -295,11 +297,15 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  # How a child's work ended: its latest run that was not rolled back, or, when the
-  # user rolled back every one, cancelled when the last was. Nil for a status no
-  # task takes.
+  # How a child's work ended: its latest run that was not rolled back, by the
+  # same pick as everywhere else (`Shell.latest_run/1` — a held run cancelled
+  # while held never started, so the run that passed it is how it ended), or,
+  # when the user rolled back every one, cancelled when the last was. Nil for a
+  # status no task takes.
   defp last_end(runs) do
-    case runs |> Enum.reject(&(&1["status"] == "rolled_back")) |> latest() do
+    case runs
+         |> Enum.reject(&(&1["status"] == "rolled_back"))
+         |> HalC2.Projection.Shell.latest_run() do
       %{"status" => ended} = run when ended in @terminal -> {ended, run, end_of(run)}
       nil -> {"cancelled", nil, end_of(latest(runs))}
       _ -> nil
@@ -319,7 +325,9 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp working?(runs), do: Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued"))
 
-  defp latest(runs), do: Enum.max_by(runs, & &1["ordinal"], fn -> nil end)
+  # Runs stored without an ordinal read 0, as in `Shell.latest_run/1`; a bare
+  # `max_by` would let `nil` win outright (it sorts above integers).
+  defp latest(runs), do: Enum.max_by(runs, &(&1["ordinal"] || 0), fn -> nil end)
   defp end_of(run), do: run["completedAt"] || run["updatedAt"]
 
   # --- tasks -------------------------------------------------------------------------
@@ -615,7 +623,7 @@ defmodule HalC2.Orchestration.Delegation do
   defp status(thread_id, task_id) do
     with %{} = task <- subagent(thread_id, task_id) do
       child = stream(task["childThreadId"])
-      runs = StreamState.list(child, "run") |> Enum.sort_by(& &1["ordinal"])
+      runs = StreamState.list(child, "run") |> Enum.sort_by(&(&1["ordinal"] || 0))
       terminal = task["status"] in @terminal
 
       %{
@@ -760,6 +768,17 @@ defmodule HalC2.Orchestration.Delegation do
     do: %{"type" => "existing_worktree", "worktreePath" => path, "branch" => branch}
 
   defp workspace(_thread), do: %{"type" => "root"}
+
+  # The task is the child's whole first message, so a call without one (an agent that
+  # called it `prompt`, say) is refused where the agent can read why. Otherwise the child
+  # starts on an empty message and answers that it came through empty.
+  defp task_given(task) do
+    if is_binary(task) and String.trim(task) != "",
+      do: :ok,
+      else:
+        {:error, "invalid_task",
+         "Delegated tasks need a `task`: the full prompt for the child, as a non-empty string."}
+  end
 
   defp not_active,
     do:

@@ -21,15 +21,43 @@ Item {
             Shell.reset();
         }
 
-        function ask() {
+        function ask(threadCount = 2) {
             Shell.state = {
                 projectRemoval: {
                     projectKey: "env-a:p1",
                     title: "shop",
                     workspaceRoot: "/work/shop",
-                    threadCount: 2
+                    threadCount: threadCount
                 }
             };
+        }
+
+        // No translation is loaded, so the text has to spell out each count itself.
+        function test_theThreadCountIsSpelledOutForEachCount_data() {
+            return [
+                {
+                    tag: "none",
+                    count: 0,
+                    text: "It has no threads."
+                },
+                {
+                    tag: "one",
+                    count: 1,
+                    text: "Its 1 thread and its conversation history will be cleared permanently."
+                },
+                {
+                    tag: "many",
+                    count: 3,
+                    text: "Its 3 threads and their conversation history will be cleared permanently."
+                }
+            ];
+        }
+
+        function test_theThreadCountIsSpelledOutForEachCount(data) {
+            const dialog = createTemporaryObject(dialogComponent, root);
+            ask(data.count);
+            tryVerify(() => dialog.opened);
+            compare(findChild(dialog.contentItem, "projectRemovalThreads").text, data.text);
         }
 
         function test_opensForTheShellsQuestionAndClosesWithIt() {

@@ -60,6 +60,42 @@ defmodule HalC2.Orchestration.RecoveryTest do
     assert Recovery.settle("t1") == {0, nil}
   end
 
+  # A held run that a newer message passed is numbered above the run that passed it.
+  test "a turn that passed a held queue can still be continued after the restart" do
+    at = "2026-09-23T10:00:00.000Z"
+
+    {:ok, _} =
+      HalC2.Streams.commit("t3", :thread, [
+        {"thread", "t3",
+         %{"s" => %{"id" => "t3", "title" => "Passed", "createdAt" => at, "updatedAt" => at}}},
+        {"run", "stop",
+         %{"s" => %{"id" => "stop", "ordinal" => 1, "status" => "failed", "completedAt" => at}}},
+        {"run", "passed",
+         %{
+           "s" => %{
+             "id" => "passed",
+             "ordinal" => 2,
+             "status" => "running",
+             "providerThreadId" => "p1"
+           }
+         }},
+        {"run", "held",
+         %{
+           "s" => %{
+             "id" => "held",
+             "ordinal" => 3,
+             "status" => "queued",
+             "queuePosition" => 1,
+             "queueHeld" => true
+           }
+         }},
+        {"provider-thread", "p1",
+         %{"s" => %{"id" => "p1", "status" => "active", "nativeThreadRef" => %{"id" => "n1"}}}}
+      ])
+
+    assert {_, %{"id" => "passed"}} = Recovery.settle("t3")
+  end
+
   test "background work left running after its turn is ended at boot" do
     :ok = HalC2.Shell.subscribe(self())
     at = "2026-09-23T10:00:00.000Z"

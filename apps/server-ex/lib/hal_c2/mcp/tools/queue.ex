@@ -125,7 +125,7 @@ defmodule HalC2.Mcp.Tools.Queue do
     state
     |> StreamState.list("run")
     |> Enum.filter(&(&1["status"] == "queued"))
-    |> Enum.sort_by(&{&1["queuePosition"] || 0, &1["ordinal"]})
+    |> Enum.sort_by(&{&1["queuePosition"] || 0, &1["ordinal"] || 0})
   end
 
   defp entry(state, run_id, limit) do

@@ -64,15 +64,26 @@ defmodule HalC2.Codex.ThreadRuntime do
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
       [{pid, _}] ->
         with {:error, _} = error <- GenServer.call(pid, {:steer, run_id, message}, 30_000) do
-          # Notifications that preceded the refusal sit in the runtime's mailbox ahead
-          # of this call.
-          GenServer.call(pid, :settle, 30_000)
+          settle(pid)
           error
         end
 
       [] ->
         {:error, "no running turn"}
     end
+  end
+
+  # Notifications that preceded a steer refusal sit in the runtime's mailbox
+  # ahead of this call, so they are applied before the refusal returns. A
+  # runtime that stops during it has still refused: its exit must not replace
+  # the refusal (and read, through `Orchestration.session_call/2`, as a session
+  # that stopped before answering at all).
+  defp settle(pid) do
+    GenServer.call(pid, :settle, 30_000)
+  catch
+    # A merely slow runtime still exits the caller, as everywhere else here.
+    :exit, {:timeout, _} = reason -> exit(reason)
+    :exit, _ -> :ok
   end
 
   @doc """
@@ -97,9 +108,19 @@ defmodule HalC2.Codex.ThreadRuntime do
   thread's provider thread. Needs the thread's session to be running.
   """
   def upload_feedback(thread_id, reason) do
+    gone = {:error, "The provider session is no longer running. Send a message first."}
+
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
-      [{pid, _}] -> GenServer.call(pid, {:upload_feedback, reason}, 60_000)
-      [] -> {:error, "The provider session is no longer running. Send a message first."}
+      # A session that stopped after the lookup, however it stopped, is as gone as one
+      # the lookup did not find. One that is only slow still exits the caller.
+      [{pid, _}] ->
+        Orchestration.session_call(
+          fn -> GenServer.call(pid, {:upload_feedback, reason}, 60_000) end,
+          gone
+        )
+
+      [] ->
+        gone
     end
   end
 
@@ -131,9 +152,12 @@ defmodule HalC2.Codex.ThreadRuntime do
        conn: nil,
        # The provider instance the app-server was started for: nil until the first
        # `connect/2`; `:unknown` after a hot update of a runtime that predates the field.
-       instance: nil,
+       # Apart from `instance`, which is the resolved one a turn's quota belongs to.
+       conn_instance: nil,
        native_thread_id: nil,
        turn: nil,
+       # The instance the latest turn runs as: a turn's quota belongs to it.
+       instance: nil,
        items: %{},
        buffer: %{},
        flush_timer: nil,
@@ -153,7 +177,24 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_call({:start_turn, turn}, _from, state) do
     # A thread saved under an older model name runs on the model it names today.
     turn = %{turn | model: HalC2.Codex.Provider.current_slug(turn.model)}
-    state = %{state | turn: turn, items: %{}, failure: nil, running: %{}}
+
+    # The instance is resolved once, here: settings changing mid-turn (the
+    # instance removed, say) do not re-attribute the rest of the turn.
+    instance =
+      case turn[:ids] do
+        %{} = ids -> Entities.instance(ids)
+        _ -> nil
+      end
+
+    state = %{
+      state
+      | turn: turn,
+        instance: resolved_instance(instance),
+        items: %{},
+        failure: nil,
+        running: %{}
+    }
+
     # The threads this turn's subagents run in (`spawnAgent`): native thread id ->
     # `%{sub: NativeSubagent handle, done: bool}`.
     state = Map.put(state, :subagents, %{})
@@ -176,8 +217,18 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
-  def handle_call(:release, _from, %{turn: nil} = state),
-    do: {:stop, {:shutdown, :released}, :ok, state}
+  # It leaves the registry before it answers: the registry drops a dead runtime's key
+  # only when it gets to its exit, so a lookup right after the release would find a pid
+  # that is gone. `terminate/2` runs after that, with the key free: a turn may start a
+  # new runtime meanwhile, so for a moment two run for the thread, and nothing in
+  # `terminate/2` may count on having the thread to itself. What it ends there is
+  # named by ids from this runtime's own state (its work, background commands and
+  # subagents), which a replacement runtime never reuses, so its writes to the shared
+  # thread stream cannot touch the new runtime's work.
+  def handle_call(:release, _from, %{turn: nil} = state) do
+    Registry.unregister(HalC2.Codex.Registry, state.thread_id)
+    {:stop, {:shutdown, :released}, :ok, state}
+  end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
 
@@ -432,14 +483,27 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   @impl true
-  def code_change(_old, state, _extra),
-    do:
-      {:ok,
-       state
-       |> Map.put_new(:running, %{})
-       |> Map.put_new(:background, %{})
-       |> Map.put_new(:instance, :unknown)
-       |> Map.put(:v, @state_version)}
+  def code_change(_old, state, _extra) do
+    # A runtime upgraded mid-turn derives the turn's instance, so the rest of
+    # that turn's quota still belongs to it; between turns there is none yet
+    # (the next quota update recovers the latest turn's from the thread —
+    # `with_instance/1`, not here: the streams may be mid-upgrade too).
+    # What is captured is resolved against settings once, as at turn start.
+    instance =
+      case state do
+        %{instance: instance} when is_binary(instance) -> resolved_instance(instance)
+        %{turn: %{ids: ids}} when is_map(ids) -> resolved_instance(Entities.instance(ids))
+        _ -> nil
+      end
+
+    {:ok,
+     state
+     |> Map.put_new(:running, %{})
+     |> Map.put_new(:background, %{})
+     |> Map.put(:instance, instance)
+     |> Map.put_new(:conn_instance, :unknown)
+     |> Map.put(:v, @state_version)}
+  end
 
   # The message, with where its files are, and its images inline.
   defp codex_input(turn) do
@@ -618,7 +682,7 @@ defmodule HalC2.Codex.ThreadRuntime do
              }
            }) do
       Connection.notify(conn, "initialized", nil)
-      {:ok, %{state | conn: conn, instance: instance}}
+      {:ok, %{state | conn: conn, conn_instance: instance}}
     else
       {:error, reason} -> {:error, reason, state}
     end
@@ -630,7 +694,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   # not known (started before a hot update) may run as another account, so it is
   # replaced too.
   defp connect(state, %{ids: ids} = turn) do
-    if state.instance == Entities.instance(ids) do
+    if state.conn_instance == Entities.instance(ids) do
       {:ok, state}
     else
       # Pending requests are a turn's: every request handler needs a running
@@ -810,10 +874,16 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # --- notifications ----------------------------------------------------------
 
-  # Quota comes alongside token usage, mostly unchanged; it merges onto the provider entry.
+  # Quota comes alongside token usage, mostly unchanged; it merges onto the turn's own
+  # instance entry, so one account never overwrites another's quota.
   # The merged snapshot is kept to name the used-up window when a turn stops on it.
   defp notification("account/rateLimits/updated", %{"rateLimits" => snapshot}, state) do
-    HalC2.ProviderUsageLimits.update("codex", HalC2.ProviderUsageLimits.Codex.windows(snapshot))
+    state = with_instance(state)
+
+    HalC2.ProviderUsageLimits.update(
+      state.instance,
+      HalC2.ProviderUsageLimits.Codex.windows(snapshot)
+    )
 
     if snapshot["limitId"] in [nil, "codex"],
       do: Map.put(state, :rate_limits, Map.merge(Map.get(state, :rate_limits) || %{}, snapshot)),
@@ -1063,6 +1133,43 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp notification(_method, _params, state), do: state
 
+  # The instance quota is published under, resolved once: a turn's own
+  # instance when settings here know it, or the driver when they do not (a
+  # thread carried from another machine, say — such a turn physically ran
+  # under the built-in configuration).
+  defp resolved_instance(instance),
+    do: if(HalC2.Settings.known_instance?(instance, "codex"), do: instance, else: "codex")
+
+  # Fills in the latest turn's instance from the thread when this runtime
+  # has captured none (it started, or was upgraded, between turns), so a
+  # late update from the still-connected app-server joins that turn's
+  # instance. Resolved once, here, and kept from then on.
+  defp with_instance(state) do
+    case Map.get(state, :instance) do
+      instance when is_binary(instance) ->
+        state
+
+      _ ->
+        Map.put(state, :instance, resolved_instance(latest_run_instance(state)))
+    end
+  end
+
+  defp latest_run_instance(state) do
+    case Map.get(state, :thread_id) do
+      thread_id when is_binary(thread_id) ->
+        run =
+          thread_id
+          |> HalC2.Streams.state()
+          |> HalC2.StreamState.list("run")
+          |> Enum.max_by(& &1["ordinal"], fn -> nil end)
+
+        if run, do: run["providerInstanceId"]
+
+      _ ->
+        nil
+    end
+  end
+
   # Codex retries a failed request itself and reports each attempt: one work-log item
   # per turn (`terminal-failure:<provider turn>`), updated by every attempt and closed
   # with the turn. The attempt comes from Codex's own "2/5" when the message has one.
@@ -1285,8 +1392,8 @@ defmodule HalC2.Codex.ThreadRuntime do
       stream = HalC2.Streams.state(thread_id)
       thread = HalC2.StreamState.get(stream, "thread")[thread_id] || %{}
 
-      latest =
-        stream |> HalC2.StreamState.list("run") |> Enum.max_by(& &1["ordinal"], fn -> %{} end)
+      # Not a held queue's run, which waits with a higher ordinal behind the one that ran.
+      latest = HalC2.Projection.Shell.latest_run(HalC2.StreamState.list(stream, "run")) || %{}
 
       message_id = Entities.new_id("message")
 

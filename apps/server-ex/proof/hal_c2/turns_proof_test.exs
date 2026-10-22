@@ -62,6 +62,8 @@ defmodule HalC2.TurnsProofTest do
         "serves reads and other RPCs; messages arrive by dispatch/1",
       "HalC2.Orchestration.launch_thread/2" =>
         "creates a thread, then sends its message as dispatch/1 does",
+      "HalC2.Orchestration.organize_plugin_thread/3" =>
+        "settles a plugin's thread and lists or unlists it: sidebar organization, no turn state",
       "HalC2.Orchestration.release_prepared/2" => @preparing,
       "HalC2.Orchestration.progress_prepared/3" => @preparing,
       "HalC2.Orchestration.fail_prepared/4" => @preparing,
@@ -69,6 +71,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.create/3" => @changes,
       "HalC2.Orchestration.next_ordinal/1" => @changes,
       "HalC2.Orchestration.driver_for/1" => "names an instance's driver",
+      "HalC2.Orchestration.session_call/2" =>
+        "answers a call into a session that stopped mid-call as a lookup that found none would; it changes no run",
       "HalC2.Orchestration.TurnWriter.commit/2" => @items,
       "HalC2.Orchestration.TurnWriter.buffer/4" => @items,
       "HalC2.Orchestration.TurnWriter.flush/2" => @items,

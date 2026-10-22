@@ -356,6 +356,8 @@ Rectangle {
 
                         Markdown {
                             objectName: "fileRenderedMarkdown"
+                            // The file is the user's own, and its task boxes tick.
+                            trusted: true
                             text: root.source?.renderedText ?? ""
                             onLinkActivated: link => {
                                 if (link.startsWith("task:"))

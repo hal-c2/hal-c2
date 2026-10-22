@@ -7,7 +7,8 @@ defmodule HalC2.PluginsPropTest do
 
   Commands write packages (good ones, new versions, ones whose manifest is broken or
   whose code does not compile, updates that ask for more or fewer permissions), rescan,
-  enable with whatever a client sends as accepted permissions, disable, restart, save
+  install one while a process is parked in the code now loaded (an update the host
+  refuses must leave that version loaded), enable with whatever a client sends as accepted permissions, disable, restart, save
   settings, call the running plugin, read its files, follow, publish and drop topics,
   kill a client, crash a plugin's process once or until its supervisor gives up, crash
   a worker announced the way a host from before an update in place heard of them,
@@ -138,6 +139,7 @@ defmodule HalC2.PluginsPropTest do
       [
         {2, {:call, __MODULE__, :write, [id(), desc()]}},
         {5, {:call, __MODULE__, :install, [id(), desc()]}},
+        {2, {:call, __MODULE__, :install_busy, [id(), desc()]}},
         {1, {:call, __MODULE__, :remove, [id()]}},
         {4, {:call, __MODULE__, :rescan, []}},
         {6, let(id <- held, do: {:call, __MODULE__, :enable, [id, consent(state, id)]})},
@@ -337,6 +339,10 @@ defmodule HalC2.PluginsPropTest do
   defp act(s, {:call, _, :remove, [id]}), do: {%{s | disk: Map.delete(s.disk, id)}, :ok}
   defp act(s, {:call, _, :rescan, []}), do: {scan(s), :ok}
   defp act(s, {:call, _, :install, [id, desc]}), do: {scan(put_in(s.disk[id], desc)), :ok}
+
+  # The same: a process in the loaded version's code only changes how the host loads.
+  defp act(s, {:call, _, :install_busy, [id, desc]}),
+    do: act(s, {:call, nil, :install, [id, desc]})
 
   # A restarted host remembers nothing it held, only the document and the disk.
   defp act(s, {:call, _, :kill_plugins, []}), do: {scan(%{s | held: %{}}), :ok}
@@ -790,6 +796,41 @@ defmodule HalC2.PluginsPropTest do
     {Plugins.handle("rescan", %{}), observe()}
   end
 
+  # An install while a process is parked in the code now loaded for the package, so that
+  # code cannot be purged: an update the host refuses must still leave that version
+  # loaded, and one it accepts replaces it. The process is released (it ends, or the host
+  # stopped it) before the step ends, as the next step may load code again.
+  def install_busy(id, desc) do
+    module = Packages.plugin_module(id)
+
+    parked =
+      if function_exported?(module, :wait, 1) do
+        me = self()
+        {pid, ref} = spawn_monitor(fn -> module.wait(me) end)
+
+        receive do
+          {:parked, ^pid} -> {pid, ref}
+        after
+          10_000 -> exit(:process_never_parked)
+        end
+      end
+
+    result = install(id, desc)
+
+    if parked do
+      {pid, ref} = parked
+      send(pid, :go)
+
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _} -> :ok
+      after
+        10_000 -> exit(:parked_process_never_ended)
+      end
+    end
+
+    result
+  end
+
   defp put_package(id, desc) do
     {marks, _seen} = Process.get({__MODULE__, :marks})
     Packages.write(Path.join(plugins_dir(), id), id, desc, marks)
@@ -1148,8 +1189,9 @@ defmodule HalC2.PluginsPropTest do
     def probe, do: HalC2.PluginsPropTest.Probe
 
     # Where a plugin's `handle_event` waits to be released, by a tail call: a process
-    # waiting in the plugin's own code keeps that code in use, and a refused update
-    # loaded meanwhile then stays loaded, which this model does not cover.
+    # waiting in the plugin's own code keeps that code in use, and the host stops it when
+    # it reloads the last good version after a refused update (`install_busy/2` covers
+    # that), which would end the held event the model keeps.
     def hold do
       receive do
         :go -> :ok
@@ -1242,6 +1284,17 @@ defmodule HalC2.PluginsPropTest do
         File.write!(#{inspect(marks)}, #{inspect("#{id} #{version}\n")}, [:append])
 
         def version, do: #{inspect(version)}
+
+        # Parks the caller in this version's own code, which keeps it from being purged.
+        def wait(parent) do
+          send(parent, {:parked, self()})
+
+          receive do
+            :go -> :ok
+          end
+
+          :ok
+        end
 
         def start_link(settings), do: GenServer.start_link(__MODULE__, settings, name: __MODULE__)
 
