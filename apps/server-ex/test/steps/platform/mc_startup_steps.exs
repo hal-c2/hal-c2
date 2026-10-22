@@ -868,6 +868,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     for child <- [
           HalC2.RuntimeRecord,
           HalC2.Web,
+          HalC2.Subprocess.Orphans,
           HalC2.Shell,
           HalC2.Streams,
           HalC2.Auth,

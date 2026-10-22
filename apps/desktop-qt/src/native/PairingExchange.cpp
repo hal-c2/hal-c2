@@ -122,10 +122,18 @@ std::optional<Link> readLink(const QString& entered) {
 }
 
 std::optional<Invitation> readInvitation(const QString& received) {
-  // A QR code holds under 3000 characters, and a pairing link a fraction of that.
+  // A QR code holds under 3000 characters, and a pairing link a fraction of
+  // that. The cap is on the link itself, in UTF-16 units (QString::size); the
+  // app's own link wraps it percent-encoded, so it is let longer. A unit costs
+  // at most nine characters once encoded: three UTF-8 bytes for a BMP
+  // character, and six for each half of a surrogate pair (four bytes, twelve
+  // characters, over two units). The wrapper's cap is a bound on everything it
+  // carries, not only the link: a worst-case encoded link leaves it about forty
+  // characters for any other query items, and the app's own wrapper has none.
   constexpr qsizetype kLongest = 2048;
+  constexpr qsizetype kLongestWrapped = 9 * kLongest + 64;
   QString text = received.trimmed();
-  if (text.isEmpty() || text.size() > kLongest) return std::nullopt;
+  if (text.isEmpty() || text.size() > kLongestWrapped) return std::nullopt;
   QUrl url(text);
   if (url.scheme() == QLatin1String("hal-c2")) {
     const QString path = url.path();
@@ -139,6 +147,7 @@ std::optional<Invitation> readInvitation(const QString& received) {
     text = carried.first().trimmed();
     url = QUrl(text);
   }
+  if (text.isEmpty() || text.size() > kLongest) return std::nullopt;
   const QString scheme = url.scheme();
   if (!url.isValid() || (scheme != QLatin1String("http") && scheme != QLatin1String("https")) || url.host().isEmpty() || !url.userInfo().isEmpty()) {
     return std::nullopt;

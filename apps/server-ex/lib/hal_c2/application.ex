@@ -35,6 +35,11 @@ defmodule HalC2.Application do
       HalC2.HomeLock,
       # Distribution starts here, before anything reads `node()`.
       HalC2.Cluster,
+      # Before anything starts or resumes a provider: kills the programs an MC
+      # that died left running, so no thread gets a second agent, and records
+      # every program started from here on. It needs only its files, which
+      # `prepare_files/0` already made.
+      HalC2.Subprocess.Orphans,
       {HalC2.Store, path: HalC2.Store.home_path()},
       HalC2.Auth,
       HalC2.Settings,

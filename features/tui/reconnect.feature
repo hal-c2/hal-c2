@@ -27,7 +27,8 @@ Feature: Reconnecting and stale requests in the terminal client
     Then the same thread is selected
     And its timeline catches up to the server's state
 
-  # The Node server's "hal-c2 tui" launcher is gone; the client buys its tickets from the MC over HTTP.
+  # The Node server's "hal-c2 tui" launcher is gone; the client buys its tickets from the MC over HTTP
+  # (launch.feature: "A socket ticket request that gets no answer fails after ten seconds and the client keeps trying").
   @dropped @tui
   Scenario: A ticket request that gets no answer fails after ten seconds
     Given the launcher does not answer a socket ticket request

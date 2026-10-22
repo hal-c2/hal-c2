@@ -163,6 +163,29 @@ Feature: OpenCode
     When the user sends a follow-up message
     Then OpenCode receives the message during the running turn
 
+  Scenario: A message sent as an OpenCode turn ends is answered in that turn
+    Given an OpenCode turn is running that ends as it is steered
+    When the user sends a follow-up message
+    Then OpenCode's answer to the message is the turn's
+
+  Scenario: A message OpenCode answers after the turn's loop failed ends the turn with its answer
+    Given an OpenCode turn is running that fails as it is steered
+    When the user sends a follow-up message
+    Then OpenCode's answer to the message is the turn's
+
+  Scenario: A message whose own OpenCode loop fails fails the turn
+    Given an OpenCode turn is running that ends as it is steered
+    When the user steers the OpenCode turn with "look here, its loop fails"
+    Then the OpenCode turn fails with "The steer's loop failed"
+
+  Scenario: Stopping an OpenCode turn ends it while a message sent into it goes unanswered
+    Given an OpenCode turn is running that ends as it is steered
+    And the user steers the OpenCode turn with "this is never answered"
+    And the user steers the OpenCode turn with "this keeps working"
+    And OpenCode answers the turn's prompt and the message in a loop of its own
+    When the user stops the turn
+    Then the OpenCode turn is interrupted
+
   Scenario: A running OpenCode command shows what it runs and its output so far
     Given an OpenCode turn is running
     Then the running command reads "ls" with the output "a.txt"

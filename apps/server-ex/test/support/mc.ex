@@ -42,6 +42,7 @@ defmodule HalC2.Test.Mc do
     start_supervised!(HalC2.Auth)
     start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Shell)
+    start_supervised!(HalC2.Subprocess.Orphans)
     web = start_supervised!(Supervisor.child_spec(HalC2.Web, id: HalC2.Web))
     start_supervised!(HalC2.RuntimeRecord)
 
@@ -72,6 +73,7 @@ defmodule HalC2.Test.Mc do
     for child <- [
           HalC2.RuntimeRecord,
           HalC2.Web,
+          HalC2.Subprocess.Orphans,
           HalC2.Shell,
           HalC2.Streams,
           HalC2.Auth,
