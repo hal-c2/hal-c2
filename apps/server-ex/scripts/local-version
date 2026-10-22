@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # Prints the version of a local MC build: `<release version>-local.<stamp>.g<commit>`,
 # stamped with the commit's time, so machines that build the same commit get the same
-# version and can cluster. A checkout with uncommitted changes is no commit's code and
-# gets `<release version>-local.<now>`, a version of its own each time.
+# version. A checkout with uncommitted changes to what the MC is built from is no
+# commit's code and gets `<release version>-local.<now>`, a version of its own each time.
+# Members cluster whatever their versions; the version says what code a machine runs.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 release_version="$(tr -d '[:space:]' <VERSION)"
-# Untracked files count whatever status.showUntrackedFiles says: Mix compiles them.
-if [[ -z "$(git status --porcelain --untracked-files=normal)" ]]; then
+# What the release is built from: the MC, the packages it bundles (the Cursor sidecar),
+# the native helpers and the toolchain mise pins. Work on the clients elsewhere in the
+# checkout is no change. Untracked files count whatever status.showUntrackedFiles says:
+# Mix compiles them.
+inputs=(:/apps/server-ex :/packages :/native :/mise.toml)
+if [[ -z "$(git status --porcelain --untracked-files=normal -- "${inputs[@]}")" ]]; then
   stamp="$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S)"
   # Cut here, not by git: --short grows with the checkout's other objects.
   commit="$(git rev-parse HEAD)"

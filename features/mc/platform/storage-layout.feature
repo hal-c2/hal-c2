@@ -12,6 +12,7 @@
 #   apps/server-ex/config/runtime.exs (HAL_C2_MC_HOME, HAL_C2_HOME)
 #   apps/server-ex/rel/env.sh.eex (the release's home)
 #   apps/server-ex/README.md (Run, Release: where the MC keeps its state)
+#   apps/server-ex/lib/hal_c2/subprocess/orphans.ex (the pids of its programs)
 #   apps/desktop-qt/src/StoragePaths.cpp, apps/desktop-qt/src/main.cpp (--home-dir, --dev, shell config dir, web profile, --base-dir for the hosted server)
 #   apps/desktop-qt/scripts/dev-qt.mjs (`mise run desktop` starts the shell with --dev)
 #   packages/shared/src/desktopAppControlSocket.ts, apps/desktop/src/app/DesktopAppActivation.ts (desktop app control socket)
@@ -279,6 +280,7 @@ Feature: Where HAL-C2 keeps its files
         | scheduled tasks                 | ~/.local/share/hal-c2/elixir/scheduled-tasks.json |
         | device hub state                | ~/.local/share/hal-c2/elixir/device               |
         | server, trace and provider logs | ~/.local/state/hal-c2/elixir/logs                 |
+        | the pids of its programs        | ~/.local/state/hal-c2/elixir/subprocesses         |
         | downloaded tools                | ~/.cache/hal-c2/elixir/tools                      |
         | the ACP registry                | ~/.cache/hal-c2/elixir/acp-registry               |
         | the Pi cache                    | ~/.cache/hal-c2/elixir/pi                         |

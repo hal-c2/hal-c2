@@ -649,13 +649,12 @@ const Steps steps([] {
   step(QStringLiteral("the message is stamped %1").arg(q), [](World& world, const Captures& c, const Table&) {
     TimelineModel& model = timeline(world);
     const int row = rowShowing(world, QStringLiteral("message:") + world.mc.part<FakeStreams>().run);
-    // Newer CLDR data puts a narrow no-break space before AM and PM.
-    const QString stamp = role(model, row, TimelineModel::TimeRole).toString().replace(QChar(0x202F), QLatin1Char(' '));
+    const QString stamp = role(model, row, TimelineModel::TimeRole).toString();
     expect(stamp == c[0], QStringLiteral("the message is stamped \"%1\"").arg(stamp));
   });
   step(QStringLiteral("its full time reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString run = world.mc.part<FakeStreams>().run;
-    const QString title = timeline(world).timeTitle(QStringLiteral("message:") + run).replace(QChar(0x202F), QLatin1Char(' '));
+    const QString title = timeline(world).timeTitle(QStringLiteral("message:") + run);
     expect(title == c[0], QStringLiteral("its full time reads \"%1\"").arg(title));
   });
 

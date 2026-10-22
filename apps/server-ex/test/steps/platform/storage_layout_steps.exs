@@ -391,6 +391,10 @@ defmodule HalC2.Steps.Platform.StorageLayout do
       "device hub state" ->
         assert under.(HalC2.Devices.agent_state_dir())
 
+      "the pids of its programs" ->
+        assert HalC2.Subprocess.Orphans.dir() == expected
+        assert File.dir?(expected)
+
       logs when logs in ["server, trace and provider logs", "its logs"] ->
         assert HalC2.Environment.server_config()["observability"]["logsDirectoryPath"] == expected
         assert under.(HalC2.Traces.path())

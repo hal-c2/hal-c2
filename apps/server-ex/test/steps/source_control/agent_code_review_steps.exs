@@ -282,6 +282,32 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
   end
 
+  step "\#{int} was reviewed at an older head commit after the user asked for it",
+       %{args: [number]} = context do
+    context =
+      context
+      |> open(number)
+      |> start(number)
+      |> started(number)
+      |> report(findings("approve", 1))
+      |> await_review!(number, &(&1["status"] == "waiting"))
+
+    head =
+      push_head(context, number, %{"src/limits.ts" => @limits <> "export const later = 1;\n"})
+
+    context
+    |> put_in([:heads, number], head)
+    |> open(number, %{"headRefOid" => head, "updatedAt" => "2026-09-04T00:00:00Z"})
+  end
+
+  step "{string} stops watching {string}", %{args: [@id, _repo]} = context do
+    save(context, %{"repositories" => []})
+  end
+
+  step "\#{int} says {string} in its description", %{args: [number, text]} = context do
+    open(context, number, %{"body" => text})
+  end
+
   step "{string} reviews new pushes", %{args: [@id]} = context do
     save(context, %{"reviewNewPushes" => true})
   end
@@ -360,6 +386,16 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     assert thread["modelSelection"]["instanceId"] == World.instance("Claude")
     assert thread["modelSelection"]["model"] == context.model
     assert thread["runtimeMode"] == context.runtime_mode
+    context
+  end
+
+  step "{string} reviews with the effort {string}", %{args: [@id, effort]} = context do
+    save(context, %{"modelOptions" => %{"effort" => effort}})
+  end
+
+  step "its thread runs with the effort {string}", %{args: [effort]} = context do
+    options = thread(context.thread)["modelSelection"]["options"] || []
+    assert %{"value" => ^effort} = Enum.find(options, &(&1["id"] == "effort"))
     context
   end
 
@@ -529,6 +565,101 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   step "the agent's turn ends without a report", context do
     end_turns(context)
+  end
+
+  step "the agent's turn ends because its usage limit is reached", context do
+    reset = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+
+    event = %{
+      "type" => "turn.finished",
+      "threadId" => context.thread,
+      "status" => "failed",
+      "errorClass" => "usage_limit",
+      "error" => "Subscription quota exhausted.",
+      "resetAt" => reset
+    }
+
+    apply(HalC2Plugins.CodeReview, :handle_event, [event, %{}])
+    context
+  end
+
+  step "the review of \#{int} waits in the queue", %{args: [number]} = context do
+    await_review!(context, number, &(&1["status"] == "queued"))
+  end
+
+  step "{string} says reviews are paused until the limit resets", %{args: [@id]} = context do
+    assert review(context.snapshot, 12)
+    {reply, context} = plugin(context, "reviews", %{})
+    assert {:ok, %{"problem" => problem}} = reply
+    assert problem =~ "usage limit"
+    context
+  end
+
+  step "the agent reports a high finding with a suggested fix on {string}",
+       %{args: [path]} = context do
+    report(context, %{
+      "verdict" => "request-changes",
+      "summary" => "The limits are never enforced.",
+      "comments" => [
+        %{
+          "path" => path,
+          "line" => 1,
+          "body" => "Make the limit configurable.",
+          "severity" => "high",
+          "suggestion" => "export const limit = configured();"
+        },
+        %{"path" => path, "line" => 4, "body" => "This always allows."}
+      ]
+    })
+  end
+
+  step "\#{int} gets the finding badged high with the suggested fix and the findings at a glance",
+       %{args: [number]} = context do
+    assert {:ok, _} = context.reply
+    assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
+    review = JSON.decode!(call["stdin"])
+    assert [%{"body" => first} | _] = review["comments"]
+    assert first =~ "🔴 **High:** Make the limit configurable."
+    assert review["body"] =~ "### Findings (2)"
+    assert review["body"] =~ "🔴 **High:** `src/limits.ts:1`"
+    assert first =~ "```suggestion\nexport const limit = configured();\n```"
+    assert review["body"] =~ "<!-- hal-c2-code-review:"
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
+  step "the agent reports a low finding starting with bold text on {string}",
+       %{args: [path]} = context do
+    context =
+      report(context, %{
+        "verdict" => "comment",
+        "summary" => "One small thing.",
+        "comments" => [
+          %{
+            "path" => path,
+            "line" => 1,
+            "body" => "**Order:** This always allows.",
+            "severity" => "low"
+          }
+        ]
+      })
+
+    await_review!(context, 12, &(&1["status"] == "waiting"))
+  end
+
+  step "\#{int} gets the finding badged low before its bold text", %{args: [number]} = context do
+    assert {:ok, _} = context.reply
+    assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
+    review = JSON.decode!(call["stdin"])
+    assert [%{"body" => body}] = review["comments"]
+    assert body == "🔵 **Low:** **Order:** This always allows."
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
+  step "the new review's prompt includes {string}", %{args: [text]} = context do
+    {review, context} = await_review(context, 12, &(&1["threadId"] != context.thread))
+    prompt = prompt(review["threadId"])
+    assert prompt =~ text, prompt
+    context
   end
 
   step "the review of \#{int} is failed saying the agent gave no findings",
@@ -960,6 +1091,16 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "its thread is no longer listed with the threads", context do
+    World.await_row(context.thread, &(&1["plugin"]["listed"] == false))
+    context
+  end
+
+  step "its thread is settled", context do
+    World.await_row(context.thread, &(&1["settledOverride"] == "settled"))
+    context
+  end
+
   # --- the host --------------------------------------------------------------------------------
 
   step "the clients of its thread see a review of \#{int} waiting with the verdict {string}",
@@ -1120,7 +1261,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   defp detail_rule(pr) do
     graphql =
       Map.merge(pr, %{
-        "body" => "",
+        "body" => pr["body"] || "",
         "changedFiles" => 1,
         "isCrossRepository" => false,
         "baseRef" => %{"compare" => %{"behindBy" => 0}},

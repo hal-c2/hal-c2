@@ -9,6 +9,7 @@ import { projectScriptRuntimeEnv } from "@hal-c2/shared/projectScripts";
 import { createComputed, createPropertyMap, createRoot, type PropertyMap } from "opentui-qml";
 
 import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
+import type { ImageDecoder } from "../composerAttachments.ts";
 import { resolveSidebarListViewport } from "../components/ChatView.layout.ts";
 import {
   buildRows,
@@ -28,7 +29,7 @@ import { createAsk } from "./askState.ts";
 import { createFeatures, type FeatureOptions } from "./features/index.ts";
 import { createClientActivity } from "./clientActivity.ts";
 import { createClusterController, NO_CLUSTER_STATE } from "./clusterState.ts";
-import { createComposer, type ImageDecoder } from "./composerState.ts";
+import { createComposer } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import { createFilesController } from "./filesState.ts";

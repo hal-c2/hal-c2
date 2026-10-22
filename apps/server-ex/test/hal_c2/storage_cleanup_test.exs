@@ -43,9 +43,12 @@ defmodule HalC2.StorageCleanupTest do
 
   defp git(cwd, args), do: {_, 0} = System.cmd("git", args, cd: cwd, stderr_to_stdout: true)
 
+  # A changed policy sweeps inside StorageCleanup, after the put. A call queued behind
+  # that message returns once the sweep is done, so the test does not race its git calls.
   defp settings(storage) do
     {_, version} = HalC2.Settings.get()
     {:ok, _} = HalC2.Settings.put(%{"storageCleanup" => storage}, version)
+    _ = :sys.get_state(HalC2.StorageCleanup, :infinity)
   end
 
   # A thread on its own new worktree, branched from main.
@@ -102,11 +105,14 @@ defmodule HalC2.StorageCleanupTest do
     :ok = HalC2.StorageCleanup.sweep()
     assert File.exists?(path)
 
-    settings(%{"worktreeUnchanged" => true})
     File.write!(Path.join(path, ".gitignore"), ".env\n")
     git(path, ~w(add .gitignore))
     git(path, ~w(-c user.name=t -c user.email=t@t commit -q -m ignore))
     File.write!(Path.join(path, ".env"), "SECRET=1\n")
+
+    # The rule goes on last: its change sweeps at once, and a clean worktree would go.
+    settings(%{"worktreeUnchanged" => true})
+    assert File.exists?(path)
 
     :ok = HalC2.StorageCleanup.sweep()
     assert File.exists?(path)
