@@ -2549,18 +2549,12 @@ defmodule HalC2.Steps.Planning.Planner do
 
   # The flight that has answered a leg: a move is pushed by the milestone that
   # holds the task, so it is that item's flight, not the task's. Read once the
-  # taking has landed on the plan (`move_answered_back/4` waits for that
-  # receipt); a flight's token, legs and answered report are not published,
-  # so this is a white-box seam like `restored_runner/0` below.
+  # taking is known to have happened (a plan or GitHub receipt); a flight's
+  # token, legs and answered report are not published, so this is a white-box
+  # seam like `restored_runner/0` below.
   defp answered_flight do
     %{pushing: pushing} = :sys.get_state(HalC2Plugins.Planner)
-
-    Enum.find_value(pushing, fn {id, flight} ->
-      case flight[:answered] do
-        {_error, %{"moved" => _moved}} -> {id, flight}
-        _ -> nil
-      end
-    end)
+    Enum.find(pushing, fn {_id, flight} -> flight[:answered] != nil end)
   end
 
   # Answers the gate of the milestone moved back to until both moves' calls
@@ -2584,48 +2578,158 @@ defmodule HalC2.Steps.Planning.Planner do
   # whose reply was lost does — through `report/7`'s wrapper, with the
   # projects its change read, which a restarted server has none of until it
   # looks; returns what the planner answers with it.
-  defp report_again(context, _title) do
-    {id, flight} = answered_flight() || flunk("no answered push is in flight")
+  defp report_again(projects, id, flight) do
     {error, extra} = flight.answered
 
-    reply =
-      GenServer.call(
-        HalC2Plugins.Planner,
-        {:projects, context.push_projects,
-         {:pushed, id, flight.token, flight.answered_leg, error, extra}}
-      )
+    GenServer.call(
+      HalC2Plugins.Planner,
+      {:projects, projects, {:pushed, id, flight.token, flight.answered_leg, error, extra}}
+    )
+  end
 
-    {reply, flight}
+  # Runs the push a resend was answered with and reports it, as the runner that
+  # lost its reply does next; returns what the planner answers with the report.
+  defp run_reply(projects, id, flight, {:push, leg, ops, synced}) do
+    {error, extra} = HalC2Plugins.Planner.Sync.run(ops, synced)
+
+    GenServer.call(
+      HalC2Plugins.Planner,
+      {:projects, projects, {:pushed, id, flight.token, leg, error, extra}}
+    )
+  end
+
+  # The runner whose reply was lost, played by the scenario: the flight's own
+  # runner did get the reply and is running its leg, so it is suspended while
+  # `fun` resends the answered report and runs what that is answered with, and
+  # resumed after to find the flight settled without it.
+  defp as_lost_runner(runner, fun) do
+    true = :erlang.suspend_process(runner)
+
+    try do
+      fun.()
+    after
+      :erlang.resume_process(runner)
+    end
+  end
+
+  # The milestone or task whose flight `id` was has no push left, and is synced.
+  defp assert_settled(context, id) do
+    %{pushing: pushing} = :sys.get_state(HalC2Plugins.Planner)
+    refute Map.has_key?(pushing, id), "#{id} still has a push in flight"
+    item = Enum.find(plan!(context)["items"], &(&1["id"] == id))
+    refute item["syncError"], "#{item["title"]} is marked as not synced: #{item["syncError"]}"
+  end
+
+  # Lets go of what waits on `gate` until `task` is done, whichever of the calls
+  # on the gate reach GitHub first; returns the task's result.
+  defp answer_until(gate, task) do
+    release(gate, "answer")
+    Task.yield(task, 1_000) || answer_until(gate, task)
   end
 
   step "the user moves {string} from {string} to {string}, then back, and the first answer is reported to the planner again",
        %{args: [title, from, to]} = context do
     {{moving, back}, context} = move_answered_back(context, title, from, to)
-    {reply, flight} = report_again(context, title)
-    assert reply == flight.answered_reply
+    {id, flight} = answered_flight() || flunk("no answered push is in flight")
+    assert report_again(context.push_projects, id, flight) == flight.answered_reply
     await_moves(context, from, [moving, back])
     context
   end
 
   step "the user moves {string} from {string} to {string}, then back, {string} is restarted, and the first answer is reported to the planner again",
-       %{args: [title, from, to, id]} = context do
+       %{args: [title, from, to, plugin]} = context do
     {{moving, back}, context} = move_answered_back(context, title, from, to)
-    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
-    {reply, _flight} = report_again(context, title)
-    # Decided again from what the first taking saved, with the projects its
-    # change read, the resend is answered with the correction that taking
-    # left: the issue goes to the milestone the plan moved it back to. The
-    # runner that lost the first reply would run that push; here the
-    # chained move back, already with its runner, asks GitHub the same, and
-    # `await_moves/3` lets it through.
-    assert {:push, _leg, [{"update", %{"number" => number, "milestone" => milestone}, _took}],
-            _synced} =
-             reply
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => plugin})
+    {id, flight} = answered_flight() || flunk("no answered push is in flight")
+    projects = context.push_projects
+    gate = context.gh_gates[from]
 
-    assert number == item(plan!(context), title)["issue"]["number"]
-    assert milestone == context.milestones[from]
+    as_lost_runner(flight.runner, fn ->
+      # Decided again from what the first taking saved, with the projects its
+      # change read, the resend is answered with the correction that taking
+      # left: the issue goes to the milestone the plan moved it back to.
+      reply = report_again(projects, id, flight)
 
-    await_moves(context, from, [moving, back])
+      assert {:push, _leg, [{"update", %{"number" => number, "milestone" => milestone}, _}], _} =
+               reply
+
+      assert number == item(plan!(context), title)["issue"]["number"]
+      assert milestone == context.milestones[from]
+      running = Task.async(fn -> run_reply(projects, id, flight, reply) end)
+      assert {:ok, :ok} = answer_until(gate, running)
+    end)
+
+    # The real runner's own leg, held at GitHub, is no longer the flight's.
+    for task <- [moving, back], do: assert({:ok, {{:ok, _}, _}} = answer_until(gate, task))
+    assert_settled(context, id)
+    context
+  end
+
+  # The first change waits on GitHub's rename while the plan switches boards (a
+  # restart) and the task changes again, so GitHub's answer chains a push under
+  # the new board, which GitHub holds too; then the plugin restarts and the first
+  # answer is reported again by the runner that lost its reply.
+  step "the user renames \#{int}'s task to {string} and moves it to end on {string}, then {string} switches to the board {string} and the user renames it to {string} and moves it to end on {string}, then {string} is restarted and the first answer is reported to the planner again",
+       %{args: [number, first, due, @id, board, second, due_again, plugin]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+
+    rename = fn title ->
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [JSON.encode!(%{"title" => title})],
+        "stdout" => %{"number" => number}
+      }
+    end
+
+    # The chained rename says when it reaches GitHub, then waits for its answer.
+    started = Path.join(context.mc.home, "gh-started")
+    gate = Path.join(context.mc.home, "gh-gate-chained")
+    for fifo <- [started, gate], do: {_, 0} = System.cmd("mkfifo", [fifo])
+    wait = "echo > '#{started}'; cat '#{gate}' > /dev/null"
+    context = World.cli_rules(context, [Map.put(rename.(second), "run", wait)])
+
+    {changing, context} = change_late(context, task, %{"title" => first, "due" => due})
+    context = save(context, %{"board" => board})
+    context = update_task(context, number, %{"title" => second, "due" => due_again})
+    {:ok, projects} = HalC2.Plugins.Host.projects(@id)
+    answer_late(context)
+    # The chained push at GitHub is the receipt that the first answer was taken.
+    {:ok, _} = File.read(started, [:raw])
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => plugin})
+    {id, flight} = answered_flight() || flunk("no answered push is in flight")
+    context = World.cli_rules(context, [rename.(second)])
+
+    reply =
+      as_lost_runner(flight.runner, fn ->
+        reply = report_again(projects, id, flight)
+        assert run_reply(projects, id, flight, reply) == :ok
+        # The real runner's chained rename answers while it is suspended.
+        File.write!(gate, "answer", [:raw])
+        reply
+      end)
+
+    assert {{:ok, _}, _} = Task.await(changing, 30_000)
+    assert_settled(context, id)
+    Map.put(context, :reported_again, reply)
+  end
+
+  # The board map of a push's add of #`number` to `board`, as `Sync.board_pushes/4`
+  # makes it.
+  step "the answer reported again adds \#{int} to {string}", %{args: [number, board]} = context do
+    [owner, n] = String.split(board, "/")
+    n = String.to_integer(n)
+    assert {:push, _leg, ops, _synced} = context.reported_again
+
+    assert Enum.any?(
+             ops,
+             &match?(
+               {:board, %{"owner" => ^owner, "number" => ^n, "item" => %{"number" => ^number}},
+                _},
+               &1
+             )
+           ),
+           "the answer does not add ##{number} to #{board}: #{inspect(ops)}"
+
     context
   end
 
@@ -3525,10 +3629,13 @@ defmodule HalC2.Steps.Planning.Planner do
 
   # Renames `task` to `title` in a client of its own, as another window's would, so the
   # rename can wait on GitHub while the scenario goes on; returns once the plan has it.
-  defp rename_late(context, task, title) do
+  defp rename_late(context, task, title), do: change_late(context, task, %{"title" => title})
+
+  # `rename_late/3` with any `fields` that hold a title.
+  defp change_late(context, task, %{"title" => title} = fields) do
     %{mc: mc} = context
     call = %{"id" => @id, "method" => "updateItem"}
-    input = %{"id" => task["id"], "fields" => %{"title" => title}}
+    input = %{"id" => task["id"], "fields" => fields}
 
     renaming =
       Task.async(fn ->

@@ -1072,8 +1072,11 @@ defmodule HalC2Plugins.Planner do
       flight[:answered] == reported and flight[:answered_leg] == leg and
         flight[:chained] == true
 
+    # The board item the report learnt is of the board its leg was pushed under: a
+    # replay's leg is the answered one, whose board the chained leg may have left.
     board = state.settings["board"] || ""
-    extra = if flight.board == board, do: extra, else: Map.delete(extra, "boardItemId")
+    leg_board = if replay?, do: flight[:answered_board], else: flight.board
+    extra = if leg_board == board, do: extra, else: Map.delete(extra, "boardItemId")
     {moved, extra} = Map.pop(extra, "moved", [])
     {stated, extra} = Map.pop(extra, "stated")
     state = %{state | items: Sync.landed(state.items, moved)}
@@ -1102,6 +1105,7 @@ defmodule HalC2Plugins.Planner do
             leg: next_leg,
             answered: reported,
             answered_leg: leg,
+            answered_board: leg_board,
             answered_reply: reply,
             chained: true
           })
@@ -1840,6 +1844,7 @@ defmodule HalC2Plugins.Planner do
                 leg: leg,
                 answered: nil,
                 answered_leg: nil,
+                answered_board: nil,
                 answered_reply: nil,
                 chained: false
               }
@@ -2077,6 +2082,7 @@ defmodule HalC2Plugins.Planner do
                 leg: leg,
                 answered: answered,
                 answered_leg: answered_leg,
+                answered_board: saved["answeredBoard"],
                 answered_reply: nil,
                 chained: saved["chained"] == true
               }
@@ -2190,7 +2196,8 @@ defmodule HalC2Plugins.Planner do
             "board" => flight.board,
             "chained" => flight[:chained] == true,
             "leg" => saved_term(flight[:leg]),
-            "answered" => saved_term(answered)
+            "answered" => saved_term(answered),
+            "answeredBoard" => flight[:answered_board]
           }
 
           {id, saved}

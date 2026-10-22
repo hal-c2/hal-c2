@@ -1398,6 +1398,20 @@ Feature: Planner
       Then #7's task is in the milestone "Beta" and not "Launch"
       And #7's task is marked as synced
 
+    # A board item a push added is of the board it was pushed under. Decided again
+    # after a restart, the answered leg is still that board's, though the push
+    # chained after it went under the board the plan switched to.
+    @mc
+    Scenario: An answer reported again after a restart does not keep the item of a board the plan left
+      Given "planner" syncs "acme/api" both ways with the board "acme/3"
+      And the board "acme/3" holds #5 and not #7
+      And the board "acme/4" holds #5 and not #7
+      And the plugin looks at GitHub
+      And GitHub answers renaming #7 to "Rate limiting" late, taking it
+      When the user renames #7's task to "Rate limiting" and moves it to end on "2026-11-09", then "planner" switches to the board "acme/4" and the user renames it to "Rate limits" and moves it to end on "2026-11-16", then "planner" is restarted and the first answer is reported to the planner again
+      Then the answer reported again adds #7 to "acme/4"
+      And #7's task is marked as synced
+
     # A chained leg refused just as the leg before it was is that leg's own
     # report, not a resend of the first: it settles as the task's sync error
     # instead of being answered with itself forever.
