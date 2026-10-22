@@ -262,7 +262,7 @@ Feature: Viewing and editing files
       And the user closes the file
       Then the file tree takes the whole Files tab
       When the user opens "src/app.ts"
-      Then the file tree stays hidden beside it
+      Then the file tree stays hidden while the file is open
 
     @desktop @backlog-desktop
     Scenario: A narrow Files tab keeps the file's buttons in the file

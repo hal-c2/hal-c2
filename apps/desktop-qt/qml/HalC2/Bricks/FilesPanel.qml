@@ -28,9 +28,9 @@ Rectangle {
     // never so much that the file (whose header buttons are its minimum width) is
     // pushed under it. A row layout does not shrink a fixed-size column on its own.
     readonly property real explorerShare: Math.max(0, Math.min(352, width * 0.46, width - 1 - fileViewer.Layout.minimumWidth))
-    // Below this the tree has no room for more than its margins and expand button (46px),
-    // so a file that leaves it less is open without the tree rather than beside a sliver
-    // of it that still takes focus.
+    // Below this width the tree is little more than its margins and expand button (about
+    // 46px of the 72), so a file that leaves it less is open without the tree rather than
+    // beside a sliver of it that still takes focus.
     readonly property int explorerMinimum: 72
     readonly property bool explorerShown: !fileOpen || (explorerOpen && explorerShare >= explorerMinimum)
     // True while keyboard focus sits inside the given item.
