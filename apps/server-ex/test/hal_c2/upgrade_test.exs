@@ -281,6 +281,31 @@ defmodule HalC2.UpgradeTest do
     assert Upgrade.manifest(unpacked)["marker"] == "first"
   end
 
+  test "a put that fails raises, keeps the previous bundle and leaves no temp", %{tmp_dir: dir} do
+    first = tarball(dir, "first", %{"version" => "2.0.0", "marker" => "first"})
+    :ok = Source.put("2.0.0", "darwin-arm64", first)
+    assert {:ok, unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+
+    assert_raise File.CopyError, fn ->
+      Source.put("2.0.0", "darwin-arm64", Path.join(dir, "missing.tar.gz"))
+    end
+
+    temps = fn version ->
+      version |> Source.cache_dir() |> File.ls!() |> Enum.filter(&(&1 =~ ".put-"))
+    end
+
+    assert temps.("2.0.0") == []
+    assert {:ok, ^unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "first"
+
+    # A failure after the copy reached its temp (here the rename, onto a
+    # directory standing where the archive goes) removes the temp too.
+    File.mkdir_p!(Path.join(Source.cache_dir("3.0.0"), Source.file_name("3.0.0", "darwin-arm64")))
+
+    assert_raise File.RenameError, fn -> Source.put("3.0.0", "darwin-arm64", first) end
+    assert temps.("3.0.0") == []
+  end
+
   test "--root is refused, before any build, unless it comes with --release alone" do
     for args <- [
           ["--root", "/srv/hal-c2"],
