@@ -14,11 +14,16 @@ defmodule HalC2.Subprocess do
   `{:subprocess_stderr, reader, lines}`. The rest never leaves the reader, since an
   agent's stderr can carry credentials.
 
+  Exile stops the program when its owner exits, but not when the VM dies;
+  `HalC2.Subprocess.Orphans` records each program so the next boot kills those.
+
   Reader loops recurse through fully qualified calls, so a hot code load moves them
   onto the new module version at the next chunk.
   """
 
   alias Exile.Process, as: Proc
+
+  require Logger
 
   @enforce_keys [:proc, :reader]
   defstruct [:proc, :reader]
@@ -34,7 +39,9 @@ defmodule HalC2.Subprocess do
     {prefix, opts} = Keyword.pop(opts, :stderr_prefix)
     stderr = if prefix, do: :consume, else: :disable
 
-    with {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, stderr)) do
+    with :ok <- trackable(),
+         {:ok, proc} <- Proc.start_link(cmd, Keyword.put_new(opts, :stderr, stderr)),
+         :ok <- track(proc) do
       owner = self()
       reader = spawn_link(fn -> reader_init(proc, owner) end)
       :ok = Proc.change_pipe_owner(proc, :stdout, reader)
@@ -49,6 +56,144 @@ defmodule HalC2.Subprocess do
       end
 
       {:ok, %__MODULE__{proc: proc, reader: reader}}
+    end
+  end
+
+  # A failure to track that is already known refuses before anything is
+  # started, so no program (a provider CLI, a JSON-RPC connection, the device
+  # hub: every caller here) is run up just to be killed. `track/1` after
+  # the start stays the check that decides, for what races past this one.
+  defp trackable do
+    case HalC2.Subprocess.Orphans.available?() do
+      {:error, reason} -> {:error, {:untracked, reason}}
+      _ -> :ok
+    end
+  end
+
+  # A program the next boot could not find if this MC died does not outlive its failed
+  # record. The wait is bounded: one in uninterruptible sleep takes SIGKILL only once it
+  # wakes, and the caller is a session's start. A program already gone (its Exile
+  # process ended, or the port has no pid) has nothing to record, as in
+  # `Orphans.track/2`.
+  defp track(proc) do
+    case os_pid_of(proc) do
+      {:ok, os_pid} ->
+        track(proc, os_pid)
+
+      :gone ->
+        :ok
+
+      # Not provably gone, and no pid to record it under: stop it, as a
+      # failed record stops it, rather than let it run untracked.
+      {:error, reason} ->
+        stop_untracked(proc, nil)
+        {:error, {:untracked, reason}}
+    end
+  end
+
+  # Only the documented gone signals read as gone: Exile answering a bare
+  # `:undefined` (not an error tuple) once the port is closed, which a
+  # program that exits at once can reach before this call, and a `:noproc`
+  # exit once its Exile process has ended. Anything else — another return, a
+  # timeout exit — leaves the program possibly alive with no pid read.
+  defp os_pid_of(proc) do
+    case Proc.os_pid(proc) do
+      {:ok, os_pid} -> {:ok, os_pid}
+      :undefined -> :gone
+      other -> {:error, {:os_pid, other}}
+    end
+  catch
+    :exit, {:noproc, _} -> :gone
+    :exit, reason -> {:error, {:os_pid, {:exit, reason}}}
+  end
+
+  defp track(proc, os_pid) do
+    with {:error, reason} <- HalC2.Subprocess.Orphans.track(proc.pid, os_pid) do
+      stop_untracked(proc, os_pid)
+      {:error, {:untracked, reason}}
+    end
+  end
+
+  # The error return hands no handle back, and some callers live on after it, so the
+  # program must not: if the kill does not take, the Exile process itself is ended
+  # (unlinked first, so its death does not take the caller), closing its port. That
+  # only closes the program's stdin, which it may not exit on, so the program itself
+  # is then checked: one still running is said to run untracked, as in the timeout
+  # below. A kill that failed only because the program had already exited needs
+  # neither the warning nor the port kill.
+  defp stop_untracked(proc, os_pid) do
+    with :ok <- Proc.kill(proc, :sigkill),
+         {:ok, _status} <- Proc.await_exit(proc, 2_000) do
+      :ok
+    else
+      failed ->
+        if os_pid != nil and HalC2.Subprocess.Orphans.gone?(os_pid) do
+          :ok
+        else
+          Logger.warning(
+            "program #{os_pid} would run untracked, its kill gave #{inspect(failed)}; " <>
+              "stopping its port process instead"
+          )
+
+          ref = Process.monitor(proc.pid)
+          Process.unlink(proc.pid)
+          Process.exit(proc.pid, :kill)
+
+          receive do
+            {:DOWN, ^ref, :process, _, _} ->
+              cond do
+                os_pid == nil ->
+                  Logger.warning(
+                    "a program whose pid could not be read may run untracked: " <>
+                      "its port process ended, which closes its stdin"
+                  )
+
+                await_gone(os_pid) ->
+                  :ok
+
+                true ->
+                  Logger.warning(
+                    "program #{os_pid} runs untracked: it stayed after its port process ended"
+                  )
+              end
+          after
+            2_000 ->
+              # No stray DOWN for a caller that never made this monitor.
+              Process.demonitor(ref, [:flush])
+              Logger.warning("program #{os_pid} runs untracked: its port process stayed")
+          end
+        end
+    end
+  catch
+    # The kill or the wait itself exiting (a wedged Exile process timing out)
+    # must not silence the outcome this function exists to announce: unless
+    # the program is provably gone, say it may run untracked.
+    :exit, reason ->
+      if os_pid != nil and HalC2.Subprocess.Orphans.gone?(os_pid) do
+        :ok
+      else
+        Logger.warning(
+          "program #{os_pid} may run untracked: stopping it exited #{inspect(reason)}"
+        )
+
+        :ok
+      end
+  end
+
+  # A program that does exit on its closed stdin needs a moment to, so "gone" is
+  # awaited, bounded, rather than read once. Nothing signals a process other than
+  # its parent that it exited, so its state is what can be read.
+  defp await_gone(os_pid, tries \\ 50) do
+    cond do
+      HalC2.Subprocess.Orphans.gone?(os_pid) ->
+        true
+
+      tries == 0 ->
+        false
+
+      true ->
+        Process.sleep(10)
+        await_gone(os_pid, tries - 1)
     end
   end
 

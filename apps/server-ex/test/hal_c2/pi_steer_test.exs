@@ -5,20 +5,12 @@ defmodule HalC2.PiSteerTest do
 
   setup do
     start_supervised!({Registry, keys: :unique, name: HalC2.Pi.Registry})
-    on_exit(fn -> Application.delete_env(:hal_c2, :pi_steer_timeout_ms) end)
     :ok
   end
 
-  # As Codex's stand-in test pins for Codex: only the steer call's own timeout may
-  # be answered `:ok` (the runtime still holds the request); a definite refusal
-  # stays a refusal, and a runtime that stops is not a delivery either.
-  test "a steer the runtime does not answer in time is taken as held by it" do
-    Application.put_env(:hal_c2, :pi_steer_timeout_ms, 50)
-    stand_in("thread-1", :hold)
-
-    assert :ok = ThreadRuntime.steer("thread-1", "run-1", %{text: "hi", attachments: []})
-  end
-
+  # Pi's caller has no budget of its own (the runtime's answer timer decides when
+  # Pi is taken to hold a steer, pinned in `pi_steer_prop_test.exs`): a definite
+  # refusal stays a refusal, and a runtime that stops is not a delivery either.
   test "a refused steer still answers the refusal" do
     stand_in("thread-1", {:error, "no running turn"})
 

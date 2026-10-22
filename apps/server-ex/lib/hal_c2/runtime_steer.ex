@@ -1,8 +1,10 @@
 defmodule HalC2.RuntimeSteer do
   @moduledoc """
-  The one way the bundled runtimes ask their own process to steer a turn.
+  The one way the bundled runtimes ask their own process to steer a turn,
+  except Pi's: its runtime replies on an answer timer of its own and its
+  caller waits without a budget (`HalC2.Pi.ThreadRuntime.steer/3`).
 
-  Every runtime answers a steer the same way, and the orchestration layer
+  Every runtime here answers a steer the same way, and the orchestration layer
   depends on the semantics staying identical: only this call's own timeout
   means the runtime (or the provider ahead of it) still holds the request
   and hands it over when it gets to it, so that case alone is answered
