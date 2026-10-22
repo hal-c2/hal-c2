@@ -28,6 +28,8 @@ ShellWindow {
     // above it follows so the two collapse as one piece.
     property real sidebarSlot: sidebarCollapsed ? 0 : 272
     property bool drawerOpen: false
+    // A page an MC plugin added is showing: it takes the place of the thread.
+    readonly property bool pluginTab: (root.route?.tab ?? "threads") !== "threads" && !root.settingsActive
     property date now: new Date()
     readonly property string dayKey: Qt.formatDate(now, "yyyy-MM-dd")
     readonly property var calendarCells: buildCalendar(dayKey)
@@ -365,11 +367,28 @@ ShellWindow {
 
                 Workspace {
                     anchors.fill: parent
-                    visible: ready
+                    visible: ready && !root.pluginTab
                     clip: true
                     sidebarToggle: root.sidebarCollapsed
                     color: "transparent"
                 }
+            }
+        }
+
+        // Threads, then a tab per page an MC plugin adds, on a card of their own;
+        // hidden while there are none.
+        ShellCard {
+            Layout.fillWidth: true
+            Layout.preferredHeight: tabs.implicitHeight + 4
+            visible: tabs.pages.length > 0 && !root.settingsActive
+
+            ShellTabs {
+                id: tabs
+
+                anchors.fill: parent
+                anchors.margins: 2
+                color: "transparent"
+                windowControls: false
             }
         }
 
@@ -538,7 +557,13 @@ ShellWindow {
                         anchors.margins: surfaceCard.border.width
                         radius: surfaceCard.radius - surfaceCard.border.width
                         kind: root.route?.kind ?? ""
-                        visible: !root.settingsActive
+                        visible: !root.settingsActive && !root.pluginTab
+                    }
+
+                    PluginPages {
+                        anchors.fill: parent
+                        anchors.margins: surfaceCard.border.width
+                        visible: root.pluginTab
                     }
 
                     // The centre dims under the drawer; clicking it closes the drawer.
@@ -1111,7 +1136,7 @@ ShellWindow {
                     id: composer
 
                     Layout.fillWidth: true
-                    visible: ready && !root.settingsActive
+                    visible: ready && !root.settingsActive && !root.pluginTab
                     color: "transparent"
                 }
 
@@ -1120,7 +1145,7 @@ ShellWindow {
 
                     Layout.fillWidth: true
                     Layout.preferredHeight: terminal.implicitHeight
-                    visible: terminal.open
+                    visible: terminal.open && !root.pluginTab
 
                     TerminalDrawer {
                         id: terminal
@@ -1136,7 +1161,7 @@ ShellWindow {
 
                 Layout.preferredWidth: panel.implicitWidth
                 Layout.fillHeight: true
-                visible: panel.available && panel.open
+                visible: panel.available && panel.open && !root.pluginTab
 
                 RightPanel {
                     id: panel
