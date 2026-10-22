@@ -33,7 +33,8 @@ defmodule HalC2.RuntimeRecord do
   The MC running with no HAL-C2 home configured, for a tool started with none either
   (`own` is its `:home`, `nil` or `:dev`): `{home, record}` of the profile that has a
   live record, the tool's own profile first, or nil when neither runs. So
-  `mix hal_c2.pair` from a checkout finds the installed MC, and the other way round.
+  `mix hal_c2.pair` from a checkout pairs with its own MC when that runs and finds
+  the installed MC when only that one does, and the other way round.
   `installed` is where the installed MC keeps its files when that is not the installed
   profile (a `HAL_C2_HOME` root a checkout's own `:home` ignores). A tool given a
   chosen home looks at that home alone.

@@ -136,7 +136,7 @@ defmodule HalC2.Steps.Connections.Pairing do
 
   defp collect(port, pid, acc) do
     receive do
-      {^port, {:data, data}} -> collect(port, pid, [acc | data])
+      {^port, {:data, data}} -> collect(port, pid, [acc, data])
       {^port, {:exit_status, status}} -> {IO.iodata_to_binary(acc), status}
     after
       60_000 ->
