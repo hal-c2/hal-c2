@@ -1145,7 +1145,12 @@ defmodule HalC2.OrchestrationTest do
     assert attempts == ["interrupted"]
   end
 
+  # Runs in the scheduled run's own process. `:ensured` comes before the call
+  # into the stream, so the hook asks the VM to report that process's sends to
+  # the test: the send of its transaction is the barrier that the dispatch is
+  # on its way, and a signal already sent survives its sender being killed.
   def notify_ensured(test, :ensured, id) do
+    :erlang.trace(self(), true, [:send, {:tracer, test}])
     send(test, {:ensured_stream, id})
     :ok
   end
@@ -1169,8 +1174,10 @@ defmodule HalC2.OrchestrationTest do
     on_exit(fn -> Application.delete_env(:hal_c2, :streams_hook) end)
     caller = Task.async(fn -> HalC2.ScheduledTasks.run_now(%{"id" => task["id"]}) end)
 
-    # The run is on its way into the held stream with its dispatch.
+    # The run has sent its dispatch to the held stream.
     assert_receive {:ensured_stream, ^thread_id}, 5_000
+
+    assert_receive {:trace, _run, :send, {:"$gen_call", _, {:transact, _, _}}, ^server}, 5_000
     Application.delete_env(:hal_c2, :streams_hook)
 
     assert {:ok, %{"id" => _}} = HalC2.ScheduledTasks.delete(%{"id" => task["id"]})

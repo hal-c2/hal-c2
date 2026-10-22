@@ -58,10 +58,10 @@ defmodule HalC2.Acp.ThreadRuntime do
     do: thread_id |> ensure() |> GenServer.call({:start_turn, turn}, 120_000)
 
   @spec interrupt(String.t(), String.t() | nil) :: :ok | {:error, String.t()}
-  def interrupt(thread_id, _run_id) do
+  def interrupt(thread_id, run_id) do
     case lookup(thread_id) do
       nil -> {:error, "no active ACP turn in this thread"}
-      pid -> GenServer.call(pid, :interrupt, 15_000)
+      pid -> GenServer.call(pid, {:interrupt, run_id}, 15_000)
     end
   end
 
@@ -247,6 +247,14 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
+
+  # Pinned to a run, the interrupt stops only that run's turn: a different
+  # turn that began since the caller read the run is not the caller's to stop.
+  def handle_call({:interrupt, run_id}, _from, %{turn: %{ids: %{run: other}}} = state)
+      when is_binary(run_id) and run_id != other,
+      do: {:reply, {:error, "no running turn"}, state}
+
+  def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
 
   def handle_call(:interrupt, _from, %{prompt: ref} = state) when ref != nil do
     Connection.notify(state.conn, "session/cancel", %{"sessionId" => state.session_id})
