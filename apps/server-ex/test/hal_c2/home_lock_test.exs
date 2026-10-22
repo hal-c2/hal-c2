@@ -44,12 +44,20 @@ defmodule HalC2.HomeLockTest do
     Sqlite3.close(other)
   end
 
-  test "a lock file that is not a database is made again", %{tmp_dir: dir} do
+  # Repairing it could unlink another MC's live lock, so nobody does.
+  test "a lock file that is not a database stops the start and is left alone", %{tmp_dir: dir} do
     path = Path.join(dir, "mc.lock")
     File.write!(path, String.duplicate("not a database ", 100))
 
-    assert HomeLock.acquire(path: path) == :ok
-    assert HomeLock.acquire(path: path, wait: true) == :ok
+    assert_raise RuntimeError, ~r/is not a lock.*Remove it/, fn ->
+      HomeLock.acquire(path: path)
+    end
+
+    assert_raise RuntimeError, ~r/is not a lock/, fn ->
+      HomeLock.acquire(path: path, wait: true)
+    end
+
+    assert File.read!(path) == String.duplicate("not a database ", 100)
   end
 
   test "the MC that holds its home takes it again without waiting", %{tmp_dir: dir} do

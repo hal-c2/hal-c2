@@ -79,9 +79,10 @@ defmodule HalC2.HomeLock do
     end
   end
 
-  # Only a busy database is another MC's lock. A file that is not a database at all
-  # (damaged, or written by something else) holds nothing: it is made again.
-  defp try_lock(path, retry \\ true) do
+  # Only a busy database is another MC's lock. Anything else (a file that is not a
+  # database) stops the start: two MCs repairing it at once could each unlink the
+  # other's live lock, so the user removes it instead.
+  defp try_lock(path) do
     {:ok, db} = Sqlite3.open(path)
 
     case Sqlite3.execute(db, "BEGIN EXCLUSIVE") do
@@ -91,18 +92,12 @@ defmodule HalC2.HomeLock do
       {:error, reason} ->
         Sqlite3.close(db)
 
-        cond do
-          reason =~ ~r/locked|busy/i ->
-            :held
-
-          retry ->
-            Logger.warning("#{path} is not a lock (#{reason}); making it again")
-            File.rm!(path)
-            try_lock(path, false)
-
-          true ->
-            raise "cannot lock #{path}: #{reason}"
-        end
+        if reason =~ ~r/locked|busy/i,
+          do: :held,
+          else:
+            raise(
+              "#{path} is not a lock (#{reason}). Remove it with no MC running and start again."
+            )
     end
   end
 end
