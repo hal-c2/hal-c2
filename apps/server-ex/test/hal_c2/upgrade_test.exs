@@ -525,7 +525,8 @@ defmodule HalC2.UpgradeTest do
     assert {:error, reason} =
              Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
 
-    assert reason =~ "No installed MC has run from"
+    assert reason =~ "No installed MC has run here"
+    assert reason =~ Path.join(HalC2.Paths.mc_dirs(home, %{}, dir).state, "server-runtime.json")
     assert reason =~ "--root"
 
     dirs = HalC2.Paths.mc_dirs(home, %{}, dir)

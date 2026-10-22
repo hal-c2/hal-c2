@@ -247,9 +247,10 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
     # Only a missing file means no MC has run here; a broken one is named, so
     # the developer fixes the file instead of second-guessing `--root`.
-    missing =
-      "No installed MC has run from #{dirs.data}; if it keeps its files under a " <>
+    missing = fn path ->
+      "No installed MC has run here (no #{path}); if it keeps its files under a " <>
         "HAL_C2_HOME root, pass --release --root <that root>"
+    end
 
     with {:ok, record} <- read_installed(record_path, missing),
          {:ok, base} <- decode_record(record, record_path),
@@ -261,7 +262,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   defp read_installed(path, missing) do
     case File.read(path) do
       {:ok, _} = read -> read
-      {:error, :enoent} -> {:error, missing}
+      {:error, :enoent} -> {:error, missing.(path)}
       {:error, reason} -> {:error, "Could not read #{path}: #{:file.format_error(reason)}"}
     end
   end
