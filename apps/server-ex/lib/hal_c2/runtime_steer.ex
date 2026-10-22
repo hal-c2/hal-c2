@@ -33,7 +33,7 @@ defmodule HalC2.RuntimeSteer do
   timeout (answered `:ok`) always fires first.
   """
 
-  @spec call(pid, String.t(), map, timeout) :: :ok | {:error, String.t()}
+  @spec call(pid(), String.t(), map(), timeout()) :: :ok | {:error, term()}
   def call(pid, run_id, message, timeout) do
     GenServer.call(pid, {:steer, run_id, message}, timeout)
   catch
