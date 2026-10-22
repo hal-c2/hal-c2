@@ -976,7 +976,7 @@ export function ChatView({
       platform: client.hostPlatform,
     });
     if (!resolution.ok) {
-      store.setStatus(resolution.error, "error");
+      store.setStatus(resolution.error, "warning");
       return;
     }
     const workspaceRoot = resolution.path;
@@ -1013,7 +1013,7 @@ export function ChatView({
     if (projectFlow?.step !== "repository" || projectSubmissionPendingRef.current) return;
     const repositoryInput = projectDraft.trim();
     if (repositoryInput.length === 0) {
-      store.setStatus("Enter a repository or Git URL.", "error");
+      store.setStatus("Enter a repository or Git URL.", "warning");
       return;
     }
 
@@ -1066,7 +1066,7 @@ export function ChatView({
       platform: client.hostPlatform,
     });
     if (!resolution.ok) {
-      store.setStatus(resolution.error, "error");
+      store.setStatus(resolution.error, "warning");
       return;
     }
 
@@ -1089,7 +1089,7 @@ export function ChatView({
 
   const chooseProjectSource = (row: Extract<AddProjectPaletteRow, { kind: "source" }>) => {
     if (row.disabled) {
-      if (row.description) store.setStatus(row.description, "error");
+      if (row.description) store.setStatus(row.description, "warning");
       return;
     }
     if (row.source === "local") {
@@ -1902,7 +1902,7 @@ export function ChatView({
       branch: newBranch,
     });
     if (validationError) {
-      store.setStatus(newThreadValidationMessage(validationError), "error");
+      store.setStatus(newThreadValidationMessage(validationError), "warning");
       return;
     }
     if (!project || !resolvedNewModelSelection) return;
@@ -2207,7 +2207,7 @@ export function ChatView({
       if (activeComposerImages.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         store.setStatus(
           `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
-          "error",
+          "warning",
         );
         closeFiles();
         return;
@@ -2217,9 +2217,21 @@ export function ChatView({
         .readFileBase64(composerCwd, row.path)
         .then((file) => {
           if (!file) throw new Error("Could not read the image.");
-          return prepareComposerImage(row.path, file, decodeImage);
+          // Decode/validation failures warn; only the read above pins as an
+          // error (composerState.ts makes the same split).
+          return prepareComposerImage(row.path, file, decodeImage).catch((error: unknown) => {
+            store.setStatus(
+              error instanceof Error ? error.message : "Could not attach image.",
+              "warning",
+            );
+            return null;
+          });
         })
         .then((image) => {
+          if (!image) {
+            setFilesStatus("ready");
+            return;
+          }
           updateActiveComposerImages((current) => [...current, image]);
           closeFiles();
           store.setStatus(`Attached ${image.upload.name}.`, "success");
@@ -2255,11 +2267,11 @@ export function ChatView({
 
   const pasteComposerImage = (paste: { readonly bytes: Uint8Array; readonly mimeType: string }) => {
     if (!detail && focus !== "new") {
-      store.setStatus("Select a thread before pasting an image.", "error");
+      store.setStatus("Select a thread before pasting an image.", "warning");
       return;
     }
     if (userInputActive) {
-      store.setStatus("Answer the pending question before attaching an image.", "error");
+      store.setStatus("Answer the pending question before attaching an image.", "warning");
       return;
     }
     if (
@@ -2268,13 +2280,13 @@ export function ChatView({
     ) {
       store.setStatus(
         `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
-        "error",
+        "warning",
       );
       return;
     }
     const extension = imageExtensionForMimeType(paste.mimeType);
     if (!extension) {
-      store.setStatus("Paste a supported image format.", "error");
+      store.setStatus("Paste a supported image format.", "warning");
       return;
     }
 
@@ -2289,11 +2301,10 @@ export function ChatView({
         );
         store.setStatus(`Attached ${image.upload.name}.`, "success");
       })
-      .catch((error) => {
-        store.setStatus(
-          error instanceof Error ? error.message : "Could not attach pasted image.",
-          "error",
-        );
+      // A decoder/validation failure means the bytes are not an image we can
+      // show (composerState.ts makes the same call); there is no read here.
+      .catch(() => {
+        store.setStatus("Paste a supported image format.", "warning");
       })
       .finally(() => {
         clipboardImageLoadsRef.current = Math.max(0, clipboardImageLoadsRef.current - 1);
@@ -2314,11 +2325,11 @@ export function ChatView({
 
     return (async () => {
       if (!detail && focus !== "new") {
-        store.setStatus("Select a thread before attaching an image path.", "error");
+        store.setStatus("Select a thread before attaching an image path.", "warning");
         return failed;
       }
       if (userInputActive) {
-        store.setStatus("Answer the pending question before attaching an image.", "error");
+        store.setStatus("Answer the pending question before attaching an image.", "warning");
         return failed;
       }
       if (activeComposerImages.some((image) => image.relativePath === imagePath)) {
@@ -2331,7 +2342,7 @@ export function ChatView({
       ) {
         store.setStatus(
           `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
-          "error",
+          "warning",
         );
         return failed;
       }
@@ -2341,27 +2352,38 @@ export function ChatView({
       store.setStatus(`Adding ${imageName}…`, "busy");
       try {
         const platformPath = client.hostPlatform === "win32" ? NodePath.win32 : NodePath.posix;
-        const image = platformPath.isAbsolute(imagePath)
-          ? await (async () => {
-              const stat = await NodeFSP.stat(imagePath);
-              if (!stat.isFile()) throw new Error("The pasted image path is not a file.");
-              if (stat.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-                throw new Error("Image exceeds the 10MB attachment limit.");
-              }
-              const mimeType = imageMimeTypeForPath(imagePath);
-              if (!mimeType) throw new Error("Paste a supported image format.");
-              return prepareComposerImageBytes(
-                imagePath,
-                mimeType,
-                await NodeFSP.readFile(imagePath),
-                decodeImage,
-              );
-            })()
-          : await (async () => {
-              const file = await client.readFileBase64(composerCwd, imagePath);
-              if (!file) throw new Error("Could not read the pasted image path.");
-              return prepareComposerImage(imagePath, file, decodeImage);
-            })();
+        // Reads pin as errors; validation and decode failures warn
+        // (composerState.ts makes the same split for the live host).
+        let prepare: () => ReturnType<typeof prepareComposerImage>;
+        if (platformPath.isAbsolute(imagePath)) {
+          const stat = await NodeFSP.stat(imagePath);
+          if (!stat.isFile()) throw new Error("The pasted image path is not a file.");
+          if (stat.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+            store.setStatus("Image exceeds the 10MB attachment limit.", "warning");
+            return failed;
+          }
+          const mimeType = imageMimeTypeForPath(imagePath);
+          if (!mimeType) {
+            store.setStatus("Paste a supported image format.", "warning");
+            return failed;
+          }
+          const bytes = await NodeFSP.readFile(imagePath);
+          prepare = () => prepareComposerImageBytes(imagePath, mimeType, bytes, decodeImage);
+        } else {
+          const file = await client.readFileBase64(composerCwd, imagePath);
+          if (!file) throw new Error("Could not read the pasted image path.");
+          prepare = () => prepareComposerImage(imagePath, file, decodeImage);
+        }
+        let image: Awaited<ReturnType<typeof prepareComposerImage>>;
+        try {
+          image = await prepare();
+        } catch (error) {
+          store.setStatus(
+            error instanceof Error ? error.message : "Could not attach the pasted image path.",
+            "warning",
+          );
+          return failed;
+        }
         updateActiveComposerImages((current) => {
           if (
             current.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS ||
@@ -2817,7 +2839,7 @@ export function ChatView({
         const supported = renderer.isOsc52Supported();
         store.setStatus(
           supported ? `${label} copied.` : "Clipboard not supported by this terminal.",
-          supported ? "success" : "error",
+          supported ? "success" : "warning",
         );
       };
 
@@ -2956,7 +2978,7 @@ export function ChatView({
       const supported = renderer.isOsc52Supported();
       store.setStatus(
         supported ? "Terminal copied to clipboard." : "Clipboard not supported by this terminal.",
-        supported ? "success" : "error",
+        supported ? "success" : "warning",
       );
     },
     onGrowPrompt: () => resizePrompt(2),

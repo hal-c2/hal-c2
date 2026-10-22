@@ -95,7 +95,7 @@ export function createPluginCatalog(options: PluginCatalogOptions) {
     if (!port || !plugin) return;
     if (plugin.file === null) {
       // Nothing to load it from again: it would be gone, not disabled.
-      options.status(`"${id}" is built into this client and cannot be disabled.`, "error");
+      options.status(`"${id}" is built into this client and cannot be disabled.`, "warning");
       return;
     }
     port.remove(id);
@@ -146,12 +146,12 @@ export function createPluginCatalog(options: PluginCatalogOptions) {
     try {
       url = new URL(address);
     } catch {
-      options.status(`"${address}" is not a URL.`, "error");
+      options.status(`"${address}" is not a URL.`, "warning");
       return;
     }
     const name = pluginFileName(url);
     if ((url.protocol !== "https:" && url.protocol !== "http:") || name === null) {
-      options.status("A plugin URL is an http(s) address of a .qml file.", "error");
+      options.status("A plugin URL is an http(s) address of a .qml file.", "warning");
       return;
     }
     const dir = options.pluginDir ?? null;
@@ -165,7 +165,7 @@ export function createPluginCatalog(options: PluginCatalogOptions) {
       records.sources[file] !== url.href &&
       !records.disabled.some((entry) => entry.file === file)
     ) {
-      options.status(`A plugin file named ${name} is already installed.`, "error");
+      options.status(`A plugin file named ${name} is already installed.`, "warning");
       return;
     }
     options.status(`Downloading ${name}…`, "busy");

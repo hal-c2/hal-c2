@@ -607,7 +607,7 @@ private slots:
           QStringLiteral("hal-c2://pair/more?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(plain)),
           QStringLiteral("hal-c2://pair:1?pairingUrl=") + QString::fromUtf8(QUrl::toPercentEncoding(plain)), QStringLiteral("hal-c2://pair"),
           // Too long for a QR code's link.
-          plain + QString(2048, QLatin1Char('a')));
+          plain + QString(2048, QLatin1Char('a')), wrapped(plain + QString(2048, QLatin1Char('a'))));
       RC_ASSERT(!pairing::readInvitation(hostile).has_value());
     }));
   }

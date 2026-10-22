@@ -122,6 +122,70 @@ defmodule HalC2.UpgradeTest do
     assert {:error, _} = Source.receive_part("2.0.0", "darwin-arm64", {:finish, sum})
   end
 
+  test "a release with no bundle of its version packs one of its own applications, once",
+       %{tmp_dir: dir} do
+    root = Path.join(dir, "release")
+
+    staged = %{
+      @manifest
+      | "version" => "2.1.0",
+        "erts" => "17.1",
+        "applications" => %{"hal_c2" => "2.1.0"}
+    }
+
+    for manifest <- [@manifest, staged] do
+      rel = Path.join([root, "releases", manifest["version"]])
+      File.mkdir_p!(rel)
+      File.write!(Path.join(rel, "upgrade.json"), JSON.encode!(manifest))
+    end
+
+    # 2.0.0 runs, and 2.1.0 is staged for the next start.
+    File.write!(Path.join([root, "releases", "start_erl.data"]), "17.1 2.1.0\n")
+
+    # The applications of 2.0.0, one an earlier version left behind, and 2.1.0's.
+    for app <- ~w(hal_c2-2.0.0 kernel-11.0.3 exqlite-0.41.0 hal_c2-1.9.0 hal_c2-2.1.0),
+        do: File.mkdir_p!(Path.join([root, "lib", app, "ebin"]))
+
+    for erts <- ~w(17.0.5 17.1), do: File.mkdir_p!(Path.join([root, "erts-#{erts}", "bin"]))
+    System.put_env("RELEASE_ROOT", root)
+    :persistent_term.put({Upgrade, :version}, "2.0.0")
+
+    on_exit(fn ->
+      System.delete_env("RELEASE_ROOT")
+      :persistent_term.erase({Upgrade, :version})
+    end)
+
+    # Two `cluster.update`s at once pack it once and agree on it.
+    assert [:ok, :ok] =
+             1..2
+             |> Enum.map(fn _ -> Task.async(fn -> Source.ensure_own("2.0.0") end) end)
+             |> Task.await_many()
+
+    archive =
+      Path.join([Source.cache_dir("2.0.0"), Source.file_name("2.0.0", Upgrade.platform())])
+
+    sum = :crypto.hash(:sha256, File.read!(archive)) |> Base.encode16(case: :lower)
+    assert File.read!(archive <> ".sha256") == sum
+
+    assert File.ls!(Source.cache_dir("2.0.0")) |> Enum.sort() ==
+             Enum.sort([Path.basename(archive), Path.basename(archive) <> ".sha256"])
+
+    {:ok, entries} = :erl_tar.table(String.to_charlist(archive), [:compressed])
+
+    dirs =
+      entries
+      |> Enum.map(&to_string/1)
+      |> Enum.map(&(&1 |> Path.split() |> Enum.take(2) |> Path.join()))
+      |> Enum.uniq()
+
+    assert "lib/hal_c2-2.0.0" in dirs and "lib/kernel-11.0.3" in dirs and
+             "erts-17.0.5/bin" in dirs
+
+    assert "releases/2.0.0" in dirs
+    refute "lib/hal_c2-1.9.0" in dirs
+    refute "lib/hal_c2-2.1.0" in dirs or "releases/2.1.0" in dirs or "erts-17.1/bin" in dirs
+  end
+
   test "a code-only version's release is the running one with the bundle's own code", %{
     tmp_dir: dir
   } do

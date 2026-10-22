@@ -114,6 +114,24 @@ interface Subscription {
   readonly shape: Shape;
   readonly onFrame: (frame: ShapeFrame) => void;
   offset: number | null;
+  /**
+   * A thread stream held as its newest runs: the turn items the first sub asks for,
+   * `floor` the first run it holds (null: all of the thread; undefined: not told
+   * yet) and `handle` the log its offset came from. A reconnect keeps the window it
+   * has, the turns the user paged in included.
+   */
+  readonly windowItems?: number;
+  floor?: number | null;
+  handle?: string;
+  /** Items of a `more` the MC has not finished answering; asked again after a resubscription. */
+  pendingMore?: number;
+}
+
+/** A thread stream that holds its newest turns; `more` adds the ones before. */
+export interface WindowedSubscription {
+  readonly unsubscribe: () => void;
+  /** Asks for about `items` more turn items; false when the socket is not connected. */
+  readonly more: (items: number) => boolean;
 }
 
 type SocketLike = Pick<WebSocket, "send" | "close" | "readyState"> & {
@@ -186,11 +204,45 @@ export class ClusterSocket {
     onFrame: (frame: ShapeFrame) => void,
     offset: number | null = null,
   ): () => void {
+    return this.add({ shape, onFrame, offset }).unsubscribe;
+  }
+
+  /**
+   * Subscribes to a thread stream as its newest `items` turn items (`page` frames
+   * answer `more`). The folded thread can be shorter than the thread; `snapshot`
+   * and `page` frames say where it starts. `floor` opens the window a client already
+   * held (a replaced session's) at that run instead (null: all of the thread).
+   */
+  subscribeWindow(
+    shape: StreamShape,
+    items: number,
+    onFrame: (frame: ShapeFrame) => void,
+    floor?: number | null,
+  ): WindowedSubscription {
+    return this.add({
+      shape,
+      onFrame,
+      offset: null,
+      windowItems: items,
+      ...(floor === undefined ? {} : { floor }),
+    });
+  }
+
+  private add(subscription: Subscription): WindowedSubscription {
     const id = this.nextId++;
-    this.subscriptions.set(id, { shape, onFrame, offset });
+    this.subscriptions.set(id, subscription);
     this.sendSub(id);
-    return () => {
-      if (this.subscriptions.delete(id)) this.send({ t: "unsub", id });
+    return {
+      unsubscribe: () => {
+        if (this.subscriptions.delete(id)) this.send({ t: "unsub", id });
+      },
+      more: (items) => {
+        const subscription = this.subscriptions.get(id);
+        if (!this.ready || subscription === undefined) return false;
+        subscription.pendingMore = items;
+        this.send({ t: "more", id, items });
+        return true;
+      },
     };
   }
 
@@ -243,7 +295,21 @@ export class ClusterSocket {
     if ((frame.t === "events" || frame.t === "live") && typeof frame.offset === "number") {
       subscription.offset = frame.offset;
     }
+    if (subscription.windowItems !== undefined) this.followWindow(subscription, frame);
     subscription.onFrame(frame);
+  }
+
+  // What a reconnect needs to keep a window: where it starts and the log it is of. A
+  // page is the stream as of its offset, whose events came before it.
+  private followWindow(subscription: Subscription, frame: ShapeFrame): void {
+    if (typeof frame.handle === "string") subscription.handle = frame.handle;
+    const floor = frame.floor;
+    const holdsFloor = frame.t === "snapshot" || (frame.t === "page" && frame.done === true);
+    if (holdsFloor && (typeof floor === "number" || floor === null)) subscription.floor = floor;
+    if (frame.t === "page" && frame.done === true) delete subscription.pendingMore;
+    if (frame.t === "page" && frame.done === true && typeof frame.offset === "number") {
+      subscription.offset = Math.max(subscription.offset ?? 0, frame.offset);
+    }
   }
 
   private onClose(socket: SocketLike): void {
@@ -268,7 +334,27 @@ export class ClusterSocket {
     const subscription = this.subscriptions.get(id);
     if (subscription === undefined || !this.ready) return;
     const offset = subscription.shape.type === "stream" ? subscription.offset : null;
-    this.send({ t: "sub", id, shape: subscription.shape, offset });
+    if (subscription.windowItems === undefined) {
+      this.send({ t: "sub", id, shape: subscription.shape, offset });
+      return;
+    }
+    this.send({
+      t: "sub",
+      id,
+      shape: subscription.shape,
+      offset,
+      window:
+        subscription.floor === undefined
+          ? { items: subscription.windowItems }
+          : { floor: subscription.floor },
+      ...(offset !== null && subscription.handle !== undefined
+        ? { handle: subscription.handle }
+        : {}),
+    });
+    // The MC drops a page owed to the subscription this one replaces.
+    if (subscription.pendingMore !== undefined) {
+      this.send({ t: "more", id, items: subscription.pendingMore });
+    }
   }
 
   private send(message: unknown): void {

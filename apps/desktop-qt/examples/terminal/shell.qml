@@ -35,6 +35,8 @@ ShellWindow {
     readonly property var swatches: [Theme.palette.color("ansiBlack", Theme.palette.color("surfaceRaised", "#2e3247")), Theme.palette.color("ansiRed", Theme.palette.color("error", "#f7768e")), Theme.palette.color("ansiGreen", Theme.palette.color("update", "#9ece6a")), Theme.palette.color("ansiYellow", Theme.palette.color("warning", "#e0af68")), Theme.palette.color("ansiBlue", Theme.palette.color("accent", "#7aa2f7")), Theme.palette.color("ansiMagenta", Theme.palette.color("accentSurface", "#374465")), Theme.palette.color("ansiCyan", Theme.palette.color("info", "#7dcfff")), Theme.palette.color("ansiWhite", Theme.palette.color("textMuted", "#757b98")), Theme.palette.color("ansiBrightBlack", Theme.palette.color("border", "#31364e")), Theme.palette.color("ansiBrightRed", Theme.palette.color("errorForeground", "#f7768e")), Theme.palette.color("ansiBrightGreen", Theme.palette.color("updateForeground", "#9ece6a")), Theme.palette.color("ansiBrightYellow", Theme.palette.color("warningForeground", "#e0af68")), Theme.palette.color("ansiBrightBlue", Theme.palette.color("focus", "#7aa2f7")), Theme.palette.color("ansiBrightMagenta", Theme.palette.color("accent", "#bb9af7")), Theme.palette.color("ansiBrightCyan", Theme.palette.color("info", "#7dcfff")), Theme.palette.color("ansiBrightWhite", Theme.palette.color("text", "#c0caf5"))]
 
     property date now: new Date()
+    // A page an MC plugin added is showing: it takes the place of the thread.
+    readonly property bool pluginTab: (root.route?.tab ?? "threads") !== "threads" && !root.settingsActive
 
     width: 1360
     height: 860
@@ -182,6 +184,14 @@ ShellWindow {
             color: root.line
         }
 
+        // Threads, then a tab per page an MC plugin adds; hidden while there are
+        // none. The status line above stays the window's drag handle.
+        ShellTabs {
+            Layout.fillWidth: true
+            visible: pages.length > 0 && !root.settingsActive
+            windowControls: false
+        }
+
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -222,6 +232,7 @@ ShellWindow {
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    visible: !root.pluginTab
                     spacing: 0
 
                     Workspace {
@@ -256,13 +267,19 @@ ShellWindow {
                     }
                 }
 
+                PluginPages {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: root.pluginTab
+                }
+
                 RightPanel {
                     id: rightPanel
 
                     Layout.fillHeight: true
                     Layout.preferredWidth: implicitWidth
                     ownToggle: false
-                    visible: available
+                    visible: available && !root.pluginTab
                 }
             }
         }

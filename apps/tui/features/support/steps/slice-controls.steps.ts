@@ -110,7 +110,7 @@ step(
 
 step("the client explains that a new thread is needed", async (ctx: World) => {
   expect(status(ctx)).toEqual({
-    kind: "error",
+    kind: "warning",
     text: "Start a new thread (^N) to use Opus: Claude cannot change models once a conversation has started.",
   });
   // The thread keeps its model: the next reply goes to it.

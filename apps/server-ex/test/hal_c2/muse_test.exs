@@ -4,6 +4,7 @@ defmodule HalC2.MuseTest do
 
   alias HalC2.Muse
   alias HalC2.Muse.ThreadRuntime
+  alias HalC2.StreamState
 
   test "command ids are UUIDv7s that sort by time" do
     ids = for _ <- 1..3, do: Muse.command_id()
@@ -109,10 +110,197 @@ defmodule HalC2.MuseTest do
   end
 
   test "a v1 runtime state keeps working after a hot update" do
-    assert {:ok, %{v: 3, last_ids: nil, started: true} = state} =
+    assert {:ok, %{v: 4, last_ids: nil, started: true, subs: %{}} = state} =
              ThreadRuntime.code_change(1, %{v: 1, last_turn: "provider-turn:x", turn: nil}, nil)
 
     refute Map.has_key?(state, :last_turn)
+  end
+
+  test "a subagent that a v3 runtime showed as a tool call stays one after a hot update" do
+    muse = %{
+      "sa" => %{"itemId" => "sa", "kind" => "subagent"},
+      "t" => %{"itemId" => "t", "kind" => "toolCall"}
+    }
+
+    assert {:ok, %{v: 4, subs: %{"sa" => :tool} = subs}} =
+             ThreadRuntime.code_change(3, %{v: 3, muse: muse, turn: nil}, nil)
+
+    assert map_size(subs) == 1
+  end
+
+  # The migrated `:tool` routing itself: a later revision of that subagent is shown
+  # as the tool call the v3 runtime started, and no subagent is created for it.
+  @tag :tmp_dir
+  test "a subagent migrated to a tool call finishes as one, not also as a subagent",
+       %{tmp_dir: dir} do
+    start_streams(dir)
+    started = subagent_item(%{"status" => "inProgress", "revision" => 1})
+
+    {:ok, state} =
+      ThreadRuntime.code_change(3, runtime_state(%{v: 3, muse: %{"sa" => started}}), nil)
+
+    {:noreply, _state} = item_completed(state, %{"revision" => 2})
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("thread-1"))
+    assert StreamState.list(stream, "subagent") == []
+
+    assert [%{"type" => "dynamic_tool", "status" => "completed"}] =
+             StreamState.list(stream, "turn-item")
+  end
+
+  # The two together: a subagent migrated to `:tool` by the hot update, whose
+  # completing revision is misshapen, finishes as that tool call (its role for
+  # a title), not as a crashed turn.
+  @tag :tmp_dir
+  test "a migrated subagent completed with misshapen fields finishes as a tool call",
+       %{tmp_dir: dir} do
+    start_streams(dir)
+    started = subagent_item(%{"status" => "inProgress", "revision" => 1})
+
+    {:ok, state} =
+      ThreadRuntime.code_change(3, runtime_state(%{v: 3, muse: %{"sa" => started}}), nil)
+
+    {:noreply, _state} =
+      item_completed(state, %{
+        "revision" => 2,
+        "objective" => 123,
+        "result" => "just text"
+      })
+
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("thread-1"))
+    assert StreamState.list(stream, "subagent") == []
+
+    assert [%{"type" => "dynamic_tool", "status" => "completed", "title" => "reviewer"}] =
+             StreamState.list(stream, "turn-item")
+  end
+
+  # No objective to name the task with: what Muse says it is doing is the
+  # child's prompt instead of a blank message, its role still the title
+  # (upstream's `objective ?? fallbackText ?? ""`).
+  @tag :tmp_dir
+  test "a subagent whose objective is blank is tasked with what Muse says it is doing",
+       %{tmp_dir: dir} do
+    start_streams(dir)
+
+    {:noreply, _state} =
+      item_completed(runtime_state(), %{
+        "objective" => "   ",
+        "fallbackText" => "Reading the diff"
+      })
+
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("thread-1"))
+
+    assert [%{"status" => "completed", "title" => "reviewer", "prompt" => "Reading the diff"}] =
+             StreamState.list(stream, "subagent")
+  end
+
+  # The started item names no objective and says nothing yet: the first
+  # progress Muse reports fills the child's prompt it was started without.
+  @tag :tmp_dir
+  test "a subagent started with a blank objective is tasked by its first progress",
+       %{tmp_dir: dir} do
+    start_streams(dir)
+    state = runtime_state()
+
+    {:noreply, state} =
+      item_event(state, "item/started", %{"status" => "inProgress", "objective" => "   "})
+
+    {:noreply, state} =
+      item_event(state, "item/updated", %{
+        "status" => "inProgress",
+        "revision" => 2,
+        "objective" => "   ",
+        "fallbackText" => "Reading the diff"
+      })
+
+    {:noreply, _state} =
+      item_event(state, "item/completed", %{
+        "revision" => 3,
+        "objective" => "   ",
+        "fallbackText" => "Reading the diff"
+      })
+
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("thread-1"))
+
+    assert [%{"status" => "completed", "prompt" => "Reading the diff"} = subagent] =
+             StreamState.list(stream, "subagent")
+
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(subagent["childThreadId"]))
+
+    assert [%{"role" => "user", "text" => "Reading the diff"}] =
+             child
+             |> StreamState.list("message")
+             |> Enum.filter(&(&1["role"] == "user"))
+  end
+
+  # A field in a shape Muse has not sent before degrades the one subagent (its role
+  # for a title, no answer to read), not the turn carrying it.
+  @tag :tmp_dir
+  test "a subagent whose objective and result are not text and a map still ends",
+       %{tmp_dir: dir} do
+    start_streams(dir)
+
+    {:noreply, _state} =
+      item_completed(runtime_state(), %{"objective" => 123, "result" => "just text"})
+
+    stream = HalC2.Streams.Server.state(HalC2.Streams.ensure("thread-1"))
+
+    assert [%{"status" => "completed", "title" => "reviewer", "prompt" => ""} = subagent] =
+             StreamState.list(stream, "subagent")
+
+    assert subagent["result"] in [nil, ""]
+  end
+
+  defp start_streams(dir) do
+    start_supervised!({HalC2.Store, path: Path.join(dir, "hal-c2.sqlite")})
+    start_supervised!(HalC2.Streams)
+    start_supervised!(HalC2.Shell)
+  end
+
+  # A runtime mid-turn on thread-1, as `init/1` and a started turn leave it but for
+  # the connection and the Muse host behind it.
+  defp runtime_state(fields \\ %{}) do
+    {:ok, state} = ThreadRuntime.init("thread-1")
+
+    ids = %{
+      driver: "muse",
+      instance: "muse",
+      thread: "thread-1",
+      run: "run-1",
+      attempt: nil,
+      root_node: "node:root",
+      provider_thread: "provider-thread:muse:thread-1",
+      provider_turn: "provider-turn:muse:run-1",
+      message: "m1"
+    }
+
+    Map.merge(
+      %{state | conn: self(), session: "session-1", native: "turn-1", turn: %{ids: ids}},
+      fields
+    )
+  end
+
+  defp subagent_item(fields) do
+    Map.merge(
+      %{
+        "itemId" => "sa",
+        "kind" => "subagent",
+        "status" => "completed",
+        "turnId" => "turn-1",
+        "revision" => 1,
+        "objective" => "Review the diff",
+        "role" => "reviewer",
+        "result" => %{"text" => "Done."}
+      },
+      fields
+    )
+  end
+
+  defp item_completed(state, fields), do: item_event(state, "item/completed", fields)
+
+  defp item_event(state, method, fields) do
+    params = %{"sessionId" => "session-1", "item" => subagent_item(fields)}
+
+    ThreadRuntime.handle_info({:json_rpc, self(), {:notification, method, params}}, state)
   end
 
   describe "approvals" do
@@ -213,6 +401,8 @@ defmodule HalC2.MuseTest do
       assert ThreadRuntime.status(%{"status" => "inProgress"}) == "running"
       assert ThreadRuntime.status(%{"status" => "completed"}) == "completed"
       assert ThreadRuntime.status(%{"status" => "cancelled"}) == "cancelled"
+      assert ThreadRuntime.status(%{"status" => "canceled"}) == "cancelled"
+      assert ThreadRuntime.status(%{"status" => "failed"}) == "failed"
       assert ThreadRuntime.status(%{"status" => "declined"}) == "failed"
 
       assert ThreadRuntime.status(%{
@@ -266,8 +456,40 @@ defmodule HalC2.MuseTest do
                  "running"
                )
 
+      # A subagent a v3 runtime showed as a tool call still renders as one.
       assert {:tool, %{"title" => "Muse agent: boom", "output" => "boom"}} =
                ThreadRuntime.tool(%{"kind" => "subagent", "failureReason" => "boom"}, "failed")
+    end
+
+    # Every field `tool/2` reads may arrive in a shape Muse has not sent before;
+    # each degrades to its fallback instead of raising on the turn.
+    test "misshapen fields degrade the item, not the turn" do
+      assert {:tool,
+              %{
+                "title" => "Muse agent: Muse reported failed.",
+                "output" => "Muse reported failed.\nok"
+              }} =
+               ThreadRuntime.tool(
+                 %{
+                   "kind" => "subagent",
+                   "objective" => 123,
+                   "role" => %{},
+                   "summary" => ["ok", 5],
+                   "failureReason" => %{},
+                   "result" => "just text",
+                   "fallbackText" => 7
+                 },
+                 "failed"
+               )
+
+      assert {:tool, %{"title" => "Workflow", "output" => ""}} =
+               ThreadRuntime.tool(
+                 %{"kind" => "workflow", "entryId" => 42, "fallbackText" => %{}},
+                 "completed"
+               )
+
+      assert {:tool, %{"output" => ""}} =
+               ThreadRuntime.tool(%{"kind" => 7, "tool" => %{}}, "running")
     end
   end
 end

@@ -1,7 +1,8 @@
 defmodule HalC2.Orchestration.Recovery do
   @moduledoc """
-  Settles turns an MC was running when it stopped. Provider processes die with
-  the MC, so at boot every run still active on this MC's threads is ended as
+  Settles turns an MC was running when it stopped. Provider processes stop with
+  the MC, and `HalC2.Subprocess.Orphans` kills, before this runs, any that an MC
+  which died left behind, so at boot every run still active on this MC's threads is ended as
   interrupted, with its items, prompts, and provider thread; otherwise the thread
   would stay "running" and refuse its next message.
 

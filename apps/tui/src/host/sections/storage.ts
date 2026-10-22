@@ -233,7 +233,7 @@ export function storageSection(host: SectionHost): SettingsSection {
                     const days = Number(text);
                     if (text === "") set(rule, null);
                     else if (Number.isInteger(days) && days > 0) set(rule, days);
-                    else host.status("Enter a whole number of days", "error");
+                    else host.status("Enter a whole number of days", "warning");
                   },
                 )
             : () => set(rule, mixed ? true : value !== true),

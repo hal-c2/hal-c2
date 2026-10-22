@@ -10,9 +10,21 @@ import HalC2.Bricks
 ShellWindow {
     id: root
 
+    // A page an MC plugin added is showing: it takes the place of the thread.
+    readonly property bool pluginTab: (root.route?.tab ?? "threads") !== "threads" && !root.settingsActive
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+
+        // Threads, then a tab per page an MC plugin adds; hidden while there are none.
+        ShellTabs {
+            Layout.fillWidth: true
+            visible: pages.length > 0 && !root.settingsActive
+            window: root
+            // The title bar below carries the window buttons.
+            windowControls: false
+        }
 
         RowLayout {
             Layout.fillWidth: true
@@ -44,6 +56,7 @@ ShellWindow {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                visible: !root.pluginTab
                 spacing: 0
 
                 Workspace {
@@ -78,13 +91,19 @@ ShellWindow {
                 }
             }
 
+            PluginPages {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: root.pluginTab
+            }
+
             RightPanel {
                 id: rightPanel
 
                 Layout.fillHeight: true
                 Layout.preferredWidth: implicitWidth
                 ownToggle: false
-                visible: available
+                visible: available && !root.pluginTab
             }
         }
 
