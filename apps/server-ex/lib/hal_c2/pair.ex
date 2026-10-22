@@ -86,9 +86,9 @@ defmodule HalC2.Pair do
   # one-line refusal like every other failure of this command, not a stack
   # trace out of a release `eval` — after a `--tailscale` publish it would
   # also leave the Serve mapping behind unexplained.
-  # A `--tailscale` mint failure happens after `publish/3` already made the
-  # Serve mapping: the refusal names the side effect and how to undo it, so
-  # the mapping is never left behind silent.
+  # A `--tailscale` mint failure happens after `publish/3` made or reused the
+  # Serve mapping (it does not say which): the refusal names the mapping and
+  # how to undo it, without claiming this call made it.
   defp mint_for(opts, serve_port, dirs, running) do
     tailscale = opts[:tailscale]
 
@@ -96,7 +96,7 @@ defmodule HalC2.Pair do
       {:error, message} when tailscale ->
         {:error,
          message <>
-           " Tailscale Serve was already published for this pairing; remove it with `tailscale serve --https=#{serve_port} off`."}
+           " Tailscale Serve on HTTPS port #{serve_port} maps to this MC and stays published; remove it with `tailscale serve --https=#{serve_port} off` if you do not want it."}
 
       result ->
         result

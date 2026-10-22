@@ -108,6 +108,19 @@ defmodule HalC2.PairTest do
     assert File.exists?(Path.join(installed.data, "hal-c2.sqlite"))
   end
 
+  test "a mint that fails after a Tailscale publish names the mapping left in place",
+       %{tmp_dir: dir} do
+    {installed, _port} = cross_profile(dir, &"http://127.0.0.2:#{&1}")
+
+    # The installed MC's store cannot be opened: a directory stands in its place.
+    File.mkdir_p!(Path.join(installed.data, "hal-c2.sqlite"))
+
+    assert {:error, message} = HalC2.Pair.command(["--release", "--tailscale"])
+    assert message =~ "Could not create a pairing token in"
+    assert message =~ "Tailscale Serve on HTTPS port 443 maps to this MC and stays published"
+    assert message =~ "`tailscale serve --https=443 off`"
+  end
+
   test "a mapping answered from a non-loopback target is not reused on its word alone",
        %{tmp_dir: dir} do
     # The target answers with the installed MC's (public) id, but it is not a

@@ -112,6 +112,12 @@ defmodule HalC2.TailscaleServe do
   # it is. An expected id of "" (a located MC whose id could be neither read
   # nor asked for) matches nothing — notably not a target in the same degraded
   # state answering "": the mapping is refused, not blessed.
+  # Neither branch probed its target, so it may front anything at all: the
+  # message does not claim a HAL-C2 server.
+  defp unverified(port, command_name),
+    do:
+      "Tailscale Serve on HTTPS port #{port} already fronts something whose identity could not be verified as this one. #{port_hint(command_name)}"
+
   defp check_existing(other, target, port, expected_id, command_name) do
     expected = expected_id || HalC2.Environment.id()
 
@@ -120,12 +126,10 @@ defmodule HalC2.TailscaleServe do
         # Not probed (its self-reported id is not trusted), so do not claim
         # it fronts a different server: it may front this very MC under a
         # non-loopback address, or nothing HAL-C2 at all.
-        {:taken,
-         "Tailscale Serve on HTTPS port #{port} already fronts a HAL-C2 server whose identity could not be verified as this one. #{port_hint(command_name)}"}
+        {:taken, unverified(port, command_name)}
 
       expected == "" ->
-        {:taken,
-         "Tailscale Serve on HTTPS port #{port} already fronts a HAL-C2 server whose identity could not be verified as this one. #{port_hint(command_name)}"}
+        {:taken, unverified(port, command_name)}
 
       true ->
         case environment_id_at(other) do
