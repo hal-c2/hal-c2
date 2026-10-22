@@ -2530,12 +2530,28 @@ defmodule HalC2.Steps.Planning.Planner do
     back = move.(to, from)
     {_, context} = await_topic(context, "plan", in?.(from))
     answer_late(context, to)
-    await_answered()
-    {{moving, back}, context}
+
+    # The first move's taking lands on the plan — the issue's milestone is the
+    # one moved to — in the same decision that answers the flight and chains
+    # the move back, so the plan announcing it is the receipt to wait on.
+    {_, context} =
+      await_topic(context, "plan", fn plan ->
+        issue = item(plan, title)["issue"] || %{}
+        issue["milestone"] == context.milestones[to]
+      end)
+
+    # The projects the moves' changes read, for reporting again below as a
+    # runner does (`report_again/2`); a restart in between leaves the new
+    # server with none until it looks.
+    {:ok, projects} = HalC2.Plugins.Host.projects(@id)
+    {{moving, back}, Map.put(context, :push_projects, projects)}
   end
 
   # The flight that has answered a leg: a move is pushed by the milestone that
-  # holds the task, so it is that item's flight, not the task's.
+  # holds the task, so it is that item's flight, not the task's. Read once the
+  # taking has landed on the plan (`move_answered_back/4` waits for that
+  # receipt); a flight's token, legs and answered report are not published,
+  # so this is a white-box seam like `restored_runner/0` below.
   defp answered_flight do
     %{pushing: pushing} = :sys.get_state(HalC2Plugins.Planner)
 
@@ -2545,18 +2561,6 @@ defmodule HalC2.Steps.Planning.Planner do
         _ -> nil
       end
     end)
-  end
-
-  defp await_answered do
-    answered =
-      Enum.reduce_while(1..600, nil, fn _, _ ->
-        case answered_flight() do
-          nil -> Process.sleep(50) && {:cont, nil}
-          found -> {:halt, found}
-        end
-      end)
-
-    answered || flunk("no push was answered in time")
   end
 
   # Answers the gate of the milestone moved back to until both moves' calls
@@ -2577,15 +2581,18 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   # Sends the flight's answered report to the planner once more, as a runner
-  # whose reply was lost does; returns what the planner answers with it.
-  defp report_again(_context, _title) do
+  # whose reply was lost does — through `report/7`'s wrapper, with the
+  # projects its change read, which a restarted server has none of until it
+  # looks; returns what the planner answers with it.
+  defp report_again(context, _title) do
     {id, flight} = answered_flight() || flunk("no answered push is in flight")
     {error, extra} = flight.answered
 
     reply =
       GenServer.call(
         HalC2Plugins.Planner,
-        {:pushed, id, flight.token, flight.answered_leg, error, extra}
+        {:projects, context.push_projects,
+         {:pushed, id, flight.token, flight.answered_leg, error, extra}}
       )
 
     {reply, flight}
@@ -2605,10 +2612,19 @@ defmodule HalC2.Steps.Planning.Planner do
     {{moving, back}, context} = move_answered_back(context, title, from, to)
     {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
     {reply, _flight} = report_again(context, title)
-    # Decided again from what the first taking saved, the resend finds nothing
-    # left to push: the move it carries already landed in the plan, and the
-    # chained push is already with its runner.
-    assert reply == :ok
+    # Decided again from what the first taking saved, with the projects its
+    # change read, the resend is answered with the correction that taking
+    # left: the issue goes to the milestone the plan moved it back to. The
+    # runner that lost the first reply would run that push; here the
+    # chained move back, already with its runner, asks GitHub the same, and
+    # `await_moves/3` lets it through.
+    assert {:push, _leg, [{"update", %{"number" => number, "milestone" => milestone}, _took}],
+            _synced} =
+             reply
+
+    assert number == item(plan!(context), title)["issue"]["number"]
+    assert milestone == context.milestones[from]
+
     await_moves(context, from, [moving, back])
     context
   end

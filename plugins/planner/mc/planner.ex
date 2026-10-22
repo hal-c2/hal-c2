@@ -603,7 +603,8 @@ defmodule HalC2Plugins.Planner do
   # the task waiting on a dead report. The flight keeps the last answered leg, so a
   # report that did land before its reply was lost is answered again with the same
   # next push instead of being taken as a new one. Bounded by 30 seconds of the
-  # clock, not by attempts: only an exit that says the server was not there (no
+  # clock between tries (a call already made can run past it by its own
+  # timeout), not by attempts: only an exit that says the server was not there (no
   # process, or it ended normally or in shutdown) is retried, and a plugin stopped
   # for longer than that window loses the report as before, which the restored
   # monitor hears as a stopped push. A call that timed out or crashed the server
@@ -614,22 +615,29 @@ defmodule HalC2Plugins.Planner do
     report(id, token, leg, error, extra, projects, deadline, 100)
   end
 
-  # The wait between tries doubles up to a second, so every runner whose report
-  # lands in the same stop does not knock on the restarted server in lockstep.
+  # The wait between tries doubles up to a second, with up to 50ms of jitter:
+  # doubling alone would keep every runner whose report lands in the same stop
+  # knocking on the restarted server in lockstep. The deadline is checked
+  # again after the wait, so no new call starts past it.
   defp report(id, token, leg, error, extra, projects, deadline, delay) do
     decide({:pushed, id, token, leg, error, extra}, projects)
   catch
     :exit, reason ->
       if retryable?(reason) and System.monotonic_time(:millisecond) < deadline do
-        Process.sleep(delay)
-        report(id, token, leg, error, extra, projects, deadline, min(delay * 2, 1_000))
+        Process.sleep(delay + :rand.uniform(50))
+
+        if System.monotonic_time(:millisecond) < deadline,
+          do: report(id, token, leg, error, extra, projects, deadline, min(delay * 2, 1_000)),
+          else: :ok
       else
         :ok
       end
   end
 
-  # An exit that means the call never reached a live server, so sending it again
-  # cannot duplicate a report the server took.
+  # An exit that says the server was not there or stopped cleanly rather than
+  # crashing mid-call, so the report can be sent again; if the old server did
+  # take it before its reply was lost, the flight's answered leg answers the
+  # resend instead of taking it twice (`handle_call({:pushed, ...})`).
   defp retryable?({why, {GenServer, :call, _}}) when why in [:noproc, :normal, :shutdown],
     do: true
 
@@ -745,12 +753,21 @@ defmodule HalC2Plugins.Planner do
 
   # A change with the MC's projects as its caller read them; they stay for the changes
   # whose callers do not read them, until a look or such a change reads them again.
-  # A push report is decided with the projects its change read, but does not install
-  # them: it may arrive long after a look refreshed the server's list.
+  # A push report does not install the projects its change read: it may arrive long
+  # after a look refreshed the server's list.
   def handle_call({:projects, projects, {:pushed, _, _, _, _, _} = message}, from, state) do
-    decided_state = Map.put(%{state | projects: projects}, :defer_announce, true)
+    # The change's snapshot decides only while the server has none of its own
+    # (it restarted and has not looked yet); a list a look refreshed since is
+    # fresher routing than the one the original change read.
+    decided_state =
+      if state.projects == [],
+        do: Map.put(%{state | projects: projects}, :defer_announce, true),
+        else: Map.put(state, :defer_announce, true)
+
     {:reply, reply, decided} = handle_call(message, from, decided_state)
-    {:reply, reply, announce(Map.put(%{decided | projects: state.projects}, :defer_announce, false))}
+
+    {:reply, reply,
+     announce(Map.put(%{decided | projects: state.projects}, :defer_announce, false))}
   end
 
   def handle_call({:projects, projects, message}, from, state),
@@ -1054,6 +1071,7 @@ defmodule HalC2Plugins.Planner do
     replay? =
       flight[:answered] == reported and flight[:answered_leg] == leg and
         flight[:chained] == true
+
     board = state.settings["board"] || ""
     extra = if flight.board == board, do: extra, else: Map.delete(extra, "boardItemId")
     {moved, extra} = Map.pop(extra, "moved", [])
@@ -2030,24 +2048,24 @@ defmodule HalC2Plugins.Planner do
     # The pushes GitHub had when the plugin stopped. Their runners outlive a restart of
     # the plugin and tell this server how they went, so a task's next push still waits
     # for its runner and cannot overtake it on GitHub. A runner of an earlier MC run is
-    # gone, as if it stopped before GitHub answered.
+    # gone, as if it stopped before GitHub answered, and so is a flight whose current
+    # leg cannot be named: no report could ever be answered for it, where a stopped
+    # push lets the next change ask again.
     {pushing, items} =
       Enum.reduce(data["pushing"] || %{}, {%{}, items}, fn
         {id, saved}, {pushing, items} when is_map_key(items, id) ->
           saved = if is_map(saved), do: saved, else: %{}
 
-          case runner(saved["runner"]) do
-            {runner, token} ->
+          case {runner(saved["runner"]), loaded_ref(saved["leg"])} do
+            {{runner, token}, leg} when is_reference(leg) ->
               {answered, answered_leg} =
                 case loaded_term(saved["answered"]) do
-                  {{_, _} = reported, leg} when is_reference(leg) -> {reported, leg}
-                  _ -> {nil, nil}
-                end
+                  {{error, %{}} = reported, answered_leg}
+                  when (is_nil(error) or is_binary(error)) and is_reference(answered_leg) ->
+                    {reported, answered_leg}
 
-              leg =
-                case loaded_ref(saved["leg"]) do
-                  nil -> answered_leg
-                  leg -> leg
+                  _ ->
+                    {nil, nil}
                 end
 
               flight = %{
@@ -2065,7 +2083,7 @@ defmodule HalC2Plugins.Planner do
 
               {Map.put(pushing, id, flight), items}
 
-            nil ->
+            _ ->
               {pushing, put_in(items[id]["syncError"], @push_stopped)}
           end
 
@@ -2160,6 +2178,7 @@ defmodule HalC2Plugins.Planner do
         Map.new(state.pushing, fn {id, flight} ->
           runner = {run_id(), flight.runner, flight.token}
           runner = runner |> :erlang.term_to_binary() |> Base.encode64()
+
           answered =
             if flight[:answered],
               do: {flight.answered, flight[:answered_leg]},
