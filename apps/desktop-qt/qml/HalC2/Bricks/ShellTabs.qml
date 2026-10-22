@@ -87,7 +87,6 @@ Rectangle {
                         text: tab.modelData.title
                         color: tab.active ? strip.foreground : strip.muted
                         font.pixelSize: Math.round(12 * Theme.fontScale)
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Qt.application.font.family
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }

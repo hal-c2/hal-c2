@@ -67,6 +67,35 @@ private slots:
     QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a directory"), QStringLiteral("a/x file")}));
   }
 
+  // A listing that named a path twice showed it twice; a search lists a path
+  // once however many times its matches name it.
+  void aListingThatNamesAPathTwiceShowsItOnce() {
+    FileTreeModel tree;
+    tree.setFetch([](const QString&) {});
+    tree.reload();
+    tree.setListing(QString(), {{QStringLiteral("a"), true, false}, {QStringLiteral("b"), false, false}, {QStringLiteral("a"), true, false}});
+    QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a directory"), QStringLiteral("b file")}));
+  }
+
+  // Two entries for one path that disagree keep the first one listed.
+  void aPathListedTwiceWithDifferentKindsKeepsTheFirst() {
+    FileTreeModel tree;
+    tree.setFetch([](const QString&) {});
+    tree.reload();
+    tree.setListing(QString(), {{QStringLiteral("a"), true, false}, {QStringLiteral("a"), false, false}});
+    QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a directory")}));
+  }
+
+  // The mirror order: a file listed first stays a file, with its ignored flag.
+  void aPathListedTwiceAsFileFirstKeepsTheFirst() {
+    FileTreeModel tree;
+    tree.setFetch([](const QString&) {});
+    tree.reload();
+    tree.setListing(QString(), {{QStringLiteral("a"), false, true}, {QStringLiteral("a"), true, false}});
+    QCOMPARE(kinds(tree), (QStringList{QStringLiteral("a file")}));
+    QCOMPARE(tree.index(0).data(FileTreeModel::IgnoredRole).toBool(), true);
+  }
+
   // Retrying a folder during a search marked the search's copy loading and
   // left the user's tree failed, so the listing never showed in either.
   void retryDuringASearchListsTheFolderAgain() {

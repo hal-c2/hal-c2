@@ -134,8 +134,8 @@ defmodule HalC2.Streams.View do
   @spec events(t, StreamState.t(), StreamState.t(), [HalC2.Store.event()]) ::
           [HalC2.Store.event()]
   def events(view, stream, before, events) do
-    {sent, settled} =
-      Enum.flat_map_reduce(events, MapSet.new(), fn event, settled ->
+    {sent, {settled, _running}} =
+      Enum.flat_map_reduce(events, {MapSet.new(), %{}}, fn event, {settled, running} = acc ->
         %{kind: kind, entity: id, patch: patch} = event
         was = StreamState.get(before, kind)[id]
         now = StreamState.get(stream, kind)[id]
@@ -144,27 +144,79 @@ defmodule HalC2.Streams.View do
 
         cond do
           StreamState.void?(event) or MapSet.member?(settled, {kind, id}) ->
-            {[], settled}
+            {[], acc}
 
           # Held all along, or made by this commit: its patches are all there is to say.
           holds? and (held? or was == nil) ->
-            case Wire.patch(kind, patch, now["type"]) do
-              nil -> {[], settled}
-              patch -> {[%{event | patch: patch}], settled}
+            {at, running} = running_at(running, kind, id, was, now, patch)
+
+            case Wire.patch(kind, patch, now["type"], at) do
+              nil -> {[], {settled, running}}
+              patch -> {[%{event | patch: patch}], {settled, running}}
             end
 
           holds? ->
-            {[%{event | patch: replacement(kind, now)}], MapSet.put(settled, {kind, id})}
+            {[%{event | patch: replacement(kind, now)}],
+             {MapSet.put(settled, {kind, id}), running}}
 
           held? ->
-            {[%{event | patch: HalC2.Patch.delete()}], MapSet.put(settled, {kind, id})}
+            {[%{event | patch: HalC2.Patch.delete()}], {MapSet.put(settled, {kind, id}), running}}
 
           true ->
-            {[], settled}
+            {[], acc}
         end
       end)
 
     sent ++ rolled(view, stream, before, events, settled)
+  end
+
+  # What a subagent item was just before an event of the commit, for the wire to tell
+  # how much of its text the client holds. Only that kind of item needs the commit's
+  # earlier events folded into `before`, and an event's patch is applied only when a
+  # later event of the commit is to the same item (kept raw until then; its
+  # `Wire.cut_basis_patch/1` is taken at the fold). What is folded is the item's
+  # `Wire.cut_basis/1` and the patch's, so each view's fold stays within the wire's
+  # limit however long the text or an append is.
+  # It goes by the item's type at the end of the commit or the type a patch in it
+  # sets, as `Wire.patch/4` does. The two agree for everything the item's writers
+  # make today because an item's type is fixed at creation: it is set once by
+  # `HalC2.Orchestration.TurnWriter.ensure_item/4`, a no-op for an item already known
+  # (`HalC2.Orchestration.NativeSubagent` and `HalC2.Orchestration.Delegation` each
+  # create their item typed — Delegation's by its `Entities.turn_item/7` with
+  # `"subagent"` — and merge fields other than `type` after, Delegation in its
+  # `settle/8`), so a set of `"type"` alone never re-types one. An adapter that
+  # ever did re-type an item mid-commit must revisit this; matching a patch that
+  # sets the type (the second clause) keeps the fold on the wire's side of that
+  # change in the meantime.
+  defp running_at(running, "turn-item", id, was, %{"type" => "subagent"}, patch),
+    do: subagent_at(running, id, was, patch)
+
+  defp running_at(running, "turn-item", id, was, _now, %{"s" => %{"type" => "subagent"}} = patch),
+    do: subagent_at(running, id, was, patch)
+
+  defp running_at(running, _kind, _id, was, _now, _patch), do: {was, running}
+
+  defp subagent_at(running, id, was, patch) do
+    # A patch that touches no cut text (and does not replace the item) cannot
+    # change its basis, and the wire does not read `was` to trim it, so it
+    # neither needs the fold nor leaves anything for a later event to fold.
+    if Wire.changes_cut_text?(patch) do
+      at =
+        case running do
+          %{^id => {base, last}} ->
+            Wire.cut_basis(HalC2.Patch.apply(base, Wire.cut_basis_patch(last)))
+
+          _ ->
+            Wire.cut_basis(was)
+        end
+
+      # The raw patch is kept (the events list already retains it for the fold);
+      # its cut basis is taken only if a later event to this item folds it, which
+      # a commit's common one event per item never does.
+      {at, Map.put(running, id, {at, patch})}
+    else
+      {was, running}
+    end
   end
 
   # A run that moves in or out of the window takes its items with it, without an
@@ -207,9 +259,10 @@ defmodule HalC2.Streams.View do
   defp replacement(kind, entity), do: %{"d" => true, "s" => Wire.entity(kind, entity)}
 
   @doc """
-  The log's events since a client's offset as they go to it, merged per entity and
-  trimmed. What the client held at its offset is not known here, only what it holds
-  now, so an entity held now is taken to have been held then. A run out of the
+  The log's events since a client's offset as they go to it, trimmed. `events` are
+  merged per entity (`HalC2.Web.Protocol.coalesce/1`), one patch each from the
+  offset to now. What the client held at its offset is not known here, only what it
+  holds now, so an entity held now is taken to have been held then. A run out of the
   window deletes its items, and one waiting in the queue, which may have rejoined
   it, sends its message again: all it holds before it runs.
   """
@@ -219,12 +272,16 @@ defmodule HalC2.Streams.View do
       entity = StreamState.get(stream, kind)[id]
 
       sent =
-        with false <- StreamState.void?(event),
-             true <- holds?(view, stream, kind, entity),
-             %{} = patch <- Wire.patch(kind, patch, entity && entity["type"]) do
-          [%{event | patch: patch}]
+        if StreamState.void?(event) or not holds?(view, stream, kind, entity) do
+          []
         else
-          _ -> []
+          # `Wire.replay_patch/3` decides replacement against trimmed patch: the
+          # empty base a replay trims against is its call to make, not this one's.
+          case Wire.replay_patch(kind, patch, entity) do
+            :replacement -> [%{event | patch: replacement(kind, entity)}]
+            nil -> []
+            {:patch, patch} -> [%{event | patch: patch}]
+          end
         end
 
       # Whether or not the client holds runs: its items are what it is owed.

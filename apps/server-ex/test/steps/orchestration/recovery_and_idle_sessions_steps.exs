@@ -196,6 +196,41 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # --- provider processes an MC that died left running ------------------------------------
+
+  # A stand-in provider whose `sleep` is a command it left in the background; it holds
+  # stdout too, so end of file means both are gone. The MC "dies" by its record naming
+  # an MC that is gone, as one from a VM that was killed does; the program itself keeps
+  # running, owned by this test.
+  step "a provider process with a command in the background was running when the MC died",
+       context do
+    {:ok, sub} =
+      HalC2.Subprocess.start(["sh", "-c", ~s(sleep 60 & while read l; do echo "$l"; done)])
+
+    pid = HalC2.Subprocess.os_pid(sub)
+    dir = HalC2.Subprocess.Orphans.dir()
+
+    [path] =
+      for name <- File.ls!(dir),
+          path = Path.join(dir, name),
+          match?(%{"pid" => ^pid}, JSON.decode!(File.read!(path))),
+          do: path
+
+    record = JSON.decode!(File.read!(path))
+    gone = Map.put(record["mc"], "started", "an earlier boot")
+    File.write!(path, JSON.encode!(%{record | "mc" => gone}))
+    Map.put(context, :orphan, sub)
+  end
+
+  step "the provider process and its background command have been killed", context do
+    sub = context.orphan
+    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+    exit_ref = sub.proc.exit_ref
+    # Killed by SIGKILL.
+    assert_receive {^exit_ref, {:ok, 137}}
+    context
+  end
+
   # --- a runtime crashing mid-turn ---------------------------------------------------------
 
   # A call no runtime handles crashes it, as a bug in any of its callbacks would.

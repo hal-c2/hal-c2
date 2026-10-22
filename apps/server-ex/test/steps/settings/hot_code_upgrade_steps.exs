@@ -338,6 +338,10 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
   # --- where the release comes from ---------------------------------------------------------
 
   step "a cluster peer already downloaded {string}", %{args: [version]} = context do
+    a_peer_with(context, version)
+  end
+
+  defp a_peer_with(context, version) do
     # Connected first: once the peer is up this process also hears of its MC, which
     # the client's upgrade handshake cannot tell from socket messages.
     context = World.put_client(context, World.client(context))
@@ -346,6 +350,15 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
     :ok = :erpc.call(peer, Source, :put, [version, Upgrade.platform(), archive])
     World.put_env("HAL_C2_UPGRADE_URL", @unreachable)
     Map.merge(context, %{peers: [peer], build: archive})
+  end
+
+  step "a cluster peer already downloaded {string}, its web port out of this MC's reach",
+       %{args: [version]} = context do
+    context = a_peer_with(context, version)
+    # The peer offers its link on the port it listened on, where nothing listens now.
+    [peer] = context.peers
+    :ok = :erpc.call(peer, Supervisor, :terminate_child, [HalC2.Supervisor, HalC2.Web])
+    context
   end
 
   step "the MC fetches the release from the peer instead of the internet", context do
@@ -469,6 +482,54 @@ defmodule HalC2.Steps.Settings.HotCodeUpgrade do
       assert sha256(archive) == sum
     end
 
+    context
+  end
+
+  step "a client of the first of three connected MCs, the first on a build the others do not run and no bundle of it kept",
+       context do
+    # Connected first: once the peers are up this process also hears of their MCs,
+    # which the client's upgrade handshake cannot tell from socket messages.
+    context = World.put_client(context, World.client(context))
+    context = cached_bundle(context, "1.3.1", :hot) |> update_to("1.3.1")
+    assert {:ok, _} = context.reply
+    # As an MC installed without its bundle, or started from a desktop app's release.
+    File.rm_rf!(Source.cache_dir("1.3.1"))
+    peers = for name <- ["b", "c"], do: start_peer(context, name)
+    # Peers reach this MC's HTTP port for the build.
+    World.put_app_env(:port, context.mc.port)
+    Map.put(context, :peers, peers)
+  end
+
+  step "the client asks the first to send its version to the other machines", context do
+    {reply, context} = World.call(context, "cluster.update", %{})
+    Map.put(context, :reply, reply)
+  end
+
+  # Each peer knows only the first MC, and the release download is unreachable.
+  step "the other MCs fetch it from the first and run it", context do
+    sum = cached_sha256("1.3.1")
+
+    for peer <- context.peers do
+      assert :erpc.call(peer, Upgrade, :version, []) == "1.3.1"
+      assert :erpc.call(peer, @probe, :version, []) == "1.3.1"
+      home = :erpc.call(peer, Application, :fetch_env!, [:hal_c2, :home])
+
+      archive =
+        Path.join([home, "upgrades", "1.3.1", Source.file_name("1.3.1", Upgrade.platform())])
+
+      assert sha256(archive) == sum
+    end
+
+    context
+  end
+
+  step "the client is told each of them updated from {string}", %{args: [from]} = context do
+    assert {:ok, %{"version" => "1.3.1", "members" => members}} = context.reply
+
+    assert Enum.sort(for m <- members, do: m["label"]) ==
+             Enum.sort(Enum.map(context.peers, &to_string/1))
+
+    assert Enum.all?(members, &match?(%{"from" => ^from, "outcome" => "updated"}, &1))
     context
   end
 

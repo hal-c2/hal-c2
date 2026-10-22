@@ -343,61 +343,75 @@ defmodule HalC2.Steps.Connections.Cluster do
     context |> stop(:b) |> boot(:b, version: @other_version)
   end
 
-  step "the second cannot connect to the first", context do
+  step "the two are connected", context do
     %{a: a, b: b} = context.machines
-    refute connect(context, b, a)
-    assert :peer.call(a.peer, Elixir.Node, :list, []) == []
+    assert await_connected(a, b)
+    assert await_connected(b, a)
     context
   end
 
-  step "the second lists the first as not connected, with the version the first runs", context do
+  step "each lists the other as connected, with the version it runs", context do
     %{a: a, b: b} = context.machines
-    version = :peer.call(a.peer, HalC2.Upgrade, :version, [])
-    assert status(b)["version"] == @other_version
-    assert [%{"id" => id, "connected" => false, "version" => ^version}] = status(b)["members"]
-    assert id == a.id
+    a_version = :peer.call(a.peer, HalC2.Upgrade, :version, [])
+    assert a_version != @other_version
+
+    # Each sends the other its table as it sees the other come up: a call the sender
+    # has answered is behind that, and a call to the other made from the sender travels
+    # behind it on the same connection.
+    status(a)
+    status(b)
+    assert [%{"connected" => true, "version" => ^a_version}] = remote_status(a, b)["members"]
+
+    assert [%{"connected" => true, "version" => @other_version}] =
+             remote_status(b, a)["members"]
+
     context
   end
 
   # As `HalC2.Upgrade` does once it has loaded a version in place.
-  step "the first moves to that version in place", context do
-    a = context.machines.a
+  step "the first moves to another HAL-C2 version in place", context do
+    %{a: a, b: b} = context.machines
+    assert await_connected(a, b)
+    before = connection_id(a, b)
     :peer.call(a.peer, :persistent_term, :put, [{HalC2.Upgrade, :version}, @other_version])
     :ok = :peer.call(a.peer, HalC2.Cluster, :version_changed, [])
+    :ok = :peer.call(a.peer, HalC2.Shell, :announce, [])
+    Map.put(context, :connection, before)
+  end
+
+  step "the two stay connected", context do
+    %{a: a, b: b} = context.machines
+    # A call the first has answered is behind the version change it was cast.
+    status(a)
+    assert connection_id(a, b) == context.connection
     context
   end
 
-  step "the two are connected again", context do
+  step "the second lists the first as connected, with the version the first moved to",
+       context do
     %{a: a, b: b} = context.machines
-    assert await_connected(a, b)
-    assert await_connected(b, a)
-
-    # The second learns the first's version from the table the first sends as it sees
-    # the second come up. A call the first has answered is behind that send, and a call
-    # to the second made from the first travels behind it on the same connection.
+    # The first tells its members as it takes up the version, before it answers this.
     status(a)
 
-    members =
-      :peer.call(a.peer, GenServer, :call, [
-        {HalC2.Cluster, HalC2.Cluster.mc_name(b.id)},
-        :status
-      ])["members"]
+    assert [%{"connected" => true, "version" => @other_version}] =
+             remote_status(a, b)["members"]
 
-    assert [%{"connected" => true, "version" => @other_version}] = members
+    # Its sidebar descriptor too, which clients read the server's version from.
+    :peer.call(a.peer, HalC2.Shell, :version, [])
+
+    :peer.call(a.peer, GenServer, :call, [{HalC2.Shell, HalC2.Cluster.mc_name(b.id)}, :sync])
+
+    descriptor =
+      :peer.call(b.peer, HalC2.Shell, :environments, [])
+      |> List.keyfind(HalC2.Cluster.mc_name(a.id), 0)
+      |> elem(1)
+
+    assert descriptor["serverVersion"] == @other_version
     context
   end
 
   step "two MCs that are not clustered, the second on another HAL-C2 version", context do
     context |> machine(:a) |> boot(:a) |> machine(:b) |> boot(:b, version: @other_version)
-  end
-
-  step "the join is refused because the machines run different versions", context do
-    assert {:error, message} = context.joined
-    assert message =~ "different HAL-C2 versions"
-    # It names both, so the user sees which machine to update.
-    assert message =~ "the joining machine runs #{@other_version}"
-    assert message =~ "the inviting one runs #{HalC2.Upgrade.version()}"
-    context
   end
 
   # --- strangers ----------------------------------------------------------------------
@@ -1094,6 +1108,23 @@ defmodule HalC2.Steps.Connections.Cluster do
     do: :peer.call(machine.peer, HalC2.Cluster.Command, :command, [args], 30_000)
 
   defp status(machine), do: :peer.call(machine.peer, HalC2.Cluster, :status, [])
+
+  # `other`'s status, asked from `machine` over their cluster connection, so it arrives
+  # behind whatever `machine` sent `other` before.
+  defp remote_status(machine, other) do
+    :peer.call(machine.peer, GenServer, :call, [
+      {HalC2.Cluster, HalC2.Cluster.mc_name(other.id)},
+      :status
+    ])
+  end
+
+  # The distribution connection between two machines; another after a reconnect.
+  defp connection_id(machine, other) do
+    mc = HalC2.Cluster.mc_name(other.id)
+    nodes = :peer.call(machine.peer, :erlang, :nodes, [:connected, %{connection_id: true}])
+    assert {^mc, %{connection_id: id}} = List.keyfind(nodes, mc, 0)
+    id
+  end
 
   # One RPC over a fresh socket to the machine's MC, as the TUI and desktop send it.
   # `:admin` pairs the client with an admin link, `:standard` with a standard one.

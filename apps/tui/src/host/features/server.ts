@@ -160,7 +160,7 @@ export function createServerFeature(kit: FeatureKit): Feature {
   const addInstance = () => {
     const drivers = [...new Set(providers().map((provider) => provider.driver as string))];
     if (drivers.length === 0) {
-      kit.status("The server reports no provider drivers.", "error");
+      kit.status("The server reports no provider drivers.", "warning");
       return;
     }
     kit.menu({
@@ -176,7 +176,7 @@ export function createServerFeature(kit: FeatureKit): Feature {
           placeholder: `Like "${driver} work"`,
           onSubmit: (name) => {
             if (name === "") {
-              kit.status("An instance needs a name.", "error");
+              kit.status("An instance needs a name.", "warning");
               return;
             }
             const variable = API_KEY_VARIABLE[driver] ?? `${driver.toUpperCase()}_API_KEY`;
@@ -191,7 +191,7 @@ export function createServerFeature(kit: FeatureKit): Feature {
   };
   const createInstance = (driver: string, name: string, variable: string, key: string) => {
     if (key === "") {
-      kit.status("No key given; nothing was added.", "error");
+      kit.status("No key given; nothing was added.", "warning");
       return;
     }
     const slug = name

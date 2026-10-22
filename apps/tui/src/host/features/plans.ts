@@ -137,7 +137,7 @@ export function createPlansFeature(kit: FeatureKit): Feature {
     const plan = latestPlan();
     const workspace = kit.workspace();
     if (!plan || !workspace) {
-      kit.status("This thread has no plan to save.", "error");
+      kit.status("This thread has no plan to save.", "warning");
       return;
     }
     const name = planFileName(plan.planMarkdown);
@@ -195,7 +195,7 @@ export function createPlansFeature(kit: FeatureKit): Feature {
           const copied = kit.copy(`${plan.planMarkdown.trimEnd()}\n`);
           kit.status(
             copied ? "Plan copied." : "This terminal has no clipboard access.",
-            copied ? "success" : "error",
+            copied ? "success" : "warning",
           );
           return true;
         }

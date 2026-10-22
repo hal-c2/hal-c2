@@ -118,4 +118,5 @@ private:
   int m_nextWatch = 1;
   int m_nextRequest = 1;
   QVariantList m_pages;
+  QHash<QString, QString> m_pageUrls;      // page key → the url its tab shows
 };

@@ -93,7 +93,12 @@ Rectangle {
             Text {
                 Layout.fillWidth: true
                 visible: root.status === "ready"
-                text: root.focused ? qsTr("1 of %n file(s)", "", root.source.fileTotal) : qsTr("%n file(s)", "", root.model?.fileCount ?? 0)
+                text: {
+                    const count = root.focused ? root.source.fileTotal : (root.model?.fileCount ?? 0);
+                    if (root.focused)
+                        return count === 1 ? qsTr("1 of %n file", "", count) : qsTr("1 of %n files", "", count);
+                    return count === 1 ? qsTr("%n file", "", count) : qsTr("%n files", "", count);
+                }
                 color: root.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 elide: Text.ElideRight

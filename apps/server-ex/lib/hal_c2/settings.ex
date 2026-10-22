@@ -119,6 +119,12 @@ defmodule HalC2.Settings do
 
   def instance_command(_instance, default), do: default
 
+  @doc "Whether `instance` is `driver`'s built-in instance or one settings add for it."
+  def known_instance?(instance, driver),
+    do:
+      instance == driver or
+        match?(%{"driver" => ^driver}, (settings()["providerInstances"] || %{})[instance])
+
   @doc "The ids of the instances settings add for `driver`, besides its built-in one."
   def instances_of(driver) do
     for {id, %{"driver" => ^driver}} <- Enum.sort(settings()["providerInstances"] || %{}),

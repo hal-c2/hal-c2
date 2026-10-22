@@ -114,6 +114,17 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context |> delegate(caller, %{"task" => line <> "\nwait for it"}) |> Map.put(:line, line)
   end
 
+  step "the agent in {string} delegates with its prompt under another name",
+       %{args: [caller]} = context do
+    input = %{"prompt" => "Write the migration", "title" => "Migration"}
+    Map.put(context, :mcp_result, World.mcp_tool(context, caller, "delegate_task", input))
+  end
+
+  step "{string} has no subagent task", %{args: [caller]} = context do
+    assert StreamState.list(World.stream(context, caller), "subagent") == []
+    context
+  end
+
   step "the agent in {string} delegates a task", %{args: [caller]} = context do
     delegate(context, caller, %{})
   end

@@ -49,7 +49,10 @@ defmodule HalC2.Plugins.Host do
 
   @doc """
   The agents threads can run on, for a plugin that starts threads to pick from:
-  `%{"instanceId", "name", "models" => [%{"slug", "name", "isDefault"}]}`.
+  `%{"instanceId", "name", "models" => [%{"slug", "name", "isDefault", "options"}]}`,
+  where a model's `options` are its option descriptors (`%{"id", "label",
+  "type", "options"}`) — reasoning effort among them — for a plugin that picks
+  a model for its threads to pick among too.
   """
   def providers(_id) do
     {:ok,
@@ -62,7 +65,23 @@ defmodule HalC2.Plugins.Host do
              %{
                "slug" => model["slug"],
                "name" => model["name"],
-               "isDefault" => model["isDefault"] == true
+               "isDefault" => model["isDefault"] == true,
+               "options" =>
+                 for descriptor <- get_in(model, ["capabilities", "optionDescriptors"]) || [] do
+                   %{
+                     "id" => descriptor["id"],
+                     "label" => descriptor["label"],
+                     "type" => descriptor["type"],
+                     "options" =>
+                       for option <- descriptor["options"] || [] do
+                         %{
+                           "id" => option["id"],
+                           "label" => option["label"],
+                           "isDefault" => option["isDefault"] == true
+                         }
+                       end
+                   }
+                 end
              }
            end
        }
@@ -122,6 +141,16 @@ defmodule HalC2.Plugins.Host do
       |> Map.put_new("commandId", "plugin:#{id}:#{HalC2.Environment.uuid4()}")
       |> HalC2.Orchestration.launch_thread(plugin: mark)
     end
+  end
+
+  @doc """
+  Settles or unsettles a thread the plugin started and shows or hides it in the
+  thread list, as `changes` (`"settled"`/`"listed"` booleans) asks
+  (`HalC2.Orchestration.organize_plugin_thread/3`).
+  """
+  def organize_thread(id, thread_id, changes) do
+    with :ok <- permit(id, "threads:organize"),
+         do: HalC2.Orchestration.organize_plugin_thread(thread_id, id, changes)
   end
 
   @doc "Whether plugin `id` was granted `permission`."

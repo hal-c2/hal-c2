@@ -51,6 +51,21 @@ function glyph(driverKind) {
     return glyphs[driverKind] ?? null;
 }
 
+// Whether a theme whose text is this colour counts as dark, for picking a
+// glyph fill. One owner, so the mark and anything tinted from it agree.
+function darkFor(textColor) {
+    // Callers pass colours and plain strings alike; coerce at the door.
+    return Qt.color(textColor).hslLightness > 0.5;
+}
+
+// The fill a glyph's path (the first unless named) is drawn in, for a light
+// or a dark theme; null when the driver has no such path or fill.
+function fill(driverKind, dark, path) {
+    const part = glyphs[driverKind]?.paths?.[path ?? 0];
+    if (!part) return null;
+    return (dark ? part.dark : part.light) ?? null;
+}
+
 function bitmap(driverKind) {
     return bitmaps[driverKind] ?? "";
 }

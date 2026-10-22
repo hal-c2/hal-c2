@@ -691,12 +691,16 @@ defmodule HalC2.Slack do
 
   defp supersede(state), do: state
 
-  # Forgets the live connection (its processes are stopped by the next attempt).
+  # Forgets the live connection (its processes are stopped by the next attempt). Its
+  # socket stops acking first: until the next attempt tears it down it would ack events
+  # the bot, with no identity, drops, and Slack does not deliver an acked event again.
   defp lose(state) do
     if state.timer, do: Process.cancel_timer(state.timer)
 
-    for {ref, _} <- (state.conn && state.conn.refs) || %{},
-        do: Process.demonitor(ref, [:flush])
+    for {ref, socket} <- (state.conn && state.conn.refs) || %{} do
+      Process.demonitor(ref, [:flush])
+      HalC2.Slack.Socket.deactivate(socket)
+    end
 
     :ets.delete_all_objects(@cache)
     %{state | conn: nil, timer: nil, identity: nil, dirty: state.dirty or state.conn != nil}

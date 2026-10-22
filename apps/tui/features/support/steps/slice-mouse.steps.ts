@@ -96,9 +96,11 @@ const PALETTE: Record<string, string> = {
   "terminal.new": "terminal.new",
   "terminal.select": "terminal.next",
   "update.notice.dismiss": "update.notice.dismiss",
+  "status.dismiss": "status.dismiss",
   "section.open": "section.open",
   "notification.action": "reach.notifications",
   "notification.dismiss": "reach.notifications",
+  "reach.notifications": "reach.notifications",
 };
 /** Bricks whose click runs whatever the host put on the row; each has its own route. */
 const DYNAMIC: Record<string, string> = {

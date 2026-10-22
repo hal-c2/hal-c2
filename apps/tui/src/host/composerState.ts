@@ -16,7 +16,6 @@ import {
   type ThreadEnvMode,
   type VcsRef,
 } from "@hal-c2/contracts";
-import type { ImagePreview } from "@hal-c2/opentui-image";
 import { formatComposerContextReference } from "@hal-c2/shared/composerContextReferences";
 import { resolveProjectSettings } from "@hal-c2/shared/projectSettings";
 import {
@@ -43,6 +42,7 @@ import {
   prepareComposerImageBytes,
   replacePromptLines,
   type ComposerImageAttachment,
+  type ImageDecoder,
 } from "../composerAttachments.ts";
 import {
   COMPOSER_MAX_EDITOR_ROWS,
@@ -103,8 +103,6 @@ export const IMAGE_ONLY_PROMPT =
 const COMPACT_SURFACE_WIDTH = 64;
 /** ChatComposer's attachment chip width (plus one cell between chips). */
 const ATTACHMENT_CHIP_WIDTH = 14;
-
-export type ImageDecoder = (encoded: Uint8Array) => Promise<ImagePreview>;
 
 export interface ComposerOptions {
   readonly client: TuiClient;
@@ -1305,7 +1303,7 @@ export function createComposer(options: ComposerOptions): Composer {
       if (started && changes && (locked(current) || locked(selection))) {
         store.setStatus(
           `Start a new thread (^N) to use ${option.label}: ${option.providerLabel} cannot change models once a conversation has started.`,
-          "error",
+          "warning",
         );
         return;
       }
@@ -1671,7 +1669,7 @@ export function createComposer(options: ComposerOptions): Composer {
       branch: draft.branch,
     });
     if (invalid) {
-      store.setStatus(newThreadValidationMessage(invalid), "error");
+      store.setStatus(newThreadValidationMessage(invalid), "warning");
       return;
     }
     if (!project || !modelSelection) return;
@@ -1866,18 +1864,18 @@ export function createComposer(options: ComposerOptions): Composer {
 
   const canAttach = (key: string | null): key is string => {
     if (!key) {
-      store.setStatus("Select a thread before attaching an image.", "error");
+      store.setStatus("Select a thread before attaching an image.", "warning");
       return false;
     }
     const detail = selectedDetail();
     if (!newDraft && detail && derivePendingUserInputs(detail.activities).length > 0) {
-      store.setStatus("Answer the pending question before attaching an image.", "error");
+      store.setStatus("Answer the pending question before attaching an image.", "warning");
       return false;
     }
     if (draftFor(key).images.length + imageLoads >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       store.setStatus(
         `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images.`,
-        "error",
+        "warning",
       );
       return false;
     }
@@ -1902,16 +1900,28 @@ export function createComposer(options: ComposerOptions): Composer {
     store.setStatus(`Adding ${NodePath.basename(imagePath)}…`, "busy");
     try {
       const platformPath = client.hostPlatform === "win32" ? NodePath.win32 : NodePath.posix;
-      let image: ComposerImageAttachment;
+      let prepare: () => Promise<ComposerImageAttachment>;
       if (platformPath.isAbsolute(imagePath)) {
         const bytes = await options.readLocalImage(imagePath);
         const mimeType = imageMimeTypeForPath(imagePath);
-        if (!mimeType) throw new Error("Select a supported image file.");
-        image = await prepareComposerImageBytes(imagePath, mimeType, bytes, decode);
+        if (!mimeType) {
+          store.setStatus("Select a supported image file.", "warning");
+          return false;
+        }
+        prepare = () => prepareComposerImageBytes(imagePath, mimeType, bytes, decode);
       } else {
         const file = await client.readFileBase64(composerCwd(), imagePath);
         if (!file) throw new Error("Could not read the pasted image path.");
-        image = await prepareComposerImage(imagePath, file, decode);
+        prepare = () => prepareComposerImage(imagePath, file, decode);
+      }
+      // Validation and decode failures are the pasted-image route's warning:
+      // the file is not an image we can show. Only the reads above pin as errors.
+      let image: ComposerImageAttachment;
+      try {
+        image = await prepare();
+      } catch (error) {
+        store.setStatus(errorText(error), "warning");
+        return false;
       }
       addImage(key, image);
       store.setStatus(`Attached ${image.upload.name}.`, "success");
@@ -1927,7 +1937,7 @@ export function createComposer(options: ComposerOptions): Composer {
   const attachPath = (rawPath: string) => {
     const key = target();
     if (!key) {
-      store.setStatus("Select a thread before attaching an image.", "error");
+      store.setStatus("Select a thread before attaching an image.", "warning");
       return;
     }
     void track(loadImage(key, rawPath));
@@ -1938,7 +1948,7 @@ export function createComposer(options: ComposerOptions): Composer {
     if (!canAttach(key)) return;
     const extension = imageExtensionForMimeType(mimeType);
     if (!extension) {
-      store.setStatus("Paste a supported image format.", "error");
+      store.setStatus("Paste a supported image format.", "warning");
       return;
     }
     clipboardSequence += 1;
@@ -1953,7 +1963,7 @@ export function createComposer(options: ComposerOptions): Composer {
             store.setStatus(`Attached ${image.upload.name}.`, "success");
           },
           // A decoder failure means the bytes are not an image we can show.
-          () => store.setStatus("Paste a supported image format.", "error"),
+          () => store.setStatus("Paste a supported image format.", "warning"),
         )
         .finally(() => {
           imageLoads = Math.max(0, imageLoads - 1);

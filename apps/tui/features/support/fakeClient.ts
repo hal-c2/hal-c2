@@ -230,7 +230,7 @@ export function fakeClient({
   switchRef = async (_cwd: string, refName: string) => ({ refName }) as never,
   getServerConfig = async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
   // The fake MC runs on this machine.
-  localPathFor = async (path: string) => path,
+  localPathFor = async (path: string) => ({ path }),
   listModels = providers
     ? async () => flattenModelOptions(providers)
     : async () =>
@@ -352,6 +352,8 @@ export function fakeClient({
       localOnly: false,
     },
     joinRefusal: null,
+    version: null,
+    updateRefusals: {},
   };
   const clusterStatus = (): ClusterStatus => ({
     clustered: true,
@@ -359,6 +361,7 @@ export function fakeClient({
     label: "This machine",
     mc: "hal-c2-env-local",
     addresses: ["192.168.1.20:47730"],
+    ...(cluster.version === null ? {} : { version: cluster.version }),
     members: cluster.members,
   });
   let connectionPhase: TuiConnectionPhase = "connecting";
@@ -464,6 +467,25 @@ export function fakeClient({
     clusterRemove: async (id: string) => {
       cluster.members = cluster.members.filter((member) => member.id !== id);
       return clusterStatus();
+    },
+    // Each connected member on another version takes this one, or says why not.
+    clusterUpdate: async () => {
+      const version = cluster.version ?? "";
+      const behind = cluster.members.filter(
+        (member) => member.connected && member.version && member.version !== version,
+      );
+      const members = behind.map((member) => ({
+        id: member.id,
+        label: member.label,
+        from: member.version ?? null,
+        outcome: cluster.updateRefusals[member.label] ?? "updated",
+      }));
+      cluster.members = cluster.members.map((member) =>
+        members.some((update) => update.id === member.id && update.outcome === "updated")
+          ? { ...member, version }
+          : member,
+      );
+      return { version, members };
     },
     // A machine on its own: the environment (environment.ts) plays a cluster's moves.
     moveDestinations: async () => [],
@@ -691,6 +713,10 @@ export interface FakeCluster {
   invite: ClusterInvite;
   /** The MC's reason for refusing a join; null joins. */
   joinRefusal: string | null;
+  /** The version this machine runs, null when the MC does not say. */
+  version: string | null;
+  /** Why a member cannot take this machine's version, by label. */
+  updateRefusals: Record<string, string>;
 }
 
 export type FakeGitCall =

@@ -49,7 +49,10 @@ defmodule HalC2.Proof do
       @moduletag timeout: Keyword.get(unquote(opts), :timeout, 300_000) + 30_000
       import HalC2.Proof, only: [refute_reachable: 4, refute_deadlock: 4, assert_ltl: 4]
 
-      setup_all do
+      # A Maude of each test's own. Maude keeps the memory a search took and every later
+      # search in it pays for that (a check of 130k states takes ten times as long after
+      # one of a million), so in a shared one a check's time would hang on the seed's order.
+      setup do
         [proof: HalC2.Proof.load(__MODULE__, unquote(opts))]
       end
 
@@ -59,7 +62,7 @@ defmodule HalC2.Proof do
     end
   end
 
-  @doc "Starts a Maude of the proof's own and loads its model."
+  @doc "Starts a Maude of the test's own and loads its model."
   def load(test, opts) do
     pool = Module.concat(test, Maude)
     pool_spec = ExMaude.Pool.child_spec(name: pool, pool_size: 1, pool_max_overflow: 0)

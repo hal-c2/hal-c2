@@ -45,8 +45,16 @@ Dialog {
     contentItem: ColumnLayout {
         spacing: 12
         Label {
+            objectName: "projectRemovalThreads"
             Layout.fillWidth: true
-            text: (dialog.removal?.threadCount ?? 0) > 0 ? qsTr("Its %n thread(s) and their conversation history will be cleared permanently.", "", dialog.removal?.threadCount ?? 0) : qsTr("It has no threads.")
+            text: {
+                const count = dialog.removal?.threadCount ?? 0;
+                if (count === 0)
+                    return qsTr("It has no threads.");
+                if (count === 1)
+                    return qsTr("Its %n thread and its conversation history will be cleared permanently.", "", count);
+                return qsTr("Its %n threads and their conversation history will be cleared permanently.", "", count);
+            }
             color: Theme.palette.color("text", "#e4e4e7")
             font.pixelSize: Math.round(13 * Theme.fontScale)
             wrapMode: Text.Wrap

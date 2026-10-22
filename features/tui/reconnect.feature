@@ -1,5 +1,5 @@
 # Sources:
-#   apps/tui/src/connection.ts (loopback supervisor, ticket re-mint, warm thread cache, HTTP history)
+#   apps/tui/src/connection.ts (loopback supervisor, ticket re-mint, warm thread cache, socket history)
 #   apps/tui/src/index.tsx (mintSocketUrl IPC timeout and parent disconnect)
 #   apps/tui/src/staleRequest.ts
 #   apps/tui/src/components/ChatView.tsx (stale versus transient request failures)
@@ -27,7 +27,8 @@ Feature: Reconnecting and stale requests in the terminal client
     Then the same thread is selected
     And its timeline catches up to the server's state
 
-  # The Node server's "hal-c2 tui" launcher is gone; the client buys its tickets from the MC over HTTP.
+  # The Node server's "hal-c2 tui" launcher is gone; the client buys its tickets from the MC over HTTP
+  # (launch.feature: "A socket ticket request that gets no answer fails after ten seconds and the client keeps trying").
   @dropped @tui
   Scenario: A ticket request that gets no answer fails after ten seconds
     Given the launcher does not answer a socket ticket request
@@ -57,7 +58,7 @@ Feature: Reconnecting and stale requests in the terminal client
     Then switching threads never shows "Old spike" again
 
   @tui
-  Scenario: Older history loads over HTTP when the user asks for earlier turns
+  Scenario: Older history loads over the socket when the user asks for earlier turns
     Given the thread has more history than the latest page
     When the user asks to load earlier turns
     Then the timeline says it is loading earlier turns
