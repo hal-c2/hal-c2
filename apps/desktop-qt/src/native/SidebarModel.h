@@ -190,6 +190,9 @@ struct Input {
   // The environment of the MC the shell runs against; its folders are the
   // ones the folder explorer lists.
   Nullable localEnvironmentId;
+  // Whether that MC runs on this machine (thisMachine::hosts), so a folder
+  // picked here is one of its folders.
+  bool localFolders = false;
   // Environments that are listed but unreachable; their rows stay, marked
   // offline, with the actions that need the environment off.
   QSet<QString> offlineEnvironments;
@@ -263,6 +266,8 @@ struct CustomSnooze {
 };
 Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, const QTimeZone& zone);
 
+// Locale AM/PM separators with plain spaces (see plainSpaces in SidebarModel.cpp).
+QString plainSpaces(QString text);
 // "12-hour", "24-hour" or "locale", the timestampFormat setting.
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale);
 QList<SnoozePreset> snoozePresets(const QDateTime& now, const QString& timestampFormat,

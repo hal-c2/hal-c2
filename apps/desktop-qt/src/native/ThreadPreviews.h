@@ -7,6 +7,7 @@
 #include <QUrl>
 
 #include <functional>
+#include <utility>
 
 class McClient;
 
@@ -24,6 +25,12 @@ class McClient;
 // while the list shows), the project's configured preview addresses and the
 // pages this device opened last. navigate(tabId, url) is `preview.navigate`,
 // and opens the page in the browser.
+//
+// A page opens with openAddress(): a dev server's loopback address on a
+// thread of another cluster MC opens through the port the connected MC
+// forwards to it (`preview.forward`), its path, query and fragment kept. The
+// thread's MC forwards only a port one of its tabs names, so an address no tab
+// names (a link in a reply) opens a tab for it first.
 class ThreadPreviews : public QAbstractListModel {
   Q_OBJECT
   Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
@@ -53,6 +60,8 @@ public:
   // The pages this device opened last, newest first: read, and written.
   using Recents = std::function<QStringList()>;
   using Remember = std::function<void(const QStringList& urls)>;
+  // Whether the MC the shell is connected to runs on this machine.
+  using Here = std::function<bool()>;
   static constexpr int maxRecents = 10;
 
   ThreadPreviews(McClient* client, Notify notify, Open open, QObject* parent = nullptr);
@@ -66,6 +75,9 @@ public:
   // The preview addresses the thread's project configures (its scripts' previewUrl).
   void setConfigured(const QStringList& urls);
   void setRecents(Recents read, Remember write);
+  // Only a connected MC on this machine forwards to this machine's loopback;
+  // without one every MC counts as here.
+  void setConnectedHere(Here here) { m_connectedHere = std::move(here); }
   QVariantList suggestions() const;
   QString emptyTab() const;
 
@@ -80,6 +92,9 @@ public:
   Q_INVOKABLE void newTab();
   // Points the tab at `url` and opens the page in the browser.
   Q_INVOKABLE void navigate(const QString& tabId, const QString& url);
+  // Opens `url` in the browser, for the thread: through the connected MC's
+  // forward when it is a dev server on the thread's machine, another MC's.
+  Q_INVOKABLE void openAddress(const QString& url);
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;
@@ -94,6 +109,11 @@ signals:
 private:
   void follow();
   void unfollow();
+  bool forwards(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc) const;
+  void openFor(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc);
+  // openFor through one of `tabs` at the url's port, or a tab opened for it.
+  void openThroughTab(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc,
+                      const QList<QJsonObject>& tabs);
   void onEvent(const QJsonObject& event);
   void setStatus(const QString& status, const QString& message = {});
   int rowOf(const QString& tabId) const;
@@ -103,6 +123,7 @@ private:
   McClient* m_client;
   Notify m_notify;
   Open m_open;
+  Here m_connectedHere;
   QString m_environment;
   QString m_thread;
   QString m_mc;

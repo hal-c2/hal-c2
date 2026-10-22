@@ -29,6 +29,7 @@
 #include <QSet>
 #include <QJsonObject>
 #include <QLocale>
+#include <QPointer>
 #include <QRegularExpression>
 #include <QVariantMap>
 
@@ -40,6 +41,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ToastController.h"
+#include "WorkspaceController.h"
 
 namespace {
 
@@ -293,13 +295,12 @@ private:
     settings()->writeDevice(kLastEditor, editor);
     m_logsError.clear();
     publish();
-    m_client->call(this, m_client->environment(), QStringLiteral("shell.openInEditor"),
-                   QJsonObject{{QStringLiteral("cwd"), path}, {QStringLiteral("editor"), editor}},
-                   [this](const QJsonValue&, const std::optional<QString>& error) {
-                     if (!error) return;
-                     m_logsError = error->isEmpty() ? QStringLiteral("Unable to open logs folder.") : *error;
-                     publish();
-                   });
+    NativeShell::of(this)->controller<WorkspaceController>()->openHere(
+        m_client->environment(), path, editor, false, {}, [self = QPointer(this)](const std::optional<QString>& error) {
+          if (!self || !error) return;
+          self->m_logsError = error->isEmpty() ? QStringLiteral("Unable to open logs folder.") : *error;
+          self->publish();
+        });
   }
 
   QVariantMap processes() const {

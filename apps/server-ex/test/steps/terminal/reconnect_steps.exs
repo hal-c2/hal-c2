@@ -33,6 +33,49 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     attached(context, ["default", "second"])
   end
 
+  # Two subscriptions ("pages") of the one client, as the Qt client makes
+  # when two of its pages watch one terminal.
+  step "one client attached twice to the same terminal", context do
+    {_snapshot, context} = Terminal.open!(context, %{}, "ctl")
+    input = attach_input(context)
+    shape = %{"type" => "terminal", "mc" => Atom.to_string(node()), "input" => input}
+
+    {pages, context} =
+      Enum.map_reduce(1..2, context, fn _, context ->
+        id = System.unique_integer([:positive])
+        client = Mc.sub(World.client(context, "default"), id, shape)
+        {_frame, client} = Mc.await(client, &(&1["id"] == id), 5_000)
+        {id, World.put_client(context, "default", client)}
+      end)
+
+    Map.put(context, :pages, pages)
+  end
+
+  step "the terminal prints {string}", %{args: [text]} = context do
+    {first, rest} = String.split_at(text, 1)
+    Terminal.write(context, "default", "echo #{first}''\"#{rest}\"\n")
+  end
+
+  step "both pages receive {string}", %{args: [text]} = context do
+    await_pages(context, context.pages, text)
+  end
+
+  step "one page leaves", context do
+    [first, second] = context.pages
+    client = Mc.unsub(World.client(context, "default"), first)
+
+    context
+    |> World.put_client("default", client)
+    |> Map.put(:pages, [second])
+    |> Map.put(:left_page, first)
+  end
+
+  step "the other page receives {string}", %{args: [text]} = context do
+    context = await_pages(context, context.pages, text)
+    assert context |> Map.get(:page_output, %{}) |> Map.get(context.left_page, "") == ""
+    context
+  end
+
   step "one client runs {string}", %{args: [command]} = context do
     context = Terminal.write(context, "default", "#{command}; echo __ran''__\n")
     {output, _, context} = Terminal.await_output(context, "default", "__ran__")
@@ -83,6 +126,7 @@ defmodule HalC2.Steps.Terminal.Reconnect do
   step "a new shell starts", context do
     assert %{"status" => "running", "pid" => pid, "exitCode" => nil} = context.snapshot
     assert File.read_link!("/proc/#{pid}/cwd") == context.terminal["cwd"]
+    Terminal.await_prompt(context.terminal, "")
     context
   end
 
@@ -492,6 +536,28 @@ defmodule HalC2.Steps.Terminal.Reconnect do
         Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]}) == []
       )
 
+  # Output on the "default" client until each page in `ids` has been told a
+  # line reading `text`; what each page was told is kept per page.
+  defp await_pages(context, ids, text, seen \\ %{}) do
+    if Enum.all?(ids, &(Map.get(seen, &1, "") =~ line(text))) do
+      Map.put(context, :page_output, seen)
+    else
+      {frame, client} = HalC2.Test.WsClient.recv(World.client(context, "default"), 5_000)
+      context = World.put_client(context, "default", client)
+
+      seen =
+        case frame do
+          %{"t" => "terminal", "id" => id, "event" => %{"type" => "output", "data" => data}} ->
+            Map.update(seen, id, data, &(&1 <> data))
+
+          _ ->
+            seen
+        end
+
+      await_pages(context, ids, text, seen)
+    end
+  end
+
   # Opens the scenario's terminal and attaches the named clients.
   defp attached(context, names) do
     {snapshot, context} = Terminal.open!(context, %{}, "ctl")
@@ -504,18 +570,20 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     |> Map.put(:snapshot, snapshot)
   end
 
-  # Prints `text` as a line of output; the typed command does not contain it.
+  # Prints `text` as a line of output; the typed command does not contain it. Returns
+  # with the shell back at its prompt, so the next command typed starts a line.
   defp print(context, name, text) do
     {first, rest} = String.split_at(text, 1)
     context = Terminal.write(context, name, "echo #{first}''\"#{rest}\"\n")
-    {_, _, context} = Terminal.await_output(context, name, line(text))
+    {_, _, context} = Terminal.await_output_idle(context, name, line(text))
     context
   end
 
-  # Runs `printf '<format>\n'` and waits for `done` at the end of the line.
+  # Runs `printf '<format>\n'` and waits for `done` at the end of the line, with
+  # the shell back at its prompt like `print/3`, so the next command typed starts a line.
   defp printf(context, name, format, done) do
     context = Terminal.write(context, name, "printf '#{format}\\n'\n")
-    {_, _, context} = Terminal.await_output(context, name, ~r/#{Regex.escape(done)}\r?\n/)
+    {_, _, context} = Terminal.await_output_idle(context, name, ~r/#{Regex.escape(done)}\r?\n/)
     context
   end
 

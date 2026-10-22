@@ -52,6 +52,9 @@ import {
   HostPowerSnapshot,
 } from "./background.ts";
 import {
+  FilesLocalPathError,
+  FilesLocalPathInput,
+  FilesLocalPathResult,
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
@@ -178,6 +181,7 @@ import {
   ClusterJoinInput,
   ClusterRemoveInput,
   ClusterStatus,
+  ClusterUpdateResult,
 } from "./cluster.ts";
 import {
   RelayClientInstallFailedError,
@@ -232,6 +236,9 @@ import {
   PreviewCloseInput,
   PreviewError,
   PreviewEvent,
+  PreviewForwardError,
+  PreviewForwardInput,
+  PreviewForwardResult,
   PreviewListInput,
   PreviewListResult,
   PreviewNavigateInput,
@@ -350,6 +357,7 @@ export const WS_METHODS = {
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  filesLocalPath: "files.localPath",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
@@ -407,6 +415,7 @@ export const WS_METHODS = {
   previewRefresh: "preview.refresh",
   previewClose: "preview.close",
   previewList: "preview.list",
+  previewForward: "preview.forward",
   previewReportStatus: "preview.reportStatus",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
@@ -476,6 +485,7 @@ export const WS_METHODS = {
   clusterInvite: "cluster.invite",
   clusterJoin: "cluster.join",
   clusterRemove: "cluster.remove",
+  clusterUpdate: "cluster.update",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -865,6 +875,16 @@ const WsClusterRemoveRpc = Rpc.make(WS_METHODS.clusterRemove, {
   error: ClusterRpcError,
 });
 
+/**
+ * Has every connected member on another HAL-C2 version update to the one this MC runs,
+ * taking the release from it. Fails with `not_a_release` on an MC run from a checkout.
+ */
+const WsClusterUpdateRpc = Rpc.make(WS_METHODS.clusterUpdate, {
+  payload: Schema.Struct({}),
+  success: ClusterUpdateResult,
+  error: ClusterRpcError,
+});
+
 const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientActivity, {
   payload: ClientActivityReportInput,
   error: EnvironmentAuthorizationError,
@@ -1169,6 +1189,13 @@ const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   error: Schema.Union([FilesystemBrowseError, EnvironmentAuthorizationError]),
 });
 
+// Answered by the client's own MC: where a file on a cluster member is on its machine.
+const WsFilesLocalPathRpc = Rpc.make(WS_METHODS.filesLocalPath, {
+  payload: FilesLocalPathInput,
+  success: FilesLocalPathResult,
+  error: Schema.Union([FilesLocalPathError, EnvironmentAuthorizationError]),
+});
+
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
   success: AgentSessionScanResult,
@@ -1394,6 +1421,12 @@ const WsPreviewListRpc = Rpc.make(WS_METHODS.previewList, {
   payload: PreviewListInput,
   success: PreviewListResult,
   error: EnvironmentAuthorizationError,
+});
+
+const WsPreviewForwardRpc = Rpc.make(WS_METHODS.previewForward, {
+  payload: PreviewForwardInput,
+  success: PreviewForwardResult,
+  error: Schema.Union([PreviewForwardError, EnvironmentAuthorizationError]),
 });
 
 const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
@@ -1734,6 +1767,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsClusterInviteRpc,
   WsClusterJoinRpc,
   WsClusterRemoveRpc,
+  WsClusterUpdateRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,
@@ -1778,6 +1812,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsFilesLocalPathRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,
@@ -1817,6 +1852,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewRefreshRpc,
   WsPreviewCloseRpc,
   WsPreviewListRpc,
+  WsPreviewForwardRpc,
   WsPreviewReportStatusRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,

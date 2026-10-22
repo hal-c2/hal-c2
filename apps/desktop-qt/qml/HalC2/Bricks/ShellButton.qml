@@ -17,6 +17,8 @@ Button {
     property string iconName: ""
     property string toolTip: ""
     property real iconSize: 14
+    // Fills the icon's outline too, for the filled variants (the fast-mode bolt).
+    property bool iconFilled: false
     property real chevronSize: 14
     property color tint: primary ? Theme.palette.color("accentForeground", "#ffffff") : Theme.palette.color("text", "#e4e4e7")
     property color iconTint: tint
@@ -37,7 +39,6 @@ Button {
     bottomPadding: 0
     leftPadding: iconOnly || chevronOnly ? glyphPadding : 8
     rightPadding: iconOnly || chevronOnly ? glyphPadding : 8
-    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     font.pixelSize: Math.round(13 * Theme.fontScale)
     font.weight: Font.Medium
     hoverEnabled: true
@@ -81,9 +82,11 @@ Button {
             spacing: 6
 
             ShellIcon {
+                objectName: "buttonIcon"
                 visible: control.iconName.length > 0
                 name: control.iconName
                 size: control.iconSize
+                filled: control.iconFilled
                 color: control.iconTint
                 Layout.alignment: Qt.AlignVCenter
             }

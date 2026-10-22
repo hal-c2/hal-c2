@@ -122,6 +122,70 @@ defmodule HalC2.UpgradeTest do
     assert {:error, _} = Source.receive_part("2.0.0", "darwin-arm64", {:finish, sum})
   end
 
+  test "a release with no bundle of its version packs one of its own applications, once",
+       %{tmp_dir: dir} do
+    root = Path.join(dir, "release")
+
+    staged = %{
+      @manifest
+      | "version" => "2.1.0",
+        "erts" => "17.1",
+        "applications" => %{"hal_c2" => "2.1.0"}
+    }
+
+    for manifest <- [@manifest, staged] do
+      rel = Path.join([root, "releases", manifest["version"]])
+      File.mkdir_p!(rel)
+      File.write!(Path.join(rel, "upgrade.json"), JSON.encode!(manifest))
+    end
+
+    # 2.0.0 runs, and 2.1.0 is staged for the next start.
+    File.write!(Path.join([root, "releases", "start_erl.data"]), "17.1 2.1.0\n")
+
+    # The applications of 2.0.0, one an earlier version left behind, and 2.1.0's.
+    for app <- ~w(hal_c2-2.0.0 kernel-11.0.3 exqlite-0.41.0 hal_c2-1.9.0 hal_c2-2.1.0),
+        do: File.mkdir_p!(Path.join([root, "lib", app, "ebin"]))
+
+    for erts <- ~w(17.0.5 17.1), do: File.mkdir_p!(Path.join([root, "erts-#{erts}", "bin"]))
+    System.put_env("RELEASE_ROOT", root)
+    :persistent_term.put({Upgrade, :version}, "2.0.0")
+
+    on_exit(fn ->
+      System.delete_env("RELEASE_ROOT")
+      :persistent_term.erase({Upgrade, :version})
+    end)
+
+    # Two `cluster.update`s at once pack it once and agree on it.
+    assert [:ok, :ok] =
+             1..2
+             |> Enum.map(fn _ -> Task.async(fn -> Source.ensure_own("2.0.0") end) end)
+             |> Task.await_many()
+
+    archive =
+      Path.join([Source.cache_dir("2.0.0"), Source.file_name("2.0.0", Upgrade.platform())])
+
+    sum = :crypto.hash(:sha256, File.read!(archive)) |> Base.encode16(case: :lower)
+    assert File.read!(archive <> ".sha256") == sum
+
+    assert File.ls!(Source.cache_dir("2.0.0")) |> Enum.sort() ==
+             Enum.sort([Path.basename(archive), Path.basename(archive) <> ".sha256"])
+
+    {:ok, entries} = :erl_tar.table(String.to_charlist(archive), [:compressed])
+
+    dirs =
+      entries
+      |> Enum.map(&to_string/1)
+      |> Enum.map(&(&1 |> Path.split() |> Enum.take(2) |> Path.join()))
+      |> Enum.uniq()
+
+    assert "lib/hal_c2-2.0.0" in dirs and "lib/kernel-11.0.3" in dirs and
+             "erts-17.0.5/bin" in dirs
+
+    assert "releases/2.0.0" in dirs
+    refute "lib/hal_c2-1.9.0" in dirs
+    refute "lib/hal_c2-2.1.0" in dirs or "releases/2.1.0" in dirs or "erts-17.1/bin" in dirs
+  end
+
   test "putting a bundle again replaces the one unpacked for its version", %{tmp_dir: dir} do
     first = tarball(dir, "first", %{"version" => "2.0.0", "marker" => "first"})
     :ok = Source.put("2.0.0", "darwin-arm64", first)
@@ -296,6 +360,8 @@ defmodule HalC2.UpgradeTest do
     old_lib = Path.join([root, "lib", "hal_c2-1.0.0"])
     File.mkdir_p!(Path.join(old_lib, "priv/cursor-acp/node_modules"))
     File.write!(Path.join(old_lib, "priv/cursor-acp/node_modules/native"), "this platform's")
+    File.mkdir_p!(Path.join(old_lib, "priv/bin"))
+    File.write!(Path.join(old_lib, "priv/bin/hal-c2-machine-files"), "this platform's helper")
     old_rel = Path.join([root, "releases", "1.0.0"])
     File.mkdir_p!(Path.join(old_rel, "consolidated"))
     File.write!(Path.join(old_rel, "start.boot"), :erlang.term_to_binary(script))
@@ -313,6 +379,7 @@ defmodule HalC2.UpgradeTest do
     File.mkdir_p!(Path.join(new_lib, "ebin"))
     File.mkdir_p!(Path.join(new_lib, "priv/cursor-acp/node_modules"))
     File.write!(Path.join(new_lib, "priv/cursor-acp/node_modules/native"), "another platform's")
+    # Built on macOS, the bundle has no machine-files helper and no `priv/bin` for it.
     modules = [:"Elixir.HalC2.Old", :"Elixir.HalC2.New"]
 
     File.write!(
@@ -359,6 +426,9 @@ defmodule HalC2.UpgradeTest do
              Path.join([root, "lib", "hal_c2-2.0.0", "priv/cursor-acp/node_modules/native"])
            ) ==
              "this platform's"
+
+    assert File.read!(Path.join([root, "lib", "hal_c2-2.0.0", "priv/bin/hal-c2-machine-files"])) ==
+             "this platform's helper"
 
     assert %{
              "version" => "2.0.0",
@@ -511,13 +581,17 @@ defmodule HalC2.UpgradeTest do
   defp hot_step?(_instruction, _kinds, _target), do: false
 
   test "a socket opened before an upgrade keeps its subscriptions" do
-    # Its state as the previous version kept it: one id per watched config, and one
-    # per followed stream.
+    # Its state as the previous version kept it: one id per watched config, one
+    # per followed stream, and one id per followed terminal.
     old = %{
       session: nil,
-      subs: %{1 => {:config, node()}, 2 => {:stream, node(), "th-old"}},
+      subs: %{
+        1 => {:config, node()},
+        2 => {:stream, node(), "th-old"},
+        3 => {:terminal, node(), {"th-old", "term-1"}}
+      },
       by_stream: %{"th-old" => 2},
-      by_terminal: %{{:settings, node()} => 1},
+      by_terminal: %{{:settings, node()} => 1, {"th-old", "term-1"} => 3},
       buffers: %{},
       item_types: %{},
       flush_scheduled: false
@@ -527,14 +601,80 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 6
+    assert state.v == 7
     assert state.scopes == :all
     refute Map.has_key?(state, :item_types)
     assert state.by_terminal[{:settings, node()}] == [1]
+    # A terminal followed before has no snapshot sequence recorded, so it is
+    # held per subscription with a nil floor and is told everything, as it was.
+    assert state.by_terminal[{"th-old", "term-1"}] == %{3 => nil}
+    assert state.subs[3] == {:terminal, node(), {"th-old", "term-1"}}
     assert state.monitors == %{}
     assert state.shell == %{}
     # A stream followed before sends no tag.
     assert state.by_stream == %{"th-old" => {2, nil}}
+
+    # The migrated terminal subscription still receives its terminal's events
+    # under its own id.
+    assert {:push, [{:text, frame}], _state} =
+             HalC2.Web.Socket.handle_info(
+               {:hal_c2_terminal, {"th-old", "term-1"},
+                %{"type" => "output", "data" => "hi", "sequence" => 1}},
+               state
+             )
+
+    assert %{"t" => "terminal", "id" => 3} = JSON.decode!(IO.iodata_to_binary(frame))
+  end
+
+  test "a v6 socket's terminal subscription migrates to per-subscription state" do
+    # The exact v6 shape: a terminal is held as a single subscription id, while
+    # a watched config is already a list of ids. This socket followed the
+    # terminal twice (2, then 3 recorded last in v6's single slot as 2 went
+    # in — the overwrite v7 fixes), and rebuilding from `subs` revives both.
+    state = %{
+      v: 6,
+      session: nil,
+      scopes: :all,
+      subs: %{
+        1 => {:config, node()},
+        2 => {:terminal, node(), {"th-6", "term-1"}},
+        3 => {:terminal, node(), {"th-6", "term-1"}}
+      },
+      by_stream: %{},
+      by_terminal: %{{"th-6", "term-1"} => 2, {:settings, node()} => [1]},
+      monitors: %{},
+      shell: %{},
+      buffers: %{},
+      flush_scheduled: false
+    }
+
+    assert {:push, [{:text, frame}], migrated} =
+             HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
+
+    assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
+    assert migrated.v == 7
+    assert migrated.subs == state.subs
+    # Only the terminal entry changes shape; the config entry is preserved,
+    # and both subscriptions `subs` held are in it.
+    assert migrated.by_terminal == %{
+             {"th-6", "term-1"} => %{2 => nil, 3 => nil},
+             {:settings, node()} => [1]
+           }
+
+    # With a nil floor each migrated subscription is told everything that
+    # follows, under its own id.
+    assert {:push, frames, _} =
+             HalC2.Web.Socket.handle_info(
+               {:hal_c2_terminal, {"th-6", "term-1"},
+                %{"type" => "output", "data" => "hi", "sequence" => 9}},
+               migrated
+             )
+
+    ids =
+      for {:text, frame} <- frames,
+          do: frame |> IO.iodata_to_binary() |> JSON.decode!() |> Map.fetch!("id")
+
+    assert Enum.sort(ids) == [2, 3]
   end
 
   test "a message without a tag is only for a stream followed before an upgrade" do
@@ -553,8 +693,10 @@ defmodule HalC2.UpgradeTest do
       flush_scheduled: false
     }
 
-    # One still on its way from the subscription the upgrade carried over.
-    assert {:ok, ^state} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
+    # One still on its way from the subscription the upgrade carried over. The
+    # v6 state is first migrated to v7, so the returned state is that migration.
+    migrated = %{state | v: 7}
+    assert {:ok, ^migrated} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
 
     assert {:push, [{:text, frame}], _} =
              HalC2.Web.Socket.handle_info({:hal_c2_stream, {"th", tag}, :resync}, state)

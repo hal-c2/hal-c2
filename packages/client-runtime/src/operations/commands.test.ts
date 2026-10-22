@@ -579,6 +579,78 @@ describe("V2 environment commands", () => {
     );
   }
 
+  it.effect("dispatches Stop for the ordinal-latest run, not the last-created one", () =>
+    Effect.gen(function* () {
+      // A was sent first and held; B passed it (ordinal 2) and A was renumbered to 3.
+      // A then ran and completed, leaving background work. The runs array stays in
+      // creation order, so `at(-1)` would pick B and the stop would miss A's work.
+      const heldRunId = RunId.make("run-held");
+      const passedRunId = RunId.make("run-passed");
+      const settled = {
+        threadId: v2ThreadId,
+        providerInstanceId: v2Projection.thread.providerInstanceId,
+        modelSelection: v2Projection.thread.modelSelection,
+        providerThreadId: null,
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "completed" as const,
+        requestedAt: v2Now,
+        startedAt: v2Now,
+        completedAt: v2Now,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        runs: [
+          { ...settled, id: heldRunId, ordinal: 3, userMessageId: MessageId.make("message-held") },
+          {
+            ...settled,
+            id: passedRunId,
+            ordinal: 2,
+            userMessageId: MessageId.make("message-passed"),
+          },
+        ],
+        turnItems: [
+          {
+            id: TurnItemId.make("background-command"),
+            threadId: v2ThreadId,
+            runId: heldRunId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "running",
+            title: null,
+            startedAt: v2Now,
+            completedAt: null,
+            updatedAt: v2Now,
+            type: "command_execution",
+            input: "vp run dev",
+          },
+        ],
+      };
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+
+      const result = yield* interruptThreadTurn({ threadId: v2ThreadId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(result).toEqual({ sequence: 1 });
+      expect(commands).toEqual([
+        {
+          type: "run.interrupt",
+          commandId: expect.any(String),
+          threadId: v2ThreadId,
+          runId: heldRunId,
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
   it.effect(
     "dispatches V2-native relationship and queue commands without compatibility shaping",
     () =>

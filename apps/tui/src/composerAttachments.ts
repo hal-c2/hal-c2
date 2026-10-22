@@ -29,6 +29,9 @@ export type Base64WorkspaceFile = Pick<
   "contents" | "byteLength" | "truncated"
 >;
 
+/** Decodes encoded image bytes into a preview; the native decoder is the default. */
+export type ImageDecoder = (encoded: Uint8Array) => Promise<ImagePreview>;
+
 export interface ComposerImageAttachment {
   readonly relativePath: string;
   readonly upload: UploadChatImageAttachment;
@@ -262,7 +265,7 @@ export function removeComposerImage(
 export async function prepareComposerImage(
   relativePath: string,
   file: Base64WorkspaceFile,
-  decoder: (encoded: Uint8Array) => Promise<ImagePreview> = (encoded) =>
+  decoder: ImageDecoder = (encoded) =>
     decodeImage(encoded, { maxWidth: PREVIEW_MAX_WIDTH, maxHeight: PREVIEW_MAX_HEIGHT }),
 ): Promise<ComposerImageAttachment> {
   const mimeType = imageMimeTypeForPath(relativePath);
@@ -286,7 +289,7 @@ export async function prepareComposerImageBytes(
   relativePath: string,
   mimeType: string,
   encoded: Uint8Array,
-  decoder: (encoded: Uint8Array) => Promise<ImagePreview> = (value) =>
+  decoder: ImageDecoder = (value) =>
     decodeImage(value, { maxWidth: PREVIEW_MAX_WIDTH, maxHeight: PREVIEW_MAX_HEIGHT }),
 ): Promise<ComposerImageAttachment> {
   const extension = imageExtensionForMimeType(mimeType);

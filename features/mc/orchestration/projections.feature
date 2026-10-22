@@ -174,9 +174,9 @@ Feature: What the engine projects for clients
     And it can page older history on request
     And then it receives live events after the snapshot's sequence
 
-  # A queued run keeps the ordinal it was sent with, so one held long enough (a delegated
-  # task's result behind a held queue) sits below the floor; a client listing the queue
-  # still needs the message it stands for.
+  # A queued run takes its ordinal when it starts; until then a client listing the queue
+  # needs the message it stands for wherever the run's ordinal sits, an older store's
+  # below the floor included.
   @mc
   Scenario: A message queued before a window's floor is in the snapshot
     Given "t1" has a message queued before a very long history
@@ -291,6 +291,13 @@ Feature: What the engine projects for clients
     When a client reads or follows "t1"
     Then the text is cut at 32,768 bytes without splitting a character
     And it ends with "… output truncated for transport"
+
+  @mc
+  Scenario: Subagent text that grows is cut to the same text a snapshot shows
+    Given a subagent in "t1" has progress that grows by appends past 32,768 bytes
+    When a client follows "t1" while the progress grows past the limit
+    Then the progress it holds is the cut text a fresh read of "t1" shows
+    And the appends past the limit are not sent
 
   @mc @backlog
   Scenario: A large tool input is sent as its first line

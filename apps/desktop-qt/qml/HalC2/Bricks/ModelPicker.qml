@@ -205,6 +205,10 @@ AbstractButton {
 
         radius: Math.min(Theme.radius, 8)
         color: control.pressed || control.hovered || popup.visible ? control.highlight : Qt.alpha(control.highlight, 0)
+        // Borderless like the composer's other pickers, so the keyboard's
+        // arrival is the ring; pointer focus stays quiet.
+        border.color: control.visualFocus ? Theme.palette.color("focus", "#3b82f6") : "transparent"
+        border.width: control.visualFocus ? 1 : 0
 
         Behavior on color {
             ColorAnimation {

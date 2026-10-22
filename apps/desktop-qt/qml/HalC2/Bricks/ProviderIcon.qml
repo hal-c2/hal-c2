@@ -21,7 +21,7 @@ Item {
 
     readonly property var glyph: ProviderIcons.glyph(driverKind)
     readonly property string bitmap: iconUrl ? iconUrl : ProviderIcons.bitmap(driverKind)
-    readonly property bool dark: Theme.palette.color("text", "#e4e4e7").hslLightness > 0.5
+    readonly property bool dark: ProviderIcons.darkFor(Theme.palette.color("text", "#e4e4e7"))
     readonly property var viewBox: glyph ? glyph.viewBox : [0, 0, 1, 1]
     readonly property real glyphScale: size / Math.max(viewBox[2], viewBox[3])
 
@@ -65,7 +65,7 @@ Item {
             readonly property var part: icon.glyph ? icon.glyph.paths[0] : null
 
             strokeColor: "transparent"
-            fillColor: part ? (icon.dark ? part.dark : part.light) : "transparent"
+            fillColor: part ? (ProviderIcons.fill(icon.driverKind, icon.dark, 0) ?? "transparent") : "transparent"
             fillRule: part && part.evenOdd ? ShapePath.OddEvenFill : ShapePath.WindingFill
 
             PathSvg {
@@ -79,7 +79,7 @@ Item {
             readonly property var part: icon.glyph && icon.glyph.paths.length > 1 ? icon.glyph.paths[1] : null
 
             strokeColor: "transparent"
-            fillColor: part ? (icon.dark ? part.dark : part.light) : "transparent"
+            fillColor: part ? (ProviderIcons.fill(icon.driverKind, icon.dark, 1) ?? "transparent") : "transparent"
             fillRule: part && part.evenOdd ? ShapePath.OddEvenFill : ShapePath.WindingFill
 
             PathSvg {
@@ -93,7 +93,6 @@ Item {
         visible: icon.bitmap.length === 0 && icon.glyph === null
         text: icon.initials
         color: Theme.palette.color("text", "#e4e4e7")
-        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
         font.pixelSize: Math.max(8, Math.round(icon.size * 0.5))
         font.weight: Font.DemiBold
     }
@@ -115,7 +114,6 @@ Item {
             anchors.centerIn: parent
             text: icon.initials
             color: icon.accentColor ? "#ffffff" : Theme.palette.color("textMuted", "#8b8b93")
-            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
             font.pixelSize: Math.max(6, Math.round(parent.height * 0.6))
             font.weight: Font.DemiBold
         }

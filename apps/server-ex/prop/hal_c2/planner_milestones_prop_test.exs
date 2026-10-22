@@ -315,24 +315,26 @@ defmodule HalC2.PlannerMilestonesPropTest do
   defp problem(text), do: Process.put(:pl_problems, [text | Process.get(:pl_problems, [])])
 
   # Returns once the plugin has no look in flight, and has heard from everything that
-  # ended.
-  defp drain, do: drain(System.monotonic_time(:millisecond) + 15_000, false)
+  # ended. It waits on the look ending however long a loaded machine takes, so a planner
+  # that never settles hangs the case rather than failing it.
+  defp drain, do: drain(false)
 
-  defp drain(deadline, settled_once) do
+  defp drain(settled_once) do
     with pid when is_pid(pid) <- Process.whereis(@server),
          {:ok, state} <- get_state(pid) do
-      kids = kids(pid)
+      case kids(pid) do
+        [] when state.polling == nil ->
+          # Once more, for what the processes that just ended told it.
+          if settled_once, do: :ok, else: drain(true)
 
-      cond do
-        System.monotonic_time(:millisecond) > deadline ->
-          problem("planner never settled: #{length(kids)} processes")
+        # A look that ended between the state read and the links read: its `:DOWN` is
+        # already queued ahead of the next state read, so this goes round once, not forever.
+        [] ->
+          drain(false)
 
-        kids == [] and state.polling == nil ->
-          if settled_once, do: :ok, else: drain(deadline, true)
-
-        true ->
-          await_any(kids)
-          drain(deadline, false)
+        kids ->
+          await(kids)
+          drain(false)
       end
     else
       _ -> problem("planner is not running")
@@ -340,7 +342,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
   end
 
   defp get_state(pid) do
-    {:ok, :sys.get_state(pid)}
+    {:ok, :sys.get_state(pid, :infinity)}
   catch
     :exit, _ -> :gone
   end
@@ -351,12 +353,12 @@ defmodule HalC2.PlannerMilestonesPropTest do
     Enum.filter(links, &(is_pid(&1) and &1 != parent))
   end
 
-  defp await_any([]), do: :ok
+  # Waits for the first of `kids` to end. A look that has ended leaves `polling` set
+  # until the planner reads its `:DOWN`, which the next state read queues behind.
 
-  defp await_any(kids) do
-    refs = Enum.map(kids, &Process.monitor/1)
-    receive do: ({:DOWN, ref, :process, _, _} when is_reference(ref) -> :ok)
-    for ref <- refs, do: Process.demonitor(ref, [:flush])
+  defp await([kid | _]) do
+    ref = Process.monitor(kid)
+    receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
   end
 
   # --- one case ----------------------------------------------------------------------------

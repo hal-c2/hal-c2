@@ -38,6 +38,7 @@ Item {
 
         function cleanup() {
             Shell.reset();
+            Theme.colors = {};
         }
 
         function model(slug, name, overrides) {
@@ -174,6 +175,22 @@ Item {
             verify(icon.visible);
             compare(icon.driverKind, "codex");
             compare(picker.activeInstance.displayName, "Codex");
+        }
+
+        // The trigger is borderless like the composer's other pickers, so
+        // Tab reaching it draws the focus ring; a click does not.
+        function test_theTriggerShowsAFocusRingWhenTabbedTo() {
+            Theme.colors = {
+                focus: "#ff8800"
+            };
+            const picker = createPicker([codex(), claude()]);
+            compare(picker.background.border.width, 0);
+            picker.forceActiveFocus(Qt.MouseFocusReason);
+            compare(picker.background.border.width, 0);
+            picker.focus = false;
+            picker.forceActiveFocus(Qt.TabFocusReason);
+            compare(picker.background.border.width, 1);
+            compare(picker.background.border.color, "#ff8800");
         }
 
         function test_searching_the_models_matches_provider_and_model_names_data() {

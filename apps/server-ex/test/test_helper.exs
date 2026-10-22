@@ -4,6 +4,9 @@
 # HalC2.Projection.ShellParityTest.
 ExUnit.start(exclude: [:codex, :claude, :opencode, :parity, :backlog])
 
+# Keep the MC's git include, if we run inside one, out of the tests.
+HalC2.Test.GitEnv.scrub()
+
 # The Gherkin specification runs only when asked for (`mix features`, or
 # `HAL_C2_FEATURES=threads/*.feature mix test --only cucumber`), so a plain
 # `mix test <file>` stays quick. `@backlog` and `@backlog-mc` scenarios are left out unless

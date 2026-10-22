@@ -1,8 +1,12 @@
 #include "FakeFiles.h"
 
+#include <QBuffer>
+#include <QDateTime>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QTcpSocket>
 
 #include "FakeMc.h"
 
@@ -17,7 +21,35 @@ QStringList withFolders(const QString& path) {
   return paths;
 }
 
+bool signFile(FakeMc& mc, const FakeMc::Rpc& rpc) {
+  const QJsonObject resource = rpc.payload.value(QLatin1String("resource")).toObject();
+  const QString tag = resource.value(QLatin1String("_tag")).toString();
+  if (tag != QLatin1String("workspace-file") && tag != QLatin1String("draft-workspace-file") && tag != QLatin1String("media-file")) return false;
+  FakeFiles& fake = fakeFiles(mc);
+  const QString path = resource.value(QLatin1String("path")).toString();
+  if (!fake.files.contains(path) && !fake.outside.contains(path)) {
+    mc.refuse(rpc, QStringLiteral("Workspace file was not found."));
+    return true;
+  }
+  const QString token = QStringLiteral("file-%1").arg(fake.signedFiles.size() + 1);
+  fake.signedFiles.insert(token, path);
+  mc.reply(rpc, QJsonObject{{QStringLiteral("relativeUrl"), QStringLiteral("/api/assets/%1/%2").arg(token, path.section(QLatin1Char('/'), -1))},
+                            {QStringLiteral("expiresAt"), double(QDateTime::currentMSecsSinceEpoch() + 3600 * 1000)}});
+  return true;
+}
+
 namespace {
+
+// A 4x3 PNG, what an image file holds.
+QByteArray png() {
+  QImage image(4, 3, QImage::Format_RGB32);
+  image.fill(Qt::darkCyan);
+  QByteArray bytes;
+  QBuffer buffer(&bytes);
+  buffer.open(QIODevice::WriteOnly);
+  image.save(&buffer, "PNG");
+  return bytes;
+}
 
 QJsonObject entry(const FakeFiles& fake, const QString& path) {
   const bool directory = !fake.files.contains(path);
@@ -28,6 +60,23 @@ QJsonObject entry(const FakeFiles& fake, const QString& path) {
 }
 
 const FakeMc::Extension extension([](FakeMc& mc) {
+  // A signed file's bytes, or a 404 once when its download fails.
+  mc.onRaw(QStringLiteral("/api/assets/file-"), [&mc](QTcpSocket* socket, const QByteArray& head) {
+    socket->read(head.size());
+    FakeFiles& fake = fakeFiles(mc);
+    const QString token = QString::fromUtf8(head.left(head.indexOf('\r')).split(' ').value(1)).section(QLatin1Char('/'), 3, 3);
+    const QString path = fake.signedFiles.value(token);
+    if (path.isEmpty() || fake.loadFailsOnce.remove(path)) {
+      socket->write("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+    } else {
+      fake.downloaded.append(path);
+      const bool image = QRegularExpression(QStringLiteral("\\.(png|jpe?g|gif|webp|bmp)$")).match(path).hasMatch();
+      const QByteArray body = image ? png() : fake.files.value(path, fake.outside.value(path)).toUtf8();
+      socket->write("HTTP/1.1 200 OK\r\nContent-Type: " + QByteArray(image ? "image/png" : "application/octet-stream") +
+                    "\r\nConnection: close\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body);
+    }
+    socket->disconnectFromHost();
+  });
   mc.onRpc(QStringLiteral("projects.listEntries"), [&mc](const FakeMc::Rpc& rpc) {
     FakeFiles& fake = fakeFiles(mc);
     const QString folder = rpc.payload.value(QLatin1String("directoryPath")).toString();
@@ -48,6 +97,7 @@ const FakeMc::Extension extension([](FakeMc& mc) {
   });
   // By name; `kind` narrows to files or folders.
   mc.onRpc(QStringLiteral("projects.searchEntries"), [&mc](const FakeMc::Rpc& rpc) {
+    ++fakeFiles(mc).searches;
     const auto answer = [&mc, rpc] {
       FakeFiles& fake = fakeFiles(mc);
       const QString query = rpc.payload.value(QLatin1String("query")).toString();

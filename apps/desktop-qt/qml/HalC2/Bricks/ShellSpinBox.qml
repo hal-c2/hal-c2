@@ -14,7 +14,6 @@ SpinBox {
     implicitHeight: 30
     implicitWidth: 120
     padding: 0
-    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     font.pixelSize: Math.round(13 * Theme.fontScale)
     hoverEnabled: true
     opacity: enabled ? 1 : 0.64

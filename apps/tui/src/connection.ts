@@ -8,6 +8,7 @@ import {
   type ClusterInvite,
   type ClusterInviteInput,
   type ClusterStatus,
+  type ClusterUpdateResult,
   EnvironmentId,
   type MessageId,
   MessageId as MessageIdSchema,
@@ -134,6 +135,7 @@ import * as Socket from "effect/unstable/socket/Socket";
 
 import { createAttachmentImageCache } from "./attachmentImages.ts";
 import { makeTuiSettingsClient, type TuiSettingsClient } from "./settingsClient.ts";
+import { FILES_ELSEWHERE, hostedHere, type LocalPath, thisMachineId } from "./thisMachine.ts";
 import type { ImagePreview } from "@hal-c2/opentui-image";
 import {
   presentTuiShell,
@@ -513,6 +515,8 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly clusterInvite: (input: ClusterInviteInput) => Promise<ClusterInvite>;
   readonly clusterJoin: (link: string) => Promise<ClusterStatus>;
   readonly clusterRemove: (id: string) => Promise<ClusterStatus>;
+  /** Has every connected member on another version take the one this machine runs. */
+  readonly clusterUpdate: () => Promise<ClusterUpdateResult>;
   /** The other machines of the cluster a thread could move to, and their projects. */
   readonly moveDestinations: (threadId: string) => Promise<ReadonlyArray<ThreadMoveDestination>>;
   /**
@@ -641,8 +645,19 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly getFullThreadDiff: (threadId: ThreadId, toTurnCount: number) => Promise<string>;
   /** The selectable models reported by the server's configured providers. */
   readonly listModels: () => Promise<ModelOption[]>;
-  /** Current server settings, including new-thread workspace defaults. */
-  readonly getServerConfig: () => Promise<ServerConfig>;
+  /**
+   * Current server settings, including new-thread workspace defaults. With `cwd`, those
+   * of the cluster member whose workspace it is (clusterClient.ts), this MC's otherwise.
+   */
+  readonly getServerConfig: (cwd?: string) => Promise<ServerConfig>;
+  /**
+   * `path` of the MC that has it as a path on this machine, or why its files
+   * cannot be reached from here. An editor starts only on a path it gives
+   * (filesState.ts). With `environmentId`, `path` is that cluster member's, and
+   * this MC, when it runs here, says where in the folder it keeps for the member
+   * it is (`files.localPath`).
+   */
+  readonly localPathFor: (path: string, environmentId?: string) => Promise<LocalPath>;
   /** Git refs available as base branches for a project's new worktree. */
   readonly listRefs: (cwd: string) => Promise<VcsListRefsResult>;
   /** Switch the selected checkout to a ref before creating a thread in it. */
@@ -723,7 +738,8 @@ interface WarmSubscriptionRef<S> {
 /** Number of recently-viewed threads whose live state we keep warm (LRU). */
 const THREAD_WARM_LIMIT = 8;
 
-export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
+/** `own` is false for another machine of the cluster, reached through the MC at `origin`. */
+export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): TuiClient {
   const attachmentImages = createAttachmentImageCache();
   // oxlint-disable-next-line hal-c2/no-global-process-runtime -- @hal-c2/shared/hostProcess imports node:sea, which the Bun-run TUI lacks.
   const hostPlatform = process.platform;
@@ -904,6 +920,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
     clusterInvite: (input) => runtime.runPromise(request(WS_METHODS.clusterInvite, input)),
     clusterJoin: (link) => runtime.runPromise(request(WS_METHODS.clusterJoin, { link })),
     clusterRemove: (id) => runtime.runPromise(request(WS_METHODS.clusterRemove, { id })),
+    clusterUpdate: () => runtime.runPromise(request(WS_METHODS.clusterUpdate, {})),
     moveDestinations: (threadId) =>
       runtime
         .runPromise(mcRequest("hal-c2.moveDestinations", { threadId }))
@@ -1236,6 +1253,30 @@ export function makeTuiClient(runtime: TuiRuntime, origin = ""): TuiClient {
       ),
 
     getServerConfig: () => runtime.runPromise(request(WS_METHODS.serverGetConfig, {})),
+
+    // An MC elsewhere mounts nothing here, and one that does not describe
+    // itself is not taken to run here.
+    localPathFor: async (path, environmentId) => {
+      const [config, ours] = await Promise.all([
+        runtime.runPromise(request(WS_METHODS.serverGetConfig, {})).catch(() => null),
+        thisMachineId(),
+      ]);
+      if (!config) return { problem: FILES_ELSEWHERE };
+      const theirs = config.environment.platform.machineId;
+      if (!hostedHere({ ours, theirs, own, origin })) return { problem: FILES_ELSEWHERE };
+      if (environmentId === undefined) return { path };
+      const answer = await runtime
+        .runPromise(
+          request(WS_METHODS.filesLocalPath, {
+            environmentId: TrimmedNonEmptyString.make(environmentId),
+            path: TrimmedNonEmptyString.make(path),
+          }),
+        )
+        // An MC from before files.localPath has no folders to offer.
+        .catch(() => null);
+      if (answer === null) return { problem: FILES_ELSEWHERE };
+      return "path" in answer ? { path: answer.path } : { problem: answer.message };
+    },
 
     listRefs: (cwd) =>
       runtime.runPromise(
