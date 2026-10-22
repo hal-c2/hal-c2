@@ -101,7 +101,7 @@ export function createClusterController(ctx: {
           const hint = next.localOnly ? ` ${LOCAL_ONLY_HINT}` : "";
           store.setStatus(
             `${copied ? "Invite link copied" : "Invite link in settings"}; join with it on the other machine.${hint}`,
-            next.localOnly ? "error" : "success",
+            next.localOnly ? "warning" : "success",
           );
         },
         (error: unknown) => store.setStatus(`Invite failed: ${errorText(error)}`, "error"),
@@ -226,7 +226,7 @@ export function createClusterController(ctx: {
         case "cluster.join": {
           const link = String(field("link") ?? "").trim();
           if (link === "") {
-            store.setStatus("Paste the invite link from the other machine.", "error");
+            store.setStatus("Paste the invite link from the other machine.", "warning");
             return true;
           }
           closeJoin();

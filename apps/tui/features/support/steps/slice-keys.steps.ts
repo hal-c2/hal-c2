@@ -272,7 +272,7 @@ step("a chord already in use is refused with the action that owns it", async (ct
   await typeText(ctx, "Ctrl+K");
   await pressKey(ctx, "Enter");
   await settle(ctx);
-  expect(status(ctx)).toEqual({ kind: "error", text: "Ctrl+K is already Command palette." });
+  expect(status(ctx)).toEqual({ kind: "warning", text: "Ctrl+K is already Command palette." });
   expect(ctx.savedKeymap).toHaveLength(1);
   // Ctrl+K still opens the palette, Ctrl+T still toggles the terminal.
   await pressKey(ctx, "Ctrl+K");

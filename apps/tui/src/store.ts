@@ -17,8 +17,15 @@ import {
 // imperative subscription plumbing stays out of the component tree, at a scale
 // that fits a single-environment terminal client.
 
-/** Tone of a status-line message — drives its glyph + colour, like the web toasts. */
-export type StatusKind = "info" | "success" | "error" | "busy";
+/**
+ * Tone of a status-line message — drives its glyph + colour, like the web toasts.
+ * "warning" is the client declining the user's last input or action before trying
+ * it ("Enter a whole number of days", "Open a thread to edit its files."): it reads
+ * like an error but is not pinned (host/statusLog.ts), so it does not outlive the
+ * correction. "error" is for something that was attempted and failed, or a system
+ * state the user cannot fix by typing something else (offline, not connected).
+ */
+export type StatusKind = "info" | "success" | "warning" | "error" | "busy";
 
 export interface StoreState {
   readonly shell: OrchestrationShellSnapshot | null;
@@ -327,12 +334,12 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
       if (state.gitBusy) return;
       const message = commitMessage?.trim();
       if (gitActionNeedsCommitMessage(action) && !message && !runOptions.generateMessage) {
-        set({ status: "Commit needs a message.", statusKind: "error" });
+        set({ status: "Commit needs a message.", statusKind: "warning" });
         return;
       }
       const cwd = currentCwd();
       if (!cwd) {
-        set({ status: "No worktree for git actions.", statusKind: "error" });
+        set({ status: "No worktree for git actions.", statusKind: "warning" });
         return;
       }
       const startedAtMs = Date.parse(now());
@@ -413,7 +420,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
       if (state.gitBusy) return;
       const cwd = currentCwd();
       if (!cwd) {
-        set({ status: "No worktree for git actions.", statusKind: "error" });
+        set({ status: "No worktree for git actions.", statusKind: "warning" });
         return;
       }
       set({ gitBusy: true, status: "Pulling…", statusKind: "busy" });

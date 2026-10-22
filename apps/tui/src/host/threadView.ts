@@ -310,7 +310,7 @@ export function createThreadView(options: ThreadViewOptions): ThreadView {
     const copied = options.copyToClipboard?.(text) ?? false;
     store.setStatus(
       copied ? `${label} copied.` : "Clipboard not supported by this terminal.",
-      copied ? "success" : "error",
+      copied ? "success" : "warning",
     );
     return copied;
   };
