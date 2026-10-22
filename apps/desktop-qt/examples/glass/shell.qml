@@ -15,6 +15,8 @@ ShellWindow {
     // How far the toolbar's leading edge stays clear of the traffic lights
     // once the sidebar folds away and they end up over the content column.
     readonly property real lightsInset: root.sidebarCollapsed && !root.settingsActive ? 66 : 0
+    // A page an MC plugin added is showing: it takes the place of the thread.
+    readonly property bool pluginTab: (root.route?.tab ?? "threads") !== "threads" && !root.settingsActive
 
     width: 1360
     height: 860
@@ -115,9 +117,21 @@ ShellWindow {
                     anchors.fill: parent
                     spacing: 0
 
+                    // Threads, then a tab per page an MC plugin adds; hidden while
+                    // there are none. It drags the window like the toolbar below.
+                    ShellTabs {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: root.lightsInset
+                        visible: pages.length > 0 && !root.settingsActive
+                        color: "transparent"
+                        window: root
+                        windowControls: false
+                    }
+
                     Item {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 52
+                        visible: !root.pluginTab
 
                         DragHandler {
                             target: null
@@ -148,6 +162,12 @@ ShellWindow {
                         color: root.line
                     }
 
+                    PluginPages {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        visible: root.pluginTab
+                    }
+
                     SettingsHost {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -160,17 +180,18 @@ ShellWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         kind: root.route?.kind ?? ""
-                        visible: !root.settingsActive
+                        visible: !root.settingsActive && !root.pluginTab
                     }
 
                     Composer {
                         Layout.fillWidth: true
-                        visible: ready && !root.settingsActive
+                        visible: ready && !root.settingsActive && !root.pluginTab
                         color: "transparent"
                     }
 
                     TerminalDrawer {
                         Layout.fillWidth: true
+                        visible: open && !root.pluginTab
                     }
                 }
             }
@@ -180,7 +201,7 @@ ShellWindow {
 
                 Layout.fillHeight: true
                 Layout.preferredWidth: rightPanel.implicitWidth
-                visible: rightPanel.available && rightPanel.implicitWidth > 0
+                visible: rightPanel.available && rightPanel.implicitWidth > 0 && !root.pluginTab
                 clip: true
                 color: Theme.palette.color("chrome", "#262626")
                 topRightRadius: root.corner - 1
