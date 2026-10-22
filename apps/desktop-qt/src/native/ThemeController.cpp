@@ -32,6 +32,8 @@ const QString kLight = QStringLiteral("light");
 const QString kDark = QStringLiteral("dark");
 // The standard look's id.
 const QString kStandardId = QStringLiteral("hal-c2");
+// What the standard look is called wherever it is listed or drafted.
+const QString kStandardLabel = QStringLiteral("HAL-C2");
 
 const QString kSystem = QStringLiteral("system");
 const QString kCustomThemes = QStringLiteral("customThemes");
@@ -329,7 +331,7 @@ void ThemeController::activate() {
     QList<CommandRegistry::Choice> choices;
     CommandRegistry::Choice standard;
     standard.id = QStringLiteral("theme:standard");
-    standard.title = QStringLiteral("HAL-C2");
+    standard.title = kStandardLabel;
     standard.current = drawn.isEmpty();
     standard.terms = {QStringLiteral("theme"), QStringLiteral("appearance")};
     standard.run = [this] { choose({}); };
@@ -534,7 +536,7 @@ QVariantMap ThemeController::draft(const QString& id) const {
   }
   const bool editable = definition && definition->source == QLatin1String("custom");
   return {{QStringLiteral("id"), editable ? definition->id : QString()},
-          {QStringLiteral("label"), definition ? definition->label : QStringLiteral("HAL-C2")},
+          {QStringLiteral("label"), definition ? definition->label : kStandardLabel},
           {QStringLiteral("appearance"), appearance},
           {QStringLiteral("colors"), colors.toVariantMap()}};
 }
@@ -578,7 +580,7 @@ QString ThemeController::duplicate(const QString& id) {
 }
 
 QString ThemeController::duplicateStandard() {
-  return saveCustom(asCopy({{QStringLiteral("label"), QStringLiteral("HAL-C2")},
+  return saveCustom(asCopy({{QStringLiteral("label"), kStandardLabel},
                             {QStringLiteral("appearance"), m_appearance},
                             {QStringLiteral("colors"), builtIns().standard.value(m_appearance).toObject().toVariantMap()}}));
 }
