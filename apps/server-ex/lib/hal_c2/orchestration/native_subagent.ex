@@ -227,6 +227,43 @@ defmodule HalC2.Orchestration.NativeSubagent do
     sub
   end
 
+  @doc """
+  Sets the subagent's task after it started: its entity and turn item, and the
+  user message its child thread opened with. For a provider that names the
+  task only after the subagent is already running.
+  """
+  def prompt(sub, text) do
+    at = Entities.now()
+    put = &Map.merge(&1, %{"prompt" => text, "updatedAt" => at})
+
+    HalC2.Streams.transact(sub.thread, :thread, fn state ->
+      {[
+         Orchestration.upsert(state, "subagent", sub.id, put),
+         Orchestration.upsert(state, "turn-item", sub.item, put)
+       ]
+       |> Enum.filter(&is_tuple/1), :ok}
+    end)
+
+    HalC2.Streams.transact(sub.child, :thread, fn state ->
+      changes =
+        Enum.map(conversation(sub, :user, text, at), fn {kind, id, entity} ->
+          if StreamState.get(state, kind)[id],
+            do:
+              Orchestration.upsert(
+                state,
+                kind,
+                id,
+                &Map.merge(&1, Map.drop(entity, ["createdAt", "startedAt"]))
+              ),
+            else: Orchestration.create(kind, id, entity)
+        end)
+
+      {Enum.filter(changes, &is_tuple/1), :ok}
+    end)
+
+    sub
+  end
+
   @doc "Shows what the running subagent is doing now, on its entity and its turn item."
   def progress(sub, text) do
     at = Entities.now()
