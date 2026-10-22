@@ -422,6 +422,7 @@ defmodule HalC2.Service do
         "WorkingDirectory=#{quote_value(cwd)}",
         for({name, dir} <- chosen_home(), do: "Environment=#{name}=#{quote_value(dir)}"),
         "Environment=PATH=#{quote_value(System.get_env("PATH", ""))}",
+        "Environment=HAL_C2_WAIT_FOR_HOME=1",
         "ExecStart=#{Enum.map_join(argv, " ", &quote_value/1)}",
         "KillMode=mixed",
         "OOMPolicy=continue",
@@ -450,7 +451,8 @@ defmodule HalC2.Service do
     log = x.(log_path())
 
     env =
-      Enum.map_join([{"PATH", System.get_env("PATH", "")} | chosen_home()], "\n", fn {k, v} ->
+      [{"PATH", System.get_env("PATH", "")}, {"HAL_C2_WAIT_FOR_HOME", "1"} | chosen_home()]
+      |> Enum.map_join("\n", fn {k, v} ->
         "    <key>#{k}</key>\n    <string>#{x.(v)}</string>"
       end)
 
