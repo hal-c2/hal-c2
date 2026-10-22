@@ -55,12 +55,10 @@ Rectangle {
     // toggle or close button, so give focus to the tree that remains.
     onFileOpenChanged: {
         if (!fileOpen && focusInside(fileViewer)) {
+            // Without search (no workspace) the explorer holds nothing
+            // focusable, so focus clearing to the window is intended.
             if (search.enabled)
                 search.forceActiveFocus();
-            else if (filesRetryButton.visible)
-                filesRetryButton.forceActiveFocus();
-            // Else (no workspace, no error to retry) the explorer holds
-            // nothing focusable, so focus clearing to the window is intended.
         }
     }
 
@@ -636,8 +634,6 @@ Rectangle {
                         wrapMode: Text.Wrap
                     }
                     ShellButton {
-                        id: filesRetryButton
-
                         objectName: "filesRetry"
                         Layout.alignment: Qt.AlignHCenter
                         visible: root.rootStatus === "error"
