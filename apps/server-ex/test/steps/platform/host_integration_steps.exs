@@ -262,8 +262,13 @@ defmodule HalC2.Steps.Platform.HostIntegration do
         end
       end)
 
+    # A class the choice names has the command only when it is an application the user
+    # picked: any other ProgId (`brokenfile`) names no command, so the lookup has to fall
+    # through to the class registered for .txt.
     command_keys =
-      Enum.uniq(["txtfile", progid] -- [nil])
+      if progid && String.starts_with?(progid, "Applications\\"),
+        do: ["txtfile", progid],
+        else: ["txtfile"]
 
     body =
       ~s|case "$2" in\n| <>
@@ -279,6 +284,17 @@ defmodule HalC2.Steps.Platform.HostIntegration do
         ~s|  *) exit 1 ;;\nesac|
 
     install_script(context, "reg", body)
+  end
+
+  # The first word of an unquoted program path with spaces (`C:\Program` of
+  # `C:\Program Files\...`) is a real executable here, named literally (legal on
+  # Linux), so only the MC's refusal of such a word, not a failed lookup, leaves the
+  # default editor unoffered.
+  step ~r/^the MC runs on Windows and Notepad is registered with the unquoted command line '(?<line>[^']+)'$/,
+       %{args: [line]} = context do
+    context = windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line)
+    [word | _] = String.split(line)
+    install(context, word)
   end
 
   step "the MC runs on Windows and opens text files in Notepad", context do
@@ -339,6 +355,46 @@ defmodule HalC2.Steps.Platform.HostIntegration do
       """
 
     install_script(bin(context), "reg", body)
+  end
+
+  # The registry's answers are kept for a minute, and `reg` logs each query it gets.
+  step "the MC runs on Windows and keeps the registry's answer for a minute", context do
+    World.put_app_env(:windows_editor_cache_ms, 60_000)
+    :persistent_term.erase({HalC2.Editors, :windows_editor})
+    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase({HalC2.Editors, :windows_editor}) end)
+
+    context =
+      windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}])
+
+    log = Path.join(context.bin, "reg.log")
+    script = Path.join(context.bin, "reg")
+    [shebang, body] = script |> File.read!() |> String.split("\n", parts: 2)
+    File.write!(script, shebang <> "\necho query >> '#{log}'\n" <> body)
+    Map.put(context, :reg_log, log)
+  end
+
+  step "a client reads the MC's server config a second time", context do
+    context = Map.put(context, :queries_after_first, registry_queries(context))
+
+    client =
+      World.client(context)
+      |> Mc.sub(10, %{"type" => "config", "environment" => context.mc.environment})
+
+    {_frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 10))
+    World.put_client(context, client)
+  end
+
+  step "the registry was not queried again", context do
+    assert context.queries_after_first > 0
+    assert registry_queries(context) == context.queries_after_first
+    context
+  end
+
+  defp registry_queries(context) do
+    case File.read(context.reg_log) do
+      {:ok, log} -> log |> String.split("\n", trim: true) |> length()
+      {:error, _} -> 0
+    end
   end
 
   step "the MC runs on Windows and reg never answers", context do

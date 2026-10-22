@@ -140,10 +140,24 @@ Feature: The MC working with its host machine
     Then the default editor is not offered
 
   @mc
-  Scenario: On Windows an unquoted program path with spaces offers no default editor
-    Given the MC runs on Windows and Notepad is registered with the command line 'C:\Program Files\Editor\editor.exe %1'
+  Scenario Outline: On Windows an unquoted program path with spaces offers no default editor
+    Given the MC runs on Windows and Notepad is registered with the unquoted command line '<line>'
     When a client reads the MC's server config
     Then the default editor is not offered
+
+    Examples:
+      | line                                  |
+      | C:\Program Files\Editor\editor.exe %1   |
+      | C:Program Files\Editor\editor.exe %1    |
+      | \Program Files\Editor\editor.exe %1     |
+
+  @mc
+  Scenario: A Windows host's text association is looked up once for the server configs read within a minute
+    Given the MC runs on Windows and keeps the registry's answer for a minute
+    When a client reads the MC's server config
+    And a client reads the MC's server config a second time
+    Then the registry was not queried again
+    And the default editor is listed first
 
   @mc
   Scenario: A hung registry lookup does not hold up the server config on Windows

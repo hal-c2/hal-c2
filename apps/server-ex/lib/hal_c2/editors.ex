@@ -182,10 +182,10 @@ defmodule HalC2.Editors do
   # "(value not set)" as the data, so the program must resolve to an executable: that also
   # drops an association to an uninstalled editor, and a command line whose program is an
   # unquoted path with spaces (`C:\Program Files\Editor\e.exe %1` splits to program
-  # `C:\Program`, which counts as no editor unless that first word itself resolves — on
-  # Windows the lookup also tries executable extensions, so a planted `C:\Program.exe`
-  # would still win; fuller handling is tracked in #409). Prefix matching stays out on
-  # purpose: if it is ever added it must try the longest join of leading words first,
+  # `C:\Program`, which counts as no editor: a rooted, drive-relative or UNC program word
+  # without an extension is refused before the lookup, as on Windows the lookup would try
+  # executable extensions on it and run a planted `C:\Program.exe`, #409). Prefix matching
+  # stays out on purpose: if it is ever added it must try the longest join of leading words first,
   # never CreateProcess's shortest-first order, which runs a planted `C:\Program.exe`.
   # Two more divergences from Explorer: the `UserChoice`
   # `Hash` is not validated (Windows ignores a choice whose hash does not match) and
@@ -194,7 +194,25 @@ defmodule HalC2.Editors do
   # share one 2 s deadline (`lookup/2`). On timeout the task is killed, which closes its
   # port but may leave a hung `reg.exe` to exit on its own: the deadline protects the
   # client, not the process table.
-  defp windows_text_editor, do: lookup(&registered_text_editor/0, nil)
+  #
+  # `available/0` runs on every server config build (and so on unrelated requests such
+  # as the auth session), and each lookup spawns up to three `reg.exe` processes, so the
+  # answer, nil included, is kept for `:windows_editor_cache_ms` (a minute by default;
+  # tests set 0). An association changed in the meantime shows up within that minute.
+  defp windows_text_editor do
+    ttl = Application.get_env(:hal_c2, :windows_editor_cache_ms, 60_000)
+    now = System.monotonic_time(:millisecond)
+
+    case ttl > 0 && :persistent_term.get({__MODULE__, :windows_editor}, nil) do
+      {expires, editor} when expires > now ->
+        editor
+
+      _ ->
+        editor = lookup(&registered_text_editor/0, nil)
+        if ttl > 0, do: :persistent_term.put({__MODULE__, :windows_editor}, {now + ttl, editor})
+        editor
+    end
+  end
 
   # Runs `fun` in a task for at most 2 s: a lookup that hangs, raises (a program path that
   # is not valid UTF-8, a vanished executable) or exits counts as `default`, and never
@@ -293,10 +311,11 @@ defmodule HalC2.Editors do
   # An unquoted program path with spaces splits to its first word (`C:\Program`),
   # and on Windows `find_executable` would try PATHEXT extensions on it, so a
   # planted `C:\Program.exe` would be offered and run (#409). An extensionless
-  # Windows absolute program word therefore counts as no editor, on every host.
+  # program word that names a Windows place (a drive, rooted or not: `C:\`, `C:/`,
+  # `C:Program`; a root: `\Program`; or a UNC share) therefore counts as no editor, on
+  # every host. A bare name such as `notepad` is looked up on PATH.
   defp extensionless_windows_path?(program) do
-    (String.match?(program, ~r/\A[A-Za-z]:[\\\/]/) or String.starts_with?(program, "\\\\")) and
-      Path.extname(program) == ""
+    String.match?(program, ~r/\A([A-Za-z]:|\\)/) and Path.extname(program) == ""
   end
 
   # The `{type, data}` of the value `reg query` prints for `args`, or nil. `reg` writes
