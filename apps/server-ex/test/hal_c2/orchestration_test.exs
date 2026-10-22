@@ -1157,7 +1157,9 @@ defmodule HalC2.OrchestrationTest do
           })
         end)
 
-      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+      # Killed only once Codex holds the steer: earlier, the steer could find no
+      # turn to steer instead of a runtime stopping under it.
+      :ok = await_held_steer(gates)
       [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
       Process.exit(runtime, :kill)
 
@@ -1211,7 +1213,7 @@ defmodule HalC2.OrchestrationTest do
           })
         end)
 
-      :ok = await_turn_item(thread_id, "turn-item:user:m3")
+      :ok = await_held_steer(gates)
       [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
       Process.exit(runtime, :kill)
 
@@ -3041,6 +3043,17 @@ defmodule HalC2.OrchestrationTest do
     )
 
     gates
+  end
+
+  # The fake Codex's receipt that a "hold ..." steer reached it and waits on the
+  # gate file "steer". The fake is another OS process, so its file is the receipt.
+  defp await_held_steer(gates) do
+    held = Path.join(gates, "steer.held")
+
+    {_, 0} =
+      System.cmd("timeout", ["5", "sh", "-c", "until [ -e '#{held}' ]; do sleep 0.01; done"])
+
+    :ok
   end
 
   # A stand-in in the Codex registry that refuses a steer with a reason that is

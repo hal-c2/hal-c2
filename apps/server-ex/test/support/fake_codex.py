@@ -10,7 +10,7 @@
 # names exists, turn/steer is refused, and while FAKE_CODEX_HOLD_STEER's exists it waits. "stream ..." turns pace themselves by gate files
 # in FAKE_CODEX_GATE (see stream_reply); "answer from gate" waits for the gate file
 # "answer" and replies with its contents, or with no message when it is empty; a steer
-# with "hold ..." waits for the gate file "steer" before it answers.
+# with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
 import glob, json, os, re, sys, time, uuid
 
 # With FAKE_CODEX_TRACE set, every message read is appended to it as a JSON line.
@@ -409,7 +409,9 @@ for line in sys.stdin:
             send({"id": mid, "error": {"code": -32600, "message": "turn moved on"}})
             continue
         if params["input"][0]["text"].startswith("hold "):
-            # The test lets the steer's answer go with the gate file "steer".
+            # The test lets the steer's answer go with the gate file "steer";
+            # "steer.held" is its receipt that the steer got here.
+            open(os.path.join(os.environ["FAKE_CODEX_GATE"], "steer.held"), "w").close()
             gate("steer")
         if closing:
             # The turn took the steer and ended before its answer got back.
