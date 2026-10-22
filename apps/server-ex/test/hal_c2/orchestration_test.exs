@@ -1162,7 +1162,7 @@ defmodule HalC2.OrchestrationTest do
       Process.exit(runtime, :kill)
 
       assert {:error, reason} = Task.await(first)
-      assert reason =~ "its runtime stopped"
+      assert reason =~ "its session stopped"
       state = current(thread_id)
       refute StreamState.get(state, "message")["m2"]
       refute StreamState.get(state, "turn-item")["turn-item:user:m2"]

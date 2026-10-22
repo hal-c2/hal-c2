@@ -2083,7 +2083,7 @@ defmodule HalC2.Orchestration do
       {:error, "its runtime did not answer in time"}
 
     :exit, _ ->
-      {:error, "its runtime stopped"}
+      {:error, "its session stopped"}
 
     kind, reason ->
       require Logger
