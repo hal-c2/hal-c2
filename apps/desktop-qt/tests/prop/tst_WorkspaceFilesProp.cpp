@@ -2,7 +2,9 @@
 // search and read and answers them in any order, as the MC (which runs each
 // RPC on its own) may. Meanwhile the user switches workspace, shows and hides
 // the tab, opens and closes folders and files, searches, retries, and the
-// agent changes the files and the tree is listed again.
+// agent changes the files and the tree is listed again. A media file is never
+// read: it previews from an address the MC signs, which may run out, fail to
+// load, and be signed again.
 //
 // The model is what the user should see: each folder's listing from the
 // newest request for it that was answered (an older answer landing later is
@@ -14,6 +16,7 @@
 #include "Prop.h"
 #include "WorkspaceModels.h"
 
+#include <QDateTime>
 #include <QJsonArray>
 
 #include <memory>
@@ -38,12 +41,15 @@ QString parentOf(const QString& path) {
 }
 
 // A workspace's disk at a version: `d/e` deep, a file in each folder, the
-// top's and the deepest's named after the version so a stale listing shows.
+// top's and the deepest's named after the version so a stale listing shows,
+// and an image and a video.
 QList<Entry> listingOf(const QString& root, int version, const QString& folder) {
   const QString tag = root.mid(1);
   const QString v = QString::number(version);
-  if (folder.isEmpty()) return {{QStringLiteral("d"), true, false}, {tag + QLatin1Char('-') + v + QStringLiteral(".txt"), false, false}};
-  if (folder == QLatin1String("d")) return {{QStringLiteral("d/e"), true, false}, {QStringLiteral("d/") + tag + QStringLiteral(".md"), false, false}};
+  if (folder.isEmpty())
+    return {{QStringLiteral("d"), true, false}, {QStringLiteral("logo.png"), false, false}, {tag + QLatin1Char('-') + v + QStringLiteral(".txt"), false, false}};
+  if (folder == QLatin1String("d"))
+    return {{QStringLiteral("d/e"), true, false}, {QStringLiteral("d/clip.mp4"), false, false}, {QStringLiteral("d/") + tag + QStringLiteral(".md"), false, false}};
   return {{QStringLiteral("d/e/") + tag + QLatin1Char('-') + v + QStringLiteral(".txt"), false, false}};
 }
 
@@ -69,6 +75,13 @@ QString contentsOf(const QString& root, int version, const QString& path) {
   return root + QLatin1Char(':') + path + QLatin1Char('@') + QString::number(version);
 }
 
+bool isMedia(const QString& path) { return path.endsWith(QLatin1String(".png")) || path.endsWith(QLatin1String(".mp4")); }
+
+// The address the MC signs `count`-th, for `path`.
+QString addressOf(int count, const QString& path) {
+  return QStringLiteral("/api/assets/%1/%2").arg(count).arg(path.section(QLatin1Char('/'), -1));
+}
+
 QJsonArray toJson(const QList<Entry>& entries) {
   QJsonArray array;
   for (const Entry& entry : entries) {
@@ -82,7 +95,7 @@ enum class State { Unloaded, Loading, Loaded, Failed };
 
 // One request the MC holds: what it is for, and its answer as the disk was.
 struct Request {
-  QString kind;  // list, search or read
+  QString kind;  // list, search, read or sign
   QString key;   // the folder, the query or the file
   QString root;
   int seq = 0;
@@ -115,6 +128,14 @@ struct Model {
   QString openPath;
   QString fileStatus = QStringLiteral("none");
   QString text;
+  // A media file's address, and whether it still works.
+  QString mediaUrl;
+  bool fresh = false;
+  // How many addresses the MC has signed.
+  int signedCount = 0;
+  // The signing "Open in browser" waits for, and the addresses the browser got.
+  int openOnSign = -1;
+  QStringList opened;
 
   QList<Request> pending;
   int seq = 0;
@@ -134,7 +155,7 @@ struct Model {
       for (const QString& match : matchesOf(root, version(), key)) request.entries.append({match, false, false});
       latestSearch = request.seq;
     } else {
-      request.contents = contentsOf(root, version(), key);
+      if (kind == QLatin1String("read")) request.contents = contentsOf(root, version(), key);
       latestRead = request.seq;
     }
     pending.append(request);
@@ -193,7 +214,30 @@ struct Model {
     openPath.clear();
     fileStatus = QStringLiteral("none");
     text.clear();
+    mediaUrl.clear();
     latestRead = -1;
+  }
+
+  // WorkspaceFiles::openMedia: the browser gets the address shown while it
+  // works, else the next one signed for this open.
+  void openMedia() {
+    if (!isMedia(openPath)) return;
+    if (fileStatus == QLatin1String("ready") && !expired()) {
+      opened.append(mediaUrl);
+      return;
+    }
+    reload();
+    openOnSign = latestRead;
+  }
+
+  // A media file shown with an address that no longer works.
+  bool expired() const { return isMedia(openPath) && (mediaUrl.isEmpty() || !fresh); }
+
+  // WorkspaceFiles::reloadFile: a media file is signed for, any other read.
+  void reload() {
+    fileStatus = QStringLiteral("loading");
+    mediaUrl.clear();
+    ask(isMedia(openPath) ? QStringLiteral("sign") : QStringLiteral("read"), openPath);
   }
 
   void setTarget(const QString& next) {
@@ -215,14 +259,14 @@ struct Model {
   void setActive(bool next) {
     active = next;
     if (active && !root.isEmpty() && tree.value(QString()).state == State::Unloaded) reloadTree();
+    if (active && fileStatus == QLatin1String("ready") && expired()) reload();
   }
 
   void open(const QString& path) {
     if (root.isEmpty()) return;
-    if (path != openPath || fileStatus != QLatin1String("ready")) {
+    if (path != openPath || fileStatus != QLatin1String("ready") || expired()) {
       openPath = path;
-      fileStatus = QStringLiteral("loading");
-      ask(QStringLiteral("read"), path);
+      reload();
     }
     setQuery({});
     revealing = path;
@@ -234,12 +278,14 @@ struct Model {
   }
 
   // The MC answers the request, the `rank`-th like it (oldest first).
-  void answer(const Request& like, int rank, bool ok) {
+  void answer(const Request& like, int rank, bool ok, bool lasting) {
     qsizetype at = 0;
     for (int seen = rank; at < pending.size(); ++at) {
       if (pending.at(at) == like && seen-- == 0) break;
     }
     const Request request = pending.takeAt(at);
+    const bool sign = request.kind == QLatin1String("sign");
+    if (sign && ok) ++signedCount;
     if (request.root != root) return;
     if (request.kind == QLatin1String("list")) {
       if (latestList.value(request.key) != request.seq) return;
@@ -259,6 +305,11 @@ struct Model {
       if (latestRead != request.seq) return;
       fileStatus = ok ? QStringLiteral("ready") : QStringLiteral("error");
       text = ok ? request.contents : QString();
+      if (sign && ok) {
+        mediaUrl = addressOf(signedCount, request.key);
+        fresh = lasting;
+        if (std::exchange(openOnSign, -1) == request.seq) opened.append(mediaUrl);
+      }
     }
   }
 
@@ -345,19 +396,25 @@ struct Sut {
   QObject barrier;
   QHash<QString, int> versions;
   QList<Held> held;
+  int signedCount = 0;
+  // The addresses handed to the browser.
+  QStringList opened;
 
   Sut() {
     const auto hold = [this](const QString& kind, const QString& keyField) {
       return [this, kind, keyField](const FakeMc::Rpc& rpc) {
-        const QString root = rpc.payload.value(QLatin1String("cwd")).toString();
-        const QString key = rpc.payload.value(keyField).toString();
+        // A signing names the workspace by its folder, or by its thread (/w1's is w1).
+        const QJsonObject of = kind == QLatin1String("sign") ? rpc.payload.value(QLatin1String("resource")).toObject() : rpc.payload;
+        const QString thread = of.value(QLatin1String("threadId")).toString();
+        const QString root = thread.isEmpty() ? of.value(QLatin1String("cwd")).toString() : QLatin1Char('/') + thread;
+        const QString key = of.value(keyField).toString();
         const int version = versions.value(root);
         Request request{kind, key, root, 0, {}, {}};
         if (kind == QLatin1String("list")) {
           request.entries = listingOf(root, version, key);
         } else if (kind == QLatin1String("search")) {
           for (const QString& match : matchesOf(root, version, key)) request.entries.append({match, false, false});
-        } else {
+        } else if (kind == QLatin1String("read")) {
           request.contents = contentsOf(root, version, key);
         }
         held.append({request, rpc});
@@ -366,11 +423,13 @@ struct Sut {
     mc.onRpc(QStringLiteral("projects.listEntries"), hold(QStringLiteral("list"), QStringLiteral("directoryPath")));
     mc.onRpc(QStringLiteral("projects.searchEntries"), hold(QStringLiteral("search"), QStringLiteral("query")));
     mc.onRpc(QStringLiteral("projects.readFile"), hold(QStringLiteral("read"), QStringLiteral("relativePath")));
+    mc.onRpc(QStringLiteral("assets.createUrl"), hold(QStringLiteral("sign"), QStringLiteral("path")));
     client.setRetryDelays({20});
     client.open(mc.origin(), QStringLiteral("token"));
     halc2::prop::until([this] { return client.isReady(); });
     files = std::make_unique<WorkspaceFiles>(&client);
     files->setSearchDelay(0);
+    QObject::connect(files.get(), &WorkspaceFiles::mediaOpened, [this](const QUrl& url) { opened.append(url.path()); });
     files->setTarget(QStringLiteral("env-a"), QString());
     mirror = std::make_unique<halc2::prop::ModelMirror>(files->tree());
   }
@@ -389,12 +448,17 @@ struct Sut {
     return halc2::prop::until([&] { return *answered; });
   }
 
-  void answer(const Request& request, int rank, bool ok) {
+  void answer(const Request& request, int rank, bool ok, bool lasting) {
     for (qsizetype i = 0; i < held.size(); ++i) {
       if (!(held.at(i).request == request) || rank-- > 0) continue;
       const Held answered = held.takeAt(i);
       if (!ok) {
         mc.refuse(answered.rpc, QStringLiteral("no"));
+      } else if (request.kind == QLatin1String("sign")) {
+        // An hour, or less than the minute the client keeps in hand.
+        const qint64 expires = QDateTime::currentMSecsSinceEpoch() + (lasting ? 3600'000 : 30'000);
+        mc.reply(answered.rpc, QJsonObject{{QStringLiteral("relativeUrl"), addressOf(++signedCount, request.key)},
+                                           {QStringLiteral("expiresAt"), double(expires)}});
       } else if (request.kind == QLatin1String("read")) {
         mc.reply(answered.rpc, QJsonObject{{QStringLiteral("contents"), answered.request.contents}});
       } else {
@@ -447,6 +511,9 @@ void check(const Model& expected, Sut& sut) {
   RC_ASSERT(files.openPath() == expected.openPath);
   RC_ASSERT(files.fileStatus() == expected.fileStatus);
   if (expected.fileStatus != QLatin1String("loading")) RC_ASSERT(files.text() == expected.text);
+  RC_ASSERT(files.mediaUrl().path() == expected.mediaUrl);
+  if (!expected.mediaUrl.isEmpty()) RC_ASSERT(files.mediaUrl() == sut.client.origin().resolved(QUrl(expected.mediaUrl)));
+  RC_ASSERT(sut.opened == expected.opened);
   const QStringList problems = sut.mirror->problems();
   RC_ASSERT(problems == QStringList());
 }
@@ -463,12 +530,14 @@ struct Step : Command {
   }
 };
 
+// A workspace, a thread's or a draft's.
 struct SetTarget : Step<SetTarget> {
   QString root = *oneOf(kRoots);
+  bool thread = *rc::gen::arbitrary<bool>();
   explicit SetTarget(const Model&) {}
   void apply(Model& model) const override { model.setTarget(root); }
-  void act(const Model&, Sut& sut) const { sut.files->setTarget(QStringLiteral("env-a"), root); }
-  void show(std::ostream& os) const override { os << "workspace '" << root.toStdString() << "'"; }
+  void act(const Model&, Sut& sut) const { sut.files->setTarget(QStringLiteral("env-a"), root, thread ? root.mid(1) : QString()); }
+  void show(std::ostream& os) const override { os << "workspace '" << root.toStdString() << (thread ? "' of its thread" : "'"); }
 };
 
 struct SetActive : Step<SetActive> {
@@ -508,6 +577,8 @@ struct Answer : Step<Answer> {
   Request request;
   int rank = 0;
   bool ok = *rc::gen::weightedElement<bool>({{4, true}, {1, false}});
+  // A signed address good for an hour, or one that has all but run out.
+  bool lasting = *rc::gen::arbitrary<bool>();
   explicit Answer(const Model& model) {
     RC_PRE(!model.pending.isEmpty());
     const int index = *rc::gen::inRange<int>(0, int(model.pending.size()));
@@ -517,11 +588,11 @@ struct Answer : Step<Answer> {
   void checkPreconditions(const Model& model) const override {
     RC_PRE(std::count(model.pending.begin(), model.pending.end(), request) > rank);
   }
-  void apply(Model& model) const override { model.answer(request, rank, ok); }
-  void act(const Model&, Sut& sut) const { sut.answer(request, rank, ok); }
+  void apply(Model& model) const override { model.answer(request, rank, ok, lasting); }
+  void act(const Model&, Sut& sut) const { sut.answer(request, rank, ok, lasting); }
   void show(std::ostream& os) const override {
     os << (ok ? "answer " : "refuse ") << request.kind.toStdString() << " '" << request.key.toStdString() << "' of '"
-       << request.root.toStdString() << "' #" << rank;
+       << request.root.toStdString() << "' #" << rank << (request.kind == QLatin1String("sign") && ok && !lasting ? " (running out)" : "");
   }
 };
 
@@ -591,6 +662,41 @@ struct Open : Step<Open> {
   void show(std::ostream& os) const override { os << "open " << path.toStdString(); }
 };
 
+// The preview could not load an address: the one shown, or one it showed
+// before.
+struct MediaFailed : Step<MediaFailed> {
+  bool shown = *rc::gen::arbitrary<bool>();
+  explicit MediaFailed(const Model& model) { RC_PRE(!model.mediaUrl.isEmpty()); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.mediaUrl.isEmpty()); }
+  void apply(Model& model) const override {
+    if (!shown) return;
+    model.mediaUrl.clear();
+    model.fileStatus = QStringLiteral("error");
+  }
+  void act(const Model& before, Sut& sut) const {
+    sut.files->mediaFailed(shown ? sut.files->mediaUrl() : sut.client.origin().resolved(QUrl(before.mediaUrl + QStringLiteral("-old"))));
+  }
+  void show(std::ostream& os) const override { os << (shown ? "the preview fails to load" : "an older preview fails to load"); }
+};
+
+// "Open in browser" on a video.
+struct OpenMedia : Step<OpenMedia> {
+  explicit OpenMedia(const Model& model) { RC_PRE(isMedia(model.openPath)); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(isMedia(model.openPath)); }
+  void apply(Model& model) const override { model.openMedia(); }
+  void act(const Model&, Sut& sut) const { sut.files->openMedia(); }
+  void show(std::ostream& os) const override { os << "open the media in the browser"; }
+};
+
+// The file's "Try again".
+struct ReloadFile : Step<ReloadFile> {
+  explicit ReloadFile(const Model& model) { RC_PRE(!model.openPath.isEmpty()); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.openPath.isEmpty()); }
+  void apply(Model& model) const override { model.reload(); }
+  void act(const Model&, Sut& sut) const { sut.files->reloadFile(); }
+  void show(std::ostream& os) const override { os << "reload the file"; }
+};
+
 struct Close : Step<Close> {
   explicit Close(const Model&) {}
   void apply(Model& model) const override { model.close(); }
@@ -610,7 +716,7 @@ private slots:
       RC_ASSERT(sut.client.isReady());
       rc::state::check(Model(), sut,
                        rc::state::gen::execOneOfWithArgs<SetTarget, SetActive, Toggle, Toggle, Answer, Answer, Answer, Answer, Change,
-                                                         Retry, Query, Open, Open, Close>());
+                                                         Retry, Query, Open, Open, Close, MediaFailed, ReloadFile, OpenMedia>());
     }));
   }
 };

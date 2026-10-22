@@ -261,7 +261,7 @@ const Steps steps([] {
     const QVariantMap github = listed(world, QStringLiteral("github"));
     const QString summary = github.value(QStringLiteral("summary")).toString();
     expect(github.value(QStringLiteral("authLabel")) == c[0] && github.value(QStringLiteral("authWarning")).toBool() &&
-               summary.contains(QLatin1String("Sign in")) && summary.contains(QLatin1String("gh")),
+               summary.contains(QLatin1String("Sign in")) && summary.contains(QLatin1String("`gh`")),
            QStringLiteral("GitHub to read %1 with how to sign in; it is %2").arg(c[0], show(github)));
   });
   step(QStringLiteral("the GitLab CLI is not installed"), [](World& world, const Captures&, const Table&) {

@@ -178,6 +178,22 @@ defmodule HalC2.Steps.Plugins.HostIssues do
     change(context, repository, number, "update", %{"number" => number, "labels" => [label]})
   end
 
+  step "it adds {string} to its assignees on \#{int} of {string}",
+       %{args: [login, number, repository]} = context do
+    change(context, repository, number, "addAssignees", %{
+      "number" => number,
+      "assignees" => [login]
+    })
+  end
+
+  step "it takes {string} off its assignees on \#{int} of {string}",
+       %{args: [login, number, repository]} = context do
+    change(context, repository, number, "removeAssignees", %{
+      "number" => number,
+      "assignees" => [login]
+    })
+  end
+
   step "it adds \#{int} as a sub-issue on \#{int} of {string}",
        %{args: [sub, number, repository]} = context do
     change(context, repository, number, "addSubIssue", %{
@@ -240,6 +256,28 @@ defmodule HalC2.Steps.Plugins.HostIssues do
   step "GitHub is asked to set the labels of \#{int} to {string}",
        %{args: [number, label]} = context do
     GitHubIssues.assert_patched(context, number, %{"labels" => [label]})
+  end
+
+  step "GitHub is asked to add {string} to the assignees of \#{int}",
+       %{args: [login, number]} = context do
+    assert %{"assignees" => [login]} in GitHubIssues.rest_calls(
+             context,
+             "POST",
+             "/issues/#{number}/assignees"
+           )
+
+    context
+  end
+
+  step "GitHub is asked to take {string} off the assignees of \#{int}",
+       %{args: [login, number]} = context do
+    assert %{"assignees" => [login]} in GitHubIssues.rest_calls(
+             context,
+             "DELETE",
+             "/issues/#{number}/assignees"
+           )
+
+    context
   end
 
   step "GitHub is asked to add \#{int} as a sub-issue of \#{int}",

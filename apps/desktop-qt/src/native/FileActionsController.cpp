@@ -65,7 +65,7 @@ bool FileActionsController::handle(const QString& action, const QVariant& payloa
     const bool reveal = action == QLatin1String("files.reveal");
     QString target = absolute(path);
     // An MC that cannot select a file shows the folder it is in.
-    const bool selects = workspace->environmentConfig().value(QLatin1String("shellRevealInFileManager")).toBool();
+    const bool selects = workspace->localConfig().value(QLatin1String("shellRevealInFileManager")).toBool();
     if (reveal && !selects) target = target.left(target.lastIndexOf(QLatin1Char('/')));
     const bool opened = !target.isEmpty() && (reveal && !selects ? workspace->openInEditor(QStringLiteral("file-manager"), target)
                                                                  : workspace->openInEditor(map.value(QStringLiteral("editorId")).toString(), target, reveal));

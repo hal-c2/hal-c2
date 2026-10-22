@@ -21,6 +21,7 @@
 #include "PluginController.h"
 #include "ThreadMenuController.h"
 #include "RightPanelController.h"
+#include "ThisMachine.h"
 #include "ThreadStore.h"
 #include "ToastController.h"
 #include "UsageController.h"
@@ -28,11 +29,15 @@
 World::World() {
   m_now = QDateTime::fromString(QStringLiteral("2026-09-23T10:00:00Z"), Qt::ISODate);
   QDir(m_home.path()).mkpath(QStringLiteral("config"));
+  // The machine the scenarios run on, whatever runs them; the fake MC has
+  // no id unless a scenario gives it one (kThisMachine for this one).
+  thisMachine::setIdForTesting(kThisMachine);
   start();
 }
 
 World::~World() {
   brick.reset();
+  thisMachine::setIdForTesting(std::nullopt);
 }
 
 // As main.cpp wires them.
@@ -166,6 +171,12 @@ void World::waitFor(const std::function<bool()>& condition, const std::function<
 
 void World::waitFor(const std::function<bool()>& condition, const QString& what) {
   waitFor(condition, [what] { return what; });
+}
+
+void World::servedFrom(const QString& machine) {
+  mc.platform = {{QStringLiteral("machineId"), machine}};
+  mc.announceEnvironment();
+  sync();
 }
 
 void World::sync() {

@@ -104,6 +104,14 @@ defmodule HalC2.Steps.Common do
 
   # --- shared outcomes -----------------------------------------------------------------
 
+  # Said of an agent's file request (providers/antigravity.feature) and of a
+  # client's preview forward (preview/remote.feature); each checks its own.
+  step "the request is refused", context do
+    if Map.has_key?(context, :forward_reply),
+      do: HalC2.Steps.Preview.Forward.refused(context),
+      else: HalC2.Steps.Providers.Antigravity.refused(context)
+  end
+
   step "the request is refused with {string}", %{args: [message]} = context do
     assert {:error, error, _detail} = context.reply,
            "expected a refusal, got #{inspect(context.reply)}"

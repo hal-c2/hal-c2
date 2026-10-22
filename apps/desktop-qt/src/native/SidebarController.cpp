@@ -12,6 +12,7 @@
 #include "ShellBridge.h"
 #include "SettingsController.h"
 #include "ShellStore.h"
+#include "ThisMachine.h"
 #include "ToastController.h"
 
 namespace {
@@ -91,6 +92,7 @@ void SidebarController::refresh() {
   sidebar::Input input;
   input.projects = m_groups;
   if (!ownEnvironment.isEmpty()) input.localEnvironmentId = ownEnvironment;
+  input.localFolders = !ownEnvironment.isEmpty() && thisMachine::hosts(*m_store, *m_client, ownEnvironment);
   for (const QString& environment : m_store->environments()) {
     if (!m_store->environmentOnline(environment)) input.offlineEnvironments.insert(environment);
   }

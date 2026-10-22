@@ -10,6 +10,7 @@
 #   apps/server-ex/lib/hal_c2/desktop.ex (HAL_C2_BOOTSTRAP_STDIN), acp.ex (HAL_C2_NODE_COMMAND)
 #   apps/server-ex/lib/hal_c2/web.ex (access-token), environment.ex (environment-id, HAL_C2_LABEL, descriptor)
 #   apps/server-ex/lib/hal_c2/runtime_record.ex (server-runtime.json)
+#   apps/server-ex/lib/hal_c2/home_lock.ex, application.ex (one MC per home; exit 73)
 #   apps/server/src/serverRuntimeState.ts (the record's fields, as the Node server writes them)
 #   apps/server/src/auth/ServerSecretStore.ts (owner-only secrets, reuse, failures propagate)
 #   apps/server/src/os-jank.ts, apps/server/src/pathExpansion.ts (PATH and HOME hydration, ~ expansion)
@@ -321,6 +322,28 @@ Feature: Starting the MC
     Given the MC is running under the service wrapper
     When the service manager stops the wrapper
     Then the MC is told to stop and the wrapper waits for it
+
+  # Two MCs on one home share its database and its cluster name: a member's connection
+  # flips between them and each undoes the other's work. The desktop app can start its
+  # MC at login before the background service's MC has said where it listens.
+  @mc
+  Scenario: A second MC on the same files stops before it opens them
+    Given an MC holds its HAL-C2 home
+    When another MC starts on that home
+    Then it is refused the home
+
+  @mc
+  Scenario: The background service waits for the MC that holds its files
+    Given an MC holds its HAL-C2 home
+    When the background service starts an MC on that home
+    Then the service's MC waits without opening the files
+    And it takes the home once the other MC stops
+
+  @mc
+  Scenario: An MC that was killed leaves its home free
+    Given an MC held its HAL-C2 home and was killed
+    When another MC starts on that home
+    Then it takes the home
 
   @mc
   Scenario: A user installs the MC as a background service with one command

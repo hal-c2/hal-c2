@@ -254,7 +254,9 @@ defmodule HalC2.Plugins.Extension do
     * `call(method, input, context)`: answers its UI parts (`plugins.call`) with
       `{:ok, json}` or `{:error, message}`.
     * `handle_event(event, context)`: a turn finished in a thread the plugin started,
-      `%{"type" => "turn.finished", "threadId", "status", "plugin" => mark}`; with
+      `%{"type" => "turn.finished", "threadId", "status", "plugin" => mark}`, plus
+      `"errorClass"`, `"error"` and `"resetAt"` when the turn failed (a usage limit
+      has class `"usage_limit"` and the time it resets); with
       `slack:read`, what happens in the MC's Slack (`HalC2.Slack.Bot`):
       `%{"type" => "slack.mention", "channel", "user", "userName", "text", "ts",
       "threadTs"}`, `slack.reply` (the same, in the thread of a message the bot posted,

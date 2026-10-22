@@ -35,6 +35,15 @@ fs.writeFileSync(path.join(dir, "record.json"), JSON.stringify({
   environment: Object.values(process.env),
   bootstrap,
 }));
+// Another MC took the files while this one booted: it says where it runs, and this one
+// stops the way an MC refused its home does.
+if (process.env.FAKE_MC_HELD_BY) {
+  const held = JSON.parse(process.env.FAKE_MC_HELD_BY);
+  fs.writeFileSync(path.join(held.data, "access-token"), held.token + "\n");
+  fs.writeFileSync(path.join(held.state, "server-runtime.json"), JSON.stringify({ origin: held.origin, pid: process.ppid, port: Number(new URL(held.origin).port) }));
+  process.stderr.write("Another MC is already running on " + held.data + ".\n");
+  process.exit(73);
+}
 if (process.env.FAKE_MC_FAIL) {
   process.stderr.write("fake MC: boom\n");
   process.exit(Number(process.env.FAKE_MC_FAIL));
@@ -468,6 +477,35 @@ describe.skipIf(NodeOS.platform() === "win32")("The desktop app runs its own MC"
 
       expect(await ready(host)).toEqual({ origin: mc.origin, token: "service-mc-token" });
       expect(readRecord(release)).toBeUndefined();
+      await host.quit();
+    });
+
+    it("An MC that takes the desktop's files while the desktop's own MC starts is used instead", async () => {
+      const mc = await runningMc();
+      const data = temporaryDirectory();
+      const state = temporaryDirectory();
+      const dirs = {
+        data: NodePath.join(data, "hal-c2", "elixir"),
+        state: NodePath.join(state, "hal-c2", "elixir"),
+      };
+      NodeFS.mkdirSync(dirs.data, { recursive: true });
+      NodeFS.mkdirSync(dirs.state, { recursive: true });
+      const release = fakeRelease();
+      const host = startHost({
+        env: {
+          HAL_C2_MC_RELEASE: release,
+          XDG_DATA_HOME: data,
+          XDG_STATE_HOME: state,
+          FAKE_MC_HELD_BY: JSON.stringify({
+            ...dirs,
+            origin: mc.origin,
+            token: "service-mc-token",
+          }),
+        },
+      });
+
+      expect(await ready(host)).toEqual({ origin: mc.origin, token: "service-mc-token" });
+      expect(readRecord(release)).toBeDefined();
       await host.quit();
     });
 

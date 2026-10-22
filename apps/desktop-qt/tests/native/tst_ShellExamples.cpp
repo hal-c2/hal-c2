@@ -175,6 +175,34 @@ private slots:
     bridge.publish("usage", QVariant());
   }
 
+  // A page an MC plugin adds brings the tab strip, and its tab takes the place of
+  // the thread; back on Threads, and with the page gone, the shell is as it was.
+  void pluginPagesHaveTabs(QQuickWindow* window) {
+    auto* content = window->contentItem();
+    auto* centre = findVisualItemOfType(content, "CentreHost");
+    QVERIFY(centre);
+    QTRY_VERIFY(centre->isVisible());
+    const QString key = QStringLiteral("code-review/reviews@1");
+    bridge.publish("mcPlugins", QVariantMap{{"pages", QVariantList{QVariantMap{
+                                                {"key", key}, {"pluginId", "code-review"}, {"pageId", "reviews"},
+                                                {"title", "Reviews"}, {"icon", ""}, {"url", ""}, {"error", ""},
+                                                {"environments", QStringList{"local"}}}}}});
+    QTRY_VERIFY(findVisualItem(content, "tab:" + key) && findVisualItem(content, "tab:" + key)->isVisible());
+    QVERIFY(findVisualItem(content, "tab:threads")->isVisible());
+    auto* pages = findVisualItemOfType(content, "PluginPages");
+    QVERIFY(pages);
+    QVERIFY(!pages->isVisible());
+    bridge.publish("route", QVariantMap{{"tab", key}});
+    QTRY_VERIFY(pages->isVisible());
+    QTRY_VERIFY(!centre->isVisible());
+    QTRY_VERIFY(pages->width() > 0 && pages->height() > 0);
+    bridge.publish("route", QVariant());
+    QTRY_VERIFY(!pages->isVisible());
+    QTRY_VERIFY(centre->isVisible());
+    bridge.publish("mcPlugins", QVariant());
+    QTRY_VERIFY(!findVisualItem(content, "tab:threads") || !findVisualItem(content, "tab:threads")->isVisible());
+  }
+
   void layoutsFit_data() {
     QTest::addColumn<QString>("example");
     QTest::addColumn<int>("width");
@@ -215,6 +243,8 @@ private slots:
     if (width == 1400) QTRY_VERIFY(!title->property("truncated").toBool());
     QTRY_VERIFY(title->mapToScene(QPointF(title->width(), 0)).x() <= window->width());
     usageRouteDrawsTheChart(window);
+    if (QTest::currentTestFailed()) return;
+    pluginPagesHaveTabs(window);
     if (QTest::currentTestFailed()) return;
     if (width == 1000) threadRoutesDrawTheCentre(window);
 

@@ -23,6 +23,7 @@
 #include "TerminalController.h"
 #include "ThreadMenuController.h"
 #include "ToastController.h"
+#include "WorkspaceController.h"
 
 namespace {
 
@@ -202,14 +203,13 @@ void KeybindingController::openFile() {
     return;
   }
   settings->writeDevice(QStringLiteral("lastEditor"), editor);
-  m_client->call(this, m_client->environment(), QStringLiteral("shell.openInEditor"),
-                 QJsonObject{{QStringLiteral("cwd"), m_filePath}, {QStringLiteral("editor"), editor}},
-                 [toasts](const QJsonValue&, const std::optional<QString>& error) {
-                   if (error) {
-                     toasts->error(tr("Unable to open keybindings file"),
-                                   error->isEmpty() ? tr("The keybindings file was not opened.") : *error);
-                   }
-                 });
+  shell->controller<WorkspaceController>()->openHere(
+      m_client->environment(), m_filePath, editor, false, {}, [toasts](const std::optional<QString>& error) {
+        if (error) {
+          toasts->error(tr("Unable to open keybindings file"),
+                        error->isEmpty() ? tr("The keybindings file was not opened.") : *error);
+        }
+      });
 }
 
 // The commands the shell has natively. A command no one registers (the

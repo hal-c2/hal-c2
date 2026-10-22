@@ -160,7 +160,7 @@ defmodule HalC2.Orchestration.Fork do
     state
     |> StreamState.list("run")
     |> Enum.filter(&(&1["status"] == "completed"))
-    |> Enum.max_by(& &1["ordinal"], fn -> nil end)
+    |> Enum.max_by(&(&1["ordinal"] || 0), fn -> nil end)
     |> found()
   end
 
@@ -223,6 +223,10 @@ defmodule HalC2.Orchestration.Fork do
   # order, as the target's own. A run the provider finished but the source has not
   # settled is finished history in the copy: left "waiting" it would hold the fork's
   # first message in the queue behind a run nothing there will ever settle.
+  # Selecting by ordinal is start order, so a held queued run a newer run passed
+  # (renumbered above the fork point when the passer started) is not copied,
+  # message and all: queued messages stay in the source, as the fork ledger's
+  # queued-message scenario already states for ones queued after the fork point.
   defp history(state, ordinal, target_id, at) do
     runs =
       for run <- StreamState.list(state, "run"),

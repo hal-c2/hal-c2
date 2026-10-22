@@ -408,7 +408,7 @@ Item {
         // Scenario: Adding a project from the thread list (features/threads/sidebar-list.feature)
         function test_addProjectChoosesAFolder() {
             Shell.localFolderImportEnabled = true;
-            const next = Object.assign(JSON.parse(JSON.stringify(Shell.state.sidebar)), { localEnvironmentId: "env" });
+            const next = Object.assign(JSON.parse(JSON.stringify(Shell.state.sidebar)), { localEnvironmentId: "env", localFolders: true });
             Shell.state = {
                 sidebar: next
             };

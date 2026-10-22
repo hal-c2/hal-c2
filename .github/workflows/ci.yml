@@ -81,6 +81,12 @@ jobs:
       - name: Git identity for test repositories
         run: git config --global user.name CI && git config --global user.email ci@example.com
 
+      # The tests that mount another machine's folder skip without it (HalC2.MachineFiles).
+      - name: Build the machine-files helper
+        run: |
+          sudo apt-get update && sudo apt-get install -y fuse3
+          cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
+
       - name: Test
         run: mix test
 
@@ -101,7 +107,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        proof: [cluster, stream_relay, streams, thread_move, turns, rest]
+        proof: [cluster, preview_forward, stream_relay, streams, thread_move, turns, rest]
     env:
       MIX_ENV: proof
     defaults:
@@ -138,7 +144,7 @@ jobs:
       - name: Proofs
         run: |
           if [ "${{ matrix.proof }}" = rest ]; then
-            files=$(ls proof/hal_c2/*_proof_test.exs | grep -vE '/(cluster|stream_relay|streams|thread_move|turns)_proof_test\.exs$')
+            files=$(ls proof/hal_c2/*_proof_test.exs | grep -vE '/(cluster|preview_forward|stream_relay|streams|thread_move|turns)_proof_test\.exs$')
           else
             files=proof/hal_c2/${{ matrix.proof }}_proof_test.exs
           fi
@@ -234,6 +240,13 @@ jobs:
       - name: Install zsh
         if: matrix.dir == 'terminal'
         run: sudo apt-get update && sudo apt-get install -y zsh
+
+      # Files on another machine mount them with FUSE; they skip without the helper.
+      - name: Build the machine-files helper
+        if: matrix.dir == 'files'
+        run: |
+          sudo apt-get update && sudo apt-get install -y fuse3
+          cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
       - name: Scenarios
         env:

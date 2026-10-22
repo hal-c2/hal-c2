@@ -3,7 +3,7 @@
 #   packages/contracts/src/orchestrationV2.ts (message.dispatch dispatchMode and deliveryIntent,
 #     queued-run.cancel, queued-run.edit, queued-run.reorder, queued-message.promote-to-steer,
 #     queue.resume, run.updated, message.updated, turn-item.updated)
-#   apps/server-ex/lib/hal_c2/orchestration.ex (decide_message, queue_run, steer, restart_promoted)
+#   apps/server-ex/lib/hal_c2/orchestration.ex (decide_message, queue_run, steer, restart_promoted, session_call)
 #   apps/server/src/orchestration-v2/ (dispatch mode resolution)
 #   apps/server/src/orchestration-v2/Orchestrator.ts (dispatchSteerIntoRun; a steer for a
 #     completed run starts immediately)
@@ -132,6 +132,16 @@ Feature: Queueing, steering and restarting
     Then the send fails saying Codex did not take the message into its running turn
     And "Also" is neither queued nor added to the running turn
 
+  # The session stopped after the runtime was found, so the steer is refused
+  # as if no session had been found, instead of crashing the dispatch.
+  @mc
+  Scenario: A steer whose session stopped is refused while its turn runs
+    Given "t1" has a running turn on "codex"
+    And the session of "t1" stops as it is asked to steer
+    When the user tries to send "Also" to "t1" as a steer
+    Then the send fails saying its session stopped
+    And "Also" was not queued and the turn of "t1" is still running
+
   @mc
   Scenario: A steer sent twice at once reaches the provider once
     Given "t1" has a running turn on "codex"
@@ -158,7 +168,7 @@ Feature: Queueing, steering and restarting
       | claudeAgent |
 
   @mc
-  Scenario: Queued messages keep their own run ids and ordinals when they start
+  Scenario: A queued message keeps its own run id and takes the next ordinal when it starts
     Given "t1" has a running turn and a queued message "Next" with ordinal 3
     When the running turn completes
     Then the run for "Next" starts with ordinal 3
@@ -254,6 +264,17 @@ Feature: Queueing, steering and restarting
     Given "t1" has a held queued message "A"
     When another run of "t1" ends
     Then "A" is still queued
+
+  # Runs are numbered in the order they start: checkpoints, handoffs and windowed
+  # history count by it.
+  @mc
+  Scenario: A held queued message that a newer message passed starts after it
+    Given "t1" has a held queued message "A"
+    And another run of "t1" ends
+    When the user resumes the queue of "t1"
+    Then the run for "A" starts with ordinal 3
+    And the run for "Something else" has ordinal 2
+    And the thread's latest run is the run for "A"
 
   @mc @backlog
   Scenario: A queued delegated task result runs before the user's queued messages

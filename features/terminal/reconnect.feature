@@ -36,6 +36,15 @@ Feature: Reattaching to terminals
       Then both clients receive the date
 
     @mc
+    Scenario: Two pages of one client attached to one terminal each see its output
+      Given one client attached twice to the same terminal
+      When the terminal prints "for both pages"
+      Then both pages receive "for both pages"
+      When one page leaves
+      And the terminal prints "still here"
+      Then the other page receives "still here"
+
+    @mc
     Scenario: Attaching to an unknown terminal with a folder opens it
       Given the thread has no terminal "term-2"
       When a client attaches to "term-2" in "/work/app"
