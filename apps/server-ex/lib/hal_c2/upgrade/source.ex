@@ -337,7 +337,9 @@ defmodule HalC2.Upgrade.Source do
   # The source checked the archive just before, but a writer outside `HalC2.Upgrade` (or
   # a cleanup) may have taken its checksum since.
   defp unpack(version, platform) do
-    case File.read(archive_path(version, platform) <> ".sha256") do
+    checksum = archive_path(version, platform) <> ".sha256"
+
+    case File.read(checksum) do
       {:ok, sum} ->
         unpack(version, platform, String.trim(sum))
 
@@ -345,7 +347,8 @@ defmodule HalC2.Upgrade.Source do
         {:error,
          %{
            "_tag" => "ServerSelfUpdateError",
-           "reason" => "The bundle's checksum went missing: #{inspect(reason)}"
+           "reason" =>
+             "The bundle's checksum #{checksum} could not be read: #{:file.format_error(reason)}"
          }}
     end
   end
