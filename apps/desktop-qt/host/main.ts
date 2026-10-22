@@ -25,12 +25,15 @@ import {
   fetchDescriptor,
   findLocalMcToken,
   findRunningMc,
+  MC_HOME_IN_USE,
+  type McExit,
   mcDataDir,
   mcPort,
   readAccessToken,
   resolveMcLaunch,
   startMc,
   waitForMc,
+  waitForRunningMc,
   type RunningMc,
 } from "./elixirMc.ts";
 import { HostError } from "./hostError.ts";
@@ -115,7 +118,19 @@ async function standalone(home: string | undefined, dev: boolean): Promise<McAcc
   const port = await mcPort(process.env);
   const started = startMc({ launch, port, home, env: process.env });
   mc = started;
-  await waitForMc(started, MC_START_TIMEOUT_MS);
+  let exit: McExit | undefined;
+  void started.exited.then((value) => {
+    exit = value;
+  });
+  try {
+    await waitForMc(started, MC_START_TIMEOUT_MS);
+  } catch (error) {
+    if (exit?.code !== MC_HOME_IN_USE) throw error;
+    // Another MC took the files first, such as the background service starting at
+    // login beside the app: the desktop uses that one, as if it had found it above.
+    mc = undefined;
+    return waitForRunningMc({ launch, home, env: process.env }, MC_START_TIMEOUT_MS);
+  }
   void started.exited.then(({ code, signal }) => {
     if (stopping) return;
     emit({ type: "exit", code, signal });

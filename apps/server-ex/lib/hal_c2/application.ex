@@ -8,6 +8,7 @@ defmodule HalC2.Application do
     children =
       if Application.fetch_env!(:hal_c2, :start_mc) do
         :ok = HalC2.Desktop.configure()
+        :ok = lock_home()
         :ok = prepare_files()
         children()
       else
@@ -105,6 +106,25 @@ defmodule HalC2.Application do
       # Members of this machine's cluster are connected once everything is up.
       HalC2.Cluster.Discovery
     ]
+  end
+
+  # The exit status of an MC that found its HAL-C2 home in use. The desktop app's host
+  # (apps/desktop-qt/host/elixirMc.ts) then uses the MC already running there.
+  @home_in_use 73
+
+  # One MC per home (`HalC2.HomeLock`). The background service waits its turn, since
+  # its supervisor would only start it again; anything else stops at once.
+  defp lock_home do
+    HalC2.Paths.mkdir_private!(HalC2.Paths.data_dir())
+
+    case HalC2.HomeLock.acquire(wait: System.get_env("HAL_C2_SERVICE") == "1") do
+      :ok ->
+        :ok
+
+      {:error, :held} ->
+        IO.puts(:stderr, "Another MC is already running on #{HalC2.Paths.data_dir()}.")
+        System.halt(@home_in_use)
+    end
   end
 
   @doc """
