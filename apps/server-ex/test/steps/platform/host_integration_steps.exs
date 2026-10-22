@@ -708,10 +708,11 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   # Gone, or a zombie no one has reaped yet: either way it runs no more.
+  # `ps` rather than /proc, so it holds on macOS too.
   defp stopped?(os_pid) do
-    case File.read("/proc/#{os_pid}/stat") do
-      {:ok, stat} -> stat |> String.split(") ") |> List.last() |> String.starts_with?("Z")
-      {:error, _} -> true
+    case System.cmd("ps", ["-o", "stat=", "-p", to_string(os_pid)], stderr_to_stdout: true) do
+      {stat, 0} -> String.trim(stat) |> String.starts_with?("Z")
+      {_, _} -> true
     end
   end
 

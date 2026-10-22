@@ -91,7 +91,7 @@ remotes from it. GitHub still works when the GitHub CLI is signed in
 (`gh auth login`): HAL-C2 and its agents reach `git@github.com:` remotes over HTTPS
 with that sign-in, even if your own git config sends all of `https://github.com/`
 to SSH or a mirror. A rule of yours for one owner, such as `https://github.com/acme/`,
-still applies: an `insteadOf` rule to fetches, a `pushInsteadOf` rule to pushes.
+still applies: an `insteadOf` rule applies to fetches, and a `pushInsteadOf` rule to pushes.
 Signing in or out later takes effect when HAL-C2 next starts or updates.
 
 Where an SSH agent is running and GitHub accepts SSH from that machine, HAL-C2

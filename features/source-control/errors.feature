@@ -81,7 +81,7 @@ Feature: When source control goes wrong
   Scenario: A push refused for a missing workflows permission says how to give it
     Given GitHub refuses the push because the token lacks the workflows permission
     When the user runs "Commit & push"
-    Then the failure tells a user pushing with the GitHub CLI's sign-in to run "gh auth refresh -s workflow"
+    Then the failure says the GitHub App that pushed needs the Workflows permission
 
   @mc
   Scenario: A failed git command keeps its command and exit code

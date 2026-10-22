@@ -81,6 +81,13 @@ defmodule HalC2.Steps.SourceControl.Errors do
     context
   end
 
+  step "the failure says the GitHub App that pushed needs the Workflows permission", context do
+    failure = World.failure(context)
+    assert failure =~ "The GitHub App whose token pushed needs the Workflows permission"
+    refute failure =~ "gh auth refresh"
+    context
+  end
+
   step "the failure tells a user pushing with the GitHub CLI's sign-in to run {string}",
        %{args: [command]} = context do
     assert World.failure(context) =~

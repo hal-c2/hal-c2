@@ -70,21 +70,29 @@ defmodule HalC2.Git do
       ] ++
         if(input = opts[:input], do: [input: [input]], else: [])
 
-    {out, err, size, status} =
+    {out, {err, _}, size, status} =
       argv
       |> Exile.stream(exile_opts)
-      |> Enum.reduce({[], [], 0, nil}, fn
+      |> Enum.reduce({[], {[], 0}, 0, nil}, fn
         {:stdout, data}, {out, err, size, status} when size < max ->
           {[out, data], err, size + IO.iodata_length(data), status}
 
         {:stdout, data}, {out, err, size, status} ->
           {out, err, size + IO.iodata_length(data), status}
 
-        {:stderr, data}, {out, err, size, status} ->
+        {:stderr, data}, {out, {err, kept}, size, status} ->
           # A rolling tail, not a head that fills and then discards: the
-          # lines a caller acts on are at the end of a long stderr. Total
-          # size is still counted for `truncated`.
-          {out, tail_bytes([err, data], max), size + IO.iodata_length(data), status}
+          # lines a caller acts on are at the end of a long stderr. It is
+          # cut back to `max` only once it holds twice that, so a chatty git
+          # costs linear copying. Total size is still counted for `truncated`.
+          length = IO.iodata_length(data)
+
+          err =
+            if kept + length > 2 * max,
+              do: {tail_bytes([err, data], max), max},
+              else: {[err, data], kept + length}
+
+          {out, err, size + length, status}
 
         {:exit, status}, {out, err, size, _} ->
           {out, err, size, status}
