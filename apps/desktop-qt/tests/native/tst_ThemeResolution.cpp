@@ -263,6 +263,21 @@ private slots:
     QCOMPARE(themes()->draft(QString()).value(QStringLiteral("label")), QVariant(QStringLiteral("HAL-C2")));
   }
 
+  // A choice that no longer resolves draws the standard look, so that is what
+  // is drafted -- not a legacy saved theme that holds the standard id.
+  void aDraftWithAStaleChoiceStartsFromTheStandardLook() {
+    save({{QStringLiteral("customThemes"), QJsonArray{theme(QStringLiteral("hal-c2"), QStringLiteral("dark"), QStringLiteral("#050505"))}},
+          {QStringLiteral("theme"), QStringLiteral("gone")}});
+    QCOMPARE(themes()->resolvedId(), QStringLiteral("hal-c2"));
+    const QVariantMap drawn = themes()->draft(QString());
+    QVERIFY(drawn.value(QStringLiteral("id")).toString().isEmpty());
+    QCOMPARE(drawn.value(QStringLiteral("label")), QVariant(QStringLiteral("HAL-C2")));
+    // Chosen on purpose, the legacy theme is drafted.
+    save({{QStringLiteral("customThemes"), QJsonArray{theme(QStringLiteral("hal-c2"), QStringLiteral("dark"), QStringLiteral("#050505"))}},
+          {QStringLiteral("theme"), QStringLiteral("hal-c2")}});
+    QCOMPARE(themes()->draft(QString()).value(QStringLiteral("id")), QVariant(QStringLiteral("hal-c2")));
+  }
+
   // settings/search-and-navigation.feature: restoring defaults puts the whole
   // theme choice back at once, or, when it cannot be saved, none of it.
   void restoringDefaultsIsAllOrNothing() {

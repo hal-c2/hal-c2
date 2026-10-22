@@ -516,12 +516,13 @@ bool ThemeController::cycleAppearance() {
 
 QVariantMap ThemeController::draft(const QString& id) const {
   // With no id asked for, the draft starts from what is drawn. The standard
-  // look is drawn only when neither a whole theme nor a half for the drawn
-  // appearance is chosen (a half alone leaves themeId() empty while drawing
-  // that half); then its draft is the standard look itself -- not a legacy
-  // saved theme that holds the standard id (an explicit id still finds it).
+  // look is drawn when resolve() landed on the standard id without a legacy
+  // saved theme of that id being chosen (as a whole or as the drawn half);
+  // this covers nothing chosen, a half for the other appearance, and a choice
+  // that no longer resolves. Its draft is then the standard look itself, not
+  // that legacy theme (an explicit id still finds it).
   const QString selected = halves().value(m_appearance).toString();
-  const bool standardDrawn = id.isEmpty() && selected.isEmpty() && themeId().isEmpty();
+  const bool standardDrawn = id.isEmpty() && m_resolvedId == kStandardId && selected != kStandardId && themeId() != kStandardId;
   const auto definition = standardDrawn ? std::nullopt : find(id.isEmpty() ? m_resolvedId : id);
   const QString appearance = definition && !colorsFor(*definition, m_appearance).isEmpty()
                                  ? m_appearance
