@@ -4,7 +4,7 @@ defmodule HalC2.StreamsProofTest do
   # lags a process's death, and a server that idles out, crashes, or takes time in
   # terminate/2 with its name still taken. prop/hal_c2/streams_prop_test.exs waits for
   # a stream to be down before its next command; this explores every interleaving.
-  @read "a read of the stream, or a page of it; the stream's lifetime is the same as for a commit"
+  @read "a read of the stream, or a page of it (by a subscription's tag or not); the stream's lifetime is the same as for a commit"
   @sidebar "writes the sidebar row; terminate/2 flushes it, which the stopping state stands for"
   @ignored "ignored: a relay's or a linked process's normal exit changes nothing"
 
@@ -62,8 +62,8 @@ defmodule HalC2.StreamsProofTest do
       "HalC2.Streams.start_link/1" => "starts the supervisor tree; the model starts with it up",
       "HalC2.Streams.flush_shell/1" => "the same call as a commit that appends nothing",
       "HalC2.Streams.state/1" => @read,
-      "HalC2.Streams.more/3" => @read,
-      "HalC2.Streams.Server.more/3" => @read,
+      "HalC2.Streams.more/4" => @read,
+      "HalC2.Streams.Server.more/4" => @read,
       "HalC2.Streams.Server.state/1" => @read,
       "HalC2.Streams.Server.flush_shell/1" => "the same call as a commit that appends nothing",
       "HalC2.Streams.Server.start_link/1" => "start-child, which starts the server and names it",
@@ -73,9 +73,11 @@ defmodule HalC2.StreamsProofTest do
       "HalC2.Streams.Server handle_call {:commit, _, []}" =>
         "commits nothing, so nothing changes",
       "HalC2.Streams.Server handle_call {:more, _, _}" => @read,
+      "HalC2.Streams.Server handle_call {:more, _, _, _}" => @read,
       "HalC2.Streams.Server handle_call :state" => @read,
       "HalC2.Streams.Server handle_call :flush_shell" => @sidebar,
       "HalC2.Streams.Server handle_cast {:more, _, _}" => @read,
+      "HalC2.Streams.Server handle_cast {:more, _, _, _}" => @read,
       "HalC2.Streams.Server handle_info :shell" => @sidebar,
       "HalC2.Streams.Server handle_info {:EXIT, _, :normal}" => @ignored
     },

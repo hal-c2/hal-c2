@@ -205,7 +205,7 @@ export function createMoveController(ctx: {
                 })),
             });
             if (destinations.length === 0) {
-              store.setStatus("No other machine can take this thread.", "error");
+              store.setStatus("No other machine can take this thread.", "warning");
             }
           },
           (error: unknown) => {

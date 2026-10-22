@@ -1,0 +1,76 @@
+defmodule HalC2.Codex.FeedbackTest do
+  # A Codex session that stops while it answers `provider.uploadFeedback` is as gone
+  # as one the registry no longer has; the caller gets the error, not the exit.
+  use ExUnit.Case, async: false
+
+  alias HalC2.Codex.ThreadRuntime
+
+  setup do
+    start_supervised!({Registry, keys: :unique, name: HalC2.Codex.Registry})
+    :ok
+  end
+
+  # A registered session that receives the feedback call and stops with `reason`.
+  defp session_stopping_with(thread_id, reason) do
+    test = self()
+
+    # Not linked: its exit would take the test with it.
+    session =
+      spawn(fn ->
+        {:ok, _} = Registry.register(HalC2.Codex.Registry, thread_id, nil)
+        send(test, :registered)
+
+        receive do
+          {:"$gen_call", _from, {:upload_feedback, _}} -> exit(reason)
+        end
+      end)
+
+    assert_receive :registered
+    on_exit(fn -> Process.exit(session, :kill) end)
+  end
+
+  for reason <- [{:shutdown, :released}, :shutdown, :normal, :killed, {:badarg, []}] do
+    test "a session that stops with #{inspect(reason)} during the call is gone" do
+      session_stopping_with("t1", unquote(Macro.escape(reason)))
+
+      assert {:error, "The provider session is no longer running." <> _} =
+               ThreadRuntime.upload_feedback("t1", "wrong answer")
+    end
+  end
+
+  # A call that times out exits `{:timeout, {GenServer, :call, _}}`, as one to a session
+  # that stops with `:timeout` does, without the wait: a slow session is not a gone one.
+  test "a session that only times out still exits the caller" do
+    session_stopping_with("t1", :timeout)
+
+    assert {:timeout, {GenServer, :call, _}} =
+             catch_exit(ThreadRuntime.upload_feedback("t1", "wrong answer"))
+  end
+
+  # A steer refusal is followed by a `:settle` call so what preceded the refusal
+  # is applied before the caller looks. A session that stops during that second
+  # call has still refused: the refusal, not the settle's exit, is the answer.
+  test "a session that stops during the settle after refusing a steer still refuses it" do
+    test = self()
+
+    session =
+      spawn(fn ->
+        {:ok, _} = Registry.register(HalC2.Codex.Registry, "t1", nil)
+        send(test, :registered)
+
+        receive do
+          {:"$gen_call", from, {:steer, _, _}} -> GenServer.reply(from, {:error, "no such turn"})
+        end
+
+        receive do
+          {:"$gen_call", _from, :settle} -> exit(:killed)
+        end
+      end)
+
+    assert_receive :registered
+    on_exit(fn -> Process.exit(session, :kill) end)
+
+    assert {:error, "no such turn"} =
+             ThreadRuntime.steer("t1", "run1", %{"text" => "hi", "attachments" => []})
+  end
+end

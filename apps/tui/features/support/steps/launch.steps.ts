@@ -17,6 +17,7 @@ import {
   LEAVE_ALT_SCREEN,
   launchSetup,
   leaveDirect,
+  orderLog,
   RESTORE_SEQUENCES,
   runClient,
   runningMc,
@@ -34,6 +35,15 @@ const TERMINALS: Record<string, { TERM: string; TERM_PROGRAM?: string; KONSOLE_V
     kitty: { TERM: "xterm-kitty" },
     wezterm: { TERM: "xterm-256color", TERM_PROGRAM: "WezTerm" },
     konsole: { TERM: "xterm-256color", KONSOLE_VERSION: "230804" },
+    alacritty: { TERM: "alacritty" },
+    foot: { TERM: "foot" },
+    iterm: { TERM: "xterm-256color", TERM_PROGRAM: "iTerm.app" },
+    rio: { TERM: "rio", TERM_PROGRAM: "rio" },
+    contour: { TERM: "contour", TERM_PROGRAM: "contour" },
+    // "VS Code" in the ledger's old outline; the step's {word} needs one word.
+    vscode: { TERM: "xterm-256color", TERM_PROGRAM: "vscode" },
+    // The matcher's `-direct` branch, e.g. a TERM that names direct colour itself.
+    "xterm-direct": { TERM: "xterm-direct" },
   };
 
 function client(ctx: LaunchWorld): ProcessRun {
@@ -236,14 +246,16 @@ step("the environment still lists the {string} session", (ctx: LaunchWorld, labe
   expect(Object.keys(savedSessions(ctx))).toEqual([mc(ctx).origin]);
 });
 
-step("the environment revoked that session", (ctx: LaunchWorld) => {
-  const remote = mc(ctx);
-  for (const session of remote.sessions) session.revoked = true;
-  remote.dropConnections();
+step("the environment revoked that session", async (ctx: LaunchWorld) => {
+  // The client has to be gone before the revocation: a client still running would
+  // reconnect, meet the revoked bearer and forget the credential on its own clock,
+  // racing the Ctrl+C that is meant to leave it, and the next start would find
+  // either a saved revoked session or none. Revoked while closed, it finds the former.
+  if (ctx.direct) expect((await leaveDirect(ctx)).code).toBe(0);
+  for (const session of mc(ctx).sessions) session.revoked = true;
 });
 
 step("the user starts the terminal client for that environment again", async (ctx: LaunchWorld) => {
-  if (ctx.direct) await leaveDirect(ctx);
   await startDirect(ctx, ["--url", mc(ctx).origin, "--base-dir", baseDir(ctx)]);
 });
 
@@ -267,6 +279,159 @@ step("the user's terminal is {word}", (ctx: LaunchWorld, name: string) => {
   const terminal = key === undefined ? undefined : TERMINALS[key];
   if (!terminal) throw new Error(`unknown terminal "${name}"`);
   Object.assign(launchSetup(ctx).env, { TERM_PROGRAM: undefined, ...terminal });
+});
+
+step("the terminal does not set COLORTERM", (ctx: LaunchWorld) => {
+  launchSetup(ctx).env.COLORTERM = undefined;
+});
+
+step("the shell set COLORTERM to {string}", (ctx: LaunchWorld, value: string) => {
+  launchSetup(ctx).env.COLORTERM = value;
+});
+
+// A name no terminal gives itself: nothing in TERM or TERM_PROGRAM the client recognises.
+step("the user's terminal is not one the client recognises", (ctx: LaunchWorld) => {
+  Object.assign(launchSetup(ctx).env, { TERM: "dumb", TERM_PROGRAM: undefined });
+});
+
+/** The client's colour report once it has left, so its startup line is certainly written. */
+async function leftWithColourReport(ctx: LaunchWorld): Promise<string> {
+  if (ctx.direct) expect((await leaveDirect(ctx)).code).toBe(0);
+  return startupLine(clientLog(ctx));
+}
+
+step("the client advertises truecolor to its renderer", async (ctx: LaunchWorld) => {
+  const line = await leftWithColourReport(ctx);
+  expect(line).toContain("COLORTERM=truecolor ");
+  expect(startupCaps(line).rgb).toBe(true);
+});
+
+step(
+  "the client keeps the shell's COLORTERM of {string}",
+  async (ctx: LaunchWorld, value: string) => {
+    expect(await leftWithColourReport(ctx)).toContain(`COLORTERM=${value} `);
+  },
+);
+
+step("the client does not claim truecolor support", async (ctx: LaunchWorld) => {
+  const line = await leftWithColourReport(ctx);
+  expect(line).toContain("COLORTERM= ");
+  expect(startupCaps(line).rgb).toBe(false);
+});
+
+// --- tmux ---
+
+step("the user is not inside tmux", (ctx: LaunchWorld) => {
+  const setup = launchSetup(ctx);
+  Object.assign(setup.env, { TMUX: undefined, TMUX_PANE: undefined });
+  setup.recordOrder = true;
+});
+
+const TMUX_PANE = "%7";
+
+step("the user is inside a tmux pane that is in copy mode", (ctx: LaunchWorld) => {
+  const setup = launchSetup(ctx);
+  Object.assign(setup.env, {
+    TMUX: "/tmp/tmux-1000/default,4242,0",
+    TMUX_PANE,
+  });
+  setup.recordOrder = true;
+});
+
+step("the client does not run any tmux command", async (ctx: LaunchWorld) => {
+  if (ctx.direct) expect((await leaveDirect(ctx)).code).toBe(0);
+  const events = orderLog(ctx);
+  // The client did start (it took the alternate screen) and called no tmux.
+  expect(events).toContain("alt-screen");
+  expect(events.filter((event) => event.startsWith("tmux "))).toEqual([]);
+});
+
+step("the pane leaves copy mode before the terminal client draws", async (ctx: LaunchWorld) => {
+  if (ctx.direct) expect((await leaveDirect(ctx)).code).toBe(0);
+  // The client asks tmux other things too (its environment, for inline images).
+  const events = orderLog(ctx);
+  expect(events).toContain("alt-screen");
+  const leftCopyMode = events.indexOf(`tmux copy-mode -q -t ${TMUX_PANE}`);
+  expect(leftCopyMode).toBeGreaterThanOrEqual(0);
+  expect(leftCopyMode).toBeLessThan(events.indexOf("alt-screen"));
+});
+
+// --- the first screen ---
+
+step(
+  "an MC is running on this machine that has not sent its first snapshot",
+  (ctx: LaunchWorld) => {
+    runningMc(ctx, { holdShell: true });
+  },
+);
+
+function open(ctx: LaunchWorld) {
+  if (!ctx.direct) throw new Error(`the client is not open:\n${ctx.client?.stderr}`);
+  return ctx.direct.spawned;
+}
+
+step("the terminal client opens in the alternate screen", (ctx: LaunchWorld) => {
+  expect(open(ctx).output.stdout).toContain(ENTER_ALT_SCREEN);
+});
+
+step("the MC is holding the client's request for its first snapshot", async (ctx: LaunchWorld) => {
+  // With the shell held, "Connecting…" is what the client shows while the snapshot is outstanding.
+  await mc(ctx).until(
+    () => mc(ctx).sockets.some((socket) => socket.shapes.some((shape) => shape.type === "shell")),
+    "the client's request for the shell snapshot",
+  );
+});
+
+step("its status line says {string}", async (ctx: LaunchWorld, text: string) => {
+  await open(ctx).screen.until(text, "status");
+});
+
+step("the MC sends its first snapshot", (ctx: LaunchWorld) => {
+  mc(ctx).releaseShell();
+});
+
+step("its status line counts the projects and threads", async (ctx: LaunchWorld) => {
+  const screen = open(ctx).screen;
+  await screen.until("0 project(s) · 0 thread(s)", "status");
+  expect(screen.statusLine()).not.toContain("Connecting…");
+});
+
+// --- a socket ticket nobody answers ---
+
+/**
+ * The behaviour the ledger specifies (features/tui/launch.feature): deliberately
+ * a literal, not client-runtime's constant, so a default change fails here until
+ * the feature text is updated on purpose.
+ */
+const TICKET_REQUEST_TIMEOUT_MS = 10_000;
+
+step(
+  "an MC is running on this machine that does not answer socket ticket requests",
+  (ctx: LaunchWorld) => {
+    runningMc(ctx, { silentTickets: true });
+  },
+);
+
+step("the client asks that MC for another socket ticket", async (ctx: LaunchWorld) => {
+  // The 10 s timeout and the 2 s reconnect delay are the behaviour, so the wait is theirs.
+  await mc(ctx).until(() => mc(ctx).ticketRequests.length >= 2, "a second ticket request", 40_000);
+});
+
+step("the first ticket request was given up on only after 10 seconds", async (ctx: LaunchWorld) => {
+  const first = mc(ctx).ticketRequests[0]!;
+  // The client hangs up before it asks again, but the abort reaches the MC on its own clock.
+  await mc(ctx).until(
+    () => first.endedAt !== undefined,
+    "the client to hang up on the first ticket request",
+  );
+  const lived = first.endedAt! - first.startedAt;
+  // The client's timer starts before the request reaches the MC, and loopback
+  // transit is milliseconds even on a loaded runner, so the bounds keep only
+  // 1s/5s of slack: a regression to a 6s or 20s timeout, or a wholesale change
+  // of the 10s default, must fail this scenario. A miss on a loaded runner
+  // means rerun first.
+  expect(lived).toBeGreaterThanOrEqual(TICKET_REQUEST_TIMEOUT_MS - 1_000);
+  expect(lived).toBeLessThan(TICKET_REQUEST_TIMEOUT_MS + 5_000);
 });
 
 // --- SSH ---

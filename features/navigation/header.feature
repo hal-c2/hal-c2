@@ -63,9 +63,10 @@ Feature: The thread's header on the desktop
     Then the header shows the thread "Deploy" in "ops" on "main"
 
   @desktop
-  Scenario: The header of a thread on another machine lists that machine's editors
-    Given the MC is clustered with "mc-c", which serves "env-c"
-    And "env-c" has the editors "VS Code" and "Zed"
+  Scenario: The header of a thread on another machine lists this computer's editors
+    Given the environment has the editors "VS Code" and "Zed"
+    And the MC is clustered with "mc-c", which serves "env-c"
+    And "env-c" has the editors "Cursor" and "Zed"
     And "env-c" has the thread "t7" titled "Deploy" in "ops" on the branch "main"
     When the user goes to "env-c:t7"
     Then the header lists the editors "VS Code" and "Zed"

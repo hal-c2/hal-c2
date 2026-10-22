@@ -178,6 +178,8 @@ private:
   static bool removeTab(Panel& state, const QString& id);
   // Closes `id` in `threadKey`'s panel, shown or not (ThreadDevices::closed).
   void closeTabIn(const QString& threadKey, const QString& id);
+  // A web address from the conversation, opened in the browser.
+  void openAddress(const QString& url);
 
   ShellBridge* m_bridge;
   McClient* m_client;

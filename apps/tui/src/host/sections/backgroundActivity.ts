@@ -300,7 +300,7 @@ export function backgroundActivitySection(host: SectionHost): SettingsSection {
                     (text) => {
                       const ms = parseInterval(text);
                       if (ms === null)
-                        host.status("Enter an interval such as 90, 2m or 1h", "error");
+                        host.status("Enter an interval such as 90, 2m or 1h", "warning");
                       else override(current, { [key]: ms });
                     },
                   ),

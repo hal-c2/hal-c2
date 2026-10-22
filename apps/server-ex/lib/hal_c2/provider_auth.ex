@@ -58,7 +58,7 @@ defmodule HalC2.ProviderAuth do
 
   @doc "Whether a sign-in is running for an instance."
   def signing_in?(instance) do
-    case Registry.lookup(@registry, instance) do
+    case lookup(instance) do
       [{server, _}] -> GenServer.call(server, :signing_in?, 5_000)
       [] -> false
     end
@@ -70,10 +70,18 @@ defmodule HalC2.ProviderAuth do
   def subscribe(instance, pid), do: call(instance, {:subscribe, pid})
 
   def unsubscribe(instance, pid) do
-    case Registry.lookup(@registry, instance) do
+    case lookup(instance) do
       [{server, _}] -> GenServer.cast(server, {:unsubscribe, pid})
       [] -> :ok
     end
+  end
+
+  # The registry is gone with the services it belongs to (a scenario's teardown):
+  # nothing is subscribed any more.
+  defp lookup(instance) do
+    Registry.lookup(@registry, instance)
+  rescue
+    ArgumentError -> []
   end
 
   defp call(instance, message) do

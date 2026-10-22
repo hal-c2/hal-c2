@@ -68,7 +68,7 @@ defmodule HalC2.Connect do
         "iat" => now,
         "exp" => now + @proof_ttl,
         "challenge" => body["challenge"],
-        "descriptor" => HalC2.Environment.descriptor(),
+        "descriptor" => HalC2.Environment.public_descriptor(),
         "environmentId" => id,
         "environmentPublicKey" => Jwt.public_pem(public),
         "endpoint" => endpoint,
@@ -181,7 +181,7 @@ defmodule HalC2.Connect do
       {_public, private} = Jwt.key_pair()
       id = HalC2.Environment.id()
       now = System.os_time(:second)
-      descriptor = HalC2.Environment.descriptor()
+      descriptor = HalC2.Environment.public_descriptor()
       checked = DateTime.utc_now() |> DateTime.to_iso8601()
 
       response =

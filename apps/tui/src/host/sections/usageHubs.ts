@@ -123,7 +123,7 @@ export function usageHubsSection(host: SectionHost): SettingsSection {
     const key = form.key.trim();
     if (url === "" || key === "") {
       form.problem = "Enter the hub's URL and its management key.";
-      host.status("A hub needs its URL and management key", "error");
+      host.status("A hub needs its URL and management key", "warning");
       host.refresh();
       return;
     }

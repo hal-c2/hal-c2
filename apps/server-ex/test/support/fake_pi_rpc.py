@@ -19,7 +19,12 @@
 # "output": s} (HAL-C2's extension gate first: see `allowed`), {"select": {"title",
 # "options"}} (waits for the answer, then says it), {"event": {...}} (sent as is),
 # {"mcp": {"name", "arguments"}} (a HAL-C2 MCP tool call), {"waitAbort": true} (until an
-# abort, or a steer prompt, which it answers), {"exit": code}.
+# abort, or a steer prompt, which it answers), {"settleOnSteer": true | n} (until an abort,
+# or n steer prompts, which reach Pi only once this run has settled, in the order of their
+# text, and each start a run of its own), {"exit": code}. While a turn waits, a steer saying "refuse" is rejected, and
+# one saying "vanish" makes Pi exit before answering it; one saying "hold" is taken in
+# but not answered while the turn waits (its next model call never comes); one saying "decline" is rejected,
+# and one saying "ignore" never answered, only once it reaches Pi after the run settled.
 # Without a match the reply names the conversation so far.
 import json, os, sys, time, urllib.request, uuid
 
@@ -188,6 +193,16 @@ def wait_for(pred):
             ui_answers[msg.get("id")] = msg
         elif kind != "prompt":
             command(msg)
+        elif steer(msg) and "refuse" in msg.get("message", ""):
+            # A steer saying "refuse" is rejected before Pi accepts it.
+            respond(msg, error="Pi cannot take this message now")
+            continue
+        elif steer(msg) and "vanish" in msg.get("message", ""):
+            # Pi exits with a steer it has not answered.
+            os._exit(1)
+        elif steer(msg) and "hold" in msg.get("message", ""):
+            # Pi took the steer in but its next model call has not come: no answer yet.
+            continue
         if pred(msg):
             return msg
 
@@ -306,6 +321,16 @@ def run_turn(text):
                     said = ["steered: " + msg["message"]]
                     send({"type": "message_update", "message": assistant(said[0]),
                           "assistantMessageEvent": {"type": "text_delta", "delta": said[0]}})
+        elif "settleOnSteer" in step:
+            steers = []
+            while not aborted[0] and len(steers) < int(step["settleOnSteer"]):
+                msg = wait_for(lambda m: m.get("type") == "abort" or steer(m))
+                if steer(msg):
+                    steers.append(msg)
+            # Steers sent at once reach the fake in either order; Pi takes them by text.
+            backlog.extend(sorted(steers, key=lambda m: m.get("message", "")))
+            if steers:
+                break
         elif "exit" in step:
             os._exit(step["exit"])
     if aborted[0]:
@@ -370,6 +395,15 @@ def command(msg):
         respond(msg, {"text": said[-1] if said else None})
     elif kind == "compact":
         respond(msg, {"summary": "Compacted.", "tokensBefore": 1000})
+    elif kind == "prompt" and steer(msg) and "decline" in msg.get("message", ""):
+        # A steer saying "decline" that reaches Pi once its run settled is rejected.
+        # One also saying "after stop" is rejected only once the abort reaches Pi.
+        if "after stop" in msg.get("message", "") and not aborted[0]:
+            wait_for(lambda m: m.get("type") == "abort")
+        respond(msg, error="Pi cannot start this message")
+    elif kind == "prompt" and steer(msg) and "ignore" in msg.get("message", ""):
+        # A steer saying "ignore" that reaches Pi once its run settled is never answered.
+        pass
     elif kind == "prompt":
         respond(msg)
         run_turn(msg.get("message", ""))

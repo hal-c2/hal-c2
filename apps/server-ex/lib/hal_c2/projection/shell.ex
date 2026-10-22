@@ -30,12 +30,12 @@ defmodule HalC2.Projection.Shell do
     turn_items = StreamState.list(state, "turn-item")
     provider_threads = StreamState.list(state, "provider-thread")
     latest_run = latest_run(runs)
-    active_run = runs |> Enum.filter(&interruptible?/1) |> latest_by(&get(&1, "ordinal"))
+    active_run = runs |> Enum.filter(&interruptible?/1) |> latest_by(&(get(&1, "ordinal") || 0))
 
     activity_run =
       runs
       |> Enum.filter(&(interruptible?(&1) or get(&1, "status") == "waiting"))
-      |> latest_by(&get(&1, "ordinal"))
+      |> latest_by(&(get(&1, "ordinal") || 0))
 
     pending_request =
       state
@@ -155,20 +155,41 @@ defmodule HalC2.Projection.Shell do
   end
 
   @doc """
-  The thread's latest run among `runs` (in the order they were made), passing over
-  queued messages held for the user (`queueHeld`): those wait behind the run that
-  stopped, so a usage limit's stop stays the thread's latest run until the queue resumes.
+  The run with the highest ordinal, passing over runs held for the user that never
+  started (`queueHeld`, still queued or cancelled while held): they wait behind the
+  run that stopped, so a usage limit's stop stays the thread's latest run until the
+  queue resumes. A run cancelled after it started counts: resuming clears the hold
+  before a run starts. Runs stored without an ordinal fall back to the order they
+  were made (the order of `runs`).
   """
   @spec latest_run([map]) :: map | nil
   def latest_run(runs) do
     runs
     |> Enum.reverse()
-    |> Enum.find(&(get(&1, "status") != "queued" or get(&1, "queueHeld") != true))
+    |> Enum.reject(&held_never_started?/1)
+    # The first of equals: of runs stored without an ordinal, the newest.
+    |> Enum.max_by(&(get(&1, "ordinal") || 0), fn -> nil end)
   end
+
+  @doc """
+  Held for the user and never started, as `latest_run/1` passes over: still
+  queued, or cancelled while held (resuming clears the hold before a run starts,
+  so a run cancelled after it started is not held). The one spelling in the MC;
+  the clients keep their own per language.
+  """
+  @spec held_never_started?(map) :: boolean
+  def held_never_started?(run),
+    do: get(run, "status") in ["queued", "cancelled"] and get(run, "queueHeld") == true
 
   defp interruptible?(run), do: get(run, "status") in @interruptible
 
   # The first element with the greatest key, as a stable descending sort's head.
+  # Of equal keys that is the oldest made, unlike `latest_run/1` above (and the
+  # clients' latest picks), which take the newest made: for legacy runs stored
+  # without an ordinal (keyed 0 at the call sites above, as in `latest_run/1`)
+  # the activity/active picks here can name an older run than a client's.
+  # Ordinals are unique for every run made since, so only the latest-run pick
+  # was aligned.
   defp latest_by([], _key), do: nil
   defp latest_by(list, key), do: Enum.max_by(list, key)
 

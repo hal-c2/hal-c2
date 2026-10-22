@@ -1,7 +1,11 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/workspace.ex (read_file, write_file, path checks)
+#   apps/server-ex/lib/hal_c2/attachments.ex (assets.createUrl: the signed address a media file previews from)
 #   apps/server/src/workspace/WorkspaceFileSystem.ts, WorkspacePaths.ts (read limits, binary guard, path checks)
 #   apps/server-ex/lib/hal_c2/editors.ex (shell.openInEditor)
+#   apps/server-ex/lib/hal_c2/environment/machine.ex (platform.machineId: the machine an MC runs on)
+#   apps/desktop-qt/src/native/ThisMachine.cpp, WorkspaceController.cpp (localPathFor, openHere: editors and the file manager start only on this machine)
+#   apps/tui/src/thisMachine.ts, apps/tui/src/host/filesState.ts (the same for the terminal client)
 #   apps/web/src/components/files/FilePreviewPanel.tsx
 #   apps/web/src/components/chat/ThreadDetailsPanel.tsx, OpenInPicker.tsx, OpenInPicker.logic.ts (open the workspace)
 #   apps/web/src/remoteOpen.ts (SSH deep links for a remote environment; remoteOpenTargets not sent by the MC)
@@ -22,6 +26,7 @@
 #   packages/shared/src/filePreview.ts (preview kinds: image, pdf, markdown, html, text, media)
 #   packages/shared/src/delimitedPreview.ts (table preview limits, quoting, delimiter by type or name)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (draft attachments listed, not opened)
+#   apps/desktop-qt/src/native/WorkspaceFiles.cpp, qml/HalC2/Bricks/FilesPanel.qml (media previewed from the address the thread's MC signs)
 #   apps/tui/src/components/FilesView.tsx
 #   apps/tui/src/features.backlog.test.ts (workspace-file-actions)
 #   apps/mobile/src/features/files/ThreadFilesRouteScreen.tsx
@@ -31,6 +36,8 @@
 #   packages/client-runtime/src/state/projectCommands.ts (optimisticFile)
 #   packages/contracts/src/rpc.ts (projects.readFile, projects.writeFile, shell.openInEditor, assets.createUrl)
 #   apps/desktop-qt/src/native/WorkspaceFiles.cpp (openFile, truncatedNotice, revealLine, wrap)
+#   apps/desktop-qt/src/native/WorkspaceController.cpp, FileActionsController.cpp, TerminalController.cpp (editor and reveal on the environment)
+#   apps/server-ex/lib/hal_c2/attachments.ex (assets.createUrl: workspace-file, media-file)
 #   apps/desktop-qt/qml/HalC2/Bricks/FilesPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 
@@ -144,26 +151,51 @@ Feature: Viewing and editing files
         | assets/a.dat  | contains null bytes                      | This file contains binary data and cannot be shown as text.            |
         | notes/old.txt | is written in a non-UTF-8 text encoding  | This file is not UTF-8 text. Open it in another app to view its contents. |
 
-    @backlog @desktop @mobile
+    # The mobile client has no Files tab yet.
+    @desktop @mobile @backlog-mobile
     Scenario Outline: Media files are previewed instead of shown as text
       When the user opens "<path>"
       Then the file is previewed as <kind>
 
       Examples:
-        | path             | kind     |
-        | assets/logo.png  | an image |
-        | media/intro.mp4  | a video  |
-        | media/theme.mp3  | audio    |
-        | docs/manual.pdf  | a document |
+        | path            | kind     |
+        | assets/logo.png | an image |
+
+      # The desktop links neither Qt Multimedia (whose FFmpeg is not bundled)
+      # nor Qt PDF, so it offers a video, audio or a PDF to open in the
+      # browser, and shows an HTML page's text and markup.
+      @backlog
+      Examples: Not yet on any surface
+        | path              | kind       |
+        | media/intro.mp4   | a video    |
+        | media/theme.mp3   | audio      |
+        | docs/manual.pdf   | a document |
         | public/index.html | a web page |
 
-    @backlog @desktop @mobile
-    Scenario: A media preview that fails to load can be retried
-      Given loading "media/theme.mp3" fails once
-      When the user opens "media/theme.mp3"
-      Then the user is told the audio could not be loaded
+    @desktop @mobile @backlog-mobile
+    Scenario: Media files of a thread on another machine are previewed
+      Given the thread is on another machine of the cluster
+      When the user opens "assets/logo.png"
+      Then the file is previewed as an image
+      And the image comes from the machine the thread is on
+
+    @desktop @mobile @backlog-mobile
+    Scenario Outline: A media preview that fails to load can be retried
+      Given loading "<path>" fails once
+      When the user opens "<path>"
+      Then the user is told the <kind> could not be loaded
       When the user retries
-      Then the audio plays
+      Then the <kind> <result>
+
+      Examples:
+        | path            | kind  | result   |
+        | assets/logo.png | image | is shown |
+
+      # No audio player on the desktop yet (see above).
+      @backlog
+      Examples: Not yet on any surface
+        | path            | kind  | result |
+        | media/theme.mp3 | audio | plays  |
 
     @desktop @tui
     Scenario Outline: Rendered files can be switched to their source and back
@@ -375,10 +407,20 @@ Feature: Viewing and editing files
         | Linux where reveal runs through Windows (WSL) | Reveal in File Explorer |
 
     @desktop @tui
-    Scenario: A file opens in the user's editor on the environment
-      Given the environment has the editor "VS Code"
+    Scenario: A file opens in the user's editor when the thread runs on this computer
+      Given the thread runs on this computer, which has the editor "VS Code"
       When the user opens "src/app.ts" in "VS Code"
-      Then "VS Code" opens "src/app.ts" on the environment
+      Then "VS Code" opens "src/app.ts" on this computer
+
+    # The client's own MC can be on another machine while its cluster has one here:
+    # that member starts the editor, from the editors it has. The desktop's is proved
+    # by tests/prop/tst_WorkspaceOpenHereProp.cpp.
+    @tui
+    Scenario: A file of a cluster member on this computer opens through that member
+      Given the client is connected to an MC on another machine, which has the editor "VS Code"
+      And the thread runs on a cluster member on this computer, which has the editor "Zed"
+      When the user opens "src/app.ts" in "Zed"
+      Then "Zed" opens "src/app.ts" on this computer through that member
 
     @desktop
     Scenario: The thread's workspace opens in the preferred editor from the thread's details
@@ -408,6 +450,31 @@ Feature: Viewing and editing files
       Given the thread's environment is on another machine with no SSH route
       When the user looks at opening the thread's workspace in an editor
       Then opening is unavailable and the user is told no SSH route is known
+
+    # Another machine's paths name nothing on this computer, and an editor or
+    # file manager started on that machine opens where nobody is looking. A
+    # cluster member's files open from the folder this machine keeps for it
+    # (files-on-another-machine.feature); an MC paired directly or reached
+    # through an SSH forward has none here, so the user is told so instead.
+    @desktop
+    Scenario Outline: An editor or file manager never starts on another machine
+      Given the thread's files are on <where>
+      When the user <does>
+      Then nothing is started on that machine
+      And the user is told the files are on another machine and can't be opened here yet
+
+      Examples:
+        | where                                              | does                                                                 |
+        | an MC on another machine the client is paired with | reveals "src/app.ts" in the file manager                             |
+        | an MC reached through an SSH port forward          | follows the path "src/app.ts" in a terminal                          |
+        | an MC on another machine the client is paired with | opens the thread's workspace in an editor from the thread's details |
+        | an MC reached through an SSH port forward          | opens the thread in their editor                                     |
+
+      @tui
+      Examples:
+        | where                                              | does                            |
+        | an MC on another machine the client is paired with | opens "src/app.ts" in an editor |
+        | an MC reached through an SSH port forward          | opens "src/app.ts" in an editor |
 
   Rule: Editing
 

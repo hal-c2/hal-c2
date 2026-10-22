@@ -16,6 +16,7 @@
 #include "ShellBridge.h"
 #include "ShellStore.h"
 #include "TerminalController.h"
+#include "ThisMachine.h"
 #include "ThreadMenuController.h"
 #include "ToastController.h"
 
@@ -477,8 +478,15 @@ QString WorkspaceController::currentBranch() const {
   return text(m_git->local, "refName");
 }
 
+QJsonObject WorkspaceController::localConfig() const {
+  if (m_place && thisMachine::hosts(*m_store, *m_client, m_place->environmentId)) return environmentConfig();
+  auto* settings = NativeShell::of(this)->controller<SettingsController>();
+  return settings ? settings->config() : QJsonObject();
+}
+
+// This machine's: a thread elsewhere opens in an editor here.
 QJsonArray WorkspaceController::editors() const {
-  const QJsonArray available = environmentConfig().value(QLatin1String("availableEditors")).toArray();
+  const QJsonArray available = localConfig().value(QLatin1String("availableEditors")).toArray();
   QJsonArray result;
   for (const auto& [id, label] : editorLabels()) {
     if (available.contains(id)) result.append(QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("label"), label}});
@@ -814,15 +822,69 @@ bool WorkspaceController::openInEditor(const QString& editorId, const QString& p
   if (!reveal) {
     if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) settings->writeDevice(kLastEditor, editor);
   }
-  QJsonObject payload{{QStringLiteral("cwd"), path}, {QStringLiteral("editor"), editor}};
-  if (reveal) payload.insert(QStringLiteral("reveal"), true);
-  auto* toasts = NativeShell::of(this)->controller<ToastController>();
-  m_client->call(this, m_place->environmentId, QStringLiteral("shell.openInEditor"), payload,
-                 [toasts](const QJsonValue&, const std::optional<QString>& error) {
-                   if (error) toasts->error(QStringLiteral("Failed to open in editor."), *error);
-                 });
+  openHere(m_place->environmentId, path, editor, reveal, QStringLiteral("Failed to open in editor."));
   publish();
   return true;
+}
+
+namespace {
+const QString kFilesElsewhere = QStringLiteral("The files are on another machine and can't be opened here yet.");
+}  // namespace
+
+// A machine's own files are where they are. Another member's are in the folder
+// the shell's MC keeps for it (files.localPath), when that MC runs here; an MC
+// on another machine (paired directly, or behind an SSH forward) mounts nothing
+// here.
+void WorkspaceController::localPathFor(const QString& environmentId, const QString& path,
+                                       std::function<void(const LocalPath&)> done) {
+  if (thisMachine::hosts(*m_store, *m_client, environmentId)) {
+    done({path, environmentId, {}});
+    return;
+  }
+  const QString shellMc = m_client->environment();
+  if (!thisMachine::hosts(*m_store, *m_client, shellMc)) {
+    done({{}, {}, kFilesElsewhere});
+    return;
+  }
+  const QJsonObject payload{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("path"), path}};
+  m_client->call(this, shellMc, QStringLiteral("files.localPath"), payload,
+                 [shellMc, done](const QJsonValue& result, const std::optional<QString>& error) {
+                   const QJsonObject answer = result.toObject();
+                   const QString local = answer.value(QLatin1String("path")).toString();
+                   const QString message = answer.value(QLatin1String("message")).toString();
+                   // An MC from before files.localPath has no folders to offer.
+                   if (error || local.isEmpty()) {
+                     done({{}, {}, error || message.isEmpty() ? kFilesElsewhere : message});
+                   } else {
+                     done({local, shellMc, {}});
+                   }
+                 });
+}
+
+void WorkspaceController::openHere(const QString& environmentId, const QString& path, const QString& editor,
+                                   bool reveal, const QString& failure,
+                                   std::function<void(const std::optional<QString>&)> done) {
+  auto* toasts = NativeShell::of(this)->controller<ToastController>();
+  localPathFor(environmentId, path, [this, toasts, editor, reveal, failure, done](const LocalPath& local) {
+    if (local.path.isEmpty()) {
+      if (done) {
+        done(local.problem);
+      } else {
+        toasts->error(local.problem);
+      }
+      return;
+    }
+    QJsonObject payload{{QStringLiteral("cwd"), local.path}, {QStringLiteral("editor"), editor}};
+    if (reveal) payload.insert(QStringLiteral("reveal"), true);
+    m_client->call(this, local.launcher, QStringLiteral("shell.openInEditor"), payload,
+                   [toasts, failure, done](const QJsonValue&, const std::optional<QString>& error) {
+                     if (done) {
+                       done(error);
+                     } else if (error) {
+                       toasts->error(failure, *error);
+                     }
+                   });
+  });
 }
 
 // Opens a changed file in the preferred editor.

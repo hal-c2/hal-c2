@@ -1262,7 +1262,7 @@ step("the user tries to start a thread with an empty first message", async (ctx:
 step("the thread is not started", (ctx: World) => {
   expect(callsTo(ctx, "createThread")).toEqual([]);
   expect(draft(ctx)).not.toBeNull();
-  expect(statusKind(ctx)).toBe("error");
+  expect(statusKind(ctx)).toBe("warning");
 });
 
 step("the user is told to pick a base branch", async (ctx: World) => {

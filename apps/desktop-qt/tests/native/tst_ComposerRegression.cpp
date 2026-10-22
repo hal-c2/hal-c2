@@ -6,6 +6,7 @@
 #include "ComposerController.h"
 #include "ComposerModel.h"
 #include "DraftController.h"
+#include "FakeFiles.h"
 #include "FakeMc.h"
 #include "McClient.h"
 #include "NativeShell.h"
@@ -185,22 +186,95 @@ private slots:
     QCOMPARE(slash->end, 3);
   }
 
+  // A bare `@` opened no menu. It is never searched, so the menu opens at
+  // once and says nothing matches, as the web's did; a word after it waits for
+  // its search to answer before saying so.
+  void aBareAtOpensTheMenuSayingNothingMatches() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto shown = [&shell] { return shell.bridge->state()->value(QStringLiteral("composer")).toMap(); };
+    // The workspace has no files, and its search answers when the test says.
+    fakeFiles(shell.mc);
+    shell.mc.hold(QStringLiteral("search"));
+
+    shell.type(QStringLiteral("@"));
+    QTRY_COMPARE(shown().value(QStringLiteral("text")).toString(), QStringLiteral("@"));
+    QCOMPARE(shown().value(QStringLiteral("triggerKind")).toString(), QStringLiteral("path"));
+    QCOMPARE(shown().value(QStringLiteral("suggestionsEmptyText")).toString(), QStringLiteral("No matching files or folders."));
+
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(shown().value(QStringLiteral("text")).toString(), QStringLiteral("@src"));
+    QCOMPARE(shown().value(QStringLiteral("triggerKind")).toString(), QStringLiteral("path"));
+    QVERIFY(shown().value(QStringLiteral("suggestionsEmptyText")).isNull());
+    shell.mc.answerHeld();
+    QTRY_COMPARE(shown().value(QStringLiteral("suggestionsEmptyText")).toString(), QStringLiteral("No matching files or folders."));
+  }
+
   // A queued run that arrived before its message was listed as a blank row;
   // it now waits off the list until the message is here.
   void aQueuedRunWithoutItsMessageIsNotListed() {
     const QJsonObject run{{QStringLiteral("id"), QStringLiteral("run-a")},
                           {QStringLiteral("status"), QStringLiteral("queued")},
+                          {QStringLiteral("queueHeld"), true},
                           {QStringLiteral("queuePosition"), 0},
                           {QStringLiteral("userMessageId"), QStringLiteral("message:a")}};
     const composer::Queued early = composer::queued({run}, {});
     QVERIFY(early.queue.isEmpty());
     QVERIFY(early.waiting.isEmpty());
+    // The queue is held all the same; the turn shows it only with a run listed.
+    QVERIFY(early.held);
 
     const composer::Queued later = composer::queued(
         {run}, {{QStringLiteral("message:a"),
                  {{QStringLiteral("id"), QStringLiteral("message:a")}, {QStringLiteral("text"), QStringLiteral("also update docs")}}}});
     QCOMPARE(later.queue.size(), 1);
     QCOMPARE(later.queue.first().toMap().value(QStringLiteral("text")).toString(), QStringLiteral("also update docs"));
+    QVERIFY(later.held);
+  }
+
+  // A held run whose message has not landed yet, beside a listed run that is
+  // not held: the queue is held, so the card offers "Resume" at once.
+  void aHeldRunWithoutItsMessageHoldsTheListedQueue() {
+    const QJsonObject early{{QStringLiteral("id"), QStringLiteral("run-a")}, {QStringLiteral("status"), QStringLiteral("queued")},
+                            {QStringLiteral("queueHeld"), true}, {QStringLiteral("queuePosition"), 0},
+                            {QStringLiteral("userMessageId"), QStringLiteral("message:a")}};
+    const QJsonObject listed{{QStringLiteral("id"), QStringLiteral("run-b")}, {QStringLiteral("status"), QStringLiteral("queued")},
+                             {QStringLiteral("queueHeld"), false}, {QStringLiteral("queuePosition"), 1},
+                             {QStringLiteral("userMessageId"), QStringLiteral("message:b")}};
+    const composer::Queued queued = composer::queued(
+        {early, listed}, {{QStringLiteral("message:b"),
+                           {{QStringLiteral("id"), QStringLiteral("message:b")}, {QStringLiteral("text"), QStringLiteral("then this")}}}});
+    QCOMPARE(queued.queue.size(), 1);
+    QVERIFY(queued.held);
+  }
+
+  // A held queue whose only listed runs wait on a notification or a provider
+  // wake (no user message) is held all the same: those runs have no other way
+  // on, so `queued()` lists them as waiting and turnState offers the resume.
+  void aHeldWaitingOnlyQueueIsHeld() {
+    const QJsonObject wake{{QStringLiteral("id"), QStringLiteral("run-a")}, {QStringLiteral("status"), QStringLiteral("queued")},
+                           {QStringLiteral("queueHeld"), true}, {QStringLiteral("queuePosition"), 0},
+                           {QStringLiteral("userMessageId"), QStringLiteral("message:a")}};
+    const composer::Queued woken = composer::queued(
+        {wake}, {{QStringLiteral("message:a"),
+                  {{QStringLiteral("id"), QStringLiteral("message:a")}, {QStringLiteral("providerWake"), true}}}});
+    QVERIFY(woken.queue.isEmpty());
+    QCOMPARE(woken.waiting.size(), 1);
+    QVERIFY(woken.held);
+
+    const QJsonObject note{{QStringLiteral("id"), QStringLiteral("run-b")}, {QStringLiteral("status"), QStringLiteral("queued")},
+                           {QStringLiteral("queueHeld"), true}, {QStringLiteral("queuePosition"), 0},
+                           {QStringLiteral("userMessageId"), QStringLiteral("message:b")}};
+    const composer::Queued notified = composer::queued(
+        {note}, {{QStringLiteral("message:b"),
+                  {{QStringLiteral("id"), QStringLiteral("message:b")},
+                   {QStringLiteral("notification"),
+                    QJsonObject{{QStringLiteral("summary"), QStringLiteral("Task done")}, {QStringLiteral("outcome"), QStringLiteral("success")}}}}}});
+    QVERIFY(notified.queue.isEmpty());
+    QCOMPARE(notified.waiting.size(), 1);
+    QVERIFY(notified.held);
   }
 
   // A send the MC refused came back only into an empty draft: when the user

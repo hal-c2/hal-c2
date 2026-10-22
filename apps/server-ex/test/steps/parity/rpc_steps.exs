@@ -406,6 +406,10 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "filesystem.browse" ->
         {%{"partialPath" => f.root <> "/"}, context}
 
+      # A machine outside the cluster: the reason, as the contract's other shape.
+      "files.localPath" ->
+        {%{"environmentId" => "env-elsewhere", "path" => f.root <> "/README.md"}, context}
+
       "agentSessions.scan" ->
         {%{}, context}
 
@@ -499,6 +503,11 @@ defmodule HalC2.Steps.Parity.Fixtures do
 
       "preview.list" ->
         {%{"threadId" => f.thread}, context}
+
+      # A thread of the MC asked: its port as it is.
+      "preview.forward" ->
+        {%{"environmentId" => HalC2.Environment.id(), "threadId" => f.thread, "port" => 5173},
+         context}
 
       "preview.navigate" ->
         preview_tab(context, %{"url" => "http://127.0.0.1:2/"})

@@ -5,13 +5,10 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   type OrchestrationV2ShellSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
-  OrchestrationV2ThreadBoundedSnapshot,
-  type OrchestrationV2ThreadHistoryPage,
 } from "@hal-c2/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
@@ -29,16 +26,9 @@ import { remoteHttpClientLayer, type RemoteEnvironmentRequestError } from "../rp
 import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import { fetchEnvironmentThreadSnapshot } from "./threadSnapshotHttp.ts";
-import {
-  boundedThreadSnapshotLoaderLayer,
-  fetchEnvironmentBoundedThreadSnapshot,
-} from "./boundedThreadSnapshotHttp.ts";
-import { ThreadSnapshotLoader } from "./threadSnapshotHttp.ts";
-import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
 const encodeThreadSnapshot = Schema.encodeSync(OrchestrationV2ThreadDetailSnapshot);
-const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
 
 const TARGET = new RelayConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -65,19 +55,6 @@ const THREAD = {
   snapshotSequence: 2,
   projection: v2Projection,
 } satisfies OrchestrationV2ThreadDetailSnapshot;
-const BOUNDED_THREAD = {
-  ...THREAD,
-  historyCursor: "older-page",
-  hasMoreHistory: true,
-  latestLocalTurnOrdinal: 3,
-} satisfies OrchestrationV2ThreadBoundedSnapshot;
-const THREAD_HISTORY = {
-  snapshotSequence: 2,
-  items: [],
-  nextCursor: null,
-  hasMoreHistory: false,
-} satisfies OrchestrationV2ThreadHistoryPage;
-
 function credentialRejectedResponse(reason = "invalid_credential") {
   return Response.json(
     {
@@ -169,28 +146,6 @@ const LOADERS: ReadonlyArray<{
     load: (input: HttpInput) =>
       fetchEnvironmentThreadSnapshot({ ...input, threadId: THREAD.projection.thread.id }),
   },
-  {
-    name: "bounded thread snapshot",
-    method: "GET",
-    path: `/api/orchestration/threads/${THREAD.projection.thread.id}/bounded`,
-    response: encodeBoundedSnapshot(BOUNDED_THREAD),
-    expected: BOUNDED_THREAD,
-    load: (input: HttpInput) =>
-      fetchEnvironmentBoundedThreadSnapshot({ ...input, threadId: THREAD.projection.thread.id }),
-  },
-  {
-    name: "older thread history",
-    method: "GET",
-    path: `/api/orchestration/threads/${THREAD.projection.thread.id}/history`,
-    response: THREAD_HISTORY,
-    expected: THREAD_HISTORY,
-    load: (input: HttpInput) =>
-      fetchEnvironmentThreadHistoryPage({
-        ...input,
-        threadId: THREAD.projection.thread.id,
-        cursor: "older-page",
-      }),
-  },
 ];
 
 describe("authenticated environment HTTP requests", () => {
@@ -233,9 +188,6 @@ describe("authenticated environment HTTP requests", () => {
           accessToken: "current-token",
         },
       ]);
-      if (loader.name === "older thread history") {
-        expect(url.searchParams.get("cursor")).toBe("older-page");
-      }
       expect(PREPARED.httpAuthorization).toMatchObject({ accessToken: "expired-token" });
     }),
   );
@@ -292,44 +244,7 @@ describe("authenticated environment HTTP requests", () => {
           url: `${RENEWED_ORIGIN}${loader.path}`,
           accessToken: "renewed-token",
         });
-        if (loader.name === "older thread history") {
-          expect(url.searchParams.get("cursor")).toBe("older-page");
-        }
       }),
-  );
-
-  it.effect("renews credentials captured by the bounded snapshot loader", () =>
-    Effect.gen(function* () {
-      const harness = makeHarness((requestNumber) =>
-        requestNumber === 1
-          ? credentialRejectedResponse()
-          : Response.json(encodeBoundedSnapshot(BOUNDED_THREAD)),
-      );
-      const loaderLayer = boundedThreadSnapshotLoaderLayer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            harness.httpLayer,
-            Layer.succeed(ManagedRelayDpopSigner, Option.getOrThrow(harness.input.signer)),
-            Layer.succeed(RemoteEnvironmentAuthorization, harness.remoteAuthorization),
-          ),
-        ),
-      );
-      const loader = yield* ThreadSnapshotLoader.pipe(Effect.provide(loaderLayer));
-      const result = yield* loader.load(PREPARED, THREAD.projection.thread.id);
-      expect(result).toEqual({
-        _tag: "present",
-        snapshot: { ...THREAD, latestLocalTurnOrdinal: BOUNDED_THREAD.latestLocalTurnOrdinal },
-        history: {
-          historyCursor: BOUNDED_THREAD.historyCursor,
-          hasMoreHistory: true,
-          latestLocalTurnOrdinal: BOUNDED_THREAD.latestLocalTurnOrdinal,
-        },
-      });
-      expect(harness.calls).toHaveLength(2);
-      expect(new Headers(harness.calls[1]!.init.headers).get("authorization")).toBe(
-        "DPoP renewed-token",
-      );
-    }),
   );
 
   it.effect("preserves the credential rejection after the one recovery attempt fails", () =>

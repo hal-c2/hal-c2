@@ -36,7 +36,8 @@ const FakeMc::Extension extension([](FakeMc& mc) {
   mc.onRpc(QStringLiteral("assets.createUrl"), [&mc](const FakeMc::Rpc& rpc) {
     const QJsonObject resource = rpc.payload.value(QLatin1String("resource")).toObject();
     if (resource.value(QLatin1String("_tag")) != QLatin1String("project-favicon")) {
-      mc.passOn(rpc);
+      // A workspace's file is FakeFiles'; an attachment TimelineSteps'.
+      if (!signFile(mc, rpc)) mc.passOn(rpc);
       return;
     }
     const QString path = resource.value(QLatin1String("path")).toString();

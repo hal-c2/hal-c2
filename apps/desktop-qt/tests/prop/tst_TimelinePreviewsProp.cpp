@@ -4,16 +4,23 @@
 // `preview.close`, `preview.open`) until a step answers it, in any order, or
 // refuses it. A list is read when it is asked for, so one answered late is
 // older than the events sent since. The user switches threads, hides and shows
-// the tab, reloads, closes tabs and opens new ones; the MC can restart.
+// the tab, reloads, closes tabs and opens new ones; the MC can restart. t2 lives
+// on another MC of the cluster, so a link the user opens for it (openAddress)
+// goes through a tab of its and the connected MC's forward (`preview.forward`,
+// held too), unless the connected MC is on another machine.
 //
 // After each step the rows are all of the thread shown, each once, and
 // QAbstractItemModelTester finds nothing wrong with the row signals; a row that
 // stayed the same is not redrawn, and nothing resets for no change. Once every
-// answer is in, a shown list that loaded is the MC's tabs of the thread.
+// answer is in, a shown list that loaded is the MC's tabs of the thread. Every
+// page the browser opens is a link the user opened, at its address or at the
+// forward of a port the thread's MC granted; once every answer is in, each link
+// has opened or said why not.
 
 #include "Prop.h"
 
 #include <QAbstractItemModelTester>
+#include <QHostAddress>
 #include <QJsonArray>
 
 #include <memory>
@@ -26,10 +33,36 @@ namespace {
 
 const QString kEnvironment = QStringLiteral("env-a");
 const QString kMc = QStringLiteral("mc-a");
+const QString kRemote = QStringLiteral("env-b");
+const QString kRemoteMc = QStringLiteral("mc-b");
 const QStringList kThreads{QStringLiteral("t1"), QStringLiteral("t2")};
 const QStringList kTabs{QStringLiteral("tab-1"), QStringLiteral("tab-2"), QStringLiteral("tab-3"), QStringLiteral("tab-4")};
 const QStringList kUrls{QString(), QStringLiteral("http://localhost:3000/"), QStringLiteral("http://localhost:5173/")};
+const QStringList kLinks{QStringLiteral("http://localhost:3000/"), QStringLiteral("http://127.0.0.1:5173/app?q=1#top"),
+                         QStringLiteral("http://[::1]:3000/"), QStringLiteral("https://example.com/")};
 constexpr int kMaxTabs = 6;
+
+// t2 is on the cluster's other MC.
+QString environmentOf(const QString& thread) {
+  return thread == QLatin1String("t2") ? kRemote : kEnvironment;
+}
+
+QString mcOf(const QString& thread) {
+  return thread == QLatin1String("t2") ? kRemoteMc : kMc;
+}
+
+int portOf(const QUrl& url) {
+  return url.port(url.scheme() == QLatin1String("https") ? 443 : 80);
+}
+
+bool loopback(const QUrl& url) {
+  return url.host() == QLatin1String("localhost") || QHostAddress(url.host()).isLoopback();
+}
+
+// Where the connected MC forwards a port: elsewhere, as when the port is taken here.
+int forwardPortOf(int port) {
+  return port + 10000;
+}
 
 QString pick(const QStringList& values) {
   return *rc::gen::elementOf(std::vector<QString>(values.cbegin(), values.cend()));
@@ -87,6 +120,17 @@ struct Sut {
     FakeMc::Rpc rpc;
     QJsonObject list;
   };
+  // A link the user opened for a thread, not yet in the browser; `away`
+  // once the connected MC was not on this machine meanwhile.
+  struct Link {
+    QString thread;
+    QUrl url;
+    bool away = false;
+  };
+  struct Forward {
+    QString thread;
+    int port = 0;
+  };
 
   FakeMc mc;
   std::unique_ptr<McClient> client;
@@ -100,6 +144,15 @@ struct Sut {
   qint64 revision = 0;
   int opened = 0;
   QList<Held> held;
+  // Whether the connected MC is on this machine.
+  bool here = true;
+  QList<Link> links;
+  QList<Forward> granted;
+  // Links that said why they did not open; calls sent to an MC other than the thread's
+  // (or a forward to one other than the connected one); pages opened for no link.
+  int linkErrors = 0;
+  QStringList misrouted;
+  QList<QUrl> stray;
   // Since the step began: rows redrawn (by tab), resets, count signals.
   QList<QString> redrawn;
   int resets = 0;
@@ -122,7 +175,7 @@ struct Sut {
       }
       held.append({rpc, {{QStringLiteral("sessions"), sessions}, {QStringLiteral("serverEpoch"), epoch}, {QStringLiteral("revision"), revision}}});
     });
-    for (const QString& method : {QStringLiteral("preview.close"), QStringLiteral("preview.open")}) {
+    for (const QString& method : {QStringLiteral("preview.close"), QStringLiteral("preview.open"), QStringLiteral("preview.forward")}) {
       mc.onRpc(method, [this](const FakeMc::Rpc& rpc) { held.append({rpc, {}}); });
     }
     client = std::make_unique<McClient>();
@@ -130,7 +183,12 @@ struct Sut {
     client->open(mc.origin(), QStringLiteral("token"));
     RC_ASSERT(halc2::prop::until([this] { return client->isReady(); }));
     previews = std::make_unique<ThreadPreviews>(
-        client.get(), [](const QString&, const QString&, const QString&) {}, [](const QUrl&) {});
+        client.get(),
+        [this](const QString&, const QString& title, const QString&) {
+          if (title == QLatin1String("Could not open the page")) ++linkErrors;
+        },
+        [this](const QUrl& url) { browsed(url); });
+    previews->setConnectedHere([this] { return here; });
     tester = std::make_unique<QAbstractItemModelTester>(previews.get(), QAbstractItemModelTester::FailureReportingMode::Warning);
     QObject::connect(previews.get(), &QAbstractItemModel::dataChanged, previews.get(),
                      [this](const QModelIndex& top, const QModelIndex& bottom) {
@@ -203,28 +261,81 @@ struct Sut {
     return tab;
   }
 
+  // Whether one of the thread's tabs on the MC is at a loopback address at the port,
+  // which preview_forward.ex's grant asks.
+  bool tabAt(const QString& thread, int port) const {
+    for (const QJsonObject& tab : tabs) {
+      const QUrl at(tab.value(QLatin1String("navStatus")).toObject().value(QLatin1String("url")).toString());
+      if (tab.value(QLatin1String("threadId")).toString() == thread && loopback(at) && portOf(at) == port) return true;
+    }
+    return false;
+  }
+
   // Answers the held call, or refuses it.
   void answer(int at, bool ok) {
     const Held call = held.takeAt(at);
-    if (!ok || (call.rpc.method == QLatin1String("preview.open") && tabs.size() >= kMaxTabs)) {
+    const QString method = call.rpc.method;
+    const QJsonObject payload = call.rpc.payload;
+    const QString thread = payload.value(QLatin1String("threadId")).toString();
+    if (method == QLatin1String("preview.forward") ? call.rpc.environment != kEnvironment || payload.value(QLatin1String("environmentId")).toString() != environmentOf(thread)
+                                                   : call.rpc.environment != environmentOf(thread)) {
+      misrouted.append(method + QLatin1Char(' ') + thread + QStringLiteral(" at ") + call.rpc.environment);
+    }
+    const int port = payload.value(QLatin1String("port")).toInt();
+    if (!ok || (method == QLatin1String("preview.open") && tabs.size() >= kMaxTabs) ||
+        (method == QLatin1String("preview.forward") && !tabAt(thread, port))) {
       mc.refuse(call.rpc, QStringLiteral("no"));
       return;
     }
-    if (call.rpc.method == QLatin1String("preview.list")) {
+    if (method == QLatin1String("preview.list")) {
       mc.reply(call.rpc, call.list);
-    } else if (call.rpc.method == QLatin1String("preview.close")) {
-      const int index = indexOf(call.rpc.payload.value(QLatin1String("tabId")).toString());
+    } else if (method == QLatin1String("preview.close")) {
+      const int index = indexOf(payload.value(QLatin1String("tabId")).toString());
       if (index >= 0) emitEvent(tabs.takeAt(index), QStringLiteral("closed"));
       mc.reply(call.rpc, QJsonValue::Null);
+    } else if (method == QLatin1String("preview.forward")) {
+      granted.append({thread, port});
+      mc.reply(call.rpc, QJsonObject{{QStringLiteral("port"), forwardPortOf(port)}});
     } else {
-      mc.reply(call.rpc, newTab(call.rpc.payload.value(QLatin1String("threadId")).toString(), {}));
+      mc.reply(call.rpc, newTab(thread, payload.value(QLatin1String("url")).toString()));
     }
+  }
+
+  // The browser opens `url`: the first waiting link it is, as it is or through a
+  // forward granted for its thread at its port, at 127.0.0.1 for an address.
+  void browsed(const QUrl& url) {
+    for (qsizetype at = 0; at < links.size(); ++at) {
+      const Link& link = links.at(at);
+      const bool remote = environmentOf(link.thread) != kEnvironment;
+      bool fits = url == link.url && (!loopback(link.url) || !remote || link.away);
+      if (!fits && remote && loopback(link.url)) {
+        QUrl forwarded = link.url;
+        forwarded.setPort(forwardPortOf(portOf(link.url)));
+        if (!QHostAddress(forwarded.host()).isNull()) forwarded.setHost(QStringLiteral("127.0.0.1"));
+        fits = url == forwarded && std::any_of(granted.cbegin(), granted.cend(), [&](const Forward& forward) {
+                 return forward.thread == link.thread && forward.port == portOf(link.url);
+               });
+      }
+      if (fits) {
+        links.removeAt(at);
+        return;
+      }
+    }
+    stray.append(url);
   }
 
   void check(const Model& model) {
     barrier();
     const QList<Row> now = rows();
     RC_ASSERT(modelTestFailures == 0);
+    RC_ASSERT(misrouted.isEmpty());
+    RC_ASSERT(stray.isEmpty());
+    // Once nothing is held, every link opened or said why not.
+    if (held.isEmpty()) {
+      RC_ASSERT(int(links.size()) == linkErrors);
+      links.clear();
+      linkErrors = 0;
+    }
     RC_ASSERT(previews->property("count").toInt() == now.size());
     RC_ASSERT(now.size() == before.size() || countSignals > 0);
     RC_ASSERT(resets == 0 || now != before);  // a reset for nothing
@@ -268,7 +379,7 @@ struct Step : Command {
 struct SetThread : Step {
   QString thread = pick(kThreads);
   void apply(Model& model) const override { model.thread = thread; }
-  void act(const Model&, Sut& sut) const override { sut.previews->setThread(kEnvironment, thread, kMc); }
+  void act(const Model&, Sut& sut) const override { sut.previews->setThread(environmentOf(thread), thread, mcOf(thread)); }
   void show(std::ostream& os) const override { os << "SetThread(" << thread.toStdString() << ")"; }
 };
 
@@ -296,6 +407,31 @@ struct UserNewTab : Step {
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const override { sut.previews->newTab(); }
   void show(std::ostream& os) const override { os << "UserNewTab"; }
+};
+
+// The user opens a link for the thread shown, from a reply or the address bar.
+struct OpenLink : Step {
+  QString url = pick(kLinks);
+  void apply(Model&) const override {}
+  void act(const Model& model, Sut& sut) const override {
+    if (model.thread.isEmpty()) return;
+    sut.links.append({model.thread, QUrl(url), !sut.here});
+    sut.previews->openAddress(url);
+  }
+  void show(std::ostream& os) const override { os << "OpenLink(" << url.toStdString() << ")"; }
+};
+
+// The connected MC is on this machine, or on another (as one reached over the network).
+struct SetHere : Step {
+  bool here = *rc::gen::arbitrary<bool>();
+  void apply(Model&) const override {}
+  void act(const Model&, Sut& sut) const override {
+    sut.here = here;
+    if (!here) {
+      for (Sut::Link& link : sut.links) link.away = true;
+    }
+  }
+  void show(std::ostream& os) const override { os << "SetHere(" << here << ")"; }
 };
 
 // The MC answers one held call (the `at`th, wrapping), or refuses it.
@@ -405,12 +541,12 @@ private slots:
   void cleanupTestCase() { qInstallMessageHandler(previousHandler); }
 
   void previews() {
-    QVERIFY(rc::check("the previews list is the MC's tabs of the thread shown, redrawn only where they changed", [] {
+    QVERIFY(rc::check("the previews list is the MC's tabs of the thread shown, redrawn only where they changed, and a link opens where it should", [] {
       Model model;
       Sut sut;
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<SetThread, SetActive, Reload, UserClose, UserNewTab, Answer, Answer, AnswerAll,
-                                                         McOpen, McOpen, McNavigate, McFail, McClose, McRestart>());
+                       rc::state::gen::execOneOfWithArgs<SetThread, SetActive, Reload, UserClose, UserNewTab, OpenLink, OpenLink, SetHere,
+                                                         Answer, Answer, AnswerAll, McOpen, McOpen, McNavigate, McFail, McClose, McRestart>());
     }));
   }
 };

@@ -22,7 +22,6 @@ MenuItem {
     implicitHeight: reason.length > 0 ? 28 + reasonText.contentHeight + 4 : 28
     leftPadding: 8
     rightPadding: 8
-    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     font.pixelSize: Math.round(14 * Theme.fontScale)
     hoverEnabled: true
     Accessible.description: [detail, reason].filter(part => part.length > 0).join(". ")

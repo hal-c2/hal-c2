@@ -23,7 +23,7 @@ defmodule HalC2.OrchestrationPropTest do
   as it starts, and the continuation, which completes, do not. After each command the test waits on the
   threads' streams until nothing is starting and the runs the command ended have
   ended, then compares each thread's projection with the model: thread state, runs
-  and their statuses in order, the queue's order and positions, at most one active
+  and their statuses in ordinal order (the order they started), the queue's order and positions, at most one active
   run, and every user message exactly once, in the run it belongs to. A message of the
   MC's own is in the transcript as a notification, never as a user message, and while
   it is queued it cannot be edited or made to steer.
@@ -99,7 +99,9 @@ defmodule HalC2.OrchestrationPropTest do
   # threads: id -> %{status: :live | :archived | :deleted, title, instance, runs, queue,
   #   messages}
   #   instance: the instance of the run that started last, else the one it was created on;
-  #   runs: [%{msg, status, held, instance}] in the order they were made (their ordinals);
+  #   runs: [%{msg, status, held, instance}] in ordinal order: a run is made last, and
+  #     when it starts it goes after every run that left the queue, with the runs still
+  #     queued after it in queue order (`in_start_order/2`);
   #   queue: queued messages, first to start first;
   #   messages: msg -> %{text, run: the message whose run it joined, shown: in transcript,
   #     notice: the MC's own message to the agent}
@@ -559,6 +561,8 @@ defmodule HalC2.OrchestrationPropTest do
   # A message's run starts and runs, or, for a "usage limit" message, fails at once and
   # holds every queued message for the user.
   defp started(thread, msg) do
+    thread = in_start_order(thread, msg)
+
     if limit_text?(thread.messages[msg].text) do
       thread
       |> set_runs(fn run ->
@@ -575,9 +579,24 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp limit_text?(text), do: String.starts_with?(text, "usage limit")
 
-  # The thread's latest run, passing over queued messages held for the user.
+  # Runs are numbered in the order they start: the starting run takes the ordinal after
+  # every run that left the queue (started, or cancelled while queued), and the runs
+  # still queued move up behind it in queue order.
+  defp in_start_order(thread, msg) do
+    {[run], others} = Enum.split_with(thread.runs, &(&1.msg == msg))
+    {waiting, left} = Enum.split_with(others, &(&1.status == :queued))
+    position = thread.queue |> Enum.with_index() |> Map.new()
+    waiting = Enum.sort_by(waiting, &Map.get(position, &1.msg))
+    %{thread | runs: left ++ [run] ++ waiting}
+  end
+
+  # The thread's latest run, passing over runs held for the user that never started
+  # (still queued, or cancelled while held).
   defp latest(thread),
-    do: thread.runs |> Enum.reverse() |> Enum.find(&(&1.status != :queued or not &1.held))
+    do:
+      thread.runs
+      |> Enum.reverse()
+      |> Enum.find(&(not &1.held or &1.status not in [:queued, :cancelled]))
 
   # The thread's latest run when it is a limit stop, else nil.
   defp limited(nil), do: nil
@@ -609,7 +628,9 @@ defmodule HalC2.OrchestrationPropTest do
         notice: false
       }
 
-      %{thread | runs: thread.runs ++ [run]} |> put_in([:messages, resume], message)
+      %{thread | runs: thread.runs ++ [run]}
+      |> in_start_order(resume)
+      |> put_in([:messages, resume], message)
     end
   end
 
@@ -846,8 +867,18 @@ defmodule HalC2.OrchestrationPropTest do
 
   def release(tid) do
     case Orchestration.release_session(tid) do
-      :ok -> reply({:ok, %{}}, [])
-      :busy -> reply({:error, :busy}, [])
+      :ok ->
+        # Released means gone from the registry too, not only dead: the next message
+        # looks the session up first.
+        case Registry.lookup(HalC2.Codex.Registry, tid) do
+          [] -> :ok
+          held -> raise("the released session of #{tid} is still registered: #{inspect(held)}")
+        end
+
+        reply({:ok, %{}}, [])
+
+      :busy ->
+        reply({:error, :busy}, [])
     end
   end
 

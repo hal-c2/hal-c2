@@ -52,7 +52,7 @@ export function createConversationFeature(kit: FeatureKit): Feature {
         const copied = kit.copy(message.text);
         kit.status(
           copied ? "Message copied." : "This terminal has no clipboard access.",
-          copied ? "success" : "error",
+          copied ? "success" : "warning",
         );
       },
     });

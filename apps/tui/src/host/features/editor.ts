@@ -77,7 +77,7 @@ export function createEditorFeature(kit: FeatureKit, options: EditorOptions): Fe
             copied
               ? `Your edit of ${path} is on the clipboard.`
               : "This terminal has no clipboard access.",
-            copied ? "success" : "error",
+            copied ? "success" : "warning",
           );
         } else kit.status(`Kept ${path} as it is on disk.`, "info");
       },
@@ -87,7 +87,7 @@ export function createEditorFeature(kit: FeatureKit, options: EditorOptions): Fe
   const edit = (path: string, line: number | null) => {
     const workspace = kit.workspace();
     if (!workspace) {
-      kit.status("Open a thread to edit its files.", "error");
+      kit.status("Open a thread to edit its files.", "warning");
       return;
     }
     const { cwd } = workspace;

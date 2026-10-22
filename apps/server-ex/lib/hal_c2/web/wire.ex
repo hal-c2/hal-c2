@@ -4,6 +4,8 @@ defmodule HalC2.Web.Wire do
   output, a file change's diff, and a handoff's history, but clients never show
   them, so they stay off the socket. A failed command keeps the fact that it failed.
   Subagent text and dynamic tool values past their limits are cut or summarized.
+  Subagent text that grows by appends is cut to the same text, so what a client folds
+  from patches is what a snapshot of the same stream shows it.
 
   Events carry patches, not entities, so a patch is trimmed by the type of the turn
   item it changes, which the stream that owns the item knows.
@@ -14,15 +16,16 @@ defmodule HalC2.Web.Wire do
   rules starts over.
   """
 
-  @version 1
+  @version 2
   @max_detail 32_768
+  @cut_keys ~w(prompt progress result)
   @max_dynamic 16_384
   @dropped %{
     "command_execution" => ~w(output),
     "file_change" => ~w(diffStr oldStr newStr)
   }
 
-  @doc "Changes whenever what `entity/2` or `patch/3` leave out does."
+  @doc "Changes whenever what `entity/2` or `patch/4` leave out does."
   def version, do: @version
 
   @doc "A snapshot row's entity, trimmed."
@@ -32,15 +35,118 @@ defmodule HalC2.Web.Wire do
 
   @doc """
   An event's patch, trimmed, or nil when nothing the client would use is left.
-  `type` is the turn item's type when the patch is to one.
+  `type` is the turn item's type when the patch is to one, and `was` the entity just
+  before the patch (or its `cut_basis/1`): how much of a subagent's text the client
+  already holds is read from it. With `was` nil an append is taken to grow an empty
+  field, which is right only where the text appended to is known to be within the
+  limit or reset by the patch itself: `replay_patch/3` is the one place that passes
+  it for a text whose current length it has checked, and the live path passes the
+  item (or its basis) an append grows, nil only for an item not there before.
   """
-  def patch("turn-item", patch, type),
-    do: turn_item_patch(get_in(patch, ["s", "type"]) || type, patch) |> nonempty()
+  def patch(kind, patch, type, was)
 
-  def patch("context-handoff", patch, _type),
+  def patch("turn-item", patch, type, was),
+    do: turn_item_patch(get_in(patch, ["s", "type"]) || type, patch, was) |> nonempty()
+
+  def patch("context-handoff", patch, _type, _was),
     do: patch |> drop(~w(history delivery)) |> set("summaryText", "") |> nonempty()
 
-  def patch(_kind, patch, _type), do: patch
+  def patch(_kind, patch, _type, _was), do: patch
+
+  # Whether `patch` appends to a subagent text that `entity`, the item as it is now,
+  # holds past the limit. A client that has not followed the item's appends one by one
+  # (a replay) cannot be handed them cut; it is sent the item whole instead. Only
+  # `replay_patch/3` decides that, so the check stays in here with it. Deliberately
+  # conservative: a key the patch itself resets (its `s`/`u`/`d`) still counts,
+  # though `patch/4` could trim that append exactly from the reset — production
+  # patches almost never carry reset and append for one field (`Patch.diff/2`
+  # never emits it, `Patch.compose/2` folds it into a set), so the whole-item
+  # replacement that costs stays the rare path, kept for simplicity.
+  defp appends_past_limit?("turn-item", %{"a" => appended}, %{"type" => "subagent"} = entity)
+       when is_map(appended),
+       do:
+         Enum.any?(@cut_keys, &(is_map_key(appended, &1) and text_size(entity[&1]) > @max_detail))
+
+  defp appends_past_limit?(_kind, _patch, _entity), do: false
+
+  @doc """
+  Whether `patch` can change a subagent item's `cut_basis/1`: it sets, appends to
+  or unsets one of the cut texts, or deletes (replaces) the item. A patch that
+  cannot leaves the basis as it was, and its trimming does not read `was`, so a
+  caller folding a commit's bases can skip the fold for it.
+  """
+  def changes_cut_text?(patch) do
+    patch["d"] == true or
+      Enum.any?(@cut_keys, fn key ->
+        key in List.wrap(patch["u"]) or
+          (is_map(patch["s"]) and is_map_key(patch["s"], key)) or
+          (is_map(patch["a"]) and is_map_key(patch["a"], key))
+      end)
+  end
+
+  @doc """
+  What a replay sends for one merged event (`HalC2.Streams.View.replayed/3`): the
+  events since a client's offset coalesced into `patch`, against `entity` as it is
+  now. `:replacement` when the patch appends to a subagent text past the limit now:
+  the text it grows at the client's offset is not known, so the caller sends the
+  item whole, cut as `entity/2` has it. Else `{:patch, trimmed}` or nil when
+  nothing is left. Text within the limit now was within it at the offset too,
+  unless the patch resets it, which `patch/4` reads from the patch itself; that is
+  the check under which this, the one caller that may, hands `patch/4` an empty
+  `was`.
+  """
+  def replay_patch(kind, patch, entity) do
+    if appends_past_limit?(kind, patch, entity) do
+      :replacement
+    else
+      case patch(kind, patch, entity && entity["type"], nil) do
+        nil -> nil
+        trimmed -> {:patch, trimmed}
+      end
+    end
+  end
+
+  @doc """
+  What `patch/4` reads of a subagent item as `was`: its texts, each kept to the bytes
+  that decide how it is cut (the first `#{@max_detail}` and whether there are more),
+  however long it has grown.
+  """
+  def cut_basis(nil), do: nil
+
+  def cut_basis(item) do
+    Map.new(Map.take(item, @cut_keys), fn
+      {key, text} when is_binary(text) and byte_size(text) > @max_detail ->
+        {key, binary_part(text, 0, @max_detail + 1)}
+
+      field ->
+        field
+    end)
+  end
+
+  @doc """
+  `patch` with its subagent texts kept to what `cut_basis/1` keeps, so that applied to
+  an item's basis it gives the patched item's basis, without growing a long text.
+  """
+  def cut_basis_patch(patch) do
+    Enum.reduce(~w(s a), patch, fn op, patch ->
+      case patch do
+        %{^op => %{} = fields} -> %{patch | op => cut_basis_fields(fields)}
+        _ -> patch
+      end
+    end)
+  end
+
+  defp cut_basis_fields(fields) do
+    Enum.reduce(@cut_keys, fields, fn key, fields ->
+      case fields do
+        %{^key => text} when is_binary(text) and byte_size(text) > @max_detail ->
+          %{fields | key => binary_part(text, 0, @max_detail + 1)}
+
+        _ ->
+          fields
+      end
+    end)
+  end
 
   # --- turn items ----------------------------------------------------------------
 
@@ -51,7 +157,7 @@ defmodule HalC2.Web.Wire do
   defp turn_item(%{"type" => "file_change"} = item), do: Map.drop(item, @dropped["file_change"])
 
   defp turn_item(%{"type" => "subagent"} = item) do
-    Enum.reduce(~w(prompt progress result), item, fn key, item ->
+    Enum.reduce(@cut_keys, item, fn key, item ->
       if is_binary(item[key]), do: Map.put(item, key, cut(item[key])), else: item
     end)
   end
@@ -64,7 +170,7 @@ defmodule HalC2.Web.Wire do
 
   defp turn_item(item), do: item
 
-  defp turn_item_patch(type, patch) when is_map_key(@dropped, type) do
+  defp turn_item_patch(type, patch, _was) when is_map_key(@dropped, type) do
     patch = drop(patch, @dropped[type])
 
     if type == "command_execution",
@@ -72,11 +178,80 @@ defmodule HalC2.Web.Wire do
       else: patch
   end
 
-  defp turn_item_patch("subagent", patch),
-    do: map_set(patch, ~w(prompt progress result), &if(is_binary(&1), do: cut(&1), else: &1))
+  # Sets are cut first: `cut_appends/2` measures an append against the set it follows
+  # as the client holds it, so a set past the limit leaves nothing to append to.
+  defp turn_item_patch("subagent", patch, was) do
+    patch
+    |> map_set(@cut_keys, &if(is_binary(&1), do: cut(&1), else: &1))
+    |> cut_appends(was)
+  end
 
-  defp turn_item_patch("dynamic_tool", patch), do: map_set(patch, ~w(input output), &summarize/1)
-  defp turn_item_patch(_type, patch), do: patch
+  defp turn_item_patch("dynamic_tool", patch, _was),
+    do: map_set(patch, ~w(input output), &summarize/1)
+
+  defp turn_item_patch(_type, patch, _was), do: patch
+
+  # The client holds a subagent's text cut, as a snapshot has it. An append that keeps
+  # the text under the limit goes through; one that takes it past is the cut text,
+  # sent as a set; one to text already past it adds nothing, as the cut text is the
+  # same first bytes whatever follows. The text appended to is the one the rest of
+  # the patch leaves, as `HalC2.Patch.apply/2` has it: a delete or an unset empties
+  # it, a set (cut before this) replaces it.
+  defp cut_appends(%{"a" => appended} = patch, was) when is_map(appended) do
+    Enum.reduce(appended, patch, fn
+      {key, suffix}, patch when key in @cut_keys and is_binary(suffix) ->
+        held = held(patch, key, was)
+        size = byte_size(held)
+
+        cond do
+          size + byte_size(suffix) <= @max_detail ->
+            patch
+
+          size > @max_detail ->
+            unappend(patch, key)
+
+          # Only the bytes that take the text one past the limit decide its cut.
+          true ->
+            suffix = binary_part(suffix, 0, @max_detail - size + 1)
+            patch |> unappend(key) |> keep(key) |> set(key, cut(held <> suffix))
+        end
+
+      _other, patch ->
+        patch
+    end)
+  end
+
+  defp cut_appends(patch, _was), do: patch
+
+  defp held(patch, key, was) do
+    held =
+      cond do
+        key in Map.get(patch, "u", []) -> nil
+        is_map_key(Map.get(patch, "s", %{}), key) -> patch["s"][key]
+        patch["d"] == true or was == nil -> nil
+        true -> was[key]
+      end
+
+    if is_binary(held), do: held, else: ""
+  end
+
+  # Unsets apply after sets, so an append turned into a set must not be unset too.
+  defp keep(%{"u" => unset} = patch, key) do
+    case List.delete(unset, key) do
+      [] -> Map.delete(patch, "u")
+      unset -> %{patch | "u" => unset}
+    end
+  end
+
+  defp keep(patch, _key), do: patch
+
+  defp unappend(patch, key) do
+    patch = Map.update!(patch, "a", &Map.delete(&1, key))
+    if patch["a"] == %{}, do: Map.delete(patch, "a"), else: patch
+  end
+
+  defp text_size(text) when is_binary(text), do: byte_size(text)
+  defp text_size(_text), do: 0
 
   # A command that failed says so without its output.
   defp failed(item, exit_code, flagged) do

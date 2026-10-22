@@ -30,10 +30,13 @@ public:
   QQmlPropertyMap* state() const { return m_state; }
   bool localFolderImportEnabled() const { return m_localFolderImportEnabled; }
   void setLocalFolderImportEnabled(bool enabled) { m_localFolderImportEnabled = enabled; }
-  // The MC the shell is connected to; local folders are its only when it
-  // runs on this machine (a loopback origin).
+  // The MC the shell is connected to (empty while it is connected to none);
+  // local folders are its only when it runs on this machine.
   QUrl mcOrigin() const { return m_mcOrigin; }
   void setMcOrigin(const QUrl& origin) { m_mcOrigin = origin; }
+  // Whether that MC runs on this machine, as NativeShell answers it
+  // (thisMachine::hosts); without an answer it does not.
+  void setMcHere(std::function<bool()> here) { m_mcHere = std::move(here); }
   // Whether this machine's folders are the MC's: import is allowed and the
   // MC runs here.
   bool localFolders() const;
@@ -96,6 +99,7 @@ private:
   std::function<void(const QUrl&)> m_openUrl;
   std::function<void(const QString&)> m_writeClipboard;
   QUrl m_mcOrigin;
+  std::function<bool()> m_mcHere;
   bool m_localFolderImportEnabled = false;
 };
 

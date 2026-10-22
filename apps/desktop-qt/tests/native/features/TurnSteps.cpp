@@ -8,6 +8,8 @@
 #include <QJsonObject>
 #include <QVariantMap>
 
+#include <memory>
+
 #include "CommandPaletteController.h"
 #include "ComposerBrick.h"
 #include "ComposerController.h"
@@ -194,6 +196,20 @@ void queueMessage(World& world, const QString& text) {
        {QStringLiteral("status"), QStringLiteral("queued")},
        {QStringLiteral("queuePosition"), position},
        {QStringLiteral("userMessageId"), QStringLiteral("message-") + text}});
+}
+
+void queueWake(World& world) {
+  FakeStreams& fake = world.mc.part<FakeStreams>();
+  const QString run = QStringLiteral("run-queued-wake");
+  const int position = ++fake.ordinal;
+  set(world, QStringLiteral("message"), QStringLiteral("message-wake"),
+      {{QStringLiteral("id"), QStringLiteral("message-wake")}, {QStringLiteral("role"), QStringLiteral("user")}, {QStringLiteral("providerWake"), true}});
+  set(world, QStringLiteral("run"), run,
+      {{QStringLiteral("id"), run},
+       {QStringLiteral("ordinal"), position},
+       {QStringLiteral("status"), QStringLiteral("queued")},
+       {QStringLiteral("queuePosition"), position},
+       {QStringLiteral("userMessageId"), QStringLiteral("message-wake")}});
 }
 
 QVariantList toasts(World& world) {
@@ -560,6 +576,44 @@ const Steps steps([] {
     expect(command.value(QLatin1String("queuedRunId")) == QStringLiteral("run-queued-") + c[0] &&
                command.value(QLatin1String("targetRunId")) == world.mc.part<FakeStreams>().run,
            QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
+  });
+
+  // A queue the MC holds after a restart (HalC2.Orchestration.Recovery marks its
+  // queued runs `queueHeld`) is resumed from the card the TurnRequests brick draws.
+  step(QStringLiteral("%1 was queued when the MC restarted").arg(q), [](World& world, const Captures& c, const Table&) {
+    queueMessage(world, c[0]);
+  });
+  step(QStringLiteral("a provider wake was queued when the MC restarted"), [](World& world, const Captures&, const Table&) { queueWake(world); });
+  step(QStringLiteral("the MC comes back"), [](World& world, const Captures&, const Table&) {
+    for (const QVariant& entry : listed(world, QStringLiteral("queue")) + listed(world, QStringLiteral("waiting"))) {
+      set(world, QStringLiteral("run"), entry.toMap().value(QStringLiteral("runId")).toString(), {{QStringLiteral("queueHeld"), true}});
+    }
+    world.waitFor([&] { return turn(world).value(QStringLiteral("queueHeld")).toBool(); },
+                  [&] { return QStringLiteral("the queue to be held; the turn is %1").arg(show(turn(world))); });
+  });
+  const auto requestsBrick = [](World& world) -> Brick& {
+    if (world.brick && world.brick->root() && world.brick->root()->objectName() == QLatin1String("turnRequestsBrick")) return *world.brick;
+    world.brick = std::make_unique<Brick>(world, "import QtQuick\nimport HalC2.Bricks\nTurnRequests { objectName: \"turnRequestsBrick\" }\n", QSize(820, 500));
+    return *world.brick;
+  };
+  step(QStringLiteral("the queue is headed %1 and says %1").arg(q), [requestsBrick](World& world, const Captures& c, const Table&) {
+    Brick& brick = requestsBrick(world);
+    world.waitFor([&] { return brick.shows(c[0]) && brick.shows(c[1]); },
+                  [&] { return QStringLiteral("the queue to read \"%1\" and \"%2\"; the turn is %3").arg(c[0], c[1], show(turn(world))); });
+  });
+  step(QStringLiteral("the user resumes the queue"), [requestsBrick](World& world, const Captures&, const Table&) {
+    Brick& brick = requestsBrick(world);
+    world.waitFor([&] { return brick.item(QStringLiteral("queueResume"))->isVisible(); }, QStringLiteral("the queue's Resume queue button"));
+    brick.click(QStringLiteral("queueResume"));
+    world.sync();
+  });
+  step(QStringLiteral("the MC is asked to resume the queue"), [](World& world, const Captures&, const Table&) {
+    const QJsonObject command = lastCommand(world, QStringLiteral("queue.resume"));
+    expect(command.value(QLatin1String("threadId")) == kThread, QStringLiteral("the MC was told %1").arg(show(command.toVariantMap())));
+  });
+  step(QStringLiteral("the MC is not asked to resume the queue"), [](World& world, const Captures&, const Table&) {
+    const QList<QJsonObject> found = commandsOf(world, QStringLiteral("queue.resume"));
+    expect(found.isEmpty(), QStringLiteral("the MC has %1").arg(world.describeCommands()));
   });
 
   // Editing a queued message.

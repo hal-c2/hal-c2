@@ -17,18 +17,35 @@ export interface TuiStatusRowInput {
   readonly sourceControlOpen: boolean;
   readonly working: boolean;
   readonly draft: boolean;
+  /** The error the user has not acknowledged yet (statusLog.ts), or null. */
+  readonly pinnedError: string | null;
+  /** Whether ^K opens the palette in the active keymap layer (host.ts). */
+  readonly paletteAvailable?: boolean;
 }
 
 /**
  * Published under `statusRow`: the main column's bottom row, as ChatView.tsx
  * draws it. `hint` (dim) is cut to leave `label` (the status glyph and
- * message, in the status colour) its room of up to 32 cells.
+ * message, in the status colour) its room of up to 32 cells. While an error is
+ * pinned and a newer message has come after it, `pinned` carries the error
+ * (glyph included) ahead of `label`, and the two share up to half the row. Otherwise
+ * `pinned` is empty and the error, if any, is `label` itself.
  */
 export interface TuiStatusRowState {
   readonly hint: string;
   readonly label: string;
   readonly kind: StatusKind;
+  readonly pinned: string;
+  /** An error is pinned: a plugin's replacing contribution leaves the status in place. */
+  readonly errorPinned: boolean;
 }
+
+/** The glue between a pinned error and the message that came after it. */
+const PINNED_SEPARATOR = " · ";
+/** How a pinned error says it is waiting to be dismissed, so it does not read as a stuck line. */
+const DISMISS_HINT = "click error or ^K to dismiss";
+/** Where ^K does not open the palette (terminal drawer, image preview), only the click is promised. */
+const DISMISS_HINT_CLICK_ONLY = "click error to dismiss";
 
 export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
   const composeHint = [
@@ -55,14 +72,55 @@ export function buildStatusRow(input: TuiStatusRowInput): TuiStatusRowState {
           ? "^P prompt · ^E close term · ^↑/^↓ size term · keys → shell"
           : composeHint;
   const statusLabel = `${statusGlyphColor(input.status.kind).glyph} ${input.status.text}`;
-  const statusWidth = Math.min(
-    Math.max(0, input.mainWidth - 2),
-    Math.max(8, Math.min(32, statusLabel.length)),
+  const beside =
+    input.pinnedError !== null &&
+    !(input.status.kind === "error" && input.status.text === input.pinnedError);
+  const pinnedLabel = beside ? `${statusGlyphColor("error").glyph} ${input.pinnedError}` : "";
+  // A pinned error announces how to dismiss it at the head of the hints, which
+  // `clip` keeps, instead of widening the status budget the layout promises.
+  // The ^K half is only promised where the compose hint is in effect: the
+  // terminal drawer and image preview bind no ctrl+k there.
+  const composeInEffect =
+    (input.paletteAvailable ?? true) &&
+    !input.imagePreview &&
+    !input.addingProject &&
+    !(!input.draft && input.questionBanner !== null) &&
+    !input.terminalOpen;
+  const hintWithDismiss =
+    input.pinnedError !== null
+      ? `${composeInEffect ? DISMISS_HINT : DISMISS_HINT_CLICK_ONLY} · ${hint}`
+      : hint;
+  const room = Math.max(0, input.mainWidth - 2);
+  // Widths are terminal cells, as `clip` counts them: a wide character takes two.
+  const statusCells = Bun.stringWidth(statusLabel);
+  const pinnedCells = Bun.stringWidth(pinnedLabel);
+  // Beside an error the two share what they need, and never more than half the row.
+  const besideNeed = pinnedCells + PINNED_SEPARATOR.length + statusCells;
+  const statusWidth = beside
+    ? Math.min(room, Math.floor(input.mainWidth / 2), besideNeed)
+    : Math.min(room, Math.max(8, Math.min(32, statusCells)));
+  const hintWidth = Math.max(0, room - statusWidth);
+  if (!beside) {
+    return {
+      hint: clip(hintWithDismiss, hintWidth),
+      label: clip(statusLabel, statusWidth),
+      kind: input.status.kind,
+      pinned: "",
+      errorPinned: input.pinnedError !== null,
+    };
+  }
+  // The newer message keeps what it needs up to a third of the shared width, or more
+  // when the error is short enough to leave it room; the error takes the rest.
+  const labelWidth = Math.min(
+    statusCells,
+    Math.max(Math.floor(statusWidth / 3), statusWidth - PINNED_SEPARATOR.length - pinnedCells),
   );
-  const hintWidth = Math.max(0, input.mainWidth - 2 - statusWidth);
+  const pinnedWidth = Math.max(0, statusWidth - PINNED_SEPARATOR.length - labelWidth);
   return {
-    hint: clip(hint, hintWidth),
-    label: clip(statusLabel, statusWidth),
+    hint: clip(hintWithDismiss, hintWidth),
+    pinned: pinnedWidth > 0 ? clip(pinnedLabel, pinnedWidth) + PINNED_SEPARATOR : "",
+    label: clip(statusLabel, labelWidth),
     kind: input.status.kind,
+    errorPinned: true,
   };
 }

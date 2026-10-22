@@ -5,6 +5,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/Notifications.qml (in-app alert cards, dismiss, actions)
 #   apps/desktop-qt/tests/tst_Notifications.qml
 #   apps/desktop-qt/tests/tst_Scenarios.qml (notification scenarios)
+#   apps/tui/src/host/notificationsState.ts (alerts kept until opened or dismissed), apps/tui/qml/HalC2/Tui/Notifications.qml (newest rows, +N more)
 #   apps/desktop-qt/src/native/AlertController.cpp (which thread changes alert, and how; muted threads)
 #   apps/desktop-qt/src/NativeNotifications.cpp (the desktop's notification service)
 #   apps/desktop-qt/tests/native/tst_NativeNotifications.cpp (clicks keep their thread, one alert per thread, disabling closes alerts)
@@ -175,3 +176,11 @@ Feature: Alerts when a thread needs the user
     And "Tax fix" finishes its turn
     Then an alert for "Tax fix" is raised
 
+
+  @tui
+  Scenario: More alerts than fit are kept, not dropped
+    Given 5 threads have finished in the background
+    Then all 5 alerts are kept
+    And 3 alerts are shown with "+2 more alerts"
+    When the user clicks "+2 more alerts"
+    Then the notifications list offers all 5 alerts

@@ -428,8 +428,7 @@ defmodule HalC2.Acp.Antigravity do
   @doc "Forgets an instance's account (signed out, or the agent asked for a sign-in)."
   def drop_account(instance) do
     File.rm(account_path(instance))
-    :persistent_term.put({HalC2.Acp, instance, :unauthenticated}, true)
-    HalC2.Settings.notify_providers()
+    HalC2.Acp.put_unauthenticated(instance)
   end
 
   # --- the provider entry ---------------------------------------------------------

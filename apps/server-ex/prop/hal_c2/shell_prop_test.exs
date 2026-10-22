@@ -116,7 +116,9 @@ defmodule HalC2.ShellPropTest do
         if(connected != [],
           do: [
             {1, {:call, __MODULE__, :peer_down, [oneof(connected)]}},
-            {1, {:call, __MODULE__, :peer_put_lost, [oneof(connected), stream_id(), title()]}}
+            {1, {:call, __MODULE__, :peer_put_lost, [oneof(connected), stream_id(), title()]}},
+            {1, {:call, __MODULE__, :peer_other_version, [oneof(connected), other_message()]}},
+            {1, {:call, __MODULE__, :announce, []}}
           ],
           else: []
         ) ++
@@ -133,6 +135,20 @@ defmodule HalC2.ShellPropTest do
   end
 
   defp title, do: oneof(["a", "b", "c"])
+
+  # What a member on another HAL-C2 version may send: a message this one does not know,
+  # or one it knows with other fields.
+  defp other_message do
+    oneof([
+      {:peer_rows, "m", []},
+      {:peer_hello, "m"},
+      {:peer_rows, "m", :new, [], %{}},
+      {:peer_hello, "m", %{}, :yes, :extra},
+      {:put_row, "r1"},
+      {:rows_from_the_future, "m", 1}
+    ])
+  end
+
   defp stream_id, do: oneof(["r1", "r2", "r3"])
 
   def precondition(state, {:call, _, :peer_up, [p]}), do: not state.peers[p].connected
@@ -317,6 +333,15 @@ defmodule HalC2.ShellPropTest do
       when cmd in [:restart, :peer_up, :peer_restart],
       do: ok?(reader == %{missing: [], crashes: 0}, {:reader, reader})
 
+  # Every connected member is told this MC's environment again, and no one else.
+  def postcondition(state, {:call, _, :announce, []}, told) do
+    connected = for {p, %{connected: true}} <- state.peers, do: p
+    ok?(Enum.sort(told) == Enum.sort(connected), {:announced, told, connected})
+  end
+
+  def postcondition(_state, {:call, _, :peer_other_version, _}, result),
+    do: ok?(result == :ignored, {:other_version, result})
+
   def postcondition(_state, _call, result), do: result == :ok
 
   defp ok?(true, _detail), do: true
@@ -464,6 +489,32 @@ defmodule HalC2.ShellPropTest do
 
         settle()
     end
+  end
+
+  # This MC moved to another version in place and tells its members its environment.
+  def announce do
+    Shell.announce()
+    Shell.version()
+    told = collect_environments([])
+    settle()
+    told
+  end
+
+  defp collect_environments(told) do
+    receive do
+      {:wire, p, {:peer_environment, _mc, _descriptor}} -> collect_environments([p | told])
+    after
+      0 -> told
+    end
+  end
+
+  # A member on another HAL-C2 version sends what this shell does not know. It stays
+  # connected (`HalC2.Cluster`), so the shell ignores the message rather than crash.
+  def peer_other_version(p, message) do
+    pid = Process.whereis(Shell)
+    peer_cast(p, message)
+    settle()
+    if Process.whereis(Shell) == pid, do: :ignored, else: :crashed
   end
 
   # The member's shell starts again: a new epoch, its rows at rev 0, and nothing

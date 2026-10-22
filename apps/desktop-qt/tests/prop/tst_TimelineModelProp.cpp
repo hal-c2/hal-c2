@@ -195,8 +195,10 @@ timeline::GroupSummary expectedSummary(const QList<Call>& all) {
 struct Run {
   QString id;
   int ordinal = 0;
-  // running, completed, failed, interrupted or rolled_back
+  // running, completed, failed, interrupted, rolled_back, queued or cancelled
   QString status;
+  // A queued run held for the user, numbered above the run that passed it.
+  bool held = false;
   bool operator==(const Run&) const = default;
 };
 
@@ -276,7 +278,9 @@ QString field(const QString& type) {
 }
 
 QJsonObject json(const Run& run) {
-  return {{QStringLiteral("id"), run.id}, {QStringLiteral("ordinal"), run.ordinal}, {QStringLiteral("status"), run.status}};
+  QJsonObject entity{{QStringLiteral("id"), run.id}, {QStringLiteral("ordinal"), run.ordinal}, {QStringLiteral("status"), run.status}};
+  if (run.held) entity.insert(QStringLiteral("queueHeld"), true);
+  return entity;
 }
 
 QJsonObject json(const Item& item) {
@@ -413,7 +417,14 @@ QList<Row> project(const Model& model) {
   });
   QString latest;
   for (const Run& run : thread.runs) {
-    if (latest.isEmpty() || run.ordinal > thread.runs.value(latest).ordinal) latest = run.id;
+    // Held for the user and never started: still queued, or cancelled while held.
+    if (run.held && (run.status == QLatin1String("queued") || run.status == QLatin1String("cancelled"))) continue;
+    // Runs are in the order they were made, so `>=` would give equal ordinals
+    // to the newest made. The generators only ever make unique ordinals, so
+    // no tie arises here; the implementation's tie-break is later-starting
+    // (first item in timeline order), covered by the dedicated regression in
+    // tst_TimelineRepaintRegression instead.
+    if (latest.isEmpty() || run.ordinal >= thread.runs.value(latest).ordinal) latest = run.id;
   }
 
   QHash<QString, QString> terminal;  // run -> its last reply
@@ -727,6 +738,35 @@ struct Change : Command {
   }
 };
 
+// The MC numbers runs in start order: a run that starts takes the ordinal
+// after every run that left the queue (a held run cancelled while held left
+// it too and keeps its number), and the held runs still waiting move up
+// behind it, each renumber a patch on a live run.
+int startOrdinal(const Model& model) {
+  int left = 0;
+  for (const Run& run : model.mc.runs) {
+    if (!(run.held && run.status == QLatin1String("queued"))) left = qMax(left, run.ordinal);
+  }
+  return left + 1;
+}
+
+QList<Event> renumberWaiting(Model& model, int after) {
+  QList<Event> events;
+  QStringList waiting;
+  for (const Run& run : model.mc.runs) {
+    if (run.held && run.status == QLatin1String("queued")) waiting.append(run.id);
+  }
+  // Runs are keyed in the order they were made (run-1, run-2, ...).
+  for (const QString& id : waiting) {
+    const int next = ++after;
+    if (model.mc.runs[id].ordinal == next) continue;
+    model.mc.runs[id].ordinal = next;
+    events.append(event(model, QStringLiteral("run"), id, {{QStringLiteral("s"), QJsonObject{{QStringLiteral("ordinal"), next}}}}));
+  }
+  model.ordinal = qMax(model.ordinal, after);
+  return events;
+}
+
 // A new turn: its run and the message that asked for it, in one frame. The
 // message is the user's, or the MC's to the agent: a notification, or what a
 // thread stored of one before the MC recorded them so.
@@ -737,18 +777,98 @@ struct StartRun : Change {
             {{4, QStringLiteral("user")}, {2, QStringLiteral("notification")}, {1, QStringLiteral("envelope")}, {1, QStringLiteral("wake")}})) {}
   void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.runs.size() < kMaxRuns); }
   void apply(Model& model) const override {
-    const Run run{QStringLiteral("run-%1").arg(model.mc.runs.size() + 1), ++model.ordinal, QStringLiteral("running")};
+    // A run that passes a held queue is numbered below it: the held runs are
+    // renumbered up behind it in the same commit, as the MC does.
+    const Run run{QStringLiteral("run-%1").arg(model.mc.runs.size() + 1), startOrdinal(model), QStringLiteral("running")};
+    model.mc.runs.insert(run.id, run);
+    QList<Event> events{event(model, QStringLiteral("run"), run.id, {{QStringLiteral("s"), json(run)}})};
+    events.append(renumberWaiting(model, run.ordinal));
     Item message{QStringLiteral("ask-") + run.id,
                  how == QLatin1String("notification") ? QStringLiteral("notification") : QStringLiteral("user_message"), run.id,
                  ++model.ordinal, QStringLiteral("ask"), false, QStringLiteral("completed")};
     message.opener = true;
     if (how == QLatin1String("envelope") || how == QLatin1String("wake")) message.legacy = how;
-    model.mc.runs.insert(run.id, run);
     model.mc.items.insert(message.id, message);
-    commit(model, {event(model, QStringLiteral("run"), run.id, {{QStringLiteral("s"), json(run)}}),
-                   event(model, QStringLiteral("turn-item"), message.id, {{QStringLiteral("s"), json(message)}}, run.id)});
+    events.append(event(model, QStringLiteral("turn-item"), message.id, {{QStringLiteral("s"), json(message)}}, run.id));
+    commit(model, events);
   }
   void show(std::ostream& os) const override { os << "StartRun(" << how.toStdString() << ")"; }
+};
+
+// A queued message held for the user (it waited behind a stop) that a newer run
+// passed: it waits, numbered above the runs that started, with nothing shown yet.
+struct Hold : Change {
+  explicit Hold(const Model&) {}
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.mc.runs.size() < kMaxRuns); }
+  void apply(Model& model) const override {
+    Run run{QStringLiteral("run-%1").arg(model.mc.runs.size() + 1), ++model.ordinal, QStringLiteral("queued")};
+    run.held = true;
+    model.mc.runs.insert(run.id, run);
+    commit(model, {event(model, QStringLiteral("run"), run.id, {{QStringLiteral("s"), json(run)}})});
+  }
+  void show(std::ostream& os) const override { os << "Hold"; }
+};
+
+// The user cancels a held message instead of resuming the queue: the run keeps
+// its hold and its number, and never started.
+struct CancelHeld : Change {
+  QString run;
+  explicit CancelHeld(const Model& model) {
+    QStringList runs;
+    for (const Run& held : model.mc.runs) {
+      if (held.held && held.status == QLatin1String("queued")) runs.append(held.id);
+    }
+    RC_PRE(!runs.isEmpty());
+    run = pick(runs);
+  }
+  void checkPreconditions(const Model& model) const override {
+    const Run found = model.mc.runs.value(run);
+    RC_PRE(found.held && found.status == QLatin1String("queued"));
+  }
+  void apply(Model& model) const override {
+    model.mc.runs[run].status = QStringLiteral("cancelled");
+    commit(model, {event(model, QStringLiteral("run"), run, {{QStringLiteral("s"), QJsonObject{{QStringLiteral("status"), QStringLiteral("cancelled")}}}})});
+  }
+  void show(std::ostream& os) const override { os << "CancelHeld(" << run.toStdString() << ")"; }
+};
+
+// The user resumes the queue and a held run starts: it takes the ordinal after
+// every run that left the queue (a renumber patch on a live run), its hold
+// clears, the runs still waiting move up behind it, and its message appears.
+struct ResumeHeld : Change {
+  QString run;
+  explicit ResumeHeld(const Model& model) {
+    QStringList runs;
+    for (const Run& held : model.mc.runs) {
+      if (held.held && held.status == QLatin1String("queued")) runs.append(held.id);
+    }
+    RC_PRE(!runs.isEmpty());
+    run = pick(runs);
+  }
+  void checkPreconditions(const Model& model) const override {
+    RC_PRE(model.mc.items.size() < kMaxItems);
+    const Run found = model.mc.runs.value(run);
+    RC_PRE(found.held && found.status == QLatin1String("queued"));
+  }
+  void apply(Model& model) const override {
+    Run& started = model.mc.runs[run];
+    started.ordinal = startOrdinal(model);
+    started.status = QStringLiteral("running");
+    started.held = false;
+    QList<Event> events{event(model, QStringLiteral("run"), run,
+                               {{QStringLiteral("s"),
+                                 QJsonObject{{QStringLiteral("ordinal"), started.ordinal},
+                                             {QStringLiteral("status"), QStringLiteral("running")},
+                                             {QStringLiteral("queueHeld"), false}}}})};
+    events.append(renumberWaiting(model, started.ordinal));
+    Item message{QStringLiteral("ask-") + run, QStringLiteral("user_message"), run, ++model.ordinal, QStringLiteral("ask"), false,
+                 QStringLiteral("completed")};
+    message.opener = true;
+    model.mc.items.insert(message.id, message);
+    events.append(event(model, QStringLiteral("turn-item"), message.id, {{QStringLiteral("s"), json(message)}}, run));
+    commit(model, events);
+  }
+  void show(std::ostream& os) const override { os << "ResumeHeld(" << run.toStdString() << ")"; }
 };
 
 QStringList running(const Model& model) {
@@ -1195,7 +1315,7 @@ private slots:
       Model model;
       Sut sut;
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<StartRun, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
+                       rc::state::gen::execOneOfWithArgs<StartRun, Hold, CancelHeld, ResumeHeld, AddItem, AddItem, Delta, Delta, Delta, Finish, Finish, DeleteItem,
                                                          Settle, Settle, RollBack, Subscribe, Subscribe, Drop, NewLog, Duplicate,
                                                          LoadEarlier, Toggle, Restart, AgentModel>());
     }));

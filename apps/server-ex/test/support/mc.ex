@@ -42,6 +42,7 @@ defmodule HalC2.Test.Mc do
     start_supervised!(HalC2.Auth)
     start_supervised!(HalC2.Streams)
     start_supervised!(HalC2.Shell)
+    start_supervised!(HalC2.Subprocess.Orphans)
     web = start_supervised!(Supervisor.child_spec(HalC2.Web, id: HalC2.Web))
     start_supervised!(HalC2.RuntimeRecord)
 
@@ -72,6 +73,7 @@ defmodule HalC2.Test.Mc do
     for child <- [
           HalC2.RuntimeRecord,
           HalC2.Web,
+          HalC2.Subprocess.Orphans,
           HalC2.Shell,
           HalC2.Streams,
           HalC2.Auth,
@@ -224,20 +226,24 @@ defmodule HalC2.Test.Mc do
   The first frame matching each predicate, in predicate order, whatever order
   they arrive in (an RPC's reply and the push it causes race).
   """
-  def await_all(client, preds), do: await_all(client, Enum.with_index(preds), %{})
+  def await_all(client, preds, timeout \\ 30_000),
+    do: await_all(client, Enum.with_index(preds), %{}, timeout)
 
-  defp await_all(client, [], found),
+  # `timeout` only bounds how long a missing frame takes to fail the test, as in `await/3`:
+  # a shape's first frames come when the MC has computed them, which on a loaded
+  # runner takes longer than any short deadline.
+  defp await_all(client, [], found, _timeout),
     do: {found |> Enum.sort() |> Enum.map(&elem(&1, 1)), client}
 
-  defp await_all(client, pending, found) do
-    {frame, client} = WsClient.recv(client, 2_000)
+  defp await_all(client, pending, found, timeout) do
+    {frame, client} = WsClient.recv(client, timeout)
 
     case Enum.find(pending, fn {pred, _} -> pred.(frame) end) do
       nil ->
-        await_all(client, pending, found)
+        await_all(client, pending, found, timeout)
 
       {_, index} = hit ->
-        await_all(client, List.delete(pending, hit), Map.put(found, index, frame))
+        await_all(client, List.delete(pending, hit), Map.put(found, index, frame), timeout)
     end
   end
 
@@ -270,8 +276,11 @@ defmodule HalC2.Test.Mc do
   Starts a second MC joined to this one: a `:peer` VM running the whole app in
   its own home under the scenario's `mc.home`. This VM becomes distributed on
   first use. Returns the peer's MC name; the peer stops when the scenario ends.
+
+  `opts`: `:env`, more of the peer's `:hal_c2` settings; `stoppable: true` lets
+  the scenario stop the MC itself (`:init.stop/0`) and still clean up after it.
   """
-  def start_peer(mc) do
+  def start_peer(mc, opts \\ []) do
     unless :erlang.is_alive() do
       {_, 0} = System.cmd("epmd", ["-daemon"])
       name = :"hal_c2_features#{System.unique_integer([:positive])}@127.0.0.1"
@@ -283,13 +292,17 @@ defmodule HalC2.Test.Mc do
         name: :"hal_c2_peer#{System.unique_integer([:positive])}",
         host: ~c"127.0.0.1",
         longnames: true,
+        peer_down: if(opts[:stoppable], do: :continue, else: :stop),
         args: Enum.flat_map(:code.get_path(), &[~c"-pa", &1])
       })
 
     ExUnit.Callbacks.on_exit(fn -> :peer.stop(peer) end)
 
     # A peer MC does not read Mix config, so it gets the MC settings directly.
-    for {key, value} <- [start_mc: true, home: Path.join(mc.home, "peer"), port: 0],
+    env =
+      [start_mc: true, home: Path.join(mc.home, "peer"), port: 0] ++ Keyword.get(opts, :env, [])
+
+    for {key, value} <- env,
         do: :ok = :erpc.call(name, Application, :put_env, [:hal_c2, key, value])
 
     {:ok, _} = :erpc.call(name, Application, :ensure_all_started, [:hal_c2])
@@ -847,6 +860,9 @@ defmodule HalC2.Test.Mc.World do
     thread = thread_id(context, title)
     before = System.os_time(:millisecond)
     {:ok, _} = HalC2.Streams.commit(thread, :thread, [{kind, id, patch}])
+    # The stream puts its row after a debounce; flushing it is the receipt that the row
+    # holds the commit, so the wait below does not depend on how long the debounce took.
+    :ok = HalC2.Streams.flush_shell(thread)
     await_row(thread, &(HalC2.Projection.JS.epoch_ms(&1["updatedAt"]) >= before))
     context
   end
@@ -2889,17 +2905,20 @@ defmodule HalC2.Test.Mc.World do
   @doc "A thread's entities of `kind` (`\"run\"`, `\"message\"`, ...), in stream order."
   def entities(context, title, kind), do: HalC2.StreamState.list(state(context, title), kind)
 
-  @doc "The latest run of a thread (highest ordinal), or nil."
+  @doc """
+  The latest run of a thread as its sidebar row has it (`HalC2.Projection.Shell.latest_run/1`):
+  the highest ordinal, passing over a held queue's run, or nil.
+  """
   def latest_run(context, title),
-    do: context |> entities(title, "run") |> Enum.max_by(& &1["ordinal"], fn -> nil end)
+    do: context |> entities(title, "run") |> HalC2.Projection.Shell.latest_run()
 
-  @doc "Waits until the thread's latest run has `status`; returns that run."
+  @doc "Waits until the thread's latest run (`latest_run/2`) has `status`; returns that run."
   def await_latest_run(context, title, status, timeout \\ 5_000) do
     await_state(
       context,
       title,
       fn state ->
-        case Enum.max_by(HalC2.StreamState.list(state, "run"), & &1["ordinal"], fn -> nil end) do
+        case HalC2.Projection.Shell.latest_run(HalC2.StreamState.list(state, "run")) do
           %{"status" => ^status} -> true
           _ -> false
         end
@@ -3862,7 +3881,7 @@ defmodule HalC2.Test.Mc.Terminal do
 
   @doc """
   Starts the MC's terminal services and makes `/bin/sh` the user's shell for
-  the scenario (quick, and it reads no rc files).
+  the scenario (quick, and it reads no rc files), with a prompt ending in `$ ` (pinned through `PS1`, which only some `sh`s honour).
   """
   def ensure(%{terminals_ready: true} = context), do: context
 
@@ -3871,8 +3890,17 @@ defmodule HalC2.Test.Mc.Terminal do
     Mc.ensure({DynamicSupervisor, name: HalC2.Terminal.Supervisor, strategy: :one_for_one})
     Mc.ensure(HalC2.Terminal.Hub)
     put_env("SHELL", "/bin/sh")
+    # The terminal passes the MC's environment on, so an exported PS1 would be the prompt
+    # of a shell that honours it (dash does; bash run as sh ignores it).
+    put_env("PS1", "$ ")
     Map.put(context, :terminals_ready, true)
   end
+
+  # Whether the shell is the one `ensure/1` installs, whose prompt `@prompt` matches;
+  # scenarios about which shell the MC picks run others (zsh, fish) that draw their own.
+  # This keys off the scenario's current `SHELL`, so it assumes one shell per scenario,
+  # set before any terminal opens; a terminal keeps the shell it spawned with.
+  defp prompt_known?, do: System.get_env("SHELL") == "/bin/sh"
 
   @doc "Sets (or with `nil` unsets) an OS environment variable until the scenario ends."
   def put_env(key, value) do
@@ -3915,11 +3943,177 @@ defmodule HalC2.Test.Mc.Terminal do
     {reply, put_input(context, input)}
   end
 
-  @doc "Like `open/3`, asserting success; returns `{snapshot, context}`."
+  @doc """
+  Like `open/3`, asserting success; returns `{snapshot, context}` once the shell has
+  drawn its first prompt (`await_prompt/2`). Reopening a terminal whose shell is busy
+  (a long command, a dev server) therefore waits until the command finishes and the
+  next prompt appears, or fails after the prompt wait's timeout.
+  """
   def open!(context, overrides \\ %{}, name \\ "default") do
+    context = ensure(context)
+    input = input(context, overrides)
+
+    fresh? =
+      Registry.lookup(HalC2.Terminal.Registry, {input["threadId"], input["terminalId"]}) == []
+
     case open(context, overrides, name) do
-      {{:ok, snapshot}, context} -> {snapshot, context}
-      {other, _} -> flunk("terminal.open failed: #{inspect(other)}")
+      {{:ok, snapshot}, context} ->
+        # A terminal with no process yet answers the open with the scrollback it
+        # restored from disk (the shell has not printed anything by then); a running
+        # one's scrollback is the shell's own.
+        restored = if fresh?, do: snapshot["history"], else: ""
+        if snapshot["status"] == "running", do: await_prompt(context.terminal, restored)
+
+        {snapshot, context}
+
+      {other, _} ->
+        flunk("terminal.open failed: #{inspect(other)}")
+    end
+  end
+
+  # What an idle shell has last printed: its prompt (`$ ` or `# `), which bash wraps
+  # in the switch to bracketed paste (`\e[?2004h` before the prompt text, and so
+  # possibly after it too once the prompt is redrawn). This is a heuristic: busy
+  # output that merely ends in `$ ` or `# ` also reads as a prompt, so steps must
+  # not print a trailing `$ `/`# ` while the shell is busy. Anchoring to a line
+  # start would instead miss a prompt printed after unterminated output.
+  @prompt ~r/[$#] (\e\[\?2004h)?\z/
+
+  # One deadline budget for `await_prompt/2`: the attach GenServer call can take
+  # `HalC2.Terminal.call_timeout/0`, the prompt wait itself 5s, and the caller
+  # must outlive both.
+  @prompt_attach_timeout HalC2.Terminal.call_timeout()
+  @prompt_wait_timeout 5_000
+  @prompt_caller_timeout @prompt_attach_timeout + @prompt_wait_timeout + 5_000
+
+  @doc """
+  Waits until the terminal's shell is idle at its prompt, for steps that type into
+  a shell they just started. Keystrokes sent earlier are echoed at once, and the
+  prompt then lands between that echo and the command's output (`$ hello`), where
+  a match for a line of output no longer finds it.
+
+  `restored` is scrollback the shell did not print, which a reopened terminal starts
+  with (the snapshot of the open); its own trailing prompt is not the new shell's.
+
+  Reads the terminal as a raw subscriber of its own, so no client's frames are
+  consumed. Does nothing when the scenario runs a shell whose prompt is not known
+  (`prompt_known?/0`).
+
+  Callers: `open!/3`, the attach-restart step, and the `terminal.restart` step.
+  Attach-with-cwd creating a terminal does not wait here; a step that types
+  right after such an attach must call this first and pass the attach
+  snapshot's history as `restored` (as `open!/3` does), so the restored
+  scrollback's stale prompt cannot satisfy the wait. `restored` has no
+  default: the choice is explicit at every call site (pass `""` only for a
+  shell known to start with no restored scrollback, e.g. after a restart).
+  """
+  def await_prompt(input, restored) do
+    if prompt_known?() do
+      session = Map.take(input, ["threadId", "terminalId"])
+      parent = self()
+      ref = make_ref()
+
+      # Monitored (not linked): asserting in the caller keeps a failure an
+      # assertion failure, and a reader crash is reported at once instead of
+      # surfacing only as the caller's timeout.
+      {pid, mon} =
+        spawn_monitor(fn -> send(parent, {ref, prompt_result(session, input, restored)}) end)
+
+      receive do
+        {^ref, :prompt} ->
+          Process.demonitor(mon, [:flush])
+          :ok
+
+        {^ref, {:no_prompt, tail}} ->
+          Process.demonitor(mon, [:flush])
+          flunk("the shell drew no prompt; its output ends #{inspect(tail)}")
+
+        {^ref, {:error, reason}} ->
+          Process.demonitor(mon, [:flush])
+          flunk("could not attach to the terminal to wait for its prompt: #{inspect(reason)}")
+
+        {:DOWN, ^mon, :process, ^pid, reason} ->
+          flunk("the prompt reader died: #{inspect(reason)}")
+      after
+        @prompt_caller_timeout ->
+          Process.exit(pid, :kill)
+          Process.demonitor(mon, [:flush])
+          flunk("the shell drew no prompt")
+      end
+    end
+
+    :ok
+  end
+
+  defp prompt_result(session, input, restored) do
+    case HalC2.Terminal.attach(session, self()) do
+      {:ok, snapshot} ->
+        try do
+          deadline = System.monotonic_time(:millisecond) + @prompt_wait_timeout
+          history = snapshot["history"] || ""
+
+          if snapshot["status"] in [nil, "running"] do
+            receive_prompt(String.replace_prefix(history, restored || "", ""), deadline)
+          else
+            {:no_prompt,
+             "terminal status #{inspect(snapshot["status"])}; output ends #{inspect(output_tail(history))}"}
+          end
+        after
+          HalC2.Terminal.detach(input["threadId"], input["terminalId"], self())
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+
+      other ->
+        {:error, other}
+    end
+  rescue
+    error -> {:error, {error.__struct__, Exception.message(error)}}
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  # The end of a terminal's output, the part that says what the shell last drew; a
+  # reopened running terminal starts with its whole scrollback (megabytes).
+  defp output_tail(output), do: String.slice(output, -200..-1//1)
+
+  # `@prompt` is `\z`-anchored, so only the tail can ever match; keeping a bounded
+  # tail makes each scan O(frame) instead of O(scrollback x frames).
+  defp prompt_tail(output) when byte_size(output) <= 1024, do: output
+
+  defp prompt_tail(output) do
+    output
+    |> binary_part(byte_size(output) - 1024, 1024)
+    |> drop_continuation_bytes()
+  end
+
+  defp drop_continuation_bytes(<<byte, rest::binary>>) when byte in 0x80..0xBF,
+    do: drop_continuation_bytes(rest)
+
+  defp drop_continuation_bytes(tail), do: tail
+
+  # `deadline` is absolute, so a shell that keeps printing without drawing a prompt
+  # still ends in the result below rather than renewing the wait with every message.
+  defp receive_prompt(output, deadline) do
+    output = prompt_tail(output)
+
+    if output =~ @prompt do
+      :prompt
+    else
+      receive do
+        {:hal_c2_terminal, _key, %{"type" => "output", "data" => data}} ->
+          receive_prompt(output <> data, deadline)
+
+        {:hal_c2_terminal, _key, %{"type" => type} = event} when type in ["exited", "error"] ->
+          {:no_prompt, "#{inspect(event)}; output ends #{inspect(output_tail(output))}"}
+
+        {:hal_c2_terminal, _key, _event} ->
+          receive_prompt(output, deadline)
+      after
+        max(deadline - System.monotonic_time(:millisecond), 0) ->
+          {:no_prompt, output_tail(output)}
+      end
     end
   end
 
@@ -3976,32 +4170,73 @@ defmodule HalC2.Test.Mc.Terminal do
   @doc """
   Output on the named client until it matches `pattern` (a string or regex);
   returns `{output so far, events seen, context}`.
+
+  `timeout` bounds the whole wait, not the gap between frames.
   """
   def await_output(context, name, pattern, timeout \\ 5_000) do
-    id = Map.fetch!(context.terminal_subs, name)
-    collect(World.client(context, name), id, pattern, timeout, "", [], context, name)
+    await_output(context, name, pattern, timeout, pattern)
   end
 
-  defp collect(client, id, pattern, timeout, acc, events, context, name) do
-    {frame, client} = WsClient.recv(client, timeout)
+  defp await_output(context, name, pattern, timeout, display_pattern) do
+    id = Map.fetch!(context.terminal_subs, name)
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    collect(
+      World.client(context, name),
+      id,
+      pattern,
+      deadline,
+      "",
+      [],
+      context,
+      name,
+      display_pattern
+    )
+  end
+
+  defp output_matches?(matcher, acc) when is_function(matcher, 1), do: matcher.(acc)
+  defp output_matches?(pattern, acc), do: acc =~ pattern
+
+  # `deadline` is absolute: a terminal that keeps printing without matching ends the
+  # wait on time, rather than renewing it with every frame.
+  defp collect(client, id, pattern, deadline, acc, events, context, name, display_pattern) do
+    {frame, client} =
+      WsClient.recv(client, max(deadline - System.monotonic_time(:millisecond), 0))
 
     case frame do
       %{"t" => "terminal", "id" => ^id, "event" => %{"type" => "output", "data" => data} = e} ->
         acc = acc <> data
 
-        if acc =~ pattern,
+        if output_matches?(pattern, acc),
           do: {acc, Enum.reverse([e | events]), World.put_client(context, name, client)},
-          else: collect(client, id, pattern, timeout, acc, [e | events], context, name)
+          else:
+            collect(
+              client,
+              id,
+              pattern,
+              deadline,
+              acc,
+              [e | events],
+              context,
+              name,
+              display_pattern
+            )
 
       %{"t" => "terminal", "id" => ^id, "event" => e} ->
-        collect(client, id, pattern, timeout, acc, [e | events], context, name)
+        collect(client, id, pattern, deadline, acc, [e | events], context, name, display_pattern)
 
       _ ->
-        collect(client, id, pattern, timeout, acc, events, context, name)
+        collect(client, id, pattern, deadline, acc, events, context, name, display_pattern)
     end
   rescue
     error in RuntimeError ->
-      flunk("#{Exception.message(error)}; no #{inspect(pattern)} in #{inspect(acc)}")
+      shown =
+        case display_pattern do
+          {:preformatted, text} -> text
+          other -> inspect(other)
+        end
+
+      flunk("#{Exception.message(error)}; no #{shown}; output ends #{inspect(output_tail(acc))}")
   end
 
   @doc "Sends keystrokes to the scenario's terminal from the named client, not waiting for the reply."
@@ -4021,13 +4256,45 @@ defmodule HalC2.Test.Mc.Terminal do
 
   @doc """
   Runs `command` in the terminal the named client is attached to and waits until
-  it finished; returns `{output, context}`.
+  it finished and the shell is back at its prompt (`await_output_idle/4`); returns
+  `{output, context}`.
   """
   def run(context, name, command, input \\ nil) do
     n = System.unique_integer([:positive])
     context = write(context, name, "#{command}; echo __done''_#{n}__\n", input)
-    {output, _events, context} = await_output(context, name, "__done_#{n}__")
+    {output, _events, context} = await_output_idle(context, name, "__done_#{n}__")
     {output, context}
+  end
+
+  @doc """
+  Like `await_output/4`, and waits for the prompt that follows the match too, so
+  the next thing typed reaches a shell that is waiting for it. Typed any sooner,
+  it is echoed first and the prompt then lands in front of its output. Waits for the
+  match alone when the scenario runs a shell whose prompt is not known.
+
+  `pattern` is any string or regex that does not end in `$` or `\\z` (the prompt
+  has to follow it).
+  """
+  def await_output_idle(context, name, pattern, timeout \\ 5_000) do
+    if prompt_known?() do
+      pattern = if is_binary(pattern), do: Regex.compile!(Regex.escape(pattern)), else: pattern
+
+      # Two separate checks instead of one composed regex: the caller's pattern
+      # (with its own options) matched somewhere, and the bounded prompt tail
+      # at the prompt. Composing them rescanned quadratically on repeated
+      # matches and leaked caller options (e.g. /x) into the prompt tail.
+      idle = fn acc -> acc =~ pattern and prompt_tail(acc) =~ @prompt end
+
+      await_output(
+        context,
+        name,
+        idle,
+        timeout,
+        {:preformatted, "#{inspect(pattern)} followed by a prompt"}
+      )
+    else
+      await_output(context, name, pattern, timeout)
+    end
   end
 
   @doc "Waits until an OS process has ended (a shell ignores SIGTERM, so up to a second)."
@@ -4056,8 +4323,7 @@ defmodule HalC2.Test.Mc.Terminal do
   def exited(context, text) do
     {_, context} = open!(context)
     {_, context} = attach!(context, "default", Map.delete(context.terminal, "cwd"))
-    # Typed before the shell's first prompt, so the prompt can land ahead of the
-    # output; the leading newline keeps `text` on a line of its own.
+    # The leading newline keeps `text` on a line of its own, whatever the prompt drew.
     context = write(context, "default", "printf '\\n%s\\n' '#{text}'; exit 0\n")
     {_, context} = await_event(context, "default", &(&1["type"] == "exited"))
     context
