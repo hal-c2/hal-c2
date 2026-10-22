@@ -894,20 +894,17 @@ defmodule HalC2Plugins.Planner.Sync do
 
   # The milestone's marks, named for their issue as `misplaced/2` writes them.
   # A plan saved before they were has them named for their task instead, and
-  # reads as the marks it meant; a mark of neither shape is left as it is, and
-  # no reader matches on it. Marks that are not a map at all (an unreleased
-  # build saved a list of task ids) read as none, and the milestone's next push
-  # writes them over, so such a mark's correction is lost.
+  # reads as the marks it meant, unless a mark named for the issue is there too,
+  # which wins; a mark of neither shape is left as it is, and no reader matches
+  # on it. Marks that are not a map at all (an unreleased build saved a list of
+  # task ids) read as none, and the milestone's next push writes them over, so
+  # such a mark's correction is lost.
   defp marks(%{"misplaced" => at}) when is_map(at) do
-    Map.new(at, fn
-      {key, %{"task" => _task, "issue" => _issue} = mark} ->
-        {key, mark}
+    {legacy, marks} =
+      Enum.split_with(at, &match?({_id, %{"repository" => _, "number" => _}}, &1))
 
-      {id, %{"repository" => _repository, "number" => _number} = issue} ->
-        {issue_key(issue), %{"task" => id, "issue" => issue}}
-
-      {key, mark} ->
-        {key, mark}
+    Enum.reduce(legacy, Map.new(marks), fn {id, issue}, marks ->
+      Map.put_new(marks, issue_key(issue), %{"task" => id, "issue" => issue})
     end)
   end
 

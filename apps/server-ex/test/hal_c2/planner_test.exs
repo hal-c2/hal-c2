@@ -1100,6 +1100,39 @@ defmodule HalC2.PlannerTest do
       assert took.(synced)["misplaced"] == %{}
     end
 
+    test "a mark named for its issue wins over one named for its task for the same issue" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "old" => issue.(7),
+          "acme/api#7" => %{"task" => "t", "issue" => issue.(7)},
+          "zzz" => issue.(7)
+        }
+      }
+
+      items =
+        Map.new([
+          {"ms",
+           %{
+             "id" => "ms",
+             "title" => "Launch",
+             "due" => nil,
+             "after" => [],
+             "projectId" => "p",
+             "milestone" => %{"repository" => @repo, "number" => 3}
+           }},
+          {"t", task(issue.(8))}
+        ])
+
+      assert Sync.settled(synced, %{"after" => []}, items)["misplaced"] ==
+               %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+    end
+
     test "an issue sent out of any milestone and to another in one push is asked once, for the other" do
       issue = fn n -> %{"repository" => @repo, "number" => n} end
 
