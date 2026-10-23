@@ -73,6 +73,8 @@ defmodule HalC2.Plugins.ProviderAdapter do
   `interrupt/2` stops the turn running as `run_id` and answers `{:error, reason}`
   when the adapter drives another run: the caller read `run_id` as active, and a
   newer turn may have started since. A `nil` run id stops whichever turn runs.
+  Between turns the pin is not checked yet: background work a turn left running
+  stops whichever run it came from (#474).
 
   An adapter that declares `active_steering` implements `steer/3`: it hands
   `%{text, attachments}` (attachments shaped like a turn's) to the turn running as
