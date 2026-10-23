@@ -419,6 +419,74 @@ defmodule HalC2.CodeReviewTest do
     _ = context
   end
 
+  # From the Maude model of claims between machines: a look that listed the old head
+  # was applied after the run had claimed the new one and reported, and queued the
+  # review again, which gave up its claim for another machine to start the commit.
+  test "a look begun before a run claimed its commit does not queue the review again",
+       context do
+    save_settings(%{"reviewNewPushes" => true})
+    at = System.monotonic_time()
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    settle()
+    %{"status" => reported} = review()
+
+    entry =
+      review
+      |> Map.take(
+        ~w(key repository number projectId title url author headBranch baseBranch isDraft labels reviewRequested changedLines updatedAt)
+      )
+      |> Map.put("headSha", String.duplicate("0", 40))
+
+    found = %{
+      at: at,
+      problem: nil,
+      unwatched: [],
+      entries: [entry],
+      read: [],
+      sizes: %{},
+      unknown_sizes: [],
+      asked: %{},
+      closed: [],
+      elsewhere: %{}
+    }
+
+    send(Process.whereis(@server), {:polled, found})
+    settle()
+    assert %{"status" => ^reported} = review()
+    assert %{@key => %{"claimed" => true}} = apply(@server, :claims, [[@key]])
+    _ = context
+  end
+
+  # From the Maude model of claims between machines: while the plugin restarted, its
+  # claims were gone with its server and a peer read them as none, so it started the
+  # commit this machine's review thread was still on.
+  test "a plugin restarting tells its peers it cannot say what it holds, then holds it again",
+       context do
+    start_review()
+    pid = Process.whereis(@server)
+    {:parent, sup} = Process.info(pid, :parent)
+    :sys.suspend(sup)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+
+    assert {:ok, %{"result" => :restarting}} =
+             HalC2.Plugins.Host.peer(@id, :claims, [[@key]])
+
+    :sys.resume(sup)
+    :sys.get_state(sup)
+    assert %{@key => %{"claimed" => true}} = apply(@server, :claims, [[@key]])
+    _ = context
+  end
+
   # --- helpers ----------------------------------------------------------------------------
 
   defp thread(thread_id) do

@@ -283,21 +283,25 @@ defmodule HalC2Plugins.CodeReview do
     # a settings save must not send the queue back into the limit it named.
     if loaded.paused_until, do: arm_resume(loaded)
 
-    {:ok,
-     %{
-       settings: settings,
-       reviews: loaded.reviews,
-       problem: nil,
-       unwatched: [],
-       checked_at: nil,
-       looked: nil,
-       polling: nil,
-       threads: nil,
-       paused_until: loaded.paused_until,
-       paused_reason: loaded.paused_reason,
-       failures: 0,
-       poll_backoff: 1
-     }, {:continue, :announce}}
+    state = %{
+      settings: settings,
+      reviews: loaded.reviews,
+      problem: nil,
+      unwatched: [],
+      checked_at: nil,
+      looked: nil,
+      polling: nil,
+      threads: nil,
+      paused_until: loaded.paused_until,
+      paused_reason: loaded.paused_reason,
+      failures: 0,
+      poll_backoff: 1,
+      claimed_at: %{}
+    }
+
+    # What this machine holds is back before a peer can read the table empty.
+    put_claims(state)
+    {:ok, state, {:continue, :announce}}
   end
 
   @impl GenServer
@@ -307,6 +311,8 @@ defmodule HalC2Plugins.CodeReview do
     listed = state.settings["display"] != "page"
     thread_ids = for {_, %{"threadId" => id}} <- state.reviews, is_binary(id), do: id
     spawn_link(fn -> Enum.each(thread_ids, &organize(&1, %{"listed" => listed})) end)
+    # The peers that stepped back while this plugin restarted look again.
+    if Node.list() != [], do: tell_peers()
     {:noreply, announce(state)}
   end
 
@@ -507,6 +513,7 @@ defmodule HalC2Plugins.CodeReview do
           end)
           |> Map.put("claimed", true)
 
+        state = %{state | claimed_at: Map.put(state.claimed_at, key, System.monotonic_time())}
         {:reply, :ok, state |> put(review) |> changed()}
 
       _ ->
@@ -997,6 +1004,7 @@ defmodule HalC2Plugins.CodeReview do
         unwatched: found.unwatched,
         checked_at: now(),
         looked: found.at,
+        claimed_at: Map.take(state.claimed_at, Map.keys(reviews)),
         poll_backoff:
           if(rate_limited?(found.problem), do: min(state.poll_backoff * 2, 8), else: 1)
     }
@@ -1026,6 +1034,11 @@ defmodule HalC2Plugins.CodeReview do
       other = found.elsewhere[pr["key"]]
 
       cond do
+        # The look began before this machine's run claimed the commit, so it may list
+        # an older head than the run checked out: it says nothing new of this one.
+        found.at < Map.get(state.claimed_at, pr["key"], found.at) ->
+          state
+
         known && known["status"] in ~w(queued running) ->
           put(state, review)
 
@@ -1318,7 +1331,15 @@ defmodule HalC2Plugins.CodeReview do
     :global.trans(
       {{__MODULE__, key}, self()},
       fn ->
-        case Enum.find(peer_claims([key]), &(&1["claimed"] and &1["sha"] == started["headSha"])) do
+        answers = Host.peers(@id, :claims, [[key]])
+
+        # A machine whose plugin is restarting cannot say what it holds; it tells
+        # this one when it can, and this one looks again then.
+        held =
+          Enum.find(rows(answers), &(&1["claimed"] and &1["sha"] == started["headSha"])) ||
+            Enum.find_value(answers, &(&1["result"] == :restarting && Map.put(&1, "status", "queued")))
+
+        case held do
           nil -> server({:started, key, thread_id, started})
           row -> {:elsewhere, Map.take(row, ~w(machine node status)), started}
         end
@@ -1742,11 +1763,12 @@ defmodule HalC2Plugins.CodeReview do
 
   @doc false
   # This machine's queued and claimed reviews of `keys`, for the other machines of
-  # the cluster: `%{key => %{"sha", "status", "claimed"}}`.
+  # the cluster: `%{key => %{"sha", "status", "claimed"}}`, or `:restarting` while
+  # the plugin runs without its server, which takes its claims with it.
   def claims(keys) do
     for key <- keys, [{^key, row}] <- [:ets.lookup(__MODULE__, key)], into: %{}, do: {key, row}
   rescue
-    ArgumentError -> %{}
+    ArgumentError -> :restarting
   end
 
   @doc false
@@ -1760,6 +1782,11 @@ defmodule HalC2Plugins.CodeReview do
   # review missing that is still this machine's. The other machines hear of a
   # change, so where they show a review running is not left stale until they look.
   defp share_claims(state) do
+    if put_claims(state) and Node.list() != [], do: tell_peers()
+  end
+
+  # Whether the claims changed.
+  defp put_claims(state) do
     rows =
       for {key, review} <- state.reviews,
           row = claim_row(review),
@@ -1771,10 +1798,10 @@ defmodule HalC2Plugins.CodeReview do
     :ets.insert(__MODULE__, rows)
     keys = MapSet.new(rows, &elem(&1, 0))
     for {key, _} <- before, key not in keys, do: :ets.delete(__MODULE__, key)
-
-    if Enum.sort(before) != Enum.sort(rows) and Node.list() != [],
-      do: spawn(fn -> Host.peers(@id, :claims_changed, []) end)
+    Enum.sort(before) != Enum.sort(rows)
   end
+
+  defp tell_peers, do: spawn(fn -> Host.peers(@id, :claims_changed, []) end)
 
   # A started review claims the commit it checked out, whatever became of it; one
   # queued or not yet started holds the head it would review, which another
@@ -1796,8 +1823,10 @@ defmodule HalC2Plugins.CodeReview do
   defp claimed?(review), do: Map.get(review, "claimed", review["reviewedSha"] != nil)
 
   # The other machines' rows for `keys`, each with its key and machine.
-  defp peer_claims(keys) do
-    for %{"result" => rows, "machine" => machine, "node" => node} <- Host.peers(@id, :claims, [keys]),
+  defp peer_claims(keys), do: rows(Host.peers(@id, :claims, [keys]))
+
+  defp rows(answers) do
+    for %{"result" => rows, "machine" => machine, "node" => node} <- answers,
         is_map(rows),
         {key, row} <- rows,
         do: Map.merge(row, %{"key" => key, "machine" => machine, "node" => node})
