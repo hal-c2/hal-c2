@@ -1,9 +1,9 @@
 # Sources:
 #   plugins/code-review/plugin.json (settings, permissions, pages, thread kinds)
-#   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing)
+#   plugins/code-review/mc/code_review.ex (watching, triggers, review runs, findings, publishing, claims across machines)
 #   plugins/code-review/ui/ReviewsPage.qml, ReviewHeader.qml, ReviewRowMark.qml, ReviewSettings.qml
 #   apps/server-ex/lib/hal_c2/pull_requests.ex (list, detail, submitReview through gh)
-#   apps/server-ex/lib/hal_c2/plugins/host.ex (providers with model options, organizing review threads)
+#   apps/server-ex/lib/hal_c2/plugins/host.ex (providers with model options, organizing review threads, peers)
 #   plugins/code-review/mc/checkout.ex (the plugin's own clone, a pull request's worktree of it)
 #   docs/user/code-review.md
 
@@ -514,3 +514,48 @@ Feature: Agent code review
         | Forgejo      |
         | Bitbucket    |
         | Azure DevOps |
+
+  Rule: One of the user's machines reviews each commit
+
+    @mc
+    Scenario: Two machines watching the same repository review a pull request once
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      When the pull request #12 is opened and both machines look at "acme/api" at once
+      Then one machine reviews #12
+      And the other shows #12 reviewing on that machine
+
+    @mc
+    Scenario: A machine on its own reviews
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" goes offline
+      When the pull request #12 is opened on "acme/api"
+      Then #12 is reviewed on this machine
+
+    @mc
+    Scenario: The review moves to another machine when its machine leaves before starting it
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too, one review at a time
+      And "laptop" is reviewing #11 and has #12 queued
+      And this machine shows #12 queued on "laptop"
+      When "laptop" goes offline
+      Then #12 is reviewed on this machine
+
+    @mc
+    Scenario: A commit two machines reviewed while apart is posted once
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" is apart from this machine
+      And the pull request #12 is opened on "acme/api"
+      And both machines reviewed #12 and "laptop" posted its review
+      When "laptop" is back in the cluster
+      And the user publishes the review of #12
+      Then it is not posted, as "laptop" already posted its review of this commit
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page shows which machine reviews a pull request
+      Given the review of #12 is running on the user's machine "laptop"
+      When the user opens the review of #12 on the "Reviews" page
+      Then the review says "Reviewing on laptop"
+      And it cannot be reviewed again on this machine

@@ -13,6 +13,13 @@ defmodule HalC2Plugins.CodeReview do
 
   Reads from the host (gh) run outside the server process: in the RPC caller for a
   call, in a process of their own for the timer, so the server only decides.
+
+  Of the user's machines connected in a cluster, one reviews each commit of a pull
+  request. A machine shares what it has queued and claimed (`claims/1`); a look
+  leaves a pull request another machine has to it (`elsewhere` on the review), and
+  a run claims its commit under a lock across the machines connected now, so of two
+  that start at once one reviews and the other steps back. A machine on its own
+  reviews as if there were no other.
   """
   @behaviour HalC2.Plugins.Extension
   use GenServer
@@ -267,6 +274,9 @@ defmodule HalC2Plugins.CodeReview do
     # Runs and posts are linked to the server, so stopping the plugin stops them; the
     # server itself only hears that one ended.
     Process.flag(:trap_exit, true)
+    :ets.new(__MODULE__, [:named_table, :protected, read_concurrency: true])
+    # A machine leaving gives back the reviews it had queued; they are looked at again.
+    :net_kernel.monitor_nodes(true)
     send(self(), :poll)
     loaded = load()
     # A pause there still is time on holds across the restart that loaded it:
@@ -484,6 +494,26 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  # Answered once the claim is shared, so the lock it was made under covers it.
+  def handle_call({:started, key, thread_id, checkout}, _from, state) do
+    case state.reviews[key] do
+      %{"threadId" => ^thread_id} = review ->
+        # A look while the checkout was fetched saw a newer head than the run began with.
+        review =
+          review
+          |> Map.merge(checkout, fn
+            "headSha", seen, fetched -> seen || fetched
+            _, _, value -> value
+          end)
+          |> Map.put("claimed", true)
+
+        {:reply, :ok, state |> put(review) |> changed()}
+
+      _ ->
+        {:reply, :ok, state}
+    end
+  end
+
   @impl GenServer
   def handle_cast({:turn_finished, thread_id, status, failure}, state) do
     case by_thread(state, thread_id) do
@@ -513,16 +543,22 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  def handle_cast({:started, key, thread_id, checkout}, state) do
+  # Another machine claimed the commit first: the review is back to not started,
+  # and shows where it runs.
+  def handle_cast({:elsewhere, key, thread_id, other}, state) do
     case state.reviews[key] do
-      %{"threadId" => ^thread_id} = review ->
-        # A look while the checkout was fetched saw a newer head than the run began with.
-        review = Map.merge(review, checkout, fn
-          "headSha", seen, fetched -> seen || fetched
-          _, _, value -> value
-        end)
+      %{"threadId" => ^thread_id, "status" => "running"} = review ->
+        review =
+          Map.merge(review, %{
+            "status" => "ready",
+            "threadId" => nil,
+            "startedAt" => nil,
+            "checkout" => nil,
+            "claimed" => false,
+            "elsewhere" => other
+          })
 
-        {:noreply, state |> put(review) |> changed()}
+        {:noreply, state |> put(review) |> pump() |> changed()}
 
       _ ->
         {:noreply, state}
@@ -599,7 +635,60 @@ defmodule HalC2Plugins.CodeReview do
     {:noreply, state}
   end
 
+  # What a machine that left had of the reviews is no longer anyone's: they are
+  # looked at again, without waiting for the next look.
+  def handle_info({:nodedown, node}, state) do
+    gone = to_string(node)
+
+    case for({key, %{"elsewhere" => %{"node" => ^gone}}} <- state.reviews, do: key) do
+      [] ->
+        {:noreply, state}
+
+      keys ->
+        reviews = Enum.reduce(keys, state.reviews, &put_in(&2[&1]["elsewhere"], nil))
+        server = self()
+        settings = state.settings
+        known = reviews
+        spawn_link(fn -> send(server, {:polled, look(settings, known)}) end)
+        {:noreply, %{state | reviews: reviews} |> changed()}
+    end
+  end
+
+  # Another machine's queued and claimed reviews changed: where the reviews this
+  # machine leaves to others run is read again, without a look at GitHub.
+  def handle_info(:peer_claims, state) do
+    heads = for {key, review} <- state.reviews, left?(review), into: %{}, do: {key, review["headSha"]}
+    server = self()
+
+    if heads != %{} do
+      spawn_link(fn ->
+        entries = for {key, head} <- heads, do: %{"key" => key, "headSha" => head}
+        send(server, {:elsewhere_seen, heads, elsewhere(%{entries: entries, elsewhere: %{}}).elsewhere})
+      end)
+    end
+
+    {:noreply, state}
+  end
+
+  def handle_info({:elsewhere_seen, heads, seen}, state) do
+    reviews =
+      for {key, head} <- heads,
+          %{"headSha" => ^head} = review <- [state.reviews[key]],
+          left?(review),
+          review["elsewhere"] != seen[key],
+          into: %{},
+          do: {key, Map.put(review, "elsewhere", seen[key])}
+
+    if reviews == %{},
+      do: {:noreply, state},
+      else: {:noreply, %{state | reviews: Map.merge(state.reviews, reviews)} |> changed()}
+  end
+
   def handle_info(_message, state), do: {:noreply, state}
+
+  # A review this machine has not taken up at its head, which another may have.
+  defp left?(review),
+    do: review["status"] not in ~w(queued running) and review["reviewedSha"] != review["headSha"]
 
   # --- looking at the watched repositories ----------------------------------------------
 
@@ -619,7 +708,8 @@ defmodule HalC2Plugins.CodeReview do
       sizes: %{},
       unknown_sizes: [],
       asked: %{},
-      closed: []
+      closed: [],
+      elsewhere: %{}
     }
 
     case Host.projects(@id) do
@@ -670,7 +760,9 @@ defmodule HalC2Plugins.CodeReview do
 
         # A list that failed is no reason to keep reading pull requests one by
         # one; the next look tries again, later if GitHub is rate limiting.
-        if found.problem, do: found, else: look_followed(found, projects, settings, known)
+        if found.problem,
+          do: found,
+          else: found |> look_followed(projects, settings, known) |> elsewhere()
 
       {:error, error} ->
         %{nothing | problem: message(error)}
@@ -729,6 +821,22 @@ defmodule HalC2Plugins.CodeReview do
           {:cont, found}
       end
     end)
+  end
+
+  # The pull requests another machine has queued or claimed at the head seen now,
+  # with which machine it is; a claim wins over a queued one.
+  defp elsewhere(%{entries: []} = found), do: found
+
+  defp elsewhere(found) do
+    heads = Map.new(found.entries, &{&1["key"], &1["headSha"]})
+
+    elsewhere =
+      for row <- heads |> Map.keys() |> peer_claims() |> Enum.sort_by(& &1["claimed"]),
+          row["sha"] == heads[row["key"]],
+          into: %{},
+          do: {row["key"], Map.take(row, ~w(machine node status))}
+
+    %{found | elsewhere: elsewhere}
   end
 
   defp pr(entry) do
@@ -895,7 +1003,8 @@ defmodule HalC2Plugins.CodeReview do
       asked? = asked != nil and (known == nil or later?(asked, known["startedAt"]))
       trigger = trigger(settings, pr)
       skipped = skipped(settings, pr)
-      review = Map.merge(known || %{"status" => "ready"}, Map.put(pr, "seenAt", pr["updatedAt"]))
+      review =
+        Map.merge(known || %{"status" => "ready"}, Map.merge(pr, %{"seenAt" => pr["updatedAt"], "elsewhere" => nil}))
       review = Map.delete(review, "sizeUnknown")
       review = Map.put(review, "skipped", if(settings["activation"] == "automatic", do: skipped))
 
@@ -903,10 +1012,15 @@ defmodule HalC2Plugins.CodeReview do
       # still standing, where the watch's own triggers may no longer hold.
       trigger = trigger || if known && followed?(known), do: known["trigger"] || "following"
       reviewed = known && known["reviewedSha"]
+      other = found.elsewhere[pr["key"]]
 
       cond do
         known && known["status"] in ~w(queued running) ->
           put(state, review)
+
+        # Another machine has this commit; an ask here is its to answer too.
+        other && reviewed != pr["headSha"] ->
+          put(state, Map.put(review, "elsewhere", other))
 
         asked? ->
           queue(state, review, "command")
@@ -999,7 +1113,9 @@ defmodule HalC2Plugins.CodeReview do
         "comments" => [],
         "error" => nil,
         "publishError" => nil,
-        "changed" => false
+        "changed" => false,
+        "claimed" => false,
+        "elsewhere" => nil
       })
 
     put(state, review)
@@ -1136,21 +1252,16 @@ defmodule HalC2Plugins.CodeReview do
                "https://#{project["host"]}/#{review["repository"]}.git",
                review["number"],
                review["baseBranch"]
-             ) do
+             ),
+           :ok <-
+             claim(key, thread_id, %{
+               "checkout" => checkout["path"],
+               "root" => clone,
+               "mergeBase" => checkout["mergeBase"],
+               "reviewedSha" => checkout["headSha"],
+               "headSha" => checkout["headSha"]
+             }) do
         review = Map.merge(review, %{"reviewedSha" => checkout["headSha"]})
-
-        GenServer.cast(
-          __MODULE__,
-          {:started, key, thread_id,
-           %{
-             "checkout" => checkout["path"],
-             "root" => clone,
-             "mergeBase" => checkout["mergeBase"],
-             "reviewedSha" => checkout["headSha"],
-             "headSha" => checkout["headSha"]
-           }}
-        )
-
         review = Map.merge(review, pull_request_context(review))
 
         Host.launch_thread(
@@ -1174,11 +1285,35 @@ defmodule HalC2Plugins.CodeReview do
       end
 
     case result do
-      {:ok, _} -> :ok
-      {:error, error} -> GenServer.cast(__MODULE__, {:start_failed, key, thread_id, message(error)})
+      {:ok, _} ->
+        :ok
+
+      {:elsewhere, other, started} ->
+        Checkout.remove(started["root"], started["checkout"])
+        GenServer.cast(__MODULE__, {:elsewhere, key, thread_id, other})
+
+      {:error, error} ->
+        GenServer.cast(__MODULE__, {:start_failed, key, thread_id, message(error)})
     end
   rescue
     e -> GenServer.cast(__MODULE__, {:start_failed, review["key"], review["threadId"], Exception.message(e)})
+  end
+
+  # Claims the checked-out commit for this machine, unless a machine connected now
+  # claimed it first. The peers are asked and the claim shared under one lock
+  # across them, so of two machines starting at once one reviews. A machine out of
+  # reach is neither asked nor locked, so one on its own reviews.
+  defp claim(key, thread_id, started) do
+    :global.trans(
+      {{__MODULE__, key}, self()},
+      fn ->
+        case Enum.find(peer_claims([key]), &(&1["claimed"] and &1["sha"] == started["headSha"])) do
+          nil -> server({:started, key, thread_id, started})
+          row -> {:elsewhere, Map.take(row, ~w(machine node status)), started}
+        end
+      end,
+      [node() | Node.list()]
+    )
   end
 
   defp model(settings) do
@@ -1497,15 +1632,34 @@ defmodule HalC2Plugins.CodeReview do
         end
     }
 
-    case Host.pull_requests(@id, "submitReview", input) do
-      {:ok, _} ->
-        server({:published, review["key"], review["threadId"], nil})
-        {:ok, server(:snapshot)}
+    # Two machines that reviewed the same commit while apart post it once: the
+    # post and its outcome are under one lock across the machines connected now.
+    :global.trans(
+      {{__MODULE__, {:post, review["key"]}}, self()},
+      fn ->
+        posted =
+          Enum.find(
+            peer_claims([review["key"]]),
+            &(&1["sha"] == review["reviewedSha"] and &1["status"] == "published")
+          )
 
-      {:error, error} ->
-        server({:published, review["key"], review["threadId"], message(error)})
-        {:error, message(error)}
-    end
+        result =
+          if posted,
+            do: {:error, "#{posted["machine"]} already posted its review of this commit."},
+            else: Host.pull_requests(@id, "submitReview", input)
+
+        case result do
+          {:ok, _} ->
+            server({:published, review["key"], review["threadId"], nil})
+            {:ok, server(:snapshot)}
+
+          {:error, error} ->
+            server({:published, review["key"], review["threadId"], message(error)})
+            {:error, message(error)}
+        end
+      end,
+      [node() | Node.list()]
+    )
   end
 
   defp may_give?(review) do
@@ -1568,10 +1722,68 @@ defmodule HalC2Plugins.CodeReview do
   # review thread's mark and header, by thread id, without the findings. A row mark
   # is drawn per row, so `threads` is sent only when it changes.
   defp announce(state) do
+    share_claims(state)
     Host.publish(@id, "reviews", snapshot(state))
     threads = threads(state)
     if threads != state.threads, do: Host.publish(@id, "threads", threads)
     %{state | threads: threads}
+  end
+
+  @doc false
+  # This machine's queued and claimed reviews of `keys`, for the other machines of
+  # the cluster: `%{key => %{"sha", "status", "claimed"}}`.
+  def claims(keys) do
+    for key <- keys, [{^key, row}] <- [:ets.lookup(__MODULE__, key)], into: %{}, do: {key, row}
+  rescue
+    ArgumentError -> %{}
+  end
+
+  @doc false
+  # Another machine's claims changed (`Host.peers/4` calls it on this machine).
+  def claims_changed do
+    if pid = Process.whereis(__MODULE__), do: send(pid, :peer_claims)
+    :ok
+  end
+
+  # Every claim goes in before a stale one goes out, so a peer never reads a
+  # review missing that is still this machine's. The other machines hear of a
+  # change, so where they show a review running is not left stale until they look.
+  defp share_claims(state) do
+    rows = for {key, review} <- state.reviews, row = claim_row(review), do: {key, row}
+    before = :ets.tab2list(__MODULE__)
+    :ets.insert(__MODULE__, rows)
+    keys = MapSet.new(rows, &elem(&1, 0))
+    for {key, _} <- before, key not in keys, do: :ets.delete(__MODULE__, key)
+
+    if Enum.sort(before) != Enum.sort(rows) and Node.list() != [],
+      do: spawn(fn -> Host.peers(@id, :claims_changed, []) end)
+  end
+
+  # A started review claims the commit it checked out, whatever became of it; one
+  # queued or not yet started holds the head it would review, which another
+  # machine's look leaves to it but another machine's run does not.
+  defp claim_row(review) do
+    cond do
+      claimed?(review) and is_binary(review["reviewedSha"]) ->
+        %{"sha" => review["reviewedSha"], "status" => review["status"], "claimed" => true}
+
+      review["status"] in ~w(queued running) ->
+        %{"sha" => review["headSha"], "status" => review["status"], "claimed" => false}
+
+      true ->
+        nil
+    end
+  end
+
+  # Reviews saved before claims were kept claim what they reviewed.
+  defp claimed?(review), do: Map.get(review, "claimed", review["reviewedSha"] != nil)
+
+  # The other machines' rows for `keys`, each with its key and machine.
+  defp peer_claims(keys) do
+    for %{"result" => rows, "machine" => machine, "node" => node} <- Host.peers(@id, :claims, [keys]),
+        is_map(rows),
+        {key, row} <- rows,
+        do: Map.merge(row, %{"key" => key, "machine" => machine, "node" => node})
   end
 
   @thread_fields ~w(key repository number title url headBranch baseBranch status verdict error publishError)
@@ -1617,6 +1829,9 @@ defmodule HalC2Plugins.CodeReview do
       # A publish the MC stopped in the middle of is the user's to try again. So is a
       # run: the end of its turn may have come while the plugin was not there to hear
       # it. Its agent can still report, as to any failed review.
+      # Where another machine had a review is read afresh at the first look.
+      reviews = Map.new(reviews, fn {key, review} -> {key, Map.delete(review, "elsewhere")} end)
+
       reviews =
         Map.new(reviews, fn
           {key, %{"status" => "publishing"} = review} ->

@@ -32,6 +32,12 @@ its projects), `start`, `retry`, `refresh`, `dismiss`, `publish` and `discard`.
 The agent reports through the `code_review_report` tool the plugin gives its
 threads.
 
+The MC parts of a cluster share which pull request commits they review through
+`HalC2.Plugins.Host.peers/4`: a review starts only once, under a cluster-wide lock,
+it finds no other machine has claimed that commit, and a peer's claim shows on the
+page as `elsewhere`. A machine whose plugin lacks this is left out and reviews
+on its own.
+
 ## Tests
 
 The MC scenarios run with `mise exec -- mix features source-control/agent-code-review.feature`

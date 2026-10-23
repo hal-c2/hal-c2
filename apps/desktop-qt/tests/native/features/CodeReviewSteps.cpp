@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QQuickItem>
+#include <QQuickWindow>
 
 #include "Harness.h"
 #include "Plugins.h"
@@ -269,6 +270,26 @@ const Steps steps([] {
     world.waitFor([&] { return textOf(world, QStringLiteral("codeReviewStatus")).startsWith(QLatin1String("Published")); },
                   [&] { return textOf(world, QStringLiteral("codeReviewStatus")); });
     expect(asked(world, QStringLiteral("publish")) == QList<QJsonObject>{{{QStringLiteral("key"), key(13)}}}, QStringLiteral("the review was not published once"));
+  });
+
+  step(QStringLiteral("the review of #(\\d+) is running on the user's machine %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    // Another machine has its head: here it is not queued, and says where it runs.
+    add(world, c[0].toInt(), QStringLiteral("ready"))
+        .insert(QStringLiteral("elsewhere"), QJsonObject{{QStringLiteral("machine"), c[1]},
+                                                         {QStringLiteral("node"), QStringLiteral("hal_c2_%1@127.0.0.1").arg(c[1])},
+                                                         {QStringLiteral("status"), QStringLiteral("running")}});
+    publish(world);
+  });
+  step(QStringLiteral("the review says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitText(world, QStringLiteral("codeReviewProblem"), c[0]);
+    const int number = state(world).reviews.value(state(world).order.last()).value(QLatin1String("number")).toInt();
+    expect(drawsText(row(world, number), c[0]), QStringLiteral("the row of #%1 does not say %2").arg(number).arg(c[0]));
+  });
+  step(QStringLiteral("it cannot be reviewed again on this machine"), [](World& world, const Captures&, const Table&) {
+    waitShownNamed(world, QStringLiteral("codeReviewProblem"));
+    world.sync();
+    QQuickItem* retry = findNamed(pluginShell(world)->contentItem(), QStringLiteral("codeReviewRetry"));
+    expect(retry && !retry->isVisible(), QStringLiteral("the review can be started here"));
   });
 
   step(QStringLiteral("the review of #(\\d+) finished with the verdict %1").arg(q), [](World& world, const Captures& c, const Table&) {

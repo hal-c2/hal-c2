@@ -2,6 +2,7 @@ defmodule HalC2.PluginsTest do
   use ExUnit.Case, async: false
 
   alias HalC2.Plugins
+  alias HalC2.Plugins.Host
 
   @moduletag :tmp_dir
   @moduletag capture_log: true
@@ -132,6 +133,21 @@ defmodule HalC2.PluginsTest do
     Plugins.handle("rescan", %{})
     assert %{"version" => "3", "reloadError" => nil} = listed("busy")
     assert "3" = busy(:version, [])
+  end
+
+  # What a peer answers for a plugin: only a function the running version has, so a
+  # machine on an older version or without the plugin is left out rather than failing.
+  test "a peer answers for a function its plugin has, and leaves out what it lacks" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "busy", "acceptPermissions" => []})
+
+    label = HalC2.Environment.label()
+    assert {:ok, %{"machine" => ^label, "result" => "1"}} = Host.peer("busy", :version, [])
+    assert :none = Host.peer("busy", :claims, [["acme/api#1"]])
+    assert :none = Host.peer("missing", :version, [])
+    # Not distributed: no other machine to ask.
+    assert [] = Host.peers("busy", :version, [])
   end
 
   test "a crash reported by a supervisor that is gone is not charged to the plugin" do
