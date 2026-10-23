@@ -1309,6 +1309,115 @@ fn a_dropped_stream_stops_loading_earlier() {
     w.drain();
 }
 
+/// A run the user stopped, its items, and a second run `other`; the
+/// stopped turn's fold title.
+fn stopped_fold_title(other: Json, items: Vec<Json>, fold: &str) -> Json {
+    let mut w = World::new();
+    let mut rows = vec![row("run", run("interrupted")), row("run", other)];
+    rows.extend(items.into_iter().map(|item| row("turn-item", item)));
+    w.seq = 8;
+    w.snapshot(rows);
+    let fold = w.row(fold);
+    w.role(fold, Role::Title)
+}
+
+fn stopped_turn() -> Vec<Json> {
+    vec![
+        item("ask", "user_message", 1, json!({"text": "ask"})),
+        item("reas-2", "reasoning", 2, json!({"text": "t"})),
+        item("reply", "assistant_message", 3, json!({"text": "a"})),
+    ]
+}
+
+// A turn the user stopped read "Worked" once a held queued message it passed
+// was numbered above it: the held run is not the thread's latest.
+#[test]
+fn a_stopped_turn_above_a_held_queue_says_the_user_stopped_it() {
+    let held = json!({"id": "run-2", "ordinal": 2, "status": "queued", "queueHeld": true});
+    assert_eq!(
+        stopped_fold_title(held, stopped_turn(), "fold:run-1"),
+        "You stopped this response"
+    );
+}
+
+// The same held run cancelled instead of resumed: it never started, so the
+// stopped turn it waited behind is still the thread's latest.
+#[test]
+fn a_stopped_turn_above_a_cancelled_held_run_says_the_user_stopped_it() {
+    let held = json!({"id": "run-2", "ordinal": 2, "status": "cancelled", "queueHeld": true});
+    assert_eq!(
+        stopped_fold_title(held, stopped_turn(), "fold:run-1"),
+        "You stopped this response"
+    );
+}
+
+// Legacy runs stored without an ordinal both read 0: the tie goes to the
+// later-starting run (its first item is later in timeline order), so the
+// stopped turn still reads as the thread's latest.
+#[test]
+fn a_stopped_turn_with_no_stored_ordinals_says_the_user_stopped_it() {
+    let mut w = World::new();
+    let second = |id: &str, kind: &str, ordinal: i64, text: &str| {
+        item(id, kind, ordinal, json!({"text": text, "runId": "run-2"}))
+    };
+    let rows = vec![
+        row("run", json!({"id": "run-1", "status": "completed"})),
+        row("run", json!({"id": "run-2", "status": "interrupted"})),
+        row(
+            "turn-item",
+            item("ask-1", "user_message", 1, json!({"text": "ask"})),
+        ),
+        row(
+            "turn-item",
+            item("reas-1", "reasoning", 2, json!({"text": "t"})),
+        ),
+        row(
+            "turn-item",
+            item("reply-1", "assistant_message", 3, json!({"text": "a"})),
+        ),
+        row("turn-item", second("ask-2", "user_message", 4, "ask")),
+        row("turn-item", second("reas-2", "reasoning", 5, "t")),
+        row("turn-item", second("reply-2", "assistant_message", 6, "b")),
+    ];
+    w.seq = 8;
+    w.snapshot(rows);
+    let fold = w.row("fold:run-2");
+    assert_eq!(w.role(fold, Role::Title), "You stopped this response");
+}
+
+// A run renumbered at start left its items' cached run ordinal at the old
+// one, so a cold-start copy filtered and trimmed by it.
+#[test]
+fn a_renumbered_run_recaches_its_items() {
+    let cache = Rc::new(MemoryCache::default());
+    let mut w = World::new();
+    w.tl.set_cache(Some(cache.clone()));
+    w.seq = 3;
+    w.snapshot(vec![
+        row("run", run("running")),
+        row(
+            "turn-item",
+            item("ask", "user_message", 1, json!({"text": "ask"})),
+        ),
+        row(
+            "turn-item",
+            item("reply", "assistant_message", 2, json!({"text": "a"})),
+        ),
+    ]);
+    w.tl.flush();
+    w.change("run", "run-1", json!({"s": {"ordinal": 7}}));
+    w.tl.flush();
+    w.drain();
+    let items: Vec<_> = cache
+        .load("env:thread")
+        .entities
+        .into_iter()
+        .filter(|e| e.kind == "turn-item")
+        .collect();
+    assert_eq!(items.len(), 2);
+    assert!(items.iter().all(|e| e.run == Some(7)), "{items:?}");
+}
+
 #[test]
 fn a_copy_is_cached_and_restored() {
     let cache = Rc::new(MemoryCache::default());
