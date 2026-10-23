@@ -109,6 +109,9 @@ defmodule HalC2.Keybindings do
     |> elem(2)
   end
 
+  @doc "Replaces the rules with a member's newer ones (`HalC2.Settings.Shared`)."
+  def replace(rules), do: save(rules)
+
   defp save(rules) do
     file = path()
     tmp = file <> ".tmp"
@@ -119,5 +122,6 @@ defmodule HalC2.Keybindings do
     {:ok, %{"rules" => rules}}
   end
 
-  defp path, do: Path.join(HalC2.Paths.config_dir(), "keybindings.json")
+  @doc "Where the rules are kept."
+  def path, do: Path.join(HalC2.Paths.config_dir(), "keybindings.json")
 end
