@@ -30,7 +30,10 @@ defmodule HalC2.PlannerPropTest do
   on the way, and renaming one also moves its due date, pushing both to GitHub from a
   caller of its own, and renaming it again before GitHub answers pushes nothing until it
   does. GitHub takes or
-  refuses a name, and answers the pushes held in any order. A push for a task not yet on
+  refuses a name, and answers the pushes held in any order, and may hold the push a
+  task's caller chains after one it answers too, while that caller, having lost the
+  planner's reply, reports the answered push again, before or after the plugin
+  restarts. A push for a task not yet on
   the board adds it there, and GitHub names the board item after the push. Someone takes
   a linked task's issue off the board, and the board grows past what a look reads whole
   and shrinks back. GitHub closes an issue of that repository as completed or not
@@ -77,6 +80,12 @@ defmodule HalC2.PlannerPropTest do
     GitHub still takes it; one on the way when the plugin restarted, or the settings
     were saved with another board, still says how it went, and a change made since
     still waits for it;
+  - a push report sent again for a chained push's leg GitHub answered is answered with
+    the push it was answered with and takes nothing again; after a restart, which keeps
+    no reply, it is decided again from what the first taking saved, as a push of the
+    task's changes since that baseline, and keeps the board item that leg added only
+    when the plan's board is still the one the leg was pushed under, while the chained
+    push GitHub still holds speaks for nobody;
   - a push sends what the task has that GitHub has not, as far as the plugin knows, and
     only that: a change to a task whose rename GitHub refused sends the name again, as
     GitHub then answers, along with its due date and relations when GitHub does not have
@@ -141,6 +150,18 @@ defmodule HalC2.PlannerPropTest do
   @moduletag timeout: :infinity
 
   @id "planner"
+  # What a case focused on a resent push report does (`focus/2`).
+  @focus [
+    :add,
+    :link,
+    :rename,
+    :answer,
+    :answer_held,
+    :resend_report,
+    :restart,
+    :switch_board,
+    :look
+  ]
   @server HalC2Plugins.Planner
   @package Path.expand("../../../../plugins/planner", __DIR__)
   @support Path.expand("../../test/support", __DIR__)
@@ -289,6 +310,23 @@ defmodule HalC2.PlannerPropTest do
     end
   end
 
+  property "a push report sent again after its reply was lost is answered as it was, or decided again after a restart",
+    numtests: HalC2.Prop.numtests(20),
+    start_size: 20,
+    max_size: 40 do
+    forall cmds <- commands(__MODULE__, %{initial_state() | focus: true}) do
+      trap_exit do
+        begin_case()
+        {history, state, result} = run_commands(__MODULE__, cmds)
+        end_case()
+
+        (result == :ok)
+        |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
+        |> aggregate(command_names(cmds))
+      end
+    end
+  end
+
   # --- model ----------------------------------------------------------------------------
 
   # An issue of `@repository`, which pushes go to.
@@ -306,8 +344,13 @@ defmodule HalC2.PlannerPropTest do
   # run, or one too long finished, is gone from it. `gens`: slot → how many times a task was added in it, so a change to a
   # removed task is not taken for one to the task added in its place. `updates`: how
   # many status updates the plan has. `pushes`: the last rename (numbered, its name
-  # `<slot><push>`). `flights`: slot → %{gen, push, changed} for the task whose push
-  # GitHub holds, the rename that made it and whether the task changed since. `held`:
+  # `<slot><push>`). `flights`: slot → %{gen, push, changed, answered, answered_on} for
+  # the task whose push GitHub holds, the rename that made it (or, for a push chained
+  # after one GitHub answered, the rename that named it), whether the task changed
+  # since, and for a chained push, whether the planner keeps the reply it chained it
+  # with (`:live`) or a restart lost it (`:saved`, nil for a push that is no chain),
+  # with the board the answered leg was pushed under and the board item it added.
+  # `held`:
   # push → %{slot, gen, ops, b} for the pushes GitHub holds, what they ask (see `ops/3`)
   # and what GitHub had of the task (`b`, a baseline as `own/2` makes); one whose flight
   # is gone speaks for nobody, but GitHub still takes it. `outcomes`: name → {push,
@@ -333,6 +376,7 @@ defmodule HalC2.PlannerPropTest do
   # changed since the look before, which its updated listing therefore names.
   def initial_state,
     do: %{
+      focus: false,
       age: nil,
       had: MapSet.new(),
       touched: MapSet.new(),
@@ -571,6 +615,25 @@ defmodule HalC2.PlannerPropTest do
     theirs =
       Enum.uniq(for {_, item} <- m.items, {pr, true, :open} <- item.pulls, pr in unmerged, do: pr)
 
+    # GitHub holding the push a caller chains after the one it answers, when that push
+    # sends a name a rename made while it waited, so a report of a leg answered is there
+    # to send again; and the caller sending it again.
+    chains = for push <- Map.keys(m.held), call = chain_held(m, push), do: call
+
+    resends =
+      for {slot, %{answered: answered}} <- m.flights,
+          answered != nil,
+          do:
+            {if(answered == :saved, do: 100, else: 20),
+             {:call, __MODULE__, :resend_report, [slot, answered == :saved]}}
+
+    # And the plugin restarting while the caller has the reply, which it then loses, or
+    # while GitHub holds a push, whose answer then chains a push under another board.
+    holding = m.held != %{}
+
+    # Renaming a task again while GitHub holds its push, so its answer chains one.
+    flying = for slot <- pushed, Map.has_key?(m.flights, slot), do: slot
+
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
        {6, {:call, __MODULE__, :link_pr, [item, elements(@pulls)]}},
@@ -645,24 +708,21 @@ defmodule HalC2.PlannerPropTest do
        ) ++
        if(pushed == [],
          do: [],
-         else: [
-           {8,
-            oneof(
-              for slot <- pushed,
-                  do:
-                    {:call, __MODULE__, :rename,
-                     [
-                       slot,
-                       oneof([:ok, :refused]),
-                       m.pushes + 1,
-                       Map.has_key?(m.flights, slot)
-                     ]}
-            )},
-           {8,
-            {:call, __MODULE__, :close,
-             [elements(Enum.map(pushed, &issue_of(m, &1))), oneof([:completed, :not_planned])]}},
-           {redate, {:call, __MODULE__, :redate, [elements(pushed), elements([@due, @moved])]}}
-         ]
+         else:
+           for(
+             slot <- pushed,
+             do:
+               {4,
+                {:call, __MODULE__, :rename,
+                 [slot, oneof([:ok, :refused]), m.pushes + 1, Map.has_key?(m.flights, slot)]}}
+           ) ++
+             [
+               {8,
+                {:call, __MODULE__, :close,
+                 [elements(Enum.map(pushed, &issue_of(m, &1))), oneof([:completed, :not_planned])]}},
+               {redate,
+                {:call, __MODULE__, :redate, [elements(pushed), elements([@due, @moved])]}}
+             ]
        ) ++
        if(pushed == [],
          do: [],
@@ -708,7 +768,24 @@ defmodule HalC2.PlannerPropTest do
          ]
        ) ++
        if(m.held != %{},
-         do: [{10, {:call, __MODULE__, :answer, [elements(Map.keys(m.held))]}}],
+         do: [{20, {:call, __MODULE__, :answer, [elements(Map.keys(m.held))]}}],
+         else: []
+       ) ++
+       if(flying == [],
+         do: [],
+         else: [
+           {60,
+            {:call, __MODULE__, :rename,
+             [elements(flying), oneof([:ok, :refused]), m.pushes + 1, true]}}
+         ]
+       ) ++
+       Enum.map(chains, &{100, &1}) ++
+       resends ++
+       if(holding,
+         do: [
+           {20, {:call, __MODULE__, :restart, []}},
+           {20, {:call, __MODULE__, :switch_board, [other]}}
+         ],
          else: []
        ) ++
        if(refused == [],
@@ -735,8 +812,17 @@ defmodule HalC2.PlannerPropTest do
          ],
          else: []
        ))
+    |> focus(m)
     |> frequency()
   end
+
+  # A case `focus`ed on a push report sent again only adds tasks, links and renames them,
+  # has GitHub answer and hold their pushes, and restarts the plugin, so its pushes get
+  # that far.
+  defp focus(commands, %{focus: true}),
+    do: for({_, {:call, _, f, _}} = command <- commands, f in @focus, do: command)
+
+  defp focus(commands, _m), do: commands
 
   def precondition(m, {:call, _, :add, [slot, parent, _kind]}),
     do: not Map.has_key?(m.items, slot) and (parent == nil or Map.has_key?(m.items, parent))
@@ -809,6 +895,15 @@ defmodule HalC2.PlannerPropTest do
         flying == Map.has_key?(m.flights, slot)
 
   def precondition(m, {:call, _, :answer, [push]}), do: Map.has_key?(m.held, push)
+
+  def precondition(m, {:call, _, :answer_held, [push | _]} = call),
+    do: Map.has_key?(m.held, push) and chain_held(m, push) == call
+
+  def precondition(m, {:call, _, :resend_report, [slot, saved]}),
+    do:
+      match?(%{answered: a} when a != nil, m.flights[slot]) and
+        m.flights[slot].answered == :saved == saved
+
   def precondition(m, {:call, _, :merge, [pr]}), do: not MapSet.member?(m.merged, pr)
   def precondition(m, {:call, _, :merge_lone, [n]}), do: not MapSet.member?(m.merged, n)
 
@@ -1121,7 +1216,14 @@ defmodule HalC2.PlannerPropTest do
       {%{
          m
          | held: Map.put(m.held, push, held),
-           flights: Map.put(m.flights, slot, %{gen: gen, push: push, changed: false}),
+           flights:
+             Map.put(m.flights, slot, %{
+               gen: gen,
+               push: push,
+               changed: false,
+               answered: nil,
+               answered_on: nil
+             }),
            synced: Map.put(m.synced, slot, b)
        }, :ok}
     end
@@ -1133,26 +1235,58 @@ defmodule HalC2.PlannerPropTest do
   # which GitHub answers at once. A task whose settings name another board since does not
   # take the board item the push added.
   defp step(m, {:call, _, :answer, [push]}) do
-    {%{slot: slot, gen: gen, ops: ops, b: b, board: on}, held} = Map.pop(m.held, push)
-    # A push GitHub took stamps its issue as changed there, as the harness's
-    # state read after a push records it.
-    m = if item = m.items[slot], do: touch(m, [item.issue]), else: m
-    {m, took} = land(%{m | held: held}, ops, b, push, on)
-    took = if on == m.board, do: took, else: %{took | board: nil}
-
-    case m.flights[slot] do
-      %{gen: ^gen, push: ^push, changed: changed?} ->
-        m = settle(%{m | flights: Map.delete(m.flights, slot)}, slot, took)
-
-        case changed? && ops(m, slot, took.b) do
-          false -> {m, :ok}
-          [] -> {clear(m, slot), :ok}
-          ops -> {land_on(m, slot, ops, took.b, push), :ok}
-        end
-
-      _ ->
-        {m, :ok}
+    case taken(m, push) do
+      {m, _slot, false, _took} -> {m, :ok}
+      {m, slot, [], _took} -> {clear(m, slot), :ok}
+      {m, slot, ops, took} -> {land_on(m, slot, ops, took.b, push), :ok}
     end
+  end
+
+  # As `answer`, but GitHub holds the push the caller chains, as the push `chained`
+  # whose rename named it: the task keeps how the push answered went, and the chained
+  # push waits on GitHub with what GitHub has of the task as its baseline. The planner
+  # keeps the reply it chained it with, and the board the answered push went under.
+  defp step(m, {:call, _, :answer_held, [push, slot, chained, _outcome]}) do
+    {m, ^slot, ops, took} = taken(m, push)
+    gen = m.gens[slot]
+
+    flight = %{
+      gen: gen,
+      push: chained,
+      changed: false,
+      answered: :live,
+      answered_on: {took.on, took.added}
+    }
+
+    held = %{slot: slot, gen: gen, ops: ops, b: took.b, board: m.board}
+
+    {%{
+       m
+       | held: Map.put(m.held, chained, held),
+         flights: Map.put(m.flights, slot, flight),
+         synced: Map.put(m.synced, slot, took.b)
+     }, :ok}
+  end
+
+  # The caller resends the report of the leg its flight last answered. With the reply
+  # still kept, it is answered with it and nothing changes. After a restart the report
+  # is decided again: the task takes back the board item that leg added when the plan
+  # is on the board it was pushed under, and the caller pushes what the task has that
+  # GitHub has not since the baseline the first taking saved, at once, to the end; the
+  # chained push GitHub still holds speaks for nobody.
+  defp step(m, {:call, _, :resend_report, [_slot, false]}), do: {m, :ok}
+
+  defp step(m, {:call, _, :resend_report, [slot, true]}) do
+    %{answered_on: {on, added}} = m.flights[slot]
+    b = baseline(m, slot)
+    m = %{m | flights: Map.delete(m.flights, slot)}
+
+    m =
+      if added != nil and on == m.board,
+        do: put_in(m.items[slot].board, added),
+        else: m
+
+    {push_now(m, slot, b), :ok}
   end
 
   defp step(m, {:call, _, :look, []}), do: {looked(m), :ok}
@@ -1295,7 +1429,13 @@ defmodule HalC2.PlannerPropTest do
         {k, if(run.status == :running, do: %{run | status: :failed}, else: run)}
       end)
 
-    {%{m | runs: runs, flights: %{}, age: nil} |> pump() |> looked(), :ok}
+    # The reply a chained push was chained with is not saved with its flight.
+    flights =
+      Map.new(m.flights, fn {slot, flight} ->
+        {slot, if(flight.answered, do: %{flight | answered: :saved}, else: flight)}
+      end)
+
+    {%{m | runs: runs, flights: flights, age: nil} |> pump() |> looked(), :ok}
   end
 
   # Saving the settings with another board starts the plugin again, the tasks' board
@@ -1304,6 +1444,43 @@ defmodule HalC2.PlannerPropTest do
     {m, :ok} = step(m, {:call, __MODULE__, :restart, []})
     items = Map.new(m.items, fn {slot, item} -> {slot, %{item | board: nil}} end)
     {looked(%{m | board: board, items: items, age: nil}), :ok}
+  end
+
+  # GitHub takes the push held, as far as it does, whoever it speaks for, on the board the
+  # settings named when it was made: `{m, slot, next, took}`, where `next` is false when
+  # no flight of the task waits on it or the task did not change since, and otherwise
+  # what its caller pushes next, and `took` is how it went (`land/5`), with the board it
+  # went under (`on`) and the board item it added there (`added`). The task of a flight
+  # waiting on it hears how it went, though not of a board item added to a board its
+  # settings no longer name.
+  defp taken(m, push) do
+    {%{slot: slot, gen: gen, ops: ops, b: b, board: on}, held} = Map.pop(m.held, push)
+    {m, took} = land(%{m | held: held}, ops, b, push, on)
+    m = stamp(m, slot, took)
+    took = Map.merge(took, %{on: on, added: took.board})
+    took = if on == m.board, do: took, else: %{took | board: nil}
+
+    case m.flights[slot] do
+      %{gen: ^gen, push: ^push, changed: changed?} ->
+        m = settle(%{m | flights: Map.delete(m.flights, slot)}, slot, took)
+        {m, slot, changed? && ops(m, slot, took.b), took}
+
+      _ ->
+        {m, slot, false, took}
+    end
+  end
+
+  # The `answer_held` call for the push held, when its answer chains a push whose first
+  # ask is a name of a rename made while it waited (`<slot><push>`), which GitHub
+  # answers as it answers that rename's: nil otherwise.
+  defp chain_held(m, push) do
+    with {_m, slot, [{:update, _, name, _} | _], _took} <- taken(m, push),
+         {chained, outcome} when chained != push <- m.outcomes[name],
+         true <- name == "#{slot}#{chained}" and not Map.has_key?(m.held, chained) do
+      {:call, __MODULE__, :answer_held, [push, slot, chained, outcome]}
+    else
+      _ -> nil
+    end
   end
 
   defp put_run(m, k, run), do: %{m | runs: Map.put(m.runs, k, run)}
@@ -1560,7 +1737,17 @@ defmodule HalC2.PlannerPropTest do
   # The task in `slot` pushes `ops`, to the board the settings name, and hears how it went.
   defp land_on(m, slot, ops, b, board) do
     {m, took} = land(m, ops, b, board, m.board)
-    settle(m, slot, took)
+    m |> stamp(slot, took) |> settle(slot, took)
+  end
+
+  # A push that gave its issue a state stamps the issue as changed on GitHub, as the
+  # harness's state read after a push records it (`states_taken/0`); one GitHub refused
+  # before it got that far, or that changed no state, stamps nothing.
+  defp stamp(m, slot, %{stated: stated}) do
+    case m.items[slot] do
+      %{issue: issue} when stated != nil -> touch(m, [issue])
+      _ -> m
+    end
   end
 
   # The task in `slot` hears how its push went: the sync error, the board item it added,
@@ -2470,27 +2657,7 @@ defmodule HalC2.PlannerPropTest do
 
   def rename(slot, outcome, push, false) do
     title = "#{slot}#{push}"
-    gate = gate(push)
-    {_, 0} = System.cmd("mkfifo", [gate])
-    hold = "if mkdir '#{gate}.held' 2>/dev/null; then read _ < '#{gate}' || :; fi; "
-    Enum.each(name_rules(slot, push, outcome, hold), &gh_rule/1)
-
-    case_pid = self()
-
-    holder =
-      spawn(fn ->
-        ref = Process.monitor(case_pid)
-        # Opening the fifo waits for the push to read it.
-        {:ok, fd} = :file.open(gate, [:write, :raw])
-        send(case_pid, {:pl_asked, push})
-
-        receive do
-          :answer -> :file.close(fd)
-          {:DOWN, ^ref, :process, _, _} -> :file.close(fd)
-        end
-      end)
-
-    Process.put({:pl_holder, push}, holder)
+    Enum.each(name_rules(slot, push, outcome, hold(push)), &gh_rule/1)
     input = %{"id" => item_id(slot), "fields" => renamed(slot, push)}
 
     caller =
@@ -2513,6 +2680,110 @@ defmodule HalC2.PlannerPropTest do
 
     await_plan(&Enum.any?(&1["items"], fn item -> item["title"] == title end))
     observe(:ok)
+  end
+
+  # A gate for the push named `push`, whose holder tells the case `{:pl_asked, push}` once
+  # the first gh run of the script returned has it, and lets go on `:answer`. A gh run
+  # of it after the first, as a push sending the name again does, passes. A gate made
+  # before for the same name, long let go, is made anew.
+  defp hold(push) do
+    gate = gate(push)
+    File.rm_rf!(gate <> ".held")
+    File.rm(gate)
+    {_, 0} = System.cmd("mkfifo", [gate])
+    case_pid = self()
+
+    holder =
+      spawn(fn ->
+        ref = Process.monitor(case_pid)
+        # Opening the fifo waits for the push to read it.
+        {:ok, fd} = :file.open(gate, [:write, :raw])
+        send(case_pid, {:pl_asked, push})
+
+        receive do
+          :answer -> :file.close(fd)
+          {:DOWN, ^ref, :process, _, _} -> :file.close(fd)
+        end
+      end)
+
+    Process.put({:pl_holder, push}, holder)
+    "if mkdir '#{gate}.held' 2>/dev/null; then read _ < '#{gate}' || :; fi; "
+  end
+
+  # As `answer/1`, but GitHub holds the push the caller chains, which sends the name of
+  # the rename `chained`, answering it with `outcome` once `answer/1` lets it.
+  def answer_held(push, slot, chained, outcome) do
+    caller = Process.get({:pl_push, push})
+    Enum.each(name_rules(slot, chained, outcome, hold(chained)), &gh_rule/1)
+    gh_rule(board_item(push))
+    send(Process.get({:pl_holder, push}), :answer)
+    Process.delete({:pl_push, push})
+    Process.put({:pl_push, chained}, caller)
+
+    receive do
+      {:pl_asked, ^chained} ->
+        :ok
+    after
+      15_000 ->
+        problem("the push #{push} did not chain the push #{chained} to GitHub")
+        # Lets go of the gate, for whatever reaches it later.
+        File.mkdir_p!(gate(chained) <> ".held")
+        send(Process.get({:pl_holder, chained}), :answer)
+    end
+
+    boarded("item-#{push}")
+    gh_rule(board_item(0))
+    observe(:ok)
+  end
+
+  # The caller of the task's push, having lost the planner's reply to the report of the
+  # leg GitHub answered, sends that report again. With the reply kept (`saved` false) it
+  # must hear the same push, and the planner must be as it was. After a restart it runs
+  # what it hears, as the caller that lost the reply does, to the end, while the caller
+  # that did get the reply still waits on GitHub with the push it chained.
+  def resend_report(slot, saved) do
+    id = item_id(slot)
+    {:ok, projects} = HalC2.Plugins.Host.projects(@id)
+
+    case :sys.get_state(@server).pushing[id] do
+      %{answered: {error, extra}, answered_leg: leg, token: token} = flight
+      when leg != nil ->
+        reply = report_again(projects, id, token, leg, error, extra)
+
+        cond do
+          saved ->
+            run_lost(projects, id, token, reply)
+
+          reply != flight.answered_reply or
+              not match?({:push, l, _, _} when l == flight.leg, reply) ->
+            problem(
+              "a resent report of #{slot} was answered with #{inspect(reply)}, not the push it chained"
+            )
+
+          :sys.get_state(@server).pushing[id] != flight ->
+            problem("a resent report of #{slot} was taken again")
+
+          true ->
+            :ok
+        end
+
+      flight ->
+        problem("#{slot} has no answered report to send again: #{inspect(flight)}")
+    end
+
+    observe(:ok)
+  end
+
+  defp report_again(projects, id, token, leg, error, extra),
+    do: GenServer.call(@server, {:projects, projects, {:pushed, id, token, leg, error, extra}})
+
+  # Runs the push a report was answered with and reports it, until the planner answers
+  # with none. Compiled when the plugin starts, so unknown to the compiler here.
+  defp run_lost(_projects, _id, _token, :ok), do: :ok
+
+  defp run_lost(projects, id, token, {:push, leg, ops, synced}) do
+    {error, extra} = Kernel.apply(Module.concat(@server, Sync), :run, [ops, synced])
+    run_lost(projects, id, token, report_again(projects, id, token, leg, error, extra))
   end
 
   defp renamed(slot, push), do: %{"title" => "#{slot}#{push}", "due" => renamed_due(push)}

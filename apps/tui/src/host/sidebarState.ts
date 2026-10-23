@@ -13,6 +13,7 @@ import {
   type Row,
   type Selection,
   selectionEquals,
+  SIDEBAR_SETTLED_PAGE,
   type SidebarSection,
 } from "../sidebar.logic.ts";
 import { padClip } from "../format.ts";
@@ -258,9 +259,12 @@ function rowLines(
   if (row.kind === "more") {
     return [
       styled(
-        chunk(`  ${selected ? "▶" : "+"} Show ${Math.min(row.hiddenCount, 25)} more`, {
-          fg: selected ? palette.accent : palette.dim,
-        }),
+        chunk(
+          `  ${selected ? "▶" : "+"} Show ${Math.min(row.hiddenCount, SIDEBAR_SETTLED_PAGE)} more`,
+          {
+            fg: selected ? palette.accent : palette.dim,
+          },
+        ),
       ),
     ];
   }
@@ -438,6 +442,7 @@ export function buildTuiSidebarState(input: TuiSidebarStateInput): TuiSidebarSta
     snoozed: byBucket.snoozed,
     settled: byBucket.settled,
     settledTotal,
+    settledPage: SIDEBAR_SETTLED_PAGE,
     drafts,
     activeThreadKey:
       draft || input.selectedThreadId === null ? null : threadKey(input.selectedThreadId),

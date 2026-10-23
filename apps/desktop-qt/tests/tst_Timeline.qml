@@ -72,6 +72,16 @@ Item {
         }
     }
 
+    // The size of a desktop window's conversation.
+    Component {
+        id: tallTimelineComponent
+        Timeline {
+            width: 833
+            height: 555
+            model: rows
+        }
+    }
+
     readonly property int roomyHeight: 700
     // How far from the end a scrolled-up thread is put, past the host's room: a
     // wheel notch travels a fraction of it, so the tests that scroll one notch
@@ -90,6 +100,15 @@ Item {
             height: scrolledAway ? root.roomyHeight : 400
             model: rows
         }
+    }
+
+    // Something else in the window that draws a frame when it ticks.
+    Text {
+        id: clock
+        property int ticks: 0
+        x: 0
+        y: 0
+        text: ticks
     }
 
     TestCase {
@@ -364,6 +383,106 @@ Item {
             verify(!atEnd(list));
         }
 
+        // A reply taller than the view with a table in it, made again each time
+        // the list lays it out.
+        function tableReply() {
+            const words = "words that run on long enough to wrap the column they are in onto a second line";
+            let text = "A paragraph before the table, " + words + ".\n\nAnother one, " + words + ".\n\n";
+            text += "| Item | Finding | Now |\n|---|---|---|\n";
+            for (let i = 0; i < 16; ++i)
+                text += "| #" + (400 + i) + " | `code` and " + words + " | a worker fixing it, with " + words + " |\n";
+            text += "\nThese are still going:\n";
+            for (let i = 0; i < 3; ++i)
+                text += "- **#" + (470 + i) + ":** " + words + ".\n";
+            return text + "\nA paragraph after the list, " + words + ".";
+        }
+
+        function test_aTableAboveTheEndHoldsStill_data() {
+            // How tall the table is made and settles depends on the font, so a
+            // few lengths of thread after it.
+            return [8, 11, 14].map(after => ({
+                        tag: after + " rows after the table",
+                        after: after
+                    }));
+        }
+
+        // Scenario: The end of the thread holds still while nothing new is written
+        function test_aTableAboveTheEndHoldsStill(data) {
+            rows.clear();
+            for (let i = 0; i < 10; ++i) {
+                rows.append(root.row({
+                    rowId: "message-" + i,
+                    text: "Message " + i
+                }));
+            }
+            rows.append(root.row({
+                rowId: "reply",
+                text: tableReply()
+            }));
+            for (let i = 0; i < data.after; ++i) {
+                rows.append(root.row({
+                    rowId: "after-" + i,
+                    text: "The loops are still running. I'll wait for them."
+                }));
+            }
+            const timeline = createTemporaryObject(tallTimelineComponent, root);
+            const list = view(timeline);
+            // Frames drawn elsewhere in the window, as the Agents panel's clock
+            // draws them, are what a view that cannot settle moves on. The
+            // first ones let the rows laid out last settle their heights.
+            for (let i = 0; i < 20; ++i) {
+                ++clock.ticks;
+                wait(16);
+            }
+            let moves = 0;
+            const count = () => ++moves;
+            list.contentYChanged.connect(count);
+            for (let i = 0; i < 30; ++i) {
+                ++clock.ticks;
+                wait(16);
+            }
+            list.contentYChanged.disconnect(count);
+            compare(moves, 0, "the view holds still");
+            verify(atEnd(list) && list.itemAtIndex(rows.count - 1), "the last row is in view");
+        }
+
+        // Scenario: The end of the thread holds still while nothing new is written
+        function test_rowsMadeAgainAfterAResizeHoldStill() {
+            const words = "words that run on long enough to wrap the column they are in onto another line";
+            rows.clear();
+            for (let i = 0; i < 40; ++i) {
+                rows.append(root.row({
+                    rowId: "message-" + i,
+                    text: "Message " + i + ", " + words + ", and " + words + "."
+                }));
+            }
+            const timeline = createTemporaryObject(tallTimelineComponent, root);
+            const list = view(timeline);
+            settleAtEnd(list);
+            // The rows at the end are dropped, and made again in a narrower
+            // column, where they wrap onto more lines.
+            list.forceActiveFocus();
+            tryVerify(() => list.activeFocus, 2000, "the conversation has the keyboard");
+            keyClick(Qt.Key_Home);
+            verify(!list.itemAtIndex(rows.count - 1), "the last row is dropped");
+            timeline.width = 500;
+            keyClick(Qt.Key_End);
+            tryVerify(() => atEnd(list) && timeline.following, 5000, "End returns to the end");
+            for (let i = 0; i < 6; ++i) {
+                ++clock.ticks;
+                wait(16);
+            }
+            let moves = 0;
+            const count = () => ++moves;
+            list.contentYChanged.connect(count);
+            for (let i = 0; i < 30; ++i) {
+                ++clock.ticks;
+                wait(16);
+            }
+            list.contentYChanged.disconnect(count);
+            compare(moves, 0, "the rows made again do not snap to another height");
+        }
+
         // Scenario: Another thread opens at its end however far the last was scrolled
         function test_anotherThreadOpensAtItsEnd() {
             const timeline = longThread(roomyTimelineComponent);
@@ -573,6 +692,27 @@ Item {
             tryVerify(() => loaded.pictured, 2000, "the image is drawn");
             verify(!visibleIn(findText(question, "cart.png")), "a drawn image needs no name");
             verify(visibleIn(findText(question, "checkout.png")), "an image still on its way is named");
+        }
+
+        // Scenario: A sent file shows its name, kind and size
+        function test_userMessageShowsItsFiles() {
+            actionRows.clear();
+            actionRows.append(root.row({
+                rowId: "question",
+                author: "user",
+                text: "",
+                sentFiles: [{
+                    id: "file-1",
+                    name: "recording.mov",
+                    detail: "MOV · 15.1 MiB"
+                }]
+            }));
+            const timeline = createTemporaryObject(actionTimelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(0) !== null);
+            const question = list.itemAtIndex(0);
+            verify(visibleIn(findText(question, "recording.mov")), "the file is named");
+            verify(visibleIn(findText(question, "MOV · 15.1 MiB")), "with its kind and size");
         }
 
         // The opacity a thing is drawn with, through its parents.

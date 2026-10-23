@@ -42,6 +42,13 @@ Feature: Moving through a thread and following links
     Then the new text stays in view
 
   @shared @backlog-mobile @backlog-tui
+  Scenario: The end of the thread holds still while nothing new is written
+    Given the user is at the end of the thread
+    And a reply with a table sits just above the end
+    When nothing new is written
+    Then the view does not move
+
+  @shared @backlog-mobile @backlog-tui
   Scenario: Scrolling away stops the view from following
     Given the agent is writing its reply
     When the user scrolls up to an earlier message

@@ -7,6 +7,7 @@ import type {
   AuthAccessStreamEvent,
   ResourceTelemetrySnapshot,
   ScheduledTask,
+  ServerSettings,
 } from "@hal-c2/contracts";
 
 import type { TuiSettingsClient, UsageLimitsSnapshot } from "../../src/settingsClient.ts";
@@ -40,6 +41,8 @@ export interface FakeSettingsMc {
   readonly emitUsageLimits: () => void;
   /** How many clients follow limits right now. */
   readonly usageLimitWatchers: () => number;
+  /** Push the MC's settings to whoever follows them, as when another client changes them. */
+  readonly emitServerSettings: (settings: ServerSettings) => void;
   /** Tell whoever follows the access list (pairing links, paired clients) what changed. */
   readonly emitAuthAccess: (event: AuthAccessStreamEvent) => void;
   /** Called when a client starts following the access list (send it the snapshot). */
@@ -54,7 +57,11 @@ export function fakeSettingsMc(): FakeSettingsMc {
   const telemetryWatchers = new Set<(snapshot: ResourceTelemetrySnapshot) => void>();
   const limitWatchers = new Set<(snapshot: UsageLimitsSnapshot) => void>();
   const accessWatchers = new Set<(event: AuthAccessStreamEvent) => void>();
+  const settingsWatchers = new Set<(settings: ServerSettings) => void>();
   const fake: FakeSettingsMc = {
+    emitServerSettings: (settings) => {
+      for (const watcher of settingsWatchers) watcher(settings);
+    },
     emitAuthAccess: (event) => {
       for (const watcher of accessWatchers) watcher(event);
     },
@@ -91,6 +98,13 @@ export function fakeSettingsMc(): FakeSettingsMc {
         fake.onScheduledTasksSubscribe?.();
         return () => {
           taskWatchers.delete(onTasks);
+        };
+      },
+      // Nothing at once: the host reads the settings with `getServerConfig`, which steps fake.
+      subscribeServerSettings: (onSettings) => {
+        settingsWatchers.add(onSettings);
+        return () => {
+          settingsWatchers.delete(onSettings);
         };
       },
       // Like the config stream, a subscriber gets the current state at once.

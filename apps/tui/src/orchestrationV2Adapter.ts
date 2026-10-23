@@ -9,6 +9,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
+  type ThreadPluginMark,
 } from "@hal-c2/contracts";
 import { deriveThreadCheckpointSummaries } from "@hal-c2/client-runtime/state/thread-checkpoints";
 import {
@@ -44,6 +45,8 @@ export type TuiThreadShell = Omit<OrchestrationThreadShell, "snoozedUntil" | "sn
     readonly moving?: OrchestrationV2ThreadMoveTarget | null;
     /** Set on the row a machine keeps for a thread that moved away (clusterClient.ts drops it). */
     readonly movedTo?: OrchestrationV2ThreadMoveTarget | null;
+    /** The plugin that started it, such as a code review. */
+    readonly plugin?: ThreadPluginMark | null;
     /** The label of the machine it lives on, when the shell spans several. */
     readonly machine?: string;
   };
@@ -188,6 +191,7 @@ export function presentTuiThreadShell(thread: OrchestrationV2ThreadShell): TuiTh
     backgroundLiveness: (thread.pendingBackgroundTasks?.length ?? 0) > 0 ? "working" : null,
     ...(thread.moving ? { moving: thread.moving } : {}),
     ...(thread.movedTo ? { movedTo: thread.movedTo } : {}),
+    ...(thread.plugin ? { plugin: thread.plugin } : {}),
   };
 }
 

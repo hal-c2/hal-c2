@@ -1260,6 +1260,10 @@ export const ServerSettings = Schema.Struct({
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Whether Settled lists the settled threads a plugin started, such as code reviews. */
+  sidebarShowSettledPluginThreads: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
@@ -1609,6 +1613,7 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
+  sidebarShowSettledPluginThreads: Schema.optionalKey(Schema.Boolean),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(

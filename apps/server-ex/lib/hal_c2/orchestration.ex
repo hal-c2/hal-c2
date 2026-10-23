@@ -1683,13 +1683,55 @@ defmodule HalC2.Orchestration do
 
   defp builtin_runtime(_codex), do: HalC2.Codex.ThreadRuntime
 
-  # A thread has at most one running turn; interrupt whichever runtime holds it. A
+  # A thread has at most one active run. A stop that reaches it, pinned to it or not
+  # pinned, goes only to the runtime of that run's provider. So stopping or restarting a
+  # turn leaves the background work any provider left, the way it does on one provider.
+  # Between turns, work an earlier turn left can sit in any provider's runtime, so every
+  # runtime is asked and each stops the work of its own that the pin covers (#474). A
   # started turn nothing drives any more (its runtime stopped without ending it) ends
   # here, and a provider plugin that cannot stop a turn says so.
   defp interrupt_any(thread_id, run_id) do
-    Enum.find_value(runtimes(:interrupt, 2), fn runtime ->
-      if interrupted?(runtime, thread_id, run_id), do: :ok
-    end) || interrupt_undriven(thread_id, run_id)
+    runtimes = runtimes(:interrupt, 2)
+
+    # A provider plugin that cannot stop a turn is not asked; `interrupt_undriven/2`
+    # says so.
+    asked =
+      case active_runtime(thread_id, run_id) do
+        nil -> runtimes
+        runtime -> Enum.filter(runtimes, &(&1 == runtime))
+      end
+
+    stopped = Enum.filter(asked, &interrupted?(&1, thread_id, run_id))
+    if stopped != [], do: :ok, else: interrupt_undriven(thread_id, run_id)
+  end
+
+  # The runtime of the pinned run if it is active, or of the active run for a stop
+  # with no pin; nil between turns.
+  defp active_runtime(thread_id, run_id) do
+    runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
+
+    run =
+      if run_id,
+        do: Enum.find(runs, &(&1["id"] == run_id)),
+        else: Enum.find(runs, &(&1["status"] in @active_statuses))
+
+    instance = run && (run["providerInstanceId"] || run["modelSelection"]["instanceId"])
+    if run["status"] in @active_statuses and is_binary(instance), do: runtime(instance)
+  end
+
+  @doc """
+  Whether a stop pinned to `run_id` reaching a runtime between turns names a run
+  that started before `latest`, the run of the runtime's latest turn, or one the
+  thread does not have: the work `latest` left is not that stop's to end (#474). A
+  stop naming `latest` or a later run (one on another provider) ends it.
+  """
+  def earlier_run?(thread_id, run_id, latest) do
+    runs = StreamState.get(HalC2.Streams.state(thread_id), "run")
+
+    case {runs[run_id], runs[latest]} do
+      {%{"ordinal" => pinned}, %{"ordinal" => last}} -> pinned < last
+      _ -> true
+    end
   end
 
   @doc """
@@ -1745,9 +1787,14 @@ defmodule HalC2.Orchestration do
     Logger.debug("a session call read as stopped exited with #{inspect(why)}")
   end
 
-  # A runtime that dies as it is asked leaves its turn to `interrupt_undriven/2`.
+  # A runtime that dies as it is asked leaves its turn to `interrupt_undriven/2`, and
+  # one whose registry is not running (an MC started without it) holds nothing to stop.
   defp interrupted?(runtime, thread_id, run_id) do
     runtime.interrupt(thread_id, run_id) == :ok
+  rescue
+    # Any other error out of an adapter is a bug, and must not read as nothing to stop.
+    error in ArgumentError ->
+      if error.message =~ "unknown registry", do: false, else: reraise(error, __STACKTRACE__)
   catch
     :exit, _ -> false
   end

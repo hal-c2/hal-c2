@@ -1,4 +1,4 @@
-import type { GitStackedAction, VcsStatusResult } from "@hal-c2/contracts";
+import type { GitActionFailureCta, GitStackedAction, VcsStatusResult } from "@hal-c2/contracts";
 import type { ShellGitState } from "@hal-c2/contracts/shell";
 
 import {
@@ -18,10 +18,13 @@ export interface TuiGitAction {
   readonly primary: boolean;
   readonly disabled: boolean;
   readonly hint: string | null;
-  readonly kind: GitPanelAction["kind"];
+  /** `copy` is a failure's remedy command, put on the clipboard. */
+  readonly kind: GitPanelAction["kind"] | "copy";
   /** The stacked action a `git` row runs. */
   readonly action: GitStackedAction | null;
   readonly url: string | null;
+  /** The command a `copy` row copies. */
+  readonly command: string | null;
   /** The label as the row draws it: " ↗" after a link, clipped to the panel. */
   readonly text: string;
 }
@@ -69,21 +72,27 @@ export function buildTuiGitState(input: {
   readonly width: number;
   readonly log?: ReadonlyArray<GitLogLine>;
   readonly progress?: GitProgress | null;
+  /** What the MC offers to fix the last failure: listed first until the log is dismissed. */
+  readonly remedy?: GitActionFailureCta | null;
 }): TuiGitState {
   const { status, busy } = input;
   const room = Math.max(6, input.width - 4);
   const quick = resolveGitQuickAction(status, busy);
-  const actions = buildGitPanelActions(status, busy).map((action): TuiGitAction => ({
-    id: action.id,
-    label: action.label,
-    primary: action.primary,
-    disabled: action.disabled,
-    hint: action.hint ?? null,
-    kind: action.kind,
-    action: action.kind === "git" ? action.action : null,
-    url: action.kind === "url" ? action.url : null,
-    text: clip(`${action.label}${action.kind === "url" ? " ↗" : ""}`, room - 2),
-  }));
+  const remedy = input.remedy ? [remedyAction(input.remedy, room)] : [];
+  const actions = remedy.concat(
+    buildGitPanelActions(status, busy).map((action): TuiGitAction => ({
+      id: action.id,
+      label: action.label,
+      primary: action.primary,
+      disabled: action.disabled,
+      hint: action.hint ?? null,
+      kind: action.kind,
+      action: action.kind === "git" ? action.action : null,
+      url: action.kind === "url" ? action.url : null,
+      command: null,
+      text: clip(`${action.label}${action.kind === "url" ? " ↗" : ""}`, room - 2),
+    })),
+  );
   const selectedIndex = clampIndex(input.selectedIndex, actions.length);
   const menuItems = buildGitMenuItems(status, busy);
   const pr = status?.pr ?? null;
@@ -149,6 +158,24 @@ export function buildTuiGitState(input: {
     progress: input.progress
       ? { stage: input.progress.stage, elapsed: gitElapsed(input.progress.elapsedMs) }
       : null,
+  };
+}
+
+function remedyAction(remedy: GitActionFailureCta, room: number): TuiGitAction {
+  const opens = remedy.kind === "open_url";
+  return {
+    id: "remedy",
+    label: remedy.label,
+    primary: false,
+    disabled: false,
+    hint: opens
+      ? "Ctrl-click the link, or press Enter to copy it."
+      : `Press Enter to copy \`${remedy.command}\`.`,
+    kind: opens ? "url" : "copy",
+    action: null,
+    url: opens ? remedy.url : null,
+    command: opens ? null : remedy.command,
+    text: clip(`${remedy.label}${opens ? " ↗" : ""}`, room - 2),
   };
 }
 

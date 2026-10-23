@@ -363,11 +363,12 @@ export function createHost(options: HostOptions): Host {
     buildRows(
       next.shell,
       next.expanded,
-      next.loadedInFull,
+      next.settledShown,
       next.selection?.kind === "thread" ? next.selection.id : null,
       next.filter,
       next.projectScopeId,
       now(),
+      next.showSettledPluginThreads,
     );
 
   // Republish a key only when what it is derived from changed, so bindings
@@ -543,7 +544,8 @@ export function createHost(options: HostOptions): Host {
       !prev ||
       prev.shell !== next.shell ||
       prev.expanded !== next.expanded ||
-      prev.loadedInFull !== next.loadedInFull ||
+      prev.settledShown !== next.settledShown ||
+      prev.showSettledPluginThreads !== next.showSettledPluginThreads ||
       prev.selection !== next.selection ||
       prev.filter !== next.filter ||
       prev.projectScopeId !== next.projectScopeId

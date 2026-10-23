@@ -17,9 +17,9 @@ defmodule HalC2.Terminal.Hub do
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
   @doc "Adds `pid` as a watcher; returns every terminal's summary."
-  def watch(pid), do: GenServer.call(__MODULE__, {:watch, pid})
+  def watch(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:watch, pid, ref})
 
-  def unwatch(pid), do: GenServer.cast(__MODULE__, {:unwatch, pid})
+  def unwatch(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unwatch, pid, ref})
 
   @doc "Records a terminal's current summary; `session` is its process."
   def upsert(summary, session), do: GenServer.cast(__MODULE__, {:upsert, summary, session})
@@ -59,16 +59,15 @@ defmodule HalC2.Terminal.Hub do
   def handle_call(:summaries, _from, state),
     do: {:reply, for({_key, {summary, _session}} <- state.terminals, do: summary), state}
 
-  def handle_call({:watch, pid}, _from, state) do
-    watchers = Map.put_new_lazy(state.watchers, pid, fn -> Process.monitor(pid) end)
+  def handle_call({:watch, pid, ref}, _from, state) do
+    watchers = HalC2.Watchers.add(state.watchers, pid, ref)
     summaries = for {_key, {summary, _session}} <- state.terminals, do: summary
     {:reply, summaries, %{state | watchers: watchers}}
   end
 
   @impl true
-  def handle_cast({:unwatch, pid}, state) do
-    {ref, watchers} = Map.pop(state.watchers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
+  def handle_cast({:unwatch, pid, ref}, state) do
+    watchers = HalC2.Watchers.remove(state.watchers, pid, ref)
     {:noreply, %{state | watchers: watchers}}
   end
 
@@ -96,8 +95,8 @@ defmodule HalC2.Terminal.Hub do
   @impl true
   def handle_info({:DOWN, ref, :process, pid, _}, state) do
     cond do
-      match?(%{^pid => ^ref}, state.watchers) ->
-        {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
+      (watchers = HalC2.Watchers.down(state.watchers, ref, pid)) != state.watchers ->
+        {:noreply, %{state | watchers: watchers}}
 
       match?(%{^pid => {_, ^ref}}, state.sessions) ->
         {key, _} = state.sessions[pid]
@@ -157,7 +156,7 @@ defmodule HalC2.Terminal.Hub do
   end
 
   defp broadcast(state, event) do
-    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_terminals, node(), event})
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_terminals, node(), event})
   end
 
   # Polls only while some shell is running.

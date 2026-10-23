@@ -200,6 +200,12 @@ void expectImage(World& world, const QString& name, int count) {
   expect(asked == QStringList(count, QStringLiteral("image-1")), QStringLiteral("the MC signed [%1]").arg(asked.join(QStringLiteral(", "))));
 }
 
+QVariantList sentFiles(World& world) {
+  TimelineModel& model = timeline(world);
+  const int row = rowShowing(world, QStringLiteral("message:") + world.mc.part<FakeStreams>().run);
+  return role(model, row, TimelineModel::SentFilesRole).toList();
+}
+
 void expectAnswer(World& world, const QString& text) {
   TimelineModel& model = timeline(world);
   for (const int row : rowsOf(model, QStringLiteral("message"))) {
@@ -618,7 +624,38 @@ const Steps steps([] {
   });
   step(QStringLiteral("the message shows the image %1 from its MC").arg(q),
        [](World& world, const Captures& c, const Table&) { expectImage(world, c[0], 1); });
-  step(QStringLiteral("more than an hour passes"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the user sent the file %1 of 2 MB with a message").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString run = startRun(world);
+    const QJsonObject file{{QStringLiteral("type"), QStringLiteral("file")}, {QStringLiteral("id"), QStringLiteral("file-1")},
+                           {QStringLiteral("name"), c[0]}, {QStringLiteral("mimeType"), QStringLiteral("application/pdf")},
+                           {QStringLiteral("sizeBytes"), 2 * 1024 * 1024}};
+    set(world, QStringLiteral("turn-item"), QStringLiteral("message:") + run, {{QStringLiteral("attachments"), QJsonArray{file}}});
+  });
+  step(QStringLiteral("the message shows %1 with its kind and size").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantList files = sentFiles(world);
+    const QVariantMap file = files.value(0).toMap();
+    expect(files.size() == 1 && file.value(QStringLiteral("name")) == c[0] && file.value(QStringLiteral("detail")) == QStringLiteral("PDF · 2.0 MiB"),
+           QStringLiteral("the message shows %1").arg(show(files)));
+  });
+  step(QStringLiteral("the message carries an attachment of a kind a newer environment added"), [](World& world, const Captures&, const Table&) {
+    const QString run = startRun(world);
+    const QJsonObject other{{QStringLiteral("type"), QStringLiteral("hologram")}, {QStringLiteral("id"), QStringLiteral("other-1")},
+                            {QStringLiteral("name"), QStringLiteral("scene.holo")}};
+    set(world, QStringLiteral("turn-item"), QStringLiteral("message:") + run, {{QStringLiteral("attachments"), QJsonArray{other}}});
+  });
+  step(QStringLiteral("the message lists the attachment by its name"), [](World& world, const Captures&, const Table&) {
+    const QVariantList files = sentFiles(world);
+    const QVariantMap file = files.value(0).toMap();
+    expect(files.size() == 1 && file.value(QStringLiteral("name")) == QLatin1String("scene.holo") && file.value(QStringLiteral("detail")).toString().isEmpty(),
+           QStringLiteral("the message lists %1").arg(show(files)));
+  });
+  step(QStringLiteral("there is nothing to open"), [](World& world, const Captures&, const Table&) {
+    TimelineModel& model = timeline(world);
+    const int row = rowShowing(world, QStringLiteral("message:") + world.mc.part<FakeStreams>().run);
+    const QVariantList images = role(model, row, TimelineModel::AttachmentsRole).toList();
+    expect(images.isEmpty(), QStringLiteral("the message shows the images %1").arg(show(images)));
+  });
+  step(QStringLiteral("more than an hour passes"),[](World& world, const Captures&, const Table&) {
     world.mc.part<FakeAssets>().at = now().addSecs(3660);
     world.setTime(now().addSecs(3660));
   });

@@ -60,6 +60,13 @@ mod TURNS is
   op mbox : Rids -> Item [ctor] .
   op icall : Tgt -> Item [ctor] .
 
+  --- Work a turn left running past its end (Codex's background terminals, Claude's
+  --- and Grok's background tasks), under the run of the runtime's latest turn, its
+  --- `last_run`: taking a turn takes it over. An interrupt that ended it keeps the
+  --- run it was under, for `stray`.
+  op work : Rid -> Item [ctor] .
+  op halted : Rid -> Item [ctor] .
+
   --- TurnWatch: the runtime's claim on a run, and a crash it has yet to act on.
   op claim : Rid -> Item [ctor] .
   op down : Rid -> Item [ctor] .
@@ -114,6 +121,24 @@ mod TURNS is
   op busy? : Conf -> Bool .
   eq busy?(run(R, S, H, G) C) = if on(S) then true else busy?(C) fi .
   eq busy?(C) = false [owise] .
+
+  op working? : Conf -> Bool .
+  eq working?(work(R) C) = true .
+  eq working?(C) = false [owise] .
+
+  --- handle_call({:start_turn, _}) makes the turn's run the latest (`last_run`), and
+  --- the work left running is the latest turn's.
+  op own : Rid Conf -> Conf .
+  eq own(R, work(R') C) = work(R) C .
+  eq own(R, C) = C [owise] .
+
+  --- end_background/2 for an interrupt, and for the runtime's own end.
+  op halt : Conf -> Conf .
+  eq halt(work(R) C) = halted(R) C .
+  eq halt(C) = C [owise] .
+  op unwork : Conf -> Conf .
+  eq unwork(work(R) C) = C .
+  eq unwork(C) = C [owise] .
 
   op claimed? : Rid Conf -> Bool .
   eq claimed?(R, claim(R) C) = true .
@@ -171,6 +196,7 @@ mod TURNS is
   eq gone(W, claim(R) C) = (if W == crashed then down(R) else empty fi) gone(W, C) .
   eq gone(W, mbox(R ; L) C) = gone(W, mbox(L) cut(W, R, C)) .
   eq gone(W, icall(Y) C) = undriven(Y) gone(W, C) .
+  eq gone(W, work(R) C) = gone(W, C) .
   eq gone(W, C) = C [owise] .
 
   --- decide_next/2: the first queued run not held.
@@ -219,6 +245,7 @@ mod TURNS is
   eq wipe(intr(Y) C) = wipe(C) .
   eq wipe(undriven(Y) C) = wipe(C) .
   eq wipe(aimed(Y) C) = wipe(C) .
+  eq wipe(work(R) C) = wipe(C) .
   eq wipe(del C) = wipe(C) .
   eq wipe(timer(busy) C) = timer(ready) wipe(C) .
   ceq wipe(rt(X) C) = rt(none) wipe(C) if X =/= none .
@@ -263,9 +290,10 @@ mod TURNS is
 
   --- the runtime: HalC2.Codex.ThreadRuntime ------------------------------------------
 
-  --- handle_call({:start_turn, _}): it takes the turn, over any it had.
-  rl [take] : rt(idle) mbox(R ; L) => rt(begun(R)) mbox(L) .
-  rl [take] : rt(turn(R', I)) mbox(R ; L) => rt(begun(R)) mbox(L) .
+  --- handle_call({:start_turn, _}): it takes the turn, over any it had, and the work
+  --- left running.
+  rl [take] : { rt(idle) mbox(R ; L) C } => { rt(begun(R)) mbox(L) own(R, C) } .
+  rl [take] : { rt(turn(R', I)) mbox(R ; L) C } => { rt(begun(R)) mbox(L) own(R, C) } .
 
   --- begin_turn/2 there: the native turn started, it claims the run (TurnWatch.claim/2)
   --- and marks it running if it is still active, then replies. A run that ended
@@ -277,10 +305,11 @@ mod TURNS is
     if on(S) .
   eq started(R, C) = rt(idle) release(R, C) [owise] .
 
-  --- turn/completed: end_turn/3, TurnWriter.finish/3.
+  --- turn/completed: end_turn/3, TurnWriter.finish/3. A completed turn's work goes on;
+  --- an interrupted one ends it.
   rl [finish] :
     { rt(turn(R, I)) C }
-    => { rt(idle) finish(R, if I then interrupted else completed fi, C) } .
+    => { rt(idle) finish(R, if I then interrupted else completed fi, if I then halt(C) else C fi) } .
 
   --- handle_call({:interrupt, run}): turn/interrupt to the turn it drives if that is
   --- the pinned run's, or the interrupt is not pinned; no running turn else, and
@@ -288,7 +317,14 @@ mod TURNS is
   rl [interrupted] : rt(turn(R, I)) icall(R) => rt(turn(R, true)) .
   rl [interrupted] : rt(turn(R, I)) icall(any) => rt(turn(R, true)) .
   crl [stale-pin] : rt(turn(R', I)) icall(R) => rt(turn(R', I)) undriven(R) if R =/= R' .
-  rl [no-turn] : rt(idle) icall(Y) => rt(idle) undriven(Y) .
+  crl [no-turn] : { rt(idle) icall(Y) C } => { rt(idle) undriven(Y) C } if not working?(C) .
+
+  --- Between turns, the work left running ends for an interrupt pinned to the latest
+  --- turn's run, or not pinned; one pinned to a run that started earlier is refused,
+  --- #474. The pinned run is r1, which starts first, so any other run is later.
+  rl [stop-work] : rt(idle) icall(R) work(R) => rt(idle) halted(R) .
+  rl [stop-work] : rt(idle) icall(any) work(R) => rt(idle) halted(R) .
+  crl [stale-pin] : rt(idle) icall(R) work(R') => rt(idle) work(R') undriven(R) if R =/= R' .
 
   --- run.interrupt: interrupt_any/2 ----------------------------------------------------
 
@@ -351,7 +387,11 @@ mod TURNS is
     { rt(begun(R)) faults(s F) C } => { rt(idle) finish(R, failed, answered(R, C)) faults(F) } .
 
   --- The app-server exits under a turn: the runtime ends it as failed.
-  rl [exit] : { rt(turn(R, I)) faults(s F) C } => { rt(idle) finish(R, failed, C) faults(F) } .
+  rl [exit] : { rt(turn(R, I)) faults(s F) C } => { rt(idle) finish(R, failed, unwork(C)) faults(F) } .
+
+  --- The turn completes leaving work running past its end.
+  crl [background] : { rt(turn(R, false)) C } => { rt(idle) finish(R, completed, work(R) C) }
+    if not working?(C) .
 
   --- The MC stops and starts again.
   rl [restart] : { faults(s F) C } => { settle(wipe(C)) faults(F) } .
@@ -374,7 +414,8 @@ mod TURNS is
 
   --- Two runs active at once; a run that ended changing status; a run that failed;
   --- an interrupt pinned to one run ending another as interrupted (a restart, which
-  --- interrupts what runs, forgets the interrupt it cut off); nothing left to do.
+  --- interrupts what runs, forgets the interrupt it cut off), or the work another
+  --- left running; nothing left to do.
   ops twice flipped failed? stray settled : Sys -> Bool .
   ceq twice({ run(R, S, H, G) run(R', S', B, G') C }) = true if on(S) /\ on(S') .
   eq twice({ C }) = false [owise] .
@@ -383,6 +424,7 @@ mod TURNS is
   eq failed?({ run(R, failed, H, G) C }) = true .
   eq failed?({ C }) = false [owise] .
   ceq stray({ aimed(R) run(R', S, H, interrupted) C }) = true if R =/= R' .
+  ceq stray({ aimed(R) halted(R') C }) = true if R =/= R' .
   eq stray({ C }) = false [owise] .
   eq settled({ client(R) C }) = false .
   eq settled({ disp(R, P) C }) = false .
