@@ -497,7 +497,7 @@ impl Sut {
         hal_c2_shell::start(&engine, &Launch::default(), mc.clone());
         let files = WorkspaceFiles::create(&engine, None, mc.clone()).expect("the files");
         let tree = WorkspaceFiles::tree(&engine, files).expect("its tree");
-        WorkspaceFiles::set_target(&engine, files, "env-a", "");
+        WorkspaceFiles::set_target(&engine, files, "env-a", "", "");
         Sut {
             engine,
             window,
@@ -694,7 +694,7 @@ fn run(ops: Vec<Op>) -> Result<(), TestCaseError> {
         let done = match op.clone() {
             Op::Target(i) => {
                 model.set_target(ROOTS[i]);
-                WorkspaceFiles::set_target(&sut.engine, sut.files, "env-a", ROOTS[i]);
+                WorkspaceFiles::set_target(&sut.engine, sut.files, "env-a", ROOTS[i], "");
                 true
             }
             Op::Active(active) => {
