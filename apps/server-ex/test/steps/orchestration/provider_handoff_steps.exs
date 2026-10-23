@@ -3,6 +3,7 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.Orchestration.Entities
   alias HalC2.Test.Mc.World
 
   @models %{"codex" => "gpt-5.4", "claudeAgent" => "claude-haiku"}
@@ -91,6 +92,85 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context = run(context, thread, "Carry on")
     context = switch(context, thread, back, @models[back])
     assert {:ok, _} = context.reply
+    context
+  end
+
+  # Its fake Codex names its threads and turns after it and cannot resume another
+  # instance's thread (`FAKE_CODEX_INSTANCE`), as a Codex in another home cannot.
+  step ~r/^an?(?:other| second) Codex instance "(?<instance>[^"]+)" with its own home$/,
+       %{args: [instance]} = context do
+    variable = %{"name" => "FAKE_CODEX_INSTANCE", "value" => instance}
+
+    World.merge_settings(%{
+      "providerInstances" => %{
+        instance => %{"driver" => "codex", "enabled" => true, "environment" => [variable]}
+      }
+    })
+
+    context
+  end
+
+  # Before each instance had its own provider thread, a thread kept the session of the
+  # instance of the driver it ran on under the driver's id.
+  step "{string} last ran on {string} when instances shared a provider thread",
+       %{args: [thread, instance]} = context do
+    ref = Entities.provider_ref("#{instance}-thread-1", "codex")
+    shared(context, thread, %{"providerInstanceId" => instance, "nativeThreadRef" => ref})
+  end
+
+  # Its runs named the shared provider thread too: the run, its attempt and its provider
+  # turn become that instance's, and the instance the last to run there.
+  step ~r/^the (?<nth>first|latest) run of "(?<thread>[^"]+)" ran on "(?<instance>[^"]+)" when instances shared a provider thread$/,
+       %{args: [nth, thread, instance]} = context do
+    id = World.thread_id(context, thread)
+
+    run =
+      if nth == "first",
+        do: Enum.find(World.entities(context, thread, "run"), &(&1["ordinal"] == 1)),
+        else: World.latest_run(context, thread)
+
+    attempt = run["activeAttemptId"]
+
+    turn =
+      context
+      |> World.entities(thread, "provider-turn")
+      |> Enum.find(&(&1["runAttemptId"] == attempt))
+
+    turn_ref = Entities.provider_ref("#{instance}-turn-#{run["ordinal"]}", "codex")
+    moved = %{"s" => %{"providerInstanceId" => instance}}
+
+    {:ok, _} =
+      HalC2.Streams.commit(id, :thread, [
+        {"run", run["id"], moved},
+        {"run-attempt", attempt, moved},
+        {"provider-turn", turn["id"], %{"s" => %{"nativeTurnRef" => turn_ref}}}
+      ])
+
+    thread_ref = Entities.provider_ref("#{instance}-thread-1", "codex")
+    shared(context, thread, %{"providerInstanceId" => instance, "nativeThreadRef" => thread_ref})
+  end
+
+  # A move brought that instance's session along, not yet continued here.
+  step "{string} last ran on {string} when instances shared a provider thread and moved here with its session",
+       %{args: [thread, instance]} = context do
+    session = %{"driver" => "codex", "nativeId" => "#{instance}-carried", "from" => "laptop"}
+
+    shared(context, thread, %{
+      "providerInstanceId" => instance,
+      "nativeThreadRef" => nil,
+      "carriedSession" => session
+    })
+  end
+
+  # A runtime started before it recorded its instance, then updated in place as
+  # `HalC2.Hot.reload/2` does.
+  step "the Codex runtime of {string} was started before it recorded its instance",
+       %{args: [thread]} = context do
+    {pid, _} = World.codex_runtime(context, thread)
+    :ok = :sys.suspend(pid)
+    :sys.replace_state(pid, &(&1 |> Map.delete(:instance) |> Map.put(:v, 2)))
+    :ok = :sys.change_code(pid, HalC2.Codex.ThreadRuntime, 2, nil)
+    :ok = :sys.resume(pid)
     context
   end
 
@@ -317,6 +397,85 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     context
   end
 
+  step "the run answers on the Codex thread {string}", %{args: [native]} = context do
+    assert answer(context, context.thread) =~ ~r/^on #{Regex.escape(native)} history /
+    context
+  end
+
+  step "the run resumes the provider thread {string} had", %{args: [instance]} = context do
+    run = World.latest_run(context, context.thread)
+    threads = World.entities(context, context.thread, "provider-thread")
+    thread = Enum.find(threads, &(&1["id"] == run["providerThreadId"]))
+
+    assert %{"providerInstanceId" => ^instance, "nativeThreadRef" => %{"nativeId" => native}} =
+             thread
+
+    assert %{"threadId" => ^native} = List.last(World.codex_requests(context, "thread/resume"))
+    assert answer(context, context.thread) =~ ~r/^on #{Regex.escape(native)} history /
+    context
+  end
+
+  step "the user forks {string} after its {word} run and sends on {string}",
+       %{args: [thread, nth, instance]} = context do
+    context = World.fork(context, thread, %{"first" => 1, "second" => 2}[nth], "fork")
+    assert {:ok, _} = context.reply
+    context = switch(context, "fork", instance, @models["codex"])
+    run(context, "fork", "where are we")
+  end
+
+  step "the fork's first turn forks the Codex thread {string} after {string}",
+       %{args: [native, turn]} = context do
+    assert %{"threadId" => ^native, "lastTurnId" => ^turn} =
+             List.last(World.codex_requests(context, "thread/fork"))
+
+    assert World.latest_run(context, "fork")["status"] == "completed"
+    context
+  end
+
+  step "the fork's first turn starts a new Codex thread with the conversation", context do
+    World.await_latest_run(context, "fork", "completed")
+    assert World.codex_requests(context, "thread/fork") == []
+    assert_history_before(Map.put(context, :thread, "fork"), "where are we")
+  end
+
+  step "the provider thread of {string} on {string} names that instance's session",
+       %{args: [thread, instance]} = context do
+    id = World.thread_id(context, thread)
+
+    assert %{"providerSessionId" => session} =
+             World.state(context, thread).entities["provider-thread"][
+               Entities.provider_thread_id(instance, id)
+             ]
+
+    assert session == Entities.provider_session_id(instance, id)
+    context
+  end
+
+  step "the session {string} runs {string} in is its own",
+       %{args: [instance, thread]} = context do
+    id = World.thread_id(context, thread)
+
+    assert %{"providerInstanceId" => ^instance, "model" => "gpt-5.4", "lastError" => nil} =
+             World.state(context, thread).entities["provider-session"][
+               Entities.provider_session_id(instance, id)
+             ]
+
+    context
+  end
+
+  step "the run continues the carried Codex session {string}", %{args: [native]} = context do
+    run = World.await_latest_run(context, context.thread, "completed")
+    assert %{"threadId" => ^native} = List.last(World.codex_requests(context, "thread/fork"))
+
+    thread =
+      context
+      |> World.entities(context.thread, "provider-thread")
+      |> Enum.find(&(&1["id"] == run["providerThreadId"]))
+
+    refute Map.has_key?(thread, "carriedSession")
+    context
+  end
+
   step "a new provider thread is started for {string}", %{args: [instance]} = context do
     run = World.await_latest_run(context, context.thread, "completed")
     threads = World.entities(context, context.thread, "provider-thread")
@@ -524,11 +683,34 @@ defmodule HalC2.Steps.Orchestration.ProviderHandoff do
     |> Map.fetch!("text")
   end
 
+  # Fields of the provider thread every instance of Codex shared, under Codex's id, from
+  # before the MC brought it up to date (`perInstance`). The session there was the
+  # instance's too, its model and last error included.
+  defp shared(context, thread, fields) do
+    id = World.thread_id(context, thread)
+    instance = fields["providerInstanceId"]
+
+    session = %{
+      "providerInstanceId" => instance,
+      "model" => "#{instance}-model",
+      "lastError" => "#{instance} is out of credits"
+    }
+
+    {:ok, _} =
+      HalC2.Streams.commit(id, :thread, [
+        {"provider-thread", Entities.provider_thread_id("codex", id),
+         %{"s" => fields, "u" => ["perInstance"]}},
+        {"provider-session", Entities.provider_session_id("codex", id), %{"s" => session}}
+      ])
+
+    context
+  end
+
   # What the latest run's provider was sent.
   defp prompt(context) do
     case World.latest_run(context, context.thread)["providerInstanceId"] do
-      "codex" -> hd(List.last(World.codex_requests(context, "turn/start"))["input"])["text"]
       "claudeAgent" -> List.last(World.claude_prompts(context))
+      _codex -> hd(List.last(World.codex_requests(context, "turn/start"))["input"])["text"]
     end
   end
 

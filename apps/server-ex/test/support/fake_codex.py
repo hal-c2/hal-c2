@@ -123,7 +123,11 @@ def rollout_history():
     return [r["payload"]["content"][0]["text"] for r in records
             if r.get("type") == "response_item" and r["payload"].get("role") == "user"]
 
-thread_id = "native-thread-1"
+# With FAKE_CODEX_INSTANCE set, the fake is that provider instance's Codex: its thread and
+# turn ids start with the instance, and it cannot resume another instance's thread, which
+# lives in another home.
+INSTANCE = os.environ.get("FAKE_CODEX_INSTANCE")
+thread_id = f"{INSTANCE}-thread-1" if INSTANCE else "native-thread-1"
 # Current Codex keeps paginated history, which only rewinds with thread/revert.
 paginated = os.environ.get("FAKE_CODEX_LEGACY") != "1"
 # FAKE_CODEX_PAGE_SIZE=N keeps N turns per history page; thread/revert only reaches the latest page.
@@ -206,6 +210,11 @@ for line in sys.stdin:
                 send({"id": mid, "error": {"code": -32600, "message": str(error)}})
                 continue
             thread_id, rollout = params["threadId"], path
+        elif INSTANCE and method == "thread/resume":
+            if not params["threadId"].startswith(f"{INSTANCE}-"):
+                send({"id": mid, "error": {"code": -32600, "message": f"no rollout found for thread id {params['threadId']}"}})
+                continue
+            thread_id = params["threadId"]
         send({"id": mid, "result": {"thread": {"id": thread_id}}})
     elif method == "turn/start":
         # FAKE_CODEX_INPUT_LOG collects every turn's input, one JSON line each.
@@ -213,7 +222,7 @@ for line in sys.stdin:
             with open(os.environ["FAKE_CODEX_INPUT_LOG"], "a") as f:
                 f.write(json.dumps(params["input"]) + "\n")
         turns += 1
-        turn_id = f"native-turn-{turns}"
+        turn_id = f"{INSTANCE or 'native'}-turn-{turns}"
         prompt = params["input"][0]["text"]
         # The script plays from the user's message, not from the context the MC hands
         # off ahead of it (`<conversation_history>`, `<imported_history>`, ...).

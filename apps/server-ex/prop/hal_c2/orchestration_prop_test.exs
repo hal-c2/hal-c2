@@ -92,10 +92,21 @@ defmodule HalC2.OrchestrationPropTest do
           HalC2.Settings
         ])
 
+        # Each instance's fake Codex names its threads and turns after the instance and
+        # cannot resume another's thread, as a Codex in another home cannot.
+        named = &[%{"name" => "FAKE_CODEX_INSTANCE", "value" => &1}]
+
         {:ok, _} =
           HalC2.Settings.put(
             %{
-              "providerInstances" => %{"codex-work" => %{"driver" => "codex", "enabled" => true}}
+              "providerInstances" => %{
+                "codex" => %{"environment" => named.("codex")},
+                "codex-work" => %{
+                  "driver" => "codex",
+                  "enabled" => true,
+                  "environment" => named.("codex-work")
+                }
+              }
             },
             0
           )
@@ -792,6 +803,7 @@ defmodule HalC2.OrchestrationPropTest do
           do: {run.msg, Atom.to_string(run.status), run.held, run.instance}
         ),
       queue: thread.queue,
+      foreign: [],
       messages:
         Map.new(thread.messages, fn {id, m} ->
           shown = if m.shown, do: {m.run, if(m.notice, do: "notification", else: "user_message")}
@@ -1278,11 +1290,31 @@ defmodule HalC2.OrchestrationPropTest do
                  run["providerInstanceId"]}
             ),
           queue: queue,
+          foreign: foreign(state, runs),
           messages: messages,
           steered: provider_steers(Enum.map(user_messages, fn {_, m} -> m["text"] end))
         }
     end
   end
+
+  # The runs whose provider turn or provider thread another instance's Codex made: a
+  # run's turn runs on its own instance, in a provider thread of that instance's. A run
+  # names its provider turn through its active attempt; one not started yet has none.
+  defp foreign(state, runs) do
+    attempts = StreamState.get(state, "run-attempt")
+    turns = StreamState.get(state, "provider-turn")
+    threads = StreamState.get(state, "provider-thread")
+
+    for %{"providerInstanceId" => instance} = run <- runs,
+        turn = turns[(attempts[run["activeAttemptId"]] || %{})["providerTurnId"]],
+        thread = threads[run["providerThreadId"]] || %{},
+        not String.starts_with?(native(turn["nativeTurnRef"]), "#{instance}-turn-") or
+          not String.starts_with?(native(thread["nativeThreadRef"]), "#{instance}-thread-") or
+          thread["providerInstanceId"] != instance,
+        do: {run["userMessageId"], instance, thread["id"], native(thread["nativeThreadRef"])}
+  end
+
+  defp native(ref), do: (ref || %{})["nativeId"] || ""
 
   defp answered_after?(items, item, text) do
     Enum.any?(Map.values(items), fn answer ->

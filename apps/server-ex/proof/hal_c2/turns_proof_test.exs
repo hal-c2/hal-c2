@@ -103,6 +103,8 @@ defmodule HalC2.TurnsProofTest do
         @items,
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:request, _, \"mcpServer/elicitation/request\", _}}" =>
         @items,
+      "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, _}" =>
+        "drops what an app-server it stopped for another instance sent; the model has one",
       "HalC2.Codex.ThreadRuntime handle_info :flush" => @items,
       "HalC2.Codex.ThreadRuntime handle_info _" => "ignores what it does not know",
       "HalC2.Orchestration.TurnWatch.start_link/1" =>

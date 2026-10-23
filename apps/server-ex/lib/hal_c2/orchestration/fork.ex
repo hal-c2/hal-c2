@@ -188,6 +188,9 @@ defmodule HalC2.Orchestration.Fork do
 
     provider_thread = turn && StreamState.get(state, "provider-thread")[turn["providerThreadId"]]
 
+    {provider_thread, turn} =
+      if ran_in?(provider_thread, run), do: {provider_thread, turn}, else: {nil, nil}
+
     %{
       "threadId" => run["threadId"],
       "runId" => run["id"],
@@ -196,6 +199,21 @@ defmodule HalC2.Orchestration.Fork do
       "providerTurnRef" => turn && turn["nativeTurnRef"]
     }
     |> Map.reject(fn {_key, value} -> value == nil end)
+  end
+
+  # Whether `run`'s native turn is in `provider_thread`'s native thread, so a fork can
+  # start there. In a thread from before each instance had its own provider thread, it
+  # is not when the provider thread is still another instance's, or when the run's
+  # instance has taken it back since and started a new native thread
+  # (`nativeSinceRunOrdinal`, `HalC2.Orchestration.new_run/5`): such a fork gets the
+  # history instead.
+  defp ran_in?(nil, _run), do: false
+
+  defp ran_in?(provider_thread, run) do
+    driver = provider_thread["driver"]
+
+    (provider_thread["providerInstanceId"] || driver) == (run["providerInstanceId"] || driver) and
+      (run["ordinal"] || 0) >= (provider_thread["nativeSinceRunOrdinal"] || 0)
   end
 
   defp transfer(command, type, source_id, target_id, point, base, run, at) do

@@ -29,7 +29,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   alias HalC2.Orchestration.{Entities, TurnWatch}
   alias HalC2.JsonRpc.Connection
 
-  @state_version 2
+  @state_version 3
 
   # The steer's two budgets, one source so their ordering cannot drift: the
   # handler's nested `turn/steer` call (`steer_call_timeout/0`, passed
@@ -185,6 +185,10 @@ defmodule HalC2.Codex.ThreadRuntime do
        v: @state_version,
        thread_id: thread_id,
        conn: nil,
+       # The provider instance the app-server was started for: nil until the first
+       # `connect/2`; `:unknown` after a hot update of a runtime that predates the field.
+       # Apart from `instance`, which is the resolved one a turn's quota belongs to.
+       conn_instance: nil,
        native_thread_id: nil,
        turn: nil,
        # The instance the latest turn runs as: a turn's quota belongs to it.
@@ -389,7 +393,12 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  # What an app-server stopped for another instance's (`connect/2`) had already sent
+  # belongs to no turn of this one.
   @impl true
+  def handle_info({:json_rpc, conn, _message}, %{conn: current} = state) when conn != current,
+    do: {:noreply, state}
+
   def handle_info({:json_rpc, _conn, {:notification, method, params}}, state),
     do: {:noreply, notification(method, params || %{}, state)}
 
@@ -535,6 +544,7 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:running, %{})
      |> Map.put_new(:background, %{})
      |> Map.put(:instance, instance)
+     |> Map.put_new(:conn_instance, :unknown)
      |> Map.put(:v, @state_version)}
   end
 
@@ -678,8 +688,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp rpc_message(%{"message" => message}) when is_binary(message), do: message
   defp rpc_message(reason), do: inspect(reason)
 
-  defp connect(%{conn: nil} = state, turn) do
-    instance = if ids = turn[:ids], do: Entities.instance(ids)
+  defp connect(%{conn: nil} = state, %{ids: ids} = turn) do
+    instance = Entities.instance(ids)
 
     cmd =
       HalC2.Settings.instance_command(
@@ -689,7 +699,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     # The instance's variables in settings (such as CODEX_HOME) reach Codex, over the
     # home its settings name (`HalC2.Codex.Home`).
-    env = if instance, do: Enum.to_list(HalC2.Settings.instance_env(instance)), else: []
+    env = Enum.to_list(HalC2.Settings.instance_env(instance))
 
     with {:ok, args} <- launch_args(instance),
          {:ok, home} <- HalC2.Codex.Home.env(instance),
@@ -715,13 +725,41 @@ defmodule HalC2.Codex.ThreadRuntime do
              }
            }) do
       Connection.notify(conn, "initialized", nil)
-      {:ok, %{state | conn: conn}}
+      {:ok, %{state | conn: conn, conn_instance: instance}}
     else
       {:error, reason} -> {:error, reason, state}
     end
   end
 
-  defp connect(state, _turn), do: {:ok, state}
+  # The app-server runs with its instance's command, variables and home, so a turn on
+  # another instance of Codex needs its own: the open one, and the commands it left
+  # running, stop, and the turn opens the thread it has there. One whose instance is
+  # not known (started before a hot update) may run as another account, so it is
+  # replaced too.
+  defp connect(state, %{ids: ids} = turn) do
+    if state.conn_instance == Entities.instance(ids) do
+      {:ok, state}
+    else
+      # Pending requests are a turn's: every request handler needs a running
+      # turn and `end_turn/3` cancels and clears them, so none is live here.
+      # Settle any that somehow remain anyway — their rpc ids belong to the
+      # app-server being stopped, never to the new instance's.
+      state =
+        Enum.reduce(Map.keys(state.requests), state, &resolve_request(&2, &1, nil, "cancelled"))
+
+      state = end_background(%{state | requests: %{}}, "interrupted")
+      Process.unlink(state.conn)
+      stop_conn(state.conn)
+      connect(%{state | conn: nil, native_thread_id: nil}, turn)
+    end
+  end
+
+  # An app-server that has just exited (its `:EXIT` not handled yet) is already stopped.
+  defp stop_conn(conn) do
+    Connection.stop(conn)
+  catch
+    :exit, _ -> :ok
+  end
 
   # The instance's launch arguments follow `app-server`.
   defp launch_args(instance), do: HalC2.Codex.Provider.launch_args(instance)

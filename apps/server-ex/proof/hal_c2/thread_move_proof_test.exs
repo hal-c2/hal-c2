@@ -61,7 +61,7 @@ defmodule HalC2.ThreadMoveProofTest do
       "HalC2.ThreadMove.locate/1" => "reads where the thread lives; changes nothing",
       "HalC2.ThreadMove.read/3" =>
         "serves the files the destination stages; a call that breaks off ends the staging, as stage and sever model",
-      "HalC2.Orchestration.Handoff.plan/6" => @handoff,
+      "HalC2.Orchestration.Handoff.plan/5" => @handoff,
       "HalC2.Orchestration.Handoff.prompt/2" => @handoff,
       "HalC2.Orchestration.Handoff.transcript/3" => @handoff,
       "HalC2.Orchestration.Handoff.legacy_summary/1" => @handoff
