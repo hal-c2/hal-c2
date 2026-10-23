@@ -417,8 +417,12 @@ Item {
         property bool following: true
         property bool positioning: false
         property bool away: false
-        // The height each row was last laid out at, by row id.
+        // The height each row was last laid out at, by row id. Heights from
+        // another column width or text size are forgotten: a row made again
+        // at one would snap to its own a moment later.
         property var heights: ({})
+        readonly property string laidOutAt: [root.columnWidth, Theme.fontScale, Theme.fontUi, Theme.fontMono, Theme.fontSizeCode].join()
+        onLaidOutAtChanged: heights = {}
 
         function settleAway() {
             if (!moving && !dragging && !scrollBar.pressed)

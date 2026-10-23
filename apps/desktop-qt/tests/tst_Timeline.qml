@@ -446,6 +446,43 @@ Item {
             verify(atEnd(list) && list.itemAtIndex(rows.count - 1), "the last row is in view");
         }
 
+        // Scenario: The end of the thread holds still while nothing new is written
+        function test_rowsMadeAgainAfterAResizeHoldStill() {
+            const words = "words that run on long enough to wrap the column they are in onto another line";
+            rows.clear();
+            for (let i = 0; i < 40; ++i) {
+                rows.append(root.row({
+                    rowId: "message-" + i,
+                    text: "Message " + i + ", " + words + ", and " + words + "."
+                }));
+            }
+            const timeline = createTemporaryObject(tallTimelineComponent, root);
+            const list = view(timeline);
+            settleAtEnd(list);
+            // The rows at the end are dropped, and made again in a narrower
+            // column, where they wrap onto more lines.
+            list.forceActiveFocus();
+            tryVerify(() => list.activeFocus, 2000, "the conversation has the keyboard");
+            keyClick(Qt.Key_Home);
+            verify(!list.itemAtIndex(rows.count - 1), "the last row is dropped");
+            timeline.width = 500;
+            keyClick(Qt.Key_End);
+            tryVerify(() => atEnd(list) && timeline.following, 5000, "End returns to the end");
+            for (let i = 0; i < 6; ++i) {
+                ++clock.ticks;
+                wait(16);
+            }
+            let moves = 0;
+            const count = () => ++moves;
+            list.contentYChanged.connect(count);
+            for (let i = 0; i < 30; ++i) {
+                ++clock.ticks;
+                wait(16);
+            }
+            list.contentYChanged.disconnect(count);
+            compare(moves, 0, "the rows made again do not snap to another height");
+        }
+
         // Scenario: Another thread opens at its end however far the last was scrolled
         function test_anotherThreadOpensAtItsEnd() {
             const timeline = longThread(roomyTimelineComponent);
