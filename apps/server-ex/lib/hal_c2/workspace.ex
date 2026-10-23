@@ -8,7 +8,8 @@ defmodule HalC2.Workspace do
   that are not ignored), else from a bounded walk; at most 25,000, kept a few seconds
   (`invalidate/1` drops them when a turn ends). Content search runs ripgrep, or git
   grep where ripgrep is missing. Writes, and reads by a relative path, stay inside
-  the workspace root, symlinks included.
+  the workspace root, symlinks included; a write by an absolute path only replaces a
+  text file already there, as one read by that path is edited.
   """
 
   use GenServer
@@ -81,7 +82,7 @@ defmodule HalC2.Workspace do
   `projects.readFile`: up to 1 MB of a text file inside the root, or up to 10 MB of
   an image as base64 (`encoding: "base64"`, for attaching it). An absolute path
   reads a file on the host in place (one an agent left elsewhere); it comes back
-  under that path, which clients cannot write back.
+  under that path, which `write_file/1` writes back.
   """
   def read_file(%{"cwd" => cwd, "relativePath" => relative} = input) do
     error = &file_error("ProjectReadFileError", input, &1, &2)
@@ -98,7 +99,7 @@ defmodule HalC2.Workspace do
         base64? ->
           {:ok, result(shown, Base.encode64(contents), size, size > max)}
 
-        String.valid?(contents) and not String.contains?(contents, <<0>>) ->
+        text?(contents) ->
           {:ok, result(shown, contents, size, size > max)}
 
         true ->
@@ -130,19 +131,65 @@ defmodule HalC2.Workspace do
   defp chat_image?(path),
     do: String.downcase(Path.extname(path)) in @chat_image_extensions
 
-  @doc "`projects.writeFile`: writes a file inside the root, creating its folders."
+  @doc """
+  `projects.writeFile`: writes a file inside the root, creating its folders. An
+  absolute path writes back a file on the host that `read_file/1` read in place (one
+  an agent left elsewhere): only a text file that is there already and that the
+  viewer could read whole, so nothing is created outside the root.
+  """
   def write_file(%{"cwd" => cwd, "relativePath" => relative, "contents" => contents} = input) do
     error = &file_error("ProjectWriteFileError", input, &1, &2)
 
     with {:ok, root} <- root(cwd, "ProjectWriteFileError"),
-         {:ok, path} <- inside(root, relative, error),
-         :ok <- mkdir(Path.dirname(path), error),
-         {:ok, path} <- inside(root, relative, error),
+         {:ok, path, shown} <- write_target(root, relative, error),
          :ok <- write(path, contents, error) do
       invalidate(root)
-      {:ok, %{"relativePath" => normalize(relative)}}
+      {:ok, %{"relativePath" => shown}}
     end
   end
+
+  defp write_target(root, relative, error) do
+    if Path.type(relative) == :absolute do
+      with {:ok, path} <- existing_text(real(relative), relative, error),
+           do: {:ok, path, relative}
+    else
+      with {:ok, path} <- inside(root, relative, error),
+           :ok <- mkdir(Path.dirname(path), error),
+           {:ok, path} <- inside(root, relative, error),
+           do: {:ok, path, normalize(relative)}
+    end
+  end
+
+  # A file outside the root is written only where `read_file/1` would have given the
+  # viewer all of it as text.
+  defp existing_text(path, shown, error) do
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :regular, size: size}} when size <= @read_max_bytes ->
+        case read_head(path, @read_max_bytes, error) do
+          {:ok, current} ->
+            if text?(current),
+              do: {:ok, path},
+              else: error.("binary_file", "'#{shown}' is not a text file.")
+
+          failure ->
+            failure
+        end
+
+      {:ok, %File.Stat{type: :regular}} ->
+        error.("operation_failed", "'#{shown}' is larger than 1 MB.")
+
+      {:ok, %File.Stat{}} ->
+        error.("path_not_file", "'#{shown}' is not a file.")
+
+      {:error, _} ->
+        error.(
+          "workspace_path_outside_root",
+          "'#{shown}' is outside the workspace, where only a file that is already there can be saved."
+        )
+    end
+  end
+
+  defp text?(contents), do: String.valid?(contents) and not String.contains?(contents, <<0>>)
 
   @doc "`projects.searchContents`: lines matching a literal or a regex."
   def search_contents(%{"cwd" => cwd, "query" => query} = input) do

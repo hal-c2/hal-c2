@@ -51,12 +51,13 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
     read(context, project, file, %{"encoding" => "utf8"})
   end
 
+  # A host path names the scenario's host (`HalC2.Test.Mc.Host`), as a client's does.
   step "the MC answers that {string} is not a text file", %{args: [file]} = context do
-    refused(context, "binary_file", "'#{file}' is not a text file.")
+    refused(context, "binary_file", "'#{shown(context, file)}' is not a text file.")
   end
 
   step "the MC answers that {string} is not a file", %{args: [file]} = context do
-    refused(context, "path_not_file", "'#{file}' is not a file.")
+    refused(context, "path_not_file", "'#{shown(context, file)}' is not a file.")
   end
 
   step "{string} is an image in {string}", %{args: [file, project]} = context do
@@ -81,19 +82,56 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
     Map.put(context, :contents, "- buy milk\n")
   end
 
-  step "the file is marked as one that cannot be written back", context do
+  step "the file comes back under its full path", context do
     assert {:ok, %{"relativePath" => path}} = context.reply
     assert Path.type(path) == :absolute
+    context
+  end
 
-    {reply, context} =
-      World.call(context, "projects.writeFile", %{
-        "cwd" => World.project(context).root,
-        "relativePath" => path,
-        "contents" => "changed\n"
-      })
+  step "{string} has the written contents", %{args: [file]} = context do
+    assert {:ok, %{"relativePath" => path}} = context.reply
+    assert path == Host.path(context, file)
+    assert File.read!(path) == context.written
+    context
+  end
 
-    assert {:error, _, %{"failure" => "workspace_path_outside_root"}} = reply
-    assert File.read!(path) == context.contents
+  step "the host has {word} at {string}", %{args: [_article, file]} = context do
+    host(context, file, nil)
+  end
+
+  step "the host has a {word} at {string}", %{args: [kind, file]} = context do
+    host(context, file, kind)
+  end
+
+  step "the host has a {word} file at {string}", %{args: [kind, file]} = context do
+    host(context, file, kind)
+  end
+
+  step "the host has a text file larger than {int} MB at {string}",
+       %{args: [mb, file]} = context do
+    host(context, file, {:large, mb})
+  end
+
+  step "the MC answers that {string} is outside the project and not there yet",
+       %{args: [file]} = context do
+    assert {:error, message, %{"failure" => "workspace_path_outside_root"}} = context.reply
+    assert message =~ Host.path(context, file)
+    context
+  end
+
+  step "the MC answers that {string} is larger than {int} MB", %{args: [file, mb]} = context do
+    refused(context, "operation_failed", "'#{Host.path(context, file)}' is larger than #{mb} MB.")
+  end
+
+  step "nothing at {string} changed", %{args: [file]} = context do
+    path = Host.path(context, file)
+
+    case context.host_before do
+      nil -> refute File.exists?(path)
+      :directory -> assert File.dir?(path)
+      contents -> assert File.read!(path) == contents
+    end
+
     context
   end
 
@@ -159,6 +197,36 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
       )
 
     Map.put(context, :reply, reply)
+  end
+
+  defp shown(context, file),
+    do: if(Path.type(file) == :absolute, do: Host.path(context, file), else: file)
+
+  # What the host holds at `file` before the scenario writes it.
+  defp host(context, file, kind) do
+    path = Host.path(context, file)
+    File.mkdir_p!(Path.dirname(path))
+
+    before =
+      case kind do
+        nil ->
+          nil
+
+        "folder" ->
+          File.mkdir_p!(path)
+          :directory
+
+        "binary" ->
+          File.write!(path, @png)
+          @png
+
+        {:large, mb} ->
+          contents = String.duplicate("log line\n", div(mb * 1_048_576, 9) + 1)
+          File.write!(path, contents)
+          contents
+      end
+
+    Map.put(context, :host_before, before)
   end
 
   defp refused(context, failure, message) do

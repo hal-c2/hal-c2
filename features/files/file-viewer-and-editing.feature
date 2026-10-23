@@ -43,7 +43,8 @@
 
 Feature: Viewing and editing files
   The user can read any text file in a project, preview media, and make small edits that
-  save themselves. Paths never escape the project.
+  save themselves. A path in the project never escapes it; a file the agent left elsewhere
+  on its machine is opened, and edited, by its full path.
 
   Background:
     Given a connected environment with the project "shop"
@@ -112,7 +113,7 @@ Feature: Viewing and editing files
       Given the host has the file "/home/sam/notes/todo.txt"
       When a client reads "/home/sam/notes/todo.txt" from "shop"
       Then the file's contents are returned
-      And the file is marked as one that cannot be written back
+      And the file comes back under its full path
 
     @tui
     Scenario: The terminal client shows an opened file with syntax colouring
@@ -483,6 +484,30 @@ Feature: Viewing and editing files
       When a client writes "src/new/deep.ts" in "shop"
       Then "src/new/deep.ts" exists with the written contents
 
+    # What an agent wrote outside the project (a report in /tmp the thread links to)
+    # is edited where it is, on the machine whose MC read it. Only a file that is
+    # there already, and that the viewer could read whole as text, is written: the
+    # project's MC makes nothing new outside the project.
+    @mc
+    Scenario: A file on the host outside the project is written back by its full path
+      Given the host has the file "/home/sam/notes/todo.txt"
+      When a client writes "/home/sam/notes/todo.txt" in "shop"
+      Then "/home/sam/notes/todo.txt" has the written contents
+
+    @mc
+    Scenario Outline: Only a text file already on the host is written by its full path
+      Given the host has <file> at "<path>"
+      When a client writes "<path>" in "shop"
+      Then the MC answers that "<path>" <reason>
+      And nothing at "<path>" changed
+
+      Examples:
+        | file                         | path                     | reason                                    |
+        | nothing                      | /home/sam/notes/new.txt  | is outside the project and not there yet  |
+        | a folder                     | /home/sam/notes          | is not a file                             |
+        | a binary file                | /home/sam/notes/db.bin   | is not a text file                        |
+        | a text file larger than 1 MB | /home/sam/notes/big.log  | is larger than 1 MB                       |
+
     @desktop @tui
     Scenario: Edits save themselves shortly after the user stops typing
       Given the user is editing "src/app.ts"
@@ -561,7 +586,6 @@ Feature: Viewing and editing files
         | action | path                 |
         | reads  | ../secrets.txt       |
         | writes | ../secrets.txt       |
-        | writes | /etc/hosts           |
         | reads  | link-to-home/.bashrc |
 
     # Legacy: apps/server/src/workspace/WorkspacePaths.ts (resolveRelativePathWithinRoot)
