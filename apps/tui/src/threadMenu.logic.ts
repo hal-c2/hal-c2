@@ -1,8 +1,8 @@
 import type { ContextMenuItem } from "@hal-c2/contracts";
 
-import type { Row } from "./components/Sidebar.logic.ts";
+import type { Row } from "./sidebar.logic.ts";
 
-// The thread row's context menu, shared by the React sidebar and the QML host.
+// The thread row's context menu, used by the QML host.
 
 export type ThreadContextMenuAction =
   | "settle"

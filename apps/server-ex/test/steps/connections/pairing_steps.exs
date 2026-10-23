@@ -10,6 +10,23 @@ defmodule HalC2.Steps.Connections.Pairing do
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
+  # hal_c2 eval EXPR ARGS...: applies this build's config as a release does
+  # (`HalC2.Test.Storage.boot_config/2` under :prod), so the HAL_C2_* variables it inherits
+  # give it its home, or is told a test MC's directory home (STAND_IN_HOME).
+  @stand_in """
+  #!/bin/sh
+  [ "$1" = eval ] || exit 64
+  expr="$2"
+  shift 2
+  exec elixir -pa "$STAND_IN_CODE" -e '
+    config = System.fetch_env!("STAND_IN_CONFIG")
+    read = &Config.Reader.read!(Path.join(config, &1), env: :prod, target: :host)
+    Application.put_all_env(Config.Reader.merge(read.("config.exs"), read.("runtime.exs")))
+    with home when home != nil <- System.get_env("STAND_IN_HOME"),
+      do: Application.put_env(:hal_c2, :home, home)
+  ' -e "$expr" -- "$@"
+  """
+
   # --- printed on the host ---------------------------------------------------------
 
   step "an operator asks the MC for a pairing link with its LAN address", context do
@@ -19,6 +36,113 @@ defmodule HalC2.Steps.Connections.Pairing do
 
   step "an operator asks for a pairing link for {string}", %{args: [base]} = context do
     context |> Map.put(:base, base) |> Map.put(:printed, print_link(base))
+  end
+
+  step "an operator asks for a pairing link with the option {string}",
+       %{args: [option]} = context do
+    Map.put(context, :refusal, Mc.run_task(Mix.Tasks.HalC2.Pair, [option]))
+  end
+
+  step "an operator asks for a pairing link with the arguments {string}",
+       %{args: [arguments]} = context do
+    Map.put(context, :refusal, Mc.run_task(Mix.Tasks.HalC2.Pair, String.split(arguments)))
+  end
+
+  step "an operator asks for a pairing link for the one address {string}",
+       %{args: [address]} = context do
+    Map.put(context, :refusal, Mc.run_task(Mix.Tasks.HalC2.Pair, [address]))
+  end
+
+  step "the command fails naming {string}", %{args: [option]} = context do
+    assert {:error, message} = context.refusal
+    assert message =~ option
+    context
+  end
+
+  step "the command does not print {string}", %{args: [text]} = context do
+    assert {:error, message} = context.refusal
+    refute message =~ text
+    context
+  end
+
+  # The real `bin/hal-c2-service` around a stand-in `bin/hal_c2` that evaluates what a
+  # release would, with elixir over this build's code and the scenario's home.
+  step "an operator runs {string} on the installed MC's command line",
+       %{args: [line]} = context do
+    root = Mc.tmp_dir(context.mc, "release")
+    File.mkdir_p!(Path.join(root, "bin"))
+    wrapper = Path.join([root, "bin", "hal-c2-service"])
+    File.cp!(Path.expand("../../../rel/overlays/bin/hal-c2-service", __DIR__), wrapper)
+    stand_in = Path.join([root, "bin", "hal_c2"])
+    File.write!(stand_in, @stand_in)
+    File.chmod!(stand_in, 0o755)
+
+    [command | args] = String.split(line)
+
+    # The scenario's home is passed on when it is a directory (the test MC's), a layout no
+    # variable names; any other comes from the HAL_C2_* variables the command inherits.
+    home =
+      case Application.fetch_env!(:hal_c2, :home) do
+        home when is_binary(home) -> [{"STAND_IN_HOME", home}]
+        _ -> []
+      end
+
+    {out, status} =
+      run(wrapper, [command | args], [
+        {"STAND_IN_CODE", Path.join(Mix.Project.build_path(), "lib/*/ebin")},
+        {"STAND_IN_CONFIG", Path.expand("../../../config", __DIR__)},
+        {"RELEASE_ROOT", root} | home
+      ])
+
+    out = String.trim(out)
+
+    # The positionals as `HalC2.Pair` parses them, so an option's value is not
+    # taken for a BASE_URL.
+    {_, positionals, _} =
+      OptionParser.parse(args,
+        strict: [release: :boolean, tailscale: :boolean, tailscale_serve_port: :integer]
+      )
+
+    case {status, positionals} do
+      {0, [base | _]} ->
+        context |> Map.put(:base, base) |> Map.put(:printed, out) |> Map.put(:pair_output, [out])
+
+      {0, []} ->
+        context
+        |> Map.put(:base, "http://127.0.0.1:#{context.mc.port}")
+        |> Map.put(:printed, out)
+        |> Map.put(:pair_output, [out])
+
+      {_, _} ->
+        Map.put(context, :pair_output, {:error, out})
+    end
+  end
+
+  # `System.cmd/3` that fails the scenario, and kills the command, when it has not exited
+  # within a minute, so a stand-in that hangs fails the run instead of hanging it.
+  defp run(executable, args, env) do
+    port =
+      Port.open({:spawn_executable, executable}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        args: args,
+        env: Enum.map(env, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
+      ])
+
+    {:os_pid, pid} = Port.info(port, :os_pid)
+    collect(port, pid, [])
+  end
+
+  defp collect(port, pid, acc) do
+    receive do
+      {^port, {:data, data}} -> collect(port, pid, [acc, data])
+      {^port, {:exit_status, status}} -> {IO.iodata_to_binary(acc), status}
+    after
+      60_000 ->
+        System.cmd("kill", ["-KILL", Integer.to_string(pid)])
+        flunk("#{inspect(Port.info(port, :name))} did not exit: #{IO.iodata_to_binary(acc)}")
+    end
   end
 
   step "it prints the address with a one-time token", context do

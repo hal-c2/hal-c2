@@ -15,6 +15,7 @@ QtObject {
     property var families: [{ title: "Foundation", roles: ["canvas"] }, { title: "Brand & content", roles: ["accent"] }]
     // The editor's draft, and what an import waits on.
     property var editing: ({})
+    property var opened: ({})
     property bool inspecting: false
     property var picked: ({})
     property string importError: ""
@@ -46,11 +47,25 @@ QtObject {
     }
     function edit(next) {
         editing = next;
+        opened = next;
         editorOpen = true;
         return record("edit", [next]);
     }
+    // Like the controller: a change with the editor closed is dropped.
     function setEditing(next) {
+        if (!editorOpen)
+            return;
         editing = next;
+    }
+    // The close a press outside is: the draft stays only when it differs
+    // from what the editor opened on, as in the controller.
+    function hideEditor() {
+        if (!editorOpen)
+            return;
+        editorOpen = false;
+        if (JSON.stringify(editing) === JSON.stringify(opened))
+            editing = {};
+        record("hideEditor", []);
     }
     function derive(canvas, accent) {
         return ({});
@@ -69,6 +84,11 @@ QtObject {
         importError = "";
         importConflicts = [];
     }
+    function resolveImport(choice) {
+        // Records every call faithfully; the brick guards its own cancel.
+        clearImport();
+        return record("resolveImport", [choice]);
+    }
     function saveCustom(theme) {
         record("saveCustom", [theme]);
         return "saved";
@@ -76,6 +96,10 @@ QtObject {
     function duplicate(id) {
         record("duplicate", [id]);
         return id + "-copy";
+    }
+    function duplicateStandard() {
+        record("duplicateStandard", []);
+        return "hal-c2-copy";
     }
     function removeCustom(id) {
         return record("removeCustom", [id]);
@@ -96,6 +120,7 @@ QtObject {
         resolvedId = "hal-c2";
         available = [];
         editing = {};
+        opened = {};
         editorOpen = false;
         calls = [];
     }

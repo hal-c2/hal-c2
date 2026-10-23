@@ -242,4 +242,17 @@ defmodule HalC2.StoreTest do
     assert Store.search_messages(path, "%three%", 10) == []
     assert Store.search_messages(path, "%two%", 10) == [{"t1", "user", "two", "b"}]
   end
+
+  test "the meta entries under a prefix are read in one go, and only those", %{path: path} do
+    :ok = Store.put_meta("import.thread.a", "unfinished")
+    :ok = Store.put_meta("import.thread.b", "finished")
+    :ok = Store.put_meta("import_thread.c%", "other")
+
+    assert Store.metas(path, "import.thread.") == %{
+             "import.thread.a" => "unfinished",
+             "import.thread.b" => "finished"
+           }
+
+    assert Store.metas(path, "import.none.") == %{}
+  end
 end

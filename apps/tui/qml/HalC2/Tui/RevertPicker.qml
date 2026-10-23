@@ -1,7 +1,6 @@
 import OpenTUI
 
-// Pick a checkpoint to revert the thread to (Shell.state.revert, RevertMenu in
-// ThreadOverlays.tsx): a rounded error box above the prompt, newest first.
+// Pick a checkpoint to revert the thread to (Shell.state.revert): a rounded error box above the prompt, newest first.
 // Open in the host's "revert" mode: ↑/↓ select, Enter reverts, Esc cancels.
 Rectangle {
     id: picker

@@ -694,6 +694,29 @@ defmodule HalC2.Steps.Orchestration.Runs do
     })
   end
 
+  step "{string} has a running turn after a run that ended", %{args: [thread]} = context do
+    context = completed_run(context, thread, "Hi")
+    context |> World.running_turn(thread) |> Map.put(:ended, context.run)
+  end
+
+  # A client that read the ended run as active, or a cleanup holding its run's id,
+  # asks for that run after a newer turn took the session.
+  step "the user interrupts the run that ended", context do
+    World.command(context, %{
+      "type" => "run.interrupt",
+      "threadId" => World.thread_id(context, context.thread),
+      "runId" => context.ended
+    })
+  end
+
+  step "the running turn is still running", context do
+    run =
+      World.entities(context, context.thread, "run") |> Enum.find(&(&1["id"] == context.running))
+
+    assert run["status"] == "running"
+    context
+  end
+
   step "the user interrupts the run of idle thread {string}", %{args: [thread]} = context do
     context
     |> World.providers()

@@ -406,6 +406,35 @@ const Steps steps([] {
     world.waitFor([&] { return !opened(world, "importer"); }, QStringLiteral("the import dialog to close"));
   });
 
+  step(QStringLiteral("the user presses in the message field"), [keyboard](World& world, const Captures&, const Table&) {
+    keyboard(world).click(QStringLiteral("message"));
+  });
+  step(QStringLiteral("the theme editor closes and the message field keeps what is typed there"),
+       [keyboard, opened](World& world, const Captures&, const Table&) {
+         Brick& brick = keyboard(world);
+         world.waitFor([&] { return !opened(world, "editor") && !themes(world)->editorOpen(); }, QStringLiteral("the theme editor to close"));
+         QTest::keyClick(&brick.window(), 'x');
+         expect(brick.item(QStringLiteral("message"))->property("text") == QLatin1String("x"),
+                QStringLiteral("the message is \"%1\"").arg(brick.item(QStringLiteral("message"))->property("text").toString()));
+       });
+
+  step(QStringLiteral("the user renames the theme in the editor"), [](World& world, const Captures&, const Table&) {
+    QVariantMap draft = themes(world)->editing();
+    draft.insert(QStringLiteral("label"), QStringLiteral("Half done"));
+    themes(world)->setEditing(draft);
+  });
+  step(QStringLiteral("the theme editor is toggled open again"), [keyboard, opened](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !opened(world, "editor") && !themes(world)->editorOpen(); }, QStringLiteral("the theme editor to close"));
+    auto* commands = world.native().controller<KeybindingController>()->commands();
+    expect(commands->run(QStringLiteral("themeEditor.toggle")) && themes(world)->editorOpen(), QStringLiteral("the theme editor did not open"));
+    world.waitFor([&] { return opened(world, "editor"); }, QStringLiteral("the theme editor to open"));
+    keyboard(world);
+  });
+  step(QStringLiteral("the editor still holds the new name"), [keyboard](World& world, const Captures&, const Table&) {
+    const QString name = keyboard(world).item(QStringLiteral("name"))->property("text").toString();
+    expect(name == QLatin1String("Half done"), QStringLiteral("the name is \"%1\"").arg(name));
+  });
+
   // Picking a colour off the app: the editor over a sidebar, with the window's inspector.
   const auto inspected = [](World& world) -> Brick& {
     if (!world.brick) {
@@ -439,6 +468,10 @@ const Steps steps([] {
                              .arg(picked.value(QStringLiteral("role")).toString(), picked.value(QStringLiteral("color")).toString())
                              .arg(picked.value(QStringLiteral("count")).toInt());
     expect(inspected(world).shows(told), QStringLiteral("the editor does not say \"%1\"").arg(told));
+  });
+  step(QStringLiteral("the keyboard is back in the theme editor"), [inspected](World& world, const Captures&, const Table&) {
+    Brick& brick = inspected(world);
+    world.waitFor([&] { return brick.item(QStringLiteral("pick"))->hasActiveFocus(); }, QStringLiteral("the editor to take the keyboard back"));
   });
   step(QStringLiteral("the user is inspecting the app for a color"), [inspected](World& world, const Captures&, const Table&) {
     auto* commands = world.native().controller<KeybindingController>()->commands();

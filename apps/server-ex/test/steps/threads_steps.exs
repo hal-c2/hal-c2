@@ -2813,8 +2813,13 @@ defmodule HalC2.Steps.Threads do
     context
   end
 
-  step "{string} has its messages, its subagent's thread, its attachment and its terminal scrollback",
-       %{args: [title]} = context do
+  step(
+    "{string} has its messages, its subagent's thread, its attachment and its terminal scrollback",
+    %{args: [title]} = context,
+    do: t3_whole(context, title)
+  )
+
+  defp t3_whole(context, title) do
     id = context.t3.ids[title]
 
     texts =
@@ -2861,14 +2866,270 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "that install offers {string} as imported", %{args: [title]} = context do
+    assert title in for(t <- t3_offered(context), t["imported"], do: t["title"])
+    context
+  end
+
+  step "that install does not offer {string} as imported", %{args: [title]} = context do
+    offered = t3_offered(context)
+    refute title in for(t <- offered, t["imported"], do: t["title"])
+    assert title in for(t <- offered, do: t["title"])
+    context
+  end
+
+  # A directory where the attachment was, which cannot be copied as a file even by
+  # root (a mode of 0 would not stop root reading it).
+  step "the attachment of {string} cannot be read", %{args: [title]} = context do
+    path = t3_attachment(context, title)
+    File.rename!(path, t3_kept(context, path))
+    File.mkdir!(path)
+    context
+  end
+
+  step "the attachment of {string} can be read again", %{args: [title]} = context do
+    path = t3_attachment(context, title)
+    File.rmdir!(path)
+    File.rename!(t3_kept(context, path), path)
+    context
+  end
+
+  # As a newer MC would leave it: same mark, a stage this one has no name for.
+  step "the partway mark of {string} is one this MC does not know",
+       %{args: [title]} = context do
+    key = "import.thread." <> context.t3.ids[title]
+    %{} = marks = HalC2.Store.metas(HalC2.Store.path(), "import.thread.")
+    [_stage, project] = String.split(marks[key], ":", parts: 2)
+    :ok = HalC2.Store.put_meta(key, "future:" <> project)
+    context
+  end
+
+  step "the user is told {string} was partly imported in a way this MC does not know",
+       %{args: [title]} = context do
+    assert t3_failure(context, title) =~ "in a way this MC does not know"
+    context
+  end
+
+  step "the partway mark of {string} is left in place", %{args: [title]} = context do
+    key = "import.thread." <> context.t3.ids[title]
+    marks = HalC2.Store.metas(HalC2.Store.path(), "import.thread.")
+    assert String.starts_with?(marks[key], "future:")
+    context
+  end
+
+  step "the user is told {string} could not be imported", %{args: [title]} = context do
+    id = context.t3.ids[title]
+
+    assert {:ok, %{"imported" => [], "failed" => [%{"id" => ^id, "message" => message}]}} =
+             context.t3_answer
+
+    assert message =~ "It could not be read"
+    context
+  end
+
+  step "{string} holds {int} more messages in that install, the last of which cannot be read",
+       %{args: [title, n]} = context do
+    id = context.t3.ids[title]
+    {log, _} = context.v2_log
+    {:ok, db} = Exqlite.Sqlite3.open(log)
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(db, """
+      INSERT INTO orchestration_events (aggregate_kind, stream_id, event_type, payload_json,
+        occurred_at, application_event_version)
+      VALUES ('thread', ?1, 'message.sent', ?2, '2026-09-01T12:00:00.000Z', 2)
+      """)
+
+    for k <- 1..n do
+      payload = if k == n, do: "{", else: JSON.encode!(t3_more_message(id, k))
+      :ok = Exqlite.Sqlite3.bind(stmt, [id, payload])
+      :done = Exqlite.Sqlite3.step(db, stmt)
+    end
+
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    :ok = Exqlite.Sqlite3.close(db)
+    Map.put(context, :t3_more, n)
+  end
+
+  step "the last message of {string} in that install can be read again",
+       %{args: [title]} = context do
+    {log, _} = context.v2_log
+    {:ok, db} = Exqlite.Sqlite3.open(log)
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(
+        db,
+        "UPDATE orchestration_events SET payload_json = ?1 WHERE sequence = (SELECT MAX(sequence) FROM orchestration_events)"
+      )
+
+    message = t3_more_message(context.t3.ids[title], context.t3_more)
+    :ok = Exqlite.Sqlite3.bind(stmt, [JSON.encode!(message)])
+    :done = Exqlite.Sqlite3.step(db, stmt)
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    :ok = Exqlite.Sqlite3.close(db)
+    context
+  end
+
+  # The thread's stream as the stopped import left it, written to by something else.
+  step "{string} is renamed here", %{args: [title]} = context do
+    id = context.t3.ids[title]
+    patch = HalC2.Patch.diff(%{}, %{"title" => "Renamed here"})
+    {:ok, _} = HalC2.Store.append([{:thread, id, [{"thread", id, patch}]}])
+    context
+  end
+
+  step "{string} has all {int} of its messages", %{args: [title, n]} = context do
+    assert length(HalC2.StreamState.list(World.stream(context, title), "message")) == n
+    context
+  end
+
+  step "the user is told {string} changed here and cannot be continued",
+       %{args: [title]} = context do
+    id = context.t3.ids[title]
+
+    assert {:ok, %{"imported" => [], "failed" => [%{"id" => ^id, "message" => message}]}} =
+             context.t3_answer
+
+    assert message =~ "changed here after its import stopped"
+    context
+  end
+
+  step "the more messages of {string} are gone from that install",
+       %{args: [title]} = context do
+    {log, _} = context.v2_log
+    {:ok, db} = Exqlite.Sqlite3.open(log)
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(db, """
+      DELETE FROM orchestration_events
+      WHERE stream_id = ?1 AND occurred_at = '2026-09-01T12:00:00.000Z'
+      """)
+
+    :ok = Exqlite.Sqlite3.bind(stmt, [context.t3.ids[title]])
+    :done = Exqlite.Sqlite3.step(db, stmt)
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    :ok = Exqlite.Sqlite3.close(db)
+    context
+  end
+
+  step "the project {string} was imported into is deleted here", %{args: [_title]} = context do
+    {:ok, _} = HalC2.Projects.mutate(%{"type" => "project.delete", "projectId" => "v2-project"})
+    HalC2.Streams.flush_shell("v2-project")
+    context
+  end
+
+  step "the user is told {string} cannot be continued, as its install now holds less",
+       %{args: [title]} = context do
+    assert t3_failure(context, title) =~ "holds more here than its install now has"
+    context
+  end
+
+  step "the user is told {string} cannot be continued, as its project is gone",
+       %{args: [title]} = context do
+    assert t3_failure(context, title) =~ "into a project that is no longer here"
+    context
+  end
+
+  # The import runs in a process of its own, held at its first progress until the
+  # scenario lets it go.
+  step "an import of {string} from that install is under way", %{args: [title]} = context do
+    test = self()
+    input = %{"source" => context.t3.dir, "threadIds" => [context.t3.ids[title]]}
+
+    task =
+      Task.async(fn ->
+        HalC2.Import.PreviousInstall.import_threads(input, fn _progress ->
+          if Process.put(:held, true) == nil do
+            send(test, {:import_held, self()})
+            receive do: (:go -> :ok)
+          end
+
+          :ok
+        end)
+      end)
+
+    assert_receive {:import_held, _}, 30_000
+    context |> Map.put(:t3_first_import, task) |> put_in([:threads, title], context.t3.ids[title])
+  end
+
+  step "the user is told {string} is being imported already", %{args: [title]} = context do
+    assert t3_failure(context, title) == "It is being imported already."
+    context
+  end
+
+  # The import lock is on the family's root, so asking by a subagent thread's id
+  # finds its parent's import under way rather than running over the same family.
+  step "the user imports the thread {string}'s subagent ran in from that install",
+       %{args: [_title]} = context do
+    test = self()
+    input = %{"source" => context.t3.dir, "threadIds" => [context.t3.sub]}
+
+    answer =
+      HalC2.Cluster.Command.stream(
+        "/api/previous-installs/import",
+        input,
+        30_000,
+        &send(test, {:import_progress, &1})
+      )
+
+    Map.put(context, :t3_answer, answer)
+  end
+
+  step "the user is told that thread is being imported already", context do
+    sub = context.t3.sub
+
+    assert {:ok,
+            %{
+              "imported" => [],
+              "failed" => [%{"id" => ^sub, "message" => "It is being imported already."}]
+            }} = context.t3_answer
+
+    context
+  end
+
+  step "once the first import is done, {string} has its messages, its subagent's thread, its attachment and its terminal scrollback",
+       %{args: [title]} = context do
+    task = context.t3_first_import
+    send(task.pid, :go)
+    id = context.t3.ids[title]
+    assert {:ok, %{"imported" => [^id], "failed" => []}} = Task.await(task, 30_000)
+
+    t3_whole(context, title)
+  end
+
+  defp t3_failure(context, title) do
+    id = context.t3.ids[title]
+
+    assert {:ok, %{"imported" => [], "failed" => [%{"id" => ^id, "message" => message}]}} =
+             context.t3_answer
+
+    message
+  end
+
+  defp t3_more_message(id, k) do
+    %{
+      "id" => "#{id}-more#{k}",
+      "threadId" => id,
+      "role" => "user",
+      "text" => "more #{k}",
+      "attachments" => [],
+      "createdAt" => "2026-09-01T12:00:00.000Z"
+    }
+  end
+
+  defp t3_offered(context) do
     {:ok, %{"threads" => offered}} =
       HalC2.Cluster.Command.request(:post, "/api/previous-installs/threads", %{
         "source" => context.t3.dir
       })
 
-    assert for(t <- offered, t["imported"], do: t["title"]) == [title]
-    context
+    offered
   end
+
+  defp t3_attachment(context, title),
+    do: Path.join([context.t3.dir, "attachments", "#{context.t3.ids[title]}-img.png"])
+
+  # Where an attachment is kept while it cannot be read: outside the install's attachments.
+  defp t3_kept(context, path), do: Path.join(context.t3.dir, Path.basename(path) <> ".kept")
 
   step "the project {string} is at the folder that install worked in",
        %{args: [title]} = context do

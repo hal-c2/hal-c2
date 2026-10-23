@@ -1,13 +1,13 @@
 import {
   projectLabel,
   type TuiThreadShell as OrchestrationThreadShell,
-} from "../orchestrationV2Adapter.ts";
+} from "./orchestrationV2Adapter.ts";
 import {
   effectiveSnoozed,
   QUEUED_TURN_START_GRACE_MS,
 } from "@hal-c2/client-runtime/state/thread-settled";
 
-import type { OrchestrationShellSnapshot } from "../connection.ts";
+import type { OrchestrationShellSnapshot } from "./connection.ts";
 
 export const SIDEBAR_SNOOZED_SECTION_ID = "sidebar-v2:snoozed";
 export const SIDEBAR_SETTLED_SECTION_ID = "sidebar-v2:settled";

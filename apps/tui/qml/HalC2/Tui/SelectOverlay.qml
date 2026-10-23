@@ -1,6 +1,6 @@
 import OpenTUI
 
-// The one open picker from `Shell.state.select` (SelectOverlay.tsx): model,
+// The one open picker from `Shell.state.select`: model,
 // effort, access, workspace or branch, or a list another area opened, in a
 // rounded accent box above the prompt. ↑/↓, Enter and Esc come from the
 // shell's keymap; options are clickable. The host windows and paints the rows.

@@ -50,8 +50,9 @@ class ThemeController : public QObject, public NativeController {
   // Whether the window's theme editor is open (themeEditor.toggle); the
   // editor sets it back when it closes.
   Q_PROPERTY(bool editorOpen READ editorOpen WRITE setEditorOpen NOTIFY editorOpenChanged)
-  // The draft the editor holds, unsaved changes included, for as long as it
-  // is open: it outlives the page that opened it.
+  // The draft the editor holds, unsaved changes included: held while it is
+  // open, and after an outside-press close until it is reopened or replaced
+  // (see hideEditor). It outlives the page that opened it.
   Q_PROPERTY(QVariantMap editing READ editing NOTIFY editingChanged)
   // Picking a colour off the app: while `inspecting`, the window's
   // ThemeInspector hands the colour under the pointer to pick(), and `picked`
@@ -113,6 +114,12 @@ public:
   Q_INVOKABLE QString saveCustom(const QVariantMap& theme);
   // Saves an editable copy ("<label> copy") of any theme offered; its id.
   Q_INVOKABLE QString duplicate(const QString& id);
+  // The same for the standard look, which is no theme offered: apart from
+  // duplicate() so that a saved theme whose id is the standard look's (made
+  // before it was kept from them) is not copied for it. The copy is the standard
+  // look as drawn now, in the appearance showing: a saved theme has no light and
+  // dark halves, so it does not follow the system's.
+  Q_INVOKABLE QString duplicateStandard();
   // Removes a saved theme; a choice that named it goes back to the standard look.
   Q_INVOKABLE bool removeCustom(const QString& id);
   // Asks first ("Remove “<label>”?"), then removes it.
@@ -123,10 +130,14 @@ public:
   bool removeCustomMany(const QStringList& ids);
 
   // The editor. edit() opens it on a draft; setEditing() keeps what the user
-  // changed since. Closing it drops the draft.
+  // changed since. Closing it drops the draft; hideEditor() is the close that
+  // keeps changes the user has made (a press outside), for the toggle to reopen.
+  // An explicit edit() (another theme's Edit, or New theme) wins over a draft
+  // hideEditor() kept: it replaces that draft, unsaved changes included.
   QVariantMap editing() const { return m_editing; }
   Q_INVOKABLE void edit(const QVariantMap& draft);
   Q_INVOKABLE void setEditing(const QVariantMap& draft);
+  Q_INVOKABLE void hideEditor();
   QVariantList families() const;
   bool inspecting() const { return m_inspecting; }
   // Starting to inspect forgets the last pick; stopping (Escape) picks nothing.
@@ -145,7 +156,9 @@ public:
   QStringList importConflicts() const;
   Q_INVOKABLE bool importText(const QString& json);
   Q_INVOKABLE void importFiles(const QStringList& paths);
-  // `choice` is update, copy or cancel.
+  // `choice` is update, copy or cancel. Safe with nothing pending. Settling
+  // clears the import, which is what keeps the import dialog from cancelling
+  // after a choice: it cancels on close only while a conflict still waits.
   Q_INVOKABLE void resolveImport(const QString& choice);
   Q_INVOKABLE void clearImport();
   // Writes the theme `id` as a theme file other clients import.
@@ -183,6 +196,7 @@ private:
   // Saves the choice; a failure is toasted as `failure`.
   bool save(const QJsonObject& device, const QString& failure = {});
   void resolve();
+  void setEditorShown(bool open);
 
   ShellBridge* m_bridge;
   SettingsController* m_settings;
@@ -192,6 +206,8 @@ private:
   QString m_cycleToast;
   bool m_editorOpen = false;
   QVariantMap m_editing;
+  // The draft the editor opened on, to tell whether anything changed since.
+  QVariantMap m_opened;
   bool m_inspecting = false;
   QVariantMap m_picked;
   QString m_importError;

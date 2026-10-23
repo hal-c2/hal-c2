@@ -65,20 +65,30 @@ defmodule HalC2.Claude.ThreadRuntime do
     do: thread_id |> ensure() |> GenServer.call({:start_turn, turn}, 60_000)
 
   @spec interrupt(String.t(), String.t() | nil) :: :ok | {:error, String.t()}
-  def interrupt(thread_id, _run_id) do
+  def interrupt(thread_id, run_id) do
     case Registry.lookup(HalC2.Claude.Registry, thread_id) do
-      [{pid, _}] -> GenServer.call(pid, :interrupt, 15_000)
+      [{pid, _}] -> GenServer.call(pid, {:interrupt, run_id}, 15_000)
       [] -> {:error, "no active Claude turn in this thread"}
     end
   end
 
-  @doc "Adds a message (`%{text, attachments}`) to the running turn of `run_id`; Claude takes it at once."
+  @doc """
+  Adds a message (`%{text, attachments}`) to the running turn of `run_id`; Claude takes it at once.
+  Non-timeout exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
+  """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Claude.Registry, thread_id) do
-      [{pid, _}] -> GenServer.call(pid, {:steer, run_id, message})
+      [{pid, _}] -> steer_call(pid, run_id, message)
       [] -> {:error, "no running turn"}
     end
+  end
+
+  # The handler only notifies the session, so the explicit budget waits on mailbox
+  # backlog alone; `HalC2.RuntimeSteer` owns which timeout means held.
+  defp steer_call(pid, run_id, message) do
+    timeout = Application.get_env(:hal_c2, :claude_steer_timeout_ms, 30_000)
+    HalC2.RuntimeSteer.call(pid, run_id, message, timeout)
   end
 
   @doc """
@@ -221,11 +231,13 @@ defmodule HalC2.Claude.ThreadRuntime do
     ids = Map.put(turn.ids, :provider_turn, "provider-turn:claudeAgent:#{turn.ids.run}")
     # The CLI also takes its MCP server at launch: a credential renewed since (the old
     # one lapsed, or the project's agent access changed) needs a new process to reach it.
+    # So does another instance of Claude, which runs with its own variables and home.
     launch =
       turn.model
       |> Provider.launch(Map.get(turn, :options, %{}), Entities.instance(ids))
       |> auto_compact(Entities.instance(ids))
       |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
+      |> Map.put(:instance, Entities.instance(ids))
 
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
     last_ids = state.last_ids
@@ -252,7 +264,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     case opened do
       {:error, {:too_old, message}} ->
         finish(state, "failed", message)
-        {:reply, :ok, %{state | turn: nil}}
+        {:reply, :ok, %{state | turn: nil, last_ids: last_ids}}
 
       {:ok, state, turn} ->
         state = %{state | turn: turn}
@@ -271,7 +283,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       {:error, reason} ->
         Logger.warning("claude turn failed to start: #{inspect(reason)}")
         finish(state, "failed", start_failure("Claude", reason))
-        {:reply, :ok, %{state | turn: nil}}
+        {:reply, :ok, %{state | turn: nil, last_ids: last_ids}}
     end
   end
 
@@ -290,6 +302,14 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
+
+  # Pinned to a run, the interrupt stops only that run's turn: a different
+  # turn that began since the caller read the run is not the caller's to stop.
+  def handle_call({:interrupt, run_id}, _from, %{turn: %{ids: %{run: other}}} = state)
+      when is_binary(run_id) and run_id != other,
+      do: {:reply, {:error, "no running turn"}, state}
+
+  def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
 
   def handle_call(:interrupt, _from, %{turn: turn, session: session} = state)
       when turn != nil and session != nil do
@@ -380,7 +400,13 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
+  # What a CLI stopped for another instance's (`ensure_session/2`) had already sent
+  # belongs to no turn of this one.
   @impl true
+  def handle_info({:claude, session, _message}, %{session: current} = state)
+      when session != current,
+      do: {:noreply, state}
+
   def handle_info({:claude, _session, {:message, message}}, state),
     do: {:noreply, receive_message(message, state)}
 
@@ -494,9 +520,16 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put(:v, @state_version)}
 
   # A session started before launches recorded their MCP server has the thread's own.
-  defp upgrade_launch(%{} = launch, %{last_ids: %{} = ids, thread_id: thread_id})
-       when not is_map_key(launch, :mcp),
-       do: Map.put(launch, :mcp, HalC2.Mcp.for_agent(thread_id, Entities.instance(ids)))
+  # One from before they recorded their instance cannot be told from the latest
+  # turn's ids: a start that failed on another instance left those naming it while
+  # this CLI still runs on the earlier one (restoring them now cannot repair a
+  # state the old runtime already kept). Like Codex's `:unknown`, it is stamped
+  # what no turn launches with, so the next turn starts its own CLI once.
+  defp upgrade_launch(%{} = launch, %{last_ids: %{} = ids, thread_id: thread_id}) do
+    launch
+    |> Map.put_new_lazy(:mcp, fn -> HalC2.Mcp.for_agent(thread_id, Entities.instance(ids)) end)
+    |> Map.put_new(:instance, :unknown)
+  end
 
   defp upgrade_launch(launch, _state), do: launch
 

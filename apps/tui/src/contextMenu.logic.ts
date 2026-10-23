@@ -1,7 +1,7 @@
 import type { ContextMenuItem } from "@hal-c2/contracts";
 
-// Pure context-menu geometry and keyboard stepping, shared by the React menu
-// and the QML shell host.
+// Pure context-menu geometry and keyboard stepping, used by the QML shell
+// host.
 
 export interface ContextMenuPosition {
   readonly x: number;

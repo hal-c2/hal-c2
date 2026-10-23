@@ -186,6 +186,169 @@ defmodule HalC2.UpgradeTest do
     refute "lib/hal_c2-2.1.0" in dirs or "releases/2.1.0" in dirs or "erts-17.1/bin" in dirs
   end
 
+  test "putting a bundle again replaces the one unpacked for its version", %{tmp_dir: dir} do
+    first = tarball(dir, "first", %{"version" => "2.0.0", "marker" => "first"})
+    :ok = Source.put("2.0.0", "darwin-arm64", first)
+    assert {:ok, unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "first"
+
+    # The same version built again: its unpacked bundle is stale now.
+    second = tarball(dir, "second", %{"version" => "2.0.0", "marker" => "second"})
+    :ok = Source.put("2.0.0", "darwin-arm64", second)
+    assert {:ok, ^unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "second"
+  end
+
+  test "a release reload names the installed MC by --root, else by the checkout's own home" do
+    home = &Mix.Tasks.HalC2.Upgrade.installed_home(&1, &2, "/home/u")
+
+    # A checkout's dev profile is not the installed MC's; a HAL_C2_MC_HOME is.
+    assert home.(nil, :dev) == {:ok, nil}
+    assert home.(nil, {:mc, "/srv/mc"}) == {:ok, {:mc, "/srv/mc"}}
+    assert home.("/srv/hal-c2", {:mc, "/srv/mc"}) == {:ok, {:root, "/srv/hal-c2"}}
+
+    # Roots `HalC2.Paths` would quietly trade for the user's profile.
+    for root <- ["/home/u/.t3", "/home/u/.hal-c2", "/home/u/.t3/sub", "relative/dir", ""] do
+      assert {:error, reason} = home.(root, :dev)
+      assert reason =~ inspect(root)
+    end
+  end
+
+  test "a --root that links into an old home is refused by where it lands", %{tmp_dir: dir} do
+    home = &Mix.Tasks.HalC2.Upgrade.installed_home(&1, &2, dir)
+
+    File.mkdir_p!(Path.join(dir, ".t3"))
+    into_old = Path.join(dir, "into-old")
+    File.ln_s!(Path.join(dir, ".t3"), into_old)
+    assert {:error, reason} = home.(into_old, :dev)
+    assert reason =~ inspect(into_old)
+
+    File.mkdir_p!(Path.join(dir, "hal-c2"))
+    to_valid = Path.join(dir, "to-valid")
+    File.ln_s!(Path.join(dir, "hal-c2"), to_valid)
+    assert home.(to_valid, :dev) == {:ok, {:root, to_valid}}
+
+    # A root not created yet inside the link is refused by its resolved
+    # prefix, not waved through to the no-installed-MC error later.
+    assert {:error, _} = home.(Path.join(into_old, "not-created"), :dev)
+
+    # The reverse: a root naming where a linked old home really points.
+    other_home = Path.join(dir, "home2")
+    real_old = Path.join(dir, "real-old")
+    File.mkdir_p!(other_home)
+    File.mkdir_p!(real_old)
+    File.ln_s!(real_old, Path.join(other_home, ".t3"))
+
+    assert {:error, _} =
+             Mix.Tasks.HalC2.Upgrade.installed_home(Path.join(real_old, "sub"), :dev, other_home)
+  end
+
+  test "the built version is read from the app's build, or nil without one", %{tmp_dir: dir} do
+    lib = Path.join(dir, "hal_c2")
+    File.mkdir_p!(Path.join(lib, "ebin"))
+
+    File.write!(
+      Path.join([lib, "ebin", "hal_c2.app"]),
+      ~s({application, hal_c2, [{vsn, "1.2.3"}]}.\n)
+    )
+
+    assert Mix.Tasks.HalC2.Upgrade.built_version(lib) == "1.2.3"
+    assert Mix.Tasks.HalC2.Upgrade.built_version(Path.join(dir, "missing")) == nil
+
+    File.write!(Path.join([lib, "ebin", "hal_c2.app"]), ~s({application, hal_c2, []}.\n))
+    assert Mix.Tasks.HalC2.Upgrade.built_version(lib) == nil
+  end
+
+  test "--release with named MCs is refused, as the mise wrapper refuses it" do
+    assert_raise Mix.Error, ~r/name no MCs/, fn ->
+      Mix.Tasks.HalC2.Upgrade.run(["--release", "hal_c2@host"])
+    end
+  end
+
+  test "a leftover temp beside the archive does not affect fetch", %{tmp_dir: dir} do
+    first = tarball(dir, "first", %{"version" => "2.0.0", "marker" => "first"})
+    :ok = Source.put("2.0.0", "darwin-arm64", first)
+    assert {:ok, unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "first"
+
+    # A stopped put's torn copy sits beside the archive under its temp name,
+    # never on it: the previous bundle is still the one fetched.
+    target =
+      Path.join(Source.cache_dir("2.0.0"), Source.file_name("2.0.0", "darwin-arm64"))
+
+    File.write!(target <> ".put-stopped", "torn")
+    assert {:ok, ^unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "first"
+  end
+
+  test "a put that fails raises, keeps the previous bundle and leaves no temp", %{tmp_dir: dir} do
+    first = tarball(dir, "first", %{"version" => "2.0.0", "marker" => "first"})
+    :ok = Source.put("2.0.0", "darwin-arm64", first)
+    assert {:ok, unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+
+    assert_raise File.CopyError, fn ->
+      Source.put("2.0.0", "darwin-arm64", Path.join(dir, "missing.tar.gz"))
+    end
+
+    temps = fn version ->
+      version |> Source.cache_dir() |> File.ls!() |> Enum.filter(&(&1 =~ ".put-"))
+    end
+
+    assert temps.("2.0.0") == []
+    assert {:ok, ^unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "first"
+
+    # A failure after the copy reached its temp (here the rename, onto a
+    # directory standing where the archive goes) removes the temp too.
+    File.mkdir_p!(Path.join(Source.cache_dir("3.0.0"), Source.file_name("3.0.0", "darwin-arm64")))
+
+    assert_raise File.RenameError, fn -> Source.put("3.0.0", "darwin-arm64", first) end
+    assert temps.("3.0.0") == []
+  end
+
+  test "--root is refused, before any build, unless it comes with --release alone" do
+    for args <- [
+          ["--root", "/srv/hal-c2"],
+          ["--root", "/srv/hal-c2", "--dev"],
+          ["--root", "/srv/hal-c2", "hal_c2@host"],
+          ["--root", "/srv/hal-c2", "--release", "hal_c2@host"]
+        ] do
+      assert_raise Mix.Error, ~r/use it with --release alone/, fn ->
+        Mix.Tasks.HalC2.Upgrade.run(args)
+      end
+    end
+  end
+
+  test "a bundle replaced in the cache by any writer is unpacked again", %{tmp_dir: dir} do
+    :ok =
+      Source.put(
+        "2.0.0",
+        "darwin-arm64",
+        tarball(dir, "first", %{"version" => "2.0.0", "marker" => "first"})
+      )
+
+    assert {:ok, unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+
+    # As a download from a peer or the release URL leaves it, or a put that stopped
+    # after writing: the new archive and its checksum, the old unpack still beside them.
+    second = tarball(dir, "second", %{"version" => "2.0.0", "marker" => "second"})
+    archive = Path.join(Source.cache_dir("2.0.0"), Source.file_name("2.0.0", "darwin-arm64"))
+    File.cp!(second, archive)
+    sum = Base.encode16(:crypto.hash(:sha256, File.read!(second)), case: :lower)
+    File.write!(archive <> ".sha256", sum)
+
+    assert {:ok, ^unpacked} = Source.fetch("2.0.0", "darwin-arm64")
+    assert Upgrade.manifest(unpacked)["marker"] == "second"
+  end
+
+  # A bundle archive whose manifest is `manifest`, packed as `mix hal_c2.bundle` does.
+  defp tarball(dir, name, manifest) do
+    archive = Path.join(dir, name <> ".tar.gz")
+    entry = {~c"releases/#{manifest["version"]}/upgrade.json", JSON.encode!(manifest)}
+    :ok = :erl_tar.create(String.to_charlist(archive), [entry], [:compressed])
+    archive
+  end
+
   test "a code-only version's release is the running one with the bundle's own code", %{
     tmp_dir: dir
   } do
@@ -299,6 +462,149 @@ defmodule HalC2.UpgradeTest do
              "applications" => %{"hal_c2" => "2.0.0", "kernel" => "11.0.3", "exqlite" => "0.41.0"}
            } = JSON.decode!(File.read!(Path.join(new_rel, "upgrade.json")))
   end
+
+  test "the step after a hot update is called by name, so the code that loads runs it" do
+    # A local call stays in the module version making it, the one being replaced; a
+    # call by name reaches the version the update just loaded.
+    {:beam_file, HalC2.Upgrade, _, _, _, functions} =
+      :beam_disasm.file(:code.which(HalC2.Upgrade))
+
+    calls = fn kinds, target ->
+      for {:function, name, arity, _, code} <- functions,
+          Enum.any?(code, &hot_step?(&1, kinds, target)),
+          do: {name, arity}
+    end
+
+    external = [:call_ext, :call_ext_only, :call_ext_last]
+    local = [:call, :call_only, :call_last]
+
+    # The one path to the step, by name; none of them locally.
+    assert Enum.sort(calls.(external, :after_hot_update)) == [run_after_hot_update: 2]
+    assert calls.(local, :after_hot_update) == []
+
+    # The other half of the contract: both call sites reach that path locally.
+    # By name would compile and pass everything here, then raise after a rollback
+    # swap, when the newly loaded older beam exports neither function — exactly
+    # the crash run_after_hot_update/2 exists to prevent.
+    assert Enum.sort(calls.(local, :run_after_hot_update)) == [
+             load: 4,
+             reload_code_path: 0
+           ]
+
+    assert calls.(external, :run_after_hot_update) == []
+    # `function_exported?/3` does not load the module, and no other test may have yet.
+    Code.ensure_loaded!(HalC2.Upgrade)
+    assert function_exported?(HalC2.Upgrade, :after_hot_update, 2)
+  end
+
+  test "running the hot step against a version without the public step asks for a restart" do
+    # This models the guard in isolation, not the whole rollback dispatch: the
+    # stripped beam still exports run_after_hot_update/2, which a real pre-public
+    # beam would not. In a real rollback nothing calls it by name on the loaded
+    # copy — the pre-swap code calls its own copy locally, whose by-name call
+    # then lands here. The disassembly test above pins that dispatch half
+    # (local calls only, from both call sites).
+    {HalC2.Upgrade, original, file} = :code.get_object_code(HalC2.Upgrade)
+
+    try do
+      load_beam(file, without_export(original, :after_hot_update, 2))
+      refute function_exported?(HalC2.Upgrade, :after_hot_update, 2)
+      assert function_exported?(HalC2.Upgrade, :run_after_hot_update, 2)
+      assert HalC2.Upgrade.run_after_hot_update([], []) == [HalC2.Upgrade]
+    after
+      load_beam(file, original)
+    end
+
+    assert function_exported?(HalC2.Upgrade, :after_hot_update, 2)
+  end
+
+  test "the installed MC's record is found under a named root, and named when absent",
+       %{tmp_dir: dir} do
+    home = {:root, dir}
+
+    assert {:error, reason} =
+             Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
+
+    assert reason =~ "No installed MC has run here"
+    assert reason =~ Path.join(HalC2.Paths.mc_dirs(home, %{}, dir).state, "server-runtime.json")
+    assert reason =~ "--root"
+
+    dirs = HalC2.Paths.mc_dirs(home, %{}, dir)
+    File.mkdir_p!(dirs.state)
+    File.mkdir_p!(dirs.data)
+    File.write!(Path.join(dirs.state, "server-runtime.json"), ~s({"origin":"http://127.0.0.1:9"}))
+    File.write!(Path.join(dirs.data, "access-token"), "tok\n")
+
+    assert {:ok, "http://127.0.0.1:9", "tok"} =
+             Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
+  end
+
+  test "a broken installed MC record is named, not read as no MC here", %{tmp_dir: dir} do
+    home = {:root, dir}
+    dirs = HalC2.Paths.mc_dirs(home, %{}, dir)
+    record = Path.join(dirs.state, "server-runtime.json")
+    token = Path.join(dirs.data, "access-token")
+    File.mkdir_p!(dirs.state)
+    File.mkdir_p!(dirs.data)
+
+    File.write!(record, "not json")
+    File.write!(token, "tok\n")
+
+    assert {:error, reason} = Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
+    assert reason =~ "Could not decode"
+    assert reason =~ "server-runtime.json"
+    refute reason =~ "No installed MC has run"
+
+    File.write!(record, ~s({}))
+    assert {:error, reason} = Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
+    assert reason =~ "no \"origin\""
+
+    File.write!(record, ~s({"origin":"http://127.0.0.1:9"}))
+    File.rm!(token)
+    File.mkdir_p!(token)
+    assert {:error, reason} = Mix.Tasks.HalC2.Upgrade.installed_record(home, %{}, dir)
+    assert reason =~ "Could not read"
+    assert reason =~ "access-token"
+  end
+
+  # A copy of a beam with one function no longer exported, as a version built
+  # before it went public would load.
+  defp without_export(bin, name, arity) do
+    {:ok, {mod, [debug_info: {:debug_info_v1, backend, data}]}} =
+      :beam_lib.chunks(bin, [:debug_info])
+
+    {:ok, forms} = backend.debug_info(:erlang_v1, mod, data, [])
+
+    forms =
+      Enum.map(forms, fn
+        {:attribute, line, :export, exports} ->
+          {:attribute, line, :export, List.delete(exports, {name, arity})}
+
+        form ->
+          form
+      end)
+
+    {:ok, ^mod, beam} = :compile.forms(forms, [:binary, :debug_info])
+    beam
+  end
+
+  defp load_beam(file, beam) do
+    :code.purge(HalC2.Upgrade)
+    {:module, HalC2.Upgrade} = :code.load_binary(HalC2.Upgrade, file, beam)
+    :ok
+  end
+
+  # A call instruction of one of `kinds` to `target/2`, by name or locally.
+  defp hot_step?(instruction, kinds, target) when is_tuple(instruction) do
+    steps = [
+      {:extfunc, HalC2.Upgrade, target, 2},
+      {HalC2.Upgrade, target, 2}
+    ]
+
+    elem(instruction, 0) in kinds and Enum.any?(Tuple.to_list(instruction), &(&1 in steps))
+  end
+
+  defp hot_step?(_instruction, _kinds, _target), do: false
 
   test "a socket opened before an upgrade keeps its subscriptions" do
     # Its state as the previous version kept it: one id per watched config, one

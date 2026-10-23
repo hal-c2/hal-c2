@@ -6,7 +6,7 @@ import { step } from "../../steps.ts";
 import { rectOf } from "../design.ts";
 import { expectClientStatus } from "./launch.steps.ts";
 import { expectCliStatus } from "./qml-runtime.steps.ts";
-import { LIST_PANE_WIDTH } from "../../../src/components/ChatView.layout.ts";
+import { LIST_PANE_WIDTH } from "../../../src/layout.ts";
 import { addProject, flush } from "../environment.ts";
 import { openOnThread } from "./composer.steps.ts";
 import {

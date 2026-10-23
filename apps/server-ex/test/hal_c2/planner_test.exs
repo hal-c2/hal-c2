@@ -744,6 +744,526 @@ defmodule HalC2.PlannerTest do
     end
   end
 
+  describe "a milestone's correction GitHub refused" do
+    @repo "acme/api"
+    @projects [%{"id" => "p", "kind" => "github", "repository" => @repo}]
+
+    # The milestone "ms" kept the correction of the issue #7 of the task "t" (`misplaced`),
+    # which "mr" holds now; `task` is what "t" is by then.
+    defp corrected(task) do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items = Map.new([milestone.("ms", 3, []), milestone.("mr", 4, ["t"]), {"t", task}])
+
+      assert [{"update", input, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+
+      assert took.(synced)["misplaced"] == %{}
+      input
+    end
+
+    defp task(issue), do: %{"id" => "t", "projectId" => "p", "after" => [], "issue" => issue}
+
+    test "goes again to the milestone holding the task that still names the issue" do
+      input = corrected(task(%{"repository" => @repo, "number" => 7}))
+      assert %{"number" => 7, "milestone" => 4} = input
+    end
+
+    test "is dropped once the milestone holds the task that still names the issue again" do
+      synced = %{
+        "after" => ["t"],
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      items = %{"t" => task(%{"repository" => @repo, "number" => 7})}
+
+      assert Sync.settled(synced, %{"after" => ["t"]}, items)["misplaced"] == %{}
+
+      assert %{"misplaced" => %{"acme/api#7" => _}} =
+               Sync.settled(synced, %{"after" => []}, items)
+
+      assert Sync.settled(nil, %{"after" => ["t"]}, items) == nil
+    end
+
+    test "stays when the milestone holds the task again under another issue, and takes the first out" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{"ms" => ms, "t" => task(%{"repository" => @repo, "number" => 8})}
+      assert synced == Sync.settled(synced, ms, items)
+
+      assert [{"update", into, took_into}, {"update", out, took_out}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = out
+      assert %{"number" => 8, "milestone" => 3} = into
+
+      # The issue the task names now being in the milestone does not clear the mark of
+      # the other, if its correction is refused; the correction's landing does, and the
+      # task stays on the milestone.
+      assert %{"misplaced" => %{"acme/api#7" => _}} = took_into.(synced)
+      landed = took_out.(took_into.(synced))
+      assert landed["after"] == ["t"]
+      assert landed["misplaced"] == %{}
+    end
+
+    test "takes the issue out of any milestone once the task names another" do
+      input = corrected(task(%{"repository" => @repo, "number" => 8}))
+      assert %{"number" => 7, "milestone" => nil} = input
+    end
+
+    test "goes to the milestone of a task that took the issue over" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, []),
+          milestone.("mr", 4, ["u"]),
+          {"t", task(%{"repository" => @repo, "number" => 8})},
+          {"u",
+           %{
+             "id" => "u",
+             "projectId" => "p",
+             "after" => [],
+             "issue" => %{"repository" => @repo, "number" => 7}
+           }}
+        ])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 4}, took}] = asks
+      assert took.(synced)["misplaced"] == %{}
+    end
+
+    test "goes to this milestone when the task that took the issue over is held by it" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, ["u"]),
+          milestone.("mr", 4, []),
+          {"t", task(%{"repository" => @repo, "number" => 8})},
+          {"u",
+           %{
+             "id" => "u",
+             "projectId" => "p",
+             "after" => [],
+             "issue" => %{"repository" => @repo, "number" => 7}
+           }}
+        ])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 3}, took}] = asks
+      assert took.(synced)["misplaced"] == %{}
+    end
+
+    test "keeps a mark per issue, so a task that left two issues behind loses neither" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+      op = fn n -> {"t", {"update", issue.(n), nil}} end
+
+      # Two late pushes left #7, then #8, in the milestone "ms" after the task
+      # was relinked and moved on; its `synced` remembers only #8 by then, so
+      # the #7 mark is the only thing still naming #7.
+      synced =
+        %{
+          "title" => "Launch",
+          "due" => nil,
+          "after" => ["t"],
+          "refs" => %{"t" => issue.(8)}
+        }
+        |> Sync.misplaced([op.(7)])
+        |> Sync.misplaced([op.(8)])
+
+      assert synced["misplaced"] == %{
+               "acme/api#7" => %{"task" => "t", "issue" => issue.(7)},
+               "acme/api#8" => %{"task" => "t", "issue" => issue.(8)}
+             }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([milestone.("ms", 3, []), milestone.("mr", 4, ["t"]), {"t", task(issue.(8))}])
+
+      assert [{"update", out, _}, {"update", into, _}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = out
+      assert %{"number" => 8, "milestone" => 4} = into
+    end
+
+    test "the older mark survives the newer correction taking, so its issue still goes out" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # As the mark-per-task shape left it: "t" was relinked from #7 to #8 in
+      # "ms", #8's correction took and #7's was refused, and `refs` names #8.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(8)},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => issue.(7)},
+          "acme/api#8" => %{"task" => "t", "issue" => issue.(8)}
+        }
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([milestone.("ms", 3, []), milestone.("mr", 4, ["t"]), {"t", task(issue.(8))}])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => n} = input, took} <- ops, do: {n, input, took}
+      assert [{7, _, _}, {8, _, _}] = Enum.sort_by(asks, &elem(&1, 0))
+
+      # #8's correction takes; #7 must still be asked out by the next push.
+      {_, _, took8} = Enum.find(asks, &(elem(&1, 0) == 8))
+      landed = took8.(synced)
+      assert landed["misplaced"] == %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, landed, items["ms"], items, @projects)
+
+      assert [{"update", %{"number" => 7, "milestone" => nil}, _}] =
+               for({"update", input, took} <- ops, do: {"update", input, took})
+    end
+
+    test "asks the issue its task left once, though both its removal and its correction send it out" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # "ms" has the task "t" for #7 and a mark for #7; "t" names #8 by now and "ms" holds it.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(7)},
+        "misplaced" => %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+      }
+
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{"ms" => ms, "t" => task(issue.(8))}
+
+      assert [{"update", out, took_out}, {"update", into, took_into}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = out
+      assert %{"number" => 8, "milestone" => 3} = into
+
+      landed = synced |> took_out.() |> took_into.()
+      assert %{"after" => ["t"], "refs" => %{"t" => %{"number" => 8}}} = landed
+      assert landed["misplaced"] == %{}
+    end
+
+    test "reads a mark named for its task, as a plan saved before marks were named for their issue" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{"t" => issue.(7)}
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, []),
+          milestone.("mr", 4, ["u"]),
+          {"t", task(issue.(8))},
+          {"u", %{"id" => "u", "projectId" => "p", "after" => [], "issue" => issue.(7)}}
+        ])
+
+      assert Sync.settled(synced, %{"after" => []}, items)["misplaced"] ==
+               %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 4}, took}] = asks
+      assert took.(synced)["misplaced"] == %{}
+    end
+
+    test "a mark named for its issue wins over one named for its task for the same issue" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "old" => issue.(7),
+          "acme/api#7" => %{"task" => "t", "issue" => issue.(7)},
+          "zzz" => issue.(7)
+        }
+      }
+
+      items =
+        Map.new([
+          {"ms",
+           %{
+             "id" => "ms",
+             "title" => "Launch",
+             "due" => nil,
+             "after" => [],
+             "projectId" => "p",
+             "milestone" => %{"repository" => @repo, "number" => 3}
+           }},
+          {"t", task(issue.(8))}
+        ])
+
+      assert Sync.settled(synced, %{"after" => []}, items)["misplaced"] ==
+               %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+    end
+
+    test "an issue sent out of any milestone and to another in one push is asked once, for the other" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # "t" left #7 in "ms" (remembered in `refs`, marked), names #8 in "mr"
+      # by now, and "u" names #7 in "mr": one push would send #7 out by the
+      # move and in by the correction.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(7)},
+        "misplaced" => %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, []),
+          milestone.("mr", 4, ["t", "u"]),
+          {"t", task(issue.(8))},
+          {"u", %{"id" => "u", "projectId" => "p", "after" => [], "issue" => issue.(7)}}
+        ])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 4}, took}] = asks
+
+      landed = took.(synced)
+      assert landed["misplaced"] == %{}
+      refute "t" in landed["after"]
+    end
+
+    test "asks an issue two tasks send out of any milestone once, and runs both tasks' tooks" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # "ms" held "old" for #7 (remembered in `refs`) and has a mark for "new" over #7;
+      # both name #8 by now, so #7 leaves any milestone by both of them.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["old"],
+        "refs" => %{"old" => issue.(7)},
+        "misplaced" => %{"acme/api#7" => %{"task" => "new", "issue" => issue.(7)}}
+      }
+
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{
+        "ms" => ms,
+        "old" => %{"id" => "old", "projectId" => "p", "after" => [], "issue" => issue.(8)},
+        "new" => %{"id" => "new", "projectId" => "p", "after" => [], "issue" => issue.(8)}
+      }
+
+      assert [{"update", input, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = input
+      landed = took.(synced)
+      assert landed["after"] == []
+      assert landed["misplaced"] == %{}
+    end
+
+    test "drops an ask for an issue whose saved ref is not whole, instead of raising" do
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      synced = %{"title" => "Launch", "due" => nil, "after" => [], "refs" => %{}}
+      items = %{"ms" => ms, "t" => task(%{"repository" => @repo})}
+
+      assert [] = Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+    end
+
+    test "takes the issue out of any milestone once the task names none" do
+      input = corrected(Map.delete(task(nil), "issue"))
+      assert %{"number" => 7, "milestone" => nil} = input
+    end
+
+    test "takes the issue out of any milestone once the task is gone from the plan" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      milestone = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{"ms" => milestone}
+
+      assert [{"update", input, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, milestone, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = input
+      assert took.(synced)["misplaced"] == %{}
+    end
+  end
+
   describe "pushes" do
     test "a relink and an owner change in one push take the old owner off the old issue" do
       projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]

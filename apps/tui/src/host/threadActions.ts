@@ -12,9 +12,9 @@ import {
   isSelectable,
   moveContextMenuIndex,
   resolveContextMenuLayout,
-} from "../components/ContextMenu.logic.ts";
+} from "../contextMenu.logic.ts";
 import { clip } from "../format.ts";
-import type { Row } from "../components/Sidebar.logic.ts";
+import type { Row } from "../sidebar.logic.ts";
 import { projectLabel, type TuiThreadShell } from "../orchestrationV2Adapter.ts";
 import type { Store } from "../store.ts";
 import { THEME } from "../theme.ts";
@@ -26,7 +26,7 @@ import { chunk, styled, type StyledText } from "./styledText.ts";
 
 /**
  * One painted line of the open menu: a divider or an item (`index` into
- * `items`), with its text as ContextMenu.tsx draws it; an active item sits on
+ * `items`), with its text as ContextMenu.qml draws it; an active item sits on
  * the selected background.
  */
 export type TuiContextMenuRow =
@@ -467,7 +467,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         return true;
       }
       case "contextMenu.hover": {
-        // The pointer over an item selects it (ContextMenu.tsx's onMouseMove).
+        // The pointer over an item selects it (ContextMenu.qml's hover).
         const index = Number(field(payload, "index"));
         if (!menu || index === menu.selectedIndex || !isSelectable(menu.items[index])) return true;
         menu = { ...menu, selectedIndex: index };

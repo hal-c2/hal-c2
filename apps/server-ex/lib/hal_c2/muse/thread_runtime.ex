@@ -46,20 +46,35 @@ defmodule HalC2.Muse.ThreadRuntime do
     do: thread_id |> ensure() |> GenServer.call({:start_turn, turn}, 120_000)
 
   @spec interrupt(String.t(), String.t() | nil) :: :ok | {:error, String.t()}
-  def interrupt(thread_id, _run_id) do
+  def interrupt(thread_id, run_id) do
     case lookup(thread_id) do
       nil -> {:error, "no active Muse turn in this thread"}
-      pid -> GenServer.call(pid, :interrupt, 35_000)
+      pid -> GenServer.call(pid, {:interrupt, run_id}, 35_000)
     end
   end
 
-  @doc "A `turn/steer` into the running turn, built from `%{text, attachments}` like a turn's."
+  @doc """
+  A `turn/steer` into the running turn, built from `%{text, attachments}` like a turn's.
+  Non-timeout exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
+  """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active Muse turn in this thread"}
-      pid -> GenServer.call(pid, {:steer, run_id, message}, 35_000)
+      pid -> steer_call(pid, run_id, message)
     end
+  end
+
+  # `HalC2.RuntimeSteer` owns which timeout means held; the budget stays the
+  # public calls' 35s, so a command never outlives its caller. One divergence
+  # from `RuntimeSteer`'s model: the handler's `command/5` catches a nested
+  # `Connection.call` timeout itself, closes the connection and answers a
+  # refusal (`{:error, "Muse Code did not answer turn/steer"}`) instead of
+  # propagating the exit, so a steer that may still land is taken back out of
+  # the turn while its session drops — the host is out of step either way.
+  defp steer_call(pid, run_id, message) do
+    timeout = Application.get_env(:hal_c2, :muse_steer_timeout_ms, 35_000)
+    HalC2.RuntimeSteer.call(pid, run_id, message, timeout)
   end
 
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}
@@ -184,6 +199,14 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
+
+  # Pinned to a run, the interrupt stops only that run's turn: a different
+  # turn that began since the caller read the run is not the caller's to stop.
+  def handle_call({:interrupt, run_id}, _from, %{turn: %{ids: %{run: other}}} = state)
+      when is_binary(run_id) and run_id != other,
+      do: {:reply, {:error, "no running turn"}, state}
+
+  def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
 
   # Muse cannot stop a compaction; closing its host does.
   def handle_call(:interrupt, _from, %{turn: turn, compact: true} = state) when turn != nil do

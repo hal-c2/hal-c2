@@ -1,6 +1,6 @@
 import OpenTUI
 
-// The source-control panel (RightPanel.tsx): where the branch stands
+// The source-control panel: where the branch stands
 // (`Shell.state.git`, clipped to the panel by the host) and the actions that
 // move it forward. Keys come from the shell's panel-mode
 // shortcuts; a commit asks for its message in the prompt's place (Composer).

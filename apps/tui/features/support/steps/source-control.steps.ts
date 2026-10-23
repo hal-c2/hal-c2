@@ -129,7 +129,7 @@ step("nothing is committed and both files are still changed", async (ctx: World)
   expect(ctx.fake!.gitCalls).toEqual([]);
   expect(gitState(ctx).commitPrompt).toBeNull();
   expect(gitState(ctx).changesLine).toBe("2 files · +6 -2");
-  // RightPanel.tsx sums the tree up on one line; it lists no files.
+  // the panel sums the tree up on one line; it lists no files.
   expect(screen).toContain("2 files · +6 -2");
   expect(scm(ctx).status!.workingTree.files.map((file) => file.path)).toEqual([
     "src/cart.ts",

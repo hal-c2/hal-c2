@@ -6,6 +6,7 @@
 #include <QDirIterator>
 #include <QGuiApplication>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTest>
@@ -115,7 +116,7 @@ private slots:
   // for by name comes with every theme, or is one a theme may add.
   void bricksPaintWithRolesEveryThemeHas() {
     // Drawn in the brick's own fallback unless a theme names them.
-    const QStringList optional{QStringLiteral("merged"), QStringLiteral("projectForeground"), QStringLiteral("branchForeground"),
+    const QStringList optional{QStringLiteral("projectForeground"), QStringLiteral("branchForeground"),
                                QStringLiteral("sidebarActiveIndicator"), QStringLiteral("scrim")};
     static const QRegularExpression read(QStringLiteral("palette\\.color\\(\"([A-Za-z0-9]+)\""));
     QStringList unknown;
@@ -149,6 +150,33 @@ private slots:
     QCOMPARE(themes()->resolvedId(), QStringLiteral("grove"));
     QVERIFY(canvas() != QStringLiteral("#010101"));
     QCOMPARE(canvas(), ThemeController::canonicalColor(QStringLiteral("oklch(0.972369 0.005497 157.15)")));
+  }
+
+  // The standard look has no row of its own to give way, so an imported file
+  // may not take its id, named or made from the name "HAL-C2".
+  void anImportedThemeCannotTakeTheStandardLooksId() {
+    const QVariantList before = themes()->available();
+    for (const QJsonObject& extra : {QJsonObject{{QStringLiteral("id"), QStringLiteral("hal-c2")}}, QJsonObject{}}) {
+      QJsonObject file{{QStringLiteral("version"), 1},
+                       {QStringLiteral("name"), QStringLiteral("HAL-C2")},
+                       {QStringLiteral("appearance"), QStringLiteral("dark")},
+                       {QStringLiteral("colors"), QJsonObject{{QStringLiteral("canvas"), QStringLiteral("#101010")}}}};
+      for (auto it = extra.begin(); it != extra.end(); ++it) file.insert(it.key(), it.value());
+      QVERIFY(!themes()->importText(QString::fromUtf8(QJsonDocument(file).toJson())));
+      QCOMPARE(themes()->importError(), QStringLiteral("The theme id \"hal-c2\" is reserved."));
+      themes()->clearImport();
+    }
+    QCOMPARE(themes()->available(), before);
+  }
+
+  // A published theme may not take the standard look's id either: it would
+  // offer a second "hal-c2" row beside the standard look.
+  void aPublishedThemeCannotTakeTheStandardLooksId() {
+    const QVariantList before = themes()->available();
+    settings()->setThemes({theme(QStringLiteral("hal-c2"), QStringLiteral("dark"), QStringLiteral("#020202"))});
+    QCOMPARE(themes()->available(), before);
+    QCOMPARE(themes()->resolvedId(), QStringLiteral("hal-c2"));
+    settings()->setThemes({});
   }
 
   void savedThemesWinOverPublishedOnes() {
@@ -216,6 +244,38 @@ private slots:
           {QStringLiteral("appearance"), QStringLiteral("light")}});
     QCOMPARE(themes()->appearance(), QStringLiteral("dark"));
     QCOMPARE(canvas(), QStringLiteral("#050505"));
+  }
+
+  // draft("") starts from the theme actually drawn: a single-appearance
+  // theme chosen as a half (no whole theme set) is that draft, not the
+  // standard look.
+  void aDraftWithNoIdStartsFromTheDrawnHalf() {
+    save({{QStringLiteral("customThemes"), QJsonArray{theme(QStringLiteral("midnight"), QStringLiteral("dark"), QStringLiteral("#050505"))}}});
+    QVERIFY(themes()->choose(QStringLiteral("midnight")));
+    QCOMPARE(themes()->themeId(), QString());
+    themes()->setSystemDark(true);
+    QCOMPARE(themes()->resolvedId(), QStringLiteral("midnight"));
+    const QVariantMap drawn = themes()->draft(QString());
+    QCOMPARE(drawn.value(QStringLiteral("label")), QVariant(QStringLiteral("midnight")));
+    QCOMPARE(drawn.value(QStringLiteral("colors")).toMap().value(QStringLiteral("canvas")), QVariant(QStringLiteral("#050505")));
+    // In the other appearance nothing is chosen, so the standard look is drawn and drafted.
+    themes()->setSystemDark(false);
+    QCOMPARE(themes()->draft(QString()).value(QStringLiteral("label")), QVariant(QStringLiteral("HAL-C2")));
+  }
+
+  // A choice that no longer resolves draws the standard look, so that is what
+  // is drafted -- not a legacy saved theme that holds the standard id.
+  void aDraftWithAStaleChoiceStartsFromTheStandardLook() {
+    save({{QStringLiteral("customThemes"), QJsonArray{theme(QStringLiteral("hal-c2"), QStringLiteral("dark"), QStringLiteral("#050505"))}},
+          {QStringLiteral("theme"), QStringLiteral("gone")}});
+    QCOMPARE(themes()->resolvedId(), QStringLiteral("hal-c2"));
+    const QVariantMap drawn = themes()->draft(QString());
+    QVERIFY(drawn.value(QStringLiteral("id")).toString().isEmpty());
+    QCOMPARE(drawn.value(QStringLiteral("label")), QVariant(QStringLiteral("HAL-C2")));
+    // Chosen on purpose, the legacy theme is drafted.
+    save({{QStringLiteral("customThemes"), QJsonArray{theme(QStringLiteral("hal-c2"), QStringLiteral("dark"), QStringLiteral("#050505"))}},
+          {QStringLiteral("theme"), QStringLiteral("hal-c2")}});
+    QCOMPARE(themes()->draft(QString()).value(QStringLiteral("id")), QVariant(QStringLiteral("hal-c2")));
   }
 
   // settings/search-and-navigation.feature: restoring defaults puts the whole

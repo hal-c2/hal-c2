@@ -39,6 +39,8 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWriter.finish/3" => "finish",
       "HalC2.Orchestration.TurnWriter.abandon/4" => "abandon",
       "HalC2.Codex.ThreadRuntime handle_call {:start_turn, _}" => ~w(take started refused),
+      "HalC2.Codex.ThreadRuntime handle_call {:interrupt, _}" =>
+        ~w(interrupted stale-pin no-turn),
       "HalC2.Codex.ThreadRuntime handle_call :interrupt" => ~w(interrupted no-turn),
       "HalC2.Codex.ThreadRuntime handle_call :release" => ~w(release-idle keep-turn),
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:notification, _, _}}" => "finish",
@@ -101,6 +103,8 @@ defmodule HalC2.TurnsProofTest do
         @items,
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:request, _, \"mcpServer/elicitation/request\", _}}" =>
         @items,
+      "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, _}" =>
+        "drops what an app-server it stopped for another instance sent; the model has one",
       "HalC2.Codex.ThreadRuntime handle_info :flush" => @items,
       "HalC2.Codex.ThreadRuntime handle_info _" => "ignores what it does not know",
       "HalC2.Orchestration.TurnWatch.start_link/1" =>
@@ -146,15 +150,17 @@ defmodule HalC2.TurnsProofTest do
   # Rules the environment may or may not take; the code's own may not stop.
   @faults ~w(crash raise time-out refused exit restart)
   @fair ~w(dispatch begin-turn start-failed start-next take started finish interrupted
-           no-turn interrupt-any interrupt-undriven delete stop-runtimes abandon
+           stale-pin no-turn interrupt-any interrupt-undriven delete stop-runtimes abandon
            end-abandoned release-session release-idle keep-turn retry)
 
-  # turns(faults, interrupt, delete, idle timer)
+  # turns(faults, interrupt, delete, idle timer): an interrupt pinned to r1, the run
+  # the client read as active, or one for whatever runs (`any`).
   @inits [
-    "turns(2, false, false, ready)",
-    "turns(2, true, false, ready)",
-    "turns(2, false, true, ready)",
-    "turns(3, true, true, ready)"
+    "turns(2, empty, false, ready)",
+    "turns(2, intr(r1), false, ready)",
+    "turns(2, intr(any), false, ready)",
+    "turns(2, empty, true, ready)",
+    "turns(3, intr(r1), true, ready)"
   ]
 
   for init <- @inits do
@@ -166,6 +172,10 @@ defmodule HalC2.TurnsProofTest do
       refute_reachable(proof, unquote(init), "flipped", [])
     end
 
+    test "an interrupt pinned to a run never ends another, from #{init}", %{proof: proof} do
+      refute_reachable(proof, unquote(init), "stray", [])
+    end
+
     test "a thread's turns never get stuck, from #{init}", %{proof: proof} do
       refute_deadlock(proof, unquote(init), "settled", besides: @faults)
     end
@@ -175,15 +185,17 @@ defmodule HalC2.TurnsProofTest do
   # that starts one there: the runtime keeps a turn it took, and a start it stopped
   # under is tried again.
   test "no run fails unless something faults", %{proof: proof} do
-    refute_reachable(proof, "turns(0, true, true, ready)", "failed?", [])
-    refute_reachable(proof, "turns(0, true, false, ready)", "failed?", [])
+    refute_reachable(proof, "turns(0, intr(r1), true, ready)", "failed?", [])
+    refute_reachable(proof, "turns(0, intr(any), true, ready)", "failed?", [])
+    refute_reachable(proof, "turns(0, intr(r1), false, ready)", "failed?", [])
   end
 
   for init <- [
-        "turns(2, false, false, ready)",
-        "turns(2, true, false, ready)",
-        "turns(2, false, true, ready)",
-        "turns(1, true, true, ready)"
+        "turns(2, empty, false, ready)",
+        "turns(2, intr(r1), false, ready)",
+        "turns(2, empty, true, ready)",
+        "turns(1, intr(r1), true, ready)",
+        "turns(1, intr(any), false, ready)"
       ] do
     test "every run ends, and a queued message starts once none is active, from #{init}",
          %{proof: proof} do

@@ -1,8 +1,8 @@
 import OpenTUI
 
-// The main column's conversation. Like MessagesTimeline, the thread sits in a
+// The main column's conversation. The thread sits in a
 // rounded faint pane: the header, the context meter, the timeline and the
-// pending approvals. Like ChatView, the file browser, the diff viewer and the
+// pending approvals. The file browser, the diff viewer and the
 // image preview take the pane's place while open, in that order; the revert
 // picker follows. A new-thread draft shows the pane empty (the composer below
 // holds the draft).
