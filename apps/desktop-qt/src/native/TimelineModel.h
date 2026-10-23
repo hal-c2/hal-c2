@@ -109,6 +109,10 @@ public:
     // A user message's images: [{id, name, url}]. `url` is empty until the
     // brick asks for it (loadAttachment) and the MC has signed one.
     AttachmentsRole,
+    // A user message's other attachments, listed by name: [{id, name,
+    // detail}]. `detail` is a file's kind and size ("PDF · 2.0 MiB"), empty
+    // for a kind this client does not know.
+    SentFilesRole,
     // Whether an error row is a wait rather than a failure (a usage limit),
     // which draws in the warning colour with its title alone.
     WarningRole,

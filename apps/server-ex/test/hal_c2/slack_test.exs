@@ -29,7 +29,7 @@ defmodule HalC2.SlackTest do
     do: %{"botToken" => bot, "appToken" => app}
 
   defp await_state(state) do
-    assert_receive {:hal_c2_slack, _, _, %{"state" => ^state} = status}, 10_000
+    assert_receive {:hal_c2_slack, _, %{"state" => ^state} = status}, 10_000
     status
   end
 
@@ -329,7 +329,7 @@ defmodule HalC2.SlackTest do
 
   # The first status pushed that carries an error.
   defp await_error do
-    assert_receive {:hal_c2_slack, _, _, %{"error" => error} = status} when error != nil, 10_000
+    assert_receive {:hal_c2_slack, _, %{"error" => error} = status} when error != nil, 10_000
     status
   end
 

@@ -89,12 +89,12 @@ export function projectActionFromFile(id: string, fileScript: HalC2ProjectFileSc
  * Null when there is none or it does not match the format.
  */
 export async function readProjectFile(
-  readFile: (cwd: string, relativePath: string) => Promise<string | null>,
+  readFile: (cwd: string, relativePath: string) => Promise<{ readonly contents: string } | null>,
   workspaceRoot: string,
 ): Promise<HalC2ProjectFile | null> {
   for (const name of HAL_C2_PROJECT_FILE_NAMES) {
-    const contents = await readFile(workspaceRoot, name).catch(() => null);
-    if (contents !== null) return parseHalC2ProjectFile(contents);
+    const file = await readFile(workspaceRoot, name).catch(() => null);
+    if (file !== null) return parseHalC2ProjectFile(file.contents);
   }
   return null;
 }

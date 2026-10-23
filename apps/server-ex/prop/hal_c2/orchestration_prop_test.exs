@@ -7,7 +7,8 @@ defmodule HalC2.OrchestrationPropTest do
   result is); send a message again with its message id, as a client retrying after a
   reconnect does, or send the same steer twice at once;
   cancel, edit, reorder and promote queued messages (and have Codex refuse to take a
-  promoted one, also after the thread was archived while Codex was asked); resume a held queue; interrupt a turn;
+  promoted one, also after the thread was archived while Codex was asked); resume a held queue; interrupt a turn, or the run of a message as a
+  client that read it as active does (#403, #474);
   crash a provider runtime mid-turn; release a thread's provider session as
   IdleSessions does; and restart the MC mid-turn (boot recovery). A message can also
   stop its turn on a usage limit, which holds the queue behind it; the user can then
@@ -193,7 +194,8 @@ defmodule HalC2.OrchestrationPropTest do
            let(
              [{t, m} <- oneof(sent), how <- oneof([:taken, :taken, :refused])],
              do: {:call, __MODULE__, :promote, [t, m, how]}
-           )}
+           )},
+          {2, let({t, m} <- oneof(sent), do: {:call, __MODULE__, :interrupt_run, [t, m]})}
         ]
 
     # A promote is worth aiming at a message that is still queued.
@@ -263,7 +265,7 @@ defmodule HalC2.OrchestrationPropTest do
         steers?(threads[tid], msg)
 
   def precondition(%{threads: threads}, {:call, _, fun, [tid, msg | _]})
-      when fun in [:cancel, :edit, :reorder, :promote, :resend],
+      when fun in [:cancel, :edit, :reorder, :promote, :resend, :interrupt_run],
       do: Map.has_key?((threads[tid] || %{messages: %{}}).messages, msg)
 
   def precondition(_state, _call), do: true
@@ -341,6 +343,14 @@ defmodule HalC2.OrchestrationPropTest do
       nil -> update(state, tid, &(&1 |> end_running(:interrupted) |> start_next()))
       _ -> state
     end
+  end
+
+  # A stop pinned to a message's run ends only that run's turn: one that ended, or
+  # never started, leaves whatever runs now.
+  def next_state(state, _result, {:call, _, :interrupt_run, [tid, msg]}) do
+    if pinned_running?(state, tid, msg),
+      do: update(state, tid, &(&1 |> end_running(:interrupted) |> start_next())),
+      else: state
   end
 
   def next_state(state, _result, {:call, _, :crash, [tid]}),
@@ -599,6 +609,9 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp expected_reply(_state, :resend, _args), do: :ok
 
+  defp expected_reply(state, :interrupt_run, [tid, msg]),
+    do: if(pinned_running?(state, tid, msg), do: :ok, else: {:error, "no running turn"})
+
   defp expected_reply(state, :release, [tid]),
     do: if(running(state.threads[tid]), do: {:error, :busy}, else: :ok)
 
@@ -620,6 +633,11 @@ defmodule HalC2.OrchestrationPropTest do
   defp set_runs(thread, fun), do: %{thread | runs: Enum.map(thread.runs, fun)}
 
   defp running(thread), do: Enum.find(thread.runs, &(&1.status == :running))
+
+  defp pinned_running?(state, tid, msg),
+    do:
+      refusal(state, tid, :interrupt) == nil and
+        match?(%{msg: ^msg}, running(state.threads[tid]))
 
   # A promote of this queued message asks the running turn's provider to take it.
   defp steers?(thread, msg) do
@@ -959,6 +977,16 @@ defmodule HalC2.OrchestrationPropTest do
   def interrupt(tid) do
     ending = active_runs(tid)
     reply(Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => tid}), ending)
+  end
+
+  def interrupt_run(tid, msg) do
+    run_id = run_of(tid, msg)
+    ending = Enum.filter(active_runs(tid), &(&1 == run_id))
+
+    reply(
+      Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => tid, "runId" => run_id}),
+      ending
+    )
   end
 
   def cancel(tid, msg),

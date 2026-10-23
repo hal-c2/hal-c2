@@ -46,12 +46,17 @@ defmodule HalC2.GitActions do
       emit.(%{"kind" => "action_finished", "result" => result})
       {:ok, result}
     catch
-      {:git_action_error, message} ->
-        emit.(%{
-          "kind" => "action_failed",
-          "phase" => Process.get(:git_action_phase),
-          "message" => message
-        })
+      {:git_action_error, message, cta} ->
+        emit.(
+          Map.merge(
+            %{
+              "kind" => "action_failed",
+              "phase" => Process.get(:git_action_phase),
+              "message" => message
+            },
+            if(cta, do: %{"cta" => cta}, else: %{})
+          )
+        )
 
         {:error, message}
     after
@@ -87,7 +92,9 @@ defmodule HalC2.GitActions do
 
   defp stringify(map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
 
-  defp fail!(message), do: throw({:git_action_error, message})
+  # `cta` (`GitActionFailureCta`) is what the user can do about it, for a failure
+  # with a known remedy.
+  defp fail!(message, cta \\ nil), do: throw({:git_action_error, message, cta})
 
   defp phase!(emit, phase, label) do
     Process.put(:git_action_phase, phase)
@@ -412,11 +419,11 @@ defmodule HalC2.GitActions do
         %{"status" => "skipped_up_to_date", "branch" => branch, "upstreamBranch" => upstream}
 
       upstream ->
-        git!(cwd, ["push"])
+        push!(cwd, ["push"], upstream |> String.split("/", parts: 2) |> hd())
         %{"status" => "pushed", "branch" => branch, "upstreamBranch" => upstream}
 
       remote = Git.primary_remote(cwd) ->
-        git!(cwd, ["push", "-u", remote, "HEAD:refs/heads/#{branch}"])
+        push!(cwd, ["push", "-u", remote, "HEAD:refs/heads/#{branch}"], remote)
 
         %{
           "status" => "pushed",
@@ -625,6 +632,71 @@ defmodule HalC2.GitActions do
       {:ok, %{status: 0}} -> :ok
       {:ok, %{err: err}} -> fail!("git #{hd(args)} failed: #{last_lines(err)}")
       {:error, reason} -> fail!("git #{hd(args)} failed: #{reason}")
+    end
+  end
+
+  defp push!(cwd, args, remote) do
+    case Git.run(cwd, args, max_bytes: 256 * 1024) do
+      {:ok, %{status: 0}} ->
+        :ok
+
+      {:ok, %{err: err}} ->
+        {hint, cta} = push_refusal(err, remote_repository(cwd, remote))
+        fail!("git push failed: #{last_lines(err)}#{hint}", cta)
+
+      {:error, reason} ->
+        fail!("git push failed: #{reason}")
+    end
+  end
+
+  # The GitHub `owner/name` the remote pushes to, or nil.
+  defp remote_repository(cwd, remote) do
+    with {:ok, url} <- Git.ok(cwd, ["remote", "get-url", "--push", remote]),
+         %{kind: "github", repository: repository} <- HalC2.PullRequests.parse_remote(url),
+         do: repository,
+         else: (_ -> nil)
+  end
+
+  # What to say and offer (`GitActionFailureCta`, or nil) when GitHub refuses a push
+  # changing a workflow, from git's stderr and the GitHub repository pushed to (nil when
+  # it is not one); `{"", nil}` for any other refusal.
+  #
+  # The credential lacks the `workflow` scope: the GitHub CLI's sign-in when it was made
+  # for SSH (see `HalC2.Git.use_gh_for_github/0`), which `gh auth refresh` widens, or a
+  # token of the user's own, which it cannot. A GitHub App's token lacks the Workflows
+  # permission instead, which no sign-in here changes: the App's installation has to
+  # grant it, from the repository's GitHub Apps settings (which list the installations
+  # whether a user or an organization owns it), or the user's own when the repository
+  # is not known.
+  defp push_refusal(err, repository) do
+    cond do
+      err =~ ~r/without `workflow` scope/ ->
+        {" GitHub refused it because it changes a workflow file and the sign-in that " <>
+           "pushed lacks the workflow scope. If this machine pushes with the GitHub " <>
+           "CLI's sign-in, run `gh auth refresh -s workflow` here, then try again; a " <>
+           "token of your own needs the workflow scope.",
+         %{
+           "kind" => "copy_command",
+           "label" => "Copy command",
+           "command" => "gh auth refresh -s workflow"
+         }}
+
+      err =~ ~r/without `workflows` permission/ ->
+        {" GitHub refused it because it changes a workflow file and the GitHub App " <>
+           "whose token pushed lacks the Workflows permission. Grant the App read and " <>
+           "write access to Workflows in its installation settings, then try again.",
+         %{
+           "kind" => "open_url",
+           "label" => "Grant Workflows permission",
+           "url" =>
+             if(repository,
+               do: "https://github.com/#{repository}/settings/installations",
+               else: "https://github.com/settings/installations"
+             )
+         }}
+
+      true ->
+        {"", nil}
     end
   end
 

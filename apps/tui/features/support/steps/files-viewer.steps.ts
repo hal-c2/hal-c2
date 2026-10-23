@@ -5,7 +5,11 @@ import { expect } from "bun:test";
 import { DEFAULT_SERVER_SETTINGS, EDITORS, ProjectWriteFileError } from "@hal-c2/contracts";
 
 import { ClusterRpcError } from "../../../../../packages/client-runtime/src/v3/clusterSocket.ts";
-import { HOST_WRITE_REFUSED, type TuiFilesState } from "../../../src/host/filesState.ts";
+import {
+  HOST_WRITE_REFUSED,
+  TRUNCATED_READ_ONLY,
+  type TuiFilesState,
+} from "../../../src/host/filesState.ts";
 import { FILES_ELSEWHERE, hostedHere } from "../../../src/thisMachine.ts";
 import { step } from "../../steps.ts";
 import { PREVIEW_FILES } from "../filePreviewFixtures.ts";
@@ -20,6 +24,8 @@ interface ViewerWorld extends World {
   noTerminal?: boolean;
   /** What the editor held before the scenario typed into it. */
   original?: string;
+  /** Why the open file is read-only, as the client says it. */
+  readOnly?: string;
 }
 
 const CHANGE = "// tuned ";
@@ -334,6 +340,7 @@ step(
 
 step("this device was paired without terminal access", async (ctx: ViewerWorld & FilesWorld) => {
   ctx.noTerminal = true;
+  ctx.readOnly = HOST_WRITE_REFUSED;
   await ensureOpen(ctx);
 });
 
@@ -354,14 +361,26 @@ step(
   },
 );
 
-step("the file cannot be edited", async (ctx: ViewerWorld) => {
+step("the file cannot be edited", async (ctx: ViewerWorld & FilesWorld) => {
   const before = writes(ctx).length;
+  const why = ctx.readOnly!;
   await pressKey(ctx, "i");
   const screen = await settle(ctx);
   expect(ctx.host!.state.get("mode")).toBe("files");
   expect(viewer(ctx).editing).toBe(false);
-  expect(status(ctx)).toEqual({ kind: "warning", text: HOST_WRITE_REFUSED });
+  expect(status(ctx)).toEqual({ kind: "warning", text: why });
   expect(screen).toContain(statusLabel(ctx));
+  if (why === TRUNCATED_READ_ONLY) {
+    // Nor in $EDITOR, which would save the first 1 MB over the whole file.
+    let started = false;
+    ctx.runEditor = async () => {
+      started = true;
+    };
+    await pressKey(ctx, "e");
+    await settle(ctx);
+    expect(started).toBe(false);
+    expect(status(ctx)).toEqual({ kind: "warning", text: why });
+  }
   expect(writes(ctx)).toHaveLength(before);
 });
 
@@ -377,6 +396,25 @@ step(
     expect(status(ctx)).toEqual({ kind: "success", text: `Saved ${path}.` });
   },
 );
+
+// --- A file larger than the MC reads whole -------------------------------------------
+// The MC sends its first 1 MB marked truncated; the fake's `files` holds that start.
+
+const isLarge = (ctx: FilesWorld, path: string) => {
+  ctx.files = { ...ctx.files, [path]: "line\n".repeat(200) };
+  (ctx.truncated ??= new Set()).add(path);
+};
+
+step("{string} in {string} is 3 MB", (ctx: FilesWorld, path: string) => isLarge(ctx, path));
+
+step("the user opens a file larger than one megabyte", async (ctx: ViewerWorld & FilesWorld) => {
+  const path = "logs/big.log";
+  isLarge(ctx, path);
+  ctx.readOnly = TRUNCATED_READ_ONLY;
+  await openFile(ctx, path);
+  servesWrites(ctx);
+  expect(viewer(ctx)).toMatchObject({ path, status: "ready" });
+});
 
 // --- Copying the open file -------------------------------------------------------------
 
@@ -402,3 +440,20 @@ step("the user is told the file's text was copied", async (ctx: World) => {
   expect(status(ctx)).toEqual({ kind: "success", text: "File contents copied." });
   expect(screen).toContain(statusLabel(ctx));
 });
+
+step("the first megabyte of {string} is on the clipboard", (ctx: FilesWorld, path: string) => {
+  expect(ctx.truncated?.has(path)).toBe(true);
+  expect(ctx.clipboard?.at(-1)).toBe(ctx.files![path]);
+});
+
+step(
+  "the user is told only the first 1 MB of {string} was copied",
+  async (ctx: World, path: string) => {
+    const screen = await settle(ctx);
+    expect(status(ctx)).toEqual({
+      kind: "warning",
+      text: `File contents copied: only the first 1 MB of ${path}.`,
+    });
+    expect(screen).toContain(statusLabel(ctx));
+  },
+);

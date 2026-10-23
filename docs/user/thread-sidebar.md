@@ -80,6 +80,11 @@ position, so using **Un-settle** returns it to the top. Pinning and snoozing pre
 position until you move it again. Thread activity does not change the order. The settled shelf
 continues to use settlement time.
 
+Threads a plugin started and settled, such as finished code reviews, stay off the settled shelf
+unless you turn on **Show plugin threads in Settled** in Settings → General (from the command
+palette in the terminal client). Search and the plugin's own page still find them, and one you
+open stays listed.
+
 If dragging is unavailable for one environment, update the HAL-C2 server running in that
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.

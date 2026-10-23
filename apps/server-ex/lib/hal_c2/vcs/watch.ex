@@ -18,16 +18,16 @@ defmodule HalC2.Vcs.Watch do
   @registry HalC2.Vcs.Registry
   @supervisor HalC2.Vcs.Supervisor
 
-  @doc "Adds `pid` as a subscriber; returns the snapshot event."
-  def subscribe(cwd, pid) do
+  @doc "Adds `pid` as a subscriber under `ref` (`HalC2.Watchers`); returns the snapshot event."
+  def subscribe(cwd, pid, ref \\ nil) do
     case DynamicSupervisor.start_child(@supervisor, {__MODULE__, cwd}) do
-      {:ok, watch} -> GenServer.call(watch, {:subscribe, pid}, 30_000)
-      {:error, {:already_started, watch}} -> GenServer.call(watch, {:subscribe, pid}, 30_000)
+      {:ok, watch} -> GenServer.call(watch, {:subscribe, pid, ref}, 30_000)
+      {:error, {:already_started, watch}} -> GenServer.call(watch, {:subscribe, pid, ref}, 30_000)
     end
   end
 
-  def unsubscribe(cwd, pid) do
-    if watch = lookup(cwd), do: GenServer.cast(watch, {:unsubscribe, pid})
+  def unsubscribe(cwd, pid, ref \\ nil) do
+    if watch = lookup(cwd), do: GenServer.cast(watch, {:unsubscribe, pid, ref})
     :ok
   end
 
@@ -69,22 +69,18 @@ defmodule HalC2.Vcs.Watch do
   end
 
   @impl true
-  def handle_call({:subscribe, pid}, _from, state) do
-    subscribers = Map.put_new_lazy(state.subscribers, pid, fn -> Process.monitor(pid) end)
+  def handle_call({:subscribe, pid, ref}, _from, state) do
+    subscribers = HalC2.Watchers.add(state.subscribers, pid, ref)
 
     {:reply, %{"_tag" => "snapshot", "local" => state.local, "remote" => state.remote},
      %{state | subscribers: subscribers}}
   end
 
   @impl true
-  def handle_cast({:unsubscribe, pid}, state) do
-    case Map.pop(state.subscribers, pid) do
-      {nil, _} ->
-        {:noreply, state}
-
-      {ref, subscribers} ->
-        Process.demonitor(ref, [:flush])
-        stop_if_idle(%{state | subscribers: subscribers})
+  def handle_cast({:unsubscribe, pid, ref}, state) do
+    case HalC2.Watchers.remove(state.subscribers, pid, ref) do
+      same when same == state.subscribers -> {:noreply, state}
+      subscribers -> stop_if_idle(%{state | subscribers: subscribers})
     end
   end
 
@@ -117,9 +113,9 @@ defmodule HalC2.Vcs.Watch do
   def handle_info(:fetch_off, state), do: {:noreply, %{state | timer: schedule_fetch()}}
 
   def handle_info({:DOWN, ref, :process, pid, _}, state) do
-    case state.subscribers do
-      %{^pid => ^ref} -> stop_if_idle(%{state | subscribers: Map.delete(state.subscribers, pid)})
-      _ -> {:noreply, state}
+    case HalC2.Watchers.down(state.subscribers, ref, pid) do
+      same when same == state.subscribers -> {:noreply, state}
+      subscribers -> stop_if_idle(%{state | subscribers: subscribers})
     end
   end
 
@@ -135,7 +131,7 @@ defmodule HalC2.Vcs.Watch do
   end
 
   defp broadcast(state, event) do
-    for {pid, _} <- state.subscribers, do: send(pid, {:hal_c2_vcs, state.cwd, event})
+    HalC2.Watchers.notify(state.subscribers, {:hal_c2_vcs, state.cwd, event})
   end
 
   defp stop_if_idle(%{subscribers: subscribers} = state) when map_size(subscribers) == 0,

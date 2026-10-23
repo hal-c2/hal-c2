@@ -445,16 +445,34 @@ defmodule HalC2.Acp do
     # Apart, so one agent waiting on a sign-in does not hold up the others.
     instances()
     |> Enum.filter(&enabled?/1)
-    |> Task.async_stream(&load/1, timeout: :infinity, max_concurrency: 4)
+    |> Task.async_stream(
+      fn id -> read(id, locked(id, fn -> start_read(id) end)) end,
+      timeout: :infinity,
+      max_concurrency: 4
+    )
     |> Stream.run()
   end
 
-  # An agent enabled after boot is read in the background, once.
+  # An agent enabled after boot is read in the background, once: not while another
+  # read (this one's, a reload's or boot's) is under way.
   defp load_once(id) do
-    if :persistent_term.get({__MODULE__, id, :loading}, false) == false do
-      :persistent_term.put({__MODULE__, id, :loading}, true)
-      Task.start(fn -> load(id) end)
+    # Checked again under the lock, which a listing takes only when no read is under way.
+    if not loading?(id) do
+      generation = locked(id, fn -> if not loading?(id), do: start_read(id) end)
+      if generation, do: Task.start(fn -> read(id, generation) end)
     end
+  end
+
+  defp loading?(id), do: :persistent_term.get({__MODULE__, id, :loading}, false)
+
+  # Starts a read: a new generation, taken under the lock when the read is asked for
+  # (not when its task gets to run, so a read asked for earlier cannot overtake a
+  # later one), and `:loading`, so `entry/1` starts no second read meanwhile.
+  defp start_read(id) do
+    ref = make_ref()
+    :persistent_term.put({__MODULE__, id, :generation}, ref)
+    :persistent_term.put({__MODULE__, id, :loading}, true)
+    ref
   end
 
   @doc "Whether the MC's settings enable an instance (built-in agents are off by default)."
@@ -489,10 +507,10 @@ defmodule HalC2.Acp do
   # it (`{:error, :closed}`), and what it read would otherwise stand as the instance's
   # state beside the read that replaced it. So the read keeps what it learns aside
   # (`stage/3`) and publishes it under the lock `forget/1` takes, and only while the
-  # generation it started in is still current. Each read starts a new generation, so
-  # of two concurrent reads (boot `load/0` does not set `:loading`, so `load_once/1`
-  # can start a second) only the most recently started may publish; the slower,
-  # possibly older-config one cannot win by finishing last. Lock-free
+  # generation it was asked for in is still current. Each read takes a new generation
+  # (`start_read/1`), so of two concurrent reads (boot `load/0` and `reload/1` start
+  # theirs whether or not one is under way) only the most recently asked for may
+  # publish; the slower, possibly older-config one cannot win by finishing last. Lock-free
   # `:persistent_term` readers can still see a brief torn state during those puts;
   # the lock serializes the publish against `forget/1`, it does not make it atomic
   # for readers. The session writers (`put_models/2`, `put_commands/2`,
@@ -501,16 +519,9 @@ defmodule HalC2.Acp do
   # report what a live session currently offers (or that its account is gone),
   # which stays authoritative for that session until the probe `forget/1`
   # triggers publishes over it.
-  defp load(id) do
+  defp read(id, generation) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-acp-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
-
-    generation =
-      locked(id, fn ->
-        ref = make_ref()
-        :persistent_term.put({__MODULE__, id, :generation}, ref)
-        ref
-      end)
 
     Process.put(staged_key(id), [])
 
@@ -1216,10 +1227,24 @@ defmodule HalC2.Acp do
     end
   end
 
-  @doc "Reads one instance's agent again, now."
+  @doc """
+  Reads one instance's agent again, now: what it reads is the instance's state when
+  this returns, unless a `forget/1` (a settings change) overtook it.
+  """
   def reload(id) do
-    forget(id)
-    if enabled?(id), do: load(id)
+    # Forgotten and started in one step, so no listing in between starts a read of
+    # its own that would supersede this one (#459). A settings change that disables
+    # the instance meanwhile forgets it after, which drops this read's generation.
+    enabled = enabled?(id)
+
+    case locked(id, fn ->
+           forget_now(id)
+           if enabled, do: start_read(id)
+         end) do
+      nil -> :ok
+      generation -> read(id, generation)
+    end
+
     :ok
   end
 

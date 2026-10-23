@@ -51,13 +51,17 @@ defmodule HalC2.Acp.Antigravity.Installation do
          do: GenServer.call(__MODULE__, {:remove, instance}, 60_000)
   end
 
-  @doc "Adds `pid` as a subscriber; it gets `{:hal_c2_provider_install, instance, state}`."
-  def subscribe(instance, pid) do
+  @doc """
+  Adds `pid` as a subscriber under `ref` (`HalC2.Watchers`); it gets
+  `{:hal_c2_provider_install, instance, state}`.
+  """
+  def subscribe(instance, pid, ref \\ nil) do
     with :ok <- require_instance(instance, "observe-install", false),
-         do: GenServer.call(__MODULE__, {:subscribe, instance, pid})
+         do: GenServer.call(__MODULE__, {:subscribe, instance, pid, ref})
   end
 
-  def unsubscribe(instance, pid), do: GenServer.cast(__MODULE__, {:unsubscribe, instance, pid})
+  def unsubscribe(instance, pid, ref \\ nil),
+    do: GenServer.cast(__MODULE__, {:unsubscribe, instance, pid, ref})
 
   @doc "The current `ProviderInstallState`."
   def state, do: GenServer.call(__MODULE__, :state)
@@ -131,9 +135,13 @@ defmodule HalC2.Acp.Antigravity.Installation do
   @impl true
   def handle_call(:state, _from, state), do: {:reply, state.state, state}
 
-  def handle_call({:subscribe, instance, pid}, _from, state) do
+  # Watchers are `{pid, instance} => HalC2.Watchers` entry.
+  def handle_call({:subscribe, instance, pid, ref}, _from, state) do
     key = {pid, instance}
-    watchers = Map.put_new_lazy(state.watchers, key, fn -> Process.monitor(pid) end)
+
+    watchers =
+      Map.put(state.watchers, key, HalC2.Watchers.add_entry(state.watchers[key], pid, ref))
+
     {:reply, {:ok, state.state}, %{state | watchers: watchers}}
   end
 
@@ -237,9 +245,21 @@ defmodule HalC2.Acp.Antigravity.Installation do
   end
 
   @impl true
-  def handle_cast({:unsubscribe, instance, pid}, state) do
-    {ref, watchers} = Map.pop(state.watchers, {pid, instance})
-    if ref, do: Process.demonitor(ref, [:flush])
+  def handle_cast({:unsubscribe, instance, pid, ref}, state) do
+    key = {pid, instance}
+
+    watchers =
+      case state.watchers do
+        %{^key => entry} ->
+          case HalC2.Watchers.remove_entry(entry, ref) do
+            nil -> Map.delete(state.watchers, key)
+            entry -> Map.put(state.watchers, key, entry)
+          end
+
+        _ ->
+          state.watchers
+      end
+
     {:noreply, %{state | watchers: watchers}}
   end
 
@@ -307,8 +327,8 @@ defmodule HalC2.Acp.Antigravity.Installation do
     {:noreply, %{state | seen: seen}}
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, _}, state) do
-    {:noreply, %{state | watchers: Map.reject(state.watchers, fn {_key, r} -> r == ref end)}}
+  def handle_info({:DOWN, _ref, :process, pid, _}, state) do
+    {:noreply, %{state | watchers: Map.reject(state.watchers, &match?({{^pid, _}, _}, &1))}}
   end
 
   def handle_info(_message, state), do: {:noreply, state}
@@ -591,8 +611,8 @@ defmodule HalC2.Acp.Antigravity.Installation do
   defp publish(state, patch) do
     state = %{state | state: Map.merge(state.state, patch)}
 
-    for {{pid, instance}, _} <- state.watchers,
-        do: send(pid, {:hal_c2_provider_install, instance, state.state})
+    for {{pid, instance}, entry} <- state.watchers,
+        do: HalC2.Watchers.tell(pid, entry, {:hal_c2_provider_install, instance, state.state})
 
     state
   end

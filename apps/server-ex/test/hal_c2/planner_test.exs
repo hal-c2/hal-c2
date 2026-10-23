@@ -744,6 +744,49 @@ defmodule HalC2.PlannerTest do
     end
   end
 
+  describe "a look while a milestone's push moves an issue" do
+    # The milestone "m1" holds the task "t" again, which the plan last heard GitHub has in
+    # it; another milestone's push on the way took the issue #2 out of any milestone
+    # before "t" went back, so the look lists #2 in none.
+    test "keeps the issue's task where the plan has it until the push reports" do
+      items =
+        plan([
+          {"t", %{"title" => "Issue 2"}},
+          {"m1",
+           %{"title" => "M1", "kind" => "milestone", "due" => "2026-11-30", "after" => ["t"]}}
+        ])
+        |> put_in(["t", "issue"], %{"repository" => "acme/api", "number" => 2, "milestone" => 1})
+        |> put_in(["m1", "milestone"], %{
+          "repository" => "acme/api",
+          "number" => 1,
+          "title" => "M1"
+        })
+
+      listed = %{"repository" => "acme/api", "number" => 2, "title" => "Issue 2"}
+
+      found = %{
+        issues: [Map.merge(listed, %{"state" => "open", "milestone" => nil})],
+        details: [],
+        projects: [],
+        items: items,
+        board: nil,
+        prs: %{},
+        moving: [Map.take(listed, ~w(repository number))]
+      }
+
+      applied = Sync.apply(items, found, %{"sync" => "twoWay"}, @now, fn -> "new" end)
+      assert applied["m1"]["after"] == ["t"]
+      assert applied["t"]["issue"]["milestone"] == 1
+
+      # Once no push moves it, the look takes GitHub's word for it.
+      applied =
+        Sync.apply(items, %{found | moving: []}, %{"sync" => "twoWay"}, @now, fn -> "new" end)
+
+      assert applied["m1"]["after"] == []
+      assert applied["t"]["issue"]["milestone"] == nil
+    end
+  end
+
   describe "a milestone's correction GitHub refused" do
     @repo "acme/api"
     @projects [%{"id" => "p", "kind" => "github", "repository" => @repo}]

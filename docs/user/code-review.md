@@ -98,7 +98,10 @@ a review, you are told why and the review keeps waiting with its comments.
 Changing this moves the review threads there already are, not only new ones.
 When a review is done — reported, published or failed — its thread is settled,
 so finished reviews leave your active list on their own. Unsettle one to bring
-it back; writing in it brings it back too.
+it back; writing in it brings it back too. Settled reviews stay off the
+**Settled** shelf so they do not bury your own threads; search and the Reviews
+page still find them. Turn on **Show plugin threads in Settled** in Settings →
+General (or from the command palette in the terminal client) to list them there.
 
 The **Reviews** page is a tab next to **Threads** with every review by state, and
 the picked one's verdict, summary and comments. Publish, retry, dismiss comments

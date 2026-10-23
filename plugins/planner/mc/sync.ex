@@ -443,7 +443,8 @@ defmodule HalC2Plugins.Planner.Sync do
   for each issue milestone, board dates, and the pull requests' states. New items
   get ids from `new_id`. The tasks in `found.kept`, which the plan keeps as they are,
   keep their subtasks and dependencies, so the ones given to others are checked
-  against them.
+  against them. The issues in `found.moving`, which a push on the way moves to a
+  milestone or out of one, keep their tasks' milestones (`milestones/8`).
   """
   def apply(items, found, settings, now, new_id) do
     {items, open} =
@@ -460,7 +461,7 @@ defmodule HalC2Plugins.Planner.Sync do
             end)
           )
           |> relations(issues, Map.get(found, :kept, %{}), now)
-          |> milestones(issues, found.items, settings, projects, now, new_id)
+          |> milestones(issues, found.items, moving_keys(found), settings, projects, now, new_id)
           |> dates(found.board, now)
 
         open = for issue <- issues, issue["state"] == "open", into: MapSet.new(), do: key(issue)
@@ -682,17 +683,27 @@ defmodule HalC2Plugins.Planner.Sync do
   # keeps the number of the milestone GitHub has it in (`issue["milestone"]`): when the
   # plan syncs both ways, a task whose issue GitHub has where it had it when the plan
   # was read (`read`) stays where the user put it, its move on the way to GitHub or
-  # refused, so only the tasks whose issues GitHub moved since change milestone.
-  defp milestones(items, issues, read, settings, projects, now, new_id) do
+  # refused, so only the tasks whose issues GitHub moved since change milestone. An issue
+  # a push on the way moves (`moving`) may be listed where that push put it, or not yet:
+  # its task stays where the plan has it, and its issue where the plan last heard GitHub
+  # has it, until the push's report lands (`landed/2`) and sets the issue right
+  # (`reasserts/4`).
+  defp milestones(items, issues, read, moving, settings, projects, now, new_id) do
     listed =
       Map.new(issues, fn issue ->
         {key(issue),
          issue["milestone"] && Map.put(issue["milestone"], "repository", issue["repository"])}
       end)
 
+    moving? = fn id ->
+      issue = get_in(items, [id, "issue"])
+      issue != nil and MapSet.member?(moving, key(issue))
+    end
+
     moved? = fn id, number ->
       settings["sync"] != "twoWay" or
-        Map.get(get_in(read, [id, "issue"]) || %{}, "milestone", :none) != number
+        (Map.get(get_in(read, [id, "issue"]) || %{}, "milestone", :none) != number and
+           not moving?.(id))
     end
 
     left? = fn milestone, id ->
@@ -768,10 +779,13 @@ defmodule HalC2Plugins.Planner.Sync do
             items
 
           task ->
-            put_in(
-              items[task["id"]]["issue"]["milestone"],
-              get_in(issue, ["milestone", "number"])
-            )
+            if moving?.(task["id"]) and settings["sync"] == "twoWay",
+              do: items,
+              else:
+                put_in(
+                  items[task["id"]]["issue"]["milestone"],
+                  get_in(issue, ["milestone", "number"])
+                )
         end
       end)
     )
@@ -1510,6 +1524,18 @@ defmodule HalC2Plugins.Planner.Sync do
   defp login?(_, _), do: false
 
   defp key(%{"repository" => repo, "number" => number}), do: {String.downcase(repo || ""), number}
+
+  # The issues `found.moving` names, as `key/1` has them.
+  defp moving_keys(found), do: MapSet.new(Map.get(found, :moving, []), &key/1)
+
+  @doc """
+  The issues `ops` (`pushes/5`) move to a milestone or out of one, as a look is told
+  of them while the push is on the way (`apply/5`).
+  """
+  def moving(ops) do
+    for {"update", %{"milestone" => _} = input, _} <- ops,
+        do: Map.take(input, ~w(repository number))
+  end
 
   defp day(value) when is_binary(value) and byte_size(value) >= 10, do: binary_part(value, 0, 10)
   defp day(_), do: nil

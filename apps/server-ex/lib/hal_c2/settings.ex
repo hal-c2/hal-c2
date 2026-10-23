@@ -213,13 +213,13 @@ defmodule HalC2.Settings do
   @doc "Replaces the document if it is still at `version`; returns the new version."
   def put(settings, version), do: GenServer.call(__MODULE__, {:put, settings, version})
 
-  def watch(pid) do
-    GenServer.call(__MODULE__, {:watch, pid})
+  def watch(pid, ref \\ nil) do
+    GenServer.call(__MODULE__, {:watch, pid, ref})
   catch
     :exit, {:noproc, _} -> :ok
   end
 
-  def unwatch(pid), do: GenServer.cast(__MODULE__, {:unwatch, pid})
+  def unwatch(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unwatch, pid, ref})
 
   @doc """
   Saves `fun.(settings)` as one step, whatever the version. Without a running
@@ -328,40 +328,39 @@ defmodule HalC2.Settings do
   def handle_call({:put, _settings, _version}, _from, state),
     do: {:reply, {:error, :stale}, state}
 
-  def handle_call({:watch, pid}, _from, state) do
-    watchers = Map.put_new_lazy(state.watchers, pid, fn -> Process.monitor(pid) end)
+  def handle_call({:watch, pid, ref}, _from, state) do
+    watchers = HalC2.Watchers.add(state.watchers, pid, ref)
     {:reply, :ok, %{state | watchers: watchers}}
   end
 
   @impl true
   def handle_cast(:providers_changed, state) do
-    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_providers_changed, node()})
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_providers_changed, node()})
     {:noreply, state}
   end
 
   def handle_cast({:keybindings_changed, rules}, state) do
-    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_keybindings, node(), rules})
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
     {:noreply, state}
   end
 
   def handle_cast({:usage_limit_sources_changed, sources}, state) do
-    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_usage_limit_sources, node(), sources})
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_usage_limit_sources, node(), sources})
     {:noreply, state}
   end
 
   def handle_cast({:upgraded, outcome}, state) do
-    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_upgraded, node(), outcome})
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_upgraded, node(), outcome})
     {:noreply, state}
   end
 
   def handle_cast({:themes_changed, themes}, state) do
-    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_themes, node(), themes})
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_themes, node(), themes})
     {:noreply, state}
   end
 
-  def handle_cast({:unwatch, pid}, state) do
-    {ref, watchers} = Map.pop(state.watchers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
+  def handle_cast({:unwatch, pid, ref}, state) do
+    watchers = HalC2.Watchers.remove(state.watchers, pid, ref)
     {:noreply, %{state | watchers: watchers}}
   end
 
@@ -433,7 +432,7 @@ defmodule HalC2.Settings do
         old[id] != new[id],
         do: HalC2.Acp.forget(id)
 
-    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_settings, node(), settings})
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_settings, node(), settings})
 
     %{
       state

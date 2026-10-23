@@ -34,3 +34,6 @@ config :hal_c2, fj_keys_paths: []
 # The cluster process never gossips on its own clock; tests that need it send it
 # `:gossip`.
 config :hal_c2, cluster_gossip: :timer.hours(24)
+
+# Every Windows editor scenario fakes its own `reg`, so none may see another's answer.
+config :hal_c2, windows_editor_cache_ms: 0

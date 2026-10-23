@@ -20,6 +20,7 @@
 #   apps/tui/src/contextWindow.ts
 #   apps/tui/src/components/ChatView.tsx (interrupt)
 #   apps/desktop-qt/src/native/ThreadStore.cpp (a sent image's signed address, asked for again once it expires)
+#   apps/desktop-qt/src/native/TimelineModel.cpp (sent files listed by name, kind and size)
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (sent file, video and unknown attachments)
 #   apps/mobile/src/features/threads/ThreadFeed.tsx (a message not yet acknowledged shows Pending)
 
@@ -116,7 +117,7 @@ Feature: Runs, interruptions and the queue
     When more than an hour passes
     Then the message shows the image "cart.png" from a new address
 
-  @backlog @mobile
+  @shared @backlog-mobile @backlog-tui
   Scenario: A sent file shows its name, kind and size
     When the user sent the file "report.pdf" of 2 MB with a message
     Then the message shows "report.pdf" with its kind and size
@@ -141,7 +142,7 @@ Feature: Runs, interruptions and the queue
     When the user opens it
     Then the video plays
 
-  @backlog @mobile
+  @shared @backlog-mobile @backlog-tui
   Scenario: A sent attachment of a kind this client does not know is listed by name only
     Given the message carries an attachment of a kind a newer environment added
     Then the message lists the attachment by its name

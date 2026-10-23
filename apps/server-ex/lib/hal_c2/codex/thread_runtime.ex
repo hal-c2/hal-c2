@@ -204,7 +204,10 @@ defmodule HalC2.Codex.ThreadRuntime do
        running: %{},
        # Commands an earlier turn left running in the background: native item id ->
        # `%{item: turn item, process: process id | nil}`.
-       background: %{}
+       background: %{},
+       # The run the latest turn ran as, also one that failed to start: the run a
+       # client names to stop the commands left running between turns.
+       last_run: nil
      }}
   end
 
@@ -227,7 +230,8 @@ defmodule HalC2.Codex.ThreadRuntime do
         instance: resolved_instance(instance),
         items: %{},
         failure: nil,
-        running: %{}
+        running: %{},
+        last_run: turn[:ids][:run]
     }
 
     # The threads this turn's subagents run in (`spawnAgent`): native thread id ->
@@ -272,6 +276,16 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_call({:interrupt, run_id}, _from, %{turn: %{ids: %{run: other}}} = state)
       when is_binary(run_id) and run_id != other,
       do: {:reply, {:error, "no running turn"}, state}
+
+  # Between turns a stop naming a run that started before the latest turn's (a
+  # restart that read it as active) leaves the commands that later run left
+  # (#474); one naming that run or a later one, on another provider, ends it.
+  def handle_call({:interrupt, run_id}, from, %{turn: nil, last_run: last} = state)
+      when is_binary(run_id) and is_binary(last) and run_id != last do
+    if HalC2.Orchestration.earlier_run?(state.thread_id, run_id, last),
+      do: {:reply, {:error, "no running turn"}, state},
+      else: handle_call(:interrupt, from, state)
+  end
 
   def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
 
@@ -543,6 +557,7 @@ defmodule HalC2.Codex.ThreadRuntime do
      state
      |> Map.put_new(:running, %{})
      |> Map.put_new(:background, %{})
+     |> Map.put_new(:last_run, nil)
      |> Map.put(:instance, instance)
      |> Map.put_new(:conn_instance, :unknown)
      |> Map.put(:v, @state_version)}

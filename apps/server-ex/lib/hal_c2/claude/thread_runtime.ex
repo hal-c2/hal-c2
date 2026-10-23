@@ -183,6 +183,9 @@ defmodule HalC2.Claude.ThreadRuntime do
        tasks: %{},
        # The latest turn's ids, which work Claude starts between turns joins.
        last_ids: nil,
+       # The run the latest turn ran as, also one that failed to start: the run a
+       # client names to stop the work left running between turns.
+       last_run: nil,
        # The instance the latest turn's quota is published under, resolved
        # against settings once when the turn starts (or its ids are recovered).
        usage_instance: nil,
@@ -215,6 +218,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         blocks: %{},
         interrupted: false,
         last_ids: ids,
+        last_run: ids.run,
         usage_instance: resolved_instance(Entities.instance(ids)),
         wake: nil
     }
@@ -249,6 +253,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         blocks: %{},
         interrupted: false,
         last_ids: ids,
+        last_run: ids.run,
         usage_instance: resolved_instance(Entities.instance(ids))
     }
 
@@ -308,6 +313,16 @@ defmodule HalC2.Claude.ThreadRuntime do
   def handle_call({:interrupt, run_id}, _from, %{turn: %{ids: %{run: other}}} = state)
       when is_binary(run_id) and run_id != other,
       do: {:reply, {:error, "no running turn"}, state}
+
+  # Between turns a stop naming a run that started before the latest turn's (a
+  # restart that read it as active) leaves the work that later run left, nor its session
+  # (#474); one naming that run or a later one, on another provider, ends it.
+  def handle_call({:interrupt, run_id}, from, %{turn: nil, last_run: last} = state)
+      when is_binary(run_id) and is_binary(last) and run_id != last do
+    if HalC2.Orchestration.earlier_run?(state.thread_id, run_id, last),
+      do: {:reply, {:error, "no running turn"}, state},
+      else: handle_call(:interrupt, from, state)
+  end
 
   def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
 
@@ -510,6 +525,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:work, %{})
        |> Map.put_new(:tasks, %{})
        |> Map.put_new(:last_ids, nil)
+       |> Map.put_new_lazy(:last_run, fn -> state[:last_ids][:run] end)
        |> Map.put_new(:usage_instance, nil)
        |> Map.put_new(:wake, nil)
        |> Map.put_new(:permission_mode, nil)
