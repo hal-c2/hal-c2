@@ -946,6 +946,76 @@ defmodule HalC2.Web.SocketTest do
     assert {[{2, 1}], _} = refresh_frames(client)
   end
 
+  # A cluster member whose update failed stays on the release before watched services
+  # took a ref.
+  test "a watched service on an MC from before refs is followed without one", %{port: port} do
+    {_peer, old} = HalC2.Test.OldMc.start(self())
+    shape = %{"type" => "pullRequestRefreshes", "mc" => Atom.to_string(old)}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
+      |> WsClient.send_json(%{"t" => "sub", "id" => 2, "shape" => shape})
+
+    assert {[{1, 0}, {2, 0}], client} = pong_refresh_frames(client)
+    [socket] = HalC2.Test.OldMc.watchers(old)
+
+    HalC2.Test.OldMc.bump(old)
+    assert {[{1, 1}, {2, 1}], client} = pong_refresh_frames(client)
+
+    # The two share the one watch the old MC keeps, let go of with the last.
+    client = WsClient.send_json(client, %{"t" => "unsub", "id" => 1})
+    HalC2.Test.OldMc.bump(old)
+    assert {[{2, 2}], client} = pong_refresh_frames(client)
+
+    client |> WsClient.send_json(%{"t" => "unsub", "id" => 2}) |> pong_refresh_frames()
+    assert_receive {:old_mc_unsubscribed, ^socket}, 5_000
+    assert HalC2.Test.OldMc.watchers(old) == []
+  end
+
+  # A service slow to be sent the subscribe (Vcs.Watch starting its server first) takes
+  # it after the socket gave up waiting; an unsubscribe sent when it did lands first.
+  test "a subscribe taken after the socket gave up on it is let go of after it", %{port: port} do
+    start_supervised!(HalC2.PullRequests.Refreshes)
+    server = Process.whereis(HalC2.PullRequests.Refreshes)
+    gate = LateUnsubscribe.install(HalC2.PullRequests.Refreshes)
+    on_exit(fn -> LateUnsubscribe.uninstall(gate) end)
+    Application.put_env(:hal_c2, :remote_timeout, 50)
+    on_exit(fn -> Application.delete_env(:hal_c2, :remote_timeout) end)
+    1 = :erlang.trace(server, true, [:receive])
+
+    LateUnsubscribe.arm(gate, hold: :alone)
+    shape = %{"type" => "pullRequestRefreshes", "mc" => Atom.to_string(node())}
+    client = connect(port) |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => shape})
+    assert_receive :subscribe_held, 5_000
+    {%{"id" => 1}, _, _client} = WsClient.recv_until(client, &(&1["t"] == "error"), 5_000)
+
+    LateUnsubscribe.release(gate)
+    assert {:subscribe, socket, ref} = next_request(server)
+    assert {:unsubscribe, ^socket, ^ref} = next_request(server)
+    assert :sys.get_state(server).watchers == %{}
+  end
+
+  # The next call or cast `server` was sent, in the order it was sent them (traced).
+  defp next_request(server) do
+    receive do
+      {:trace, ^server, :receive, {:"$gen_call", _from, request}} -> request
+      {:trace, ^server, :receive, {:"$gen_cast", request}} -> request
+      {:trace, ^server, :receive, _other} -> next_request(server)
+    after
+      5_000 -> flunk("#{inspect(server)} was sent nothing more")
+    end
+  end
+
+  # The pull request refresh frames before the pong answering a ping, as {id, revision}.
+  defp pong_refresh_frames(client) do
+    client = WsClient.send_json(client, %{"t" => "ping"})
+    {_pong, frames, client} = WsClient.recv_until(client, &(&1["t"] == "pong"), 5_000)
+
+    {for(%{"t" => "pullRequestRefreshes", "id" => id, "revision" => r} <- frames, do: {id, r})
+     |> Enum.sort(), client}
+  end
+
   # The pull request refresh frames before the pong answering a ping sent once
   # HalC2.PullRequests.Refreshes has handled what it was sent, as {id, revision}.
   defp refresh_frames(client) do

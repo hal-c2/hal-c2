@@ -461,10 +461,9 @@ defmodule HalC2.Web.Socket do
   # `/usage-limits` itself (`:usage_limits_command`) gets providers that offer it.
   defp subscribe(state, id, {:config, mc, command}, _offset) do
     shape = {:config, mc}
-    ref = make_ref()
 
-    with {:ok, :ok} <- remote(mc, HalC2.Settings, :watch, [self(), ref]),
-         {:ok, config} <- remote(mc, HalC2.Environment, :server_config, []) do
+    with {:ok, ref, :ok} <- watch(state, shape),
+         {:ok, config} <- config_or_let_go(state, shape, ref) do
       # Published themes follow the snapshot.
       themes =
         case remote(mc, HalC2.EnvironmentThemes, :current, []) do
@@ -510,9 +509,7 @@ defmodule HalC2.Web.Socket do
        [Protocol.encode(frame), Protocol.encode(themes_frame), Protocol.encode(sources_frame)],
        state}
     else
-      {_, reason} ->
-        :erpc.cast(mc, HalC2.Settings, :unwatch, [self(), ref])
-        {:push, Protocol.encode(error_frame(id, reason)), state}
+      {:error, reason} -> {:push, Protocol.encode(error_frame(id, reason)), state}
     end
   end
 
@@ -673,11 +670,10 @@ defmodule HalC2.Web.Socket do
   # subscribe from dropping that one, and the changes sent before it from following
   # its snapshot.
   defp subscribe(state, id, shape, _offset) do
-    {key, mc, module, sub, unsub, args} = watch_spec(shape)
-    ref = make_ref()
+    key = elem(watch_spec(shape), 0)
 
-    case remote(mc, module, sub, args ++ [ref]) do
-      {:ok, reply} ->
+    case watch(state, shape) do
+      {:ok, ref, reply} ->
         case snapshot(shape, reply) do
           {:error, detail} ->
             {:push, Protocol.encode(error_frame(id, detail)), state}
@@ -690,13 +686,113 @@ defmodule HalC2.Web.Socket do
                   Map.update(state.by_terminal, key, %{id => ref}, &Map.put(&1, id, ref))
             }
 
-            if message, do: watched(state, message, [ref]), else: {:ok, state}
+            # To this subscription alone: others without a ref were sent it already.
+            if message,
+              do: {:push, Protocol.encode(snapshot_frame(id, message, state)), state},
+              else: {:ok, state}
         end
 
       {:error, reason} ->
-        # A call that gave up may still be taken.
-        :erpc.cast(mc, module, unsub, args ++ [ref])
         {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
+  # Watches the service of `shape` (`watch_spec/1`) under a new ref, answering
+  # `{:ok, ref, reply}`, or `{:error, reason}` with nothing left watching.
+  #
+  # An MC from before refs (a cluster member whose update failed) has no ref arity, so
+  # it is watched without one: `ref` is nil, and it tells this socket its changes bare
+  # (`handle_info/2`'s last clause for `@watched`).
+  #
+  # The subscribe runs in a process of its own, which outlives this socket giving up on
+  # it after `remote_timeout/0`: the service may still take the subscribe after an
+  # unsubscribe sent now, and keep the ref as long as this socket lives. Whichever of
+  # the two settles the atomic first decides: the process hands the answer over, or
+  # it lets go of the ref itself once the subscribe has been taken, ordered after it.
+  defp watch(state, shape) do
+    {key, mc, module, sub, unsub, args} = watch_spec(shape)
+    socket = self()
+    tag = make_ref()
+    verdict = :atomics.new(1, [])
+
+    spawn(fn ->
+      result = subscribe_call(mc, module, sub, args, make_ref())
+
+      case :atomics.compare_exchange(verdict, 1, 0, 1) do
+        :ok ->
+          send(socket, {tag, result})
+
+        # An old MC's watch without a ref may be shared with the socket's others, which
+        # this process knows nothing of: one left over is let go of with the socket's
+        # next subscription to it, or when the socket exits.
+        _given_up ->
+          with {_, ref, _} when ref != nil <- result,
+               do: :erpc.cast(mc, module, unsub, args ++ [ref])
+      end
+    end)
+
+    receive do
+      {^tag, result} -> settle(state, shape, key, result)
+    after
+      remote_timeout() ->
+        case :atomics.compare_exchange(verdict, 1, 0, 2) do
+          :ok ->
+            {:error, "MC unavailable: timeout"}
+
+          _handed_over ->
+            receive do
+              {^tag, result} -> settle(state, shape, key, result)
+            end
+        end
+    end
+  end
+
+  # The MC's config for a watch of its settings just made under `ref`, which is let go
+  # of if the MC cannot answer.
+  defp config_or_let_go(state, {:config, mc} = shape, ref) do
+    with {:error, _} = error <- remote(mc, HalC2.Environment, :server_config, []) do
+      let_go(shape, ref, Map.get(state.by_terminal, {:settings, mc}, %{}))
+      error
+    end
+  end
+
+  # A failed subscribe may still have been taken (a service's own call timing out).
+  defp settle(_state, _shape, _key, {:ok, _ref, _reply} = ok), do: ok
+
+  defp settle(state, shape, key, {:error, reason, ref}) do
+    let_go(shape, ref, Map.get(state.by_terminal, key, %{}))
+    {:error, reason}
+  end
+
+  # `fun` under `args ++ [ref]`, or under `args` alone on an MC without that arity.
+  defp subscribe_call(mc, module, fun, args, ref) do
+    with_ref = args ++ [ref]
+
+    try do
+      {:ok, ref, :erpc.call(mc, module, fun, with_ref, :infinity)}
+    catch
+      :error, {:exception, :undef, [{^module, ^fun, ^with_ref, _} | _]} ->
+        case remote(mc, module, fun, args, :infinity) do
+          {:ok, reply} -> {:ok, nil, reply}
+          {:error, reason} -> {:error, reason, nil}
+        end
+
+      kind, reason ->
+        {:error, failure(mc, kind, reason), ref}
+    end
+  end
+
+  # Lets go of the watch of `shape` under `ref`; `others`, the socket's other
+  # subscriptions to it (`%{id => ref}`). Without a ref (an MC from before refs, or a
+  # subscription an upgrade carried over), the watch is the socket's and goes with the
+  # last subscription holding none, by the arity without one, which every MC has.
+  defp let_go(shape, ref, others) do
+    {_key, mc, module, _sub, unsub, args} = watch_spec(shape)
+
+    cond do
+      ref != nil -> :erpc.cast(mc, module, unsub, args ++ [ref])
+      nil in Map.values(others) -> :ok
+      true -> :erpc.cast(mc, module, unsub, args)
     end
   end
 
@@ -733,15 +829,19 @@ defmodule HalC2.Web.Socket do
     Enum.uniq([node() | Node.list()] ++ Enum.map(shell, &elem(&1, 0)))
   end
 
-  defp remote(mc, module, fun, args) do
-    {:ok, :erpc.call(mc, module, fun, args, 15_000)}
+  defp remote(mc, module, fun, args, timeout \\ remote_timeout()) do
+    {:ok, :erpc.call(mc, module, fun, args, timeout)}
   catch
-    :error, {:erpc, reason} ->
-      {:error, "MC unavailable: #{reason}"}
-
-    kind, reason ->
-      {:error, "#{mc} cannot serve this: #{Exception.format_banner(kind, reason)}"}
+    kind, reason -> {:error, failure(mc, kind, reason)}
   end
+
+  defp failure(_mc, :error, {:erpc, reason}), do: "MC unavailable: #{reason}"
+
+  defp failure(mc, kind, reason),
+    do: "#{mc} cannot serve this: #{Exception.format_banner(kind, reason)}"
+
+  # How long a call to an MC may take before its subscription fails (`:remote_timeout`).
+  defp remote_timeout, do: Application.get_env(:hal_c2, :remote_timeout, 15_000)
 
   # Marks this socket's own session in an access event.
   defp own(%{"type" => "snapshot", "payload" => payload} = event, state),
@@ -1142,14 +1242,12 @@ defmodule HalC2.Web.Socket do
   end
 
   # Lets go of subscription `id`'s ref on the service it watches; the service keeps
-  # this socket's others. The subscriptions an upgrade carried over (version 7) share
-  # one watch without a ref, let go of with the last of them.
+  # this socket's others. Those without a ref (an upgrade carried them over, version 7,
+  # or the MC is from before refs) share one watch, let go of with the last of them.
   defp unwatch(state, id, shape) do
-    {key, mc, module, _sub, unsub, args} = watch_spec(shape)
+    key = elem(watch_spec(shape), 0)
     {ref, ids} = Map.pop(Map.get(state.by_terminal, key, %{}), id)
-
-    if ref != nil or nil not in Map.values(ids),
-      do: :erpc.cast(mc, module, unsub, args ++ [ref])
+    let_go(shape, ref, ids)
 
     by_terminal =
       if ids == %{},
@@ -1306,6 +1404,11 @@ defmodule HalC2.Web.Socket do
         frames = for id <- ids, do: Protocol.encode(Map.merge(%{"t" => type, "id" => id}, fields))
         {:push, frames, state}
     end
+  end
+
+  defp snapshot_frame(id, message, state) do
+    {_key, type, fields} = watched_frame(message, state)
+    Map.merge(%{"t" => type, "id" => id}, fields)
   end
 
   # The key of the subscriptions a service's message is for, and their frame's type and
