@@ -1701,6 +1701,7 @@ defmodule HalC2Plugins.Planner do
   # `{nil, state}` when the plan does not push it, or GitHub has all of it, which clears
   # its marks.
   defp next_push(state, id, item, synced) do
+    synced = Sync.settled(synced, item, state.items)
     marked? = item["synced"] != nil or item["syncError"] != nil
 
     case Sync.pushes(state.settings, synced, item, state.items, state.projects) do
@@ -1709,6 +1710,14 @@ defmodule HalC2Plugins.Planner do
 
       [] when marked? ->
         {nil, put_in(state.items[id], Map.merge(item, %{"synced" => nil, "syncError" => nil}))}
+
+      # Not pushed, but the marks `settled/3` dropped stay dropped.
+      nil ->
+        {nil,
+         put_in(
+           state.items[id],
+           if(item["synced"], do: Map.put(item, "synced", synced), else: item)
+         )}
 
       _ ->
         {nil, put_in(state.items[id], item)}
@@ -1727,7 +1736,8 @@ defmodule HalC2Plugins.Planner do
 
       again ->
         item = state.items[id]
-        synced = synced || Sync.synced(item, item, state.items)
+        synced = Sync.misplaced(synced || Sync.synced(item, item, state.items), again)
+        again = for {_id, op} <- again, do: op
         {{again ++ ops, synced}, put_in(state.items[id]["synced"], synced)}
     end
   end
