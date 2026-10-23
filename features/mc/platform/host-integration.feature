@@ -110,6 +110,13 @@ Feature: The MC working with its host machine
       | README.md      |
       | tool.desktop   |
 
+  # A trailing slash on a file's path must not make the opener treat the file as a folder.
+  @mc
+  Scenario: On Linux a file addressed with a trailing slash still shows the folder that holds it
+    Given a Linux host with a display and xdg-open installed
+    When a client opens the file "tool.desktop" addressed with a trailing slash in the file manager
+    Then the host's file manager shows the folder that holds the file
+
   @mc
   Scenario Outline: On a Mac opening a file in the file manager reveals it instead of opening it
     Given the MC runs on macOS

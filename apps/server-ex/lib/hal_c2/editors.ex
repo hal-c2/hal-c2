@@ -181,8 +181,10 @@ defmodule HalC2.Editors do
   # folder. Explorer's `/select,` goes in an argument of its own so a path with a space
   # is quoted on its own (written to Microsoft's documented form; unverified on a real
   # Windows host, like #397).
-  defp show("xdg-open", target, _reveal),
-    do: [if(File.dir?(target), do: target, else: Path.dirname(target))]
+  defp show("xdg-open", target, _reveal) do
+    path = Path.expand(target)
+    [if(File.dir?(path), do: path, else: Path.dirname(path))]
+  end
 
   # The path is expanded first so what is checked is what is opened: no trailing slash
   # that makes `lstat` follow a link, no `..` that a link would take somewhere else.

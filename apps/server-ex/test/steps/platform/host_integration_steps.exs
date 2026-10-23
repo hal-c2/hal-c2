@@ -375,6 +375,16 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     |> open(%{"cwd" => cwd, "editor" => "file-manager"})
   end
 
+  step ~r/^a client opens the file "(?<file>[^"]+)" addressed with a trailing slash in the file manager$/,
+       %{args: [file]} = context do
+    target = Path.join(Mc.tmp_dir(context.mc, "project"), file)
+    File.write!(target, "x\n")
+
+    context
+    |> Map.put(:target, target)
+    |> open(%{"cwd" => target <> "/", "editor" => "file-manager"})
+  end
+
   step "Finder opens that folder", context do
     assert {:ok, nil} = context.reply
     {conn, argv} = launched(context)
