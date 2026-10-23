@@ -15,6 +15,8 @@ mod commands;
 mod composer;
 mod composer_brick;
 mod composer_prop;
+mod composer_queue;
+mod composer_queue_prop;
 mod composer_suggestions_prop;
 mod connection_health;
 mod connections;

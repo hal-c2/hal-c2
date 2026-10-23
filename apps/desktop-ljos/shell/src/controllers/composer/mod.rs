@@ -24,7 +24,8 @@
 //! approvals [{requestId, title, appName, detail, options [{decision, label,
 //! warning}], canRespond, responding, problem}], questions [{requestId,
 //! questions [{id, ..., attachments}], canRespond, responding, problem}],
-//! plan {id, title, markdown} | null, queue, waiting}.
+//! plan {id, title, markdown} | null, queue, waiting, queueHeld,
+//! queueResuming}: the MC keeps a held queue until it is resumed.
 //!
 //! Actions: composer.text.set {target, text, cursor, edit},
 //! composer.suggest.select {id}, composer.suggest.dismiss,
@@ -42,7 +43,8 @@
 //! {requestId, answers}, composer.question.dismiss {requestId},
 //! composer.plan.implement, composer.queue.remove {runId},
 //! composer.queue.steer {runId?}, composer.queue.edit {runId?},
-//! composer.queue.edit.cancel, composer.stash, composer.stash.restore {id},
+//! composer.queue.edit.cancel, composer.queue.resume (a held queue),
+//! composer.stash, composer.stash.restore {id},
 //! composer.stash.delete {id}, composer.stash.menu {open?}.
 
 pub mod kept;
@@ -132,6 +134,9 @@ pub struct Composer {
     recall: Option<Recall>,
     /// What "/usage-limits" showed, by target.
     usage_limits: HashMap<String, Json>,
+    /// This window's "Not connected: queue not resumed" toast, while it may
+    /// still show.
+    not_connected_toast: String,
 }
 
 /// Runs `f` on the composer once no controller is running: what an MC
@@ -229,6 +234,7 @@ impl Controller for Composer {
             paths: PathSearch::default(),
             recall: None,
             usage_limits: HashMap::new(),
+            not_connected_toast: String::new(),
         }
     }
 
@@ -681,6 +687,21 @@ pub fn attachment_preview(engine: &Engine, id: &str) -> Option<Json> {
 /// composer is busy or there is none.
 pub fn current_selection(engine: &Engine) -> Obj {
     controller::with::<Composer, _>(engine, |c, e| c.current_selection(e)).unwrap_or_default()
+}
+
+/// Every window's composer publishes again, once it is free: what one window
+/// changed in what they share ([`kept`]) the others show too. The composer
+/// running now is skipped: it publishes itself.
+fn publish_everywhere(engine: &Engine) {
+    controller::each_window(engine, |engine| {
+        let Some(composer) = controller::controller::<Composer>(engine) else {
+            return;
+        };
+        let Ok(me) = composer.try_borrow().map(|c| c.me.clone()) else {
+            return;
+        };
+        later(&me, engine, Composer::publish);
+    });
 }
 
 /// The kept attachment `id` of any draft or question's answer.

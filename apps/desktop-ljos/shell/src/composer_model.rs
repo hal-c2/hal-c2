@@ -1408,11 +1408,23 @@ pub fn score_query_match(
 /// itself, a delegated task's result or the provider's wake-up (`runId`,
 /// `summary`, `outcome`), which is not the user's to edit, steer with or
 /// remove. A run whose message has not arrived yet is in neither: which it
-/// is, and what it says, comes with the message.
+/// is, and what it says, comes with the message. `held` is the MC keeping
+/// the queue for the user (after a restart or a usage limit) until it is
+/// resumed, whether or not every run is listed yet.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Queued {
     pub queue: Vec<Json>,
     pub waiting: Vec<Json>,
+    pub held: bool,
+}
+
+impl Queued {
+    /// Held with something listed: the card shows and the resume is
+    /// offered. Held with nothing listed shows no card, so it offers no
+    /// resume either.
+    pub fn shown_held(&self) -> bool {
+        self.held && (!self.queue.is_empty() || !self.waiting.is_empty())
+    }
 }
 
 fn number(object: &Obj, field: &str, otherwise: f64) -> f64 {
@@ -1441,6 +1453,9 @@ pub fn queued<'a>(
     });
     let mut queued = Queued::default();
     for run in waiting {
+        // Held is the queue's, listed run or not; the card shows it only
+        // with a run to list.
+        queued.held = queued.held || flag(run, "queueHeld");
         let run_id = text(run, "id");
         let Some(message) = message(text(run, "userMessageId")) else {
             continue;

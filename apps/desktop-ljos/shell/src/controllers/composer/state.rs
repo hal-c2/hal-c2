@@ -53,6 +53,8 @@ impl Composer {
                 "plan": null,
                 "queue": [],
                 "waiting": [],
+                "queueHeld": false,
+                "queueResuming": false,
             });
         }
         let mut state = json!({
@@ -64,6 +66,8 @@ impl Composer {
             "plan": null,
             "queue": [],
             "waiting": [],
+            "queueHeld": false,
+            "queueResuming": kept::read(engine, |d| d.resuming.contains(&self.thread)),
         });
         let (Some(_), Some(obj)) = (&thread, self.timeline) else {
             return state;
@@ -201,16 +205,36 @@ impl Composer {
             }
             let messages = t.entities("message");
             let queued = model::queued(runs.values(), |id| messages.get(id));
-            (approvals, questions, plan, queued.queue, queued.waiting)
+            (approvals, questions, plan, queued)
         });
-        if let Some((approvals, questions, plan, queue, waiting)) = read {
+        if let Some((approvals, questions, plan, queued)) = read {
             state["approvals"] = Json::Array(approvals);
             state["questions"] = Json::Array(questions);
             state["plan"] = plan;
-            state["queue"] = Json::Array(queue);
-            state["waiting"] = Json::Array(waiting);
+            // Held with nothing listed shows no card, so it offers no resume
+            // either. A queued run comes with its message in the one
+            // transaction that queues it (the MC's `queue_run`), so a run
+            // without its message on a live stream is the moment before the
+            // two events are read, not a state that lasts; an empty card in
+            // that moment would only flash.
+            state["queueHeld"] = json!(queued.shown_held());
+            state["queue"] = Json::Array(queued.queue);
+            state["waiting"] = Json::Array(queued.waiting);
         }
         state
+    }
+
+    /// Whether the MC holds this thread's queue, with something listed to
+    /// resume: the one fact `resume_queue` needs, without building the whole
+    /// turn state.
+    pub(super) fn queue_held(&self, engine: &Engine) -> bool {
+        if !self.draft_id.is_empty() || thread_of(engine, &self.thread).is_none() {
+            return false;
+        }
+        self.read_timeline(engine, |t| {
+            let messages = t.entities("message");
+            model::queued(t.entities("run").values(), |id| messages.get(id)).shown_held()
+        })
     }
 
     /// ShellComposerState; null with no thread or draft open.
