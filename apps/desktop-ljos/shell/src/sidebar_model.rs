@@ -1611,10 +1611,26 @@ pub fn resolve_custom_snooze<Tz: TimeZone>(
     (wake > now).then(|| format_iso(&wake))
 }
 
+/// Locale AM/PM separators as plain spaces. Newer CLDR data puts a narrow
+/// no-break space (U+202F) before AM and PM, which all but vanishes in the
+/// monospace meta lines ("8:46AM"), and some locales use a no-break space
+/// (U+00A0) for the same separator. The stamp and the snooze labels built
+/// from it are short, so a break at that space costs nothing. The QML stamps
+/// that cannot call this (ComposerUsageLimits.qml, ConnectionsSettings.qml)
+/// repeat the same character set in a regex; extend both if this set grows.
+pub fn plain_spaces(text: &str) -> String {
+    text.replace(['\u{202F}', '\u{00A0}'], " ")
+}
+
+/// The time of day in the timestampFormat setting, with plain spaces.
+pub fn time_of_day<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> String {
+    plain_spaces(&locale_time(local, timestamp_format))
+}
+
 /// "12-hour", "24-hour" or "locale", the timestampFormat setting.
 // TODO(ljos#76): Settings::locale — "locale" is QLocale's short time
 // format; without the system locale from Rust it reads as 24-hour "H:mm".
-pub fn time_of_day<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> String {
+fn locale_time<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> String {
     let (hour, minute) = (local.hour(), local.minute());
     match timestamp_format {
         "12-hour" => {

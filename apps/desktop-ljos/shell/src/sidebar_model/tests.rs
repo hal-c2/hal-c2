@@ -454,6 +454,22 @@ fn plugin_threads_are_hidden_before_the_shelf_pages() {
     assert_eq!(view.state["settledTotal"], 2);
 }
 
+// A time of day reads with plain spaces whatever the locale separates it
+// with: the narrow no-break space (U+202F) of newer CLDR data, and the
+// no-break space (U+00A0) some locales put inside "p. m.".
+#[test]
+fn a_time_of_day_has_plain_spaces() {
+    assert_eq!(plain_spaces("6\u{202F}PM\u{00A0}x"), "6 PM x");
+    assert_eq!(plain_spaces("6:05 PM"), "6:05 PM");
+    let evening = Utc.with_ymd_and_hms(2026, 9, 23, 18, 5, 0).unwrap();
+    for format in ["locale", "12-hour", "24-hour"] {
+        let time = time_of_day(&evening, format);
+        assert!(!time.contains(['\u{202F}', '\u{00A0}']), "{format}: {time}");
+    }
+    assert_eq!(time_of_day(&evening, "12-hour"), "6:05 PM");
+    assert_eq!(time_of_day(&evening, "24-hour"), "18:05");
+}
+
 #[test]
 fn rows_carry_their_project_offline_state_and_selection() {
     let projects = [project_from_row(
