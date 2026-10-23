@@ -311,6 +311,18 @@ Feature: Recovering from restarts and releasing idle sessions
     Then the command of "t1" is interrupted
     And Codex is asked to terminate the command's terminal
 
+  # Stopping a running turn ends only that turn, as it does on one provider. The next
+  # stop comes between turns and ends the work an earlier run left.
+  @mc @plugin-codex
+  Scenario: A stop of a Claude turn leaves the Codex command an earlier run left
+    Given thread "t1" left a Codex command running in the background
+    And "t1" is running its latest turn on Claude
+    When a client stops run 3 of "t1"
+    Then run 3 of "t1" is interrupted
+    And "t1" lists the command "npm run dev" as background work
+    When a client stops run 3 of "t1"
+    Then the command of "t1" is interrupted
+
   # Codex leaves a unified exec process running when it interrupts a turn.
   @mc @plugin-codex
   Scenario: Stopping a Codex turn stops the command it started in a terminal

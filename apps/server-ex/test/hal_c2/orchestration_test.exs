@@ -1770,9 +1770,10 @@ defmodule HalC2.OrchestrationTest do
       assert [%{"processId" => "4275"}] = terminated(log)
     end
 
-    # Codex holds the command an earlier run left while Claude runs the latest: the
-    # stop reaches both, not just the first runtime to take it.
-    test "an interrupt pinned to a turn on another provider also stops the command",
+    # Codex holds the command an earlier run left while Claude runs the latest. The
+    # stop reaches Claude's turn, before Codex or not, and like a stop of a turn on
+    # one provider it leaves the command; the next stop, between turns, ends it.
+    test "an interrupt pinned to a turn on another provider stops the turn, then the command",
          %{log: log} do
       thread_id = launch("start the dev server in the background")
       _ = await_run(thread_id, "completed")
@@ -1780,19 +1781,20 @@ defmodule HalC2.OrchestrationTest do
       claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "haiku"}}
       {:ok, _} = send_message(thread_id, "msg-claude", "wait for me", claude)
       [_, %{"id" => latest}] = runs(await_statuses(thread_id, ["completed", "running"]))
+      stop = %{"type" => "run.interrupt", "threadId" => thread_id, "runId" => latest}
 
-      assert {:ok, _} =
-               Orchestration.dispatch(%{
-                 "type" => "run.interrupt",
-                 "threadId" => thread_id,
-                 "runId" => latest
-               })
+      cmd_bg = fn ->
+        Enum.filter(commands(thread_id), &(&1["nativeItemRef"]["nativeId"] == "cmd-bg"))
+      end
 
+      assert {:ok, _} = Orchestration.dispatch(stop)
       _ = await_statuses(thread_id, ["completed", "interrupted"])
+      assert [%{"status" => "running"}] = cmd_bg.()
+      assert terminated(log) == []
 
-      assert [%{"status" => "interrupted"}] =
-               Enum.filter(commands(thread_id), &(&1["nativeItemRef"]["nativeId"] == "cmd-bg"))
-
+      assert {:ok, _} = Orchestration.dispatch(stop)
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      assert [%{"status" => "interrupted"}] = cmd_bg.()
       assert [%{"processId" => "4275"}] = terminated(log)
     end
 
@@ -2153,6 +2155,40 @@ defmodule HalC2.OrchestrationTest do
       # With nothing left to stop, a second stop is refused as before.
       assert {:error, _} =
                Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    end
+
+    # Claude's work outlives a restart of the Codex turn after it, as Codex's own work
+    # outlives a restart of a Codex turn: interrupt-and-send reaches only the turn.
+    test "a restart of a turn on another provider leaves Claude's work and process" do
+      :ok = HalC2.Shell.subscribe(self())
+      thread_id = launch("work in the background", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      session = :sys.get_state(pid).session
+      codex = %{"modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}}
+      {:ok, _} = send_message(thread_id, "m2", "wait for it", codex)
+      _ = await_statuses(thread_id, ["completed", "running"])
+
+      {:ok, _} =
+        send_message(
+          thread_id,
+          "m3",
+          "say done",
+          Map.merge(codex, %{
+            "dispatchMode" => %{"type" => "start_immediately"},
+            "deliveryIntent" => "restart"
+          })
+        )
+
+      _ = await_statuses(thread_id, ["completed", "interrupted", "completed"])
+      assert Process.alive?(session)
+
+      assert ["running", "running"] =
+               current(thread_id)
+               |> StreamState.list("turn-item")
+               |> Enum.filter(&(&1["type"] in ["subagent", "command_execution"]))
+               |> Enum.map(& &1["status"])
     end
 
     test "an interrupt between turns pinned to an earlier run leaves Claude's work and process" do
