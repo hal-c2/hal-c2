@@ -48,7 +48,7 @@ import {
   COMPOSER_MAX_EDITOR_ROWS,
   COMPOSER_MIN_EDITOR_ROWS,
   countWrappedComposerLines,
-} from "../components/ChatView.layout.ts";
+} from "../layout.ts";
 import type { TuiClient } from "../connection.ts";
 import { clip } from "../format.ts";
 import { projectLabel } from "../orchestrationV2Adapter.ts";
@@ -82,7 +82,7 @@ import {
   resolveEditorCommand,
   type EditorCommand,
 } from "../promptEditor.ts";
-import type { Selection } from "../components/Sidebar.logic.ts";
+import type { Selection } from "../sidebar.logic.ts";
 import type { Store } from "../store.ts";
 import { THEME, type Palette } from "../theme.ts";
 import { isWorking } from "../timeline.ts";

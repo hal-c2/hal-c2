@@ -10,7 +10,7 @@ import {
   resolveChatVerticalLayout,
   resolveSidebarListViewport,
   STATUS_ROWS,
-} from "./ChatView.layout.ts";
+} from "./layout.ts";
 
 describe("responsive chat layout", () => {
   it("Given enough width, the projects sidebar remains docked at full height", () => {

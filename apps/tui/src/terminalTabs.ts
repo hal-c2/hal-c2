@@ -1,7 +1,7 @@
 import { DEFAULT_TERMINAL_ID } from "@hal-c2/contracts";
 
 // Pure per-thread terminal-tab transitions (the TUI's form of the web's terminal
-// groups). ChatView owns the side effects (open/close server sessions, focus);
+// groups). The host owns the side effects (open/close server sessions, focus);
 // the tab-list math lives here so it's unit-tested without a renderer.
 
 /** A thread's open terminal tabs: client-chosen ids + the active one. */
@@ -113,7 +113,7 @@ export type TerminalMetadataEvent =
  * Fold a terminal-metadata event into the per-thread map of known terminal ids.
  * A snapshot merges currently live sessions into the known map; upsert/remove
  * adjust one thread's set. The result feeds {@link tabsWithDiscovered}. Removals are tracked so a closed
- * terminal stops being re-added; ChatView also applies explicit remove events
+ * terminal stops being re-added; the host also applies explicit remove events
  * to its open tabs so other clients stay synchronized.
  */
 export function reduceKnownTerminals(

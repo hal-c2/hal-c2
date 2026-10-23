@@ -1,5 +1,5 @@
 // The command-palette model (mirrors the web CommandPalette): a flat list of
-// runnable commands plus a pure fuzzy filter. ChatView builds the list from its
+// runnable commands plus a pure fuzzy filter. The host builds the list from its
 // handlers + current context; the palette renders the filtered result. Keeping
 // the filter pure makes the ranking unit-testable without a renderer.
 
