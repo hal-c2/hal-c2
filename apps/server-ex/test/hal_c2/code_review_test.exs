@@ -161,8 +161,7 @@ defmodule HalC2.CodeReviewTest do
 
     send(@server, :poll)
     await_file(Path.join(context.dir, "list.held"))
-    {:monitors, [{:process, look} | _]} = Process.info(Process.whereis(@server), :monitors)
-    ref = Process.monitor(look)
+    ref = Process.monitor(look(Process.whereis(@server)))
 
     {:ok, _} = HalC2.Plugins.handle("disable", %{"id" => @id})
 
@@ -471,17 +470,12 @@ defmodule HalC2.CodeReviewTest do
   # Returns once the plugin has nothing in flight and has heard from what ended.
   defp settle do
     pid = Process.whereis(@server)
-    state = :sys.get_state(pid)
     {:parent, parent} = Process.info(pid, :parent)
+    # Runs, posts and the look are all linked; what the plugin monitors besides
+    # them includes whatever it is calling, such as the file server.
     {:links, links} = Process.info(pid, :links)
 
-    poller =
-      case Process.info(pid, :monitors) do
-        {:monitors, [{:process, poller} | _]} when state.polling != nil -> [poller]
-        _ -> []
-      end
-
-    case Enum.filter(links, &(is_pid(&1) and &1 != parent)) ++ poller do
+    case Enum.filter(links, &(is_pid(&1) and &1 != parent)) do
       [] ->
         :sys.get_state(pid)
         :ok
@@ -499,12 +493,19 @@ defmodule HalC2.CodeReviewTest do
     pid = Process.whereis(@server)
 
     with %{polling: polling} when polling != nil <- :sys.get_state(pid),
-         {:monitors, [{:process, look} | _]} <- Process.info(pid, :monitors) do
+         look when is_pid(look) <- look(pid) do
       ref = Process.monitor(look)
       assert_receive {:DOWN, ^ref, :process, _, _}, 15_000
     end
 
     :sys.get_state(pid)
+  end
+
+  # The look under way: the one process the plugin both links and monitors.
+  defp look(pid) do
+    {:links, links} = Process.info(pid, :links)
+    {:monitors, monitors} = Process.info(pid, :monitors)
+    Enum.find_value(monitors, fn {:process, p} -> p in links and p end)
   end
 
   defp await_file(path) do
