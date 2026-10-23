@@ -1112,6 +1112,7 @@ defmodule HalC2Plugins.Planner do
             changed: false,
             board: board,
             leg: next_leg,
+            moving: Sync.moving(ops),
             answered: reported,
             answered_leg: leg,
             answered_board: leg_board,
@@ -1399,16 +1400,22 @@ defmodule HalC2Plugins.Planner do
   # A task changed since the look read the plan, by the user or a push GitHub answered,
   # keeps its change, as does one with a push on the way, which GitHub may not have
   # taken when the look read it: the look is older news about it, and the next one
-  # catches it up. The sync is told which, so what it gives other tasks fits them.
+  # catches it up. The sync is told which, so what it gives other tasks fits them, and
+  # which issues the pushes on the way move between milestones, whose tasks stay in the
+  # milestones the plan has them in: a milestone's push moves issues of tasks other
+  # milestones hold, or none does, and the look may list them where it put them.
   defp apply_look(state, found) do
     kept =
       Map.filter(state.items, fn {id, item} ->
         found.items[id] != item or is_map_key(state.pushing, id)
       end)
 
+    moving = Enum.flat_map(state.pushing, fn {_, flight} -> flight[:moving] || [] end)
+    found = Map.merge(found, %{kept: kept, moving: moving})
+
     items =
       state.items
-      |> Sync.apply(Map.put(found, :kept, kept), state.settings, now(), fn -> id("t") end)
+      |> Sync.apply(found, state.settings, now(), fn -> id("t") end)
       |> Map.merge(kept)
 
     state = %{
@@ -1868,6 +1875,7 @@ defmodule HalC2Plugins.Planner do
                 changed: false,
                 board: board,
                 leg: leg,
+                moving: Sync.moving(ops),
                 answered: nil,
                 answered_leg: nil,
                 answered_board: nil,
@@ -2116,6 +2124,7 @@ defmodule HalC2Plugins.Planner do
                 changed: saved["changed"] == true,
                 board: saved["board"] || "",
                 leg: leg,
+                moving: loaded_moving(saved["moving"]),
                 answered: answered,
                 answered_leg: answered_leg,
                 answered_board: saved["answeredBoard"],
@@ -2208,6 +2217,13 @@ defmodule HalC2Plugins.Planner do
 
   defp loaded_ref(_saved), do: nil
 
+  # The issues a flight's push moves between milestones, as `save/1` wrote them; a save
+  # from before flights kept them, or a mangled one, names none.
+  defp loaded_moving(saved) when is_list(saved),
+    do: for(%{"repository" => r, "number" => n} = i <- saved, is_binary(r), is_integer(n), do: i)
+
+  defp loaded_moving(_saved), do: []
+
   defp save(state) do
     data = %{
       "items" => state.items,
@@ -2232,6 +2248,7 @@ defmodule HalC2Plugins.Planner do
             "board" => flight.board,
             "chained" => flight[:chained] == true,
             "leg" => saved_term(flight[:leg]),
+            "moving" => flight[:moving] || [],
             "answered" => saved_term(answered),
             "answeredBoard" => flight[:answered_board]
           }
