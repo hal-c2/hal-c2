@@ -37,7 +37,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
   alias HalC2.Acp.OpenCode
 
-  @state_version 10
+  @state_version 11
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -157,6 +157,9 @@ defmodule HalC2.Acp.ThreadRuntime do
        # The models the session's `model` option lists.
        options: [],
        turn: nil,
+       # The run the latest turn ran as, also one that failed to start: the run a
+       # client names to stop the work left running between turns.
+       last_run: nil,
        # Whether the turn's prompt is out, or its answer waits for its steers'.
        prompt: nil,
        # The turn's prompts the agent has not answered (`Connection.request/5`): its own
@@ -211,6 +214,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     state = %{
       state
       | turn: turn,
+        last_run: ids.run,
         items: %{},
         interrupted: false,
         subagents: subagents,
@@ -268,6 +272,16 @@ defmodule HalC2.Acp.ThreadRuntime do
   def handle_call({:interrupt, run_id}, _from, %{turn: %{ids: %{run: other}}} = state)
       when is_binary(run_id) and run_id != other,
       do: {:reply, {:error, "no running turn"}, state}
+
+  # Between turns a stop naming a run that started before the latest turn's (a
+  # restart that read it as active) leaves the work that later run left, nor the agent
+  # (#474); one naming that run or a later one, on another provider, ends it.
+  def handle_call({:interrupt, run_id}, from, %{turn: nil, last_run: last} = state)
+      when is_binary(run_id) and is_binary(last) and run_id != last do
+    if HalC2.Orchestration.earlier_run?(state.thread_id, run_id, last),
+      do: {:reply, {:error, "no running turn"}, state},
+      else: handle_call(:interrupt, from, state)
+  end
 
   def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
 
@@ -622,7 +636,9 @@ defmodule HalC2.Acp.ThreadRuntime do
     do: state |> Map.merge(%{plan_modes: %{}, build_modes: %{}}) |> Map.put(:v, 9) |> migrate()
 
   defp migrate(%{v: 9} = state),
-    do: Map.merge(state, %{v: 10, prompts: :gen_server.reqids_new(), answer: nil})
+    do: state |> Map.merge(%{v: 10, prompts: :gen_server.reqids_new(), answer: nil}) |> migrate()
+
+  defp migrate(%{v: 10} = state), do: Map.merge(state, %{v: 11, last_run: nil})
 
   # --- session -------------------------------------------------------------------
 
