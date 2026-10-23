@@ -1134,10 +1134,8 @@ defmodule HalC2.PlannerPropTest do
   # take the board item the push added.
   defp step(m, {:call, _, :answer, [push]}) do
     {%{slot: slot, gen: gen, ops: ops, b: b, board: on}, held} = Map.pop(m.held, push)
-    # A push GitHub took stamps its issue as changed there, as the harness's
-    # state read after a push records it.
-    m = if item = m.items[slot], do: touch(m, [item.issue]), else: m
     {m, took} = land(%{m | held: held}, ops, b, push, on)
+    m = stamp(m, slot, took)
     took = if on == m.board, do: took, else: %{took | board: nil}
 
     case m.flights[slot] do
@@ -1560,7 +1558,17 @@ defmodule HalC2.PlannerPropTest do
   # The task in `slot` pushes `ops`, to the board the settings name, and hears how it went.
   defp land_on(m, slot, ops, b, board) do
     {m, took} = land(m, ops, b, board, m.board)
-    settle(m, slot, took)
+    m |> stamp(slot, took) |> settle(slot, took)
+  end
+
+  # A push that gave its issue a state stamps the issue as changed on GitHub, as the
+  # harness's state read after a push records it (`states_taken/0`); one GitHub refused
+  # before it got that far, or that changed no state, stamps nothing.
+  defp stamp(m, slot, %{stated: stated}) do
+    case m.items[slot] do
+      %{issue: issue} when stated != nil -> touch(m, [issue])
+      _ -> m
+    end
   end
 
   # The task in `slot` hears how its push went: the sync error, the board item it added,
