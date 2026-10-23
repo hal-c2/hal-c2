@@ -33,22 +33,30 @@ defmodule HalC2.RuntimeRecord do
   The MC running with no HAL-C2 home configured, for a tool started with none either
   (`own` is its `:home`, `nil` or `:dev`): `{home, record}` of the profile that has a
   live record, the tool's own profile first, or nil when neither runs. So
-  `mix hal_c2.pair` from a checkout finds the installed MC, and the other way round.
+  `mix hal_c2.pair` from a checkout pairs with its own MC when that runs and finds
+  the installed MC when only that one does, and the other way round.
+  `installed` is where the installed MC keeps its files when that is not the installed
+  profile (a `HAL_C2_HOME` root a checkout's own `:home` ignores). A tool given a
+  chosen home looks at that home alone.
   """
-  def locate(own) when own in [nil, :dev] do
-    Enum.find_value([own | [nil, :dev] -- [own]], fn home ->
+  def locate(own, installed \\ nil)
+
+  def locate(own, installed) when own in [nil, :dev] do
+    Enum.find_value(Enum.uniq([own, installed, nil, :dev]), fn home ->
       if record = running(home), do: {home, record}
     end)
   end
 
-  def locate(_own), do: nil
+  # A chosen home (`HAL_C2_HOME`, `HAL_C2_MC_HOME`) is one MC's own: no other profile to try.
+  def locate(own, _installed), do: if(record = running(own), do: {own, record})
 
   @doc """
-  The live record of the MC of one profile (`nil` the installed one, `:dev` one run
-  from a checkout), or nil when that one is not running: for a tool that was told
-  which of the two it means, as `mix hal_c2.pair --release` is.
+  The live record of the MC of one home (`nil` the installed profile, `:dev` one run
+  from a checkout, or a chosen home as the application's `:home` holds it), or nil when
+  that one is not running: for a tool that was told which it means, as
+  `mix hal_c2.pair --release` is.
   """
-  def running(home) when home in [nil, :dev] do
+  def running(home) do
     state = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home()).state
 
     with {:ok, text} <- File.read(Path.join(state, "server-runtime.json")),

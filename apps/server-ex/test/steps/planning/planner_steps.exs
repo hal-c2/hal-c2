@@ -1741,6 +1741,58 @@ defmodule HalC2.Steps.Planning.Planner do
     close_issue(context, number, "COMPLETED", %{"title" => title, "body" => body})
   end
 
+  # GitHub answers for the issue read alone, but lists nothing as updated since.
+  step "the closed \#{int} is renamed on GitHub to {string} with the description {string}, which GitHub does not count as an update",
+       %{args: [number, title, body]} = context do
+    context
+    |> close_issue(number, "COMPLETED", %{"title" => title, "body" => body})
+    |> World.cli_rules([listing([], nil)])
+  end
+
+  # Over a day has passed since the last full read, as `nearly a day passes`
+  # below ages it.
+  step "the planner last read every closed issue alone over a day ago", context do
+    :sys.replace_state(Process.whereis(HalC2Plugins.Planner), fn state ->
+      %{state | full_at: state.full_at && DateTime.add(state.full_at, -90_000, :second)}
+    end)
+
+    context
+  end
+
+  step "GitHub fails to read the closed \#{int} alone", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["{ ...IssueFields", ~s("number":#{number})],
+        "exit" => 1,
+        "stderr" => "HTTP 502: Bad Gateway\n"
+      }
+    ])
+  end
+
+  # Time passes for the planner's copies of the closed issues: the last full read is
+  # moved back most of a day, so one more such step puts it past the day. This and
+  # the prop's `age/0` reach into the planner's `full_at` field on purpose (there
+  # is no other way to age by nearly a day); rename them in lockstep with it.
+  step "nearly a day passes since the planner last read every closed issue alone", context do
+    :sys.replace_state(Process.whereis(HalC2Plugins.Planner), fn state ->
+      %{state | full_at: state.full_at && DateTime.add(state.full_at, -80_000, :second)}
+    end)
+
+    context
+  end
+
+  step "GitHub fails to list the issues changed since", context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["issues(first: $first", "\"states\":null"],
+        "exit" => 1,
+        "stderr" => "HTTP 502: Bad Gateway\n"
+      }
+    ])
+  end
+
   step "\#{int} is reopened on GitHub without the label", %{args: [number]} = context do
     off_the_list(context, GitHubIssues.issue(context.repository, number))
   end
@@ -1758,11 +1810,23 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "that look read the closed \#{int} alone", %{args: [number]} = context do
+    assert [%{"number" => ^number}] = reads(context) -- context.reads
+    context
+  end
+
+  step "that look read the closed \#{int} and \#{int} alone",
+       %{args: [one, other]} = context do
+    numbers = context |> reads() |> Kernel.--(context.reads) |> Enum.map(& &1["number"])
+    assert Enum.sort(numbers) == Enum.sort([one, other])
+    context
+  end
+
   defp count_reads(context), do: Map.put(context, :reads, reads(context))
 
-  # How many issues were read one at a time so far.
+  # The issues read one at a time so far, as the variables they were asked with.
   defp reads(context),
-    do: length(GitHubIssues.graphql_calls(context, "issue(number: $number) { ...IssueFields"))
+    do: GitHubIssues.graphql_calls(context, "issue(number: $number) { ...IssueFields")
 
   step "\#{int}'s task is done", %{args: [number]} = context do
     assert task_of(plan!(context), number)["status"] == "done"
@@ -2481,6 +2545,21 @@ defmodule HalC2.Steps.Planning.Planner do
   # and to `soon` at once; it notes each milestone in the order it takes them.
   step "GitHub takes moving \#{int} to {string} late and to {string} at once",
        %{args: [number, late, soon]} = context do
+    late_and_soon(context, number, late, soon, "")
+  end
+
+  # As above, but `soon` is refused the second time it is asked: the script counts the
+  # asks in a file and exits 1 on the second. The scenario answers one ask before the
+  # next is made (the move, the correction, the retry), so the count needs no locking.
+  step "GitHub takes moving \#{int} to {string} late and to {string} at once, but refuses the second move to it",
+       %{args: [number, late, soon]} = context do
+    count = Path.join(context.mc.home, "gh-asked")
+    n = "$(cat '#{count}' 2>/dev/null || echo 0)"
+    refuse = "n=#{n}; echo $((n + 1)) > '#{count}'; [ \"$n\" -ne 1 ] || exit 1; "
+    late_and_soon(context, number, late, soon, refuse)
+  end
+
+  defp late_and_soon(context, number, late, soon, check) do
     gate = Path.join(context.mc.home, "gh-gate")
     {_, 0} = System.cmd("mkfifo", [gate])
     taken = Path.join(context.mc.home, "gh-milestones")
@@ -2497,7 +2576,7 @@ defmodule HalC2.Steps.Planning.Planner do
     end
 
     context
-    |> World.cli_rules([move.(late, "cat '#{gate}' > /dev/null; "), move.(soon, "")])
+    |> World.cli_rules([move.(late, "cat '#{gate}' > /dev/null; "), move.(soon, check)])
     |> Map.merge(%{gh_gate: gate, gh_milestones: taken})
   end
 

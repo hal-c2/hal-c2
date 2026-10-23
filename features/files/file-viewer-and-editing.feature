@@ -245,10 +245,35 @@ Feature: Viewing and editing files
         | data/a.csv    | text/plain                | the file is shown as a comma table       |
         | data/a.txt    | text/plain                | the file is not shown as a table         |
 
+    # The three scenarios below are layout: the native steps drive models and cannot see
+    # columns, so they stay @backlog-desktop until a step can. The QML tests
+    # (apps/desktop-qt/tests/tst_RightPanel.qml) cover them meanwhile.
     @desktop @backlog-desktop
-    Scenario: An open file gets most of the Files tab
+    Scenario: An open file sits beside the file tree
       When the user opens "src/app.ts"
-      Then the file viewer is taller than the file tree
+      Then the file viewer takes the height of the Files tab
+      And the file tree is a column beside it
+
+    @desktop @backlog-desktop
+    Scenario: The file tree can be hidden while a file is open
+      Given the user opened "src/app.ts"
+      When the user hides the file explorer
+      Then the file viewer takes the whole Files tab
+      When the user shows the file explorer
+      Then the file tree is a column beside the file
+      When the user hides the file explorer
+      And the user closes the file
+      Then the file tree takes the whole Files tab
+      When the user opens "src/app.ts"
+      Then the file tree stays hidden while the file is open
+
+    @desktop @backlog-desktop
+    Scenario: A narrow Files tab keeps the file's buttons in the file
+      Given the Files tab is as narrow as a phone
+      When the user opens "docs/guide.md"
+      Then every button above the file is inside the file's column
+      And the file tree gives way before the buttons do
+      And a tab too narrow to leave the tree room shows the file alone
 
     @desktop
     Scenario: The rendered or source choice is remembered on this device

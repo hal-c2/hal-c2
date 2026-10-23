@@ -72,7 +72,11 @@ defmodule HalC2.Plugins.ProviderAdapter do
 
   An adapter that declares `active_steering` implements `steer/3`: it hands
   `%{text, attachments}` (attachments shaped like a turn's) to the turn running as
-  `run_id`, or answers `{:error, reason}` when the provider does not take it.
+  `run_id`, or answers `{:error, reason}` when the provider does not take it. The
+  message is already recorded in the turn when `steer/3` is called and only an
+  `{:error, _}` (or an exit) takes it back out, so an adapter whose own call times
+  out after the request reached the provider answers `:ok` itself; a timeout exit
+  out of `steer/3` counts as a refusal.
   """
   use HalC2.Plugins.Kind
 

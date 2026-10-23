@@ -6,7 +6,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
       mix hal_c2.upgrade MC [MC ...] [--cookie COOKIE]
       mix hal_c2.upgrade --dev [MC ...] [--cookie COOKIE]
-      mix hal_c2.upgrade --release
+      mix hal_c2.upgrade --release [--root ROOT]
 
   Without `--dev`, builds the prod release and its bundle, sends the bundle to the
   first MC, and has each named MC update to it; the others fetch it over HTTP
@@ -22,7 +22,10 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   With `--release`, builds the prod release under this commit's local version and has the
   installed MC on this machine update to it (`mise run mc:reload --release`), over
   its HTTP port with its access token as well. That MC is the one in the user's
-  `hal-c2` profile, or in `HAL_C2_MC_HOME` when that is set. The MCs clustered with
+  `hal-c2` profile, or the one in `HAL_C2_MC_HOME` (the MC's own directory) when that is
+  set. `--root ROOT` replaces both: it names the root the installed MC runs with as
+  `HAL_C2_HOME` (the XDG directories under it hold the MC's files), never a `HAL_C2_MC_HOME`
+  directory, and must be absolute and outside the old homes (`~/.t3`, `~/.hal-c2`). The MCs clustered with
   it update to the build too, whatever their platform, when it only changes code.
 
   Named MCs are reached from a hidden short-name node started with `--cookie`, so
@@ -38,17 +41,39 @@ defmodule Mix.Tasks.HalC2.Upgrade do
   @impl true
   def run(args) do
     {opts, mcs} =
-      OptionParser.parse!(args, strict: [dev: :boolean, release: :boolean, cookie: :string])
+      OptionParser.parse!(args,
+        strict: [dev: :boolean, release: :boolean, cookie: :string, root: :string]
+      )
 
     mcs = Enum.map(mcs, &String.to_atom/1)
 
     cond do
+      opts[:root] && !(opts[:release] && mcs == []) ->
+        Mix.raise("--root names the root of the installed MC: use it with --release alone")
+
+      opts[:release] && mcs != [] ->
+        Mix.raise("--release updates the installed MC on this machine; name no MCs with it")
+
       opts[:release] && mcs == [] ->
+        # Before the build, so a root that names no installed MC fails at once.
+        Mix.Task.run("app.config")
+
+        home =
+          case installed_home(opts[:root], Application.get_env(:hal_c2, :home)) do
+            {:ok, home} -> home
+            {:error, reason} -> Mix.raise(reason)
+          end
+
+        case installed_record(home) do
+          {:ok, _base, _token} -> :ok
+          {:error, reason} -> Mix.raise(reason)
+        end
+
         # The commit's version, as `mise run release:mc` builds it: an MC refuses the
         # version it already runs.
         {version, 0} = System.cmd(Path.expand("scripts/local-version"), [])
         build(String.trim(version))
-        local_release(Mix.Tasks.HalC2.Bundle.bundle())
+        local_release(Mix.Tasks.HalC2.Bundle.bundle(), home)
 
       opts[:dev] && mcs == [] ->
         Mix.Task.run("compile")
@@ -71,7 +96,12 @@ defmodule Mix.Tasks.HalC2.Upgrade do
 
   defp build(version \\ nil) do
     # Earlier builds leave their lib/hal_c2-<version> behind, and the bundle packs all of lib/.
+    # Mix does not recompile the app when only HAL_C2_MC_VERSION changes, so its .app would
+    # keep an earlier version: its build goes too when it was another version's.
     File.rm_rf!("_build/prod/rel/hal_c2")
+
+    if built_version("_build/prod/lib/hal_c2") != (version || Mix.Project.config()[:version]),
+      do: File.rm_rf!("_build/prod/lib/hal_c2")
 
     {_, 0} =
       System.cmd("mix", ~w(release --overwrite),
@@ -134,23 +164,127 @@ defmodule Mix.Tasks.HalC2.Upgrade do
     end
   end
 
+  @doc false
+  # The `:home` spec (`HalC2.Paths`) of the installed MC `--release` reaches, from `--root`
+  # and the home this checkout is configured with: `{:ok, spec}` or `{:error, reason}`.
+  # A root typed for this run is refused where `HalC2.Paths` would fall back to the
+  # default profile. Without one, a checkout's own home is the dev profile, and the
+  # installed MC's is the user's; a `HAL_C2_MC_HOME` names the installed MC as well.
+  def installed_home(root, configured, user_home \\ HalC2.Paths.user_home())
+
+  def installed_home(nil, :dev, _user_home), do: {:ok, nil}
+  def installed_home(nil, configured, _user_home), do: {:ok, configured}
+
+  # `HalC2.Paths` only refuses an old home itself as a root; a root typed here is refused
+  # inside one too, the rule it keeps for an MC's own directory. `root?/3` is lexical,
+  # so the root is also checked by where its links land: its longest existing prefix
+  # resolved (a not-yet-created root inside a link to an old home is still refused
+  # here, not later as "no MC has run"), and against the old homes resolved the same
+  # way (a root naming the real target of a linked `~/.t3` is inside it).
+  def installed_home(root, _configured, user_home) do
+    checked = resolved(String.trim(root))
+
+    if HalC2.Paths.root?(root, :mc, user_home) and
+         HalC2.Paths.root?(checked, :mc, user_home) and
+         not inside_resolved_legacy?(checked, user_home),
+       do: {:ok, {:root, String.trim(root)}},
+       else:
+         {:error,
+          "--root #{inspect(root)} is not an absolute HAL_C2_HOME root outside ~/.t3 and ~/.hal-c2"}
+  end
+
+  # The path with every link of its longest existing prefix resolved; a tail
+  # that does not exist yet is carried over unresolved.
+  defp resolved(path) do
+    expanded = Path.expand(path)
+
+    case HalC2.Paths.real(expanded) do
+      {:ok, real} ->
+        real
+
+      _ ->
+        parent = Path.dirname(expanded)
+
+        if parent == expanded,
+          do: expanded,
+          else: Path.join(resolved(parent), Path.basename(expanded))
+    end
+  end
+
+  defp inside_resolved_legacy?(checked, user_home) do
+    Enum.any?(HalC2.Paths.legacy_names(), fn name ->
+      case HalC2.Paths.real(Path.join(user_home, name)) do
+        {:ok, legacy} -> at_or_under?(checked, legacy)
+        _ -> false
+      end
+    end)
+  end
+
+  defp at_or_under?(path, dir) do
+    parts = Path.split(dir)
+    Enum.take(Path.split(path), length(parts)) == parts
+  end
+
+  @doc false
+  # The version an app's build was compiled as, or nil when there is none. mise-tasks/release/mc
+  # reads it the same way (`file:consult/1`); change both together.
+  def built_version(lib) do
+    case :file.consult(Path.join([lib, "ebin", "#{Path.basename(lib)}.app"])) do
+      {:ok, [{:application, _, props}]} -> props[:vsn] && to_string(props[:vsn])
+      _ -> nil
+    end
+  end
+
+  @doc false
+  # The installed MC's address and access token at `home`, as its runtime record and
+  # token file name them: `{:ok, base, token}` or `{:error, reason}` when no MC has
+  # run there. `--release` checks this before building, so a root that names no
+  # installed MC fails at once.
+  def installed_record(home, env \\ System.get_env(), user_home \\ HalC2.Paths.user_home()) do
+    dirs = HalC2.Paths.mc_dirs(home, env, user_home)
+    record_path = Path.join(dirs.state, "server-runtime.json")
+    token_path = Path.join(dirs.data, "access-token")
+
+    # Only a missing file means no MC has run here; a broken one is named, so
+    # the developer fixes the file instead of second-guessing `--root`.
+    missing = fn path ->
+      "No installed MC has run here (no #{path}); if it keeps its files under a " <>
+        "HAL_C2_HOME root, pass --release --root <that root>"
+    end
+
+    with {:ok, record} <- read_installed(record_path, missing),
+         {:ok, base} <- decode_record(record, record_path),
+         {:ok, token} <- read_installed(token_path, missing) do
+      {:ok, base, String.trim(token)}
+    end
+  end
+
+  defp read_installed(path, missing) do
+    case File.read(path) do
+      {:ok, _} = read -> read
+      {:error, :enoent} -> {:error, missing.(path)}
+      {:error, reason} -> {:error, "Could not read #{path}: #{:file.format_error(reason)}"}
+    end
+  end
+
+  defp decode_record(record, path) do
+    case JSON.decode(record) do
+      {:ok, %{"origin" => base}} when is_binary(base) ->
+        {:ok, base}
+
+      {:ok, _} ->
+        {:error, "#{path} does not name the MC's address (no \"origin\")"}
+
+      {:error, reason} ->
+        {:error, "Could not decode #{path}: #{inspect(reason)}"}
+    end
+  end
+
   # The installed MC on this machine, through `POST /api/dev/reload` with a bundle.
-  defp local_release(path) do
-    Mix.Task.run("app.config")
+  defp local_release(path, home) do
     {:ok, _} = Application.ensure_all_started(:inets)
 
-    # A checkout's own home is the dev profile; the installed MC's is the user's.
-    home =
-      case Application.get_env(:hal_c2, :home) do
-        :dev -> nil
-        home -> home
-      end
-
-    dirs = HalC2.Paths.mc_dirs(home, System.get_env(), HalC2.Paths.user_home())
-
-    with {:ok, record} <- File.read(Path.join(dirs.state, "server-runtime.json")),
-         {:ok, %{"origin" => base}} <- JSON.decode(record),
-         {:ok, token} <- File.read(Path.join(dirs.data, "access-token")) do
+    with {:ok, base, token} <- installed_record(home) do
       body = JSON.encode!(%{"bundle" => path, "version" => manifest(path)["version"]})
 
       request =
@@ -180,7 +314,7 @@ defmodule Mix.Tasks.HalC2.Upgrade do
           Mix.raise("No MC answers at #{base}; is the installed MC running?")
       end
     else
-      _ -> Mix.raise("No installed MC has run from #{dirs.data}")
+      {:error, reason} -> Mix.raise(reason)
     end
   end
 

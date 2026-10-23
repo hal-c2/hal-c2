@@ -6,7 +6,7 @@ import HalC2.Shell
 
 // The right panel's Files tab: the thread's workspace as the MC lists it,
 // from a WorkspaceFiles (Panel.files). The tree loads a folder when it is
-// expanded; typing searches the whole workspace. A file opens below the
+// expanded; typing searches the whole workspace. A file opens beside the
 // tree, one row per line, to read, edit or copy whole; an image shows as
 // itself, and other media open in the browser.
 //
@@ -20,6 +20,47 @@ Rectangle {
     readonly property bool fileOpen: (source?.openPath ?? "").length > 0
     readonly property string mediaKind: source?.mediaKind ?? ""
     readonly property int maxLineColumns: 2000
+    // Whether the tree shows beside an open file; with no file open it always shows.
+    // Hiding it is a preference, kept while this panel lives (the next file opens
+    // with the tree still hidden), not a state of the file that was open.
+    property bool explorerOpen: true
+    // What the tree takes beside an open file: at most 352px or 46% of the tab, and
+    // never so much that the file (whose header buttons are its minimum width) is
+    // pushed under it. A row layout does not shrink a fixed-size column on its own.
+    readonly property real explorerShare: Math.max(0, Math.min(352, width * 0.46, width - 1 - fileViewer.Layout.minimumWidth))
+    // Below this width the tree is little more than its margins and expand button (about
+    // 46px of the 72), so a file that leaves it less is open without the tree rather than
+    // beside a sliver of it that still takes focus.
+    readonly property int explorerMinimum: 72
+    readonly property bool explorerShown: !fileOpen || (explorerOpen && explorerShare >= explorerMinimum)
+    // True while keyboard focus sits inside the given item.
+    function focusInside(item: Item): bool {
+        let focused = root.Window.activeFocusItem;
+        while (focused) {
+            if (focused === item)
+                return true;
+            focused = focused.parent;
+        }
+        return false;
+    }
+
+    // When the explorer goes away under the focused item, focus would be
+    // cleared to nowhere; give it to the toggle that brings the tree back.
+    onExplorerShownChanged: {
+        if (!explorerShown && fileOpen && focusInside(filesExplorerColumn))
+            fileExplorerToggleButton.forceActiveFocus();
+    }
+
+    // The reverse case: closing the file hides the viewer holding the
+    // toggle or close button, so give focus to the tree that remains.
+    onFileOpenChanged: {
+        if (!fileOpen && focusInside(fileViewer)) {
+            // Without search (no workspace) the explorer holds nothing
+            // focusable, so focus clearing to the window is intended.
+            if (search.enabled)
+                search.forceActiveFocus();
+        }
+    }
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -50,188 +91,21 @@ Rectangle {
         }
     }
 
-    ColumnLayout {
+    // The web's layout: the file takes the tab and the tree is a column beside it that
+    // the file's header can hide. With no file open the tree is the whole tab.
+    RowLayout {
         anchors.fill: parent
         spacing: 0
 
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.margins: 8
-            spacing: 4
-
-            ShellTextField {
-                id: search
-
-                objectName: "filesSearch"
-                Layout.fillWidth: true
-                placeholderText: qsTr("Search files")
-                enabled: (root.source?.root ?? "").length > 0
-                text: root.source?.query ?? ""
-                onTextEdited: root.source.query = text
-                Keys.onEscapePressed: root.source.query = ""
-            }
-            ShellButton {
-                objectName: "filesExpandAll"
-                subtle: true
-                iconName: root.tree?.allExpanded ? "chevron-up" : "chevron-down"
-                iconSize: 13
-                iconTint: root.muted
-                implicitWidth: 26
-                implicitHeight: 26
-                enabled: root.rootStatus === "ready"
-                Accessible.name: root.tree?.allExpanded ? qsTr("Collapse all folders") : qsTr("Expand all folders")
-                onClicked: root.tree.allExpanded ? root.tree.collapseAll() : root.tree.expandAll()
-            }
-        }
-
-        Text {
-            objectName: "filesSearchNote"
-            Layout.fillWidth: true
-            Layout.leftMargin: 10
-            Layout.rightMargin: 10
-            Layout.bottomMargin: 4
-            visible: text.length > 0
-            text: {
-                if (!root.source || root.source.query.length === 0)
-                    return "";
-                if (root.source.searching)
-                    return qsTr("Searching...");
-                if (root.source.searchProblem.length > 0)
-                    return root.source.searchProblem;
-                if (treeView.count === 0)
-                    return qsTr("No files match.");
-                return root.source.searchTruncated ? qsTr("Showing the first matches; refine the search for more.") : "";
-            }
-            color: root.source?.searchProblem.length > 0 ? root.errorColor : root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
-            wrapMode: Text.Wrap
-        }
-
-        Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.verticalStretchFactor: 1
-            Layout.minimumHeight: 80
-
-            ColumnLayout {
-                id: rootMessage
-
-                objectName: "filesRootMessage"
-                anchors.centerIn: parent
-                width: parent.width - 32
-                visible: root.rootStatus === "error" || (root.source?.root ?? "").length === 0
-                spacing: 10
-
-                Text {
-                    Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    text: (root.source?.root ?? "").length === 0 ? qsTr("This thread has no workspace.") : root.tree?.rootProblem ?? ""
-                    color: root.rootStatus === "error" ? root.errorColor : root.muted
-                    font.pixelSize: Math.round(13 * Theme.fontScale)
-                    wrapMode: Text.Wrap
-                }
-                ShellButton {
-                    objectName: "filesRetry"
-                    Layout.alignment: Qt.AlignHCenter
-                    visible: root.rootStatus === "error"
-                    text: qsTr("Try again")
-                    onClicked: root.source.reload()
-                }
-            }
-
-            ListView {
-                id: treeView
-
-                objectName: "filesTree"
-                anchors.fill: parent
-                visible: !rootMessage.visible
-                clip: true
-                model: root.tree
-                reuseItems: true
-                boundsBehavior: Flickable.StopAtBounds
-                ScrollBar.vertical: ScrollBar {
-                    Accessible.name: qsTr("Scroll file tree")
-                }
-
-                Connections {
-                    target: root.tree
-                    function onSelectedChanged() {
-                        const row = root.tree.rowOf(root.tree.selectedPath);
-                        if (row >= 0)
-                            treeView.positionViewAtIndex(row, ListView.Contain);
-                    }
-                }
-
-                delegate: AbstractButton {
-                    id: entry
-
-                    required property string path
-                    required property string name
-                    required property int depth
-                    required property string kind
-                    required property bool expanded
-                    required property bool ignored
-                    required property string problem
-                    required property bool selected
-
-                    objectName: "filesEntry-" + (kind === "file" || kind === "directory" ? path : kind + "-" + path)
-                    width: treeView.width
-                    height: 24
-                    hoverEnabled: true
-                    leftPadding: 8 + depth * 14
-                    Accessible.name: name
-                    onClicked: {
-                        if (kind === "directory")
-                            root.tree.toggle(path);
-                        else if (kind === "file")
-                            root.source.openFile(path, 0);
-                        else if (kind === "error")
-                            root.tree.retry(path);
-                    }
-                    TapHandler {
-                        acceptedButtons: Qt.RightButton
-                        enabled: entry.kind === "file"
-                        onTapped: {
-                            entryMenu.path = entry.path;
-                            entryMenu.popup(entry);
-                        }
-                    }
-                    background: Rectangle {
-                        color: entry.selected ? Theme.palette.color("sidebarRowSelected", "#25314d") : entry.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
-                    }
-                    contentItem: RowLayout {
-                        spacing: 6
-
-                        ShellIcon {
-                            visible: entry.kind === "directory" || entry.kind === "file"
-                            name: entry.kind === "directory" ? (entry.expanded ? "folder-open" : "folder") : "file-text"
-                            size: 13
-                            color: root.muted
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: entry.kind === "loading" ? qsTr("Loading...") : entry.kind === "error" ? qsTr("%1 Click to retry.").arg(entry.problem) : entry.name
-                            color: entry.kind === "error" ? root.errorColor : entry.ignored || entry.kind === "loading" ? root.muted : root.foreground
-                            font.pixelSize: Math.round(12 * Theme.fontScale)
-                            elide: Text.ElideMiddle
-                        }
-                    }
-                }
-            }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            visible: root.fileOpen
-            color: root.borderColor
-        }
-
         ColumnLayout {
+            id: fileViewer
+
             objectName: "fileViewer"
+            // A file whose header is wider than the tab overflows this column;
+            // clip here so the tree column does not pay for an offscreen pass.
+            clip: true
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.verticalStretchFactor: 3
             visible: root.fileOpen
             spacing: 0
 
@@ -244,6 +118,9 @@ Rectangle {
 
                 FilePathTrail {
                     Layout.fillWidth: true
+                    // A long path gives way to the header's buttons (it clips)
+                    // instead of widening the file past the tab.
+                    Layout.minimumWidth: 0
                     clip: true
                     source: root.source
                 }
@@ -296,6 +173,45 @@ Rectangle {
                     text: root.source?.wrap ? qsTr("No wrap") : qsTr("Wrap")
                     implicitHeight: 26
                     onClicked: root.source.wrap = !root.source.wrap
+                }
+                ShellButton {
+                    id: fileExplorerToggleButton
+
+                    objectName: "fileExplorerToggle"
+                    subtle: true
+                    // The button owns the flip; the panel copies it into the
+                    // explorerOpen preference. checked presents what is on
+                    // screen (explorerShown), so an auto-hidden tree does not
+                    // read as shown, and the binding stays live for
+                    // programmatic changes to the preference.
+                    checkable: true
+                    checked: root.explorerShown
+                    // While the tab is too narrow for the tree the toggle
+                    // cannot bring it back; it stays the focus home for the
+                    // hidden column, and its tooltip says what will.
+                    toolTip: root.fileOpen && root.explorerOpen && !root.explorerShown ? qsTr("Widen the panel to show the file explorer") : root.explorerShown ? qsTr("Hide file explorer") : qsTr("Show file explorer")
+                    Accessible.description: toolTip
+                    Accessible.checkable: true
+                    Accessible.checked: checked
+                    iconName: "folder-tree"
+                    iconSize: 13
+                    iconTint: root.muted
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    // Stable name: the checked state carries Hide/Show, so
+                    // activation does not rename the focused button. The
+                    // verb stays on the explicit tooltip above.
+                    Accessible.name: qsTr("File explorer")
+                    onClicked: {
+                        root.explorerOpen = checked;
+                        // Auto-hidden: explorerShown cannot follow the flip
+                        // (and may not even re-notify), so snap checked back
+                        // to what is on screen. This covers both entry
+                        // states: shown-by-preference (preference kept, since
+                        // checked flipped to true) and hidden-by-preference.
+                        if (checked !== root.explorerShown)
+                            checked = Qt.binding(() => root.explorerShown);
+                    }
                 }
                 ShellButton {
                     objectName: "fileClose"
@@ -630,6 +546,192 @@ Rectangle {
                             wrapMode: lines.wrap ? Text.WrapAnywhere : Text.NoWrap
                             topPadding: 1
                             bottomPadding: 1
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillHeight: true
+            Layout.preferredWidth: 1
+            visible: root.fileOpen && root.explorerShown
+            color: root.borderColor
+        }
+
+        ColumnLayout {
+            id: filesExplorerColumn
+
+            objectName: "filesExplorer"
+            Layout.fillHeight: true
+            Layout.fillWidth: !root.fileOpen
+            Layout.preferredWidth: root.fileOpen ? root.explorerShare : -1
+            Layout.maximumWidth: root.fileOpen ? root.explorerShare : Infinity
+            Layout.minimumWidth: 0
+            visible: root.explorerShown
+            spacing: 0
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.margins: 8
+                spacing: 4
+
+                ShellTextField {
+                    id: search
+
+                    objectName: "filesSearch"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    placeholderText: qsTr("Search files")
+                    enabled: (root.source?.root ?? "").length > 0
+                    text: root.source?.query ?? ""
+                    onTextEdited: root.source.query = text
+                    Keys.onEscapePressed: root.source.query = ""
+                }
+                ShellButton {
+                    objectName: "filesExpandAll"
+                    subtle: true
+                    iconName: root.tree?.allExpanded ? "chevron-up" : "chevron-down"
+                    iconSize: 13
+                    iconTint: root.muted
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    enabled: root.rootStatus === "ready"
+                    Accessible.name: root.tree?.allExpanded ? qsTr("Collapse all folders") : qsTr("Expand all folders")
+                    onClicked: root.tree.allExpanded ? root.tree.collapseAll() : root.tree.expandAll()
+                }
+            }
+
+            Text {
+                objectName: "filesSearchNote"
+                Layout.fillWidth: true
+                Layout.leftMargin: 10
+                Layout.rightMargin: 10
+                Layout.bottomMargin: 4
+                visible: text.length > 0
+                text: {
+                    if (!root.source || root.source.query.length === 0)
+                        return "";
+                    if (root.source.searching)
+                        return qsTr("Searching...");
+                    if (root.source.searchProblem.length > 0)
+                        return root.source.searchProblem;
+                    if (treeView.count === 0)
+                        return qsTr("No files match.");
+                    return root.source.searchTruncated ? qsTr("Showing the first matches; refine the search for more.") : "";
+                }
+                color: root.source?.searchProblem.length > 0 ? root.errorColor : root.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 80
+
+                ColumnLayout {
+                    id: rootMessage
+
+                    objectName: "filesRootMessage"
+                    anchors.centerIn: parent
+                    width: parent.width - 32
+                    visible: root.rootStatus === "error" || (root.source?.root ?? "").length === 0
+                    spacing: 10
+
+                    Text {
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                        text: (root.source?.root ?? "").length === 0 ? qsTr("This thread has no workspace.") : root.tree?.rootProblem ?? ""
+                        color: root.rootStatus === "error" ? root.errorColor : root.muted
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        wrapMode: Text.Wrap
+                    }
+                    ShellButton {
+                        objectName: "filesRetry"
+                        Layout.alignment: Qt.AlignHCenter
+                        visible: root.rootStatus === "error"
+                        text: qsTr("Try again")
+                        onClicked: root.source.reload()
+                    }
+                }
+
+                ListView {
+                    id: treeView
+
+                    objectName: "filesTree"
+                    anchors.fill: parent
+                    visible: !rootMessage.visible
+                    clip: true
+                    model: root.tree
+                    reuseItems: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {
+                        Accessible.name: qsTr("Scroll file tree")
+                    }
+
+                    Connections {
+                        target: root.tree
+                        function onSelectedChanged() {
+                            const row = root.tree.rowOf(root.tree.selectedPath);
+                            if (row >= 0)
+                                treeView.positionViewAtIndex(row, ListView.Contain);
+                        }
+                    }
+
+                    delegate: AbstractButton {
+                        id: entry
+
+                        required property string path
+                        required property string name
+                        required property int depth
+                        required property string kind
+                        required property bool expanded
+                        required property bool ignored
+                        required property string problem
+                        required property bool selected
+
+                        objectName: "filesEntry-" + (kind === "file" || kind === "directory" ? path : kind + "-" + path)
+                        width: treeView.width
+                        height: 24
+                        hoverEnabled: true
+                        leftPadding: 8 + depth * 14
+                        Accessible.name: name
+                        onClicked: {
+                            if (kind === "directory")
+                                root.tree.toggle(path);
+                            else if (kind === "file")
+                                root.source.openFile(path, 0);
+                            else if (kind === "error")
+                                root.tree.retry(path);
+                        }
+                        TapHandler {
+                            acceptedButtons: Qt.RightButton
+                            enabled: entry.kind === "file"
+                            onTapped: {
+                                entryMenu.path = entry.path;
+                                entryMenu.popup(entry);
+                            }
+                        }
+                        background: Rectangle {
+                            color: entry.selected ? Theme.palette.color("sidebarRowSelected", "#25314d") : entry.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+                        }
+                        contentItem: RowLayout {
+                            spacing: 6
+
+                            ShellIcon {
+                                visible: entry.kind === "directory" || entry.kind === "file"
+                                name: entry.kind === "directory" ? (entry.expanded ? "folder-open" : "folder") : "file-text"
+                                size: 13
+                                color: root.muted
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: entry.kind === "loading" ? qsTr("Loading...") : entry.kind === "error" ? qsTr("%1 Click to retry.").arg(entry.problem) : entry.name
+                                color: entry.kind === "error" ? root.errorColor : entry.ignored || entry.kind === "loading" ? root.muted : root.foreground
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                elide: Text.ElideMiddle
+                            }
                         }
                     }
                 }
