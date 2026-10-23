@@ -2,8 +2,10 @@
 
 #include <QCache>
 #include <QClipboard>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QLocale>
 #include <QRegularExpression>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -1288,6 +1290,7 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {ModelRole, "agentModel"}, {PullRequestUrlRole, "pullRequestUrl"},
       {MessageIdRole, "messageId"},
       {AttachmentsRole, "attachments"},
+      {SentFilesRole, "sentFiles"},
       {WarningRole, "warning"},
   };
 }
@@ -1523,6 +1526,27 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         });
       }
       return images;
+    }
+    case SentFilesRole: {
+      QVariantList files;
+      if (type != QLatin1String("user_message")) return files;
+      for (const QJsonValue& value : item.value(QLatin1String("attachments")).toArray()) {
+        const QJsonObject attachment = value.toObject();
+        const QString kind = text(attachment, QLatin1String("type"));
+        if (kind == QLatin1String("image")) continue;
+        const QString name = text(attachment, QLatin1String("name"));
+        QString detail;
+        if (kind == QLatin1String("file")) {
+          const QString suffix = QFileInfo(name).suffix().toUpper();
+          const QString size = QLocale(QLocale::English, QLocale::UnitedStates)
+                                   .formattedDataSize(attachment.value(QLatin1String("sizeBytes")).toInteger(), 1, QLocale::DataSizeIecFormat);
+          detail = suffix.isEmpty() ? size : QStringLiteral("%1 · %2").arg(suffix, size);
+        }
+        files.append(QVariantMap{{QStringLiteral("id"), text(attachment, QLatin1String("id"))},
+                                 {QStringLiteral("name"), name},
+                                 {QStringLiteral("detail"), detail}});
+      }
+      return files;
     }
     case FilesRole: {
       QVariantList files;

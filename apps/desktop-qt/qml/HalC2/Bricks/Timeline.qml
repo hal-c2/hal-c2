@@ -7,7 +7,8 @@ import "js/changedFilesTree.js" as ChangedFilesTree
 // A thread's timeline: the rows of a TimelineModel (Threads.timeline), or any
 // model with its roles (rowId, kind, author, text, streaming, title, status,
 // statusLabel, marker, entries, hiddenCount, expanded, files, time, icon,
-// intent, attribution, meta, attachments, and optionally summary and summaryFailed).
+// intent, attribution, meta, attachments, and optionally summary, summaryFailed
+// and sentFiles).
 //
 //   Timeline { anchors.fill: parent; model: Threads.timeline }
 //
@@ -767,6 +768,65 @@ Item {
                                         font.pixelSize: Math.round(12 * Theme.fontScale)
                                         wrapMode: Text.NoWrap
                                         elide: Text.ElideMiddle
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // The other files sent with it, by name, kind and size.
+                    Flow {
+                        id: sentFiles
+                        readonly property var files: root.list(row.model.sentFiles)
+                        visible: files.length > 0
+                        anchors.right: parent.right
+                        width: Math.round(parent.width * 0.8)
+                        layoutDirection: Qt.RightToLeft
+                        spacing: 8
+                        Repeater {
+                            model: sentFiles.files
+                            delegate: Rectangle {
+                                id: sentFile
+
+                                required property var modelData
+
+                                objectName: "sentFile-" + modelData.id
+                                Accessible.role: Accessible.StaticText
+                                Accessible.name: (modelData.detail ?? "").length > 0 ? qsTr("%1, %2").arg(modelData.name).arg(modelData.detail) : (modelData.name ?? "")
+                                width: Math.min(sentFiles.width, fileRow.implicitWidth + 20)
+                                height: 32
+                                radius: 8
+                                color: root.messageColor
+                                border.color: root.borderColor
+
+                                Row {
+                                    id: fileRow
+                                    x: 10
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 6
+                                    ShellIcon {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        name: "file"
+                                        size: 14
+                                        color: root.iconColor
+                                    }
+                                    RowText {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        // The name gives way so the kind and size stay whole.
+                                        width: Math.max(0, Math.min(implicitWidth, sentFiles.width - 40 - (fileDetail.visible ? fileDetail.implicitWidth + fileRow.spacing : 0)))
+                                        text: sentFile.modelData.name ?? ""
+                                        color: root.messageTextColor
+                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        wrapMode: Text.NoWrap
+                                        elide: Text.ElideMiddle
+                                    }
+                                    RowText {
+                                        id: fileDetail
+                                        visible: text.length > 0
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: sentFile.modelData.detail ?? ""
+                                        color: root.mutedColor
+                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        wrapMode: Text.NoWrap
                                     }
                                 }
                             }

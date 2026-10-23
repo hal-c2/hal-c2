@@ -575,6 +575,27 @@ Item {
             verify(visibleIn(findText(question, "checkout.png")), "an image still on its way is named");
         }
 
+        // Scenario: A sent file shows its name, kind and size
+        function test_userMessageShowsItsFiles() {
+            actionRows.clear();
+            actionRows.append(root.row({
+                rowId: "question",
+                author: "user",
+                text: "",
+                sentFiles: [{
+                    id: "file-1",
+                    name: "recording.mov",
+                    detail: "MOV · 15.1 MiB"
+                }]
+            }));
+            const timeline = createTemporaryObject(actionTimelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(0) !== null);
+            const question = list.itemAtIndex(0);
+            verify(visibleIn(findText(question, "recording.mov")), "the file is named");
+            verify(visibleIn(findText(question, "MOV · 15.1 MiB")), "with its kind and size");
+        }
+
         // The opacity a thing is drawn with, through its parents.
         function shownOpacity(item) {
             let opacity = 1;
