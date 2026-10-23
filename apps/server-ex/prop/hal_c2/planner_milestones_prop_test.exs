@@ -22,6 +22,14 @@ defmodule HalC2.PlannerMilestonesPropTest do
 
   A refusal stands until the item's next change, so once GitHub has refused a move it
   may end with an issue elsewhere than its task, but never without a mark saying so.
+  Which milestone asked is not known to the case, so a refusal stands until every
+  milestone has changed since the last one: then GitHub ends with every issue where its
+  task is, and nothing is marked, as if it had refused nothing.
+
+  Each task keeps the issue it starts with: relinking, unlinking or removing a
+  task is not generated, so what corrections do for a relinked task (one task
+  leaving two issues behind in a milestone) rests on the `Sync` unit tests in
+  `test/hal_c2/planner_test.exs`, not on this model.
   """
   use ExUnit.Case, async: false
   use PropCheck
@@ -121,7 +129,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
     at = next_state(m, observed, call).at
 
     observed.problems == [] and observed.at == at and
-      if(observed.refused,
+      if(observed.refused and MapSet.new(observed.changed) != MapSet.new(@milestones),
         do: observed.github == at or observed.marked != [],
         else: observed.github == at and observed.marked == []
       )
@@ -163,6 +171,8 @@ defmodule HalC2.PlannerMilestonesPropTest do
 
     Process.put(:pl_callers, [caller | Process.get(:pl_callers)])
     await_github()
+    changed = Enum.uniq(Process.get(:pl_changed) ++ Enum.reject([from, to], &is_nil/1))
+    Process.put(:pl_changed, Enum.sort(changed))
     observe()
   end
 
@@ -181,7 +191,12 @@ defmodule HalC2.PlannerMilestonesPropTest do
       held ->
         gate = Enum.at(held, rem(k, length(held)))
         Process.put(:pl_held, List.delete(held, gate))
-        if word == "no", do: Process.put(:pl_refused, true)
+
+        if word == "no" do
+          Process.put(:pl_refused, true)
+          Process.put(:pl_changed, [])
+        end
+
         File.write!(gate, word <> "\n", [:raw])
         await_github()
     end
@@ -293,6 +308,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
       github: github(),
       marked: marked,
       refused: Process.get(:pl_refused),
+      changed: Process.get(:pl_changed),
       problems: Process.put(:pl_problems, []) |> Enum.reverse()
     }
   end
@@ -409,6 +425,7 @@ defmodule HalC2.PlannerMilestonesPropTest do
     Process.put(:pl_callers, [])
     Process.put(:pl_problems, [])
     Process.put(:pl_refused, false)
+    Process.put(:pl_changed, [])
 
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},

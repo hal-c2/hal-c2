@@ -4,7 +4,7 @@ Connect a phone, the terminal app, or another desktop app to HAL-C2 running on a
 machine. That machine must stay running and reachable while you work.
 
 Commands marked `mix` run in a source checkout, in `apps/server-ex`, as `mise exec -- mix <task>`.
-The MC file you [install](./install.md#command-line) has `cluster` and `threads`
+The MC file you [install](./install.md#command-line) has `pair`, `cluster` and `threads`
 commands of its own, shown below.
 
 ## HAL-C2 Connect
@@ -52,6 +52,7 @@ link**. From the command line, run, with the address a device can reach:
 
 ```bash
 mix hal_c2.pair http://<private-ip>:<port>
+hal-c2-service pair http://<private-ip>:<port>   # the installed MC file
 ```
 
 Scan the QR code on your phone or paste the pairing URL into the receiving app's
@@ -174,6 +175,7 @@ line:
 
 ```bash
 mix hal_c2.pair --tailscale
+hal-c2-service pair --tailscale   # the installed MC file
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
@@ -185,7 +187,7 @@ tailscale serve --https=443 off
 ```
 
 If that port is already in use, choose another with
-`--tailscale-serve-port`.
+`--tailscale-serve-port` (`pair --tailscale --tailscale-serve-port 8443`).
 
 ## Manage or revoke access
 

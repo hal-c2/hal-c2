@@ -446,6 +446,39 @@ const Steps steps([] {
     expect(duplicate.value(QStringLiteral("colors")) == original.value(QStringLiteral("colors")),
            QStringLiteral("the copy draws %1, the original %2").arg(show(duplicate), show(original)));
   });
+  step(QStringLiteral("the user duplicates the standard theme"), [](World& world, const Captures&, const Table&) {
+    expect(!themes(world)->duplicateStandard().isEmpty(), settings(world)->deviceError());
+  });
+  step(QStringLiteral("an editable copy of the standard theme as drawn now is added and becomes the theme in use"), [](World& world, const Captures&, const Table&) {
+    const auto copy = offered(world, QStringLiteral("HAL-C2 copy"));
+    expect(copy && copy->value(QStringLiteral("source")) == QLatin1String("custom"),
+           QStringLiteral("the themes offered are %1").arg(show(themes(world)->available())));
+    const QVariantMap standard = themes(world)->draft(QStringLiteral("hal-c2"));
+    const QVariantMap duplicate = themes(world)->draft(copy->value(QStringLiteral("id")).toString());
+    expect(duplicate.value(QStringLiteral("colors")) == standard.value(QStringLiteral("colors")),
+           QStringLiteral("the copy draws %1, the standard theme %2").arg(show(duplicate), show(standard)));
+    // As any saved theme is: the copy is pinned to one appearance, so the app stops following the system's.
+    expect(themes(world)->resolvedId() == copy->value(QStringLiteral("id")).toString(),
+           QStringLiteral("the theme in use is %1").arg(themes(world)->resolvedId()));
+  });
+  // A theme saved before the standard look's id was kept from new ones.
+  step(QStringLiteral("a saved theme has the standard theme's id"), [](World& world, const Captures&, const Table&) {
+    saveCustom(world, QJsonObject{{QStringLiteral("id"), QStringLiteral("hal-c2")},
+                                  {QStringLiteral("label"), QStringLiteral("Imposter")},
+                                  {QStringLiteral("appearance"), QStringLiteral("dark")},
+                                  {QStringLiteral("colors"), QJsonObject{{QStringLiteral("canvas"), QStringLiteral("#112233")},
+                                                                          {QStringLiteral("accent"), QStringLiteral("#445566")}}}});
+  });
+  step(QStringLiteral("the copy of the standard theme draws the standard colors, not the saved theme's"),
+       [](World& world, const Captures&, const Table&) {
+         const auto copy = offered(world, QStringLiteral("HAL-C2 copy"));
+         expect(copy && copy->value(QStringLiteral("source")) == QLatin1String("custom"),
+                QStringLiteral("the themes offered are %1").arg(show(themes(world)->available())));
+         const QVariantMap drawn = themes(world)->draft(copy->value(QStringLiteral("id")).toString());
+         const QString canvas = drawn.value(QStringLiteral("colors")).toMap().value(QStringLiteral("canvas")).toString();
+         expect(!canvas.isEmpty() && canvas != QLatin1String("#112233"), QStringLiteral("the copy draws %1").arg(show(drawn)));
+         expect(offered(world, QStringLiteral("Imposter")).has_value(), QStringLiteral("the saved theme is gone"));
+       });
   step(QStringLiteral("the theme cannot be removed"), [](World& world, const Captures&, const Table&) {
     ensureTheme(world, QStringLiteral("My Theme"));
     world.themeDraft = themes(world)->draft(QStringLiteral("My Theme"));

@@ -124,6 +124,22 @@ defmodule HalC2.Steps.Connections.ConnectionModes do
     Map.put(context, :printed, link)
   end
 
+  step "the MC was started from an installed release", context do
+    World.put_env("RELEASE_ROOT", Mc.tmp_dir(context.mc, "release"))
+    context
+  end
+
+  step "an operator asks for a Tailscale pairing link on the taken port", context do
+    assert {:error, message} = Mc.run_task(Mix.Tasks.HalC2.Pair, ["--tailscale"])
+    Map.put(context, :refusal, message)
+  end
+
+  step "the refusal tells them to run {string}", %{args: [command]} = context do
+    assert context.refusal =~ "to `#{command}`"
+    refute context.refusal =~ "mix hal_c2.pair"
+    context
+  end
+
   step "the link uses that port", context do
     token_after(context.printed, "https://#{@tailnet_name}:8443/?token=")
     assert served(context)["#{@tailnet_name}:8443"] == "http://127.0.0.1:#{context.mc.port}"

@@ -31,6 +31,13 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   @state_version 3
 
+  # The steer's two budgets, one source so their ordering cannot drift: the
+  # handler's nested `turn/steer` call (`steer_call_timeout/0`, passed
+  # explicitly rather than left to `Connection.call`'s default) and the outer
+  # steer call's default above it. See `steer_call/3`.
+  @steer_call_timeout_ms 30_000
+  @steer_timeout_ms @steer_call_timeout_ms + 5_000
+
   # runtimeMode -> {approvalPolicy, approvalsReviewer, sandboxPolicy type}. Auto lets Codex's own reviewer answer what it would ask the user.
   @runtime_policies %{
     "approval-required" => {"untrusted", "user", "readOnly"},
@@ -58,31 +65,59 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   When Codex refuses, whatever it said before refusing (a `turn/completed`, say) is
   applied before this returns, so the caller sees whether the turn is still running.
+  Non-timeout exits (the runtime stopping mid-call, its nested provider call
+  timing out) propagate: the caller must treat them as a refusal. See
+  `HalC2.RuntimeSteer`.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
-      [{pid, _}] ->
-        with {:error, _} = error <- GenServer.call(pid, {:steer, run_id, message}, 30_000) do
-          settle(pid)
-          error
-        end
-
-      [] ->
-        {:error, "no running turn"}
+      [{pid, _}] -> steer_call(pid, run_id, message)
+      [] -> {:error, "no running turn"}
     end
   end
 
-  # Notifications that preceded a steer refusal sit in the runtime's mailbox
-  # ahead of this call, so they are applied before the refusal returns. A
-  # runtime that stops during it has still refused: its exit must not replace
-  # the refusal (and read, through `Orchestration.session_call/2`, as a session
-  # that stopped before answering at all).
+  @doc false
+  # The outer steer call's budget. Its default is derived above
+  # `steer_call_timeout/0` (see the module attributes), so the two stay
+  # ordered; an env override below the inner budget reorders them on purpose
+  # (tests timeout a steer quickly that way).
+  def steer_timeout,
+    do: Application.get_env(:hal_c2, :codex_steer_timeout_ms, @steer_timeout_ms)
+
+  @doc false
+  # The handler's nested `turn/steer` budget, passed explicitly at the call.
+  def steer_call_timeout, do: @steer_call_timeout_ms
+
+  # `HalC2.RuntimeSteer` owns which timeout means held. The handler blocks in
+  # a nested `Connection.call` on the inner budget, so the outer defaults
+  # above it: with equal budgets the outer deadline — started strictly before
+  # the handler starts the inner call — would always win, and a provider that
+  # never answers `turn/steer` would be reported as a delivery. Ordered this
+  # way, a promptly started handler whose provider hangs is decided by the
+  # inner exit (a refusal), while a steer stuck behind mailbox backlog past
+  # the outer budget still falls through to `:ok`. A refusal is always the
+  # refusal: settling the runtime so the caller sees whether the turn still
+  # runs is best-effort, and a settle that itself times out or finds the
+  # runtime gone must not turn it into a delivery. The two budgets stack: a
+  # wedged runtime blocks the dispatching process for the steer budget plus
+  # the settle budget (35s + 30s by default) before the sender hears the
+  # refusal, so tune them together, not one in isolation.
+  defp steer_call(pid, run_id, message) do
+    timeout = steer_timeout()
+
+    with {:error, _} = error <- HalC2.RuntimeSteer.call(pid, run_id, message, timeout) do
+      # Notifications that preceded the refusal sit in the runtime's mailbox ahead
+      # of this call.
+      settle(pid)
+      error
+    end
+  end
+
   defp settle(pid) do
-    GenServer.call(pid, :settle, 30_000)
+    timeout = Application.get_env(:hal_c2, :codex_steer_settle_timeout_ms, 30_000)
+    GenServer.call(pid, :settle, timeout)
   catch
-    # A merely slow runtime still exits the caller, as everywhere else here.
-    :exit, {:timeout, _} = reason -> exit(reason)
     :exit, _ -> :ok
   end
 
@@ -260,7 +295,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       "input" => codex_input(message)
     }
 
-    case Connection.call(state.conn, "turn/steer", params) do
+    case Connection.call(state.conn, "turn/steer", params, steer_call_timeout()) do
       {:ok, _} -> {:reply, :ok, state}
       {:error, reason} -> {:reply, {:error, rpc_message(reason)}, state}
     end

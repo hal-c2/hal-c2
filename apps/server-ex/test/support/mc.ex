@@ -1843,7 +1843,8 @@ defmodule HalC2.Test.Mc.World do
   fake text generator. Every scenario that sends a message must call this first, or
   the MC would start the real CLIs. `env` is extra OS environment for the fakes;
   the fake Codex logs every request it gets and every answer to its own requests
-  (see `codex_requests/2`) and refuses steers while `<home>/reject-steer` exists; the
+  (see `codex_requests/2`), refuses steers while `<home>/reject-steer` exists and
+  holds them while `<home>/hold-steer` does; the
   fake ACP agent logs its permission answers (see `acp_requests/2`). Paced fake Codex
   replies wait for gate files in `<home>/gate`.
   """
@@ -1852,6 +1853,7 @@ defmodule HalC2.Test.Mc.World do
       env
       |> Map.put_new("FAKE_CODEX_LOG", Path.join(context.mc.home, "codex-requests.log"))
       |> Map.put_new("FAKE_CODEX_REJECT_STEER", Path.join(context.mc.home, "reject-steer"))
+      |> Map.put_new("FAKE_CODEX_HOLD_STEER", Path.join(context.mc.home, "hold-steer"))
       |> Map.put_new("FAKE_ACP_LOG", Path.join(context.mc.home, "acp-requests.log"))
       |> Map.put_new("FAKE_CLAUDE_LOG", Path.join(context.mc.home, "claude-prompts.log"))
       |> Map.put_new("FAKE_CODEX_GATE", Path.join(context.mc.home, "gate"))

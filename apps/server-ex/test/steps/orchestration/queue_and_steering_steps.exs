@@ -284,6 +284,78 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     context
   end
 
+  # Both carry the message's id, as a client retrying while the first is on its way. The
+  # repeat is sent while Codex still holds the first: the message is in the turn, and
+  # Codex has not answered.
+  step "the user's client sends the steer {string} to {string} twice at once",
+       %{args: [text, thread]} = context do
+    message_id = "msg-#{System.unique_integer([:positive])}"
+
+    command = %{
+      "type" => "message.dispatch",
+      "threadId" => World.thread_id(context, thread),
+      "messageId" => message_id,
+      "text" => text,
+      "attachments" => [],
+      "deliveryIntent" => "steer"
+    }
+
+    hold = Path.join(context.mc.home, "hold-steer")
+    File.touch!(hold)
+    first = Task.async(fn -> HalC2.Orchestration.dispatch(command) end)
+
+    World.await_state(context, thread, fn state ->
+      StreamState.get(state, "turn-item")["turn-item:user:#{message_id}"] != nil
+    end)
+
+    second = HalC2.Orchestration.dispatch(command)
+    File.rm!(hold)
+    replies = [Task.await(first, 15_000), second]
+
+    context |> Map.put(:thread, thread) |> Map.put(:replies, replies) |> Map.put(:sent, text)
+  end
+
+  step "both sends succeed", context do
+    assert [{:ok, _}, {:ok, _}] = context.replies
+    context
+  end
+
+  step "Codex is asked to take {string} once", %{args: [text]} = context do
+    steers = World.codex_requests(context, "turn/steer")
+    assert [_] = Enum.filter(steers, &match?(%{"input" => [%{"text" => ^text} | _]}, &1))
+    context
+  end
+
+  step "{string} is in the running turn once", %{args: [text]} = context do
+    assert [%{"runId" => run_id}] =
+             Enum.filter(
+               World.entities(context, context.thread, "message"),
+               &(&1["text"] == text)
+             )
+
+    assert run_id == context.running
+    assert %{"runId" => ^run_id} = user_item(context, text, "steer")
+    context
+  end
+
+  # The fake Codex answers the steer and ends its turn before it replies that it took it.
+  step "{string} has a running turn on {string} that ends as it takes a steer",
+       %{args: [thread, provider]} = context do
+    provider_turn(context, thread, provider, "wait, closing soon")
+  end
+
+  step "{string} is in the turn ahead of the answer to it", %{args: [text]} = context do
+    state = World.await_runs(context, context.thread, ["completed"])
+    items = StreamState.list(state, "turn-item")
+    steer = user_item(context, text, "steer")
+    answer = Enum.find(items, &(&1["text"] == "steered: " <> text))
+
+    assert answer, "no answer to #{inspect(text)}"
+    assert steer["runId"] == context.running and answer["runId"] == context.running
+    assert steer["ordinal"] < answer["ordinal"]
+    context
+  end
+
   step "the user steers {string} with {string} and an attached screenshot",
        %{args: [thread, text]} = context do
     context =
@@ -612,7 +684,7 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
   defp selection(provider), do: %{"instanceId" => provider, "model" => @models[provider]}
 
   # A turn that keeps running on `provider`, which the thread is set to.
-  defp provider_turn(context, thread, provider) do
+  defp provider_turn(context, thread, provider, text \\ "wait for it") do
     context =
       context
       |> World.providers()
@@ -622,7 +694,7 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
         "providerInstanceId" => provider
       })
 
-    World.running_turn(context, thread)
+    World.running_turn(context, thread, text)
   end
 
   # Queued runs arranged before a restart: the active run is only a record (the

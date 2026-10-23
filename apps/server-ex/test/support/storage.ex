@@ -167,21 +167,47 @@ defmodule HalC2.Test.Storage do
   end
 
   @doc """
-  Runs `mix hal_c2.pair --release` from a checkout (the development profile), whichever
-  server the scenario runs: what it printed, or `{:error, message}`, is
-  `context.pair_output`.
+  Runs `mix hal_c2.pair` from a checkout with `args` (`["--release"]` for the installed
+  server's link), whichever server the scenario runs, with the `:home` a checkout's
+  config gives it in the scenario's environment: what it printed, or
+  `{:error, message}`, is `context.pair_output`.
   """
-  def pair_release(context), do: pair_from(context, :dev, ["--release"])
+  def pair_checkout(context, args), do: pair_from(context, boot_config(:dev)[:home], args)
+
+  @doc "`pair_checkout/2` with `--release`."
+  def pair_release(context), do: pair_checkout(context, ["--release"])
+
+  @doc """
+  Runs the installed MC's own `pair` command (`hal-c2-service pair`: a release, so no
+  Mix, and the `:home` a release's config gives it in the scenario's environment)
+  whichever server the scenario runs.
+  """
+  def pair_from_release(context) do
+    previous = System.get_env("RELEASE_ROOT")
+    System.put_env("RELEASE_ROOT", Path.join(fs(context), "release"))
+
+    try do
+      pair_from(context, release_spec(), [])
+    after
+      if previous,
+        do: System.put_env("RELEASE_ROOT", previous),
+        else: System.delete_env("RELEASE_ROOT")
+    end
+  end
 
   defp pair_from(context, profile, args) do
     guard!(context, profile)
+    previous = Application.get_env(:hal_c2, :home)
     Application.put_env(:hal_c2, :home, profile)
 
     lines =
       try do
-        Mc.run_task(Mix.Tasks.HalC2.Pair, args)
+        lines = Mc.run_task(Mix.Tasks.HalC2.Pair, args)
+        # The command reads the home it finds without moving the caller's.
+        assert Application.get_env(:hal_c2, :home) == profile
+        lines
       after
-        Application.put_env(:hal_c2, :home, context.running_profile)
+        Application.put_env(:hal_c2, :home, previous)
       end
 
     Map.put(context, :pair_output, lines)
