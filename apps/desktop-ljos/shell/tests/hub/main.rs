@@ -66,6 +66,7 @@ mod windows;
 mod windows_prop;
 mod workspace;
 mod workspace_files;
+mod workspace_open_here_prop;
 mod worktree_setup;
 
 use std::cell::RefCell;
@@ -106,6 +107,30 @@ impl Hub {
             mc_origin: Some("http://127.0.0.1:1".into()),
             ..Launch::default()
         })
+    }
+
+    /// A hub whose MC runs on this machine: reached on loopback, its
+    /// environment (env-1) described by the first `shell` frame, so apps the
+    /// shell starts start through it (`this_machine::hosts`).
+    pub fn here(launch: Launch) -> Hub {
+        let hub = Hub::with(Launch {
+            mc_origin: launch
+                .mc_origin
+                .clone()
+                .or_else(|| Some("http://127.0.0.1:1".into())),
+            ..launch
+        });
+        hub.mc.set_ready(&hub.engine, true);
+        hub.mc.frame(
+            &hub.engine,
+            "shell",
+            "",
+            serde_json::json!({"t": "shell", "mcs": [
+                {"mc": "a", "online": true, "epoch": "e", "rev": 1,
+                 "environment": {"environmentId": "env-1"}},
+            ], "rows": []}),
+        );
+        hub
     }
 
     pub fn with(launch: Launch) -> Hub {

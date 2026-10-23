@@ -59,6 +59,7 @@ use crate::sidebar_model::{
     Thread, View,
 };
 use crate::store;
+use crate::this_machine;
 
 /// The snooze menus' last item, which asks for a time of the user's own.
 pub const CUSTOM_SNOOZE: &str = "snooze:custom";
@@ -542,10 +543,12 @@ impl Sidebar {
                 None => model::wake_description(until, &at.with_timezone(&Local), &format),
             }
         };
+        let local_folders = !own.is_empty() && this_machine::hosts(engine, &own);
         let view = store::with(engine, |s| {
             let input = Input {
                 projects: groups.clone(),
                 local_environment_id: (!own.is_empty()).then(|| own.clone()),
+                local_folders,
                 offline_environments: s
                     .environments()
                     .into_iter()

@@ -58,6 +58,7 @@ use crate::controllers::settings::Settings;
 use crate::controllers::settings_scope::SettingsScope;
 use crate::controllers::thread_menu::ThreadMenu;
 use crate::controllers::toasts::{Action, Toasts};
+use crate::controllers::workspace;
 use crate::json::Json;
 use crate::keybindings::{self as keymap, Binding, Context, When, qt};
 
@@ -1095,8 +1096,8 @@ impl Keymap {
         });
     }
 
-    /// Opens keybindings.json on the MC in the editor last used there, else
-    /// the first it has; says so when it cannot.
+    /// Opens keybindings.json on this machine (`workspace::open_here`) in the
+    /// editor last used, else the first the MC has; says so when it cannot.
     pub fn open_file(&self, engine: &Engine) {
         let path = self.file_path();
         if path.is_empty() {
@@ -1132,22 +1133,25 @@ impl Keymap {
         let Some(mc) = controller::mc(engine) else {
             return;
         };
-        mc.call(
+        workspace::open_here(
+            engine,
             &mc.environment(),
-            "shell.openInEditor",
-            json!({"cwd": path, "editor": editor}),
-            Box::new(|engine, result| {
-                if let Err(error) = result {
-                    let message = if error.message.is_empty() {
+            &path,
+            &editor,
+            false,
+            "",
+            Some(Box::new(|engine, error| {
+                if let Some(error) = error {
+                    let message = if error.is_empty() {
                         "The keybindings file was not opened.".to_owned()
                     } else {
-                        error.message
+                        error
                     };
                     toast(engine, move |toasts, engine| {
                         toasts.error(engine, OPEN_FAILED, &message);
                     });
                 }
-            }),
+            })),
         );
     }
 

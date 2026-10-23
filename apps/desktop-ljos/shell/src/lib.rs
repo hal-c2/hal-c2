@@ -38,6 +38,7 @@ pub mod storage;
 pub mod store;
 pub mod terminal;
 pub mod theme;
+pub mod this_machine;
 pub mod thread_view;
 pub mod window_mc;
 

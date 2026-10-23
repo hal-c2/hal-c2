@@ -32,13 +32,11 @@
 //! reachability source, so only [`ConnectionHealth::set_network`] says a
 //! device is offline.
 
-use std::net::IpAddr;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos::prelude::{Engine, Value};
 use serde_json::json;
-use url::{Host, Url};
 
 use crate::bridge::Bridge;
 use crate::commands::Commands;
@@ -49,6 +47,7 @@ use crate::json::Json;
 use crate::mc::{Mc, Phase, Status};
 use crate::session::Session;
 use crate::store;
+use crate::this_machine;
 use hal_c2_mc::pairing::{self, Client, Link, Outcome, Pairing};
 
 const KEY: &str = "connection";
@@ -327,13 +326,7 @@ impl ConnectionHealth {
         let local = self
             .mc
             .origin()
-            .and_then(|origin| Url::parse(&origin).ok())
-            .is_some_and(|url| match url.host() {
-                Some(Host::Domain(name)) => name == "localhost",
-                Some(Host::Ipv4(ip)) => IpAddr::V4(ip).is_loopback(),
-                Some(Host::Ipv6(ip)) => IpAddr::V6(ip).is_loopback(),
-                None => false,
-            });
+            .is_some_and(|origin| this_machine::loopback_host(&this_machine::origin_host(&origin)));
         let online = local || !(self.network.disconnected)() || (self.network.interface_up)();
         self.mc.set_online(online);
         if online {
