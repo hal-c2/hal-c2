@@ -273,6 +273,7 @@ Item {
         when: windowShown
 
         function cleanup() {
+            Theme.fontScale = 1;
             Shell.reset();
             Panel.diff = null;
             Panel.files = null;
@@ -693,9 +694,12 @@ Item {
             const files = createTemporaryObject(filesComponent, root, { source: source });
             const before = files.explorerMinimum;
             verify(before > 72, "room for ten characters, not a 72px sliver: " + before);
-            Theme.fontScale = 2;
-            tryVerify(() => files.explorerMinimum > before + 40, 5000, "a doubled font asks for more room: " + files.explorerMinimum);
-            Theme.fontScale = 1;
+            try {
+                Theme.fontScale = 2;
+                tryVerify(() => files.explorerMinimum > before + 40, 5000, "a doubled font asks for more room: " + files.explorerMinimum);
+            } finally {
+                Theme.fontScale = 1;
+            }
             tryVerify(() => files.explorerMinimum === before);
         }
 
