@@ -8,6 +8,11 @@
 //! the window shows keeps the row it had when the window opened it: none for
 //! one that was empty then, and the same label however the user types.
 //!
+//! The Settled shelf lists a page of rows at a time ([`model::SETTLED_PAGE`]),
+//! and `sidebar.more` lists the next; the open thread is listed past the
+//! page. Settled threads a plugin started stay out of it, and its count,
+//! unless the MC's `sidebarShowSettledPluginThreads` says otherwise.
+//!
 //! Selection: `thread.select.toggle {key}` adds or removes one,
 //! `thread.select.range {key}` selects from the anchor (the last one toggled
 //! or opened) to it, `thread.select.clear` drops them all, as does scoping
@@ -350,6 +355,13 @@ pub struct Sidebar {
     following: bool,
     grouping: GroupingSettings,
     thread_sort_order: String,
+    /// Whether Settled lists the threads a plugin started, as the MC's
+    /// settings say (`sidebarShowSettledPluginThreads`).
+    show_settled_plugin_threads: bool,
+    /// How many settled rows the shelf lists, and how many more
+    /// `sidebar.more` lists.
+    settled_page: usize,
+    settled_shown: usize,
     /// Threads park() waits on the MC for.
     pending: HashSet<String>,
     /// The threads the custom snooze question is about.
@@ -390,6 +402,9 @@ impl Controller for Sidebar {
             following: false,
             grouping: GroupingSettings::default(),
             thread_sort_order: "updated_at".into(),
+            show_settled_plugin_threads: false,
+            settled_page: model::SETTLED_PAGE,
+            settled_shown: model::SETTLED_PAGE,
             pending: HashSet::new(),
             custom_snooze_keys: Vec::new(),
             jump_labels: Vec::new(),
@@ -440,6 +455,8 @@ impl Sidebar {
         drafts::on_changed(engine, later(self.me.clone()));
         mc_plugin::on_running_changed(engine, later(self.me.clone()));
         Settings::of(engine).on_device_changed(later(self.me.clone()));
+        // And the MC's settings, which say whether Settled lists plugin threads.
+        Settings::of(engine).on_settings_changed(later(self.me.clone()));
         let refresh = later(self.me.clone());
         self.bridge
             .watch(engine, "route", move |engine, _| refresh(engine));
@@ -452,6 +469,13 @@ impl Sidebar {
             let labels = labels.to_vec();
             me.run(engine, |c, e| c.set_jump_hints(e, labels, shown));
         });
+    }
+
+    /// The settled shelf lists `page` rows at a time (and `sidebar.more` lists
+    /// the next page too). Tests shorten the page.
+    pub fn set_settled_page(&mut self, page: usize) {
+        self.settled_page = page;
+        self.settled_shown = page;
     }
 
     /// Re-reads everything the list shows and publishes it.
@@ -562,6 +586,9 @@ impl Sidebar {
                 show_jump_hints: self.show_jump_hints,
                 selected_keys: selected,
                 describe_wake: Some(Box::new(describe_wake)),
+                settled_limit: self.settled_shown,
+                settled_page: self.settled_page,
+                show_settled_plugin_threads: self.show_settled_plugin_threads,
             };
             model::build(
                 &threads,
@@ -632,6 +659,13 @@ impl Sidebar {
                 .unwrap_or_default(),
         };
         self.thread_sort_order = text("sidebarThreadSortOrder", "updated_at");
+        // The shell's own MC decides for the whole sidebar, as its Settings
+        // row shows.
+        self.show_settled_plugin_threads = Settings::of(engine)
+            .settings()
+            .get("sidebarShowSettledPluginThreads")
+            .and_then(Json::as_bool)
+            .unwrap_or(false);
         *shared(engine).timestamp_format.borrow_mut() = text("timestampFormat", "locale");
     }
 
@@ -782,6 +816,12 @@ impl Sidebar {
                     return true;
                 }
                 self.select(engine, &key, action == "thread.select.range");
+                true
+            }
+            // Lists the settled shelf's next page.
+            "sidebar.more" => {
+                self.settled_shown += self.settled_page;
+                self.refresh(engine);
                 true
             }
             "sidebar.scope" => {

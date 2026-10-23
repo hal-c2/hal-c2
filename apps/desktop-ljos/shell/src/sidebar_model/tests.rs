@@ -328,7 +328,7 @@ fn pinned_and_active_order_by_their_keys_then_by_age() {
 
 #[test]
 fn the_settled_shelf_stops_at_its_limit_but_keeps_the_open_thread() {
-    let threads: Vec<Thread> = (0..SETTLED_LIMIT + 5)
+    let threads: Vec<Thread> = (0..SETTLED_PAGE + 5)
         .map(|n| {
             let at = format!("2026-09-{:02}T00:00:00Z", 1 + n % 20);
             thread_from_row(
@@ -347,10 +347,111 @@ fn the_settled_shelf_stops_at_its_limit_but_keeps_the_open_thread() {
     };
     let view = build(&threads, &input, &None, &|_| all(), now());
     let shown = view.state["settled"].as_array().unwrap();
-    assert_eq!(view.state["settledTotal"], SETTLED_LIMIT + 5);
-    assert_eq!(shown.len(), SETTLED_LIMIT + 1);
+    assert_eq!(view.state["settledTotal"], SETTLED_PAGE + 5);
+    assert_eq!(shown.len(), SETTLED_PAGE + 1);
     assert_eq!(shown.last().unwrap()["key"], last.as_str());
-    assert_eq!(view.parked_keys.len(), SETTLED_LIMIT + 5);
+    assert_eq!(view.parked_keys.len(), SETTLED_PAGE + 5);
+}
+
+fn settled(id: &str, extra: Value) -> Thread {
+    thread_from_row("e", &with(row(id), with_settled(extra)))
+}
+
+fn with_settled(extra: Value) -> Value {
+    let mut base = json!({"settledOverride": "settled", "settledAt": AT});
+    for (k, v) in extra.as_object().unwrap() {
+        base[k] = v.clone();
+    }
+    base
+}
+
+fn reviews() -> Value {
+    json!({"plugin": {"id": "code-review", "kind": "review", "listed": true}})
+}
+
+fn settled_titles(view: &View) -> Vec<String> {
+    view.state["settled"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["key"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn the_settled_shelf_lists_the_limit_it_is_given_and_says_its_page() {
+    let threads: Vec<Thread> = (0..7)
+        .map(|n| settled(&format!("t{n}"), json!({})))
+        .collect();
+    let input = Input {
+        settled_limit: 5,
+        settled_page: 3,
+        ..Input::default()
+    };
+    let view = build(&threads, &input, &None, &|_| all(), now());
+    assert_eq!(settled_titles(&view).len(), 5);
+    assert_eq!(view.state["settledTotal"], 7);
+    assert_eq!(view.state["settledPage"], 3);
+    assert_eq!(build_all(&threads).state["settledPage"], SETTLED_PAGE);
+}
+
+#[test]
+fn settled_plugin_threads_stay_out_of_the_shelf_and_its_count_unless_asked() {
+    let threads = [
+        settled("own", json!({})),
+        settled("review-1", reviews()),
+        settled("review-2", reviews()),
+    ];
+    let hidden = build_all(&threads);
+    assert_eq!(settled_titles(&hidden), ["e:own"]);
+    assert_eq!(hidden.state["settledTotal"], 1);
+    // Nor are they rows to move through or to select.
+    assert_eq!(hidden.ordered_keys, ["e:own"]);
+
+    let shown = build(
+        &threads,
+        &Input {
+            show_settled_plugin_threads: true,
+            ..Input::default()
+        },
+        &None,
+        &|_| all(),
+        now(),
+    );
+    assert_eq!(shown.state["settledTotal"], 3);
+    assert_eq!(settled_titles(&shown).len(), 3);
+}
+
+#[test]
+fn the_open_settled_plugin_thread_stays_listed() {
+    let threads = [settled("own", json!({})), settled("review-1", reviews())];
+    let input = Input {
+        active_thread_key: Some("e:review-1".into()),
+        ..Input::default()
+    };
+    let view = build(&threads, &input, &None, &|_| all(), now());
+    assert_eq!(settled_titles(&view).len(), 2);
+    assert_eq!(view.state["settledTotal"], 2);
+}
+
+#[test]
+fn plugin_threads_are_hidden_before_the_shelf_pages() {
+    // Three of five are the plugin's: a page of two still fills with the user's.
+    let threads = [
+        settled("a", json!({"settledAt": "2026-09-23T08:05:00Z"})),
+        settled("r1", with_settled(reviews())),
+        settled("b", json!({"settledAt": "2026-09-23T08:04:00Z"})),
+        settled("r2", with_settled(reviews())),
+        settled("r3", with_settled(reviews())),
+    ];
+    let input = Input {
+        settled_limit: 2,
+        settled_page: 2,
+        ..Input::default()
+    };
+    let view = build(&threads, &input, &None, &|_| all(), now());
+    assert_eq!(settled_titles(&view), ["e:a", "e:b"]);
+    assert_eq!(view.state["settledTotal"], 2);
 }
 
 #[test]

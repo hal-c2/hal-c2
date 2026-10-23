@@ -85,6 +85,7 @@ static ROWS: &[Row] = rows![
     "snoozeLimitedThreads", false, false;
     "sidebarAutoSettleOnMerge", false, true;
     "sidebarAutoSettleAfterDays", false, 3;
+    "sidebarShowSettledPluginThreads", false, false;
     "notificationMode", true, "off";
     "inAppNotificationsEnabled", true, false;
     "timestampFormat", true, "locale";
