@@ -11,7 +11,15 @@ defmodule HalC2.Plugins.Kind do
     * `validate_settings/1` (optional): `:ok`, or `{:error, message}` shown to the
       user when they save settings the plugin cannot use.
     * `start_link/1` (optional): the plugin's process, started with its settings
-      under the plugin's own supervisor while the plugin is enabled.
+      under the plugin's own supervisor while the plugin is enabled. A restart after
+      a crash starts it with the settings saved last.
+    * `settings_changed/3` (optional): `settings_changed(pid, settings, old)` hands
+      the process `start_link/1` started (`pid`) the settings the user just saved, in
+      the shape `start_link/1` takes, and answers `:ok` once it runs with them. It is
+      called from the MC's plugin host while the save waits, so it answers promptly
+      and never calls back into `HalC2.Plugins`. A plugin without it, or one that
+      answers anything else, raises or exits, is restarted with the new settings,
+      which stops the work its process was doing.
   """
 
   defmacro __using__(_opts) do
@@ -19,7 +27,8 @@ defmodule HalC2.Plugins.Kind do
       @callback manifest() :: map
       @callback validate_settings(settings :: map) :: :ok | {:error, String.t()}
       @callback start_link(settings :: map) :: GenServer.on_start()
-      @optional_callbacks manifest: 0, validate_settings: 1, start_link: 1
+      @callback settings_changed(pid, settings :: map, old :: map) :: :ok | {:error, term}
+      @optional_callbacks manifest: 0, validate_settings: 1, start_link: 1, settings_changed: 3
     end
   end
 end
