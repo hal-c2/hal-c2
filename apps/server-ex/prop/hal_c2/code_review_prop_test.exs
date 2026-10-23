@@ -23,6 +23,7 @@ defmodule HalC2.CodeReviewPropTest do
     automatically is answered once GitHub has, with how the post went;
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
     and the look for pull requests, and leaves no checkout no review points at;
+  - a settings save keeps them going, and starts queued reviews when it makes room;
   - the `reviews` snapshot, and the topic clients follow, match the model;
   - the plugin process is only replaced when the step restarts it.
   """
@@ -437,8 +438,9 @@ defmodule HalC2.CodeReviewPropTest do
         "reviewNewPushes" => :new_pushes
       }[field]
 
+    # The running plugin takes it as it is: the next look reads the rest.
     m = %{m | settings: Map.put(m.settings, name, value)}
-    if m.enabled, do: {restart(%{m | crashes: 0}), :ok}, else: {m, :ok}
+    if m.enabled, do: {pump(m), :ok}, else: {m, :ok}
   end
 
   defp step(m, {:call, _, :push, [key]}),
@@ -861,12 +863,8 @@ defmodule HalC2.CodeReviewPropTest do
     observe(nil, :restarted)
   end
 
-  def save({field, value}) do
-    restarts = if Process.whereis(@server), do: :restarted, else: :same
-
-    killing(fn -> plugins("saveSettings", %{"id" => @id, "settings" => %{field => value}}) end)
-    |> observe(restarts)
-  end
+  def save({field, value}),
+    do: observe(plugins("saveSettings", %{"id" => @id, "settings" => %{field => value}}))
 
   def push(key) do
     world = Process.get(:cr_world)
@@ -1357,6 +1355,9 @@ defmodule HalC2.CodeReviewPropTest do
     {:ok, last} = HalC2.Plugins.subscribe_topic(self(), @id, "reviews")
     Process.put(:cr_topic, last)
     HalC2.PullRequests.invalidate(%{})
+    # The look the plugin started with is over, and one sees the repositories saved.
+    drain()
+    {:ok, _} = HalC2.Plugins.handle("call", %{"id" => @id, "method" => "refresh", "input" => %{}})
     drain()
     :sys.get_state(HalC2.Plugins)
     take_messages()

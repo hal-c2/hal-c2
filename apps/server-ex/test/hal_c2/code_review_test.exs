@@ -357,11 +357,41 @@ defmodule HalC2.CodeReviewTest do
     settle()
     assert %{"status" => "queued"} = review()
 
-    # A settings save restarts the plugin; the queue must not start into the limit.
-    save_settings(%{})
+    # Neither a save, which starts queued reviews when it makes room, nor a restart
+    # starts the queue into the limit.
+    save_settings(%{"concurrency" => 2})
+    assert %{"status" => "queued"} = review()
+    {:ok, _} = HalC2.Plugins.handle("restart", %{"id" => @id})
+    settle()
     refresh()
     assert %{"status" => "queued"} = review()
     assert GenServer.call(@server, :snapshot)["problem"] =~ "usage limit"
+    _ = context
+  end
+
+  test "a review under way keeps running through a settings save", context do
+    review = start_review()
+    pid = Process.whereis(@server)
+
+    save_settings(%{"concurrency" => 2, "display" => "both", "repositories" => []})
+
+    assert Process.whereis(@server) == pid
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    assert thread_id == review["threadId"]
+    assert GenServer.call(@server, :snapshot)["watching"] == []
+    _ = context
+  end
+
+  test "a new pace re-arms the wait for the next look, and only once", context do
+    pid = Process.whereis(@server)
+    %{timer: armed} = await_look()
+    assert Process.read_timer(armed) > 59 * 60_000
+
+    save_settings(%{"pollMinutes" => 5})
+
+    %{timer: timer} = :sys.get_state(pid)
+    refute Process.read_timer(armed)
+    assert Process.read_timer(timer) in 1..(5 * 60_000)
     _ = context
   end
 

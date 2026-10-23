@@ -358,6 +358,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "all four reviews run", context do
+    {{:ok, snapshot}, context} = plugin(context, "reviews", %{})
+    assert Enum.map(snapshot["reviews"], & &1["status"]) == List.duplicate("running", 4)
+    context
+  end
+
   # --- the agent and its prompt ----------------------------------------------------------------
 
   step "{string} reviews with Claude on {string} in the {string} mode",
@@ -722,6 +728,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the user changes how often {string} looks for pull requests", %{args: [@id]} = context do
+    save(context, %{"pollMinutes" => 15})
+  end
+
   step "the review of \#{int} is failed saying the plugin stopped while it ran",
        %{args: [number]} = context do
     {review, context} = await_review(context, number, &(&1["status"] == "failed"))
@@ -1052,6 +1062,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "the user changes how often {string} looks for pull requests while the review of \#{int} is being posted",
+       %{args: [@id, number]} = context do
+    context = await_review!(context, number, &(&1["status"] == "publishing"))
+    save(context, %{"pollMinutes" => 15})
+  end
+
   step "the post to GitHub is called off", context do
     pid = context.github_gate |> Kernel.<>(".pid") |> File.read!() |> String.trim()
     # `tail --pid` returns once the process is gone.
@@ -1152,7 +1168,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
   # --- helpers ---------------------------------------------------------------------------------
 
-  # Saves `patch` over the plugin's settings, which restarts it.
+  # Saves `patch` over the plugin's settings; the running plugin takes them.
   defp save(context, patch) do
     {_, context} =
       World.call!(context, "plugins.saveSettings", %{"id" => @id, "settings" => patch})
