@@ -262,6 +262,33 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # The stop a client sends naming the run it saw, as a restart does.
+  step "a client stops run {int} of {string}", %{args: [ordinal, thread]} = context do
+    %{"id" => run_id} = Enum.find(World.runs(context, thread), &(&1["ordinal"] == ordinal))
+
+    {reply, context} =
+      World.dispatch(context, %{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, thread),
+        "runId" => run_id
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "{string} ran its latest turn on Claude", %{args: [thread]} = context do
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+    context = World.dispatch_message(context, thread, "Hi", claude)
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_run(context, thread, &(&1["ordinal"] == 3 and &1["status"] == "completed"))
+    context
+  end
+
+  step "the stop is refused", context do
+    assert {:error, _, _} = context.reply
+    context
+  end
+
   step "the run of {string} is interrupted", %{args: [thread]} = context do
     World.await_run(
       context,

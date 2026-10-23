@@ -10,6 +10,7 @@
 #   https://github.com/hal-c2/hal-c2/issues/254 (provider CLIs left running by an MC that died)
 #   https://github.com/hal-c2/hal-c2/issues/387 (commands in a session of their own outlive that kill)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (background subagents and commands, also between turns)
+#   https://github.com/hal-c2/hal-c2/issues/474 (a stop naming an earlier run ended what a later run left)
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts (task_started, task_notification, pendingBackgroundTasks)
 #   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (commands left running in background terminals)
 #   apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts (settledTurns, terminalizeRunningCommandItems,
@@ -280,6 +281,35 @@ Feature: Recovering from restarts and releasing idle sessions
       | action                        |
       | stops "t1"                    |
       | rewinds "t1" to its first run |
+
+  # A restart reads the run it stops before that run ends; by the time the stop
+  # arrives a later run may have left work running that is not the restart's to end.
+  @mc
+  Scenario: A stop naming an earlier run leaves the Claude work a later run left
+    Given thread "t1" left a Claude subagent and a command running in the background
+    When a client stops run 1 of "t1"
+    Then the stop is refused
+    And "t1" lists the subagent and the command as background work
+    When a client stops run 2 of "t1"
+    Then the subagent and the command of "t1" are interrupted
+
+  @mc @plugin-codex
+  Scenario: A stop naming an earlier run leaves the Codex command a later run left
+    Given thread "t1" left a Codex command running in the background
+    When a client stops run 1 of "t1"
+    Then the stop is refused
+    And "t1" lists the command "npm run dev" as background work
+    When a client stops run 2 of "t1"
+    Then the command of "t1" is interrupted
+
+  # The client's stop names the thread's latest run, wherever it ran.
+  @mc @plugin-codex
+  Scenario: A stop naming a later run on Claude ends the Codex command an earlier run left
+    Given thread "t1" left a Codex command running in the background
+    And "t1" ran its latest turn on Claude
+    When a client stops run 3 of "t1"
+    Then the command of "t1" is interrupted
+    And Codex is asked to terminate the command's terminal
 
   # Codex leaves a unified exec process running when it interrupts a turn.
   @mc @plugin-codex

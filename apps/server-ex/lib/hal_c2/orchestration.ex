@@ -1683,13 +1683,29 @@ defmodule HalC2.Orchestration do
 
   defp builtin_runtime(_codex), do: HalC2.Codex.ThreadRuntime
 
-  # A thread has at most one running turn; interrupt whichever runtime holds it. A
-  # started turn nothing drives any more (its runtime stopped without ending it) ends
-  # here, and a provider plugin that cannot stop a turn says so.
+  # A thread has at most one running turn, but work an earlier turn left running can
+  # sit in another provider's runtime, so every runtime is asked and each stops what
+  # of its own the pin covers. A started turn nothing drives any more (its runtime
+  # stopped without ending it) ends here, and a provider plugin that cannot stop a
+  # turn says so.
   defp interrupt_any(thread_id, run_id) do
-    Enum.find_value(runtimes(:interrupt, 2), fn runtime ->
-      if interrupted?(runtime, thread_id, run_id), do: :ok
-    end) || interrupt_undriven(thread_id, run_id)
+    stopped = Enum.filter(runtimes(:interrupt, 2), &interrupted?(&1, thread_id, run_id))
+    if stopped != [], do: :ok, else: interrupt_undriven(thread_id, run_id)
+  end
+
+  @doc """
+  Whether a stop pinned to `run_id` reaching a runtime between turns names a run
+  that started before `latest`, the run of the runtime's latest turn, or one the
+  thread does not have: the work `latest` left is not that stop's to end (#474). A
+  stop naming `latest` or a later run (one on another provider) ends it.
+  """
+  def earlier_run?(thread_id, run_id, latest) do
+    runs = StreamState.get(HalC2.Streams.state(thread_id), "run")
+
+    case {runs[run_id], runs[latest]} do
+      {%{"ordinal" => pinned}, %{"ordinal" => last}} -> pinned < last
+      _ -> true
+    end
   end
 
   @doc """
