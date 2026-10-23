@@ -186,10 +186,20 @@ defmodule HalC2.AcpReadsPropTest do
   # A client lists the providers; the read it starts, if any, is read `n`.
   def list(n, starts) do
     drain_strays()
+    before = generation()
     %{"models" => models} = HalC2.Acp.entry(@instance)
+
+    # A read's generation is taken when it is asked for, before its task runs, so a
+    # duplicate is seen here whether or not its agent's probe has arrived yet (it
+    # may never, if this is the case's last command).
+    if not starts and generation() not in [before, nil],
+      do: raise("a listing started a read while one was under way or models were known")
+
     if starts, do: :ok = started(n, nil)
     Enum.map(models, & &1["slug"])
   end
+
+  defp generation, do: :persistent_term.get({HalC2.Acp, @instance, :generation}, nil)
 
   # Lets read `n`'s agent answer and returns, once the read is done, what the
   # instance shows.
