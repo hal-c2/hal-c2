@@ -1,7 +1,12 @@
-import type { GitStackedAction, OrchestrationThread, VcsStatusResult } from "@hal-c2/contracts";
+import type {
+  GitActionFailureCta,
+  GitStackedAction,
+  OrchestrationThread,
+  VcsStatusResult,
+} from "@hal-c2/contracts";
 
 import type { OrchestrationShellSnapshot, TuiClient, TuiThreadPage } from "./connection.ts";
-import { gitActionNeedsCommitMessage } from "./gitActions.logic.ts";
+import { GitActionFailure, gitActionNeedsCommitMessage } from "./gitActions.logic.ts";
 import {
   buildRows,
   SIDEBAR_SETTLED_SECTION_ID,
@@ -50,6 +55,8 @@ export interface StoreState {
    * something, never on a timer. Null with no action running.
    */
   readonly gitProgress: GitProgress | null;
+  /** What the MC offers to fix the last action's failure; kept with `gitLog`. */
+  readonly gitRemedy: GitActionFailureCta | null;
 }
 
 /** How long a git action has run, in whole seconds ("7s", "1m 05s"). */
@@ -132,6 +139,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     gitBusy: false,
     gitLog: [],
     gitProgress: null,
+    gitRemedy: null,
   };
   const listeners = new Set<() => void>();
   let unsubShell: (() => void) | null = null;
@@ -339,6 +347,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
       set({
         gitBusy: true,
         gitLog: [],
+        gitRemedy: null,
         gitProgress: { stage: `Running ${action}…`, phase: null, startedAtMs, elapsedMs: 0 },
         status: `Running ${action}…`,
         statusKind: "busy",
@@ -395,6 +404,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
             ],
             status: `Git failed: ${String(error)}`,
             statusKind: "error",
+            gitRemedy: error instanceof GitActionFailure ? error.remedy : null,
           });
           // A failed action may have got part of the way (a commit made before the
           // push was refused): read the checkout again rather than wait for the stream.
@@ -407,7 +417,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
         });
     },
     dismissGitLog: () => {
-      if (state.gitLog.length > 0) set({ gitLog: [] });
+      if (state.gitLog.length > 0) set({ gitLog: [], gitRemedy: null });
     },
     pullGit: () => {
       if (state.gitBusy) return;
