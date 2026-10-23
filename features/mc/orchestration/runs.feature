@@ -8,7 +8,7 @@
 #   packages/contracts/src/rpc.ts (orchestration.dispatchCommand, provider.uploadFeedback)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (dispatch_message, new_run, begin_turn, release_session)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex
-#   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (begin_turn)
+#   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (begin_turn, interrupt)
 #   apps/server-ex/proof/models/turns.maude
 #   apps/server/src/orchestration-v2/ (run lifecycle)
 #   apps/server/src/orchestration-v2/RunExecutionService.ts (interrupt outcome, open subagents, bare
@@ -378,6 +378,13 @@ Feature: Runs and turns
     Given "t1" has a running turn
     When the user interrupts the run
     Then the run is interrupted
+
+  @mc
+  Scenario: Interrupting a run that already ended leaves the turn running now alone
+    Given "t1" has a running turn after a run that ended
+    When the user interrupts the run that ended
+    Then the command fails with "no running turn"
+    And the running turn is still running
 
   @mc
   Scenario: Interrupting when nothing is running is refused

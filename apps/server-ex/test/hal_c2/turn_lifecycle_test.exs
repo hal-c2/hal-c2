@@ -96,6 +96,22 @@ defmodule HalC2.TurnLifecycleTest do
     await_statuses(thread_id, ["failed", "failed"])
   end
 
+  # An interrupt pinned to a run stops that run's turn only: its caller read the
+  # run as active, and a newer turn can have taken the thread's session before
+  # the interrupt reaches it (#403).
+  test "an interrupt pinned to another run leaves the running turn alone",
+       %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    [running] = await_statuses(thread_id, ["running"])
+
+    assert {:error, "no running turn"} =
+             HalC2.Codex.ThreadRuntime.interrupt(thread_id, "run:some-earlier-run")
+
+    assert ["running"] = statuses(thread_id)
+    :ok = HalC2.Codex.ThreadRuntime.interrupt(thread_id, running["id"])
+    await_statuses(thread_id, ["interrupted"])
+  end
+
   # The provider's turn ending after a delete cancelled its run wrote the run as
   # interrupted over the cancel.
   test "a turn that ends after its thread was deleted stays cancelled", %{thread_id: thread_id} do
