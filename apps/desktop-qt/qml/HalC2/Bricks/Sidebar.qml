@@ -119,7 +119,10 @@ Rectangle {
     readonly property string activeKey: model ? (model.activeThreadKey ?? "") : ""
     onActiveKeyChanged: Qt.callLater(() => list.revealActive())
 
-    onRowsChanged: syncRows()
+    onRowsChanged: {
+        syncRows();
+        list.keepCursor();
+    }
     Component.onCompleted: syncRows()
 
     implicitWidth: 256
@@ -458,6 +461,33 @@ Rectangle {
             // Shift+F10 opens its context menu.
             property string cursorKey: ""
             readonly property int cursorIndex: sidebar.rows.findIndex(r => r.rowKey !== undefined && r.rowKey === list.cursorKey)
+            // Where the cursor last was, so a row that goes (the last "Show
+            // more", an archived thread) hands the cursor to the row that
+            // takes its place, or the one before it at the end of the list.
+            property int cursorAt: -1
+            onCursorIndexChanged: {
+                if (cursorIndex >= 0) {
+                    cursorAt = cursorIndex;
+                }
+            }
+
+            function keepCursor() {
+                const rows = sidebar.rows;
+                if (cursorKey.length === 0 || rows.some(r => r.rowKey === cursorKey)) {
+                    return;
+                }
+                let i = Math.max(0, Math.min(cursorAt, rows.length - 1));
+                while (i < rows.length && rows[i].rowKey === undefined) {
+                    ++i;
+                }
+                if (i === rows.length) {
+                    i = Math.min(cursorAt, rows.length) - 1;
+                    while (i >= 0 && rows[i].rowKey === undefined) {
+                        --i;
+                    }
+                }
+                cursorKey = i >= 0 ? rows[i].rowKey : "";
+            }
 
             function moveCursor(delta) {
                 let i = cursorIndex;
