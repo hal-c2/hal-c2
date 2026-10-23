@@ -234,17 +234,68 @@ fn scores_prefer_exact_then_prefix_then_boundary() {
 
 #[test]
 fn queued_runs_wait_for_their_message() {
-    let run = obj(
-        json!({"id": "run-a", "status": "queued", "queuePosition": 0, "userMessageId": "message:a"}),
-    );
+    let run = obj(json!({"id": "run-a", "status": "queued", "queueHeld": true,
+        "queuePosition": 0, "userMessageId": "message:a"}));
     let early = queued([&run], |_| None);
     assert!(early.queue.is_empty() && early.waiting.is_empty());
+    // The queue is held all the same; the turn shows it only with a run listed.
+    assert!(early.held);
+    assert!(!early.shown_held());
     let message = obj(json!({"id": "message:a", "text": "also update docs"}));
     let later = queued([&run], |id| (id == "message:a").then_some(&message));
     assert_eq!(
         later.queue,
         [json!({"runId": "run-a", "text": "also update docs"})]
     );
+    assert!(later.shown_held());
+}
+
+/// A held run whose message has not landed yet, beside a listed run that is
+/// not held: the queue is held, so the card offers "Resume" at once.
+#[test]
+fn a_held_run_without_its_message_holds_the_listed_queue() {
+    let early = obj(json!({"id": "run-a", "status": "queued", "queueHeld": true,
+        "queuePosition": 0, "userMessageId": "message:a"}));
+    let listed = obj(
+        json!({"id": "run-b", "status": "queued", "queueHeld": false,
+        "queuePosition": 1, "userMessageId": "message:b"}),
+    );
+    let message = obj(json!({"id": "message:b", "text": "then this"}));
+    let q = queued([&early, &listed], |id| {
+        (id == "message:b").then_some(&message)
+    });
+    assert_eq!(q.queue.len(), 1);
+    assert!(q.shown_held());
+}
+
+/// A held queue whose only listed runs wait on a notification or a provider
+/// wake (no user message) is held all the same: those runs have no other way
+/// on, so they are listed as waiting and the turn offers the resume.
+#[test]
+fn a_held_waiting_only_queue_is_held() {
+    let wake = obj(json!({"id": "run-a", "status": "queued", "queueHeld": true,
+        "queuePosition": 0, "userMessageId": "message:a"}));
+    let woken_by = obj(json!({"id": "message:a", "providerWake": true}));
+    let woken = queued([&wake], |id| (id == "message:a").then_some(&woken_by));
+    assert!(woken.queue.is_empty());
+    assert_eq!(woken.waiting.len(), 1);
+    assert!(woken.shown_held());
+
+    let note = obj(json!({"id": "run-b", "status": "queued", "queueHeld": true,
+        "queuePosition": 0, "userMessageId": "message:b"}));
+    let told_by = obj(json!({"id": "message:b",
+        "notification": {"summary": "Task done", "outcome": "success"}}));
+    let notified = queued([&note], |id| (id == "message:b").then_some(&told_by));
+    assert!(notified.queue.is_empty());
+    assert_eq!(notified.waiting.len(), 1);
+    assert!(notified.shown_held());
+
+    let free = queued(
+        [&obj(json!({"id": "run-c", "status": "queued",
+        "queuePosition": 0, "userMessageId": "message:a"}))],
+        |id| (id == "message:a").then_some(&woken_by),
+    );
+    assert!(!free.held);
 }
 
 #[test]
