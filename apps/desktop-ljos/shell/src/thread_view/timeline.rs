@@ -1465,9 +1465,31 @@ impl Timeline {
             if kind == "run" {
                 self.agents_touched = true;
             }
+            // A renumbered run (it took its start ordinal) moves its
+            // windowed entities' cached run ordinal with it: cache them
+            // again, or restore() and park() would filter and trim by the
+            // stale ordinal until they next change.
+            let renumbered = kind == "run"
+                && next
+                    .as_ref()
+                    .zip(current.as_ref())
+                    .is_some_and(|(next, current)| next.get("ordinal") != current.get("ordinal"));
             // Runs, attempts and requests change fold labels, visibility
             // and the working state; they change far less often than items.
             self.store(kind, id, next);
+            if renumbered {
+                for windowed in WINDOWED {
+                    let ids: Vec<String> = self
+                        .entities(windowed)
+                        .iter()
+                        .filter(|(_, entity)| text(entity, "runId") == id)
+                        .map(|(key, _)| key.clone())
+                        .collect();
+                    for key in ids {
+                        self.dirty.insert((windowed.to_owned(), key));
+                    }
+                }
+            }
             return true;
         }
         changed.insert(id.to_owned());
@@ -1615,13 +1637,55 @@ impl Timeline {
                 && !interrupt_requested.contains(run_id))
         };
 
+        // The thread's latest run, as the MC's (HalC2.Projection.Shell
+        // latest_run/1): a run held for the user that never started (still
+        // queued, or cancelled while held) waits numbered above the run that
+        // passed it. Equal ordinals (legacy runs stored without one read 0)
+        // go to the later-starting run for runs with an item here: a run is
+        // as new as its first item in timeline order. That is start order,
+        // where the MC's tie-break is newest *made*; for legacy ties where a
+        // later-made run passed an earlier-made one the two can disagree on
+        // the pick. Runs with no item here (none created yet, or outside the
+        // window) are settled by id instead. The item index is built only
+        // when the highest ordinal actually ties, so the common case is one
+        // pass over the runs.
+        let held_never_started = |run: &Obj| {
+            matches!(text(run, "status"), "queued" | "cancelled") && flag(run, "queueHeld")
+        };
         let mut latest_run = "";
         let mut latest_ordinal = -1.0;
+        let mut latest_tied = false;
         for (id, r) in runs {
+            if held_never_started(r) {
+                continue;
+            }
             let ordinal = number(r, "ordinal");
             if ordinal > latest_ordinal {
                 latest_ordinal = ordinal;
                 latest_run = id;
+                latest_tied = false;
+            } else if ordinal == latest_ordinal {
+                latest_tied = true;
+            }
+        }
+        if latest_tied {
+            let mut first_item: HashMap<&str, i64> = HashMap::new();
+            for (i, id) in self.order.iter().enumerate() {
+                let run_id = text(item(id), "runId");
+                if !run_id.is_empty() {
+                    first_item.entry(run_id).or_insert(i as i64);
+                }
+            }
+            let mut latest_first = -1;
+            for (id, r) in runs {
+                if held_never_started(r) || number(r, "ordinal") != latest_ordinal {
+                    continue;
+                }
+                let first = first_item.get(id.as_str()).copied().unwrap_or(-1);
+                if first > latest_first || (first == latest_first && id.as_str() > latest_run) {
+                    latest_first = first;
+                    latest_run = id;
+                }
             }
         }
 

@@ -261,8 +261,12 @@ fn expected_summary(all: &[Call]) -> summary::GroupSummary {
 struct Run {
     id: String,
     ordinal: i64,
-    /// running, completed, failed, interrupted or rolled_back
+    /// running, completed, failed, interrupted, rolled_back, queued or
+    /// cancelled
     status: String,
+    /// A queued run held for the user, numbered above the run that passed
+    /// it.
+    held: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -368,7 +372,11 @@ fn field(kind: &str) -> &'static str {
 }
 
 fn run_json(run: &Run) -> Json {
-    json!({"id": run.id, "ordinal": run.ordinal, "status": run.status})
+    let mut entity = json!({"id": run.id, "ordinal": run.ordinal, "status": run.status});
+    if run.held {
+        entity["queueHeld"] = json!(true);
+    }
+    entity
 }
 
 fn item_json(item: &Item) -> Json {
@@ -520,7 +528,17 @@ fn project(model: &Model) -> Vec<Row> {
     shown.sort_by(|a, b| (a.ordinal, &a.id).cmp(&(b.ordinal, &b.id)));
     let mut latest: Option<&Run> = None;
     for run in thread.runs.values() {
-        if latest.is_none_or(|l| run.ordinal > l.ordinal) {
+        // Held for the user and never started: still queued, or cancelled
+        // while held.
+        if run.held && matches!(run.status.as_str(), "queued" | "cancelled") {
+            continue;
+        }
+        // Runs are in the order they were made, so `>=` would give equal
+        // ordinals to the newest made. The generators only ever make unique
+        // ordinals, so no tie arises here; the timeline's tie-break is
+        // later-starting (first item in timeline order), covered by
+        // timeline_tests instead.
+        if latest.is_none_or(|l| run.ordinal >= l.ordinal) {
             latest = Some(run);
         }
     }
@@ -906,6 +924,56 @@ fn event(model: &mut Model, kind: &str, id: &str, patch: Json, run: &str) -> Eve
     }
 }
 
+/// The MC numbers runs in start order: a run that starts takes the ordinal
+/// after every run that left the queue (a held run cancelled while held
+/// left it too and keeps its number).
+fn start_ordinal(model: &Model) -> i64 {
+    model
+        .mc
+        .runs
+        .values()
+        .filter(|run| !(run.held && run.status == "queued"))
+        .map(|run| run.ordinal)
+        .max()
+        .unwrap_or(0)
+        + 1
+}
+
+/// The held runs still waiting move up behind the run that started at
+/// `after`, each renumber a patch on a live run.
+fn renumber_waiting(model: &mut Model, mut after: i64) -> Vec<Event> {
+    let mut events = Vec::new();
+    // Runs are keyed in the order they were made (run-1, run-2, ...).
+    for id in held_waiting(model) {
+        after += 1;
+        let run = model.mc.runs.get_mut(&id).unwrap();
+        if run.ordinal == after {
+            continue;
+        }
+        run.ordinal = after;
+        events.push(event(
+            model,
+            "run",
+            &id,
+            json!({"s": {"ordinal": after}}),
+            "",
+        ));
+    }
+    model.ordinal = model.ordinal.max(after);
+    events
+}
+
+/// The queued runs held for the user, in the order they were made.
+fn held_waiting(model: &Model) -> Vec<String> {
+    model
+        .mc
+        .runs
+        .values()
+        .filter(|run| run.held && run.status == "queued")
+        .map(|run| run.id.clone())
+        .collect()
+}
+
 fn running(model: &Model) -> Vec<String> {
     model
         .mc
@@ -944,6 +1012,18 @@ enum Action {
     /// notification, or what a thread stored of one before the MC recorded
     /// them so.
     StartRun(&'static str),
+    /// A queued message held for the user (it waited behind a stop) that a
+    /// newer run passed: it waits, numbered above the runs that started,
+    /// with nothing shown yet.
+    Hold,
+    /// The user cancels a held message instead of resuming the queue: the
+    /// run keeps its hold and its number, and never started.
+    CancelHeld(usize),
+    /// The user resumes the queue and a held run starts: it takes the
+    /// ordinal after every run that left the queue (a renumber patch on a
+    /// live run), its hold clears, the runs still waiting move up behind it,
+    /// and its message appears.
+    ResumeHeld(usize),
     /// The agent starts a reply, a call, a plan, a subagent or an error in
     /// a running turn.
     AddItem {
@@ -1000,6 +1080,9 @@ fn action() -> impl Strategy<Value = Action> {
             1 => Just("wake"),
         ]
         .prop_map(Action::StartRun),
+        1 => Just(Action::Hold),
+        1 => any::<usize>().prop_map(Action::CancelHeld),
+        1 => any::<usize>().prop_map(Action::ResumeHeld),
         2 => (
             any::<usize>(),
             prop_oneof![
@@ -1051,12 +1134,24 @@ fn change(model: &mut Model, action: &Action) -> Option<()> {
             if model.mc.runs.len() >= MAX_RUNS {
                 return None;
             }
-            model.ordinal += 1;
+            // A run that passes a held queue is numbered below it: the held
+            // runs are renumbered up behind it in the same commit, as the MC
+            // does.
             let run = Run {
                 id: format!("run-{}", model.mc.runs.len() + 1),
-                ordinal: model.ordinal,
+                ordinal: start_ordinal(model),
                 status: "running".into(),
+                held: false,
             };
+            model.mc.runs.insert(run.id.clone(), run.clone());
+            let mut events = vec![event(
+                model,
+                "run",
+                &run.id,
+                json!({"s": run_json(&run)}),
+                "",
+            )];
+            events.extend(renumber_waiting(model, run.ordinal));
             model.ordinal += 1;
             let message = Item {
                 id: format!("ask-{}", run.id),
@@ -1078,18 +1173,82 @@ fn change(model: &mut Model, action: &Action) -> Option<()> {
                 },
                 ..Item::default()
             };
-            model.mc.runs.insert(run.id.clone(), run.clone());
             model.mc.items.insert(message.id.clone(), message.clone());
-            let events = vec![
-                event(model, "run", &run.id, json!({"s": run_json(&run)}), ""),
-                event(
-                    model,
-                    "turn-item",
-                    &message.id,
-                    json!({"s": item_json(&message)}),
-                    &run.id,
-                ),
-            ];
+            let e = event(
+                model,
+                "turn-item",
+                &message.id,
+                json!({"s": item_json(&message)}),
+                &run.id,
+            );
+            events.push(e);
+            commit(model, events);
+        }
+        Action::Hold => {
+            if model.mc.runs.len() >= MAX_RUNS {
+                return None;
+            }
+            model.ordinal += 1;
+            let run = Run {
+                id: format!("run-{}", model.mc.runs.len() + 1),
+                ordinal: model.ordinal,
+                status: "queued".into(),
+                held: true,
+            };
+            model.mc.runs.insert(run.id.clone(), run.clone());
+            let e = event(model, "run", &run.id, json!({"s": run_json(&run)}), "");
+            commit(model, vec![e]);
+        }
+        Action::CancelHeld(run) => {
+            let run = pick(&held_waiting(model), *run)?;
+            model.mc.runs.get_mut(&run).unwrap().status = "cancelled".into();
+            let e = event(
+                model,
+                "run",
+                &run,
+                json!({"s": {"status": "cancelled"}}),
+                "",
+            );
+            commit(model, vec![e]);
+        }
+        Action::ResumeHeld(run) => {
+            let run = pick(&held_waiting(model), *run)?;
+            if model.mc.items.len() >= MAX_ITEMS {
+                return None;
+            }
+            let ordinal = start_ordinal(model);
+            let started = model.mc.runs.get_mut(&run).unwrap();
+            started.ordinal = ordinal;
+            started.status = "running".into();
+            started.held = false;
+            let mut events = vec![event(
+                model,
+                "run",
+                &run,
+                json!({"s": {"ordinal": ordinal, "status": "running", "queueHeld": false}}),
+                "",
+            )];
+            events.extend(renumber_waiting(model, ordinal));
+            model.ordinal += 1;
+            let message = Item {
+                id: format!("ask-{run}"),
+                kind: "user_message".into(),
+                run: run.clone(),
+                ordinal: model.ordinal,
+                text: "ask".into(),
+                status: "completed".into(),
+                opener: true,
+                ..Item::default()
+            };
+            model.mc.items.insert(message.id.clone(), message.clone());
+            let e = event(
+                model,
+                "turn-item",
+                &message.id,
+                json!({"s": item_json(&message)}),
+                &run,
+            );
+            events.push(e);
             commit(model, events);
         }
         Action::AddItem {
@@ -1258,6 +1417,9 @@ fn change(model: &mut Model, action: &Action) -> Option<()> {
 fn step(model: &mut Model, sut: &mut Sut, action: &Action) -> Result<bool, TestCaseError> {
     match action {
         Action::StartRun(_)
+        | Action::Hold
+        | Action::CancelHeld(_)
+        | Action::ResumeHeld(_)
         | Action::AddItem { .. }
         | Action::Delta { .. }
         | Action::Finish { .. }
