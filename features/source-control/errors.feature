@@ -72,16 +72,33 @@ Feature: When source control goes wrong
 
   # The GitHub CLI's sign-in made for SSH has no `workflow` scope (hal-c2/hal-c2#244).
   @mc
-  Scenario: A push refused for a missing workflow scope says how to give it
+  Scenario: A push refused for a missing workflow scope offers the command that gives it
     Given GitHub refuses the push because the sign-in lacks the workflow scope
     When the user runs "Commit & push"
-    Then the failure tells a user pushing with the GitHub CLI's sign-in to run "gh auth refresh -s workflow"
+    Then the failure says the push changes a workflow file and the sign-in lacks the workflow scope
+    And the failure tells a user pushing with the GitHub CLI's sign-in to run "gh auth refresh -s workflow"
+    And the failure offers "Copy command" to copy "gh auth refresh -s workflow"
 
   @mc
-  Scenario: A push refused for a missing workflows permission says how to give it
-    Given GitHub refuses the push because the token lacks the workflows permission
+  Scenario Outline: A push refused for a missing Workflows permission links to where it is granted
+    Given the repository's remote is <remote>
+    And GitHub refuses the push because the token lacks the workflows permission
     When the user runs "Commit & push"
-    Then the failure says the GitHub App that pushed needs the Workflows permission
+    Then the failure says the GitHub App that pushed lacks the Workflows permission
+    And the failure offers "Grant Workflows permission" to open "<page>"
+
+    # A repository's GitHub Apps page lists its installations whether a user or an
+    # organization owns it; elsewhere only the user's own installations are known.
+    Examples:
+      | remote                     | page                                                |
+      | the GitHub one "acme/shop" | https://github.com/acme/shop/settings/installations |
+      | not on GitHub              | https://github.com/settings/installations           |
+
+  @mc
+  Scenario: A push refused for another reason offers nothing
+    Given the push will be rejected by the remote
+    When the user runs "Commit & push"
+    Then the failure offers nothing to do
 
   @mc
   Scenario: A failed git command keeps its command and exit code
