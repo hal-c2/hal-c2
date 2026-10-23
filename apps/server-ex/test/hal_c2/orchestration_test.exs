@@ -378,6 +378,210 @@ defmodule HalC2.OrchestrationTest do
     assert [%{"status" => "interrupted"}] = StreamState.list(state, "run-attempt")
   end
 
+  # A turn on another instance stops the app-server the runtime had; what it had sent
+  # by then is still in the runtime's mailbox.
+  test "what a Codex app-server the runtime no longer runs sent belongs to no turn" do
+    thread_id = launch("wait for me")
+    await_provider_turn(thread_id)
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    %{turn: %{native_turn_id: turn}, native_thread_id: native} = :sys.get_state(pid)
+    stopped = spawn(fn -> :ok end)
+
+    send(
+      pid,
+      {:json_rpc, stopped,
+       {:notification, "turn/completed",
+        %{"threadId" => native, "turn" => %{"id" => turn, "status" => "completed"}}}}
+    )
+
+    assert %{turn: %{native_turn_id: ^turn}} = :sys.get_state(pid)
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    _ = await_run(thread_id, "interrupted")
+  end
+
+  # Pending provider requests are a turn's (every request handler needs a turn,
+  # and ending one cancels them), so none is live when a turn on another instance
+  # replaces the app-server. One somehow left is settled there, not carried: its
+  # rpc id belongs to the stopped connection.
+  test "a turn on another Codex instance settles requests the old app-server left" do
+    start_supervised!(HalC2.Settings)
+    {_, version} = HalC2.Settings.get()
+    work = %{"codex-work" => %{"driver" => "codex", "enabled" => true}}
+    {:ok, _} = HalC2.Settings.put(%{"providerInstances" => work}, version)
+
+    thread_id = launch("hello")
+    _ = await_statuses(thread_id, ["completed"])
+    [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    # A call behind the turn's last notification: the runtime has ended it.
+    :ok = GenServer.call(pid, :settle)
+    %{conn: conn, turn: nil} = :sys.get_state(pid)
+
+    :sys.replace_state(pid, &%{&1 | requests: %{"runtime-request:codex:stale" => 99}})
+    assert %{"runtime-request:codex:stale" => 99} = :sys.get_state(pid).requests
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"runtime-request", "runtime-request:codex:stale",
+         %{"s" => %{"id" => "runtime-request:codex:stale", "status" => "pending"}}},
+        {"turn-item", "turn-item:approval:stale",
+         %{"s" => %{"id" => "turn-item:approval:stale", "status" => "running", "ordinal" => 0}}},
+        {"node", "node:approval:stale",
+         %{"s" => %{"id" => "node:approval:stale", "status" => "running"}}}
+      ])
+
+    elsewhere = %{"modelSelection" => %{"instanceId" => "codex-work", "model" => "gpt-5.4"}}
+    {:ok, _} = send_message(thread_id, "msg-user-2", "wait for me", elsewhere)
+    state = await_statuses(thread_id, ["completed", "running"])
+
+    assert %{conn: renewed, instance: "codex-work", requests: requests} = :sys.get_state(pid)
+    assert requests == %{}
+    refute renewed == conn
+
+    assert %{"status" => "cancelled"} =
+             StreamState.get(state, "runtime-request")["runtime-request:codex:stale"]
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    _ = await_statuses(thread_id, ["completed", "interrupted"])
+  end
+
+  # A turn on another instance stops the CLI the runtime had; what it had sent by
+  # then is still in the runtime's mailbox.
+  test "what a Claude CLI the runtime no longer runs sent belongs to no turn" do
+    thread_id = launch("wait for me", "claudeAgent")
+    _ = await_run(thread_id, "running")
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+    %{turn: %{ids: %{run: run_id}}} = :sys.get_state(pid)
+    stopped = spawn(fn -> :ok end)
+
+    send(
+      pid,
+      {:claude, stopped,
+       {:message, %{"type" => "result", "subtype" => "success", "is_error" => false}}}
+    )
+
+    assert %{turn: %{ids: %{run: ^run_id}}} = :sys.get_state(pid)
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    _ = await_run(thread_id, "interrupted")
+  end
+
+  # Only a thread from before instances had their own provider threads has anything to
+  # bring up to date; one this MC started is never rewritten for it.
+  test "a thread's next run leaves the provider thread this MC made for it as it was" do
+    thread_id = launch("hello")
+    _ = await_statuses(thread_id, ["completed"])
+    {:ok, _} = send_message(thread_id, "msg-user-2", "again")
+    _ = await_statuses(thread_id, ["completed", "completed"])
+    id = HalC2.Orchestration.Entities.provider_thread_id("codex", thread_id)
+
+    [created | updates] =
+      HalC2.Store.reduce_stream(HalC2.Store.path(), thread_id, 0, [], fn e, acc ->
+        if e.entity == id, do: [e.patch | acc], else: acc
+      end)
+      |> Enum.reverse()
+
+    assert %{"s" => %{"perInstance" => true}} = created
+    refute Enum.any?(updates, &Map.has_key?(&1["s"] || %{}, "perInstance"))
+  end
+
+  # Of a thread from before instances had their own provider threads: an instance that
+  # did not run there last gets a provider thread of its own covering the runs it had.
+  test "a provider thread made for an instance's earlier runs spans them" do
+    thread_id = launch("one")
+    _ = await_statuses(thread_id, ["completed"])
+
+    for {n, done} <- [{2, 2}, {3, 3}] do
+      {:ok, _} = send_message(thread_id, "msg-user-#{n}", "more")
+      _ = await_statuses(thread_id, List.duplicate("completed", done))
+    end
+
+    [one, two, three] = runs(current(thread_id))
+    shared = HalC2.Orchestration.Entities.provider_thread_id("codex", thread_id)
+    on = &%{"s" => %{"providerInstanceId" => &1}}
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"run", one["id"], on.("codex-other")},
+        {"run", two["id"], on.("codex-other")},
+        {"run", three["id"], on.("codex-work")},
+        {"provider-thread", shared,
+         %{"s" => %{"providerInstanceId" => "codex-work"}, "u" => ["perInstance"]}}
+      ])
+
+    {:ok, _} = send_message(thread_id, "msg-user-4", "back home")
+    state = await_statuses(thread_id, List.duplicate("completed", 4))
+    other = HalC2.Orchestration.Entities.provider_thread_id("codex-other", thread_id)
+
+    assert %{"firstRunOrdinal" => 1, "lastRunOrdinal" => 2, "nativeSinceRunOrdinal" => 3} =
+             StreamState.get(state, "provider-thread")[other]
+  end
+
+  # The shape the old MC itself wrote: it set the shared record's instance only when
+  # it created it, so the instance named there is the one the thread was made on, not
+  # the one that ran last. The creator keeps the native thread; the later instance
+  # starts a new one.
+  test "a shared provider thread keeps its native thread with the instance it was made for" do
+    thread_id = launch("one")
+    _ = await_statuses(thread_id, ["completed"])
+
+    for {n, done} <- [{2, 2}, {3, 3}] do
+      {:ok, _} = send_message(thread_id, "msg-user-#{n}", "more")
+      _ = await_statuses(thread_id, List.duplicate("completed", done))
+    end
+
+    [one, two, three] = runs(current(thread_id))
+    shared = HalC2.Orchestration.Entities.provider_thread_id("codex", thread_id)
+    legacy = StreamState.get(current(thread_id), "provider-thread")[shared]
+    on = &%{"s" => %{"providerInstanceId" => &1}}
+
+    {:ok, _} =
+      HalC2.Streams.commit(thread_id, :thread, [
+        {"run", one["id"], on.("codex-other")},
+        {"run", two["id"], on.("codex-other")},
+        {"run", three["id"], on.("codex-work")},
+        {"provider-thread", shared,
+         %{"s" => %{"providerInstanceId" => "codex-other"}, "u" => ["perInstance"]}}
+      ])
+
+    {:ok, _} = send_message(thread_id, "msg-user-4", "back home")
+    state = await_statuses(thread_id, List.duplicate("completed", 4))
+    other = HalC2.Orchestration.Entities.provider_thread_id("codex-other", thread_id)
+    work = HalC2.Orchestration.Entities.provider_thread_id("codex-work", thread_id)
+
+    assert %{
+             "providerInstanceId" => "codex-other",
+             "nativeThreadRef" => native,
+             "perInstance" => true
+           } = StreamState.get(state, "provider-thread")[other]
+
+    assert native == legacy["nativeThreadRef"]
+
+    assert %{
+             "firstRunOrdinal" => 3,
+             "lastRunOrdinal" => 3,
+             "nativeSinceRunOrdinal" => 4,
+             "nativeThreadRef" => nil,
+             "perInstance" => true
+           } = StreamState.get(state, "provider-thread")[work]
+  end
+
+  defp await_provider_turn(thread_id) do
+    if StreamState.list(current(thread_id), "provider-turn") == [] do
+      receive do
+        {:hal_c2_stream, ^thread_id, _} -> await_provider_turn(thread_id)
+      after
+        5_000 -> flunk("no provider turn")
+      end
+    end
+  end
+
   test "a message's image upload reaches codex inline, with where it is saved" do
     png = <<137, 80, 78, 71, 13, 10, 26, 10>>
 
@@ -1938,6 +2142,76 @@ defmodule HalC2.OrchestrationTest do
                Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
     end
 
+    # A restart's interrupt for a run that ended before it arrived names an earlier
+    # run than the one that left the command (#474); a client's stop names the latest.
+    test "an interrupt between turns pinned to an earlier run leaves the command running",
+         %{log: log} do
+      thread_id = launch("start the dev server in the background")
+      [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
+
+      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.("run:earlier"))
+      assert [%{"status" => "running"}] = commands(thread_id)
+      assert terminated(log) == []
+
+      assert {:ok, _} = Orchestration.dispatch(pinned.(run_id))
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      assert [%{"status" => "interrupted"}] = commands(thread_id)
+    end
+
+    # The latest run went to another provider; the command an earlier Codex run left
+    # is still the thread's latest run's to stop, as the client's stop names it.
+    test "an interrupt pinned to a later run on another provider stops the command",
+         %{log: log} do
+      thread_id = launch("start the dev server in the background")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "haiku"}}
+      {:ok, _} = send_message(thread_id, "msg-claude", "hello", claude)
+      [_, %{"id" => latest}] = runs(await_statuses(thread_id, ["completed", "completed"]))
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{
+                 "type" => "run.interrupt",
+                 "threadId" => thread_id,
+                 "runId" => latest
+               })
+
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+
+      assert [%{"status" => "interrupted"}] =
+               Enum.filter(commands(thread_id), &(&1["nativeItemRef"]["nativeId"] == "cmd-bg"))
+
+      assert [%{"processId" => "4275"}] = terminated(log)
+    end
+
+    # Codex holds the command an earlier run left while Claude runs the latest: the
+    # stop reaches both, not just the first runtime to take it.
+    test "an interrupt pinned to a turn on another provider also stops the command",
+         %{log: log} do
+      thread_id = launch("start the dev server in the background")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "haiku"}}
+      {:ok, _} = send_message(thread_id, "msg-claude", "wait for me", claude)
+      [_, %{"id" => latest}] = runs(await_statuses(thread_id, ["completed", "running"]))
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{
+                 "type" => "run.interrupt",
+                 "threadId" => thread_id,
+                 "runId" => latest
+               })
+
+      _ = await_statuses(thread_id, ["completed", "interrupted"])
+
+      assert [%{"status" => "interrupted"}] =
+               Enum.filter(commands(thread_id), &(&1["nativeItemRef"]["nativeId"] == "cmd-bg"))
+
+      assert [%{"processId" => "4275"}] = terminated(log)
+    end
+
     test "an interrupted turn terminates the command it started", %{log: log} do
       thread_id = launch("start the dev server in the background and wait")
       _ = await_run(thread_id, "running")
@@ -2093,6 +2367,23 @@ defmodule HalC2.OrchestrationTest do
 
       assert {:error, _} =
                Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    end
+
+    test "an interrupt between turns pinned to an earlier run leaves the work and the agent" do
+      thread_id = launch("work in the background", "grok")
+      [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      conn = :sys.get_state(runtime_pid(thread_id)).conn
+      pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
+
+      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.("run:earlier"))
+      assert Process.alive?(conn)
+      assert ["running", "running"] = Enum.map(background_items(thread_id), & &1["status"])
+
+      ref = Process.monitor(conn)
+      assert {:ok, _} = Orchestration.dispatch(pinned.(run_id))
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      assert_receive {:DOWN, ^ref, :process, _, _}
     end
 
     test "an interrupted turn ends the work it started, and the agent" do
@@ -2278,6 +2569,29 @@ defmodule HalC2.OrchestrationTest do
       # With nothing left to stop, a second stop is refused as before.
       assert {:error, _} =
                Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    end
+
+    test "an interrupt between turns pinned to an earlier run leaves Claude's work and process" do
+      :ok = HalC2.Shell.subscribe(self())
+      thread_id = launch("work in the background", "claudeAgent")
+      [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      session = :sys.get_state(pid).session
+      pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
+
+      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.("run:earlier"))
+      assert Process.alive?(session)
+
+      assert ["running", "running"] =
+               current(thread_id)
+               |> StreamState.list("turn-item")
+               |> Enum.filter(&(&1["type"] in ["subagent", "command_execution"]))
+               |> Enum.map(& &1["status"])
+
+      assert {:ok, _} = Orchestration.dispatch(pinned.(run_id))
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      refute Process.alive?(session)
     end
 
     test "releasing a Claude process ends the background work it ran" do
@@ -2586,6 +2900,76 @@ defmodule HalC2.OrchestrationTest do
       claude_says(thread_id, wake_text("m-wake", "Woke up"))
       claude_says(thread_id, %{"type" => "result", "subtype" => "success", "is_error" => false})
       _ = await_statuses(thread_id, ["completed", "completed"])
+    end
+
+    # Another instance of Claude runs with its own variables and home, so its turn needs
+    # its own CLI even when it launches Claude as the first does. A runtime updated in
+    # place from before launches recorded their instance cannot tell the one its CLI
+    # runs, so its next turn starts a new CLI rather than guess.
+    test "a turn on another instance of Claude starts its own CLI" do
+      start_supervised!(HalC2.Settings)
+      {_, version} = HalC2.Settings.get()
+      work = %{"claude-work" => %{"driver" => "claudeAgent", "enabled" => true}}
+      {:ok, _} = HalC2.Settings.put(%{"providerInstances" => work}, version)
+
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_statuses(thread_id, ["completed"])
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      %{session: session} = :sys.get_state(pid)
+
+      :ok = :sys.suspend(pid)
+
+      :sys.replace_state(
+        pid,
+        &update_in(&1.launch, fn launch -> Map.delete(launch, :instance) end)
+      )
+
+      :ok = :sys.change_code(pid, HalC2.Claude.ThreadRuntime, 9, nil)
+      :ok = :sys.resume(pid)
+
+      {:ok, _} = send_message(thread_id, "msg-user-2", "again")
+      _ = await_statuses(thread_id, ["completed", "completed"])
+      assert %{session: renewed, launch: %{instance: "claudeAgent"}} = :sys.get_state(pid)
+      refute renewed == session
+
+      elsewhere = %{"modelSelection" => %{"instanceId" => "claude-work", "model" => "gpt-5.4"}}
+      {:ok, _} = send_message(thread_id, "msg-user-3", "elsewhere", elsewhere)
+      _ = await_statuses(thread_id, ["completed", "completed", "completed"])
+      assert %{session: other, launch: %{instance: "claude-work"}} = :sys.get_state(pid)
+      refute other == renewed
+    end
+
+    # A start that failed on another instance left the old runtime's latest ids
+    # naming that instance while its CLI was still the first instance's. Updated
+    # in place in that state, it must not stamp the old CLI with the new instance:
+    # the next turn there would reuse the wrong account's CLI.
+    test "an upgrade after a failed start on another instance does not reuse the old CLI" do
+      start_supervised!(HalC2.Settings)
+      {_, version} = HalC2.Settings.get()
+      work = %{"claude-work" => %{"driver" => "claudeAgent", "enabled" => true}}
+      {:ok, _} = HalC2.Settings.put(%{"providerInstances" => work}, version)
+
+      thread_id = launch("hello", "claudeAgent")
+      _ = await_statuses(thread_id, ["completed"])
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      %{session: session} = :sys.get_state(pid)
+
+      :ok = :sys.suspend(pid)
+
+      :sys.replace_state(pid, fn state ->
+        state
+        |> update_in([:launch], &Map.delete(&1, :instance))
+        |> update_in([:last_ids], &Map.put(&1, :instance, "claude-work"))
+      end)
+
+      :ok = :sys.change_code(pid, HalC2.Claude.ThreadRuntime, 9, nil)
+      :ok = :sys.resume(pid)
+
+      elsewhere = %{"modelSelection" => %{"instanceId" => "claude-work", "model" => "gpt-5.4"}}
+      {:ok, _} = send_message(thread_id, "msg-user-2", "elsewhere", elsewhere)
+      _ = await_statuses(thread_id, ["completed", "completed"])
+      assert %{session: other, launch: %{instance: "claude-work"}} = :sys.get_state(pid)
+      refute other == session
     end
 
     defp wake_text(id, text),
@@ -3020,6 +3404,27 @@ defmodule HalC2.OrchestrationTest do
                StreamState.get(state, "checkpoint")[
                  HalC2.Checkpoint.checkpoint_id(HalC2.Checkpoint.scope_id(thread_id), 3)
                ]
+    end
+
+    # One from before provider threads recorded their instance is the driver's own.
+    test "a Codex provider thread that names no instance rolls back in the app-server it ran in",
+         %{work: work} do
+      thread_id = launch_in(work, "write a.txt", "codex")
+      await_statuses(thread_id, ["completed"])
+      {:ok, _} = send_message(thread_id, "msg-user-2", "write b.txt")
+      await_statuses(thread_id, ["completed", "completed"])
+      [%{"id" => provider_thread}] = StreamState.list(current(thread_id), "provider-thread")
+
+      {:ok, _} =
+        HalC2.Streams.commit(thread_id, :thread, [
+          {"provider-thread", provider_thread, %{"s" => %{"providerInstanceId" => nil}}}
+        ])
+
+      [{pid, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+      %{conn: conn} = :sys.get_state(pid)
+
+      assert {:ok, _} = rollback(thread_id, 1)
+      assert %{conn: ^conn} = :sys.get_state(pid)
     end
 
     test "a legacy Codex thread drops its later turns by count", %{work: work} do
