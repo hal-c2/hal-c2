@@ -711,6 +711,7 @@ export function createHost(options: HostOptions): Host {
       else if (mode === "fileEdit") setMode("files");
     },
     publish: (next) => state.set("files", next),
+    copy: (text) => options.copyToClipboard?.(text) === true,
     attach: (path) => composer!.dispatch("composer.attach", { path }),
     canAttach: () => {
       const context = composer!.context();

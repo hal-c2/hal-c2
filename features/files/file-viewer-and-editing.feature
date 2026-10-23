@@ -40,6 +40,8 @@
 #   apps/server-ex/lib/hal_c2/attachments.ex (assets.createUrl: workspace-file, media-file)
 #   apps/desktop-qt/qml/HalC2/Bricks/FilesPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
+#   apps/desktop-qt/src/native/FileActionsController.cpp (files.copyContents, the palette's "Copy file contents")
+#   apps/tui/src/host/filesState.ts, apps/tui/src/keymap.ts (files.viewer.copy, "c" in the viewer)
 
 Feature: Viewing and editing files
   The user can read any text file in a project, preview media, and make small edits that
@@ -528,7 +530,34 @@ Feature: Viewing and editing files
       Examples:
         | file                                    |
         | a file larger than one megabyte         |
-        | a file outside the project on the host  |
+
+    # The thread's own MC reads and writes it, wherever that MC runs.
+    @desktop @tui
+    Scenario Outline: A file outside the project the agent left can be edited
+      Given the thread is <where>
+      And the agent wrote "/tmp/report/menu.csv" outside the project
+      When the user opens "/tmp/report/menu.csv" and edits it
+      Then the change is written to "/tmp/report/menu.csv" on the thread's machine
+
+      Examples:
+        | where                                |
+        | on this computer                     |
+        | on another machine of the cluster    |
+
+    # Copying takes the text anywhere, also where no folder on this machine shows the
+    # file (files-on-another-machine.feature). The phone layout has no file viewer
+    # yet; the tablet's is the desktop's FilesPanel.
+    @shared @backlog-mobile
+    Scenario Outline: The open file's text is copied whole
+      Given the user is reading "src/app.ts" in the viewer
+      When the user copies the file's text <from>
+      Then the whole of "src/app.ts" is on the clipboard
+      And the user is told the file's text was copied
+
+      Examples:
+        | from                     |
+        | from the viewer          |
+        | from the command palette |
 
     @desktop
     Scenario: Ticking a Markdown task writes the file

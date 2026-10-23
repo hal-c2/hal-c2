@@ -61,8 +61,9 @@ private:
 //
 // Markdown, CSV and HTML files show rendered (`renderedText`) until the user
 // asks for their source; the choice is kept per kind (sourceKinds, which the
-// owner saves on this device). A file the MC read whole from inside the
-// workspace can be edited (`setEditing`, `edit`): an edit is written with
+// owner saves on this device). A file the MC read whole can be edited,
+// one outside the workspace (opened by its full path) too (`setEditing`,
+// `edit`): an edit is written with
 // `projects.writeFile` half a second after the last one, and at once when the
 // file closes or another opens. A write the MC refuses keeps the edit and
 // says why (`saveProblem`, `saveFailed`). A Markdown task ticked in the

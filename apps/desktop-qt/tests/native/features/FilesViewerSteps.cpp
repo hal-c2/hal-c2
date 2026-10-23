@@ -9,8 +9,11 @@
 #include <QQuickItem>
 #include <QTest>
 
+#include "CommandRegistry.h"
 #include "FilesViewer.h"
 #include "FilesWorkspace.h"
+#include "KeybindingController.h"
+#include "NavigationController.h"
 #include "SettingsController.h"
 
 namespace {
@@ -41,7 +44,17 @@ const FakeMc::Extension extension([](FakeMc& mc) {
       mc.refuse(rpc, QStringLiteral("Could not write %1.").arg(path));
       return;
     }
-    fakeFiles(mc).files.insert(path, rpc.payload.value(QLatin1String("contents")).toString());
+    FakeFiles& fake = fakeFiles(mc);
+    const QString contents = rpc.payload.value(QLatin1String("contents")).toString();
+    if (!path.startsWith(QLatin1Char('/'))) {
+      fake.files.insert(path, contents);
+    } else if (fake.outside.contains(path)) {
+      // By its full path, only a file that is already there.
+      fake.outside.insert(path, contents);
+    } else {
+      mc.refuse(rpc, QStringLiteral("'%1' is outside the workspace, where only a file that is already there can be saved.").arg(path));
+      return;
+    }
     mc.reply(rpc, QJsonObject{{QStringLiteral("relativePath"), path}});
   });
 });
@@ -302,17 +315,11 @@ const Steps steps([] {
     expect(files(world).unsaved() && writes(world).isEmpty() && !fakeFiles(world.mc).files.value(c[0]).contains(viewer(world).typed),
            QStringLiteral("the change is already written"));
   });
-  step(QStringLiteral("the user opens (a file larger than one megabyte|a file outside the project on the host)"), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("the user opens a file larger than one megabyte"), [](World& world, const Captures&, const Table&) {
     FakeFiles& fake = fakeFiles(world.mc);
-    QString path = QStringLiteral("logs/big.log");
-    if (c[0] == QLatin1String("a file larger than one megabyte")) {
-      fake.files.insert(path, QStringLiteral("line\n").repeated(200));
-      fake.truncated.insert(path, 3 * 1024 * 1024);
-    } else {
-      // Read by its full path, as the MC reads a file outside the workspace.
-      path = QStringLiteral("/home/sam/notes/todo.txt");
-      fake.outside.insert(path, QStringLiteral("call the bank\n"));
-    }
+    const QString path = QStringLiteral("logs/big.log");
+    fake.files.insert(path, QStringLiteral("line\n").repeated(200));
+    fake.truncated.insert(path, 3 * 1024 * 1024);
     showPanel(world);
     openFile(world, path);
     viewer(world).described = path;
@@ -333,6 +340,73 @@ const Steps steps([] {
                fakeFiles(world.mc).outside == before.outside,
            QStringLiteral("the file was changed"));
   });
+  // A file the agent left outside the project, on the thread's machine.
+  // "on another machine of the cluster" is FilesMediaSteps' thread on a peer.
+  step(QStringLiteral("the thread is on this computer"), [](World&, const Captures&, const Table&) {});
+  step(QStringLiteral("the agent wrote %1 outside the project").arg(q), [](World& world, const Captures& c, const Table&) {
+    fakeFiles(world.mc).outside.insert(c[0], QStringLiteral("dish,price\nsoup,4.50\n"));
+  });
+  step(QStringLiteral("the user opens %1 and edits it").arg(q), [](World& world, const Captures& c, const Table&) {
+    showPanel(world);
+    openFile(world, c[0]);
+    expect(files(world).fileStatus() == QLatin1String("ready") && files(world).editable() && world.brick->item(QStringLiteral("fileEdit"))->isEnabled(),
+           describeViewer(world));
+    world.brick->click(QStringLiteral("fileEdit"));
+    world.waitFor([&] { return files(world).editing() && shown(world, QStringLiteral("fileEditor")); }, [&] { return describeViewer(world); });
+    viewer(world).edited = c[0];
+    typeChange(world);
+  });
+  step(QStringLiteral("the change is written to %1 on the thread's machine").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return fakeFiles(world.mc).outside.value(c[0]).contains(viewer(world).typed); },
+                  [&] { return QStringLiteral("%1 to hold the change; it was written %2 time(s); %3").arg(c[0]).arg(writes(world).size()).arg(describeViewer(world)); });
+    world.sync();
+    const FakeMc::Rpc* last = nullptr;
+    for (const FakeMc::Rpc& rpc : std::as_const(world.mc.calls)) {
+      if (rpc.method == QLatin1String("projects.writeFile")) last = &rpc;
+    }
+    // Asked of the MC the thread runs on, by the file's full path.
+    const QString machine = files(world).environment();
+    const bool there = last && (last->environment == machine || (last->environment.isEmpty() && machine == world.mc.environmentId));
+    expect(there && last->payload.value(QLatin1String("cwd")) == workspaceRoot(world) && last->payload.value(QLatin1String("relativePath")) == c[0],
+           QStringLiteral("the MC was asked %1").arg(last ? QStringLiteral("%1 on \"%2\"").arg(show(last->payload.toVariantMap()), last->environment) : QStringLiteral("nothing")));
+    expect(files(world).saveProblem().isEmpty() && !fakeFiles(world.mc).files.contains(c[0]), describeViewer(world));
+  });
+
+  // Copying the open file.
+  step(QStringLiteral("the user is reading %1 in the viewer").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.clipboard.clear();
+    view(world, c[0]);
+    expect(files(world).fileStatus() == QLatin1String("ready"), describeViewer(world));
+  });
+  step(QStringLiteral("the user copies the file's text from the (viewer|command palette)"), [](World& world, const Captures& c, const Table&) {
+    if (c[0] == QLatin1String("viewer")) {
+      world.brick->click(QStringLiteral("fileCopy"));
+      return;
+    }
+    CommandRegistry* commands = world.native().controller<KeybindingController>()->commands();
+    const QString command = QStringLiteral("files.copyContents");
+    QModelIndex row;
+    for (int index = 0; index < commands->rowCount(); ++index) {
+      if (commands->index(index).data(CommandRegistry::CommandRole) == command) row = commands->index(index);
+    }
+    expect(row.isValid() && row.data(CommandRegistry::ListedRole).toBool() && row.data(CommandRegistry::EnabledRole).toBool() &&
+               row.data(CommandRegistry::TitleRole) == QLatin1String("Copy file contents"),
+           QStringLiteral("the palette does not offer \"Copy file contents\""));
+    commands->run(command);
+  });
+  step(QStringLiteral("the whole of %1 is on the clipboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString wanted = fakeFiles(world.mc).files.value(c[0]);
+    world.sync();
+    expect(!wanted.isEmpty() && world.clipboard == wanted, QStringLiteral("the clipboard holds \"%1\"").arg(world.clipboard));
+  });
+  step(QStringLiteral("the user is told the file's text was copied"), [](World& world, const Captures&, const Table&) {
+    bool told = false;
+    for (const QVariant& toast : at(world.state(QStringLiteral("toasts")), QStringLiteral("items")).toList()) {
+      told = told || (at(toast, QStringLiteral("type")) == QLatin1String("success") && at(toast, QStringLiteral("title")) == QLatin1String("File contents copied"));
+    }
+    expect(told, QStringLiteral("the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))));
+  });
+
   step(QStringLiteral("%1 has the unticked task %1").arg(q), [](World& world, const Captures& c, const Table&) {
     fakeFiles(world.mc).files.insert(c[0], QStringLiteral("# To do\n\n- [x] Draft the plan\n- [ ] %1\n- [ ] Tell everyone\n").arg(c[1]));
   });

@@ -10,7 +10,7 @@ import { step } from "../../steps.ts";
 import { PREVIEW_FILES } from "../filePreviewFixtures.ts";
 import { chooseCommand } from "../threadUi.ts";
 import { advance, findObject, pressKey, settle, typeText, type World } from "../world.ts";
-import { openFile } from "./files.steps.ts";
+import { ensureOpen, type FilesWorld, openFile } from "./files.steps.ts";
 
 interface ViewerWorld extends World {
   /** The MC's reason for refusing to write a path. */
@@ -284,4 +284,73 @@ step("the edit is still in the editor", async (ctx: ViewerWorld) => {
   await settle(ctx);
   expect(ctx.host!.state.get("mode")).toBe("fileEdit");
   expect(editorText(ctx)).toContain(CHANGE);
+});
+
+// --- A file the agent left outside the project ----------------------------------------
+// The fake client stands in for the cluster client, which sends a thread's reads and
+// writes to the MC of the machine it runs on by its workspace (clusterClient.ts, and
+// its test for a full path), so both places look alike from here.
+
+step(/^the thread is (on this computer|on another machine of the cluster)$/, (ctx: FilesWorld) =>
+  ensureOpen(ctx),
+);
+
+step("the agent wrote {string} outside the project", (ctx: FilesWorld, path: string) => {
+  // The tree lists the project; the file is read by its full path.
+  ctx.listedPaths ??= Object.keys(ctx.files!);
+  ctx.files![path] = "dish,price\nsoup,4.50\n";
+});
+
+step(
+  "the user opens {string} and edits it",
+  async (ctx: ViewerWorld & FilesWorld, path: string) => {
+    servesWrites(ctx);
+    // As a link to it in the conversation opens it.
+    ctx.host!.dispatch("files.view", { path });
+    await settle(ctx);
+    expect(viewer(ctx)).toMatchObject({ path, status: "ready" });
+    await pressKey(ctx, "i");
+    await settle(ctx);
+    expect(ctx.host!.state.get("mode")).toBe("fileEdit");
+    ctx.original = editorText(ctx);
+    await typeAndPause(ctx);
+  },
+);
+
+step(
+  "the change is written to {string} on the thread's machine",
+  async (ctx: ViewerWorld, path: string) => {
+    await settle(ctx);
+    const written = writes(ctx);
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({ cwd: WORKSPACE, relativePath: path });
+    expect(String(written[0]!.contents)).toBe(`${CHANGE}${ctx.original}`);
+    expect(viewer(ctx).save).toBe("saved");
+    expect(status(ctx)).toEqual({ kind: "success", text: `Saved ${path}.` });
+  },
+);
+
+// --- Copying the open file -------------------------------------------------------------
+
+step("the user is reading {string} in the viewer", (ctx: FilesWorld, path: string) =>
+  openFile(ctx, path),
+);
+
+step(
+  /^the user copies the file's text from the (viewer|command palette)$/,
+  async (ctx: World, from: string) => {
+    if (from === "viewer") await pressKey(ctx, "c");
+    else await chooseCommand(ctx, "Copy file contents");
+    await settle(ctx);
+  },
+);
+
+step("the whole of {string} is on the clipboard", (ctx: FilesWorld, path: string) => {
+  expect(ctx.clipboard?.at(-1)).toBe(ctx.files![path]);
+});
+
+step("the user is told the file's text was copied", async (ctx: World) => {
+  const screen = await settle(ctx);
+  expect(status(ctx)).toEqual({ kind: "success", text: "File contents copied." });
+  expect(screen).toContain(statusLabel(ctx));
 });

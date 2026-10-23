@@ -556,8 +556,8 @@ QString WorkspaceFiles::renderedText() const {
 QString WorkspaceFiles::readOnlyReason() const {
   if (m_fileStatus != QLatin1String("ready")) return {};
   if (m_truncated) return tr("Files larger than 1 MB open read-only.");
-  // Only a path inside the workspace can be written back.
-  if (m_openPath.startsWith(QLatin1Char('/')) || m_openPath.contains(QLatin1String(":\\"))) return tr("Files outside the project open read-only.");
+  // A file outside the workspace is written back by its full path, by the MC
+  // that read it; one that is not text it refuses (saveFailed).
   return {};
 }
 

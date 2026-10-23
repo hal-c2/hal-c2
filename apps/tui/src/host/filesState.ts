@@ -90,6 +90,8 @@ export interface FilesControllerOptions {
   readonly attach?: (path: string) => void;
   /** The prompt can take another attachment (offers "Attach image"). */
   readonly canAttach?: () => boolean;
+  /** Put text on the system clipboard; false when the terminal cannot. */
+  readonly copy?: (text: string) => boolean;
 }
 
 export interface FilesController {
@@ -256,7 +258,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
       hint: viewer?.edit
         ? `  ·  ${viewer.edit.save === "error" ? "not saved" : viewer.edit.save === "pending" ? "saving…" : "saved"} · Esc done`
         : viewer
-          ? // `i` (edit) and `o` (the environment's editor) are in the palette and the key reference.
+          ? // `i` (edit), `o` (the environment's editor) and `c` (copy) are in the palette and the key reference.
             `  ·  PgUp/PgDn scroll · ${renderable ? `s ${rendering ? "source" : "rendered"} · ` : ""}Esc back`
           : attach
             ? "  ·  ↑/↓ select · Enter attach · Esc close"
@@ -531,11 +533,30 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
         }
         return mcCall(
           "shell.openInEditor",
-          { cwd: `${root.path}/${path}`, editor: editor.id },
+          { cwd: localFile(root.path, path), editor: editor.id },
           root.environmentId,
         ).then(() => options.status?.(`Opened ${path} in ${editor.label}.`, "success"), failed);
       }, failed),
     );
+  };
+
+  /**
+   * `path` where this machine sees the workspace at `local`. One the agent left
+   * outside the workspace is opened by its full path, which sits under the same
+   * folder as the workspace does.
+   */
+  const localFile = (local: string, path: string) => {
+    if (!path.startsWith("/")) return `${local}/${path}`;
+    const above = local.endsWith(cwd) ? local.slice(0, local.length - cwd.length) : "";
+    return `${above}${path}`;
+  };
+
+  /** The viewer's file, whole as it was read, on the clipboard. */
+  const copyContents = () => {
+    if (!viewer || viewer.status !== "ready") return;
+    const text = viewer.edit ? viewer.edit.text : viewer.lines.join("\n");
+    if (options.copy?.(text)) options.status?.("File contents copied.", "success");
+    else options.status?.("Clipboard not supported by this terminal.", "warning");
   };
 
   const back = () => {
@@ -604,6 +625,9 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
           viewer = { ...viewer, source: !viewer.source, top: 0 };
           publish();
           return true;
+        case "files.viewer.copy":
+          if (open) copyContents();
+          return true;
         case "files.editor.open":
           if (open) startEdit();
           return true;
@@ -664,6 +688,9 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
                         },
                       ]),
                   { title: "Edit file here", action: "files.editor.open" },
+                  ...(viewer.status === "ready"
+                    ? [{ title: "Copy file contents", action: "files.viewer.copy" }]
+                    : []),
                   ...editors.map((editor) => ({
                     title: `Open file in ${editor.label}`,
                     action: "files.openInEditor",
