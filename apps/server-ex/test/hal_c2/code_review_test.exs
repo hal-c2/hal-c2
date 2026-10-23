@@ -340,6 +340,22 @@ defmodule HalC2.CodeReviewTest do
     _ = context
   end
 
+  test "a display saved while the checkout of a review is fetched lists its thread as it now says",
+       context do
+    hold = Path.join(context.dir, "fetch.hold")
+    File.write!(hold, "")
+    on_exit(fn -> File.rm(hold) end)
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    await_file(Path.join(context.dir, "fetch.held"))
+
+    put_settings(%{"display" => "page"})
+    File.rm!(hold)
+    settle()
+
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    assert %{"plugin" => %{"listed" => false}} = thread(thread_id)
+  end
+
   test "a review runs with the model options picked in the settings", context do
     save_settings(%{"modelOptions" => %{"reasoningEffort" => "high", "effort" => "high"}})
     review = start_review()
