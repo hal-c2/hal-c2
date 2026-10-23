@@ -280,7 +280,8 @@ defmodule HalC2.CodeReviewPropTest do
       checkouts: checkouts(m),
       orphans: [],
       posts: Enum.sort(m.posts),
-      problems: if(m.paused, do: ["code-review reports: #{m.pause_text}"], else: [])
+      # A plugin turned off reports nothing; its pause stands for when it is back.
+      problems: if(m.enabled and m.paused, do: ["code-review reports: #{m.pause_text}"], else: [])
     }
 
     observed = %{observed | posts: Enum.sort(observed.posts)}
