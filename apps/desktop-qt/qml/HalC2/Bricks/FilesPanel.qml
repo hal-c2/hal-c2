@@ -28,10 +28,14 @@ Rectangle {
     // never so much that the file (whose header buttons are its minimum width) is
     // pushed under it. A row layout does not shrink a fixed-size column on its own.
     readonly property real explorerShare: Math.max(0, Math.min(352, width * 0.46, width - 1 - fileViewer.Layout.minimumWidth))
-    // Below this width the tree is little more than its margins and expand button (about
-    // 46px of the 72), so a file that leaves it less is open without the tree rather than
-    // beside a sliver of it that still takes focus.
-    readonly property int explorerMinimum: 72
+    // Below this width the tree has no room for a row to be read, so a file that
+    // leaves it less is open without the tree rather than beside a sliver of it that
+    // still takes focus. A row needs its indent, icon and gap (8 + 13 + 6), about ten
+    // characters of the name at the row's font (which follows the user's font scale,
+    // so the floor does too), and a margin; 72 fixed px held six characters and a
+    // search field of 26px. Longer names elide in the middle and say the rest in a
+    // tooltip and the entry's accessible description.
+    readonly property real explorerMinimum: Math.ceil(8 + 13 + 6 + rowSample.advanceWidth + 8)
     readonly property bool explorerShown: !fileOpen || (explorerOpen && explorerShare >= explorerMinimum)
     // True while keyboard focus sits inside the given item.
     function focusInside(item: Item): bool {
@@ -70,6 +74,14 @@ Rectangle {
 
     objectName: "filesPanel"
     color: Theme.palette.color("surface", "#0f0f11")
+
+    // Ten ordinary characters at the tree row's font; sizes explorerMinimum.
+    TextMetrics {
+        id: rowSample
+
+        font.pixelSize: Math.round(12 * Theme.fontScale)
+        text: "abcdefghij"
+    }
 
     TextMetrics {
         id: glyph
@@ -685,6 +697,10 @@ Rectangle {
                         hoverEnabled: true
                         leftPadding: 8 + depth * 14
                         Accessible.name: name
+                        Accessible.description: path
+                        ToolTip.visible: hovered && nameText.truncated
+                        ToolTip.delay: 400
+                        ToolTip.text: path
                         onClicked: {
                             if (kind === "directory")
                                 root.tree.toggle(path);
@@ -714,6 +730,8 @@ Rectangle {
                                 color: root.muted
                             }
                             Text {
+                                id: nameText
+
                                 Layout.fillWidth: true
                                 text: entry.kind === "loading" ? qsTr("Loading...") : entry.kind === "error" ? qsTr("%1 Click to retry.").arg(entry.problem) : entry.name
                                 color: entry.kind === "error" ? root.errorColor : entry.ignored || entry.kind === "loading" ? root.muted : root.foreground
