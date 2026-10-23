@@ -166,9 +166,74 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     Storage.pair_release(context)
   end
 
-  step "the developer is told the installed server is not running", context do
+  # Serve on 443 already fronts the running server, but as localhost, not the
+  # 127.0.0.1 address the pair command would publish: reusing it must be decided
+  # by that server's identity, not the checkout profile's.
+  step "Tailscale already serves that server at another loopback address", context do
+    state = Path.join(Mc.tmp_dir(context.mc, "tailscale"), "state.json")
+
+    File.write!(
+      state,
+      JSON.encode!(%{
+        "self" => %{"DNSName" => "box.tail5e3a.ts.net."},
+        "serve" => %{"box.tail5e3a.ts.net:443" => "http://localhost:#{context.mc.port}"}
+      })
+    )
+
+    World.put_app_env(:tailscale_command, [
+      "env",
+      "FAKE_TAILSCALE_STATE=#{state}",
+      Path.expand("test/support/fake_tailscale.py")
+    ])
+
+    context
+  end
+
+  step "a developer asks a checkout for the installed server's pairing link over Tailscale",
+       context do
+    Storage.pair_checkout(context, ["--release", "--tailscale"])
+  end
+
+  step "it prints a Tailscale pairing link for that server", context do
+    assert [link, _note] = context.pair_output
+    base = "https://box.tail5e3a.ts.net/?token="
+    assert String.starts_with?(link, base), link
+    token = String.replace_prefix(link, base, "")
+    assert {200, %{"access_token" => access}} = Mc.exchange(context.mc, token)
+    assert is_binary(access)
+    context
+  end
+
+  step "a developer asks a checkout for a pairing link", context do
+    Storage.pair_checkout(context, [])
+  end
+
+  step "an operator runs the installed server's own pair command", context do
+    Storage.pair_from_release(context)
+  end
+
+  step ~r/^the (?:developer|operator) is told the installed server is not running$/, context do
     assert {:error, message} = context.pair_output
     assert message =~ "The installed MC is not running"
+    context
+  end
+
+  step "the developer is not told to leave --release out", context do
+    assert {:error, message} = context.pair_output
+    refute message =~ "leave --release out"
+    context
+  end
+
+  # Starts the MC as a release does with the home the scenario chose.
+  step "the server of that home is running", context do
+    context = Storage.start(context)
+    assert File.exists?(HalC2.RuntimeRecord.path())
+    Map.put(context, :running_profile, context.mc.spec)
+  end
+
+  step "no store is made at the chosen home", context do
+    dirs = Paths.mc_dirs(context.mc.spec, System.get_env(), Paths.user_home())
+    refute File.exists?(Path.join(dirs.data, "hal-c2.sqlite"))
     context
   end
 
