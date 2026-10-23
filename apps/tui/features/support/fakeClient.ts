@@ -168,6 +168,7 @@ const UNRECORDED = new Set([
   "subscribeScheduledTasks",
   "subscribeResourceTelemetry",
   "subscribeUsageLimits",
+  "subscribeServerSettings",
   "subscribeAuthAccess",
   "readSettings",
 ]);

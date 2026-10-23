@@ -294,7 +294,9 @@ Feature: Home screen and thread list on a phone
     When the app restarts
     Then the settled shelf is still collapsed
 
-  @backlog @mobile
+  # The phone lists the sidebar's own pages instead: threads/sidebar-list.feature,
+  # "Very long settled shelves are shown a page at a time".
+  @dropped @mobile
   Scenario: Long settled lists page in on request
     Given a project has 40 settled threads
     Then 10 settled threads are listed

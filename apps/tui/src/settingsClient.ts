@@ -11,6 +11,7 @@ import {
   type ResourceTelemetrySnapshot,
   type ScheduledTask,
   type ServerProvider,
+  type ServerSettings,
   type UsageLimitSourceSnapshots,
   WS_METHODS,
 } from "@hal-c2/contracts";
@@ -45,6 +46,11 @@ export interface TuiSettingsClient {
   readonly subscribeScheduledTasks: (
     onTasks: (tasks: ReadonlyArray<ScheduledTask>) => void,
   ) => () => void;
+  /**
+   * This machine's server settings: as they are on each (re)connection, then
+   * whenever any client changes them.
+   */
+  readonly subscribeServerSettings: (onSettings: (settings: ServerSettings) => void) => () => void;
   /**
    * This machine's providers and usage hubs, now and whenever either changes.
    * The MC reads its hubs only for clients that follow them, so unsubscribe on leaving.
@@ -99,6 +105,18 @@ export function makeTuiSettingsClient(
       drain(
         subscribe(WS_METHODS.scheduledTasksSubscribe, {}).pipe(
           Stream.tap((result) => Effect.sync(() => onTasks(result.tasks))),
+        ),
+      ),
+    subscribeServerSettings: (onSettings) =>
+      drain(
+        // `subscribe` follows the supervisor's session, so a new connection starts on its snapshot.
+        subscribe(WS_METHODS.subscribeServerConfig, {}).pipe(
+          Stream.tap((event) =>
+            Effect.sync(() => {
+              if (event.type === "snapshot") onSettings(event.config.settings);
+              if (event.type === "settingsUpdated") onSettings(event.payload.settings);
+            }),
+          ),
         ),
       ),
     subscribeUsageLimits: (onSnapshot) => {

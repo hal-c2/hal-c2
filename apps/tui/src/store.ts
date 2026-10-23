@@ -4,6 +4,8 @@ import type { OrchestrationShellSnapshot, TuiClient, TuiThreadPage } from "./con
 import { gitActionNeedsCommitMessage } from "./gitActions.logic.ts";
 import {
   buildRows,
+  SIDEBAR_SETTLED_INITIAL_COUNT,
+  SIDEBAR_SETTLED_PAGE,
   SIDEBAR_SETTLED_SECTION_ID,
   SIDEBAR_SNOOZED_SECTION_ID,
   type Row,
@@ -28,8 +30,10 @@ export type StatusKind = "info" | "success" | "warning" | "error" | "busy";
 export interface StoreState {
   readonly shell: OrchestrationShellSnapshot | null;
   readonly expanded: ReadonlySet<string>;
-  /** Projects whose full thread list has been loaded ("show more" activated). */
-  readonly loadedInFull: ReadonlySet<string>;
+  /** How many settled threads the shelf lists; "show more" lists another page. */
+  readonly settledShown: number;
+  /** Whether Settled lists threads a plugin started (`sidebarShowSettledPluginThreads`). */
+  readonly showSettledPluginThreads: boolean;
   readonly selection: Selection | null;
   readonly detail: OrchestrationThread | null;
   /** Pagination state for the selected thread's bounded server snapshot. */
@@ -94,6 +98,8 @@ export interface Store {
   readonly setProjectScope: (projectId: string | null) => void;
   readonly setStatus: (status: string, kind?: StatusKind) => void;
   readonly setFilter: (filter: string) => void;
+  /** Follow the MC's `sidebarShowSettledPluginThreads`. */
+  readonly setShowSettledPluginThreads: (show: boolean) => void;
   /** Run a git stacked action on the selected thread's worktree (commitMessage for commit-bearing actions). */
   readonly runGitAction: (
     action: GitStackedAction,
@@ -125,7 +131,8 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
   let state: StoreState = {
     shell: null,
     expanded: new Set<string>([SIDEBAR_SETTLED_SECTION_ID]),
-    loadedInFull: new Set<string>(),
+    settledShown: SIDEBAR_SETTLED_INITIAL_COUNT,
+    showSettledPluginThreads: false,
     selection: null,
     detail: null,
     threadPage: null,
@@ -150,11 +157,12 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     buildRows(
       state.shell,
       state.expanded,
-      state.loadedInFull,
+      state.settledShown,
       selectedThreadId(),
       state.filter,
       state.projectScopeId,
       now(),
+      state.showSettledPluginThreads,
     );
 
   const emit = () => {
@@ -305,8 +313,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     },
     loadMore: (id) => {
       if (id !== SIDEBAR_SETTLED_SECTION_ID) return;
-      const loadedInFull = new Set(state.loadedInFull).add(SIDEBAR_SETTLED_SECTION_ID);
-      set({ loadedInFull });
+      set({ settledShown: state.settledShown + SIDEBAR_SETTLED_PAGE });
     },
     toggleSection: (section) => {
       const id = section === "snoozed" ? SIDEBAR_SNOOZED_SECTION_ID : SIDEBAR_SETTLED_SECTION_ID;
@@ -325,6 +332,12 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     setStatus: (status, kind = "info") => set({ status, statusKind: kind }),
     setFilter: (filter) => {
       state = { ...state, filter };
+      ensureValidSelection(rowsNow());
+      emit();
+    },
+    setShowSettledPluginThreads: (showSettledPluginThreads) => {
+      if (showSettledPluginThreads === state.showSettledPluginThreads) return;
+      state = { ...state, showSettledPluginThreads };
       ensureValidSelection(rowsNow());
       emit();
     },
