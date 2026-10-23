@@ -2,7 +2,8 @@
 #   docs/user/remote-access.md (Pair over a LAN or private network, Manage or revoke access)
 #   docs/operations/development.md (vp run dev --share pairing URL, Reusable dev credential)
 #   docs/internals/environment-auth.md (Authority survives transport changes)
-#   apps/server-ex/lib/mix/tasks/hal_c2.pair.ex
+#   apps/server-ex/lib/mix/tasks/hal_c2.pair.ex, apps/server-ex/lib/hal_c2/pair.ex,
+#     apps/server-ex/rel/overlays/bin/hal-c2-service (pair)
 #   apps/server-ex/lib/hal_c2/auth.ex, apps/server-ex/lib/hal_c2/web/router.ex (/oauth/token, pairing links,
 #     /pair: the page a phone's camera app opens)
 #   apps/server-ex/lib/hal_c2/rpc.ex (hal-c2.createPairingLink), apps/server-ex/lib/hal_c2/web.ex (address/1:
@@ -43,6 +44,90 @@ Feature: Pairing a client with an environment
   Scenario: A pairing link names the address the operator gives it
     When an operator asks for a pairing link for "https://box.tailnet.ts.net"
     Then the printed link starts with that address
+
+  # The single file's `pair` runs the same code as the Mix task, in the release with no Mix.
+  @mc
+  Scenario: An installed MC prints a pairing link from its single file
+    When an operator runs "pair https://box.tailnet.ts.net" on the installed MC's command line
+    Then it prints the address with a one-time token
+
+  @mc
+  Scenario: A pairing command given an option it does not have says so
+    Given an administrator's client
+    When an operator asks for a pairing link with the option "--tailnet"
+    Then the command fails naming "--tailnet"
+    And no pairing link is listed
+
+  @mc
+  Scenario: A pairing command given two addresses says it takes one
+    Given an administrator's client
+    When an operator asks for a pairing link with the arguments "https://a.example https://b.example"
+    Then the command fails naming "at most one"
+    And no pairing link is listed
+
+  @mc
+  Scenario Outline: A pairing command given an address a link cannot be built on says so
+    Given an administrator's client
+    When an operator asks for a pairing link for the one address "<address>"
+    Then the command fails naming "BASE_URL must be an http or https address"
+    And no pairing link is listed
+
+    Examples:
+      | address                         |
+      | box.tailnet.ts.net              |
+      | localhost:3780                  |
+      | ftp://box.example               |
+      | https://box.example/?a=1        |
+      | https://box.example/#top        |
+      | http://user:pass@127.0.0.1:3780 |
+      | http://host:abc                 |
+      | http://127.0.0.1:99999          |
+      | http://exa mple.com             |
+      | https://box.example/some path   |
+
+  @mc
+  Scenario: A pairing command given an address with credentials does not print them back
+    Given an administrator's client
+    When an operator asks for a pairing link for the one address "http://user:pass@127.0.0.1:3780"
+    Then the command fails naming "BASE_URL must be an http or https address"
+    And the command does not print "user:pass"
+    And no pairing link is listed
+
+  @mc
+  Scenario: A pairing command given a pasted pairing link does not print its token back
+    Given an administrator's client
+    When an operator asks for a pairing link for the one address "https://box.example/?token=sekrit"
+    Then the command fails naming "BASE_URL must be an http or https address"
+    And the command does not print "sekrit"
+    And no pairing link is listed
+
+  @mc
+  Scenario: A pairing command given a bad value says which one
+    Given an administrator's client
+    When an operator asks for a pairing link with the option "--tailscale-serve-port=foo"
+    Then the command fails naming "--tailscale-serve-port=foo"
+    And no pairing link is listed
+
+  @mc
+  Scenario: A Tailscale pairing command given an address says it takes none
+    Given an administrator's client
+    When an operator asks for a pairing link with the arguments "--tailscale https://a.example"
+    Then the command fails naming "takes no BASE_URL"
+    And no pairing link is listed
+
+  @mc
+  Scenario: A Tailscale Serve port without Tailscale says so
+    Given an administrator's client
+    When an operator asks for a pairing link with the option "--tailscale-serve-port=8443"
+    Then the command fails naming "only applies with `--tailscale`"
+    And no pairing link is listed
+
+  @mc
+  Scenario: A Tailscale Serve port outside the port range says so
+    Given an administrator's client
+    When an operator asks for a pairing link with the arguments "--tailscale --tailscale-serve-port 70000"
+    Then the command fails naming "1 to 65535"
+    And no pairing link is listed
 
   @backlog @mc
   Scenario: A pairing link keeps its token out of the address a server sees

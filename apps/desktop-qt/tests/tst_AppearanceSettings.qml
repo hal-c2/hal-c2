@@ -75,6 +75,15 @@ Item {
             verify(standard.checked);
         }
 
+        // features/navigation/theme-editor.feature: the standard theme can be
+        // duplicated like the others.
+        function test_theStandardThemeCanBeDuplicated() {
+            const page = createTemporaryObject(pageComponent, root);
+            mouseClick(findChild(page, "duplicate:hal-c2"));
+            compare(Themes.calls.filter(call => call.name === "duplicateStandard").length, 1);
+            compare(Themes.calls.filter(call => call.name === "duplicate").length, 0, "a saved theme is not what it copies");
+        }
+
         // features/navigation/appearance.feature: each theme shows its colors.
         function test_eachThemeShowsItsColorsBesideItsName() {
             const page = createTemporaryObject(pageComponent, root);

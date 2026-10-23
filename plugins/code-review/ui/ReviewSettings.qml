@@ -26,6 +26,8 @@ ColumnLayout {
     property string problem: ""
     readonly property var watched: values.repositories ?? []
     readonly property var provider: providers.find(each => each.instanceId === values.provider) ?? null
+    // The model reviews will run on: the picked one, else the agent's default.
+    readonly property var modelEntry: (provider?.models ?? []).find(each => each.slug === values.model) ?? (provider?.models ?? []).find(each => each.isDefault) ?? (provider?.models ?? [])[0] ?? null
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     readonly property color border: Theme.palette.color("border", "#27272a")
@@ -514,6 +516,7 @@ ColumnLayout {
                     onActivated: index => {
                         settings.set("provider", settings.providers[index].instanceId);
                         settings.set("model", "");
+                        settings.set("modelOptions", ({}));
                     }
                 }
 
@@ -527,7 +530,38 @@ ColumnLayout {
                     currentIndex: (settings.values.model ?? "") === "" ? 0 : models.findIndex(each => each.slug === settings.values.model) + 1
                     displayText: currentIndex >= 0 ? currentText : settings.values.model
                     Accessible.name: qsTr("Model")
-                    onActivated: index => settings.set("model", index === 0 ? "" : models[index - 1].slug)
+                    onActivated: index => {
+                        settings.set("model", index === 0 ? "" : models[index - 1].slug);
+                        settings.set("modelOptions", ({}));
+                    }
+                }
+            }
+        }
+
+        // What the chosen model offers besides itself: its reasoning effort first of all.
+        Repeater {
+            model: settings.modelEntry?.options ?? []
+
+            delegate: Field {
+                id: option
+
+                required property var modelData
+
+                objectName: "codeReviewSetting:modelOption:" + modelData.id
+                label: modelData.label ?? modelData.id
+
+                Choice {
+                    visible: option.modelData.type !== "boolean"
+                    options: [{ value: "", label: qsTr("Its default") }].concat((option.modelData.options ?? []).map(each => ({ value: each.id, label: each.label ?? each.id })))
+                    value: (settings.values.modelOptions ?? {})[option.modelData.id] ?? ""
+                    onPicked: value => settings.setFor("modelOptions", option.modelData.id, value === "" ? undefined : value)
+                }
+
+                Switch {
+                    visible: option.modelData.type === "boolean"
+                    checked: (settings.values.modelOptions ?? {})[option.modelData.id] === true
+                    Accessible.name: option.label
+                    onToggled: settings.setFor("modelOptions", option.modelData.id, checked)
                 }
             }
         }
@@ -574,7 +608,7 @@ ColumnLayout {
 
         Field {
             label: qsTr("Review prompt")
-            hint: qsTr("{{pr.number}}, {{pr.title}}, {{pr.author}}, {{pr.base}}, {{pr.head}}, {{pr.headSha}}, {{pr.mergeBase}}, {{pr.url}} and {{repository}} are filled in. How to report the findings is added after it.")
+            hint: qsTr("{{pr.number}}, {{pr.title}}, {{pr.author}}, {{pr.base}}, {{pr.head}}, {{pr.headSha}}, {{pr.mergeBase}}, {{pr.url}}, {{pr.body}} and {{repository}} are filled in. The description, failing checks, comments already on the pull request and your previous review of it are added after it, then how to report the findings.")
 
             Area {
                 objectName: "codeReviewSetting:prompt"

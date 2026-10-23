@@ -718,6 +718,34 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  # --- one quota per account -----------------------------------------------------------
+
+  step "both Codex instances' usage has been checked", context do
+    Mc.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["codex", @second])
+    # The account arrives as a cast the probe sent; this call lands after it.
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "a turn on the second Codex instance reports its usage", context do
+    context = World.launch_on(context, "Work", @second, "how close is the rate limit")
+    World.await_runs(context, "Work", ["completed"])
+    # The turn's update is a cast; this call lands after it.
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    context
+  end
+
+  step "each Codex account keeps its own usage limits", context do
+    codex = HalC2.ProviderUsageLimits.get("codex")
+    work = HalC2.ProviderUsageLimits.get(@second)
+
+    assert %{"usedPercent" => 42} = Enum.find(codex["windows"], &(&1["id"] == "primary"))
+    assert %{"usedPercent" => 77} = Enum.find(work["windows"], &(&1["id"] == "primary"))
+    context
+  end
+
   # --- subagents -------------------------------------------------------------------------
 
   # The fake's spawnAgent tool call starts the thread native-child-1, which answers.

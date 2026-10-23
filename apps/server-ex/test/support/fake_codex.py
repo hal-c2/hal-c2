@@ -7,14 +7,21 @@
 # starting" makes the process exit on turn/start. With FAKE_CODEX_LOG set, every request the MC sends
 # is appended to that file as one JSON line, and every answer to our own requests as
 # {"method": "response", "params": {"id": ..., "result": ...}}; while the file FAKE_CODEX_REJECT_STEER
-# names exists, turn/steer is refused. "stream ..." turns pace themselves by gate files
+# names exists, turn/steer is refused, and while FAKE_CODEX_HOLD_STEER's exists it waits. "stream ..." turns pace themselves by gate files
 # in FAKE_CODEX_GATE (see stream_reply); "answer from gate" waits for the gate file
-# "answer" and replies with its contents, or with no message when it is empty.
+# "answer" and replies with its contents, or with no message when it is empty; a steer
+# with "hold ..." writes "steer.held" and waits for the gate file "steer" before it answers.
 import glob, json, os, re, sys, time, uuid
 
 # With FAKE_CODEX_TRACE set, every message read is appended to it as a JSON line.
 # FAKE_CODEX_MODELS is the JSON `data` model/list answers with.
 TRACE = os.environ.get("FAKE_CODEX_TRACE")
+# A steer's answer is an item of its own. Its id is unique across fake processes, as
+# Codex's are: request ids start over with a new process, so they would name an
+# earlier process's answer, and the MC would move that answer into this turn.
+def steer_item_id():
+    return f"msg-steer-{uuid.uuid4().hex}"
+
 def trace(entry):
     if TRACE:
         with open(TRACE, "a") as f:
@@ -123,6 +130,7 @@ paginated = os.environ.get("FAKE_CODEX_LEGACY") != "1"
 page_size = int(os.environ.get("FAKE_CODEX_PAGE_SIZE", "0"))
 turns = 0
 finishing = False  # "finishing": the turn ends as a steer for it arrives
+closing = False  # "closing": the turn takes a steer, answers it and ends before it replies
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
@@ -239,9 +247,10 @@ for line in sys.stdin:
                 send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-bg", "text": "The dev server is running."}}})
                 send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
                 continue
-        if "wait" in text or "finishing" in text:
+        if "wait" in text or "finishing" in text or "closing" in text:
             waiting_ctx = ctx
             finishing = "finishing" in text
+            closing = "closing" in text
             continue
         if text.startswith("say "):
             say(ctx, text)
@@ -382,6 +391,14 @@ for line in sys.stdin:
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
     elif method == "turn/steer":
         ctx = waiting_ctx
+        # While the file FAKE_CODEX_HOLD_STEER names exists, a steer waits.
+        # Bounded, so a gate a failed test never removes fails the suite
+        # instead of hanging it.
+        hold_deadline = time.time() + 120
+        while os.path.exists(os.environ.get("FAKE_CODEX_HOLD_STEER", "/nonexistent")):
+            if time.time() > hold_deadline:
+                sys.exit("fake Codex: steer held past 120s (stuck hold-steer gate)")
+            time.sleep(0.01)
         if finishing:
             # The turn ended before the steer got there.
             finishing = False
@@ -390,6 +407,21 @@ for line in sys.stdin:
             continue
         if params["expectedTurnId"] != ctx["turnId"] or os.path.exists(os.environ.get("FAKE_CODEX_REJECT_STEER", "/nonexistent")):
             send({"id": mid, "error": {"code": -32600, "message": "turn moved on"}})
+            continue
+        if params["input"][0]["text"].startswith("hold "):
+            # The test lets the steer's answer go with the gate file "steer";
+            # "steer.held" is its receipt that the steer got here.
+            open(os.path.join(os.environ["FAKE_CODEX_GATE"], "steer.held"), "w").close()
+            gate("steer")
+        if closing:
+            # The turn took the steer and ended before its answer got back.
+            closing = False
+            text = "steered: " + params["input"][0]["text"]
+            item_id = steer_item_id()
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": ""}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": text}}})
+            send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
+            send({"id": mid, "result": {"turnId": ctx["turnId"]}})
             continue
         send({"id": mid, "result": {"turnId": ctx["turnId"]}})
         if params["input"][0]["text"].startswith("say "):
@@ -402,8 +434,9 @@ for line in sys.stdin:
         # A running turn passes on a new quota reading, as Codex does alongside token usage.
         if "rate limit" in text:
             send({"method": "account/rateLimits/updated", "params": {"rateLimits": {"limitId": "codex", "primary": {"usedPercent": 77, "windowDurationMins": 300}}}})
-        send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": ""}}})
-        send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-steer", "text": text}}})
+        item_id = steer_item_id()
+        send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": ""}}})
+        send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": item_id, "text": text}}})
         send({"method": "turn/completed", "params": {**ctx, "turn": {"id": ctx["turnId"], "status": "completed"}}})
     elif method == "thread/fork" and SESSIONS:
         # A fork by `path` reads that rollout; the new thread works in the given cwd.

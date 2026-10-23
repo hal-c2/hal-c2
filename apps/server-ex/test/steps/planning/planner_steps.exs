@@ -1339,6 +1339,32 @@ defmodule HalC2.Steps.Planning.Planner do
     World.cli_rules(context, [%{"args" => ["pr view #{number}", repository], "stdout" => pr}])
   end
 
+  step "the MC also has the project {string} whose remote is {string} on {string}",
+       %{args: [title, repository, host]} = context do
+    context = World.create_project(context, title)
+
+    World.git!(
+      World.project(context, title).root,
+      ["remote", "add", "origin", "https://#{host}/#{repository}.git"]
+    )
+
+    context
+  end
+
+  step "{string} is linked to \#{int} of {string} at {string}",
+       %{args: [title, number, repository, url]} = context do
+    context |> ensure(title) |> link_prs(title, repository, [number], %{"url" => url})
+  end
+
+  step "\#{int} of {string} is merged on {string}",
+       %{args: [number, repository, host]} = context do
+    pr = Shared.gh_pr(repository, number, %{"state" => "MERGED"})
+
+    World.cli_rules(context, [
+      %{"args" => ["pr view #{number}", "#{host}/#{repository}"], "stdout" => pr}
+    ])
+  end
+
   step "{string} has {int} pull requests updated since \#{int}",
        %{args: [_repository, count, _number]} = context do
     pr_list(%{context | newer_prs: count})
@@ -1730,6 +1756,58 @@ defmodule HalC2.Steps.Planning.Planner do
     close_issue(context, number, "COMPLETED", %{"title" => title, "body" => body})
   end
 
+  # GitHub answers for the issue read alone, but lists nothing as updated since.
+  step "the closed \#{int} is renamed on GitHub to {string} with the description {string}, which GitHub does not count as an update",
+       %{args: [number, title, body]} = context do
+    context
+    |> close_issue(number, "COMPLETED", %{"title" => title, "body" => body})
+    |> World.cli_rules([listing([], nil)])
+  end
+
+  # Over a day has passed since the last full read, as `nearly a day passes`
+  # below ages it.
+  step "the planner last read every closed issue alone over a day ago", context do
+    :sys.replace_state(Process.whereis(HalC2Plugins.Planner), fn state ->
+      %{state | full_at: state.full_at && DateTime.add(state.full_at, -90_000, :second)}
+    end)
+
+    context
+  end
+
+  step "GitHub fails to read the closed \#{int} alone", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["{ ...IssueFields", ~s("number":#{number})],
+        "exit" => 1,
+        "stderr" => "HTTP 502: Bad Gateway\n"
+      }
+    ])
+  end
+
+  # Time passes for the planner's copies of the closed issues: the last full read is
+  # moved back most of a day, so one more such step puts it past the day. This and
+  # the prop's `age/0` reach into the planner's `full_at` field on purpose (there
+  # is no other way to age by nearly a day); rename them in lockstep with it.
+  step "nearly a day passes since the planner last read every closed issue alone", context do
+    :sys.replace_state(Process.whereis(HalC2Plugins.Planner), fn state ->
+      %{state | full_at: state.full_at && DateTime.add(state.full_at, -80_000, :second)}
+    end)
+
+    context
+  end
+
+  step "GitHub fails to list the issues changed since", context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["api graphql"],
+        "stdin" => ["issues(first: $first", "\"states\":null"],
+        "exit" => 1,
+        "stderr" => "HTTP 502: Bad Gateway\n"
+      }
+    ])
+  end
+
   step "\#{int} is reopened on GitHub without the label", %{args: [number]} = context do
     off_the_list(context, GitHubIssues.issue(context.repository, number))
   end
@@ -1747,11 +1825,23 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "that look read the closed \#{int} alone", %{args: [number]} = context do
+    assert [%{"number" => ^number}] = reads(context) -- context.reads
+    context
+  end
+
+  step "that look read the closed \#{int} and \#{int} alone",
+       %{args: [one, other]} = context do
+    numbers = context |> reads() |> Kernel.--(context.reads) |> Enum.map(& &1["number"])
+    assert Enum.sort(numbers) == Enum.sort([one, other])
+    context
+  end
+
   defp count_reads(context), do: Map.put(context, :reads, reads(context))
 
-  # How many issues were read one at a time so far.
+  # The issues read one at a time so far, as the variables they were asked with.
   defp reads(context),
-    do: length(GitHubIssues.graphql_calls(context, "issue(number: $number) { ...IssueFields"))
+    do: GitHubIssues.graphql_calls(context, "issue(number: $number) { ...IssueFields")
 
   step "\#{int}'s task is done", %{args: [number]} = context do
     assert task_of(plan!(context), number)["status"] == "done"
@@ -2017,10 +2107,7 @@ defmodule HalC2.Steps.Planning.Planner do
 
   step "GitHub answers renaming \#{int} to {string} late, refusing it",
        %{args: [number, title]} = context do
-    answers_late(context, number, title, %{
-      "exit" => 1,
-      "stderr" => "HTTP 422: Validation Failed\n"
-    })
+    answers_late(context, number, title, %{"stdout" => %{"number" => number}}, true)
   end
 
   step "GitHub refuses renaming \#{int} to {string}", %{args: [number, title]} = context do
@@ -2198,14 +2285,54 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  step "the user clears the owner of \#{int}'s task", %{args: [number]} = context do
+    update_task(context, number, %{"owner" => nil})
+  end
+
   step "the user makes {string} the owner of \#{int}'s task",
        %{args: [owner, number]} = context do
     update_task(context, number, %{"owner" => owner})
   end
 
-  step "GitHub is asked to rename \#{int} to {string} and assign it to {string} at once",
+  step "the user tries to make {string} the owner of \#{int}'s task",
+       %{args: [owner, number]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    fields = %{"owner" => owner}
+    {reply, context} = plugin(context, "updateItem", %{"id" => task["id"], "fields" => fields})
+    Map.put(context, :update_reply, reply)
+  end
+
+  step "the change is refused saying {string} is not a login", %{args: [owner]} = context do
+    assert {:error, message, _} = context.update_reply
+    assert message =~ "owner: #{inspect(owner)} is not a login."
+    context
+  end
+
+  step "GitHub is asked to rename \#{int} to {string} and to add {string} to its assignees",
        %{args: [number, title, owner]} = context do
-    GitHubIssues.assert_patched(context, number, %{"title" => title, "assignees" => [owner]})
+    context
+    |> GitHubIssues.assert_patched(number, %{"title" => title})
+    |> assert_assignees("POST", number, owner)
+  end
+
+  step "GitHub is asked to take {string} off \#{int}'s assignees and nothing else",
+       %{args: [old, number]} = context do
+    context
+    |> assert_assignees("DELETE", number, old)
+    |> assert_assignee_order(number, [{"DELETE", old}])
+  end
+
+  step "GitHub is asked to take {string} off \#{int}'s assignees once and to add {string} twice",
+       %{args: [old, number, owner]} = context do
+    assert_assignee_order(context, number, [{"DELETE", old}, {"POST", owner}, {"POST", owner}])
+  end
+
+  step "GitHub is asked to take {string} off \#{int}'s assignees and to add {string}",
+       %{args: [old, number, owner]} = context do
+    context
+    |> assert_assignees("DELETE", number, old)
+    |> assert_assignees("POST", number, owner)
+    |> assert_assignee_order(number, [{"DELETE", old}, {"POST", owner}])
   end
 
   step "the user renames \#{int}'s task to {string}, then to {string} before GitHub answers",
@@ -2391,23 +2518,67 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   step "GitHub refuses changes to \#{int}", %{args: [number]} = context do
+    World.cli_rules(
+      context,
+      for {args, docs} <- [
+            {["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+             "issues/issues#update-an-issue"},
+            {["--method POST", "repos/#{context.repository}/issues/#{number}/assignees"],
+             "issues/assignees#add-assignees-to-an-issue"},
+            {["--method DELETE", "repos/#{context.repository}/issues/#{number}/assignees"],
+             "issues/assignees#remove-assignees-from-an-issue"}
+          ] do
+        %{
+          "args" => args,
+          "exit" => 1,
+          "stderr" => "HTTP 422: Validation Failed (https://docs.github.com/rest/#{docs})\n"
+        }
+      end
+    )
+  end
+
+  step "GitHub refuses adding assignees to \#{int}", %{args: [number]} = context do
     World.cli_rules(context, [
       %{
-        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "args" => ["--method POST", "repos/#{context.repository}/issues/#{number}/assignees"],
         "exit" => 1,
         "stderr" =>
-          "HTTP 422: Validation Failed (https://docs.github.com/rest/issues/issues#update-an-issue)\n"
+          "HTTP 422: Validation Failed (https://docs.github.com/rest/issues/assignees#add-assignees-to-an-issue)\n"
       }
     ])
   end
 
-  step "GitHub takes changes to \#{int} again", %{args: [number]} = context do
+  step "GitHub refuses removing assignees from \#{int}", %{args: [number]} = context do
     World.cli_rules(context, [
       %{
-        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
-        "stdout" => %{"number" => number}
+        "args" => ["--method DELETE", "repos/#{context.repository}/issues/#{number}/assignees"],
+        "exit" => 1,
+        "stderr" =>
+          "HTTP 422: Validation Failed (https://docs.github.com/rest/issues/assignees#remove-assignees-from-an-issue)\n"
       }
     ])
+  end
+
+  step "GitHub is asked to take {string} off \#{int}'s assignees twice and to add {string} once",
+       %{args: [old, number, owner]} = context do
+    assert_assignee_order(context, number, [
+      {"DELETE", old},
+      {"DELETE", old},
+      {"POST", owner}
+    ])
+  end
+
+  step "GitHub takes changes to \#{int} again", %{args: [number]} = context do
+    World.cli_rules(
+      context,
+      for args <- [
+            ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+            ["--method POST", "repos/#{context.repository}/issues/#{number}/assignees"],
+            ["--method DELETE", "repos/#{context.repository}/issues/#{number}/assignees"]
+          ] do
+        %{"args" => args, "stdout" => %{"number" => number, "assignees" => []}}
+      end
+    )
   end
 
   step "the user labels \#{int}'s task {string}", %{args: [number, label]} = context do
@@ -2422,6 +2593,58 @@ defmodule HalC2.Steps.Planning.Planner do
   step "GitHub is never asked to change \#{int}'s assignees", %{args: [number]} = context do
     changes = GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}")
     refute Enum.any?(changes, &Map.has_key?(&1, "assignees")), inspect(changes)
+
+    for method <- ~w(POST DELETE) do
+      assert GitHubIssues.rest_calls(context, method, "/issues/#{number}/assignees") == []
+    end
+
+    context
+  end
+
+  step "GitHub is never asked to set \#{int}'s assignees outright", %{args: [number]} = context do
+    changes = GitHubIssues.rest_calls(context, "PATCH", "/issues/#{number}")
+    refute Enum.any?(changes, &Map.has_key?(&1, "assignees")), inspect(changes)
+    context
+  end
+
+  step "\#{int} is assigned to {string} and {string} on GitHub",
+       %{args: [number, first, second]} = context do
+    repository = context.repository
+
+    context =
+      context
+      |> GitHubIssues.answers(repository, [
+        GitHubIssues.issue(repository, number, %{
+          "assignees" => %{"nodes" => [%{"login" => first}, %{"login" => second}]}
+        })
+      ])
+      |> sync!()
+
+    assert task_of(plan!(context), number)["owner"] == first
+    context
+  end
+
+  step "GitHub lists \#{int} as assigned to {string} and {string}",
+       %{args: [number, first, second]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{
+        "assignees" => %{"nodes" => [%{"login" => first}, %{"login" => second}]}
+      })
+    ])
+  end
+
+  step "GitHub lists \#{int} as assigned to {string}", %{args: [number, login]} = context do
+    repository = context.repository
+
+    GitHubIssues.answers(context, repository, [
+      GitHubIssues.issue(repository, number, %{"assignees" => %{"nodes" => [%{"login" => login}]}})
+    ])
+  end
+
+  step "\#{int}'s task is owned by {string}", %{args: [number, owner]} = context do
+    assert task_of(plan!(context), number)["owner"] == owner
     context
   end
 
@@ -2439,6 +2662,21 @@ defmodule HalC2.Steps.Planning.Planner do
   # and to `soon` at once; it notes each milestone in the order it takes them.
   step "GitHub takes moving \#{int} to {string} late and to {string} at once",
        %{args: [number, late, soon]} = context do
+    late_and_soon(context, number, late, soon, "")
+  end
+
+  # As above, but `soon` is refused the second time it is asked: the script counts the
+  # asks in a file and exits 1 on the second. The scenario answers one ask before the
+  # next is made (the move, the correction, the retry), so the count needs no locking.
+  step "GitHub takes moving \#{int} to {string} late and to {string} at once, but refuses the second move to it",
+       %{args: [number, late, soon]} = context do
+    count = Path.join(context.mc.home, "gh-asked")
+    n = "$(cat '#{count}' 2>/dev/null || echo 0)"
+    refuse = "n=#{n}; echo $((n + 1)) > '#{count}'; [ \"$n\" -ne 1 ] || exit 1; "
+    late_and_soon(context, number, late, soon, refuse)
+  end
+
+  defp late_and_soon(context, number, late, soon, check) do
     gate = Path.join(context.mc.home, "gh-gate")
     {_, 0} = System.cmd("mkfifo", [gate])
     taken = Path.join(context.mc.home, "gh-milestones")
@@ -2455,7 +2693,7 @@ defmodule HalC2.Steps.Planning.Planner do
     end
 
     context
-    |> World.cli_rules([move.(late, "cat '#{gate}' > /dev/null; "), move.(soon, "")])
+    |> World.cli_rules([move.(late, "cat '#{gate}' > /dev/null; "), move.(soon, check)])
     |> Map.merge(%{gh_gate: gate, gh_milestones: taken})
   end
 
@@ -3476,6 +3714,31 @@ defmodule HalC2.Steps.Planning.Planner do
     Map.put(context, :answer, List.last(FakeSlack.responses())["body"])
   end
 
+  # GitHub was asked to `method` ("POST" adds, "DELETE" removes) `login` alone on
+  # issue `number`'s assignees.
+  defp assert_assignees(context, method, number, login) do
+    calls = GitHubIssues.rest_calls(context, method, "/issues/#{number}/assignees")
+
+    assert %{"assignees" => [login]} in calls,
+           "GitHub was not asked to #{method} #{login} on ##{number}: #{inspect(calls)}"
+
+    context
+  end
+
+  # GitHub was asked to change issue `number`'s assignees in the order of `changes`, as
+  # `{method, login}`: the calls to GitHub are logged in the order they were made.
+  defp assert_assignee_order(context, number, changes) do
+    asked =
+      for call <- World.cli_calls(context, "/issues/#{number}/assignees"),
+          "--method" in call["args"],
+          method = Enum.at(call["args"], Enum.find_index(call["args"], &(&1 == "--method")) + 1),
+          %{"assignees" => [login]} <- [JSON.decode!(call["stdin"])],
+          do: {method, login}
+
+    assert asked == changes, "GitHub was asked #{inspect(asked)}"
+    context
+  end
+
   # GitHub's list of the open issues: #`number`, named `title`.
   defp listed(context, number, title) do
     issue =
@@ -3605,15 +3868,19 @@ defmodule HalC2.Steps.Planning.Planner do
 
   # GitHub's answer to renaming #`number` to `title` (a fake gh rule's outcome) waits on
   # a fifo until the scenario answers it.
-  defp answers_late(context, number, title, outcome) do
+  # Only the first change to the title waits, and is refused when `refusing?`: the one
+  # after it, with whatever else the task gained, goes through.
+  defp answers_late(context, number, title, outcome, refusing? \\ false) do
     gate = Path.join(context.mc.home, "gh-gate")
     {_, 0} = System.cmd("mkfifo", [gate])
+    refuse = if refusing?, do: " echo 'HTTP 422: Validation Failed' >&2; exit 1;", else: ""
 
     rule =
       Map.merge(outcome, %{
         "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
         "stdin" => [JSON.encode!(%{"title" => title})],
-        "run" => "cat '#{gate}' > /dev/null"
+        "run" =>
+          "if [ -p '#{gate}' ]; then cat '#{gate}' > /dev/null; rm -f '#{gate}';#{refuse} fi"
       })
 
     context |> World.cli_rules([rule]) |> Map.put(:gh_gate, gate)

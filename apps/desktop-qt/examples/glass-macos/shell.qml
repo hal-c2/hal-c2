@@ -21,7 +21,9 @@ ShellWindow {
     readonly property bool sidebarVisible: !root.sidebarCollapsed || root.settingsActive
     // Settings navigation always takes the column, even in a narrow window.
     readonly property bool sidebarOverlay: root.compact && !root.settingsActive
-    readonly property bool inspectorShown: rightPanel.available && rightPanel.open && !root.settingsActive
+    // A page an MC plugin added is showing: it takes the place of the thread.
+    readonly property bool pluginTab: (root.route?.tab ?? "threads") !== "threads" && !root.settingsActive
+    readonly property bool inspectorShown: rightPanel.available && rightPanel.open && !root.settingsActive && !root.pluginTab
     readonly property bool overlayActive: !root.settingsActive && ((root.sidebarOverlay && root.sidebarVisible) || (root.inspectorOverlay && root.inspectorShown))
     readonly property int slideDuration: 220
     // The title band: AppKit's compact toolbar strip (PlatformWindow.mm
@@ -132,7 +134,7 @@ ShellWindow {
                         anchors.leftMargin: navigation.visible ? 0 : showSidebar.x + showSidebar.width - 8
                         anchors.rightMargin: trailing.width + 8
                         color: "transparent"
-                        visible: ready
+                        visible: ready && !root.pluginTab
 
                         Behavior on anchors.leftMargin {
                             Slide {}
@@ -150,7 +152,7 @@ ShellWindow {
                             icon.name: "sidebar.right"
                             objectName: "macInspectorToggle"
                             text: rightPanel.open ? qsTr("Hide Inspector") : qsTr("Show Inspector")
-                            visible: rightPanel.available && !root.settingsActive
+                            visible: rightPanel.available && !root.settingsActive && !root.pluginTab
 
                             onClicked: Shell.dispatch("rightPanel.toggle")
                         }
@@ -168,6 +170,19 @@ ShellWindow {
                     Layout.preferredHeight: 1
                     color: root.hairline
                 }
+                // Threads, then a tab per page an MC plugin adds; hidden while
+                // there are none.
+                ShellTabs {
+                    Layout.fillWidth: true
+                    color: "transparent"
+                    visible: pages.length > 0 && !root.settingsActive
+                    windowControls: false
+                }
+                PluginPages {
+                    Layout.fillHeight: true
+                    Layout.fillWidth: true
+                    visible: root.pluginTab
+                }
                 SettingsHost {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
@@ -180,13 +195,13 @@ ShellWindow {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     kind: root.route?.kind ?? ""
-                    visible: !root.settingsActive
+                    visible: !root.settingsActive && !root.pluginTab
                 }
 
                 Composer {
                     Layout.fillWidth: true
                     color: root.canvas
-                    visible: ready && !root.settingsActive
+                    visible: ready && !root.settingsActive && !root.pluginTab
                 }
                 // The drawer folds open under the composer. It keeps its open
                 // height while the slot around it animates, so the document
@@ -201,6 +216,7 @@ ShellWindow {
                     Layout.preferredHeight: Math.round(openHeight * reveal)
                     clip: true
                     objectName: "macTerminal"
+                    visible: !root.pluginTab
 
                     Behavior on reveal {
                         Slide {}

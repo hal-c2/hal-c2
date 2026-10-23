@@ -44,6 +44,10 @@ defmodule HalC2.PlannerPropTest do
   launches. A client links a task to a pull request
   of that repository, or unlinks it, someone on GitHub names a pull request as closing an
   issue there, or stops, and GitHub merges a pull request; a merge alone closes no issue.
+  A task is also linked to a pull request of a repository no project has, by a link whose
+  url names a host the MC has a project on, a host it has none on, or no web address,
+  and GitHub merges it; only a host the MC has a project on is asked, the one the link
+  names when it names one.
   After every step:
 
   - nothing waits for itself, no task is its own ancestor, a removed task's subtasks move
@@ -121,6 +125,14 @@ defmodule HalC2.PlannerPropTest do
     thread;
   - the `plan` and `runs` the plugin answers match the model, and the topics clients
     follow match what it answers.
+
+  Task owners are deliberately not modelled here — an exemption, not an
+  equivalence claim: the owner-push ordering and retry semantics (remove old,
+  add new, retry only what a refusal left, relink and case-only changes pushing
+  nothing, a stored owner that is no login never being taken off) are pinned by
+  the planner Gherkin scenarios and the `Sync.pushes/5` unit tests in
+  `test/hal_c2/planner_test.exs`. Modelling owners here stays open if the
+  maintainer wants the interleavings explored too.
   """
   use ExUnit.Case, async: false
   use PropCheck
@@ -142,7 +154,31 @@ defmodule HalC2.PlannerPropTest do
   @unplanned 4
   # The pull requests of `@repository`.
   @pulls [40, 41, 42]
+  # The pull requests of `@lone`'s repository, which no project on the MC has, by number:
+  # the kind of host a link to one names and the url it says. `:enterprise` is on
+  # `@enterprise`, where the MC has a project, and is read through that host; `:plain`
+  # names no web address a host can be taken from (none, not text, not a url, or a
+  # scheme the plan drops), so github.com, where the MC has a project too, reads it; the
+  # host of `:unknown` has no project, so it is never asked.
+  @lone "acme/other"
+  @enterprise "github.example.com"
+  @lone_pulls %{
+    50 => {:enterprise, "https://github.example.com/acme/other/pull/50"},
+    51 => {:enterprise, "http://github.example.com/acme/other/pull/51"},
+    52 => {:plain, "ftp://github.example.com/acme/other/pull/52"},
+    53 => {:plain, 53},
+    54 => {:plain, "not a url"},
+    55 => {:plain, nil},
+    56 => {:unknown, "https://ghe.elsewhere.example/acme/other/pull/56"},
+    # A deep link with credentials, a query and a fragment is stored as the plain address.
+    57 => {:enterprise, "https://user:token@github.example.com/acme/other/pull/57/files?x=1#y"}
+  }
   @bad_ref %{"repository" => 7, "number" => 1}
+  # A look may reuse what the one before read of the closed issues until `@full_read`
+  # seconds have passed since a look read them all alone; `age/0` moves that look back by
+  # `@shift`, so two of them expire it and one does not.
+  @full_read 1_000_000
+  @shift 600_000
   @due "2026-10-30"
   @moved "2026-11-06"
   @board "acme/3"
@@ -189,7 +225,7 @@ defmodule HalC2.PlannerPropTest do
 
     apps =
       ~w(gh_command codex_command settings_check_ms home planner_today planner_kept_runs
-         planner_skew_seconds)a
+         planner_skew_seconds planner_full_read_seconds)a
 
     previous_apps = Map.new(apps, &{&1, Application.fetch_env(:hal_c2, &1)})
 
@@ -216,6 +252,9 @@ defmodule HalC2.PlannerPropTest do
     # The fake GitHub stamps changes by the MC's clock, so a look lists only what changed
     # since the last one began.
     Application.put_env(:hal_c2, :planner_skew_seconds, 0)
+    # How long the copies of closed issues a look holds stand (`@full_read`); the model
+    # ages them by `@shift` at a time (`age/0`) instead of waiting.
+    Application.put_env(:hal_c2, :planner_full_read_seconds, @full_read)
 
     on_exit(fn ->
       for {var, value} <- previous_vars,
@@ -285,9 +324,18 @@ defmodule HalC2.PlannerPropTest do
   # `merged`: the pull requests GitHub merged; the others are open. `closing`: issue of
   # `@repository` → the pull requests GitHub names as closing it, in its order. An item's
   # `pulls`: its pull requests, `[{number, from_issue (linked as one its issue names),
-  # state (:open or :merged, as the plugin last read it)}]` in the order linked.
+  # state (:open or :merged, as the plugin last read it)}]` in the order linked. `age`:
+  # the seconds since a look read every closed issue alone, nil while no look has
+  # (a look with none to read alone is not full, the one the plugin makes as it
+  # starts included); `had`: the closed
+  # issues linked tasks had at the look before, whose copies the next look reuses until
+  # the age passes `@full_read`; `touched`: the issues GitHub has stamped as
+  # changed since the look before, which its updated listing therefore names.
   def initial_state,
     do: %{
+      age: nil,
+      had: MapSet.new(),
+      touched: MapSet.new(),
       board: @board,
       boards: %{},
       full: false,
@@ -501,6 +549,16 @@ defmodule HalC2.PlannerPropTest do
     unmerged = Enum.reject(@pulls, &MapSet.member?(m.merged, &1))
     pulling = for {slot, %{pulls: [_ | _]}} <- m.items, do: slot
 
+    # GitHub merges a pull request of `@lone` that a task is linked to and a host serves.
+    lone =
+      Enum.uniq(
+        for {_, item} <- m.items,
+            {n, _, :open} <- item.pulls,
+            is_map_key(@lone_pulls, n),
+            elem(@lone_pulls[n], 0) != :unknown,
+            do: n
+      )
+
     # A merge matters most for a pull request a task has or an issue names.
     wanted =
       for pr <- unmerged,
@@ -516,6 +574,7 @@ defmodule HalC2.PlannerPropTest do
     ([
        {4, {:call, __MODULE__, :add, [slot, parent, frequency([{3, :task}, {1, :milestone}])]}},
        {6, {:call, __MODULE__, :link_pr, [item, elements(@pulls)]}},
+       {3, {:call, __MODULE__, :link_pr, [item, elements(Map.keys(@lone_pulls))]}},
        {4, {:call, __MODULE__, :wait, [item, item]}},
        {2, {:call, __MODULE__, :nest, [item, oneof([nil, item])]}},
        {2, {:call, __MODULE__, :move, [item, oneof([nil, item]), oneof([nil, item])]}},
@@ -537,7 +596,9 @@ defmodule HalC2.PlannerPropTest do
        {2, {:call, __MODULE__, :work, [item, oneof(["nowhere", "api"])]}},
        {1, {:call, __MODULE__, :kill_launcher, [item]}},
        {1, {:call, __MODULE__, :restart, []}},
-       {look, {:call, __MODULE__, :look, []}},
+       {if(closed_linked(m) == MapSet.new(), do: look, else: look + 12),
+        {:call, __MODULE__, :look, []}},
+       {if(closed_linked(m) == MapSet.new(), do: 1, else: 12), {:call, __MODULE__, :age, []}},
        {switch, {:call, __MODULE__, :switch_board, [other]}},
        {if(onboard == [], do: 1, else: 3), {:call, __MODULE__, :crowd, [not m.full]}}
      ] ++
@@ -629,8 +690,13 @@ defmodule HalC2.PlannerPropTest do
        if(theirs == [], do: [], else: [{100, {:call, __MODULE__, :merge, [elements(theirs)]}}]) ++
        if(pulling == [],
          do: [],
-         else: [{2, {:call, __MODULE__, :unlink_pr, [elements(pulling), elements(@pulls)]}}]
+         else: [
+           {2,
+            {:call, __MODULE__, :unlink_pr,
+             [elements(pulling), elements(@pulls ++ Map.keys(@lone_pulls))]}}
+         ]
        ) ++
+       if(lone == [], do: [], else: [{12, {:call, __MODULE__, :merge_lone, [elements(lone)]}}]) ++
        if(m.closed == %{},
          do: [],
          else: [{2, {:call, __MODULE__, :reopen, [elements(Map.keys(m.closed))]}}]
@@ -744,6 +810,7 @@ defmodule HalC2.PlannerPropTest do
 
   def precondition(m, {:call, _, :answer, [push]}), do: Map.has_key?(m.held, push)
   def precondition(m, {:call, _, :merge, [pr]}), do: not MapSet.member?(m.merged, pr)
+  def precondition(m, {:call, _, :merge_lone, [n]}), do: not MapSet.member?(m.merged, n)
 
   def precondition(m, {:call, _, :refer, [number, pr]}),
     do: here?(number) and pr not in Map.get(m.closing, number, [])
@@ -779,6 +846,7 @@ defmodule HalC2.PlannerPropTest do
     do: Map.update(blockers, number, [], &List.delete(&1, blocker))
 
   def postcondition(before, call, observed) do
+    {alone, observed} = Map.pop(observed, :alone)
     {m, reply} = step(before, call)
 
     expected = %{
@@ -788,6 +856,7 @@ defmodule HalC2.PlannerPropTest do
       updates: m.updates,
       github: m.github,
       rel: m.rel,
+      age: m.age,
       problems: []
     }
 
@@ -801,7 +870,7 @@ defmodule HalC2.PlannerPropTest do
     end
 
     observed == expected and latest_on_github?(before, m, call, observed) and
-      not own_ancestor?(observed.items)
+      not own_ancestor?(observed.items) and read_alone?(before, call, alone)
   end
 
   # Whether a task the plugin answers is its own ancestor.
@@ -954,13 +1023,19 @@ defmodule HalC2.PlannerPropTest do
 
   # GitHub merges a pull request, or names one as closing an issue, or no longer; the plan
   # hears of it at the next look.
-  defp step(m, {:call, _, :merge, [pr]}), do: {%{m | merged: MapSet.put(m.merged, pr)}, :ok}
+  defp step(m, {:call, _, :merge, [pr]}) do
+    naming = for {number, prs} <- m.closing, pr in prs, do: number
+    {%{touch(m, naming) | merged: MapSet.put(m.merged, pr)}, :ok}
+  end
+
+  defp step(m, {:call, _, :merge_lone, [n]}), do: {%{m | merged: MapSet.put(m.merged, n)}, :ok}
 
   defp step(m, {:call, _, :refer, [number, pr]}),
-    do: {%{m | closing: Map.update(m.closing, number, [pr], &(&1 ++ [pr]))}, :ok}
+    do: {%{touch(m, [number]) | closing: Map.update(m.closing, number, [pr], &(&1 ++ [pr]))}, :ok}
 
   defp step(m, {:call, _, :unrefer, [number, pr]}),
-    do: {%{m | closing: Map.update!(m.closing, number, &List.delete(&1, pr))}, :ok}
+    do:
+      {%{touch(m, [number]) | closing: Map.update!(m.closing, number, &List.delete(&1, pr))}, :ok}
 
   defp step(m, {:call, _, :run, [action, slot]}), do: {ask(m, action, slot), :ok}
   defp step(m, {:call, _, :work, [slot, _project]}), do: {ask(m, "work", slot), :ok}
@@ -1059,6 +1134,9 @@ defmodule HalC2.PlannerPropTest do
   # take the board item the push added.
   defp step(m, {:call, _, :answer, [push]}) do
     {%{slot: slot, gen: gen, ops: ops, b: b, board: on}, held} = Map.pop(m.held, push)
+    # A push GitHub took stamps its issue as changed there, as the harness's
+    # state read after a push records it.
+    m = if item = m.items[slot], do: touch(m, [item.issue]), else: m
     {m, took} = land(%{m | held: held}, ops, b, push, on)
     took = if on == m.board, do: took, else: %{took | board: nil}
 
@@ -1079,6 +1157,9 @@ defmodule HalC2.PlannerPropTest do
 
   defp step(m, {:call, _, :look, []}), do: {looked(m), :ok}
 
+  # Time passes since the last look that read every closed issue alone, if any did.
+  defp step(m, {:call, _, :age, []}), do: {%{m | age: m.age && m.age + @shift}, :ok}
+
   # The look reads the plan before the nest and GitHub as it was before it too, and the
   # task the nest changed keeps the change.
   defp step(m, {:call, _, :nest_while_looking, [slot, parent]}) do
@@ -1090,33 +1171,37 @@ defmodule HalC2.PlannerPropTest do
   # GitHub makes an issue a sub-issue of another, or of none; the plan hears of it at the
   # next look.
   defp step(m, {:call, _, :adopt, [number, nil]}),
-    do: {%{m | parents: Map.delete(m.parents, number)}, :ok}
+    do: {%{touch(m, [number]) | parents: Map.delete(m.parents, number)}, :ok}
 
   defp step(m, {:call, _, :adopt, [number, parent]}),
-    do: {put_in(m.parents[number], parent), :ok}
+    do: {put_in(touch(m, [number]).parents[number], parent), :ok}
 
   # GitHub puts `parent` under `sub`, and `sub` where `parent` was; the plan hears of it
   # at the next look.
   defp step(m, {:call, _, :swap, [sub, parent]}),
-    do: {%{m | parents: swapped(m.parents, sub, parent)}, :ok}
+    do: {%{touch(m, [sub, parent]) | parents: swapped(m.parents, sub, parent)}, :ok}
 
   # GitHub marks an issue blocked by another too, or by none, or turns the dependency on
   # `blocker` around; the plan hears of it at the next look.
   defp step(m, {:call, _, :block, [number, nil]}),
-    do: {%{m | blockers: Map.delete(m.blockers, number)}, :ok}
+    do: {%{touch(m, [number]) | blockers: Map.delete(m.blockers, number)}, :ok}
 
   defp step(m, {:call, _, :block, [number, blocker]}),
-    do: {%{m | blockers: Map.update(m.blockers, number, [blocker], &(&1 ++ [blocker]))}, :ok}
+    do:
+      {%{
+         touch(m, [number])
+         | blockers: Map.update(m.blockers, number, [blocker], &(&1 ++ [blocker]))
+       }, :ok}
 
   defp step(m, {:call, _, :turn, [number, blocker]}),
-    do: {%{m | blockers: turned(m.blockers, number, blocker)}, :ok}
+    do: {%{touch(m, [number, blocker]) | blockers: turned(m.blockers, number, blocker)}, :ok}
 
   # GitHub moves an issue; the plan hears of it at the next look.
   defp step(m, {:call, _, :close, [number, reason]}),
-    do: {put_in(m.closed[number], reason), :ok}
+    do: {put_in(touch(m, [number]).closed[number], reason), :ok}
 
   defp step(m, {:call, _, :reopen, [number]}),
-    do: {%{m | closed: Map.delete(m.closed, number)}, :ok}
+    do: {%{touch(m, [number]) | closed: Map.delete(m.closed, number)}, :ok}
 
   # Someone takes the task's issue off the board the settings name; the plan hears of it
   # at the next look that reads the whole board.
@@ -1210,7 +1295,7 @@ defmodule HalC2.PlannerPropTest do
         {k, if(run.status == :running, do: %{run | status: :failed}, else: run)}
       end)
 
-    {%{m | runs: runs} |> pump() |> looked(), :ok}
+    {%{m | runs: runs, flights: %{}, age: nil} |> pump() |> looked(), :ok}
   end
 
   # Saving the settings with another board starts the plugin again, the tasks' board
@@ -1218,7 +1303,7 @@ defmodule HalC2.PlannerPropTest do
   defp step(m, {:call, _, :switch_board, [board]}) do
     {m, :ok} = step(m, {:call, __MODULE__, :restart, []})
     items = Map.new(m.items, fn {slot, item} -> {slot, %{item | board: nil}} end)
-    {looked(%{m | board: board, items: items}), :ok}
+    {looked(%{m | board: board, items: items, age: nil}), :ok}
   end
 
   defp put_run(m, k, run), do: %{m | runs: Map.put(m.runs, k, run)}
@@ -1503,7 +1588,24 @@ defmodule HalC2.PlannerPropTest do
   # part. A task with a push on the way, or kept, keeps all it has, its board item too,
   # as the plugin keeps such a task whole when it applies a look; the push's answer sets
   # the board item only when the push added one (`settle/3`).
+  # The issues GitHub stamps as changed, which the next look's updated listing
+  # therefore names; cleared by each look, as the look's `before` covers them.
+  defp touch(m, numbers),
+    do: %{m | touched: MapSet.union(m.touched, MapSet.new(numbers -- [nil]))}
+
   defp looked(m, kept \\ []) do
+    # A look with no closed issue to read alone is not the full read either. A
+    # reusing look whose missing closed issues all came back in the updated
+    # listing (touched on GitHub since, or never had) reused no copy either, so
+    # it is the full read too, as `Sync.look/3` counts it.
+    closed = closed_linked(m)
+
+    full? =
+      closed != MapSet.new() and
+        (not reuses?(m) or
+           MapSet.subset?(closed, MapSet.union(m.touched, MapSet.difference(closed, m.had))))
+
+    m = %{m | age: if(full?, do: 0, else: m.age), had: closed, touched: MapSet.new()}
     listed = Map.get(m.boards, m.board, %{})
     whole? = &(Map.has_key?(m.flights, &1) or &1 in kept)
 
@@ -1545,6 +1647,46 @@ defmodule HalC2.PlannerPropTest do
           end)
     }
   end
+
+  # Whether a look reuses the copies of the closed issues the look before read, which it
+  # does until a day has passed since a look read them all.
+  defp reuses?(m), do: m.age != nil and m.age < @full_read
+
+  # The closed issues of `@repository` tasks are linked to, which a look reads alone or has
+  # a copy of.
+  defp closed_linked(m),
+    do: MapSet.new(for({_, %{issue: n}} <- m.items, here?(n), Map.has_key?(m.closed, n), do: n))
+
+  # What a look read alone, seen from the model: all the closed issues when it did not
+  # reuse the copies, otherwise some of those it had no copy of and none it had. A
+  # command of one look reads an issue alone at most once; a restart or a board
+  # switch looks twice, so there the reads are compared as a set.
+  defp read_alone?(before, {:call, _, cmd, _}, alone)
+       when cmd in [:look, :nest_while_looking, :restart, :switch_board] do
+    closed = closed_linked(before)
+    reuses? = cmd in [:look, :nest_while_looking] and reuses?(before)
+    read = MapSet.new(alone)
+    once? = cmd not in [:look, :nest_while_looking] or length(alone) == MapSet.size(read)
+
+    ok? =
+      once? and
+        if reuses?,
+          do: MapSet.subset?(read, MapSet.difference(closed, before.had)),
+          else: read == closed
+
+    if ok? do
+      true
+    else
+      IO.puts(
+        "read alone #{inspect(alone)} of the closed #{inspect(closed)}, " <>
+          "having copies of #{inspect(before.had)} at #{inspect(before.age)}"
+      )
+
+      false
+    end
+  end
+
+  defp read_alone?(_before, _call, _alone), do: true
 
   # The task `item` once a look reads its pull requests. One linked to an issue of
   # `@repository`, sync error or not, drops those it took from its issue that the issue
@@ -1938,7 +2080,51 @@ defmodule HalC2.PlannerPropTest do
     observe(:ok)
   end
 
+  # GitHub merges the pull request `n` of `@lone`, which only the host it is on answers.
+  def merge_lone(n) do
+    Process.put(:pl_merged, MapSet.put(Process.get(:pl_merged), n))
+    gh_rule(lone_view(n, "MERGED"))
+    observe(:ok)
+  end
+
+  # What a link to the pull request `pr` says: the repository and number, and the url of a
+  # pull request of `@lone`.
+  defp pull_ref(pr) when is_map_key(@lone_pulls, pr) do
+    ref = %{"repository" => @lone, "number" => pr}
+
+    case @lone_pulls[pr] do
+      {_, nil} -> ref
+      {_, url} -> Map.put(ref, "url", url)
+    end
+  end
+
   defp pull_ref(pr), do: %{"repository" => @repository, "number" => pr}
+
+  # `gh pr view` of the pull request `n` of `@lone` on the host that serves it (the arg ends
+  # in a space so that #5 does not match #55). No rule is made for `:unknown`, which
+  # nothing may ask: the call would fail, and `lone_routes/0` says it was made.
+  defp lone_view(n, state) do
+    host = if elem(@lone_pulls[n], 0) == :enterprise, do: @enterprise, else: "github.com"
+
+    pr = %{
+      "number" => n,
+      "title" => "Pull request #{n}",
+      "url" => "https://#{host}/#{@lone}/pull/#{n}",
+      "author" => %{"login" => "octocat"},
+      "headRefName" => "feature/#{n}",
+      "baseRefName" => "main",
+      "state" => state,
+      "isDraft" => false,
+      "createdAt" => "2026-09-01T00:00:00Z",
+      "updatedAt" => "2026-09-02T00:00:00Z",
+      "reviewRequests" => [],
+      "latestReviews" => [],
+      "statusCheckRollup" => [],
+      "labels" => []
+    }
+
+    %{"args" => ["pr view #{n} ", "#{host}/#{@lone}"], "stdout" => pr}
+  end
 
   # The pull requests of `@repository` as `gh pr list` answers them, merged or open.
   defp pr_list do
@@ -2255,6 +2441,19 @@ defmodule HalC2.PlannerPropTest do
   # The plugin looks at GitHub as the user asks it to.
   def look, do: observe(elem(call("sync", %{}), 0))
 
+  # A day passes, as far as the plugin's copies of the closed issues are concerned: the
+  # look that read them all alone is moved back by `@shift`. Reaches into the
+  # planner's `full_at` field on purpose, as the planning steps' "nearly a day" does.
+  def age do
+    pid = Process.whereis(@server)
+
+    :sys.replace_state(pid, fn state ->
+      %{state | full_at: state.full_at && DateTime.add(state.full_at, -@shift, :second)}
+    end)
+
+    observe(:ok)
+  end
+
   # Renames the task to a name of the push's own and moves its due date. GitHub answers
   # every push carrying the name with `outcome`, at once, and writes the name down when
   # it takes it.
@@ -2531,6 +2730,8 @@ defmodule HalC2.PlannerPropTest do
     take_messages()
     # What the step put on a board, the next look reads.
     boarded("item-0")
+    alone = read_alone()
+    lone_routes()
     board_reads()
     plan = plan()
     runs = runs()
@@ -2601,7 +2802,9 @@ defmodule HalC2.PlannerPropTest do
       updates: length(plan["updates"]),
       github: named(),
       rel: related(),
-      problems: Process.put(:pl_problems, []) |> Enum.reverse()
+      age: full_age(),
+      problems: Process.put(:pl_problems, []) |> Enum.reverse(),
+      alone: alone
     }
   end
 
@@ -2617,6 +2820,57 @@ defmodule HalC2.PlannerPropTest do
       {:error, :enoent} ->
         %{}
     end
+  end
+
+  # The seconds since the plugin's look that read every closed issue alone, to the nearest
+  # `@shift`: what a step takes of the real time passing is nothing.
+  defp full_age do
+    case get_state(Process.whereis(@server)) do
+      {:ok, %{full_at: %DateTime{} = at}} ->
+        round(DateTime.diff(DateTime.utc_now(), at) / @shift) * @shift
+
+      _ ->
+        nil
+    end
+  end
+
+  # The issues the plugin read alone since the last step, as a list: a look that
+  # read one twice is seen (`read_alone?/3` sets it for two-look commands).
+  defp read_alone do
+    calls = gh_calls()
+
+    alone =
+      for line <- Enum.drop(calls, Process.get(:pl_alone_read)),
+          %{"stdin" => stdin} <- [JSON.decode!(line)],
+          {:ok, %{"query" => query, "variables" => %{"number" => number}}} <-
+            [JSON.decode(stdin)],
+          String.contains?(query, "issue(number: $number) { ...IssueFields"),
+          do: number
+
+    Process.put(:pl_alone_read, length(calls))
+    alone
+  end
+
+  # Every read of a pull request of `@lone` since the last, which the host its link names
+  # served if the MC has a project there and github.com otherwise, and was none for a host
+  # the MC has no project on.
+  defp lone_routes do
+    calls = gh_calls()
+
+    for line <- Enum.drop(calls, Process.get(:pl_lone_read)),
+        %{"args" => ["pr", "view", number | rest]} <- [JSON.decode!(line)],
+        {n, ""} <- [Integer.parse(number)],
+        is_map_key(@lone_pulls, n) do
+      repo = rest |> Enum.drop_while(&(&1 != "--repo")) |> Enum.at(1)
+
+      case elem(@lone_pulls[n], 0) do
+        :enterprise when repo == "#{@enterprise}/#{@lone}" -> :ok
+        :plain when repo == "github.com/#{@lone}" -> :ok
+        kind -> problem("##{n} (#{kind}) was read through #{inspect(repo)}")
+      end
+    end
+
+    Process.put(:pl_lone_read, length(calls))
   end
 
   # The gh calls so far, one JSON line each.
@@ -2919,6 +3173,7 @@ defmodule HalC2.PlannerPropTest do
       Path.join(gh, "rules.json"),
       JSON.encode!(
         [issue_list([]), board_item(0), pr_list()] ++
+          for({n, {kind, _}} <- @lone_pulls, kind != :unknown, do: lone_view(n, "OPEN")) ++
           pairs ++
           [%{"args" => ["api user"], "stdout" => %{"id" => 1, "login" => "octocat"}}] ++
           Enum.flat_map(here, fn number ->
@@ -2959,6 +3214,8 @@ defmodule HalC2.PlannerPropTest do
     Process.put(:pl_boards, %{})
     Process.put(:pl_full, false)
     Process.put(:pl_calls_read, 0)
+    Process.put(:pl_alone_read, 0)
+    Process.put(:pl_lone_read, 0)
     Process.put(:pl_ids, %{})
     Process.put(:pl_runs, [])
     Process.put(:pl_problems, [])
@@ -2995,7 +3252,22 @@ defmodule HalC2.PlannerPropTest do
         "workspaceRoot" => root
       })
 
+    # A project on `@enterprise`, which reads the pull requests of any repository there.
+    tools = Path.join(home, "tools")
+    File.mkdir_p!(tools)
+    git!(tools, ["init", "-q"])
+    git!(tools, ["remote", "add", "origin", "https://#{@enterprise}/acme/tools.git"])
+
+    {:ok, _} =
+      HalC2.Projects.mutate(%{
+        "type" => "project.create",
+        "projectId" => "tools",
+        "title" => "tools",
+        "workspaceRoot" => tools
+      })
+
     HalC2.Streams.flush_shell("api")
+    HalC2.Streams.flush_shell("tools")
     :sys.get_state(HalC2.Shell)
     File.mkdir_p!(Path.join(HalC2.Paths.data_dir(), "plugins"))
     File.cp_r!(@package, Path.join([HalC2.Paths.data_dir(), "plugins", @id]))

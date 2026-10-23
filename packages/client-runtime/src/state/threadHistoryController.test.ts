@@ -26,7 +26,7 @@ function handler(
     },
     loadEarlier: () => {
       state.calls += 1;
-      return Effect.succeed({ _tag: "loaded" } satisfies ThreadHistoryLoadEarlierResult);
+      return Effect.succeed({ _tag: "requested" } satisfies ThreadHistoryLoadEarlierResult);
     },
   };
 }
@@ -45,7 +45,7 @@ describe("ThreadHistoryController", () => {
       yield* controller.unregister(olderRegistration);
 
       const result = yield* controller.loadEarlier(ENV, THREAD);
-      expect(result).toEqual({ _tag: "loaded" });
+      expect(result).toEqual({ _tag: "requested" });
       expect(newer.calls).toBe(1);
       expect(older.calls).toBe(0);
 

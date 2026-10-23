@@ -12,8 +12,9 @@ defmodule HalC2.ShellPropTest do
 
   The promises checked:
 
-    * the shell holds this MC's rows, as the store has them after a restart, and
-      every connected member's rows as that member has them;
+    * the shell holds this MC's rows, as the store has them after a restart, save
+      those of streams an import has not finished, and every connected member's rows
+      as that member has them;
     * a member holds this MC's rows as of the shell's version;
     * a client resuming from a version is sent exactly the rows changed after it,
       or everything with `reset` when the version is of another epoch, and from then
@@ -33,6 +34,9 @@ defmodule HalC2.ShellPropTest do
   @moduletag timeout: :infinity
 
   @streams ~w(s1 s2 s3)
+  # A stream an import left unfinished before the shell first started: its row is
+  # stored, and the shell does not show it.
+  @importing "s4"
   @peers [:"pa@prop.invalid", :"pb@prop.invalid"]
   @clients [:c1, :c2]
 
@@ -77,12 +81,14 @@ defmodule HalC2.ShellPropTest do
   # `:on`, or `{:held, view}` with the shell's view when it went away.
   def initial_state do
     initial = Map.new(@streams, &{&1, {initial_row(&1), 0}})
+    stored = Map.new([@importing | @streams], &{&1, initial_row(&1)})
 
     %{
       run: 0,
       rev: 0,
       rows: initial,
-      stored: Map.new(initial, fn {id, {kind_row, _}} -> {id, kind_row} end),
+      stored: stored,
+      unfinished: MapSet.new([@importing]),
       peers: Map.new(@peers, &{&1, %{run: 0, rev: 0, rows: %{}, connected: false}}),
       held: %{},
       clients: Map.new(@clients, &{&1, :off})
@@ -97,9 +103,11 @@ defmodule HalC2.ShellPropTest do
 
     frequency(
       [
-        {6, {:call, __MODULE__, :put_local, [oneof(@streams), title()]}},
-        {1, {:call, __MODULE__, :put_stored_only, [oneof(@streams), title()]}},
+        {6, {:call, __MODULE__, :put_local, [oneof([@importing | @streams]), title()]}},
+        {1, {:call, __MODULE__, :put_stored_only, [oneof([@importing | @streams]), title()]}},
         {2, {:call, __MODULE__, :restart, []}},
+        {1, {:call, __MODULE__, :import_unfinished, [oneof([@importing | @streams])]}},
+        {1, {:call, __MODULE__, :import_finished, [oneof([@importing | @streams])]}},
         {5, {:call, __MODULE__, :peer_put, [oneof(@peers), stream_id(), title()]}},
         {1, {:call, __MODULE__, :peer_restart, [oneof(@peers)]}},
         {3, {:call, __MODULE__, :check, []}}
@@ -108,7 +116,9 @@ defmodule HalC2.ShellPropTest do
         if(connected != [],
           do: [
             {1, {:call, __MODULE__, :peer_down, [oneof(connected)]}},
-            {1, {:call, __MODULE__, :peer_put_lost, [oneof(connected), stream_id(), title()]}}
+            {1, {:call, __MODULE__, :peer_put_lost, [oneof(connected), stream_id(), title()]}},
+            {1, {:call, __MODULE__, :peer_other_version, [oneof(connected), other_message()]}},
+            {1, {:call, __MODULE__, :announce, []}}
           ],
           else: []
         ) ++
@@ -125,6 +135,20 @@ defmodule HalC2.ShellPropTest do
   end
 
   defp title, do: oneof(["a", "b", "c"])
+
+  # What a member on another HAL-C2 version may send: a message this one does not know,
+  # or one it knows with other fields.
+  defp other_message do
+    oneof([
+      {:peer_rows, "m", []},
+      {:peer_hello, "m"},
+      {:peer_rows, "m", :new, [], %{}},
+      {:peer_hello, "m", %{}, :yes, :extra},
+      {:put_row, "r1"},
+      {:rows_from_the_future, "m", 1}
+    ])
+  end
+
   defp stream_id, do: oneof(["r1", "r2", "r3"])
 
   def precondition(state, {:call, _, :peer_up, [p]}), do: not state.peers[p].connected
@@ -133,6 +157,12 @@ defmodule HalC2.ShellPropTest do
   def precondition(state, {:call, _, :forget, [p]}), do: Map.has_key?(state.held, p)
   def precondition(state, {:call, _, :subscribe, [c, _]}), do: state.clients[c] != :on
   def precondition(state, {:call, _, :disconnect, [c]}), do: state.clients[c] == :on
+  # An import marks a stream before the shell is told of it, and the shell is told
+  # only once the import is done (`HalC2.Import.PreviousInstall`).
+  def precondition(state, {:call, _, :import_unfinished, [id]}),
+    do: not Map.has_key?(state.rows, id)
+
+  def precondition(state, {:call, _, :put_local, [id, _]}), do: id not in state.unfinished
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :put_local, [id, title]}) do
@@ -152,12 +182,24 @@ defmodule HalC2.ShellPropTest do
   def next_state(state, _result, {:call, _, :put_stored_only, [id, title]}),
     do: put_in(state.stored[id], row(id, title))
 
+  def next_state(state, _result, {:call, _, :import_unfinished, [id]}),
+    do: %{state | unfinished: MapSet.put(state.unfinished, id)}
+
+  def next_state(state, _result, {:call, _, :import_finished, [id]}),
+    do: %{state | unfinished: MapSet.delete(state.unfinished, id)}
+
   def next_state(state, _result, {:call, _, :restart, []}) do
     %{
       state
       | run: state.run + 1,
         rev: 0,
-        rows: Map.new(state.stored, fn {id, kind_row} -> {id, {kind_row, 0}} end)
+        rows:
+          for(
+            {id, kind_row} <- state.stored,
+            id not in state.unfinished,
+            into: %{},
+            do: {id, {kind_row, 0}}
+          )
     }
     |> sync_connected()
   end
@@ -291,6 +333,15 @@ defmodule HalC2.ShellPropTest do
       when cmd in [:restart, :peer_up, :peer_restart],
       do: ok?(reader == %{missing: [], crashes: 0}, {:reader, reader})
 
+  # Every connected member is told this MC's environment again, and no one else.
+  def postcondition(state, {:call, _, :announce, []}, told) do
+    connected = for {p, %{connected: true}} <- state.peers, do: p
+    ok?(Enum.sort(told) == Enum.sort(connected), {:announced, told, connected})
+  end
+
+  def postcondition(_state, {:call, _, :peer_other_version, _}, result),
+    do: ok?(result == :ignored, {:other_version, result})
+
   def postcondition(_state, _call, result), do: result == :ok
 
   defp ok?(true, _detail), do: true
@@ -316,10 +367,12 @@ defmodule HalC2.ShellPropTest do
 
     sup = HalC2.Prop.start_services([{Store, path: Store.home_path()}])
 
-    for id <- @streams do
+    for id <- [@importing | @streams] do
       {:ok, _} = Store.append([{:thread, id, [{"thread", id, %{"s" => %{"id" => id}}}]}])
       :ok = Store.put_shell(id, 1, initial_row(id))
     end
+
+    :ok = import_unfinished(@importing)
 
     {:ok, _} = Supervisor.start_child(sup, Shell)
 
@@ -379,6 +432,11 @@ defmodule HalC2.ShellPropTest do
     :ok = Store.put_shell(id, world().seq, row(id, title))
   end
 
+  # An import of the stream stopped partway, or a retry made it whole: the store's
+  # mark `HalC2.Import.PreviousInstall` keeps.
+  def import_unfinished(id), do: Store.put_meta("import.thread." <> id, "files:project-1")
+  def import_finished(id), do: Store.delete_meta("import.thread." <> id)
+
   # The server alone stops and starts again, as a crash would.
   def restart do
     reading(fn ->
@@ -431,6 +489,32 @@ defmodule HalC2.ShellPropTest do
 
         settle()
     end
+  end
+
+  # This MC moved to another version in place and tells its members its environment.
+  def announce do
+    Shell.announce()
+    Shell.version()
+    told = collect_environments([])
+    settle()
+    told
+  end
+
+  defp collect_environments(told) do
+    receive do
+      {:wire, p, {:peer_environment, _mc, _descriptor}} -> collect_environments([p | told])
+    after
+      0 -> told
+    end
+  end
+
+  # A member on another HAL-C2 version sends what this shell does not know. It stays
+  # connected (`HalC2.Cluster`), so the shell ignores the message rather than crash.
+  def peer_other_version(p, message) do
+    pid = Process.whereis(Shell)
+    peer_cast(p, message)
+    settle()
+    if Process.whereis(Shell) == pid, do: :ignored, else: :crashed
   end
 
   # The member's shell starts again: a new epoch, its rows at rev 0, and nothing

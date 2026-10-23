@@ -15,6 +15,18 @@ mix local.hex --force --if-missing
 mix local.rebar --force --if-missing
 mix deps.get --only prod
 # Earlier builds leave their lib/hal_c2-<version> behind, and the bundle packs all of lib/.
+# Mix keeps the version of an app it has compiled, so the app's build goes too when it
+# was another version's. Read as `built_version/1` in lib/mix/tasks/hal_c2.upgrade.ex
+# reads it; change both together.
 rm -rf _build/prod/rel/hal_c2
+built=$(erl -noshell -eval '
+  case file:consult("_build/prod/lib/hal_c2/ebin/hal_c2.app") of
+    {ok, [{application, _, Props}]} -> io:put_chars(proplists:get_value(vsn, Props, ""));
+    _ -> ok
+  end,
+  halt().' 2>/dev/null || true)
+if [ "$built" != "$HAL_C2_MC_VERSION" ]; then
+  rm -rf _build/prod/lib/hal_c2
+fi
 mix release --overwrite
 mix hal_c2.bundle ../../release

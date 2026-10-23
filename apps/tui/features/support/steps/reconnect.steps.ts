@@ -175,7 +175,7 @@ step("the user asks to load earlier turns", async (ctx: World) => {
   ctx.host!.dispatch("timeline.showOlder");
   await settle();
   expect(recorded(ctx, "loadOlderThreadTurns")).toEqual([[ctx.thread!.id]]);
-  // The client fetches the page over HTTP and marks the thread as loading meanwhile.
+  // The client asks the MC over the socket and marks the thread as loading meanwhile.
   ctx.page = { hasMore: true, loadingOlder: true };
   await updateThread(ctx, () => ({}));
 });

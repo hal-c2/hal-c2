@@ -1,5 +1,6 @@
 import { RGBA, SyntaxStyle } from "@opentui/core";
 import type { TuiThreadShell as OrchestrationThreadShell } from "./orchestrationV2Adapter.ts";
+import type { StatusKind } from "./store.ts";
 
 /**
  * Shared visual vocabulary for the TUI: thread status pills and relative-time
@@ -378,13 +379,15 @@ export function createTuiSyntaxStyle(palette: Palette = THEME): SyntaxStyle {
 export const usePalette = (): Palette => THEME;
 
 /** Glyph + colour for a status-line tone (mirrors the web toast icon set). */
-export function statusGlyphColor(kind: "info" | "success" | "error" | "busy"): {
+export function statusGlyphColor(kind: StatusKind): {
   readonly glyph: string;
   readonly color: RGBA;
 } {
   switch (kind) {
     case "success":
       return { glyph: "✓", color: THEME.success };
+    case "warning":
+      return { glyph: "!", color: THEME.warning };
     case "error":
       return { glyph: "✗", color: THEME.error };
     case "busy":

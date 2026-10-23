@@ -436,7 +436,7 @@ defmodule HalC2.Plugins do
   `status`, unless a client has the thread in the foreground
   (`HalC2.BackgroundPolicy.watched?/1`).
   """
-  def turn_finished(thread_id, status) do
+  def turn_finished(thread_id, status, failure \\ nil) do
     channels = running("notificationChannel")
     thread = fn -> thread(thread_id) end
 
@@ -453,12 +453,16 @@ defmodule HalC2.Plugins do
     with %{"plugin" => %{"id" => owner} = mark} <- thread.(),
          {^owner, module, settings, sup} <- List.keyfind(runs("extension"), owner, 0),
          true <- function_exported?(module, :handle_event, 2) do
-      event = %{
-        "type" => "turn.finished",
-        "threadId" => thread_id,
-        "status" => status,
-        "plugin" => mark
-      }
+      # The failure rides along so the owner can tell a usage limit (wait for its
+      # reset) from a turn that simply failed.
+      event =
+        %{
+          "type" => "turn.finished",
+          "threadId" => thread_id,
+          "status" => status,
+          "plugin" => mark
+        }
+        |> Map.merge(failure_event(failure))
 
       context = %{id: owner, settings: settings, thread_id: thread_id}
 
@@ -471,6 +475,14 @@ defmodule HalC2.Plugins do
 
     :ok
   end
+
+  defp failure_event(%{"class" => class} = failure) when is_binary(class) do
+    %{"errorClass" => class, "error" => failure["message"], "resetAt" => failure["resetAt"]}
+  end
+
+  defp failure_event(%{"message" => message}) when is_binary(message), do: %{"error" => message}
+  defp failure_event(message) when is_binary(message), do: %{"error" => message}
+  defp failure_event(_failure), do: %{}
 
   @doc """
   Hands a Slack event (`HalC2.Slack.Bot`, `HalC2.Slack`) to every running extension

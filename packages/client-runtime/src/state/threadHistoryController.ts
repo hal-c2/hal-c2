@@ -6,8 +6,13 @@ import * as Ref from "effect/Ref";
 
 import { threadKey } from "./entities.ts";
 
+/**
+ * `requested` means the request for earlier turns is out, not that they arrived: the
+ * page lands later as a longer thread snapshot, and completion is seen through the
+ * thread's history meta (`loading` ends, `historyCursor` moves).
+ */
 export type ThreadHistoryLoadEarlierResult =
-  | { readonly _tag: "loaded" }
+  | { readonly _tag: "requested" }
   | { readonly _tag: "noop" }
   | { readonly _tag: "busy" }
   | { readonly _tag: "error"; readonly message: string };

@@ -188,6 +188,13 @@ Feature: Claude
     When the user signs in to the CLI with that config directory
     Then each instance uses its own account and history
 
+  Scenario: Two Claude accounts keep their own usage limits
+    Given the user adds a second Claude instance with its own config directory
+    And the user signs in to the CLI with that config directory
+    When both Claude instances' usage has been checked
+    And a turn on the second Claude instance reports its usage
+    Then each Claude account keeps its own usage limits
+
   Scenario: Claude models come from the fetched model manifest
     When the model manifest lists a new Claude model
     Then the new model is offered after the next refresh

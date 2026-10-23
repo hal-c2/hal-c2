@@ -72,13 +72,22 @@ Item {
         }
     }
 
+    readonly property int roomyHeight: 700
+    // How far from the end a scrolled-up thread is put, past the host's room: a
+    // wheel notch travels a fraction of it, so the tests that scroll one notch
+    // down cannot reach the end. How far a notch travels is a platform and
+    // user setting, so this stays a heuristic on the down side: on an
+    // aggressively configured machine one notch could still reach the end.
+    // The up side no longer relies on it: scrollUp verifies the distance.
+    readonly property int scrollMargin: 300
+
     // A host that gives the timeline more room while the user reads, as the
     // composer resting on one line does (Composer.conversationScrolled).
     Component {
         id: roomyTimelineComponent
         Timeline {
             width: 600
-            height: scrolledAway ? 700 : 400
+            height: scrolledAway ? root.roomyHeight : 400
             model: rows
         }
     }
@@ -125,11 +134,38 @@ Item {
             rows.setProperty(last, "text", rows.get(last).text + "\n\nAnother paragraph of the reply, written just now.");
         }
 
-        function scrollUp(timeline) {
+        // Scrolls up until the end is more than `room` (the height the host has
+        // when the scroll ends, which a roomy host only makes after the first
+        // notch, so it is the caller's to give) plus the margin away.
+        // How far a wheel notch carries is the platform's and the machine's: a
+        // short scroll would leave the room the host makes showing the end,
+        // which is not mid-thread. The margin is what the tests that then
+        // scroll one notch down rely on, whatever the batch overshoots by, and
+        // what absorbs a row measured late shortening the way to the end.
+        function scrollUp(timeline, room) {
             const list = view(timeline);
-            for (let i = 0; i < 5; ++i)
-                mouseWheel(list, list.width / 2, list.height / 2, 0, 360);
-            tryVerify(() => !list.moving && !timeline.following, 5000, "scrolling up stops following");
+            const farUp = () => list.originY + list.contentHeight - list.contentY > room + root.scrollMargin;
+            for (let i = 0; i < 20 && !farUp(); ++i) {
+                for (let notch = 0; notch < 5; ++notch)
+                    mouseWheel(list, list.width / 2, list.height / 2, 0, 360);
+                tryVerify(() => !list.moving && !timeline.following, 5000, "scrolling up stops following");
+            }
+            verify(farUp(), "the thread is scrolled well away from its end");
+        }
+
+        // Lays the end of the list out until its height stops changing: the rows
+        // there are measured as they come into view. tryVerify waits between
+        // its polls for the event loop to run, so two equal readings are a
+        // frame apart, with the layout run before each.
+        function settleAtEnd(list) {
+            let measured = -1;
+            tryVerify(() => {
+                list.forceLayout();
+                list.positionViewAtEnd();
+                const settled = list.contentHeight === measured;
+                measured = list.contentHeight;
+                return settled && atEnd(list);
+            }, 5000, "the rows at the end are measured");
         }
 
         // Scenario: The view follows new output while the user is at the end
@@ -147,7 +183,7 @@ Item {
         function test_scrollingAwayStopsFollowing() {
             const timeline = longThread();
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, timeline.height);
             const contentY = list.contentY;
             const before = list.contentHeight;
             grow();
@@ -164,7 +200,7 @@ Item {
         function test_returnsToTheEnd() {
             const timeline = longThread();
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, timeline.height);
             const jump = findChild(timeline, "jumpToLatest");
             mouseClick(jump);
             tryVerify(() => atEnd(list) && timeline.following, 5000, "the latest output is shown");
@@ -198,7 +234,7 @@ Item {
         function test_jumpToTheEndIsAKeyboardButton() {
             const timeline = longThread();
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, timeline.height);
             const jump = findChild(timeline, "jumpToLatest");
             compare(jump.Accessible.role, Accessible.Button);
             compare(jump.Accessible.name, "Scroll to end");
@@ -277,7 +313,7 @@ Item {
             wait(0);
             verify(!timeline.following, "the room made does not count as the user returning");
             verify(timeline.scrolledAway, "the room stays made");
-            compare(timeline.height, 700);
+            compare(timeline.height, root.roomyHeight);
             verify(findChild(timeline, "jumpToLatest").visible);
         }
 
@@ -287,8 +323,12 @@ Item {
             const list = view(timeline);
             mouseWheel(list, list.width / 2, 100, 0, 120);
             tryVerify(() => timeline.scrolledAway && !list.moving, 5000, "the host makes room once the scroll ends");
-            // The room made shows the end, without the user scrolling there.
-            list.positionViewAtEnd();
+            // The room made shows the end, without the user scrolling there. The
+            // rows at the end are measured as they come into view, so the end
+            // is laid out until it stops changing before the user scrolls down
+            // to it: a row measured under a wheel in flight moves the list and
+            // the view stops following.
+            settleAtEnd(list);
             verify(!timeline.following);
             // Down where the list goes no further.
             mouseWheel(list, list.width / 2, 100, 0, -120);
@@ -302,7 +342,7 @@ Item {
         function test_scrollingDownMidThreadOnlyScrolls() {
             const timeline = longThread(roomyTimelineComponent);
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, root.roomyHeight);
             const away = list.contentY;
             mouseWheel(list, list.width / 2, 100, 0, -120);
             tryVerify(() => !list.moving && list.contentY > away, 5000, "the view scrolls down");
@@ -314,7 +354,7 @@ Item {
         function test_scrollingDownOverTheJumpButtonMidThreadOnlyScrolls() {
             const timeline = longThread(roomyTimelineComponent);
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, root.roomyHeight);
             const jump = findChild(timeline, "jumpToLatest");
             verify(jump.visible);
             mouseWheel(jump, jump.width / 2, jump.height / 2, 0, -120);
@@ -328,7 +368,7 @@ Item {
         function test_anotherThreadOpensAtItsEnd() {
             const timeline = longThread(roomyTimelineComponent);
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, root.roomyHeight);
             tryVerify(() => timeline.scrolledAway, 5000);
             otherRows.clear();
             for (let i = 0; i < 30; ++i) {

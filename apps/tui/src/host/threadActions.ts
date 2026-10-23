@@ -276,7 +276,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
     const copied = ctx.copyToClipboard?.(value) ?? false;
     store.setStatus(
       copied ? `${label} copied.` : "Clipboard not supported by this terminal.",
-      copied ? "success" : "error",
+      copied ? "success" : "warning",
     );
   };
 
@@ -316,7 +316,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
       case "snooze":
         // The same rule the server enforces: a thread that waits on the user stays in view.
         if (!canSnooze(thread, { now: ctx.now() })) {
-          store.setStatus("This thread is waiting on you and cannot be snoozed.", "error");
+          store.setStatus("This thread is waiting on you and cannot be snoozed.", "warning");
           return;
         }
         return openSubmenu(thread, snoozeMenu(thread));
@@ -352,7 +352,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
   const rename = (thread: TuiThreadShell, raw: string) => {
     const title = raw.trim();
     if (title.length === 0) {
-      store.setStatus("Thread title cannot be empty", "error");
+      store.setStatus("Thread title cannot be empty", "warning");
       return;
     }
     if (title === thread.title) return;

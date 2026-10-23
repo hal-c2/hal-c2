@@ -34,6 +34,11 @@ from `threadView.ts` (below).
   the key hints for what has the keys (`hint`) cut to leave the status glyph
   and message (`label`, up to 32 cells, `kind` for its colour) their room. It
   follows the keys it is built from (`layout`, `threadHints`, `status`, ...).
+  An error stays pinned (`statusError`, `statusLog.ts`) until the user
+  dismisses it (`status.dismiss`: a click on it, or the palette) or a newer
+  error replaces it; a message that follows shows beside it (`pinned`, then
+  `label`), and a replacing "statusbar" plugin gives way (`errorPinned`).
+  `status.history` lists the last errors in a picker; choosing one copies it whole.
 - `contextMenu` (null when closed): the thread menu's `threadKey`, position,
   size, `rows` (items and separators) and highlighted index. Opening it never
   changes which thread is open.

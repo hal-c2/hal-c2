@@ -181,6 +181,7 @@ import {
   ClusterJoinInput,
   ClusterRemoveInput,
   ClusterStatus,
+  ClusterUpdateResult,
 } from "./cluster.ts";
 import {
   RelayClientInstallFailedError,
@@ -484,6 +485,7 @@ export const WS_METHODS = {
   clusterInvite: "cluster.invite",
   clusterJoin: "cluster.join",
   clusterRemove: "cluster.remove",
+  clusterUpdate: "cluster.update",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -870,6 +872,16 @@ const WsClusterJoinRpc = Rpc.make(WS_METHODS.clusterJoin, {
 const WsClusterRemoveRpc = Rpc.make(WS_METHODS.clusterRemove, {
   payload: ClusterRemoveInput,
   success: ClusterStatus,
+  error: ClusterRpcError,
+});
+
+/**
+ * Has every connected member on another HAL-C2 version update to the one this MC runs,
+ * taking the release from it. Fails with `not_a_release` on an MC run from a checkout.
+ */
+const WsClusterUpdateRpc = Rpc.make(WS_METHODS.clusterUpdate, {
+  payload: Schema.Struct({}),
+  success: ClusterUpdateResult,
   error: ClusterRpcError,
 });
 
@@ -1755,6 +1767,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsClusterInviteRpc,
   WsClusterJoinRpc,
   WsClusterRemoveRpc,
+  WsClusterUpdateRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,

@@ -1,4 +1,4 @@
-for file <- ~w(plan slack),
+for file <- ~w(plan slack sync),
     do: Code.require_file("../../../../plugins/planner/mc/#{file}.ex", __DIR__)
 
 defmodule HalC2.PlannerTest do
@@ -11,7 +11,7 @@ defmodule HalC2.PlannerTest do
   """
   use ExUnit.Case, async: true
 
-  alias HalC2Plugins.Planner.{Plan, Slack}
+  alias HalC2Plugins.Planner.{Plan, Slack, Sync}
 
   @now "2026-10-15T09:00:00Z"
   @today "2026-10-15"
@@ -86,6 +86,27 @@ defmodule HalC2.PlannerTest do
 
       assert {:error, "late is not a field a change can set."} =
                Plan.add(%{}, "a", %{"title" => "a", "late" => true}, @now)
+
+      # An owner is a login: the blanks around it go, those inside refuse it.
+      assert {:error, "owner: \"da na\" is not a login."} =
+               Plan.add(%{}, "a", %{"title" => "a", "owner" => " da na "}, @now)
+
+      assert {:ok, %{"a" => %{"owner" => "dana"}}, _} =
+               Plan.add(%{}, "a", %{"title" => "a", "owner" => " dana "}, @now)
+
+      # The rest of the host's login shape refuses it here too, not at every
+      # push; the cases are the host suite's own (`HalC2.Test.LoginCases`).
+      for bad <- HalC2.Test.LoginCases.bad() do
+        assert {:error, _} = Plan.add(%{}, "a", %{"title" => "a", "owner" => bad}, @now)
+      end
+
+      for good <- HalC2.Test.LoginCases.good() do
+        assert {:ok, %{"a" => %{"owner" => ^good}}, _} =
+                 Plan.add(%{}, "a", %{"title" => "a", "owner" => good}, @now)
+      end
+
+      assert {:ok, %{"a" => %{"owner" => "copilot[bot]"}}, _} =
+               Plan.add(%{}, "a", %{"title" => "a", "owner" => "copilot[bot]"}, @now)
 
       items = plan([{"a", %{}}])
 
@@ -201,6 +222,192 @@ defmodule HalC2.PlannerTest do
                item["pullRequests"]
     end
 
+    test "a link keeps the address of the pull request it names, and a second one corrects it" do
+      ghe = "https://ghe.example.com/acme/api/pull/4"
+      ref = fn fields -> %{"repository" => "acme/api", "number" => 4} |> Map.merge(fields) end
+
+      for url <- [
+            "https://ghe.example.com/acme/tools/pull/4",
+            "https://ghe.example.com/acme/api",
+            "https://ghe.example.com/acme/api/pull/44",
+            "https://ghe.example.com/acme/api/pull/14",
+            "https://ghe.example.com/acme/api/issues/4"
+          ] do
+        assert {:ok, %{"repository" => "acme/api", "number" => 4} = given} =
+                 Plan.ref(ref.(%{"url" => url}), "pullRequest")
+
+        refute Map.has_key?(given, "url")
+      end
+
+      assert {:ok, %{"url" => ^ghe}} = Plan.ref(ref.(%{"url" => ghe}), "pullRequest")
+      assert {:ok, %{"url" => ^ghe}} = Plan.ref(ref.(%{"url" => ghe}))
+
+      item = plan([{"a", %{}}])["a"] |> Plan.link(%{"pullRequest" => ref.(%{})}, @now)
+      assert [%{"url" => "https://github.com/acme/api/pull/4"}] = item["pullRequests"]
+
+      item = Plan.link(item, %{"pullRequest" => ref.(%{"url" => ghe})}, @now)
+      assert [%{"number" => 4, "url" => ^ghe}] = item["pullRequests"]
+
+      # A link made again without an address does not take the corrected one back.
+      item = Plan.link(item, %{"pullRequest" => ref.(%{})}, @now)
+      assert [%{"number" => 4, "url" => ^ghe}] = item["pullRequests"]
+    end
+
+    test "an address keeps only its scheme, host, port and path, and names the kind it links" do
+      ref = %{"repository" => "acme/api", "number" => 4}
+
+      url = fn url, kind ->
+        with({:ok, given} <- Plan.ref(Map.put(ref, "url", url), kind), do: given["url"])
+      end
+
+      assert url.(
+               "https://user:token@ghe.example.com/acme/api/pull/4?token=abc#files",
+               "pullRequest"
+             ) ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      assert url.("https://github.com@evil.example/acme/api/pull/4", "pullRequest") ==
+               "https://evil.example/acme/api/pull/4"
+
+      # The path is made over, so the same pull request is one address however it was
+      # given, and nothing odd after the number stays.
+      for path <- ["/files", "/../../evil", "/", "/%2e%2e/x"] do
+        assert url.("https://ghe.example.com:8443/acme/api/pull/4#{path}", "pullRequest") ==
+                 "https://ghe.example.com:8443/acme/api/pull/4"
+      end
+
+      assert url.("https://ghe.example.com/ACME/Api/PULL/4", "pullRequest") ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      # A literal IPv6 host keeps its brackets, so the address reads back to that host.
+      stored = url.("https://[::1]:8443/acme/api/pull/4", "pullRequest")
+      assert stored == "https://[::1]:8443/acme/api/pull/4"
+      assert URI.parse(stored).host == "::1"
+
+      assert url.("https://ghe.example.com:443/acme/api/pull/4", "pullRequest") ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      assert url.("https://ghe.example.com/acme/api/issues/4", "issue") ==
+               "https://ghe.example.com/acme/api/issues/4"
+
+      assert url.("https://ghe.example.com/acme/api/pull/4", "issue") == nil
+
+      # The host is canonical, as everywhere else it is derived.
+      assert url.("https://GHE.Example.COM./acme/api/pull/4", "pullRequest") ==
+               "https://ghe.example.com/acme/api/pull/4"
+
+      assert url.("https://ghe.example.com:0/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://ghe.example.com:99999/acme/api/pull/4", "pullRequest") == nil
+
+      # A host that canonicalizes to nothing, or holds whitespace, names no host.
+      assert url.("https://./acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://../acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://exa mple.com/acme/api/pull/4", "pullRequest") == nil
+
+      # A host with an empty label or a `%` in it names no host either.
+      assert url.("https://ghe..example.com/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://ghe.example.com%2f.evil.com/acme/api/pull/4", "pullRequest") == nil
+
+      # Nor does a label starting or ending with a hyphen, or an IPv6 literal
+      # with a zone, which `URI.parse/1` would mangle into another address.
+      assert url.("https://-ghe.example.com/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://ghe-.example.com/acme/api/pull/4", "pullRequest") == nil
+      assert url.("https://[fe80::1%25eth0]/acme/api/pull/4", "pullRequest") == nil
+
+      # Nor does an IPv6-shaped string that is no address.
+      for host <- ["[:::]", "[....:]", "[1:2:3:4:5:6:7:8:9]", "[::ffff:999.999.999.999]"] do
+        assert url.("https://#{host}/acme/api/pull/4", "pullRequest") == nil
+      end
+
+      assert url.("https://[::ffff:1.2.3.4]/acme/api/pull/4", "pullRequest") ==
+               "https://[::ffff:1.2.3.4]/acme/api/pull/4"
+
+      # A repository that is no `owner/name` over GitHub's charset is no ref:
+      # it would otherwise be interpolated verbatim into the stored address.
+      assert :error = Plan.ref(%{"repository" => "../evil", "number" => 4}, "pullRequest")
+      assert :error = Plan.ref(%{"repository" => "acme/api\n", "number" => 4}, "pullRequest")
+
+      # A leading dot or underscore is a repository name like any other
+      # (`owner/.github` is the conventional one), and links as one.
+      assert {:ok, %{"repository" => "acme/.github", "url" => ghe_github}} =
+               Plan.ref(
+                 %{
+                   "repository" => "acme/.github",
+                   "number" => 4,
+                   "url" => "https://ghe.example.com/acme/.github/pull/4"
+                 },
+                 "pullRequest"
+               )
+
+      assert ghe_github == "https://ghe.example.com/acme/.github/pull/4"
+
+      item =
+        plan([{"a", %{}}])["a"]
+        |> Plan.link(
+          %{"pullRequest" => %{"repository" => "acme/.github", "number" => 4}},
+          @now
+        )
+
+      assert [%{"repository" => "acme/.github", "number" => 4}] = item["pullRequests"]
+    end
+
+    test "a correcting link to another host forgets what the old host's look stored" do
+      ghe = "https://ghe.example.com/acme/api/pull/4"
+      ref = fn fields -> %{"repository" => "acme/api", "number" => 4} |> Map.merge(fields) end
+
+      item = plan([{"a", %{}}])["a"] |> Plan.link(%{"pullRequest" => ref.(%{})}, @now)
+
+      item =
+        put_in(item["pullRequests"], [
+          %{
+            "repository" => "acme/api",
+            "number" => 4,
+            "url" => "https://github.com/acme/api/pull/4",
+            "title" => "Old",
+            "state" => "merged"
+          }
+        ])
+
+      item = Plan.link(item, %{"pullRequest" => ref.(%{"url" => ghe})}, @now)
+      assert [%{"url" => ^ghe, "state" => "open", "title" => nil}] = item["pullRequests"]
+    end
+
+    test "an issue linked again with the address of its host takes that address and keeps the rest" do
+      ghe = "https://ghe.example.com/acme/api/issues/7"
+      ref = fn fields -> %{"repository" => "acme/api", "number" => 7} |> Map.merge(fields) end
+      item = plan([{"a", %{}}])["a"] |> Plan.link(%{"issue" => ref.(%{})}, @now)
+      item = put_in(item["issue"]["state"], "closed")
+      assert item["issue"]["url"] == "https://github.com/acme/api/issues/7"
+
+      # A correction to another host forgets what the old host's look stored, as a
+      # pull request does: that closed state described a different issue, and so
+      # do the milestone, the board row, the failure and the synced snapshot.
+      item =
+        item
+        |> put_in(["issue", "milestone"], %{"number" => 3})
+        |> Map.merge(%{
+          "boardItemId" => "PVTI_1",
+          "syncError" => "refused",
+          "synced" => %{"title" => "T"}
+        })
+
+      item = Plan.link(item, %{"issue" => ref.(%{"url" => ghe})}, @now)
+
+      assert %{"url" => ^ghe, "state" => "open", "title" => nil, "milestone" => nil} =
+               item["issue"]
+
+      assert %{"boardItemId" => nil, "syncError" => nil, "synced" => nil} = item
+
+      # A same-host correction keeps the rest.
+      item = put_in(item["issue"]["state"], "closed")
+      ported = "https://ghe.example.com:8443/acme/api/issues/7"
+      item = Plan.link(item, %{"issue" => ref.(%{"url" => ported})}, @now)
+      assert %{"url" => ^ported, "state" => "closed"} = item["issue"]
+      ghe = ported
+
+      assert %{"url" => ^ghe} = Plan.link(item, %{"issue" => ref.(%{})}, @now)["issue"]
+    end
+
     test "a task linked to another issue leaves the old issue's board row and failure behind" do
       issue = fn repository, number ->
         %{"issue" => %{"repository" => repository, "number" => number}}
@@ -272,7 +479,7 @@ defmodule HalC2.PlannerTest do
       link = &%{"op" => "link", "itemId" => "api", "fields" => &1}
 
       refused =
-        "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number}."
+        "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number, url}."
 
       assert {:ok, [%{"fields" => %{"issue" => ^issue}}]} =
                Plan.check_changes(items, [link.(%{"issue" => issue, "pullRequest" => nil})])
@@ -534,6 +741,748 @@ defmodule HalC2.PlannerTest do
 
       assert Slack.actions("", actions, "/planner") =~
                ~r"^Name the action to run\..*\n/planner run status — Write status update\n"
+    end
+  end
+
+  describe "a milestone's correction GitHub refused" do
+    @repo "acme/api"
+    @projects [%{"id" => "p", "kind" => "github", "repository" => @repo}]
+
+    # The milestone "ms" kept the correction of the issue #7 of the task "t" (`misplaced`),
+    # which "mr" holds now; `task` is what "t" is by then.
+    defp corrected(task) do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items = Map.new([milestone.("ms", 3, []), milestone.("mr", 4, ["t"]), {"t", task}])
+
+      assert [{"update", input, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+
+      assert took.(synced)["misplaced"] == %{}
+      input
+    end
+
+    defp task(issue), do: %{"id" => "t", "projectId" => "p", "after" => [], "issue" => issue}
+
+    test "goes again to the milestone holding the task that still names the issue" do
+      input = corrected(task(%{"repository" => @repo, "number" => 7}))
+      assert %{"number" => 7, "milestone" => 4} = input
+    end
+
+    test "is dropped once the milestone holds the task that still names the issue again" do
+      synced = %{
+        "after" => ["t"],
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      items = %{"t" => task(%{"repository" => @repo, "number" => 7})}
+
+      assert Sync.settled(synced, %{"after" => ["t"]}, items)["misplaced"] == %{}
+
+      assert %{"misplaced" => %{"acme/api#7" => _}} =
+               Sync.settled(synced, %{"after" => []}, items)
+
+      assert Sync.settled(nil, %{"after" => ["t"]}, items) == nil
+    end
+
+    test "stays when the milestone holds the task again under another issue, and takes the first out" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{"ms" => ms, "t" => task(%{"repository" => @repo, "number" => 8})}
+      assert synced == Sync.settled(synced, ms, items)
+
+      assert [{"update", into, took_into}, {"update", out, took_out}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = out
+      assert %{"number" => 8, "milestone" => 3} = into
+
+      # The issue the task names now being in the milestone does not clear the mark of
+      # the other, if its correction is refused; the correction's landing does, and the
+      # task stays on the milestone.
+      assert %{"misplaced" => %{"acme/api#7" => _}} = took_into.(synced)
+      landed = took_out.(took_into.(synced))
+      assert landed["after"] == ["t"]
+      assert landed["misplaced"] == %{}
+    end
+
+    test "takes the issue out of any milestone once the task names another" do
+      input = corrected(task(%{"repository" => @repo, "number" => 8}))
+      assert %{"number" => 7, "milestone" => nil} = input
+    end
+
+    test "goes to the milestone of a task that took the issue over" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, []),
+          milestone.("mr", 4, ["u"]),
+          {"t", task(%{"repository" => @repo, "number" => 8})},
+          {"u",
+           %{
+             "id" => "u",
+             "projectId" => "p",
+             "after" => [],
+             "issue" => %{"repository" => @repo, "number" => 7}
+           }}
+        ])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 4}, took}] = asks
+      assert took.(synced)["misplaced"] == %{}
+    end
+
+    test "goes to this milestone when the task that took the issue over is held by it" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, ["u"]),
+          milestone.("mr", 4, []),
+          {"t", task(%{"repository" => @repo, "number" => 8})},
+          {"u",
+           %{
+             "id" => "u",
+             "projectId" => "p",
+             "after" => [],
+             "issue" => %{"repository" => @repo, "number" => 7}
+           }}
+        ])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 3}, took}] = asks
+      assert took.(synced)["misplaced"] == %{}
+    end
+
+    test "keeps a mark per issue, so a task that left two issues behind loses neither" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+      op = fn n -> {"t", {"update", issue.(n), nil}} end
+
+      # Two late pushes left #7, then #8, in the milestone "ms" after the task
+      # was relinked and moved on; its `synced` remembers only #8 by then, so
+      # the #7 mark is the only thing still naming #7.
+      synced =
+        %{
+          "title" => "Launch",
+          "due" => nil,
+          "after" => ["t"],
+          "refs" => %{"t" => issue.(8)}
+        }
+        |> Sync.misplaced([op.(7)])
+        |> Sync.misplaced([op.(8)])
+
+      assert synced["misplaced"] == %{
+               "acme/api#7" => %{"task" => "t", "issue" => issue.(7)},
+               "acme/api#8" => %{"task" => "t", "issue" => issue.(8)}
+             }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([milestone.("ms", 3, []), milestone.("mr", 4, ["t"]), {"t", task(issue.(8))}])
+
+      assert [{"update", out, _}, {"update", into, _}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = out
+      assert %{"number" => 8, "milestone" => 4} = into
+    end
+
+    test "the older mark survives the newer correction taking, so its issue still goes out" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # As the mark-per-task shape left it: "t" was relinked from #7 to #8 in
+      # "ms", #8's correction took and #7's was refused, and `refs` names #8.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(8)},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => issue.(7)},
+          "acme/api#8" => %{"task" => "t", "issue" => issue.(8)}
+        }
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([milestone.("ms", 3, []), milestone.("mr", 4, ["t"]), {"t", task(issue.(8))}])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => n} = input, took} <- ops, do: {n, input, took}
+      assert [{7, _, _}, {8, _, _}] = Enum.sort_by(asks, &elem(&1, 0))
+
+      # #8's correction takes; #7 must still be asked out by the next push.
+      {_, _, took8} = Enum.find(asks, &(elem(&1, 0) == 8))
+      landed = took8.(synced)
+      assert landed["misplaced"] == %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, landed, items["ms"], items, @projects)
+
+      assert [{"update", %{"number" => 7, "milestone" => nil}, _}] =
+               for({"update", input, took} <- ops, do: {"update", input, took})
+    end
+
+    test "asks the issue its task left once, though both its removal and its correction send it out" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # "ms" has the task "t" for #7 and a mark for #7; "t" names #8 by now and "ms" holds it.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(7)},
+        "misplaced" => %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+      }
+
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{"ms" => ms, "t" => task(issue.(8))}
+
+      assert [{"update", out, took_out}, {"update", into, took_into}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = out
+      assert %{"number" => 8, "milestone" => 3} = into
+
+      landed = synced |> took_out.() |> took_into.()
+      assert %{"after" => ["t"], "refs" => %{"t" => %{"number" => 8}}} = landed
+      assert landed["misplaced"] == %{}
+    end
+
+    test "reads a mark named for its task, as a plan saved before marks were named for their issue" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{"t" => issue.(7)}
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, []),
+          milestone.("mr", 4, ["u"]),
+          {"t", task(issue.(8))},
+          {"u", %{"id" => "u", "projectId" => "p", "after" => [], "issue" => issue.(7)}}
+        ])
+
+      assert Sync.settled(synced, %{"after" => []}, items)["misplaced"] ==
+               %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 4}, took}] = asks
+      assert took.(synced)["misplaced"] == %{}
+    end
+
+    test "a mark named for its issue wins over one named for its task for the same issue" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "old" => issue.(7),
+          "acme/api#7" => %{"task" => "t", "issue" => issue.(7)},
+          "zzz" => issue.(7)
+        }
+      }
+
+      items =
+        Map.new([
+          {"ms",
+           %{
+             "id" => "ms",
+             "title" => "Launch",
+             "due" => nil,
+             "after" => [],
+             "projectId" => "p",
+             "milestone" => %{"repository" => @repo, "number" => 3}
+           }},
+          {"t", task(issue.(8))}
+        ])
+
+      assert Sync.settled(synced, %{"after" => []}, items)["misplaced"] ==
+               %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+    end
+
+    test "an issue sent out of any milestone and to another in one push is asked once, for the other" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # "t" left #7 in "ms" (remembered in `refs`, marked), names #8 in "mr"
+      # by now, and "u" names #7 in "mr": one push would send #7 out by the
+      # move and in by the correction.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "refs" => %{"t" => issue.(7)},
+        "misplaced" => %{"acme/api#7" => %{"task" => "t", "issue" => issue.(7)}}
+      }
+
+      milestone = fn id, number, after_ ->
+        {id,
+         %{
+           "id" => id,
+           "title" => "Launch",
+           "due" => nil,
+           "after" => after_,
+           "projectId" => "p",
+           "milestone" => %{"repository" => @repo, "number" => number}
+         }}
+      end
+
+      items =
+        Map.new([
+          milestone.("ms", 3, []),
+          milestone.("mr", 4, ["t", "u"]),
+          {"t", task(issue.(8))},
+          {"u", %{"id" => "u", "projectId" => "p", "after" => [], "issue" => issue.(7)}}
+        ])
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, items["ms"], items, @projects)
+      asks = for {"update", %{"number" => 7} = input, took} <- ops, do: {input, took}
+      assert [{%{"milestone" => 4}, took}] = asks
+
+      landed = took.(synced)
+      assert landed["misplaced"] == %{}
+      refute "t" in landed["after"]
+    end
+
+    test "asks an issue two tasks send out of any milestone once, and runs both tasks' tooks" do
+      issue = fn n -> %{"repository" => @repo, "number" => n} end
+
+      # "ms" held "old" for #7 (remembered in `refs`) and has a mark for "new" over #7;
+      # both name #8 by now, so #7 leaves any milestone by both of them.
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["old"],
+        "refs" => %{"old" => issue.(7)},
+        "misplaced" => %{"acme/api#7" => %{"task" => "new", "issue" => issue.(7)}}
+      }
+
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{
+        "ms" => ms,
+        "old" => %{"id" => "old", "projectId" => "p", "after" => [], "issue" => issue.(8)},
+        "new" => %{"id" => "new", "projectId" => "p", "after" => [], "issue" => issue.(8)}
+      }
+
+      assert [{"update", input, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = input
+      landed = took.(synced)
+      assert landed["after"] == []
+      assert landed["misplaced"] == %{}
+    end
+
+    test "drops an ask for an issue whose saved ref is not whole, instead of raising" do
+      ms = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => ["t"],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      synced = %{"title" => "Launch", "due" => nil, "after" => [], "refs" => %{}}
+      items = %{"ms" => ms, "t" => task(%{"repository" => @repo})}
+
+      assert [] = Sync.pushes(%{"sync" => "twoWay"}, synced, ms, items, @projects)
+    end
+
+    test "takes the issue out of any milestone once the task names none" do
+      input = corrected(Map.delete(task(nil), "issue"))
+      assert %{"number" => 7, "milestone" => nil} = input
+    end
+
+    test "takes the issue out of any milestone once the task is gone from the plan" do
+      synced = %{
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "refs" => %{},
+        "misplaced" => %{
+          "acme/api#7" => %{"task" => "t", "issue" => %{"repository" => @repo, "number" => 7}}
+        }
+      }
+
+      milestone = %{
+        "id" => "ms",
+        "title" => "Launch",
+        "due" => nil,
+        "after" => [],
+        "projectId" => "p",
+        "milestone" => %{"repository" => @repo, "number" => 3}
+      }
+
+      items = %{"ms" => milestone}
+
+      assert [{"update", input, took}] =
+               Sync.pushes(%{"sync" => "twoWay"}, synced, milestone, items, @projects)
+
+      assert %{"number" => 7, "milestone" => nil} = input
+      assert took.(synced)["misplaced"] == %{}
+    end
+  end
+
+  describe "pushes" do
+    test "a relink and an owner change in one push take the old owner off the old issue" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = fn n -> %{"repository" => "acme/api", "number" => n} end
+
+      new = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "dana",
+        "issue" => issue.(8),
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "owner" => "alice",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue.(7)
+      }
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+      assert {"removeAssignees", %{"number" => 7, "assignees" => ["alice"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "removeAssignees"))
+
+      assert {"addAssignees", %{"number" => 8, "assignees" => ["dana"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
+    end
+
+    test "a case-only owner change pushes no assignee ops" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      new = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "Alice",
+        "issue" => issue,
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "owner" => "alice",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue
+      }
+
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+      refute Enum.any?(ops, &(elem(&1, 0) in ["addAssignees", "removeAssignees"]))
+    end
+
+    test "a stored owner that is no login is never taken off, only the new one added" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      base = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "issue" => issue,
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "owner" => "Dana Smith",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue
+      }
+
+      new = Map.put(base, "owner", "dana")
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+      assert {"addAssignees", %{"number" => 7, "assignees" => ["dana"]}, _} =
+               Enum.find(ops, &(elem(&1, 0) == "addAssignees"))
+
+      refute Enum.any?(ops, &(elem(&1, 0) == "removeAssignees"))
+
+      cleared = Map.put(base, "owner", nil)
+      ops = Sync.pushes(%{"sync" => "twoWay"}, synced, cleared, %{"t" => cleared}, projects)
+      refute Enum.any?(ops, &(elem(&1, 0) in ["addAssignees", "removeAssignees"]))
+    end
+
+    test "a bot or managed user as the old owner is taken off like any login" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      for old <- ["copilot[bot]", "dana_acme"] do
+        new = %{
+          "id" => "t",
+          "title" => "T",
+          "notes" => nil,
+          "labels" => [],
+          "status" => "todo",
+          "owner" => "dana",
+          "issue" => issue,
+          "after" => [],
+          "parent" => nil,
+          "projectId" => "p"
+        }
+
+        synced = %{
+          "title" => "T",
+          "notes" => nil,
+          "labels" => [],
+          "state" => "open",
+          "owner" => old,
+          "start" => nil,
+          "due" => nil,
+          "after" => [],
+          "parent" => nil,
+          "refs" => %{},
+          "issue" => issue
+        }
+
+        ops = Sync.pushes(%{"sync" => "twoWay"}, synced, new, %{"t" => new}, projects)
+
+        assert {"removeAssignees", %{"number" => 7, "assignees" => [^old]}, _} =
+                 Enum.find(ops, &(elem(&1, 0) == "removeAssignees"))
+      end
+    end
+
+    test "a push takes a stored owner off exactly for the logins Plan takes" do
+      projects = [%{"id" => "p", "kind" => "github", "repository" => "acme/api"}]
+      issue = %{"repository" => "acme/api", "number" => 7}
+
+      new = %{
+        "id" => "t",
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "status" => "todo",
+        "owner" => "erin",
+        "issue" => issue,
+        "after" => [],
+        "parent" => nil,
+        "projectId" => "p"
+      }
+
+      synced = %{
+        "title" => "T",
+        "notes" => nil,
+        "labels" => [],
+        "state" => "open",
+        "start" => nil,
+        "due" => nil,
+        "after" => [],
+        "parent" => nil,
+        "refs" => %{},
+        "issue" => issue
+      }
+
+      # The same cases `Plan` makes an owner by and the host suite runs, so the
+      # push's own gate cannot drift from either.
+      for bad <- HalC2.Test.LoginCases.bad() do
+        ops =
+          Sync.pushes(
+            %{"sync" => "twoWay"},
+            Map.put(synced, "owner", bad),
+            new,
+            %{"t" => new},
+            projects
+          )
+
+        refute Enum.any?(ops, &(elem(&1, 0) == "removeAssignees")),
+               "expected no removal for #{inspect(bad)}"
+      end
+
+      for good <- HalC2.Test.LoginCases.good() do
+        ops =
+          Sync.pushes(
+            %{"sync" => "twoWay"},
+            Map.put(synced, "owner", good),
+            new,
+            %{"t" => new},
+            projects
+          )
+
+        assert {"removeAssignees", %{"number" => 7, "assignees" => [^good]}, _} =
+                 Enum.find(ops, &(elem(&1, 0) == "removeAssignees")),
+               "expected a removal for #{inspect(good)}"
+      end
     end
   end
 end

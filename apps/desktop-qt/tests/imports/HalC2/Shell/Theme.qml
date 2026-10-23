@@ -15,7 +15,7 @@ QtObject {
     property string lastError: ""
     property real radius: 8
     readonly property string fontUi: ""
-    readonly property string fontMono: ""
+    property string fontMono: ""
     readonly property string fontPrompt: ""
     readonly property string fontTerminal: ""
     property real fontScale: 1
