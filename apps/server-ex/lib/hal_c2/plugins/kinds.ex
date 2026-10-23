@@ -83,7 +83,9 @@ defmodule HalC2.Plugins.ProviderAdapter do
   `{:error, reason}` for a run that started before its latest turn's
   (`HalC2.Orchestration.earlier_run?/3`) and stops the work for that run, a later
   one (a client stopping that work names the thread's latest run, which may have
-  run on another provider), or `nil`. Every adapter is asked on each interrupt.
+  run on another provider), or `nil`. A stop of the thread's active run reaches
+  only that run's adapter, so it leaves background work any adapter holds; a stop
+  between turns reaches every adapter.
 
   An adapter that declares `active_steering` implements `steer/3`: it hands
   `%{text, attachments}` (attachments shaped like a turn's) to the turn running as

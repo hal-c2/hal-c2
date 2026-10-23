@@ -1683,14 +1683,36 @@ defmodule HalC2.Orchestration do
 
   defp builtin_runtime(_codex), do: HalC2.Codex.ThreadRuntime
 
-  # A thread has at most one running turn, but work an earlier turn left running can
-  # sit in another provider's runtime, so every runtime is asked and each stops what
-  # of its own the pin covers. A started turn nothing drives any more (its runtime
-  # stopped without ending it) ends here, and a provider plugin that cannot stop a
-  # turn says so.
+  # A thread has at most one active run. A stop that reaches it, pinned to it or not
+  # pinned, goes only to the runtime of that run's provider. So stopping or restarting a
+  # turn leaves the background work any provider left, the way it does on one provider.
+  # Between turns, work an earlier turn left can sit in any provider's runtime, so every
+  # runtime is asked and each stops the work of its own that the pin covers (#474). A
+  # started turn nothing drives any more (its runtime stopped without ending it) ends
+  # here, and a provider plugin that cannot stop a turn says so.
   defp interrupt_any(thread_id, run_id) do
-    stopped = Enum.filter(runtimes(:interrupt, 2), &interrupted?(&1, thread_id, run_id))
+    asked =
+      case active_runtime(thread_id, run_id) do
+        nil -> runtimes(:interrupt, 2)
+        runtime -> [runtime]
+      end
+
+    stopped = Enum.filter(asked, &interrupted?(&1, thread_id, run_id))
     if stopped != [], do: :ok, else: interrupt_undriven(thread_id, run_id)
+  end
+
+  # The runtime of the pinned run if it is active, or of the active run for a stop
+  # with no pin; nil between turns.
+  defp active_runtime(thread_id, run_id) do
+    runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
+
+    run =
+      if run_id,
+        do: Enum.find(runs, &(&1["id"] == run_id)),
+        else: Enum.find(runs, &(&1["status"] in @active_statuses))
+
+    instance = run && (run["providerInstanceId"] || run["modelSelection"]["instanceId"])
+    if run["status"] in @active_statuses and is_binary(instance), do: runtime(instance)
   end
 
   @doc """
@@ -1766,7 +1788,9 @@ defmodule HalC2.Orchestration do
   defp interrupted?(runtime, thread_id, run_id) do
     runtime.interrupt(thread_id, run_id) == :ok
   rescue
-    ArgumentError -> false
+    # Any other error out of an adapter is a bug, and must not read as nothing to stop.
+    error in ArgumentError ->
+      if error.message =~ "unknown registry", do: false, else: reraise(error, __STACKTRACE__)
   catch
     :exit, _ -> false
   end

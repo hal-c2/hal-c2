@@ -284,6 +284,24 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  step "{string} is running its latest turn on Claude", %{args: [thread]} = context do
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+    context = World.dispatch_message(context, thread, "wait for me", claude)
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_run(context, thread, &(&1["ordinal"] == 3 and &1["status"] == "running"))
+    context
+  end
+
+  step "run {int} of {string} is interrupted", %{args: [ordinal, thread]} = context do
+    World.await_run(
+      context,
+      thread,
+      &(&1["ordinal"] == ordinal and &1["status"] == "interrupted")
+    )
+
+    context
+  end
+
   step "the stop is refused", context do
     assert {:error, _, _} = context.reply
     context
