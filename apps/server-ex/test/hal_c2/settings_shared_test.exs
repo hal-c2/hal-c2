@@ -63,6 +63,11 @@ defmodule HalC2.SettingsSharedTest do
     assert Shared.sanitize(:garbage) == %{}
   end
 
+  test "an empty rule list arrives as an unset, as this MC records no rules" do
+    assert Shared.sanitize(%{"keybindings" => record(1, "b", [])}) ==
+             %{"keybindings" => %{"at" => 1, "by" => "b"}}
+  end
+
   test "a local write is stamped after everything seen, and only where the value changed" do
     records = %{"defaultRuntimeMode" => record(100, "b", "full-access")}
     assert Shared.stamp(records, 50) == 101
@@ -215,6 +220,93 @@ defmodule HalC2.SettingsSharedTest do
 
       assert File.read!(path) == "{not json"
       assert {%{}, 0} = Settings.get()
+    end
+
+    test "a write while the document cannot be read resets no shared setting it left alone",
+         %{path: path, records: records} do
+      :ok = stop_supervised(Settings)
+      seeded = %{"defaultRuntimeMode" => record(5, "zz", "full-access")}
+      File.write!(records, JSON.encode!(seeded))
+      File.write!(path, "{not json")
+      start_supervised!(Settings)
+
+      # The shared settings stand in for the document a client reads and writes back.
+      assert {%{"defaultRuntimeMode" => "full-access"}, 0} = Settings.get()
+      {:ok, 1} = Settings.update(&Map.put(&1, "defaultTheme", "x"))
+      {doc, 1} = Settings.get()
+      {:ok, 2} = Settings.put(Map.put(doc, "environmentIcon", "laptop"), 1)
+
+      assert Settings.shared_records() == seeded
+      assert JSON.decode!(File.read!(records)) == seeded
+
+      assert JSON.decode!(File.read!(path)) == %{
+               "defaultRuntimeMode" => "full-access",
+               "defaultTheme" => "x",
+               "environmentIcon" => "laptop"
+             }
+    end
+
+    test "a member's rules arriving while a local edit's notice is on its way keep the edit",
+         %{id: id} do
+      :ok = Settings.watch(self())
+      ours = [%{"key" => "mod+k", "command" => "commandPalette.toggle"}]
+      theirs = [%{"key" => "mod+j", "command" => "terminal.toggle"}]
+
+      # The member's rules are newer than any record here, but older than the edit.
+      :ok = :sys.suspend(Settings)
+      Settings.merge_shared(%{"keybindings" => record(1, "zz", theirs)})
+      {:ok, _} = HalC2.Keybindings.upsert(hd(ours))
+      :ok = :sys.resume(Settings)
+      _ = :sys.get_state(Settings)
+
+      assert HalC2.Keybindings.rules() == ours
+
+      assert %{"keybindings" => %{"by" => ^id, "value" => ^ours}} =
+               Settings.shared_records()
+
+      assert_received {:hal_c2_keybindings, _, ^ours}
+      refute_received {:hal_c2_keybindings, _, ^theirs}
+    end
+
+    test "a member's rules newer than a local edit in flight win, in the file and the record" do
+      ours = [%{"key" => "mod+k", "command" => "commandPalette.toggle"}]
+      theirs = [%{"key" => "mod+j", "command" => "terminal.toggle"}]
+      ahead = System.os_time(:millisecond) + 3_600_000
+
+      :ok = :sys.suspend(Settings)
+      Settings.merge_shared(%{"keybindings" => record(ahead, "zz", theirs)})
+      {:ok, _} = HalC2.Keybindings.upsert(hd(ours))
+      :ok = :sys.resume(Settings)
+      _ = :sys.get_state(Settings)
+
+      assert HalC2.Keybindings.rules() == theirs
+      assert %{"keybindings" => %{"at" => ^ahead, "value" => ^theirs}} = Settings.shared_records()
+    end
+
+    test "a member's empty rule list is kept as it arrived, not stamped over by the file" do
+      {:ok, _} = HalC2.Keybindings.upsert(%{"key" => "mod+k", "command" => "x"})
+      _ = :sys.get_state(Settings)
+      ahead = System.os_time(:millisecond) + 3_600_000
+
+      Settings.merge_shared(%{"keybindings" => record(ahead, "zz", [])})
+      _ = :sys.get_state(Settings)
+      _ = :sys.get_state(Settings)
+
+      assert HalC2.Keybindings.rules() == []
+      assert Settings.shared_records()["keybindings"] == %{"at" => ahead, "by" => "zz"}
+    end
+
+    test "a rule written with a null condition is shared without one" do
+      :ok = stop_supervised(Settings)
+      rules = [%{"key" => "mod+k", "command" => "commandPalette.toggle", "when" => nil}]
+      File.write!(HalC2.Keybindings.path(), JSON.encode!(rules))
+      start_supervised!(Settings)
+
+      bare = [%{"key" => "mod+k", "command" => "commandPalette.toggle"}]
+      assert HalC2.Keybindings.rules() == bare
+      shared = Settings.shared_records()
+      assert %{"keybindings" => %{"value" => ^bare}} = shared
+      assert Shared.sanitize(shared) == shared
     end
 
     test "a deleted document is learned again from the members, not shared as a reset", %{

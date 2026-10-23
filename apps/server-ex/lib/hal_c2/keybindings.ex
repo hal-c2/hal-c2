@@ -13,14 +13,14 @@ defmodule HalC2.Keybindings do
   @script ~r/^script\.([a-z0-9][a-z0-9-]*)\.run$/
   @max_script_id 24
 
-  @doc "The stored rules, skipping entries that are not rules."
+  @doc "The stored rules, skipping entries that are not rules; a null `when` is left out."
   def rules do
     with {:ok, text} <- File.read(path()),
          {:ok, list} when is_list(list) <- JSON.decode(text) do
       for %{"key" => key, "command" => command} = rule <- list,
           is_binary(key) and is_binary(command) and
             (rule["when"] == nil or is_binary(rule["when"])),
-          do: Map.take(rule, ~w(key command when))
+          do: rule(rule)
     else
       _ -> []
     end

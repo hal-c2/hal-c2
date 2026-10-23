@@ -80,13 +80,18 @@ defmodule HalC2.Settings.Shared do
   def sanitize(records) when is_map(records) do
     for {unit, %{"at" => at, "by" => by} = record} <- records,
         unit in @units and is_integer(at) and at >= 0 and is_binary(by),
-        record = Map.take(record, ~w(at by value)),
+        record = record |> Map.take(~w(at by value)) |> no_rules(unit),
         valid?(unit, record),
         into: %{},
         do: {unit, record}
   end
 
   def sanitize(_records), do: %{}
+
+  # An empty rule list is no rules, which `HalC2.Settings` records as an unset: read as
+  # anything else, the rules file it leaves would be stamped over it as a change.
+  defp no_rules(%{"value" => []} = record, "keybindings"), do: Map.delete(record, "value")
+  defp no_rules(record, _unit), do: record
 
   defp valid?(unit, record) do
     case Map.fetch(record, "value") do

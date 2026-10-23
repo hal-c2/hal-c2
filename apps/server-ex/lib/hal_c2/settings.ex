@@ -288,6 +288,11 @@ defmodule HalC2.Settings do
   def init(nil) do
     path = path()
 
+    shared = read_shared()
+
+    # Until a document that cannot be read can be (`held`), the shared settings stand in
+    # for it as their records say: a write meanwhile is then compared with them, not
+    # with nothing, which would reset every one of them across the cluster.
     {settings, held} =
       case read(path) do
         {:ok, settings} ->
@@ -295,7 +300,7 @@ defmodule HalC2.Settings do
 
         {:error, reason} ->
           Logger.warning("ignoring unreadable #{path}: #{inspect(reason)}")
-          {%{}, true}
+          {Shared.apply(%{}, shared), true}
       end
 
     # A key written in plain text (by hand, or before keys were sealed) moves out now.
@@ -314,7 +319,7 @@ defmodule HalC2.Settings do
       watchers: %{},
       stamp: stamp(path),
       id: HalC2.Environment.id(),
-      shared: read_shared(),
+      shared: shared,
       held: held
     }
 
@@ -369,6 +374,9 @@ defmodule HalC2.Settings do
 
     Shared.local(records, values, units, Shared.stamp(records, at), state.id)
   end
+
+  defp local_keybindings(records, state),
+    do: local_shared(records, keybindings(HalC2.Keybindings.rules()), ["keybindings"], state)
 
   defp keybindings([]), do: %{}
   defp keybindings(rules), do: %{"keybindings" => rules}
@@ -449,17 +457,25 @@ defmodule HalC2.Settings do
     {:noreply, state}
   end
 
-  def handle_cast({:keybindings_changed, rules}, state) do
+  # The rules as the file holds them now, not as the notice carries them: a member's
+  # newer ones may have replaced them since it was sent (`:merge_shared`).
+  def handle_cast({:keybindings_changed, _rules}, state) do
+    rules = HalC2.Keybindings.rules()
     HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
-
-    {:noreply,
-     put_shared(state, local_shared(state.shared, keybindings(rules), ["keybindings"], state))}
+    {:noreply, put_shared(state, local_keybindings(state.shared, state))}
   end
 
   def handle_cast({:merge_shared, _records}, %{held: true} = state), do: {:noreply, state}
 
   def handle_cast({:merge_shared, records}, state) do
-    merged = Shared.merge(state.shared, Shared.sanitize(records))
+    # A rules file unlike its record holds an edit whose notice is still on its way. It
+    # is stamped first, so the merge weighs it rather than writing over it.
+    ours =
+      if File.exists?(HalC2.Keybindings.path()),
+        do: local_keybindings(state.shared, state),
+        else: state.shared
+
+    merged = Shared.merge(ours, Shared.sanitize(records))
 
     if merged == state.shared do
       {:noreply, state}
