@@ -1824,7 +1824,8 @@ defmodule HalC2Plugins.CodeReview do
   # queued or not yet started holds the head it would review, which another
   # machine's look leaves to it but another machine's run does not. Paused at the
   # agent's usage limit, what waits in the queue is left to others. A commit
-  # reviewed before the review was queued again stays claimed, as `held`.
+  # reviewed before the review was queued again stays claimed, as `held`, even
+  # once a push back queues the review at that commit again.
   defp claim_row(review, paused?) do
     held = review["held"] && Map.put(review["held"], "claimed", true)
 
@@ -1841,7 +1842,7 @@ defmodule HalC2Plugins.CodeReview do
       end
 
     cond do
-      row && held && held["sha"] != row["sha"] -> Map.put(row, "held", held)
+      row && held && held != row -> Map.put(row, "held", held)
       row -> row
       true -> held
     end

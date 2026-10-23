@@ -612,7 +612,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       {nil, {sha, held}} ->
         {sha, held, true, nil}
 
-      {{sha, status, claimed}, {other, held}} when other != sha ->
+      {{sha, status, claimed}, {other, held}}
+      when {other, held, true} != {sha, status, claimed} ->
         {sha, status, claimed, {other, held, true}}
 
       {{sha, status, claimed}, _} ->
