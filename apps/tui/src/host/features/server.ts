@@ -3,6 +3,7 @@ import {
   ProviderInstanceId,
   type ServerConfig,
   type ServerProvider,
+  type ServerSettings,
 } from "@hal-c2/contracts";
 
 import type { TuiSettingsExtraGroup } from "../settingsState.ts";
@@ -49,8 +50,16 @@ const updatable = (provider: ServerProvider) =>
 export function createServerFeature(kit: FeatureKit): Feature {
   const { client } = kit;
   let config: ServerConfig | null = null;
+  /**
+   * The settings as the MC last pushed them, which another device may have changed.
+   * They win over `config.settings`, since an MC session answers `getServerConfig`
+   * with the config it connected with (client-runtime's v3/session.ts).
+   */
+  let pushed: ServerSettings | null = null;
+  const settings = () => pushed ?? config?.settings ?? null;
 
   const changed = () => {
+    kit.store.setShowSettledPluginThreads(showsPluginThreads());
     kit.settingsChanged();
     kit.commandsChanged();
   };
@@ -60,15 +69,18 @@ export function createServerFeature(kit: FeatureKit): Feature {
       client.getServerConfig().then(
         (next) => {
           config = next;
-          kit.store.setShowSettledPluginThreads(showsPluginThreads());
           if (reloadComposer) kit.dispatch("composer.providers.reload");
           changed();
         },
         () => {},
       ),
     );
+  const applySettings = (next: ServerSettings) => {
+    pushed = next;
+    changed();
+  };
   const providers = () => config?.providers ?? [];
-  const showsPluginThreads = () => config?.settings.sidebarShowSettledPluginThreads === true;
+  const showsPluginThreads = () => settings()?.sidebarShowSettledPluginThreads === true;
 
   const refresh = () => {
     kit.status("Refreshing providers…", "busy");
@@ -125,7 +137,7 @@ export function createServerFeature(kit: FeatureKit): Feature {
   };
 
   const chooseDefaultWorkspace = () => {
-    const current = config?.settings.defaultThreadEnvMode === "worktree" ? "worktree" : "local";
+    const current = settings()?.defaultThreadEnvMode === "worktree" ? "worktree" : "local";
     kit.menu({
       title: "new threads start in",
       options: [
@@ -144,7 +156,8 @@ export function createServerFeature(kit: FeatureKit): Feature {
       onChoose: (mode) => {
         void kit.track(
           client.updateSettings({ defaultThreadEnvMode: mode as "local" | "worktree" }).then(
-            async () => {
+            async (next) => {
+              applySettings(next);
               await load();
               kit.status(
                 `New threads start in ${mode === "worktree" ? "a new worktree" : "the current checkout"}.`,
@@ -163,8 +176,8 @@ export function createServerFeature(kit: FeatureKit): Feature {
     const show = !showsPluginThreads();
     void kit.track(
       client.updateSettings({ sidebarShowSettledPluginThreads: show }).then(
-        async () => {
-          await load(false);
+        (next) => {
+          applySettings(next);
           kit.status(
             show
               ? "Settled lists the threads plugins started."
@@ -235,7 +248,8 @@ export function createServerFeature(kit: FeatureKit): Feature {
           },
         )
         .then(
-          async () => {
+          async (next) => {
+            applySettings(next);
             await load();
             kit.status(`Added ${name}; its key is stored as a secret.`, "success");
           },
@@ -299,8 +313,9 @@ export function createServerFeature(kit: FeatureKit): Feature {
   };
 
   const settingsGroups = (): TuiSettingsExtraGroup[] => {
-    if (!config) return [];
-    const instances = config.settings.providerInstances ?? {};
+    const current = settings();
+    if (!config || !current) return [];
+    const instances = current.providerInstances ?? {};
     const rows: Array<readonly [string, string]> = providers().map(
       (provider) => [providerName(provider), providerSummary(provider)] as const,
     );
@@ -323,9 +338,7 @@ export function createServerFeature(kit: FeatureKit): Feature {
         rows: [
           [
             "new threads",
-            config.settings.defaultThreadEnvMode === "worktree"
-              ? "New worktree"
-              : "Current checkout",
+            current.defaultThreadEnvMode === "worktree" ? "New worktree" : "Current checkout",
           ],
         ],
       },
@@ -338,7 +351,9 @@ export function createServerFeature(kit: FeatureKit): Feature {
 
   // The composer reads the config itself at start.
   void load(false);
+  const stopSettings = client.subscribeServerSettings(applySettings);
   return {
+    dispose: stopSettings,
     settingsGroups,
     commands: () => [
       {

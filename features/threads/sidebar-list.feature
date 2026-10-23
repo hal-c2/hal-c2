@@ -15,6 +15,7 @@
 #   packages/contracts/src/plugin.ts (ThreadPluginMark: the threads a plugin started)
 #   plugins/code-review/mc/code_review.ex (settles each review thread it finishes)
 #   apps/tui/src/host/features/server.ts (settings.settledPluginThreads: the TUI's toggle)
+#   apps/tui/src/settingsClient.ts (subscribeServerSettings: the settings another client changed)
 #   packages/contracts/src/shell.ts (thread.open, draft.open, thread.new, sidebar.scope, sidebar.toggle, sidebar.more, project.add, thread.menu)
 #   packages/contracts/src/rpc.ts (subscribeShell)
 #   apps/web/src/components/LegacySidebar.tsx (the per-project thread tree)
@@ -126,6 +127,17 @@ Feature: The thread list
     When the user turns on "Show plugin threads in Settled"
     Then 5 settled threads are shown
     When the user turns off "Show plugin threads in Settled"
+    Then 3 settled threads are shown
+
+  # The setting is the MC's, shared by every client, so an open client follows a change
+  # made on another.
+  @tui
+  Scenario: Plugin threads follow the setting when another device changes it
+    Given there are 3 settled threads
+    And 2 settled threads a plugin started
+    When "Show plugin threads in Settled" is turned on on another device
+    Then 5 settled threads are shown
+    When "Show plugin threads in Settled" is turned off on another device
     Then 3 settled threads are shown
 
   @desktop @mobile @backlog-mobile
