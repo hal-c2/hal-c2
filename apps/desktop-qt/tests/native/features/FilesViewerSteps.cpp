@@ -23,6 +23,8 @@ using namespace filesteps;
 struct Viewer {
   // Paths the MC refuses to write.
   QSet<QString> unwritable;
+  // The session lacks terminal:operate, so the MC refuses writes by full path.
+  bool noTerminal = false;
   // The file the scenario edits, and what the user typed into it.
   QString edited;
   QString typed;
@@ -46,6 +48,13 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     }
     FakeFiles& fake = fakeFiles(mc);
     const QString contents = rpc.payload.value(QLatin1String("contents")).toString();
+    if (path.startsWith(QLatin1Char('/')) && mc.part<Viewer>().noTerminal) {
+      // As apps/server-ex lib/hal_c2/rpc.ex required_scope/2, checked by the socket.
+      mc.refuse(rpc, QStringLiteral("terminal:operate is required"),
+                QJsonObject{{QStringLiteral("_tag"), QStringLiteral("EnvironmentScopeRequiredError")},
+                            {QStringLiteral("requiredScope"), QStringLiteral("terminal:operate")}});
+      return;
+    }
     if (!path.startsWith(QLatin1Char('/'))) {
       fake.files.insert(path, contents);
     } else if (fake.outside.contains(path)) {
@@ -328,15 +337,17 @@ const Steps steps([] {
   step(QStringLiteral("the file cannot be edited"), [](World& world, const Captures&, const Table&) {
     const QString path = viewer(world).described;
     const FakeFiles before = fakeFiles(world.mc);
+    const qsizetype writesBefore = writes(world).size();
     expect(!files(world).editable() && !files(world).readOnlyReason().isEmpty(), describeViewer(world));
-    // The viewer says why, and its Edit takes no press.
+    // The viewer says why (after "Not saved: " when an edit was refused), and its Edit takes no press.
     const QQuickItem* edit = world.brick->item(QStringLiteral("fileEdit"));
-    expect(edit->isVisible() && !edit->isEnabled() && world.brick->shows(files(world).readOnlyReason()),
+    const QQuickItem* note = world.brick->item(QStringLiteral("fileNote"));
+    expect(edit->isVisible() && !edit->isEnabled() && note->isVisible() && note->property("text").toString().endsWith(files(world).readOnlyReason()),
            QStringLiteral("the viewer offers to edit; it says \"%1\"").arg(world.brick->item(QStringLiteral("fileNote"))->property("text").toString()));
     files(world).setEditing(true);
     files(world).edit(files(world).text() + QStringLiteral("changed\n"));
     world.sync();
-    expect(!path.isEmpty() && !files(world).editing() && writes(world).isEmpty() && fakeFiles(world.mc).files == before.files &&
+    expect(!path.isEmpty() && !files(world).editing() && writes(world).size() == writesBefore && fakeFiles(world.mc).files == before.files &&
                fakeFiles(world.mc).outside == before.outside,
            QStringLiteral("the file was changed"));
   });
@@ -345,6 +356,17 @@ const Steps steps([] {
   step(QStringLiteral("the thread is on this computer"), [](World&, const Captures&, const Table&) {});
   step(QStringLiteral("the agent wrote %1 outside the project").arg(q), [](World& world, const Captures& c, const Table&) {
     fakeFiles(world.mc).outside.insert(c[0], QStringLiteral("dish,price\nsoup,4.50\n"));
+  });
+  step(QStringLiteral("this device was paired without terminal access"), [](World& world, const Captures&, const Table&) { viewer(world).noTerminal = true; });
+  step(QStringLiteral("the user is told saving outside the project needs terminal access"), [](World& world, const Captures&, const Table&) {
+    const QString why = QStringLiteral("Saving a file outside the project needs terminal access, which this device was not paired with.");
+    world.waitFor([&] { return files(world).saveProblem() == why; }, [&] { return describeViewer(world); });
+    world.sync();
+    // Asked once: the refusal is not tried again, and the edit stays on screen to copy.
+    expect(writes(world).size() == 1 && !files(world).editing() && files(world).text().contains(viewer(world).typed) &&
+               world.brick->shows(QStringLiteral("Not saved: %1").arg(why)),
+           QStringLiteral("%1 after %2 write(s)").arg(describeViewer(world)).arg(writes(world).size()));
+    viewer(world).described = viewer(world).edited;
   });
   step(QStringLiteral("the user opens %1 and edits it").arg(q), [](World& world, const Captures& c, const Table&) {
     showPanel(world);

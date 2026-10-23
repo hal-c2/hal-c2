@@ -66,7 +66,9 @@ private:
 // `edit`): an edit is written with
 // `projects.writeFile` half a second after the last one, and at once when the
 // file closes or another opens. A write the MC refuses keeps the edit and
-// says why (`saveProblem`, `saveFailed`). A Markdown task ticked in the
+// says why (`saveProblem`, `saveFailed`); one refused outside the workspace
+// for want of terminal access leaves such files there read-only
+// (`readOnlyReason`). A Markdown task ticked in the
 // rendered view (`toggleTask`) is written at once.
 //
 // A media file (mediaKindOf) is never read as text: the environment signs a
@@ -180,6 +182,8 @@ public:
   QString renderedText() const;
   bool editable() const { return readOnlyReason().isEmpty() && m_fileStatus == QLatin1String("ready") && mediaKind().isEmpty(); }
   QString readOnlyReason() const;
+  // The open file is outside the workspace on an environment that refused such a write.
+  bool hostWritesRefused() const;
   bool editing() const { return m_editing; }
   void setEditing(bool editing);
   bool unsaved() const { return m_pending; }
@@ -287,6 +291,9 @@ private:
   bool m_saving = false;
   int m_revision = 0;
   QString m_saveProblem;
+  // The environment that refused to write a file by its full path for want of
+  // terminal access (the session's scopes do not change while it lasts).
+  QString m_hostWritesRefusedOn;
   std::optional<bool> m_wrap;
   bool m_defaultWrap = false;
 };

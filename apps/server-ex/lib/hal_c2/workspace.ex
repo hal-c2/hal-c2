@@ -10,6 +10,12 @@ defmodule HalC2.Workspace do
   grep where ripgrep is missing. Writes, and reads by a relative path, stay inside
   the workspace root, symlinks included; a write by an absolute path only replaces a
   text file already there, as one read by that path is edited.
+
+  That write reaches any such file the MC's user can write (`~/.bashrc` as much as a
+  report the agent left in `/tmp`), which is as much as a shell can do, so a session
+  needs `terminal:operate` for it (`HalC2.Rpc.required_scope/2`, which the socket
+  checks before the call goes to the member that owns the environment). Nothing here
+  ties the path to the thread.
   """
 
   use GenServer
@@ -135,7 +141,8 @@ defmodule HalC2.Workspace do
   `projects.writeFile`: writes a file inside the root, creating its folders. An
   absolute path writes back a file on the host that `read_file/1` read in place (one
   an agent left elsewhere): only a text file that is there already and that the
-  viewer could read whole, so nothing is created outside the root.
+  viewer could read whole, so nothing is created outside the root. That needs a
+  session with `terminal:operate` (see the moduledoc).
   """
   def write_file(%{"cwd" => cwd, "relativePath" => relative, "contents" => contents} = input) do
     error = &file_error("ProjectWriteFileError", input, &1, &2)

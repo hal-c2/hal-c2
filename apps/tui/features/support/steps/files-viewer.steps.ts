@@ -2,9 +2,10 @@
 // rendered files and their source, opening a file in an editor on this computer,
 // and editing with saves that follow the typing.
 import { expect } from "bun:test";
-import { DEFAULT_SERVER_SETTINGS, EDITORS } from "@hal-c2/contracts";
+import { DEFAULT_SERVER_SETTINGS, EDITORS, ProjectWriteFileError } from "@hal-c2/contracts";
 
-import type { TuiFilesState } from "../../../src/host/filesState.ts";
+import { ClusterRpcError } from "../../../../../packages/client-runtime/src/v3/clusterSocket.ts";
+import { HOST_WRITE_REFUSED, type TuiFilesState } from "../../../src/host/filesState.ts";
 import { FILES_ELSEWHERE, hostedHere } from "../../../src/thisMachine.ts";
 import { step } from "../../steps.ts";
 import { PREVIEW_FILES } from "../filePreviewFixtures.ts";
@@ -15,6 +16,8 @@ import { ensureOpen, type FilesWorld, openFile } from "./files.steps.ts";
 interface ViewerWorld extends World {
   /** The MC's reason for refusing to write a path. */
   writeErrors?: Record<string, string>;
+  /** This device was paired without terminal:operate: the MC refuses writes by full path. */
+  noTerminal?: boolean;
   /** What the editor held before the scenario typed into it. */
   original?: string;
 }
@@ -45,6 +48,18 @@ const servesWrites = (ctx: ViewerWorld) => {
   ctx.fake!.override("writeFile", async (cwd, relativePath, contents) => {
     const refusal = ctx.writeErrors?.[relativePath];
     if (refusal) throw new Error(refusal);
+    if (ctx.noTerminal && relativePath.startsWith("/")) {
+      // As the session hands it on: the socket's refusal in the error's cause.
+      throw new ProjectWriteFileError({
+        cwd,
+        relativePath,
+        failure: "operation_failed",
+        cause: new ClusterRpcError("terminal:operate is required", {
+          _tag: "EnvironmentScopeRequiredError",
+          requiredScope: "terminal:operate",
+        }),
+      });
+    }
     ctx.fake!.server.written.set(`${cwd}:${relativePath}`, contents);
   });
 };
@@ -316,6 +331,39 @@ step(
     await typeAndPause(ctx);
   },
 );
+
+step("this device was paired without terminal access", async (ctx: ViewerWorld & FilesWorld) => {
+  ctx.noTerminal = true;
+  await ensureOpen(ctx);
+});
+
+step(
+  "the user is told saving outside the project needs terminal access",
+  async (ctx: ViewerWorld) => {
+    const screen = await settle(ctx);
+    expect(writes(ctx)).toHaveLength(1);
+    expect(status(ctx)).toEqual({
+      kind: "error",
+      text: `Could not save ${viewer(ctx).path}: ${HOST_WRITE_REFUSED}`,
+    });
+    expect(screen).toContain(statusLabel(ctx));
+    // The editor closed on the edit, which stays on screen, unsaved.
+    expect(ctx.host!.state.get("mode")).toBe("files");
+    expect(viewer(ctx).editing).toBe(false);
+    expect(screen).toContain(CHANGE);
+  },
+);
+
+step("the file cannot be edited", async (ctx: ViewerWorld) => {
+  const before = writes(ctx).length;
+  await pressKey(ctx, "i");
+  const screen = await settle(ctx);
+  expect(ctx.host!.state.get("mode")).toBe("files");
+  expect(viewer(ctx).editing).toBe(false);
+  expect(status(ctx)).toEqual({ kind: "warning", text: HOST_WRITE_REFUSED });
+  expect(screen).toContain(statusLabel(ctx));
+  expect(writes(ctx)).toHaveLength(before);
+});
 
 step(
   "the change is written to {string} on the thread's machine",

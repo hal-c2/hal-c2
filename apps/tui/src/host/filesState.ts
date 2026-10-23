@@ -158,6 +158,27 @@ function rowLine(row: FlatTreeRow, active: boolean, nameRoom: number, palette: P
   );
 }
 
+/** Why a file outside the project cannot be saved once the MC refused it (the desktop says the same). */
+export const HOST_WRITE_REFUSED =
+  "Saving a file outside the project needs terminal access, which this device was not paired with.";
+
+/**
+ * The MC refused a write by full path: this session was paired without
+ * terminal:operate (apps/server-ex lib/hal_c2/rpc.ex required_scope/2). The
+ * refusal's detail rides on the write error's `cause` (client-runtime's session).
+ */
+const hostWriteRefused = (error: unknown) => {
+  type Detail = { readonly _tag?: unknown; readonly requiredScope?: unknown };
+  const failure = error as {
+    readonly detail?: Detail;
+    readonly cause?: { readonly detail?: Detail };
+  };
+  const detail = failure?.cause?.detail ?? failure?.detail;
+  return (
+    detail?._tag === "EnvironmentScopeRequiredError" && detail.requiredScope === "terminal:operate"
+  );
+};
+
 export function createFilesController(options: FilesControllerOptions): FilesController {
   const { client } = options;
   const palette = options.palette ?? THEME;
@@ -181,6 +202,12 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     edit?: { text: string; seq: number; save: TuiFileViewerState["save"] } | undefined;
   } | null = null;
   let editSeq = 0;
+  /**
+   * Workspaces whose MC refused a write by full path: their files outside the
+   * project open read-only from then on. The client learns its scopes only so.
+   */
+  const hostWritesRefused = new Set<string>();
+  const readOnly = (path: string) => path.startsWith("/") && hostWritesRefused.has(cwd);
   /** The inside of the viewer's frame. */
   const viewerWidth = () => Math.max(8, options.width() - 4);
   /** The lines the viewer shows: the rendering, or null for the file's text. */
@@ -434,6 +461,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     const edit = viewer?.edit;
     if (!viewer || !edit || edit.save === "saved") return;
     const { path } = viewer;
+    const workspace = cwd;
     const text = edit.text;
     const call = client.writeFile
       ? client.writeFile(cwd, path, text)
@@ -452,6 +480,18 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
           publish();
         },
         (error: unknown) => {
+          if (path.startsWith("/") && hostWriteRefused(error)) {
+            hostWritesRefused.add(workspace);
+            options.status?.(`Could not save ${path}: ${HOST_WRITE_REFUSED}`, "error");
+            if (viewer?.path !== path || !viewer.edit) return;
+            // The edit stays on screen, unsaved, and the file is read-only now.
+            viewer.lines = viewer.edit.text.split("\n");
+            viewer.rendered = undefined;
+            viewer.edit = undefined;
+            options.setEditing?.(false);
+            publish();
+            return;
+          }
           if (viewer?.path !== path || !viewer.edit) return;
           viewer.edit.save = "error";
           options.status?.(`Could not save ${path}: ${errorText(error)}`, "error");
@@ -463,6 +503,10 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
 
   const startEdit = () => {
     if (!viewer || viewer.status !== "ready" || viewer.edit) return;
+    if (readOnly(viewer.path)) {
+      options.status?.(HOST_WRITE_REFUSED, "warning");
+      return;
+    }
     viewer.edit = { text: viewer.lines.join("\n"), seq: ++editSeq, save: "saved" };
     options.setEditing?.(true);
     publish();
@@ -687,7 +731,9 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
                           action: "files.viewer.toggleSource",
                         },
                       ]),
-                  { title: "Edit file here", action: "files.editor.open" },
+                  ...(readOnly(viewer.path)
+                    ? []
+                    : [{ title: "Edit file here", action: "files.editor.open" }]),
                   ...(viewer.status === "ready"
                     ? [{ title: "Copy file contents", action: "files.viewer.copy" }]
                     : []),

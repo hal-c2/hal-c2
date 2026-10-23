@@ -544,9 +544,10 @@ defmodule HalC2.Web.Socket do
 
   # Runs a client RPC on the MC that owns the environment, off this process so a
   # slow command never holds up streaming.
-  # Each method needs the scope the contract declares for it (`HalC2.Rpc.required_scope/1`).
+  # Each call needs the scope the contract declares for it (`HalC2.Rpc.required_scope/2`),
+  # checked here, before the call goes to whichever member owns the environment.
   defp rpc(state, id, environment, method, payload) do
-    scope = HalC2.Rpc.required_scope(method)
+    scope = HalC2.Rpc.required_scope(method, payload)
 
     if allowed?(state, scope) do
       run_rpc(state, id, environment, method, payload)

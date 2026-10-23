@@ -79,7 +79,36 @@ defmodule HalC2.Steps.Files.FileViewerAndEditing do
     path = Host.path(context, file)
     File.mkdir_p!(Path.dirname(path))
     File.write!(path, "- buy milk\n")
-    Map.put(context, :contents, "- buy milk\n")
+    Map.merge(context, %{contents: "- buy milk\n", host_before: "- buy milk\n"})
+  end
+
+  step "a client paired without terminal access", context do
+    scopes = HalC2.Auth.standard_scopes() -- ["terminal:operate"]
+    World.put_client(context, "no terminal", Mc.connect_as(context.mc, Mc.pair(scopes, "Phone")))
+  end
+
+  step "that client writes {string} in {string}", %{args: [file, project]} = context do
+    Mc.ensure(HalC2.Workspace)
+    contents = "export const written = #{System.unique_integer([:positive])};\n"
+
+    input = %{
+      "cwd" => World.project(context, project).root,
+      "relativePath" => Host.path(context, file),
+      "contents" => contents
+    }
+
+    {reply, context} = World.call(context, "projects.writeFile", input, "no terminal")
+    Map.merge(context, %{reply: reply, written: contents})
+  end
+
+  step "the MC answers that client that {word} is required", %{args: [scope]} = context do
+    message = "#{scope} is required"
+
+    assert {:error, ^message,
+            %{"_tag" => "EnvironmentScopeRequiredError", "requiredScope" => ^scope}} =
+             context.reply
+
+    context
   end
 
   step "the file comes back under its full path", context do

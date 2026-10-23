@@ -6,6 +6,12 @@ defmodule HalC2.WorkspaceWritePropTest do
   leaves them. A write by full path lands only on a text file already there that
   `read_file/1` gives whole, through any links; every other write is refused and
   changes nothing, and nothing is ever created outside the project.
+
+  Each write is made by a session with or without `terminal:operate`, gated as the
+  socket gates it (`HalC2.Rpc.required_scope/2`), and names the file by its full path
+  or by a relative path that tries to leave the project (`../outside/a`, or through a
+  link in the project to the folder outside). A session without terminal access never
+  changes anything outside the project, however it names the file.
   """
 
   use ExUnit.Case, async: false
@@ -41,6 +47,8 @@ defmodule HalC2.WorkspaceWritePropTest do
     outside = Path.join(dir, "outside")
     File.mkdir_p!(root)
     File.mkdir_p!(outside)
+    # The way out a relative path can try: a link in the project to the folder outside.
+    File.ln_s!(outside, Path.join(root, "out"))
     Process.put(:root, root)
     Process.put(:outside, outside)
   end
@@ -56,7 +64,9 @@ defmodule HalC2.WorkspaceWritePropTest do
       {1, {:call, __MODULE__, :put, [oneof(@names), oneof([:binary, :big, :folder])]}},
       {2, {:call, __MODULE__, :link, [oneof(@names), oneof(@names)]}},
       {1, {:call, __MODULE__, :remove, [oneof(@names)]}},
-      {5, {:call, __MODULE__, :write, [oneof(@names), oneof(@texts)]}}
+      {5,
+       {:call, __MODULE__, :write,
+        [oneof(@names), oneof(@texts), oneof([:full, :dotdot, :link]), boolean()]}}
     ])
   end
 
@@ -73,25 +83,33 @@ defmodule HalC2.WorkspaceWritePropTest do
 
   def next_state(state, _result, {:call, _, :remove, [name]}), do: Map.delete(state, name)
 
-  def next_state(state, _result, {:call, _, :write, [name, text]}) do
+  def next_state(state, _result, {:call, _, :write, [name, text, how, terminal?]}) do
     case resolve(state, name) do
-      {target, {:text, _}} -> Map.put(state, target, {:text, text})
-      _ -> state
+      {target, {:text, _}} when how == :full and terminal? ->
+        Map.put(state, target, {:text, text})
+
+      _ ->
+        state
     end
   end
 
-  def postcondition(state, {:call, _, :write, [name, text]}, {result, seen, project}) do
-    written? = match?({_, {:text, _}}, resolve(state, name))
+  def postcondition(
+        state,
+        {:call, _, :write, [name, _, how, terminal?]} = call,
+        {result, seen, project}
+      ) do
+    refused_scope? = how == :full and not terminal?
+    written? = how == :full and terminal? and match?({_, {:text, _}}, resolve(state, name))
 
     answered =
       case result do
         {:ok, %{"relativePath" => shown}} -> written? and shown == path(name)
-        {:error, %{"_tag" => "ProjectWriteFileError"}} -> not written?
+        :terminal_operate_required -> refused_scope?
+        {:error, %{"_tag" => "ProjectWriteFileError"}} -> not written? and not refused_scope?
         _ -> false
       end
 
-    answered and project == [] and
-      seen == next_state(state, nil, {:call, __MODULE__, :write, [name, text]})
+    answered and project == ["out"] and seen == next_state(state, nil, call)
   end
 
   def postcondition(_state, _call, _result), do: true
@@ -135,11 +153,28 @@ defmodule HalC2.WorkspaceWritePropTest do
 
   def remove(name), do: clear(name)
 
-  # The write, what the host outside the project holds after it, and the project.
-  def write(name, text) do
+  # The write by a session with or without terminal access, as the socket gates it;
+  # what the host outside the project holds after it; and the project.
+  def write(name, text, how, terminal?) do
     root = Process.get(:root)
-    input = %{"cwd" => root, "relativePath" => path(name), "contents" => text}
-    {Workspace.write_file(input), seen(), File.ls!(root)}
+
+    relative =
+      case how do
+        :full -> path(name)
+        :dotdot -> "../outside/#{name}"
+        :link -> "out/#{name}"
+      end
+
+    input = %{"cwd" => root, "relativePath" => relative, "contents" => text}
+    scopes = HalC2.Auth.standard_scopes()
+    scopes = if terminal?, do: scopes, else: scopes -- ["terminal:operate"]
+
+    result =
+      if HalC2.Rpc.required_scope("projects.writeFile", input) in scopes,
+        do: Workspace.write_file(input),
+        else: :terminal_operate_required
+
+    {result, seen(), File.ls!(root)}
   end
 
   defp seen do

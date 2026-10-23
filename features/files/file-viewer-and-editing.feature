@@ -1,5 +1,6 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/workspace.ex (read_file, write_file, path checks)
+#   apps/server-ex/lib/hal_c2/rpc.ex (required_scope/2: a write by full path needs terminal:operate)
 #   apps/server-ex/lib/hal_c2/attachments.ex (assets.createUrl: the signed address a media file previews from)
 #   apps/server/src/workspace/WorkspaceFileSystem.ts, WorkspacePaths.ts (read limits, binary guard, path checks)
 #   apps/server-ex/lib/hal_c2/editors.ex (shell.openInEditor)
@@ -535,6 +536,19 @@ Feature: Viewing and editing files
         | a binary file                | /home/sam/notes/db.bin   | is not a text file                        |
         | a text file larger than 1 MB | /home/sam/notes/big.log  | is larger than 1 MB                       |
 
+    # A write by full path reaches any such file on the host, as far as a shell in a
+    # terminal does, so it takes the session's terminal access. A session paired
+    # without it saves inside the project only.
+    @mc
+    Scenario: A session without terminal access cannot save a file outside the project
+      Given the host has the file "/home/sam/notes/todo.txt"
+      And a client paired without terminal access
+      When that client writes "/home/sam/notes/todo.txt" in "shop"
+      Then the MC answers that client that terminal:operate is required
+      And nothing at "/home/sam/notes/todo.txt" changed
+      When that client writes "src/app.ts" in "shop"
+      Then "src/app.ts" exists with the written contents
+
     @desktop @tui
     Scenario: Edits save themselves shortly after the user stops typing
       Given the user is editing "src/app.ts"
@@ -568,6 +582,16 @@ Feature: Viewing and editing files
         | where                                |
         | on this computer                     |
         | on another machine of the cluster    |
+
+    # The client learns the session's scopes from the MC's refusal, and keeps such
+    # files read-only for that environment from then on.
+    @desktop @tui
+    Scenario: A file outside the project turns read-only when the MC refuses to save it
+      Given this device was paired without terminal access
+      And the agent wrote "/tmp/report/menu.csv" outside the project
+      When the user opens "/tmp/report/menu.csv" and edits it
+      Then the user is told saving outside the project needs terminal access
+      And the file cannot be edited
 
     # Copying takes the text anywhere, also where no folder on this machine shows the
     # file (files-on-another-machine.feature). The phone layout has no file viewer

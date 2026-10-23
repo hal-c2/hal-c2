@@ -553,12 +553,33 @@ QString WorkspaceFiles::renderedText() const {
   return out;
 }
 
+namespace {
+
+// A file outside the workspace, opened by its full path.
+bool hostPath(const QString& path) {
+  return path.startsWith(QLatin1Char('/')) || path.contains(QLatin1String(":\\"));
+}
+
+QString hostWriteRefusal() {
+  return WorkspaceFiles::tr("Saving a file outside the project needs terminal access, which this device was not paired with.");
+}
+
+}  // namespace
+
 QString WorkspaceFiles::readOnlyReason() const {
   if (m_fileStatus != QLatin1String("ready")) return {};
   if (m_truncated) return tr("Files larger than 1 MB open read-only.");
   // A file outside the workspace is written back by its full path, by the MC
-  // that read it; one that is not text it refuses (saveFailed).
+  // that read it; one that is not text it refuses (saveFailed). Such a write
+  // reaches any file on that machine, so it needs the terminal access this
+  // device may have been paired without; once refused, the others there open
+  // read-only too.
+  if (hostWritesRefused()) return hostWriteRefusal();
   return {};
+}
+
+bool WorkspaceFiles::hostWritesRefused() const {
+  return !m_hostWritesRefusedOn.isEmpty() && m_hostWritesRefusedOn == m_environment && hostPath(m_openPath);
 }
 
 void WorkspaceFiles::setEditing(bool editing) {
@@ -605,22 +626,46 @@ void WorkspaceFiles::toggleTask(int index) {
 void WorkspaceFiles::save(bool closing) {
   m_saveDelay.stop();
   if (!m_pending || m_openPath.isEmpty() || m_root.isEmpty()) return;
+  if (hostWritesRefused()) {
+    // Refused already: the edit stays on screen, unsaved, until the file goes,
+    // and is never written to the file opened next.
+    if (closing) m_pending = false;
+    return;
+  }
   // One write at a time: the next goes when this one is answered.
   if (m_saving && !closing) return;
   const QString path = m_openPath;
   const QString root = m_root;
   const int revision = m_revision;
   const int request = m_fileRequest;
+  const QString environment = m_environment;
   m_saving = !closing;
   if (closing) m_pending = false;
   m_client->call(this, m_environment, QStringLiteral("projects.writeFile"),
                  QJsonObject{{QStringLiteral("cwd"), root}, {QStringLiteral("relativePath"), path}, {QStringLiteral("contents"), m_text}},
-                 [this, path, root, revision, request, closing](const QJsonValue&, const std::optional<QString>& error) {
-                   const QString problem = error ? (error->isEmpty() ? QStringLiteral("Unable to save this file.") : *error) : QString();
+                 [this, path, root, environment, revision, request, closing](const QJsonValue& detail, const std::optional<QString>& error) {
+                   // A session without terminal access may not write outside the workspace (Rpc.required_scope/2).
+                   const QJsonObject refusal = error ? detail.toObject() : QJsonObject();
+                   const bool hostRefused = refusal.value(QLatin1String("_tag")) == QLatin1String("EnvironmentScopeRequiredError") &&
+                                            refusal.value(QLatin1String("requiredScope")) == QLatin1String("terminal:operate");
+                   if (hostRefused) m_hostWritesRefusedOn = environment;
+                   const QString problem = hostRefused ? hostWriteRefusal()
+                                           : error     ? (error->isEmpty() ? QStringLiteral("Unable to save this file.") : *error)
+                                                       : QString();
                    if (error) emit saveFailed(path, problem);
                    // The file closed, or another opened, meanwhile.
                    if (closing || path != m_openPath || root != m_root || request != m_fileRequest) return;
                    m_saving = false;
+                   if (hostRefused) {
+                     // The file is read-only now; the view shows the edit that was not saved, to copy.
+                     m_saveProblem = problem;
+                     m_editing = false;
+                     m_lines.setText(m_text);
+                     emit renderedChanged();
+                     emit fileChanged();
+                     emit saveChanged();
+                     return;
+                   }
                    if (error) {
                      // The edit stays, to be written with the next one.
                      m_saveProblem = problem;
