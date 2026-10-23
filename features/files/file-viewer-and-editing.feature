@@ -587,7 +587,8 @@ Feature: Viewing and editing files
         | on another machine of the cluster    |
 
     # The client learns the session's scopes from the MC's refusal, and keeps such
-    # files read-only for that environment from then on.
+    # files read-only from then on: for that environment on the desktop, for that
+    # thread's workspace on the TUI (its files controller knows only the workspace).
     @desktop @tui
     Scenario: A file outside the project turns read-only when the MC refuses to save it
       Given this device was paired without terminal access
