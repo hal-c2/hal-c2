@@ -710,6 +710,68 @@ defmodule HalC2.Steps.Providers.Opencode do
     Map.put(context, :running, %{thread: World.thread_id(context, @thread)})
   end
 
+  # OpenCode ends (or fails) the turn's loop as the steer lands, and answers it in a
+  # loop of its own.
+  step ~r/^an OpenCode turn is running that (?<how>ends|fails) as it is steered$/,
+       %{args: [how]} = context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "opencode", "wait, it #{how} as steered")
+
+    World.await_running(context, @thread)
+
+    context
+    |> Map.put(:running, %{thread: World.thread_id(context, @thread)})
+    |> Map.put(:thread, @thread)
+  end
+
+  # A steer, as the composer sends one into the running turn. Its text says how the
+  # fake answers it: "never answered", "keeps working" (a loop that runs until the
+  # turn is stopped or steered again), "its loop fails".
+  step "the user steers the OpenCode turn with {string}", %{args: [text]} = context do
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "message.dispatch",
+        "threadId" => context.running.thread,
+        "messageId" => "steer-#{System.unique_integer([:positive])}",
+        "text" => text,
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "start_immediately"},
+        "deliveryIntent" => "steer"
+      })
+
+    context
+  end
+
+  # The steer's own loop started, after the turn's prompt answered: its message is
+  # there and the turn still runs.
+  step "OpenCode answers the turn's prompt and the message in a loop of its own", context do
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(StreamState.list(state, "message"), &String.contains?(&1["id"], ":msg-steer"))
+    end)
+
+    World.await_runs(context, @thread, ["running"])
+    context
+  end
+
+  step "the OpenCode turn is interrupted", context do
+    World.await_runs(context, @thread, ["interrupted"])
+    context
+  end
+
+  # The steer's loop ran last, so its failure is the turn's.
+  step "the OpenCode turn fails with {string}", %{args: [error]} = context do
+    World.await_runs(context, @thread, ["failed"])
+
+    assert Enum.any?(
+             StreamState.list(World.stream(context, @thread), "provider-session"),
+             &(&1["lastError"] == error)
+           )
+
+    context
+  end
+
   # The MC talks to OpenCode over ACP, so its event stream is the agent's connection.
   step "an OpenCode turn is streaming", context do
     context =
@@ -758,6 +820,13 @@ defmodule HalC2.Steps.Providers.Opencode do
           ])
     )
 
+    World.await_runs(context, @thread, ["completed"])
+    assert "steered: look here instead" in World.replies(context, @thread)
+    context
+  end
+
+  # The turn waits for the steer's own loop, so its answer is recorded in the turn.
+  step "OpenCode's answer to the message is the turn's", context do
     World.await_runs(context, @thread, ["completed"])
     assert "steered: look here instead" in World.replies(context, @thread)
     context

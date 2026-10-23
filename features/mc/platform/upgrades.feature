@@ -282,6 +282,31 @@ Feature: MC self-update and hot upgrades
     And the other MC loaded that bundle's code too
 
   @mc
+  Scenario: A version built again is installed from its newest bundle
+    Given the MC already unpacked a bundle of the target version
+    And that version is built again with other code
+    When it updates to that version
+    Then it loads the code built last
+
+  @mc
+  Scenario: A developer's release reload reaches an installed MC under a HAL-C2 home root
+    Given an installed MC that keeps its files under a HAL_C2_HOME root
+    When a developer reloads the installed MC naming that root
+    Then the reload looks for that MC in the root's MC directories
+
+  @mc
+  Scenario Outline: A developer's release reload refuses a root that cannot name an installed MC
+    When a developer reloads the installed MC naming the root "<root>"
+    Then the reload is refused naming that root
+
+    Examples:
+      | root         |
+      | ~/.t3        |
+      | ~/.hal-c2    |
+      | ~/.t3/sub    |
+      | relative/dir |
+
+  @mc
   Scenario: A bundle built on its machine that needs a restart restarts the installed MC
     Given a bundle on this machine the MC has not seen that needs a restart
     When a developer reloads the local MC with that bundle

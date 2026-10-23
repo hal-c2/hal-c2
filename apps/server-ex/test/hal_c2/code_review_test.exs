@@ -227,7 +227,224 @@ defmodule HalC2.CodeReviewTest do
     settle()
   end
 
+  test "a push to a pull request the user asked to review is reviewed again in selective mode",
+       context do
+    save_settings(%{"reviewNewPushes" => true})
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+
+    assert %{"status" => "running", "reviewedSha" => reviewed} = review()
+    assert reviewed == context.shas[2]
+  end
+
+  test "a push to a followed pull request is seen after its repository stops being watched",
+       context do
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    save_settings(%{"repositories" => []})
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+
+    assert %{"changed" => true, "headSha" => head} = review()
+    assert head == context.shas[2]
+  end
+
+  test "a review stopped by a usage limit waits in the queue instead of failing", context do
+    review = start_review()
+    reset = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+
+    :ok =
+      apply(@server, :handle_event, [
+        %{
+          "type" => "turn.finished",
+          "threadId" => review["threadId"],
+          "status" => "failed",
+          "errorClass" => "usage_limit",
+          "error" => "Subscription quota exhausted.",
+          "resetAt" => reset
+        },
+        %{}
+      ])
+
+    settle()
+    assert %{"status" => "queued"} = review()
+    assert GenServer.call(@server, :snapshot)["problem"] =~ "usage limit"
+    _ = context
+  end
+
+  test "a finished review settles its thread in the sidebar", context do
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    settle()
+    assert %{"settledOverride" => "settled"} = thread(review["threadId"])
+    _ = context
+  end
+
+  test "showing reviews on the page only unlists review threads there already are", context do
+    review = start_review()
+    assert %{"plugin" => %{"listed" => true}} = thread(review["threadId"])
+
+    save_settings(%{"display" => "page"})
+    settle()
+    assert %{"plugin" => %{"listed" => false}} = thread(review["threadId"])
+
+    save_settings(%{"display" => "both"})
+    settle()
+    assert %{"plugin" => %{"listed" => true}} = thread(review["threadId"])
+    _ = context
+  end
+
+  test "a review runs with the model options picked in the settings", context do
+    save_settings(%{"modelOptions" => %{"reasoningEffort" => "high", "effort" => "high"}})
+    review = start_review()
+
+    assert %{"modelSelection" => %{"options" => options}} = thread(review["threadId"])
+    assert %{"value" => "high"} = Enum.find(options, &(&1["id"] in ["reasoningEffort", "effort"]))
+    _ = context
+  end
+
+  test "model options a known model does not offer are left out of its run", context do
+    save_settings(%{"model" => "", "modelOptions" => %{"reasoningEffort" => "high"}})
+    review = start_review()
+
+    assert %{"modelSelection" => selection} = thread(review["threadId"])
+    assert selection["model"] in ["gpt-6-luna", "gpt-5.5"]
+    refute Map.has_key?(selection, "options")
+    _ = context
+  end
+
+  test "a usage-limit pause holds across a restart of the plugin", context do
+    review = start_review()
+    reset = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+
+    :ok =
+      apply(@server, :handle_event, [
+        %{
+          "type" => "turn.finished",
+          "threadId" => review["threadId"],
+          "status" => "failed",
+          "errorClass" => "usage_limit",
+          "error" => "Subscription quota exhausted.",
+          "resetAt" => reset
+        },
+        %{}
+      ])
+
+    settle()
+    assert %{"status" => "queued"} = review()
+
+    # A settings save restarts the plugin; the queue must not start into the limit.
+    save_settings(%{})
+    refresh()
+    assert %{"status" => "queued"} = review()
+    assert GenServer.call(@server, :snapshot)["problem"] =~ "usage limit"
+    _ = context
+  end
+
+  test "a review saved before following was kept stays followed on an automatic re-queue",
+       context do
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    settle()
+
+    # As reviews.json looked before the following flag: no such key.
+    file = Path.join([context.dir, "home", "plugin-data", "code-review", "reviews.json"])
+    saved = file |> File.read!() |> JSON.decode!()
+    saved = put_in(saved, ["reviews", @key], Map.delete(saved["reviews"][@key], "following"))
+    File.write!(file, JSON.encode!(saved))
+
+    save_settings(%{"activation" => "automatic", "reviewNewPushes" => true})
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+
+    assert %{"status" => "running", "following" => true} = review()
+  end
+
+  test "a plugin unsettling its thread clears the override, so it can settle again",
+       context do
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    settle()
+    assert %{"settledOverride" => "settled"} = thread(review["threadId"])
+
+    :ok =
+      HalC2.Orchestration.organize_plugin_thread(review["threadId"], @id, %{"settled" => false})
+
+    assert %{"settledOverride" => nil} = thread(review["threadId"])
+
+    :ok =
+      HalC2.Orchestration.organize_plugin_thread(review["threadId"], @id, %{"settled" => true})
+
+    assert %{"settledOverride" => "settled"} = thread(review["threadId"])
+    _ = context
+  end
+
   # --- helpers ----------------------------------------------------------------------------
+
+  defp thread(thread_id) do
+    HalC2.StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id]
+  end
+
+  defp save_settings(overrides) do
+    settings =
+      Map.merge(
+        %{
+          "provider" => "codex",
+          "model" => "fake/one",
+          "prompt" => "Review \#{{pr.number}} in {{repository}}. answer from gate",
+          "pollMinutes" => 60,
+          "repositories" => ["acme/api"],
+          "activation" => "selective",
+          "publishing" => "draft",
+          "reviewNewPushes" => false,
+          "readReviewMd" => false
+        },
+        overrides
+      )
+
+    {:ok, _} = HalC2.Plugins.handle("saveSettings", %{"id" => @id, "settings" => settings})
+    settle()
+  end
 
   defp start_review do
     {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})

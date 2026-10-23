@@ -75,6 +75,23 @@ Feature: Custom themes
       And Escape closes the theme editor and gives the keyboard back
 
     @desktop
+    Scenario: A press outside the theme editor closes it
+      Given the message field has the keyboard
+      And the user opens the theme editor
+      When the user presses in the message field
+      Then the theme editor closes and the message field keeps what is typed there
+
+    # Escape, Cancel and Save let the changes go; a stray press outside must not.
+    @desktop
+    Scenario: A press outside the theme editor keeps what was changed
+      Given the message field has the keyboard
+      And the user opens the theme editor
+      And the user renames the theme in the editor
+      When the user presses in the message field
+      And the theme editor is toggled open again
+      Then the editor still holds the new name
+
+    @desktop
     Scenario: The theme import dialog takes the keyboard
       Given the message field has the keyboard
       When the user opens the theme import dialog
@@ -92,12 +109,14 @@ Feature: Custom themes
       Given the theme editor is open
       When the user inspects the app and picks the sidebar
       Then the editor shows the color used there and how many places use it
+      And the keyboard is back in the theme editor
 
     @desktop
     Scenario: Escape cancels picking a color
       Given the user is inspecting the app for a color
       When the user presses Escape
       Then nothing is picked
+      And the keyboard is back in the theme editor
 
     # Legacy: apps/web/src/components/settings/ThemeColorPicker.tsx (ThemeColorField)
     @backlog @desktop
@@ -185,6 +204,17 @@ Feature: Custom themes
     Scenario: Duplicating a theme
       When the user duplicates "Nord"
       Then an editable copy of "Nord" is added
+
+    @desktop
+    Scenario: Duplicating the standard theme
+      When the user duplicates the standard theme
+      Then an editable copy of the standard theme as drawn now is added and becomes the theme in use
+
+    @desktop
+    Scenario: A saved theme with the standard theme's id does not stand in for it
+      Given a saved theme has the standard theme's id
+      When the user duplicates the standard theme
+      Then the copy of the standard theme draws the standard colors, not the saved theme's
 
     # Legacy: apps/web/src/components/settings/ThemeSettings.tsx (seedName `${label} copy`)
     @backlog @desktop
@@ -536,6 +566,7 @@ Feature: Custom themes
         | uses a color that is not a literal CSS color  | The color for "accent" must be a literal CSS color such as oklch(0.62 0.2 280). |
         | has an id with capitals or spaces             | Theme ids may only contain lowercase letters, numbers, and hyphens.  |
         | takes the id of a built-in theme              | The theme id "default" is reserved.                                  |
+        | takes the id of the standard theme            | The theme id "hal-c2" is reserved.                                   |
         | has a variant that repeats the base appearance | Theme variants must not repeat the base appearance "dark".           |
 
     @backlog @desktop

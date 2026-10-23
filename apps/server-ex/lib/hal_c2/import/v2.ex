@@ -22,6 +22,27 @@ defmodule HalC2.Import.V2 do
 
   Options: `:only`, the stream ids to import, and `:rewrite`, a function every event's
   payload goes through first (`HalC2.ThreadArchive.rewriter/4`, to land in another project).
+  `:resume` names streams an import that stopped partway left in the store, as
+  `%{id => {count, last}}`: their changes there and the last of them (`{kind, entity,
+  patch, at}`). The import is deterministic, so those streams continue after their first
+  `count` changes; one whose last change is not the import's own raises instead, since
+  something else wrote to it and its history can no longer be continued. Only that
+  last skipped change is compared, so determinism also rests on the source's
+  prefix being unchanged and on the retry diffing as the stopped attempt did
+  (an older MC's import resumed after an upgrade whose diffing changed would
+  mix its prefix patches with new suffix diffs). The tail is
+  read again just before each batch of changes after the skipped ones is stored, and at
+  the end of the stream, so a write during the replay itself
+  (which re-reads the whole history first) — before the first batch or between
+  later ones — raises too instead of being appended over
+  or silently kept — checked immediately before the append, not atomically with
+  it: a write landing between that re-read and the store call is still possible,
+  though in practice the thread is hidden and its family's imports are locked,
+  so a writer would need its id by another route. And so does
+  one holding more changes than the source now gives, including one the source no
+  longer has at all. Determinism needs the same
+  `:rewrite` as the stopped import: the caller resumes a stream only into the project
+  it was going to (`HalC2.Import.PreviousInstall`).
   """
 
   @quiet_events ["thread.visited", "thread.marked-unread"]
@@ -44,6 +65,16 @@ defmodule HalC2.Import.V2 do
 
     try do
       streams = source_streams(db, Keyword.get(opts, :only))
+      resume = Keyword.get(opts, :resume, %{})
+
+      # A stream to resume that the source no longer has at all is not skipped over:
+      # what is stored here is more than its install now has, as below.
+      for {id, {skip, _last}} <- resume,
+          skip > 0,
+          not Enum.any?(streams, fn {_aggregate, stream_id, _legacy?} -> stream_id == id end) do
+        raise "#{id} holds more here than its install now has, so it cannot be continued"
+      end
+
       totals = %{streams: 0, source_events: 0, events: 0, source_bytes: 0, bytes: 0}
       progress = progress(db, streams, opts[:progress])
 
@@ -56,6 +87,7 @@ defmodule HalC2.Import.V2 do
               aggregate,
               stream_id,
               legacy?,
+              Map.get(resume, stream_id, {0, nil}),
               opts[:rewrite] || (& &1),
               &progress.(totals.source_events + &1)
             )
@@ -141,7 +173,7 @@ defmodule HalC2.Import.V2 do
 
   # A thread with any v2 event was migrated by an earlier install; its v1 events are
   # history the v2 ones already carry.
-  defp import_stream(db, store, aggregate, stream_id, legacy?, rewrite, progress) do
+  defp import_stream(db, store, aggregate, stream_id, legacy?, {skip, last}, rewrite, progress) do
     {:ok, stmt} =
       Sqlite3.prepare(db, """
       SELECT event_type, payload_json, occurred_at FROM orchestration_events
@@ -162,6 +194,12 @@ defmodule HalC2.Import.V2 do
       progress: progress,
       pending: [],
       pending_count: 0,
+      skip: skip,
+      last: last,
+      # The stored tail this stream must still end at before each batch is
+      # stored: the tail the resume was snapshotted from, then this import's
+      # own last stored change after each flush. Nil when not resuming.
+      check_tail: if(skip > 0, do: {skip, last}),
       source_events: 0,
       events: 0,
       source_bytes: 0,
@@ -169,7 +207,17 @@ defmodule HalC2.Import.V2 do
     }
 
     acc = step(db, stmt, acc, store, stream_kind, stream_id)
+
+    if acc.skip > 0,
+      do:
+        raise("#{stream_id} holds more here than its install now has, so it cannot be continued")
+
+    # Checked once more after the last flush, which also covers nothing after
+    # the skipped changes being left to store (the tail check in `flush/4`
+    # would not run, and a write during the replay would be kept as part of
+    # the imported history).
     acc = flush(acc, store, stream_kind, stream_id)
+    acc = verify_tail(acc, store, stream_id)
     HalC2.Projection.rebuild(store, stream_id)
     Map.take(acc, [:source_events, :events, :source_bytes, :bytes])
   end
@@ -298,12 +346,56 @@ defmodule HalC2.Import.V2 do
       )
   end
 
-  defp push(acc, change),
+  defp push(%{skip: 0} = acc, change),
     do: %{acc | pending: [change | acc.pending], pending_count: acc.pending_count + 1}
+
+  # A change a stopped import already stored; the last of them must be the stored one.
+  # The replay is deterministic, so a write here after the stop moves that last change.
+  # That checks the snapshot the resume was given; a write during the replay is
+  # checked for by the tail re-read before each post-skip flush (`verify_tail/3`
+  # — immediately before the append, not atomically with it). Only the last
+  # skipped change is compared, so the prefix before it is taken as the stopped
+  # import left it: determinism rests on the source's prefix being unchanged
+  # and on the retry diffing as the stopped attempt did (see the moduledoc).
+  defp push(%{skip: 1} = acc, change) do
+    if stored(change) != acc.last, do: raise(diverged(acc.stream_id))
+
+    %{acc | skip: 0}
+  end
+
+  defp push(acc, _change), do: %{acc | skip: acc.skip - 1}
+
+  # A change in the form the store keeps it (string keys, lists for tuples),
+  # as `HalC2.Store.stream_tail/2` reads it back.
+  defp stored({kind, entity, patch, at}),
+    do: {kind, entity, JSON.decode!(JSON.encode!(patch)), at}
+
+  defp diverged(stream_id),
+    do: "#{stream_id} changed here after its import stopped, so it cannot be continued"
+
+  # Before each batch after the skipped changes is stored, and again at the end
+  # of the stream, the stream must still end where this import last left it
+  # (the resume's snapshot, then its own last stored change): a write during
+  # the replay — before the first batch or between later ones — would
+  # otherwise have this import's diffs, computed without it, appended over it,
+  # or be kept as imported history. The re-read is on a reader connection and
+  # the append goes through the store writer after it, so the check narrows
+  # the window to between the two calls rather than closing it (the thread is
+  # hidden and family imports are locked meanwhile; a conditional append
+  # inside the writer would close it).
+  defp verify_tail(%{check_tail: nil} = acc, _store, _stream_id), do: acc
+
+  defp verify_tail(acc, store, stream_id) do
+    if HalC2.Store.stream_tail(HalC2.Store.path(store), stream_id) != acc.check_tail,
+      do: raise(diverged(stream_id))
+
+    acc
+  end
 
   defp flush(%{pending: []} = acc, _store, _kind, _id), do: acc
 
   defp flush(acc, store, stream_kind, stream_id) do
+    acc = verify_tail(acc, store, stream_id)
     changes = Enum.reverse(acc.pending)
     {:ok, _seq} = HalC2.Store.append(store, [{stream_kind, stream_id, changes}])
 
@@ -312,10 +404,18 @@ defmodule HalC2.Import.V2 do
         n + IO.iodata_length(JSON.encode_to_iodata!(patch))
       end)
 
+    # The next batch's tail check expects this import's own last stored change.
+    check_tail =
+      case acc.check_tail do
+        nil -> nil
+        {count, _last} -> {count + length(changes), stored(List.last(changes))}
+      end
+
     %{
       acc
       | pending: [],
         pending_count: 0,
+        check_tail: check_tail,
         events: acc.events + length(changes),
         bytes: acc.bytes + bytes
     }

@@ -114,7 +114,7 @@ export function projectSearchSection(
             clip: true,
             run: () => {
               if (!options.openFile(cwd!, match.path, match.lineNumber)) {
-                host.status("Open a thread of this project to read the file.", "error");
+                host.status("Open a thread of this project to read the file.", "warning");
               }
             },
           });

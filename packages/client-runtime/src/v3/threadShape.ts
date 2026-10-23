@@ -65,6 +65,12 @@ const decodeEvent = Schema.decodeUnknownSync(Schema.toCodecJson(OrchestrationV2D
 export class ThreadShapeFold {
   private readonly entities = new Map<string, Map<string, EntityJson>>();
   private updatedAt = 0;
+  // The first run the MC sent (null: the thread's start); undefined without a window.
+  private floor: number | null | undefined;
+  // The newest offset the fold has seen (snapshot, page or event). Snapshots carry it,
+  // so a page that finishes after later events does not move the sequence backwards.
+  private offset = 0;
+  private pageRows: Array<ShapeRow> = [];
   private readonly threadId: ThreadId;
 
   constructor(threadId: ThreadId) {
@@ -78,22 +84,77 @@ export class ThreadShapeFold {
     readonly offset: number;
     /** Time of the stream's latest event, unix ms. */
     readonly at: number | null;
+    /** Where the snapshot's window starts, as the MC says it; absent without a window. */
+    readonly floor?: number | null;
   }): ReadonlyArray<OrchestrationV2ThreadStreamItem> {
     if (input.part === 0) {
       this.entities.clear();
+      this.pageRows = [];
       this.updatedAt = input.at ?? 0;
+      this.floor = input.floor;
     }
     for (const [kind, id, entity] of input.rows) this.byKind(kind).set(id, entity);
     if (!input.done) return [];
+    // The MC repeats the floor on every part; the last one is the one that counts, as
+    // for the socket's resume and the desktop, with part 0's as the fallback.
+    if (input.floor !== undefined) this.floor = input.floor;
+    // A new snapshot replaces everything held, so its offset replaces the one seen.
+    this.offset = input.offset;
+    return this.snapshotItem(this.offset);
+  }
+
+  /**
+   * The runs before the window, as `page` frames bring them: once the last part is
+   * in, a snapshot of the thread with them, and where its window starts now.
+   */
+  page(input: {
+    readonly rows: ReadonlyArray<ShapeRow>;
+    readonly done: boolean;
+    readonly offset: number;
+    readonly floor: number | null;
+  }): ReadonlyArray<OrchestrationV2ThreadStreamItem> {
+    this.pageRows.push(...input.rows);
+    if (!input.done) return [];
+    const older = new Map<string, Map<string, EntityJson>>();
+    for (const [kind, id, entity] of this.pageRows.splice(0)) {
+      if (this.byKind(kind).has(id)) continue;
+      let ofKind = older.get(kind);
+      if (ofKind === undefined) older.set(kind, (ofKind = new Map()));
+      ofKind.set(id, entity);
+    }
+    // Entities keep creation order, and these were created before the ones held.
+    for (const [kind, ofKind] of older) {
+      this.entities.set(kind, new Map([...ofKind, ...this.byKind(kind)]));
+    }
+    this.floor = input.floor;
+    this.offset = Math.max(this.offset, input.offset);
+    return this.snapshotItem(this.offset);
+  }
+
+  private snapshotItem(offset: number): ReadonlyArray<OrchestrationV2ThreadStreamItem> {
     const projection = this.projection();
-    return projection === null
-      ? []
-      : [{ kind: "snapshot", snapshotSequence: input.offset, projection }];
+    if (projection === null) return [];
+    return [
+      {
+        kind: "snapshot",
+        snapshotSequence: offset,
+        projection,
+        // The cursor is the window's floor; the MC pages by it itself, so a client
+        // only needs to know there is something before it.
+        ...(this.floor === undefined
+          ? {}
+          : {
+              historyCursor: this.floor === null ? null : String(this.floor),
+              hasMoreHistory: this.floor !== null,
+            }),
+      },
+    ];
   }
 
   events(events: ReadonlyArray<ShapeEvent>): ReadonlyArray<OrchestrationV2ThreadStreamItem> {
     const items: Array<OrchestrationV2ThreadStreamItem> = [];
     for (const [seq, kind, id, patch, at] of events) {
+      this.offset = Math.max(this.offset, seq);
       // An entity kind a newer MC publishes and this client has no place for: skipped, so
       // the events after it are still applied.
       if (!KNOWN_KINDS.has(kind)) continue;

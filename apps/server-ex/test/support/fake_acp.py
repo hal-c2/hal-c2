@@ -1,6 +1,11 @@
 # Fake ACP agent (like `opencode acp`) for tests. A prompt containing "wait" runs
-# until session/cancel, or until another prompt joins it; "approve" asks permission for a command first, offering
-# "Always allow" unless the prompt says "once only". Title and commit prompts (without
+# until session/cancel, or until another prompt joins it (one that also says "ends as
+# steered" ends just before, or "fails as steered" fails just before, so the joining
+# prompt runs a loop of its own: one that says "its loop fails" fails, "keeps working"
+# writes a paragraph and waits as a "wait" prompt does, so the next one joins it or, as
+# above, ends or fails it). Each steer answers with a message of its own. A prompt
+# saying "never answered" is never answered; "approve" asks permission for a command
+# first, offering "Always allow" unless the prompt says "once only". Title and commit prompts (without
 # FAKE_TEXT_LOG) ask to run a tool, then answer JSON naming the permission outcome.
 # With FAKE_ACP_LOG set, every permission answer is appended to that file as a JSON line;
 # FAKE_ACP_TRACE collects the argv and every message read.
@@ -180,6 +185,10 @@ if PORT:
     api = ThreadingHTTPServer(("127.0.0.1", PORT), Api)
     threading.Thread(target=api.serve_forever, daemon=True).start()
 
+def steered_end(text):
+    """How a waiting prompt's loop ends as a steer lands, if it does."""
+    return "ends" if "ends as steered" in text else "fails" if "fails as steered" in text else None
+
 def update(sid, u):
     send({"method": "session/update", "params": {"sessionId": sid, "update": u}})
 
@@ -299,10 +308,31 @@ for line in sys.stdin:
         if os.environ.get("FAKE_ACP_INPUT_LOG"):
             with open(os.environ["FAKE_ACP_INPUT_LOG"], "a") as input_log:
                 input_log.write(json.dumps(text) + "\n")
+        if "never answered" in text:
+            continue
+        if waiting and waiting[1] == sid and waiting[2]:
+            # The loop ended (or failed) as the prompt landed: OpenCode answers it in a
+            # loop of its own, after the first one's answer.
+            if waiting[2] == "fails":
+                send({"id": waiting[0], "error": {"code": -32603, "message": "The first loop failed"}})
+            else:
+                end_prompt(waiting[0], sid)
+            waiting = None
+            if "its loop fails" in text:
+                send({"id": mid, "error": {"code": -32603, "message": "The steer's loop failed"}})
+                continue
+            # A loop that keeps working has written a paragraph so far, which the thread shows.
+            answer = "steered: " + text + ("\n\n" if "keeps working" in text else "")
+            update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-steer-%s" % mid, "content": {"type": "text", "text": answer}})
+            if "keeps working" in text:
+                waiting = (mid, sid, steered_end(text))
+            else:
+                end_prompt(mid, sid)
+            continue
         if waiting and waiting[1] == sid:
             # A prompt during a waiting turn joins it, as OpenCode's running loop takes
             # it: the turn answers it, then both prompts end.
-            update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-steer", "content": {"type": "text", "text": "steered: " + text}})
+            update(sid, {"sessionUpdate": "agent_message_chunk", "messageId": "msg-steer-%s" % mid, "content": {"type": "text", "text": "steered: " + text}})
             end_prompt(waiting[0], sid)
             send({"id": mid, "result": {"stopReason": "end_turn"}})
             waiting = None
@@ -360,7 +390,7 @@ for line in sys.stdin:
                          "content": [{"type": "content", "content": {"type": "text", "text":
                              "Subagent started in background.\nsubagent_id: %s\nUse get_command_or_subagent_output." % CHILD}}]})
             if "wait" in text:
-                waiting = (mid, sid)
+                waiting = (mid, sid, steered_end(text))
             else:
                 finish_turn(mid, sid)
         elif "wait" in text:
@@ -368,7 +398,7 @@ for line in sys.stdin:
             update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "in_progress",
                          "kind": "execute", "title": "ls", "rawInput": {"command": "ls"},
                          "content": [{"type": "content", "content": {"type": "text", "text": "a.txt\n"}}]})
-            waiting = (mid, sid)
+            waiting = (mid, sid, steered_end(text))
         elif "approve" in text:
             pending = (mid, sid)
             asked += 1

@@ -21,7 +21,7 @@ Item {
 
     readonly property var glyph: ProviderIcons.glyph(driverKind)
     readonly property string bitmap: iconUrl ? iconUrl : ProviderIcons.bitmap(driverKind)
-    readonly property bool dark: Theme.palette.color("text", "#e4e4e7").hslLightness > 0.5
+    readonly property bool dark: ProviderIcons.darkFor(Theme.palette.color("text", "#e4e4e7"))
     readonly property var viewBox: glyph ? glyph.viewBox : [0, 0, 1, 1]
     readonly property real glyphScale: size / Math.max(viewBox[2], viewBox[3])
 
@@ -65,7 +65,7 @@ Item {
             readonly property var part: icon.glyph ? icon.glyph.paths[0] : null
 
             strokeColor: "transparent"
-            fillColor: part ? (icon.dark ? part.dark : part.light) : "transparent"
+            fillColor: part ? (ProviderIcons.fill(icon.driverKind, icon.dark, 0) ?? "transparent") : "transparent"
             fillRule: part && part.evenOdd ? ShapePath.OddEvenFill : ShapePath.WindingFill
 
             PathSvg {
@@ -79,7 +79,7 @@ Item {
             readonly property var part: icon.glyph && icon.glyph.paths.length > 1 ? icon.glyph.paths[1] : null
 
             strokeColor: "transparent"
-            fillColor: part ? (icon.dark ? part.dark : part.light) : "transparent"
+            fillColor: part ? (ProviderIcons.fill(icon.driverKind, icon.dark, 1) ?? "transparent") : "transparent"
             fillRule: part && part.evenOdd ? ShapePath.OddEvenFill : ShapePath.WindingFill
 
             PathSvg {

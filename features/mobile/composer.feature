@@ -663,11 +663,17 @@ Feature: Writing to an agent from a phone
     Then the queued messages close
     And the user is back in the thread
 
+  # The phone already gains "Queue held / Resume queue" in its thread screen
+  # through the shared Composer brick (ThreadScreen.qml uses Composer, which
+  # stacks TurnRequests); that path is exercised by the @desktop scenarios in
+  # features/composer/queue-and-steer.feature over the same brick and native
+  # controller. This scenario stays @backlog because it describes the old
+  # dedicated queued-messages screen, which the QML phone does not have.
   @backlog @mobile
   Scenario: A queue held after a restart is resumed from the queued messages
     Given "also update docs" was queued when "My MacBook" restarted
     When the user opens the queued messages
-    Then the user is told the queue is held after restart
+    Then the user is told the queue is held
     When the user resumes the queue
     Then "also update docs" runs after the current turn
 

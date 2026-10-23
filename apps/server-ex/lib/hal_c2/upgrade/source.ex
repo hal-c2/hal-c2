@@ -6,8 +6,9 @@ defmodule HalC2.Upgrade.Source do
     1. its own cache, `<home>/upgrades/<version>/`, where `mix hal_c2.upgrade` also
        leaves bundles it built;
     2. a cluster peer that already has it, over the peer's HTTP port with a
-       one-time link the peer hands out over distribution (bundles never travel
-       over distribution itself, which a large message would stall);
+       one-time link the peer hands out over distribution, or, when that port is out
+       of reach (an MC that listens on loopback behind Tailscale Serve), in small
+       pieces over distribution (never in one message, which would stall it);
     3. the release artifact at `HAL_C2_UPGRADE_URL` (`{version}` and `{platform}` are
        filled in), with its `.sha256` beside it;
     4. its cache or a peer again, for a bundle of any platform.
@@ -19,6 +20,7 @@ defmodule HalC2.Upgrade.Source do
 
   require Logger
 
+  @part 256 * 1024
   @default_url "https://github.com/hal-c2/hal-c2/releases/download/mc-v{version}/hal-c2-mc-{version}-{platform}.tar.gz"
   @link_ttl_ms :timer.minutes(10)
 
@@ -51,7 +53,24 @@ defmodule HalC2.Upgrade.Source do
   def put(version, platform, source_path) do
     target = archive_path(version, platform)
     File.mkdir_p!(Path.dirname(target))
-    File.cp!(source_path, target)
+    # Copy beside the archive and rename, like `receive_part/3` and
+    # `download/2`: a fetch hashing mid-copy otherwise sees a torn archive,
+    # drops the good unpack, and fails until retried. A stopped copy leaves
+    # only the temp file; the previous archive stays whole.
+    temp = target <> ".put-#{System.unique_integer([:positive])}"
+
+    try do
+      File.cp!(source_path, temp)
+      File.rename!(temp, target)
+    rescue
+      error ->
+        # A failed copy must not leak a bundle-sized temp per retry (the
+        # disk-full copy that failed is the likeliest retry); a hard kill
+        # can still leave one, which fetch ignores.
+        File.rm(temp)
+        reraise error, __STACKTRACE__
+    end
+
     File.write!(target <> ".sha256", sha256(target))
     :ok
   end
@@ -79,8 +98,6 @@ defmodule HalC2.Upgrade.Source do
     if sha256(incoming) == sum do
       File.rename!(incoming, target)
       File.write!(target <> ".sha256", sum)
-      # A bundle for the same version unpacked before is stale now.
-      File.rm_rf!(Path.join(cache_dir(version), "bundle-#{platform}"))
       :ok
     else
       File.rm(incoming)
@@ -112,6 +129,80 @@ defmodule HalC2.Upgrade.Source do
       }
     else
       _ -> nil
+    end
+  end
+
+  @doc """
+  Packs the release at `root` into the bundle of the version it starts, at `path`:
+  its `bin`, `lib`, that version's `releases/` and its ERTS (`mix hal_c2.bundle`).
+  `version:` packs that version instead, with the ERTS its `upgrade.json` names, and
+  `lib: :listed` only the applications that lists: an installed release
+  (`ensure_own/1`) keeps those of other versions too, and may start another next.
+  """
+  def pack(root, path, opts \\ []) do
+    [start_erts, start_version] =
+      root |> Path.join("releases/start_erl.data") |> File.read!() |> String.split()
+
+    version = opts[:version] || start_version
+
+    manifest =
+      case File.read(Path.join([root, "releases", version, "upgrade.json"])) do
+        {:ok, text} -> JSON.decode!(text)
+        _ -> %{}
+      end
+
+    erts = if opts[:version], do: manifest["erts"] || start_erts, else: start_erts
+
+    lib =
+      case {opts[:lib], manifest["applications"]} do
+        {:listed, %{} = apps} -> for {name, vsn} <- apps, do: Path.join("lib", "#{name}-#{vsn}")
+        _ -> ["lib"]
+      end
+
+    files =
+      for entry <- ["bin" | lib] ++ [Path.join("releases", version), "erts-#{erts}"],
+          File.exists?(Path.join(root, entry)),
+          do: {String.to_charlist(entry), String.to_charlist(Path.join(root, entry))}
+
+    File.mkdir_p!(Path.dirname(path))
+    :ok = :erl_tar.create(String.to_charlist(path), files, [:compressed])
+  end
+
+  @doc """
+  Puts the bundle of `version`, the one this MC runs, in its cache, packed from its
+  release when it has none (an MC installed without one, or started from a desktop app's
+  copy of the release), so members moving to that version can take it.
+  """
+  def ensure_own(version) do
+    platform = HalC2.Upgrade.platform()
+
+    # One packing at a time: another `cluster.update` may be packing the same bundle.
+    :global.trans({{__MODULE__, version}, self()}, fn -> pack_own(version, platform) end, [node()])
+  end
+
+  defp pack_own(version, platform) do
+    with {:error, _} <- cached(version, platform) do
+      path = archive_path(version, platform)
+      pack(HalC2.Upgrade.release_root(), path <> ".packing", version: version, lib: :listed)
+      File.rename!(path <> ".packing", path)
+      File.write!(path <> ".sha256", sha256(path))
+    end
+
+    :ok
+  end
+
+  @doc """
+  Up to `length` bytes from `offset` of this MC's copy of a bundle, for a peer that
+  cannot reach its HTTP port: `{:ok, data}`, or `:eof` past its end.
+  """
+  def read_part(version, platform, offset, length) do
+    case File.open(
+           archive_path(version, platform),
+           [:read, :binary],
+           &:file.pread(&1, offset, length)
+         ) do
+      {:ok, result} -> result
+      error -> error
     end
   end
 
@@ -162,8 +253,7 @@ defmodule HalC2.Upgrade.Source do
              safe_erpc(peer, __MODULE__, :offer, [version, platform]),
            platform when is_binary(platform) <- offer["platform"] || platform,
            archive = archive_path(version, platform),
-           host = peer_host(peer),
-           :ok <- download("http://#{host}:#{port}#{path}", archive),
+           :ok <- from_peer(peer, "http://#{peer_host(peer)}:#{port}#{path}", version, platform),
            true <- sha256(archive) == sum || {:error, "the copy from #{peer} does not match"} do
         File.write!(archive <> ".sha256", sum)
         Logger.info("upgrade bundle #{version} came from #{peer}")
@@ -177,6 +267,44 @@ defmodule HalC2.Upgrade.Source do
           {:cont, acc}
       end
     end)
+  end
+
+  defp from_peer(peer, url, version, platform) do
+    archive = archive_path(version, platform)
+
+    with {:error, reason} <- download(url, archive) do
+      Logger.info("upgrade bundle over HTTP failed (#{reason}); taking it from #{peer} in pieces")
+      pull(peer, version, platform, archive)
+    end
+  end
+
+  defp pull(peer, version, platform, archive) do
+    part = archive <> ".part"
+    File.write!(part, "")
+
+    case pull(peer, version, platform, part, 0) do
+      :ok ->
+        File.rename!(part, archive)
+        :ok
+
+      error ->
+        File.rm(part)
+        error
+    end
+  end
+
+  defp pull(peer, version, platform, part, offset) do
+    case safe_erpc(peer, __MODULE__, :read_part, [version, platform, offset, @part]) do
+      {:ok, data} ->
+        File.write!(part, data, [:append])
+        pull(peer, version, platform, part, offset + byte_size(data))
+
+      :eof ->
+        :ok
+
+      _ ->
+        {:error, "#{peer} stopped handing out the bundle"}
+    end
   end
 
   defp from_url(version, platform) do
@@ -201,12 +329,41 @@ defmodule HalC2.Upgrade.Source do
     end
   end
 
+  # An unpacked bundle is the archive's only while the stamp beside it holds the archive's
+  # SHA-256 and the archive still hashes to it: whichever source replaced the archive,
+  # and wherever an unpack or a writer stopped, a bundle of the same version built again
+  # is unpacked again. Hashing on the fast path too closes the window where a writer
+  # replaced the archive but not yet its checksum after the source checked it.
+  # The source checked the archive just before, but a writer outside `HalC2.Upgrade` (or
+  # a cleanup) may have taken its checksum since.
   defp unpack(version, platform) do
-    dir = Path.join(cache_dir(version), "bundle-#{platform}")
+    checksum = archive_path(version, platform) <> ".sha256"
 
-    if HalC2.Upgrade.manifest(dir) != nil do
+    case File.read(checksum) do
+      {:ok, sum} ->
+        unpack(version, platform, String.trim(sum))
+
+      {:error, reason} ->
+        {:error,
+         %{
+           "_tag" => "ServerSelfUpdateError",
+           "reason" =>
+             "The bundle's checksum #{checksum} could not be read: #{:file.format_error(reason)}"
+         }}
+    end
+  end
+
+  defp unpack(version, platform, sum) do
+    dir = unpacked_dir(version, platform)
+    stamp = dir <> ".sha256"
+
+    archive = archive_path(version, platform)
+
+    if File.read(stamp) == {:ok, sum} and File.regular?(archive) and
+         sha256_if_present(archive) == sum and HalC2.Upgrade.manifest(dir) != nil do
       {:ok, dir}
     else
+      File.rm(stamp)
       File.rm_rf!(dir)
       File.mkdir_p!(dir)
 
@@ -215,7 +372,20 @@ defmodule HalC2.Upgrade.Source do
              {:cwd, String.to_charlist(dir)}
            ]) do
         :ok ->
-          {:ok, dir}
+          # A writer outside the upgrade server may have replaced the archive since
+          # its checksum was read; only stamp what was actually checked.
+          if sha256_if_present(archive_path(version, platform)) == sum do
+            File.write!(stamp, sum)
+            {:ok, dir}
+          else
+            File.rm_rf!(dir)
+
+            {:error,
+             %{
+               "_tag" => "ServerSelfUpdateError",
+               "reason" => "The bundle changed while it was unpacked; update again."
+             }}
+          end
 
         {:error, reason} ->
           {:error,
@@ -298,6 +468,17 @@ defmodule HalC2.Upgrade.Source do
 
   defp archive_path(version, platform),
     do: Path.join(cache_dir(version), file_name(version, platform))
+
+  defp unpacked_dir(version, platform),
+    do: Path.join(cache_dir(version), "bundle-#{platform}")
+
+  # An archive a writer outside the upgrade server took mid-unpack is simply
+  # not the sum: the unpack answers "the bundle changed" instead of raising.
+  defp sha256_if_present(path) do
+    sha256(path)
+  rescue
+    File.Error -> nil
+  end
 
   defp sha256(path) do
     path

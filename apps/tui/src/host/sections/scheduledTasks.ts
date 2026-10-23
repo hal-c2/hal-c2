@@ -419,14 +419,16 @@ export function scheduledTasksSection(host: SectionHost): SettingsSection {
     host.refresh();
   };
 
-  const fail = (target: Editor, problem: DraftProblem) => {
+  // `kind` is "warning" for a draft the user has to correct (nothing was sent), "error" for a
+  // failed save.
+  const fail = (target: Editor, problem: DraftProblem, kind: "warning" | "error" = "error") => {
     target.saving = false;
     if (editor === target) {
       target.problem = problem;
       host.refresh();
     }
     // The page says how to fix it; the status row names the problem.
-    host.status(problem.title, "error");
+    host.status(problem.title, kind);
   };
 
   const upsertLocally = (id: string, task: ScheduledTask) => {
@@ -443,7 +445,7 @@ export function scheduledTasksSection(host: SectionHost): SettingsSection {
   const send = (saving: Editor) => {
     const built = draftToUpsert(saving.draft);
     if ("problem" in built) {
-      fail(saving, built.problem);
+      fail(saving, built.problem, "warning");
       return;
     }
     return client

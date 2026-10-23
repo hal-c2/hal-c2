@@ -56,8 +56,9 @@ defmodule HalC2Plugins.Planner do
   - health: on-track, at-risk or off-track, when you judge how the plan is going
   - changes: each with an op and a reason. update gives itemId and fields; add gives \
   fields and a ref that later changes may name in parent and after; remove gives \
-  itemId; link gives itemId and fields {"pullRequest": {repository, number}} or \
-  {"issue": {repository, number}}. fields are title, notes, kind (task or milestone), \
+  itemId; link gives itemId and fields {"pullRequest": {repository, number, url}} or \
+  {"issue": {repository, number, url}}, the url being its web address, whenever you \
+  know it. fields are title, notes, kind (task or milestone), \
   status (todo, doing, blocked, done, dropped), start and due (YYYY-MM-DD), progress \
   (0 to 100), parent, after (the ids it waits for), labels and owner
   - feedback: notes on one task ({itemId, text}) or on the whole plan ({text})\
@@ -259,7 +260,7 @@ defmodule HalC2Plugins.Planner do
 
         :error ->
           {:error,
-           "link gives just one of: a pullRequest or an issue as {repository, number}, or a threadId."}
+           "link gives just one of: a pullRequest or an issue as {repository, number, url}, or a threadId."}
       end
 
     with {:ok, fields} <- fields, do: change({:link, id, fields}, context.settings)
@@ -338,7 +339,7 @@ defmodule HalC2Plugins.Planner do
     fields = %{
       "type" => "object",
       "description" =>
-        "title, notes, kind (task|milestone), status (todo|doing|blocked|done|dropped), start, due (YYYY-MM-DD), progress (0-100), parent, after (ids), labels, owner; for link {pullRequest|issue: {repository, number}}"
+        "title, notes, kind (task|milestone), status (todo|doing|blocked|done|dropped), start, due (YYYY-MM-DD), progress (0-100), parent, after (ids), labels, owner; for link {pullRequest|issue: {repository, number, url (its web address, whenever you know it)}}"
     }
 
     %{
@@ -385,7 +386,14 @@ defmodule HalC2Plugins.Planner do
     ref = %{
       "type" => "object",
       "required" => ["repository", "number"],
-      "properties" => %{"repository" => %{"type" => "string"}, "number" => %{"type" => "integer"}}
+      "properties" => %{
+        "repository" => %{"type" => "string"},
+        "number" => %{"type" => "integer"},
+        "url" => %{
+          "type" => "string",
+          "description" => "Its web address, whenever you know it."
+        }
+      }
     }
 
     %{
@@ -500,7 +508,7 @@ defmodule HalC2Plugins.Planner do
     pr =
       if is_nil(arguments["pullRequest"]),
         do: {:ok, nil},
-        else: Plan.ref(arguments["pullRequest"])
+        else: Plan.ref(arguments["pullRequest"], "pullRequest")
 
     taken =
       arguments
@@ -519,7 +527,7 @@ defmodule HalC2Plugins.Planner do
         {:error, "note is text."}
 
       pr == :error ->
-        {:error, "pullRequest is {repository, number}."}
+        {:error, "pullRequest is {repository, number, url}."}
 
       Map.drop(taken, ["itemId"]) == %{} ->
         {:error, "Report a progress, a status, a note or a pull request."}
@@ -667,6 +675,7 @@ defmodule HalC2Plugins.Planner do
        checked_at: nil,
        looked: nil,
        details: nil,
+       full_at: nil,
        projects: [],
        slack: nil,
        slack_at: nil,
@@ -682,7 +691,7 @@ defmodule HalC2Plugins.Planner do
   @impl GenServer
   def handle_call(:plan, _from, state), do: {:reply, plan(state), state}
   def handle_call(:runs, _from, state), do: {:reply, runs(state), state}
-  def handle_call(:looking, _from, state), do: {:reply, {state.items, state.details}, state}
+  def handle_call(:looking, _from, state), do: {:reply, {state.items, reusable(state)}, state}
 
   def handle_call({:item, id}, _from, state) do
     case state.items[id] do
@@ -1161,7 +1170,8 @@ defmodule HalC2Plugins.Planner do
   @impl GenServer
   def handle_info(:poll, %{polling: nil} = state) do
     server = self()
-    %{settings: settings, items: items, details: details} = state
+    %{settings: settings, items: items} = state
+    details = reusable(state)
     # Linked, so turning the planner off calls off a look still waiting on GitHub.
     looking = fn -> send(server, {:polled, look(settings, items, details)}) end
     {_pid, ref} = Process.spawn(looking, [:link, :monitor])
@@ -1217,6 +1227,21 @@ defmodule HalC2Plugins.Planner do
       else: found
   end
 
+  # What the next look may reuse of the one applied last, nothing once a day has passed
+  # since a full look; one its read failed for is read alone again at the next look.
+  # GitHub does not count every change to an issue as an update to it (a milestone
+  # renamed, a pull request now closing it), so a closed task's last
+  # copy would otherwise stand until the MC restarts or the issue changes. The day
+  # is a wall-clock day (`full_at` and now are wall times, as a look's `started`
+  # and `since` already are), so a clock stepped backwards holds the copies that
+  # much longer; that bound is accepted, not corrected for.
+  defp reusable(%{details: details, full_at: full_at}) do
+    if full_at != nil and DateTime.diff(DateTime.utc_now(), full_at) < full_read_seconds(),
+      do: details
+  end
+
+  defp full_read_seconds, do: Application.get_env(:hal_c2, :planner_full_read_seconds, 86_400)
+
   defp connected? do
     case slack("status", %{}) do
       {:ok, %{"connected" => true}} -> {:ok, nil}
@@ -1252,6 +1277,7 @@ defmodule HalC2Plugins.Planner do
         checked_at: now(),
         looked: found.at,
         details: {found.started, found.details},
+        full_at: if(found.full, do: found.started, else: state.full_at),
         projects: found.projects || state.projects
     }
 
@@ -1500,7 +1526,7 @@ defmodule HalC2Plugins.Planner do
     how =
       if run["kind"] == "work",
         do:
-          "Tell the plan how the work goes with the `planner_progress` tool of the hal-c2 MCP server: its progress (0 to 100), its status (doing, blocked or done), a short note, and the pull request you open as {repository, number}. The task is #{values["item.id"]}.",
+          "Tell the plan how the work goes with the `planner_progress` tool of the hal-c2 MCP server: its progress (0 to 100), its status (doing, blocked or done), a short note, and the pull request you open as {repository, number, url}. The task is #{values["item.id"]}.",
         else: @report
 
     String.trim(Plan.fill(action["prompt"], values)) <> "\n\n" <> how
@@ -1693,6 +1719,7 @@ defmodule HalC2Plugins.Planner do
   # `{nil, state}` when the plan does not push it, or GitHub has all of it, which clears
   # its marks.
   defp next_push(state, id, item, synced) do
+    synced = Sync.settled(synced, item, state.items)
     marked? = item["synced"] != nil or item["syncError"] != nil
 
     case Sync.pushes(state.settings, synced, item, state.items, state.projects) do
@@ -1701,6 +1728,14 @@ defmodule HalC2Plugins.Planner do
 
       [] when marked? ->
         {nil, put_in(state.items[id], Map.merge(item, %{"synced" => nil, "syncError" => nil}))}
+
+      # Not pushed, but the marks `settled/3` dropped stay dropped.
+      nil ->
+        {nil,
+         put_in(
+           state.items[id],
+           if(item["synced"], do: Map.put(item, "synced", synced), else: item)
+         )}
 
       _ ->
         {nil, put_in(state.items[id], item)}
@@ -1719,7 +1754,8 @@ defmodule HalC2Plugins.Planner do
 
       again ->
         item = state.items[id]
-        synced = synced || Sync.synced(item, item, state.items)
+        synced = Sync.misplaced(synced || Sync.synced(item, item, state.items), again)
+        again = for {_id, op} <- again, do: op
         {{again ++ ops, synced}, put_in(state.items[id]["synced"], synced)}
     end
   end

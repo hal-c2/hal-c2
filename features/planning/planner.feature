@@ -66,7 +66,7 @@ Feature: Planner
     Scenario: A pull request or issue that is not a repository and a number is neither linked nor unlinked
       Given "Rate limits" is linked to #12 of "acme/api"
       When a client links "Rate limits" to a pull request and to an issue whose repository is not text
-      Then the planner answers "link gives just one of: a pullRequest or an issue as {repository, number}, or a threadId."
+      Then the planner answers "link gives just one of: a pullRequest or an issue as {repository, number, url}, or a threadId."
       When a client unlinks from "Rate limits" a pull request whose repository is not text
       Then the planner answers "unlink gives the pull request as {repository, number}."
       When a client unlinks from "Rate limits" an issue it does not name
@@ -77,7 +77,7 @@ Feature: Planner
     Scenario: A link to two things at once is refused rather than half made
       Given the plan has the task "Rate limits"
       When a client links "Rate limits" to the pull request #12 and the issue #7 of "acme/api" at once
-      Then the planner answers "link gives just one of: a pullRequest or an issue as {repository, number}, or a threadId."
+      Then the planner answers "link gives just one of: a pullRequest or an issue as {repository, number, url}, or a threadId."
       And "Rate limits" is linked to no pull request and no issue
 
     @mc
@@ -427,7 +427,7 @@ Feature: Planner
     Scenario: A proposal that links a task to two things at once goes back to the agent
       Given the run of "Reschedule" is running
       When its agent reports linking "API" to the pull request #12 and the issue #7 of "acme/api" at once
-      Then the agent is told "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number}."
+      Then the agent is told "Change 1: link gives in fields just one of: a pullRequest or an issue as {repository, number, url}."
       And the run is still running
 
     @mc
@@ -750,6 +750,16 @@ Feature: Planner
       And the plugin looks at GitHub
       Then "API" is done
 
+    # No project checks out "acme/other", so its pull request is read through a project on
+    # the host its link names.
+    @mc
+    Scenario: A pull request linked from a GitHub Enterprise host is read through that host
+      Given the MC also has the project "tools" whose remote is "acme/tools" on "github.example.com"
+      And "API" is linked to #12 of "acme/other" at "https://github.example.com/acme/other/pull/12"
+      When #12 of "acme/other" is merged on "github.example.com"
+      And the plugin looks at GitHub
+      Then "API" is done
+
     @mc
     Scenario: Open issues of a followed repository become tasks
       Given "planner" follows the issues of "acme/api"
@@ -937,6 +947,83 @@ Feature: Planner
       And the plugin looks at GitHub again
       Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
       And that look read no issue alone
+
+    # GitHub does not count every change to an issue, a milestone renamed or a pull
+    # request now closing it, as an update to it. A look a day after the last one that
+    # read every closed issue alone reads them all alone again.
+    @mc
+    Scenario: A closed issue is read alone again once a day, whatever GitHub counted as updated
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      And the planner last read every closed issue alone over a day ago
+      When the closed #7 is renamed on GitHub to "Rate limiting" with the description "Shipped in 2.4", which GitHub does not count as an update
+      And the plugin looks at GitHub again
+      Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
+      And that look read the closed #7 alone
+
+    # A look that could not read a closed issue alone does not hold its old copy for the
+    # day: the next look reads it again.
+    @mc
+    Scenario: A closed issue the daily read failed to read is read alone again at the next look
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      And the planner last read every closed issue alone over a day ago
+      And GitHub fails to read the closed #7 alone
+      And the plugin looks at GitHub again, with nothing there changed since
+      When the closed #7 is renamed on GitHub to "Rate limiting" with the description "Shipped in 2.4", which GitHub does not count as an update
+      And the plugin looks at GitHub again
+      Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
+      And that look read the closed #7 alone
+
+    @mc
+    Scenario: A closed issue read alone is not read alone again until the next day
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      And the planner last read every closed issue alone over a day ago
+      And the plugin looks at GitHub again, with nothing there changed since
+      When the plugin looks at GitHub again, with nothing there changed since
+      Then that look read no issue alone
+
+    # A look the listing of changes failed for read every closed issue alone, so it
+    # counts as the day's full read: the next look need not read them alone again.
+    @mc
+    Scenario: A closed issue read alone because the listing of changes failed is not read alone again until the next day
+      Given #7's task is in progress
+      And #7 is closed on GitHub
+      And the plugin looks at GitHub
+      And nearly a day passes since the planner last read every closed issue alone
+      And GitHub fails to list the issues changed since
+      When the plugin looks at GitHub again
+      Then that look read the closed #7 alone
+      When nearly a day passes since the planner last read every closed issue alone
+      And the plugin looks at GitHub again, with nothing there changed since
+      Then that look read no issue alone
+
+    # But a look inside the day whose alone-read of one issue failed is not the
+    # day's full read, though it read the others alone (the listing of changes
+    # having failed): their copies stand only until a day after the last full
+    # read, not a fresh day from this look.
+    @mc
+    Scenario: A day after the last full read, a closed issue is read alone again though a look inside the day read it alone while another's read failed
+      Given #7's task is in progress
+      And #8's task is in progress
+      And #7 is closed on GitHub
+      And #8 is closed on GitHub
+      And the plugin looks at GitHub
+      And nearly a day passes since the planner last read every closed issue alone
+      And GitHub fails to list the issues changed since
+      And GitHub fails to read the closed #7 alone
+      And the plugin looks at GitHub again
+      And nearly a day passes since the planner last read every closed issue alone
+      When the closed #7 is renamed on GitHub to "Rate limiting" with the description "Shipped in 2.4", which GitHub does not count as an update
+      And the closed #8 is renamed on GitHub to "Backpressure" with the description "Shipped in 2.5", which GitHub does not count as an update
+      And the plugin looks at GitHub again
+      Then #7's task is named "Rate limiting" with the notes "Shipped in 2.4"
+      And #8's task is named "Backpressure" with the notes "Shipped in 2.5"
+      And that look read the closed #7 and #8 alone
 
     @mc
     Scenario: A closed issue reopened on GitHub without the planner label is to do again
@@ -1152,6 +1239,17 @@ Feature: Planner
       When the user moves "Issue 7" from "Beta" to "Launch", then to "Release" before GitHub answers
       Then GitHub has #7 in the milestone "Release" last
 
+    # The correction is the milestone's to send, so one GitHub refused goes again with
+    # the milestone's next change, though the milestone the task is in asked GitHub already.
+    @mc
+    Scenario: A correction GitHub refused is sent again with the milestone's next change
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta", #9 in "Launch" and #12 in "Release" on GitHub
+      And GitHub takes moving #7 to "Launch" late and to "Release" at once, but refuses the second move to it
+      And the user moves "Issue 7" from "Beta" to "Launch", then to "Release" before GitHub answers
+      When the user moves "Issue 9" from "Launch" to "Beta"
+      Then GitHub has #7 in the milestone "Release" last
+
     # A move between milestones is asked of GitHub by the milestone the task moved to, so
     # a task that leaves that one before it asks still leaves the one GitHub has it in.
     @mc
@@ -1290,13 +1388,89 @@ Feature: Planner
       Then #7's task is marked as synced
 
     @mc
+    Scenario: A new owner replaces only the old owner among an issue's assignees
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      When the user makes "dana" the owner of #7's task
+      Then GitHub is asked to take "alice" off #7's assignees and to add "dana"
+      And GitHub is never asked to set #7's assignees outright
+      And #7's task is marked as synced
+
+    # A push adds the new owner after the assignees the issue has, so GitHub does not list
+    # them first.
+    @mc
+    Scenario: A task's owner stays while GitHub lists them among the issue's assignees
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      And the user makes "dana" the owner of #7's task
+      When GitHub lists #7 as assigned to "bob" and "dana"
+      And the plugin looks at GitHub
+      Then #7's task is owned by "dana"
+
+    # Clearing the owner takes only them off the issue, as a new owner replaces only the
+    # old one, so an issue others are assigned to stays assigned to them and the task
+    # follows the first of them again.
+    @mc
+    Scenario: Clearing a task's owner takes only them off the issue's assignees
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      When the user clears the owner of #7's task
+      Then GitHub is asked to take "alice" off #7's assignees and nothing else
+      When GitHub lists #7 as assigned to "bob"
+      And the plugin looks at GitHub
+      Then #7's task is owned by "bob"
+
+    # An owner is a login, so one with a blank inside is refused where it is made, rather
+    # than refusing every push of the task.
+    @mc
+    Scenario: An owner with a blank inside is refused
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      When the user tries to make "da na" the owner of #7's task
+      Then the change is refused saying "da na" is not a login
+      And #7's task is owned by "alice"
+
+    @mc
+    Scenario: An owner that is not a login is refused
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      When the user tries to make "a/b" the owner of #7's task
+      Then the change is refused saying "a/b" is not a login
+      And #7's task is owned by "alice"
+
+    # The old owner comes off first and stays off, so the retry adds only the new one.
+    @mc
+    Scenario: An owner GitHub refused to add goes again without taking the old owner off again
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      And GitHub refuses adding assignees to #7
+      And the user makes "dana" the owner of #7's task
+      And GitHub takes changes to #7 again
+      When the user renames #7's task to "Rate limiting"
+      Then GitHub is asked to take "alice" off #7's assignees once and to add "dana" twice
+      And #7's task is named "Rate limiting" and marked as synced
+
+    # The old owner stays on when taking them off is refused, so the retry takes
+    # them off before adding the new one.
+    @mc
+    Scenario: An owner GitHub refused to take off goes again with the task's next change
+      Given "planner" syncs "acme/api" both ways
+      And #7 is assigned to "alice" and "bob" on GitHub
+      And GitHub refuses removing assignees from #7
+      And the user makes "dana" the owner of #7's task
+      And GitHub takes changes to #7 again
+      When the user renames #7's task to "Rate limiting"
+      Then GitHub is asked to take "alice" off #7's assignees twice and to add "dana" once
+      And #7's task is named "Rate limiting" and marked as synced
+
+    @mc
     Scenario: An owner GitHub refused goes again with the task's next change
       Given "planner" syncs "acme/api" both ways
       And GitHub refuses changes to #7
       And the user makes "dana" the owner of #7's task
       And GitHub takes changes to #7 again
       When the user renames #7's task to "Rate limiting"
-      Then GitHub is asked to rename #7 to "Rate limiting" and assign it to "dana" at once
+      Then GitHub is asked to rename #7 to "Rate limiting" and to add "dana" to its assignees
       And #7's task is named "Rate limiting" and marked as synced
 
     @mc
@@ -1313,7 +1487,7 @@ Feature: Planner
       Given "planner" syncs "acme/api" both ways
       And GitHub answers renaming #7 to "Rate limiting" late, refusing it
       When the user renames #7's task to "Rate limiting", then makes "dana" its owner before GitHub answers
-      Then GitHub is asked to rename #7 to "Rate limiting" and assign it to "dana" at once
+      Then GitHub is asked to rename #7 to "Rate limiting" and to add "dana" to its assignees
       And #7's task is named "Rate limiting" and marked as synced
 
     # GitHub keeps the change that reaches it last, so a change waits for GitHub to answer

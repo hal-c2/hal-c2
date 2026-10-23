@@ -2,7 +2,7 @@ defmodule HalC2.JsonRpc.Connection do
   @moduledoc """
   Owns one JSON-RPC subprocess (a Codex app-server or an ACP agent).
 
-  Callers use `call/4` and `notify/3`. Incoming notifications and server-to-client
+  Callers use `call/4`, `request/5` and `notify/3`. Incoming notifications and server-to-client
   requests go to the `:handler` pid as `{:json_rpc, conn, message}`; the handler
   answers requests with `respond/3`. If the subprocess exits, pending calls fail with
   `{:error, :closed}` and the connection stops. With `:log` (a thread id), every
@@ -34,6 +34,18 @@ defmodule HalC2.JsonRpc.Connection do
   @spec call(GenServer.server(), String.t(), term, timeout) :: {:ok, term} | {:error, term}
   def call(conn, method, params, timeout \\ 30_000),
     do: GenServer.call(conn, {:call, method, params}, timeout)
+
+  @doc """
+  Sends a call without waiting for its reply, adding it to `reqids` under `label`.
+  The reply reaches the caller as a message; take it out with
+  `:gen_server.check_response/3`. A caller that is also the connection's `:handler`
+  gets it after every notification the subprocess sent before it (both come from this
+  process); any other caller has no such order.
+  """
+  @spec request(GenServer.server(), String.t(), term, term, :gen_server.request_id_collection()) ::
+          :gen_server.request_id_collection()
+  def request(conn, method, params, label, reqids),
+    do: :gen_server.send_request(conn, {:call, method, params}, label, reqids)
 
   @spec notify(GenServer.server(), String.t(), term) :: :ok
   def notify(conn, method, params), do: GenServer.cast(conn, {:notify, method, params})

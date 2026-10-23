@@ -82,8 +82,8 @@ defmodule HalC2.Streams do
   @doc "Tells `pid` whenever the stream changes, without sending it the stream."
   defdelegate watch(stream_id, pid), to: Server
 
-  @doc "See `HalC2.Streams.Server.more/3`."
-  defdelegate more(stream_id, pid, items), to: Server
+  @doc "See `HalC2.Streams.Server.more/4`."
+  defdelegate more(stream_id, pid, items, tag \\ nil), to: Server
 
   @doc "See `HalC2.Streams.Server.unsubscribe/3`."
   defdelegate unsubscribe(stream_id, pid, tag \\ nil), to: Server

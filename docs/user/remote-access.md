@@ -4,7 +4,7 @@ Connect a phone, the terminal app, or another desktop app to HAL-C2 running on a
 machine. That machine must stay running and reachable while you work.
 
 Commands marked `mix` run in a source checkout, in `apps/server-ex`, as `mise exec -- mix <task>`.
-The MC file you [install](./install.md#command-line) has `cluster` and `threads`
+The MC file you [install](./install.md#command-line) has `pair`, `cluster` and `threads`
 commands of its own, shown below.
 
 ## HAL-C2 Connect
@@ -52,6 +52,7 @@ link**. From the command line, run, with the address a device can reach:
 
 ```bash
 mix hal_c2.pair http://<private-ip>:<port>
+hal-c2-service pair http://<private-ip>:<port>   # the installed MC file
 ```
 
 Scan the QR code on your phone or paste the pairing URL into the receiving app's
@@ -90,8 +91,12 @@ hal-c2-service cluster invite      # prints the link
 hal-c2-service cluster join LINK   # on the machine that joins
 ```
 
-Every machine of a cluster runs the same HAL-C2 version. A machine on another version
-stays listed but does not connect until it is updated. Removing a machine from the
+Machines of a cluster connect whatever HAL-C2 versions they run, but keep them on one
+version: features that span machines, such as moving a thread, can fail between
+versions. The Cluster page shows the version of each machine that runs another one, and
+**Send this version to the other machines** (in the terminal client, the command palette
+entry of that name) has each of them update to the version of the machine you are on,
+which hands them its release. Removing a machine from the
 Cluster page stops every member from admitting it, and its projects and threads leave
 the sidebar.
 
@@ -170,6 +175,7 @@ line:
 
 ```bash
 mix hal_c2.pair --tailscale
+hal-c2-service pair --tailscale   # the installed MC file
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
@@ -181,7 +187,7 @@ tailscale serve --https=443 off
 ```
 
 If that port is already in use, choose another with
-`--tailscale-serve-port`.
+`--tailscale-serve-port` (`pair --tailscale --tailscale-serve-port 8443`).
 
 ## Manage or revoke access
 

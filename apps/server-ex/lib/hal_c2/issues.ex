@@ -23,6 +23,8 @@ defmodule HalC2.Issues do
     "board" => :board,
     "create" => :create,
     "update" => :update,
+    "addAssignees" => :add_assignees,
+    "removeAssignees" => :remove_assignees,
     "comment" => :comment,
     "createMilestone" => :create_milestone,
     "updateMilestone" => :update_milestone,
@@ -34,11 +36,12 @@ defmodule HalC2.Issues do
     "setBoardField" => :set_board_field
   }
 
-  @writes ~w(create update comment createMilestone updateMilestone addSubIssue removeSubIssue
-             addBlockedBy removeBlockedBy addBoardItem setBoardField)
+  @writes ~w(create update addAssignees removeAssignees comment createMilestone updateMilestone
+             addSubIssue removeSubIssue addBlockedBy removeBlockedBy addBoardItem setBoardField)
 
   @page 100
   @repository ~r/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/
+  @login ~r/\A(?:[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}|[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,33}\[bot\]|(?=.{1,39}\z)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*_[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)\z/
   @date ~r/^\d{4}-\d{2}-\d{2}$/
   @scope "gh may not read boards with its current login. Run `gh auth refresh -s project` and try again."
 
@@ -413,12 +416,13 @@ defmodule HalC2.Issues do
   @doc false
   def create(input) do
     with {:ok, ctx} <- repository(input),
-         {:ok, title} <- text(input["title"], "title") do
+         {:ok, title} <- text(input["title"], "title"),
+         {:ok, assignees} <- checked_assignees(input) do
       body =
         %{"title" => title}
         |> put_present("body", input["body"])
         |> put_present("labels", input["labels"])
-        |> put_present("assignees", input["assignees"])
+        |> put_present("assignees", assignees)
         |> put_present("milestone", input["milestone"])
 
       with {:ok, %{"number" => number} = made} <- post(ctx, "issues", "POST", body),
@@ -429,16 +433,71 @@ defmodule HalC2.Issues do
   @doc false
   def update(input) do
     with {:ok, ctx} <- repository(input),
-         {:ok, number} <- number(input["number"]) do
+         {:ok, number} <- number(input["number"]),
+         {:ok, assignees} <- checked_assignees(input) do
       body =
         input
-        |> Map.take(~w(title body state labels assignees milestone))
+        |> Map.take(~w(title body state labels milestone))
+        |> put_present("assignees", assignees)
         |> put_present("state_reason", input["stateReason"])
 
       with {:ok, made} <- post(ctx, "issues/#{number}", "PATCH", body),
            do: read_written(ctx, number, made)
     end
   end
+
+  # Assignees are added and removed by login, so the issue's other assignees stay;
+  # `update` sets the whole list.
+  @doc false
+  def add_assignees(input), do: assignees("POST", input)
+  @doc false
+  def remove_assignees(input), do: assignees("DELETE", input)
+
+  defp assignees(method, input) do
+    with {:ok, ctx} <- repository(input),
+         {:ok, number} <- number(input["number"]),
+         {:ok, logins} <- logins(input["assignees"]),
+         {:ok, raw} <- post(ctx, "issues/#{number}/assignees", method, %{"assignees" => logins}) do
+      {:ok,
+       %{
+         "repository" => ctx.repository,
+         "number" => number,
+         "assignees" => for(%{"login" => login} <- raw["assignees"] || [], do: login)
+       }}
+    end
+  end
+
+  # `create`/`update` set the whole assignee list, so an empty one clears it and an
+  # absent or nil one leaves it alone; the add/remove endpoints refuse both.
+  defp checked_assignees(input) do
+    case Map.fetch(input, "assignees") do
+      :error -> {:ok, nil}
+      {:ok, nil} -> {:ok, nil}
+      {:ok, []} -> {:ok, []}
+      {:ok, value} -> logins(value)
+    end
+  end
+
+  # GitHub allows ten assignees on an issue; a login is trimmed, then is 1 to 39
+  # of letters, digits and single hyphens, or a managed user's one underscore
+  # before its shortcode, or either with a bot's `[bot]` inside the 39.
+  # GitHub reads logins whatever their case, so the case-variants of one are one.
+  # A raw list far past any real assignee list is refused before it is trimmed
+  # and de-duplicated, so the work below stays bounded however it was sent.
+  defp logins(logins) when is_list(logins) and length(logins) > 300,
+    do: {:error, "assignees must be a list of logins."}
+
+  defp logins([_ | _] = logins) do
+    trimmed = for login <- logins, is_binary(login), do: String.trim(login)
+    unique = Enum.uniq_by(trimmed, &String.downcase/1)
+
+    if length(trimmed) == length(logins) and length(unique) <= 10 and
+         Enum.all?(unique, &String.match?(&1, @login)),
+       do: {:ok, unique},
+       else: {:error, "assignees must be a list of logins."}
+  end
+
+  defp logins(_), do: {:error, "assignees must be a list of logins."}
 
   @doc false
   def comment(input) do

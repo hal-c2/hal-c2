@@ -69,6 +69,32 @@ step("this machine is clustered with {string}, which is connected", (ctx: World,
   });
 });
 
+step(
+  "this machine runs {string} and is clustered with {string}, which is connected on {string}",
+  (ctx: World, version: string, label: string, theirs: string) => {
+    configure(ctx, (cluster) => {
+      cluster.version = version;
+      cluster.members = [{ ...member(label, true), version: theirs }];
+    });
+  },
+);
+
+step(
+  "this machine runs {string} and is clustered with {string}, which is connected on {string} and cannot update saying {string}",
+  (ctx: World, version: string, label: string, theirs: string, reason: string) => {
+    configure(ctx, (cluster) => {
+      cluster.version = version;
+      cluster.members = [{ ...member(label, true), version: theirs }];
+      cluster.updateRefusals = { [label]: reason };
+    });
+  },
+);
+
+step("the MC is asked to update the other machines", async (ctx: World) => {
+  await settle(ctx);
+  expect(callsTo(ctx, "clusterUpdate")).toHaveLength(1);
+});
+
 step("the MC listens only on loopback", (ctx: World) => {
   configure(ctx, (cluster) => {
     cluster.invite = {
@@ -126,7 +152,7 @@ step("settings show the invite link", async (ctx: World) => {
 step("the user is warned that only this machine can open the invite", async (ctx: World) => {
   await settle(ctx);
   const status = ctx.host!.state.get("status") as { kind: string; text: string };
-  expect(status.kind).toBe("error");
+  expect(status.kind).toBe("warning");
   expect(status.text).toContain(LOCAL_ONLY_HINT);
 });
 

@@ -19,6 +19,7 @@
 #include "NativeController.h"
 
 class McClient;
+class NativeShell;
 class ShellBridge;
 class ShellStore;
 class TimelineModel;
@@ -56,7 +57,8 @@ class TimelineModel;
 //      [{label, description}], multiSelect, allowCustomAnswer}], canRespond,
 //      responding, problem}],
 //    plan: {id, title, markdown} | null,  // offered while the thread is idle
-//    queue: [{runId, text}]}
+//    queue: [{runId, text}], waiting: [{runId, summary, outcome}],
+//    queueHeld, queueResuming}  // the MC keeps the queue until it is resumed
 // `problem` says why a request cannot be answered, when it cannot. On a new
 // thread's draft route the turn is {threadKey: draftId, kind: "draft",
 // sending} with nothing pending; `sending` while its first send
@@ -92,7 +94,8 @@ class TimelineModel;
 // {requestId}, composer.plan.implement, composer.queue.remove {runId},
 // composer.queue.steer {runId?} (the first queued without one),
 // composer.queue.edit {runId?} (the last queued without one),
-// composer.queue.edit.cancel, composer.stash, composer.stash.restore {id},
+// composer.queue.edit.cancel, composer.queue.resume (a held queue),
+// composer.stash, composer.stash.restore {id},
 // composer.stash.delete {id}, composer.stash.menu {open?} (toggles without),
 // composer.history.step {direction: "backward" | "forward"}.
 //
@@ -364,6 +367,7 @@ private:
   QVariantMap stashState() const;
   bool respond(const QString& requestId, const QJsonObject& fields, const QString& failure);
   bool queueCommand(const QString& type, const QString& runId);
+  bool resumeQueue();
   bool editQueued(const QString& target, QString runId);
   bool saveQueuedEdit(const QString& target, const QString& text);
   // Gives the set-aside draft back; `keepEdit` leaves the edit's text instead.
@@ -420,7 +424,11 @@ private:
   void toast(const QString& title, const QString& description);
   void follow();
   void publish();
+  // publish() in every window's composer: what one window changed in the
+  // shared state (Kept) the others show too.
+  static void publishEverywhere(NativeShell* shell);
   QVariantMap turnState() const;
+  bool queueHeld() const;
   QVariant composerState(const QVariantMap& turn) const;
   QVariantMap pickerState() const;
 
@@ -447,10 +455,15 @@ private:
     // The images last written beside the drafts (imagesPath), so a keystroke
     // does not rewrite them.
     QString images;
+    // The threads whose `queue.resume` the MC has not answered: one request
+    // at a time per thread, whichever window asks.
+    QSet<QString> resuming;
   };
   // Where the drafts' images are kept: shell-composer-images.json beside them.
   QString imagesPath() const;
   Kept& m_kept;
+  // This window's "Not connected: queue not resumed" toast, while it may still show.
+  QString m_notConnectedToast;
   QHash<QString, Draft>& m_drafts;
   // Each thread's sends, the one in flight first: a thread sends one at a
   // time, in the order the user sent them.

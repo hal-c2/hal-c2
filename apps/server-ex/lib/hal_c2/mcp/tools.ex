@@ -166,7 +166,7 @@ defmodule HalC2.Mcp.Tools do
          "recentRuns" =>
            state
            |> StreamState.list("run")
-           |> Enum.sort_by(& &1["ordinal"], :desc)
+           |> Enum.sort_by(&(&1["ordinal"] || 0), :desc)
            |> Enum.take(args["runLimit"] || 10)
            |> Enum.map(&run_summary/1),
          "items" =>

@@ -10,9 +10,14 @@ defmodule HalC2.StreamsPropTest do
   `HalC2.Prop.StreamsCollector` processes named `p1`..`p3` that fold what they are
   sent as a client does, and resume from what they hold. Commands commit and
   transact, subscribe plainly, as clients (kinds and windows) and as watchers, resume,
-  unsubscribe (also by a tag no subscription has), page a window back, crash
+  unsubscribe (also by a tag no subscription has), page a window back (also by a
+  tag no subscription has, which pages nothing), crash
   subscribers, stop streams idle, crash them, restart the stream supervisor and the
   store, and append enough at once to push a subscriber past what a replay carries.
+  Some turn items are subagents whose prompt, progress and result grow by long appends, past
+  the limit `HalC2.Web.Wire` cuts them at, or are emptied and grown again in one
+  patch, so a client that folds the appends must hold the cut text a snapshot shows,
+  for each of the wire's cut keys and for an item growing both in one commit.
   """
 
   use ExUnit.Case, async: false
@@ -120,7 +125,8 @@ defmodule HalC2.StreamsPropTest do
            let key <- oneof(subs) do
              {:call, __MODULE__, :resume, [key, asked(state.subs[key])]}
            end},
-          {2, {:call, __MODULE__, :more, [oneof(subs), oneof([1, 2])]}}
+          {2, {:call, __MODULE__, :more, [oneof(subs), oneof([1, 2])]}},
+          {2, {:call, __MODULE__, :more_stale, [oneof(subs), oneof([1, 2])]}}
         ]
 
     frequency(base ++ with_subs)
@@ -148,6 +154,9 @@ defmodule HalC2.StreamsPropTest do
       {:run, oneof(@runs), oneof(["queued", "running", "done", "rolled_back"])},
       {:item, oneof(@items), text},
       {:append, oneof(@items), oneof(["a", "bc", "é"])},
+      {:subagent, oneof(@items), cut_key(), progress()},
+      {:grow, oneof(@items), cut_key(), progress()},
+      {:reset, oneof(@items), cut_key(), progress(), oneof([:unset, :delete])},
       {:message, oneof(@messages)},
       {:delete, oneof(Enum.map(@items, &{"turn-item", &1}) ++ Enum.map(@notes, &{"note", &1}))},
       {:delete, oneof(Enum.map(@messages, &{"message", &1}))},
@@ -155,6 +164,24 @@ defmodule HalC2.StreamsPropTest do
       {:void, oneof(@items)}
     ])
   end
+
+  # The wire's cut keys a subagent's text grows under here: all three, `prompt`
+  # included. The adapters set it once, but `HalC2.Patch.diff/2` turns any string
+  # field that grows by a prefix into an append, so an adapter that ever re-emits
+  # a longer prompt crosses by appends the same way.
+  defp cut_key, do: oneof(~w(prompt progress result))
+
+  # A subagent text, set or grown by: mostly short, sometimes sized to land the
+  # text just under, on and over the limit (32 KiB), in the middle of a character too.
+  defp progress do
+    frequency([
+      {6, oneof(["", "x", "bc", "é"])},
+      {1, oneof([16_000, 16_383, 16_384, 16_385]) |> let_dup("é")},
+      {1, oneof([20_000, 32_767, 32_768, 40_000]) |> let_dup("x")}
+    ])
+  end
+
+  defp let_dup(sizes, char), do: let(n <- sizes, do: String.duplicate(char, n))
 
   @doc false
   def resolve(intents, st) do
@@ -201,6 +228,47 @@ defmodule HalC2.StreamsPropTest do
     end
   end
 
+  # A subagent with each of its cut texts there to grow, the intent's holding `text`.
+  defp change({:subagent, id, key, text}, st) do
+    item =
+      %{
+        "id" => id,
+        "type" => "subagent",
+        "text" => "",
+        "prompt" => "",
+        "progress" => "",
+        "result" => ""
+      }
+      |> Map.put(key, text)
+
+    with %{} = item <- with_run(item, st), do: {"turn-item", id, %{"d" => true, "s" => item}}
+  end
+
+  defp change({:grow, id, key, suffix}, st) do
+    case StreamState.get(st, "turn-item")[id] do
+      %{"type" => "subagent"} = item ->
+        if is_binary(item[key]), do: {"turn-item", id, %{"a" => %{key => suffix}}}
+
+      _ ->
+        nil
+    end
+  end
+
+  # A subagent text emptied and grown again in one patch, by an unset or by a
+  # delete that replaces the item.
+  defp change({:reset, id, key, suffix, form}, st) do
+    case StreamState.get(st, "turn-item")[id] do
+      %{"type" => "subagent"} when form == :unset ->
+        {"turn-item", id, %{"u" => [key], "a" => %{key => suffix}}}
+
+      %{"type" => "subagent"} = item ->
+        {"turn-item", id, %{"d" => true, "s" => Map.delete(item, key), "a" => %{key => suffix}}}
+
+      _ ->
+        nil
+    end
+  end
+
   defp change({:message, id}, st) do
     message = %{"id" => id, "role" => @role_of[id], "text" => "t"}
     with %{} = message <- with_run(message, st), do: {"message", id, %{"s" => message}}
@@ -227,6 +295,9 @@ defmodule HalC2.StreamsPropTest do
     do: not Enum.any?(state.subs, fn {{_, s}, sub} -> s == id and sub.active end)
 
   def precondition(state, {:call, _, :more, [key, _]}),
+    do: match?(%{mode: :client, active: true, window: %{}}, state.subs[key])
+
+  def precondition(state, {:call, _, :more_stale, [key, _]}),
     do: match?(%{mode: :client, active: true, window: %{}}, state.subs[key])
 
   def precondition(state, {:call, _, :resume, [key, asked]}),
@@ -597,6 +668,11 @@ defmodule HalC2.StreamsPropTest do
 
   def more({name, id}, items), do: Streams.more(id, collector(name), items)
 
+  # A `more` of a subscription replaced since, by a tag no subscription has now:
+  # it pages nothing and moves no floor (`check` sees both).
+  def more_stale({name, id}, items),
+    do: Streams.more(id, collector(name), items, {node(), make_ref()})
+
   def check({name, id}), do: Collector.get(collector(name), id)
 
   def state(id), do: comparable(Server.state(Streams.ensure(id)))
@@ -616,13 +692,20 @@ defmodule HalC2.StreamsPropTest do
     end
   end
 
-  # What its idle timeout does: the stream stops, and starts again on next use.
+  # What its idle timeout does: the stream stops, and starts again on next use. The
+  # Registry can still list a stream that stopped a moment ago; monitoring it gives
+  # `:noproc`: already stopped, reason unknowable. That trades away crash evidence
+  # in the lookup-to-monitor window (a crash there also reports `:noproc`), so do
+  # not trust `idle_stop/1` as proof a stop was clean.
   def idle_stop(id) do
     case Registry.lookup(HalC2.Streams.Registry, id) do
       [{pid, _}] ->
         ref = Process.monitor(pid)
         send(pid, :timeout)
-        receive do: ({:DOWN, ^ref, _, _, reason} -> if(reason == :normal, do: :ok, else: reason))
+
+        receive do
+          {:DOWN, ^ref, _, _, reason} -> if(reason in [:normal, :noproc], do: :ok, else: reason)
+        end
 
       [] ->
         :ok

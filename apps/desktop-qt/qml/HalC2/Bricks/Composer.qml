@@ -5,6 +5,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/providerIcons.js" as ProviderIcons
 
 // The prompt: text input, model/effort/mode pickers, send/stop, with the
 // checkout context strip welded under it. Rendered from Shell.state.composer
@@ -29,6 +30,13 @@ Rectangle {
     readonly property color canvas: Theme.palette.color("canvas", "#0f0f12")
     readonly property color outline: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.05)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
+    // Claude's mark colour, as the provider icon draws it: its fill for a light or dark theme.
+    // A missing variant falls back to the glyph's other fill; the literal is
+    // only for a build without the glyph at all.
+    readonly property color claudeOrange: {
+        const dark = ProviderIcons.darkFor(foreground);
+        return ProviderIcons.fill("claudeAgent", dark) ?? ProviderIcons.fill("claudeAgent", !dark) ?? "#d97757";
+    }
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color secondary: Theme.palette.color("secondaryLabel", "#a1a1aa")
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")
@@ -1118,6 +1126,9 @@ Rectangle {
                                     readonly property bool fast: optionItem.modelData.id === "fastMode"
                                     iconName: fast && checked ? "zap" : ""
                                     iconSize: 14
+                                    // The bolt is filled, in Claude's orange on a Claude model.
+                                    iconFilled: fast && checked
+                                    iconTint: fast && checked && modelPicker.activeInstance?.driverKind === "claudeAgent" ? Qt.alpha(composer.claudeOrange, 0.8) : tint
                                     text: fast ? optionItem.modelData.label : qsTr("%1 %2").arg(optionItem.modelData.label).arg(checked ? qsTr("On") : qsTr("Off"))
                                     Accessible.name: qsTr("%1, %2").arg(optionItem.modelData.label).arg(checked ? qsTr("on") : qsTr("off"))
                                     Accessible.checkable: true
@@ -1410,7 +1421,7 @@ Rectangle {
                 // PR badge.
                 Rectangle {
                     readonly property var pr: contextStrip.wsReady && contextStrip.ws.git ? contextStrip.ws.git.pullRequest : null
-                    readonly property color prColor: pr === null ? "transparent" : pr.state === "merged" ? Theme.palette.color("info", "#a78bfa") : pr.state === "closed" ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#34d399")
+                    readonly property color prColor: pr === null ? "transparent" : pr.state === "merged" ? Theme.palette.color("merged", "#a855f7") : pr.state === "closed" ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#34d399")
 
                     visible: pr !== null && contextStrip.ws.canOpenPullRequest
                     implicitWidth: prLabel.implicitWidth + 8

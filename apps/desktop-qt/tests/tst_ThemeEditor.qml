@@ -163,5 +163,122 @@ Item {
             tryVerify(() => !dialog.visible);
             tryVerify(() => composer.activeFocus);
         }
+
+        // Leaving the dialog any way but a choice cancels the import, so an
+        // installed theme it was asking about is dropped.
+        function test_escapeCancelsWhatTheImportWasAskingAbout() {
+            const dialog = openImport();
+            Themes.importConflicts = ["Nord"];
+            keyClick(Qt.Key_Escape);
+            tryVerify(() => !dialog.visible);
+            compare(Themes.calls.filter(call => call.name === "resolveImport").map(call => call.args[0]), ["cancel"]);
+            compare(Themes.importConflicts, []);
+        }
+
+        // A close with only an import error showing drops that error too.
+        function test_escapeClearsAnImportError() {
+            const dialog = openImport();
+            Themes.importError = "That is not a theme.";
+            keyClick(Qt.Key_Escape);
+            tryVerify(() => !dialog.visible);
+            compare(Themes.calls.filter(call => call.name === "resolveImport").map(call => call.args[0]), ["cancel"]);
+            compare(Themes.importError, "");
+        }
+
+        // A colour typed but not yet committed (editingFinished fires on
+        // focus loss) survives the outside press that keeps the draft.
+        function test_anUncommittedColourSurvivesAPressOutside() {
+            const editor = openEditor();
+            const field = findChild(editor.contentItem, "color:canvas");
+            verify(field, "the canvas colour field");
+            field.forceActiveFocus();
+            tryVerify(() => field.activeFocus);
+            field.selectAll();
+            for (const ch of "#112233")
+                keySequence(ch);
+            mouseClick(composer);
+            tryVerify(() => !editor.visible);
+            verify(!Themes.editorOpen);
+            compare(Themes.calls.filter(call => call.name === "hideEditor").length, 1);
+            Themes.editorOpen = true;
+            tryVerify(() => editor.opened);
+            compare(findChild(editor.contentItem, "color:canvas").text, "#112233");
+        }
+
+        // A choice made in the dialog is the only call: closing after it does not cancel.
+        function test_aChoiceIsNotFollowedByACancel() {
+            for (const [button, choice] of [["keepBoth", "copy"], ["updateExisting", "update"]]) {
+                Themes.clear();
+                const dialog = openImport();
+                Themes.importConflicts = ["Nord"];
+                const target = findChild(dialog.contentItem, button);
+                tryVerify(() => target.visible);
+                waitForRendering(dialog.contentItem);
+                mouseClick(target);
+                tryVerify(() => !dialog.visible);
+                compare(Themes.calls.filter(call => call.name === "resolveImport").map(call => call.args[0]), [choice]);
+            }
+        }
+
+        // The appearance dropdown is a popup of its own that can reach past the editor;
+        // choosing from it is not a press outside the editor.
+        function test_choosingFromTheAppearanceDropdownKeepsTheEditorOpen() {
+            const editor = openEditor();
+            const combo = findChild(editor.contentItem, "appearance");
+            verify(combo, "the editor has an appearance choice");
+            mouseClick(combo);
+            tryVerify(() => combo.popup.opened);
+            const row = combo.popup.contentItem.itemAtIndex(1);
+            verify(row, "the dropdown lists Dark");
+            mouseClick(row);
+            tryVerify(() => !combo.popup.opened);
+            verify(editor.opened && Themes.editorOpen, "the editor stays open");
+        }
+
+        // features/navigation/theme-editor.feature: the editor closes on a
+        // press outside it, but not on the press that picks a colour.
+        function test_aPressOutsideClosesTheEditorExceptWhileItPicks() {
+            const editor = openEditor();
+            Themes.inspecting = true;
+            mouseClick(composer);
+            verify(editor.visible, "the press that picks does not close it");
+            Themes.pick("#ff0000");
+            mouseClick(composer);
+            tryVerify(() => !editor.visible);
+            verify(!Themes.editorOpen);
+            // Closed the way that keeps unsaved changes.
+            compare(Themes.calls.filter(call => call.name === "hideEditor").length, 1);
+        }
+
+        // Escape, Cancel and Save let the draft go; only a press outside keeps it.
+        function test_onlyAPressOutsideKeepsTheDraft() {
+            for (const close of [
+                editor => keyClick(Qt.Key_Escape),
+                editor => mouseClick(findChild(editor.contentItem, "cancel")),
+                editor => mouseClick(findChild(editor.contentItem, "save"))
+            ]) {
+                Themes.clear();
+                const editor = openEditor();
+                tryVerify(() => findChild(editor.contentItem, "name").activeFocus);
+                close(editor);
+                tryVerify(() => !editor.visible);
+                verify(!Themes.editorOpen);
+                compare(Themes.calls.filter(call => call.name === "hideEditor").length, 0);
+            }
+        }
+
+        // features/navigation/theme-editor.feature: after a colour is picked
+        // the keyboard is the editor's again.
+        function test_theKeyboardReturnsToTheEditorAfterAPick() {
+            const editor = openEditor();
+            const pick = findChild(editor.contentItem, "pick");
+            Themes.inspecting = true;
+            composer.forceActiveFocus();
+            verify(!pick.activeFocus);
+            Themes.pick("#ff0000");
+            tryVerify(() => pick.activeFocus);
+            keyClick(Qt.Key_Escape);
+            tryVerify(() => !editor.visible);
+        }
     }
 }

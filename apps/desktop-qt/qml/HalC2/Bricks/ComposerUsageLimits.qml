@@ -22,7 +22,7 @@ Rectangle {
 
     function resets(iso) {
         const date = new Date(iso);
-        return isNaN(date.getTime()) ? "" : qsTr("resets %1").arg(date.toLocaleString(Qt.locale(), Locale.ShortFormat));
+        return isNaN(date.getTime()) ? "" : qsTr("resets %1").arg(date.toLocaleString(Qt.locale(), Locale.ShortFormat).replace(/[\u202f\u00a0]/g, " ")); // plain spaces, as sidebar::plainSpaces
     }
 
     ColumnLayout {

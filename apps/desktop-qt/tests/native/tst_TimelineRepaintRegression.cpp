@@ -1,7 +1,9 @@
 // What tests/prop/tst_TimelineModelProp.cpp found in TimelineModel.
 
+#include <QTemporaryDir>
 #include <QtTest>
 
+#include "LocalCache.h"
 #include "TimelineModel.h"
 
 namespace {
@@ -102,6 +104,112 @@ private slots:
     model.receive(delta);
     model.receive(delta);
     QCOMPARE(model.data(model.index(rowOf(model, QStringLiteral("reply"))), TimelineModel::TextRole).toString(), QStringLiteral("ab"));
+  }
+
+  // A turn the user stopped read "Worked" once a held queued message it passed
+  // was numbered above it: the held run is not the thread's latest.
+  void aStoppedTurnAboveAHeldQueueSaysTheUserStoppedIt() {
+    TimelineModel model(QStringLiteral("thread"));
+    const QJsonObject held{{QStringLiteral("id"), QStringLiteral("run-2")},
+                           {QStringLiteral("ordinal"), 2},
+                           {QStringLiteral("status"), QStringLiteral("queued")},
+                           {QStringLiteral("queueHeld"), true}};
+    snapshot(model,
+             {row(QStringLiteral("run"), run(QStringLiteral("interrupted"))), row(QStringLiteral("run"), held),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("ask"), QStringLiteral("user_message"), 1,
+                                                    {{QStringLiteral("text"), QStringLiteral("ask")}})),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("reas-2"), QStringLiteral("reasoning"), 2, {{QStringLiteral("text"), QStringLiteral("t")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("reply"), QStringLiteral("assistant_message"), 3, {{QStringLiteral("text"), QStringLiteral("a")}}))},
+             5);
+    const int fold = rowOf(model, QStringLiteral("fold:run-1"));
+    QVERIFY(fold >= 0);
+    QCOMPARE(model.data(model.index(fold), TimelineModel::TitleRole).toString(), QStringLiteral("You stopped this response"));
+  }
+
+  // The same held run cancelled instead of resumed: it never started, so the
+  // stopped turn it waited behind is still the thread's latest.
+  void aStoppedTurnAboveACancelledHeldRunSaysTheUserStoppedIt() {
+    TimelineModel model(QStringLiteral("thread"));
+    const QJsonObject held{{QStringLiteral("id"), QStringLiteral("run-2")},
+                           {QStringLiteral("ordinal"), 2},
+                           {QStringLiteral("status"), QStringLiteral("cancelled")},
+                           {QStringLiteral("queueHeld"), true}};
+    snapshot(model,
+             {row(QStringLiteral("run"), run(QStringLiteral("interrupted"))), row(QStringLiteral("run"), held),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("ask"), QStringLiteral("user_message"), 1,
+                                                    {{QStringLiteral("text"), QStringLiteral("ask")}})),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("reas-2"), QStringLiteral("reasoning"), 2, {{QStringLiteral("text"), QStringLiteral("t")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("reply"), QStringLiteral("assistant_message"), 3, {{QStringLiteral("text"), QStringLiteral("a")}}))},
+             5);
+    const int fold = rowOf(model, QStringLiteral("fold:run-1"));
+    QVERIFY(fold >= 0);
+    QCOMPARE(model.data(model.index(fold), TimelineModel::TitleRole).toString(), QStringLiteral("You stopped this response"));
+  }
+
+  // Legacy runs stored without an ordinal both read 0: the tie goes to the
+  // later-starting run (its first item is later in timeline order), so the
+  // stopped turn still reads as the thread's latest.
+  void aStoppedTurnWithNoStoredOrdinalsSaysTheUserStoppedIt() {
+    TimelineModel model(QStringLiteral("thread"));
+    const QJsonObject first{{QStringLiteral("id"), QStringLiteral("run-1")}, {QStringLiteral("status"), QStringLiteral("completed")}};
+    const QJsonObject second{{QStringLiteral("id"), QStringLiteral("run-2")}, {QStringLiteral("status"), QStringLiteral("interrupted")}};
+    snapshot(model,
+             {row(QStringLiteral("run"), first), row(QStringLiteral("run"), second),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("ask-1"), QStringLiteral("user_message"), 1,
+                                                    {{QStringLiteral("text"), QStringLiteral("ask")}})),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("reas-1"), QStringLiteral("reasoning"), 2, {{QStringLiteral("text"), QStringLiteral("t")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("reply-1"), QStringLiteral("assistant_message"), 3, {{QStringLiteral("text"), QStringLiteral("a")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("ask-2"), QStringLiteral("user_message"), 4,
+                       {{QStringLiteral("text"), QStringLiteral("ask")}, {QStringLiteral("runId"), QStringLiteral("run-2")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("reas-2"), QStringLiteral("reasoning"), 5,
+                       {{QStringLiteral("text"), QStringLiteral("t")}, {QStringLiteral("runId"), QStringLiteral("run-2")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("reply-2"), QStringLiteral("assistant_message"), 6,
+                       {{QStringLiteral("text"), QStringLiteral("b")}, {QStringLiteral("runId"), QStringLiteral("run-2")}}))},
+             8);
+    const int fold = rowOf(model, QStringLiteral("fold:run-2"));
+    QVERIFY(fold >= 0);
+    QCOMPARE(model.data(model.index(fold), TimelineModel::TitleRole).toString(), QStringLiteral("You stopped this response"));
+  }
+
+  // A run renumbered at start left its items' cached run_ord at the old
+  // ordinal, so a cold-start copy filtered and trimmed by it.
+  void aRenumberedRunRecachesItsItems() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    LocalCache cache;
+    cache.open(dir.path());
+    TimelineModel model(QStringLiteral("thread"));
+    model.setCache(&cache);
+    snapshot(model,
+             {row(QStringLiteral("run"), run(QStringLiteral("running"))),
+              row(QStringLiteral("turn-item"), item(QStringLiteral("ask"), QStringLiteral("user_message"), 1,
+                                                    {{QStringLiteral("text"), QStringLiteral("ask")}})),
+              row(QStringLiteral("turn-item"),
+                  item(QStringLiteral("reply"), QStringLiteral("assistant_message"), 2, {{QStringLiteral("text"), QStringLiteral("a")}}))},
+             3);
+    model.flush();
+    cache.drain();
+    const QJsonObject renumber{{QStringLiteral("s"), QJsonObject{{QStringLiteral("ordinal"), 7}}}};
+    model.receive(events(4, QStringLiteral("run"), QStringLiteral("run-1"), renumber));
+    model.flush();
+    cache.drain();
+    cache::Thread found;
+    cache.loadThread(QStringLiteral("thread"), &cache, [&found](const cache::Thread& thread) { found = thread; });
+    cache.drain();
+    bool checked = false;
+    for (const cache::Entity& entity : found.entities) {
+      if (entity.kind != QLatin1String("turn-item")) continue;
+      QVERIFY(entity.run.has_value());
+      QCOMPARE(*entity.run, qint64(7));
+      checked = true;
+    }
+    QVERIFY(checked);
   }
 
   // Every subagent row redrew its model whenever a run or command changed;
