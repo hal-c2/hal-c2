@@ -125,6 +125,10 @@ function keepSelectedVisible(
  * - `expanded` contains the snoozed/settled section ids.
  * - `settledShown` is how many settled threads are listed: the first page,
  *   and SIDEBAR_SETTLED_PAGE more per "show more".
+ *
+ * Settled threads a plugin started (code reviews) are left out of the shelf
+ * and its count unless `showSettledPluginThreads`; the filter and the
+ * selection still reach them.
  */
 export function buildRows(
   shell: OrchestrationShellSnapshot | null,
@@ -134,6 +138,7 @@ export function buildRows(
   filter = "",
   projectScopeId: string | null = null,
   now = new Date().toISOString(),
+  showSettledPluginThreads = false,
 ): Row[] {
   if (!shell) return [];
 
@@ -161,7 +166,12 @@ export function buildRows(
     if (effectiveSnoozed(thread, { now })) {
       snoozed.push(thread);
     } else if (thread.settledOverride === "settled") {
-      settled.push(thread);
+      const hidden =
+        thread.plugin != null &&
+        !showSettledPluginThreads &&
+        needle.length === 0 &&
+        thread.id !== selectedThreadId;
+      if (!hidden) settled.push(thread);
     } else {
       active.push(thread);
     }

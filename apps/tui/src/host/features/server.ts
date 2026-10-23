@@ -60,6 +60,7 @@ export function createServerFeature(kit: FeatureKit): Feature {
       client.getServerConfig().then(
         (next) => {
           config = next;
+          kit.store.setShowSettledPluginThreads(showsPluginThreads());
           if (reloadComposer) kit.dispatch("composer.providers.reload");
           changed();
         },
@@ -67,6 +68,7 @@ export function createServerFeature(kit: FeatureKit): Feature {
       ),
     );
   const providers = () => config?.providers ?? [];
+  const showsPluginThreads = () => config?.settings.sidebarShowSettledPluginThreads === true;
 
   const refresh = () => {
     kit.status("Refreshing providers…", "busy");
@@ -154,6 +156,25 @@ export function createServerFeature(kit: FeatureKit): Feature {
         );
       },
     });
+  };
+
+  /** Settled threads a plugin started (code reviews): listed in Settled, or left to search. */
+  const toggleSettledPluginThreads = () => {
+    const show = !showsPluginThreads();
+    void kit.track(
+      client.updateSettings({ sidebarShowSettledPluginThreads: show }).then(
+        async () => {
+          await load(false);
+          kit.status(
+            show
+              ? "Settled lists the threads plugins started."
+              : "Threads plugins started stay out of Settled; search still finds them.",
+            "success",
+          );
+        },
+        (error: unknown) => kit.status(`Could not save: ${errorText(error)}`, "error"),
+      ),
+    );
   };
 
   /** Driver, then a name, then the key: three short questions, one request. */
@@ -308,6 +329,10 @@ export function createServerFeature(kit: FeatureKit): Feature {
           ],
         ],
       },
+      {
+        title: "Settled",
+        rows: [["plugin threads", showsPluginThreads() ? "Listed" : "Hidden"]],
+      },
     ];
   };
 
@@ -344,6 +369,14 @@ export function createServerFeature(kit: FeatureKit): Feature {
         action: "settings.defaultWorkspace",
       },
       {
+        id: "settings.settledPluginThreads",
+        title: showsPluginThreads()
+          ? "Hide plugin threads from Settled"
+          : "Show plugin threads in Settled",
+        keywords: "settings sidebar settled plugin code review threads",
+        action: "settings.settledPluginThreads",
+      },
+      {
         id: "relay.check",
         title: "Relay client",
         keywords: "remote access connect cloudflared install tunnel",
@@ -365,6 +398,9 @@ export function createServerFeature(kit: FeatureKit): Feature {
           return true;
         case "settings.defaultWorkspace":
           chooseDefaultWorkspace();
+          return true;
+        case "settings.settledPluginThreads":
+          toggleSettledPluginThreads();
           return true;
         case "relay.check":
           checkRelay();

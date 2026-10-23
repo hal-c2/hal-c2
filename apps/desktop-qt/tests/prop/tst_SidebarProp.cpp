@@ -3,6 +3,8 @@
 // projects and threads each environment holds, and what the user did to the
 // list. After every step the `sidebar` the shell publishes is the model's
 // projection of it, row for row, and the window shows no thread that is gone.
+// The settled threads a plugin started stay off the list unless the MC's
+// settings document asks for them.
 
 #include "Prop.h"
 
@@ -82,6 +84,8 @@ struct Row {
   // On its way to this environment, and gone there (the forwarding record).
   std::optional<std::string> moving;
   std::optional<std::string> movedTo;
+  // A plugin started it (its `plugin` mark), as the code-review plugin does.
+  bool plugin = false;
   bool operator==(const Row&) const = default;
 };
 
@@ -119,6 +123,7 @@ std::ostream& operator<<(std::ostream& os, const Row& row) {
   if (row.activeKey) os << " activeKey " << *row.activeKey;
   if (row.moving) os << " moving->" << *row.moving;
   if (row.movedTo) os << " movedTo " << *row.movedTo;
+  if (row.plugin) os << " plugin";
   return os << "}";
 }
 
@@ -224,6 +229,10 @@ QJsonObject threadJson(const std::string& id, const Row& row, int now) {
       {QStringLiteral("movedTo"), row.movedTo ? QJsonValue(QJsonObject{{QStringLiteral("environmentId"), q(*row.movedTo)},
                                                                       {QStringLiteral("mc"), q(mcOf(*row.movedTo))}})
                                               : QJsonValue(QJsonValue::Null)},
+      {QStringLiteral("plugin"), row.plugin ? QJsonValue(QJsonObject{{QStringLiteral("id"), QStringLiteral("code-review")},
+                                                                    {QStringLiteral("kind"), QStringLiteral("review")},
+                                                                    {QStringLiteral("listed"), true}})
+                                            : QJsonValue(QJsonValue::Null)},
   };
 }
 
@@ -312,6 +321,8 @@ struct Model {
   std::string anchor;
   // How many settled rows the shelf lists (`sidebar.more` adds a page).
   qsizetype settledShown = kSettledPage;
+  // The MC's settings document lists settled plugin threads (sidebarShowSettledPluginThreads).
+  bool showPlugins = false;
 };
 
 Model initialModel() {
@@ -354,7 +365,9 @@ Sections sectionsOf(const Model& model, bool scoped) {
     if (row.snoozedUntil && *row.snoozedUntil > model.now) {
       sections.snoozed.push_back(thread);
     } else if (row.override == "settled") {
-      sections.settled.push_back(thread);
+      // Left out before the shelf pages and counts; the window never shows one
+      // here (RowAction), which would keep it listed.
+      if (!row.plugin || model.showPlugins) sections.settled.push_back(thread);
     } else if (row.pinned) {
       sections.pinned.push_back(thread);
     } else {
@@ -659,11 +672,23 @@ struct Sut {
   Environments away;
   int now = 0;
   int sidebarChanges = 0;
+  // The MC's settings document: whether it lists settled plugin threads, and its version.
+  bool showPlugins = false;
+  int settingsVersion = 0;
   std::unique_ptr<ShellBridge> bridge;
   std::unique_ptr<NativeShell> native;
 
   explicit Sut(const Model& initial) : truth(initial.environments) {
     mc.onRpc(QStringLiteral("orchestration.dispatchCommand"), [this](const FakeMc::Rpc& rpc) { answer(rpc); });
+    mc.onShape(QStringLiteral("config"), [this](int id, const QJsonObject&) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("config")},
+               {QStringLiteral("id"), id},
+               {QStringLiteral("mc"), mc.name},
+               {QStringLiteral("config"), QJsonObject{{QStringLiteral("settings"), settingsDocument()}}}});
+    });
+    mc.onRpc(QStringLiteral("hal-c2.readSettings"), [this](const FakeMc::Rpc& rpc) {
+      mc.reply(rpc, QJsonObject{{QStringLiteral("settings"), settingsDocument()}, {QStringLiteral("version"), settingsVersion}});
+    });
     for (const auto& [environment, members] : truth) {
       if (environment != kOwn) mc.join(q(environment));
       for (const auto& [project, title] : members.projects) pushProject(environment, project);
@@ -689,6 +714,20 @@ struct Sut {
   ~Sut() {
     native.reset();
     bridge.reset();
+  }
+
+  QJsonObject settingsDocument() const { return {{QStringLiteral("sidebarShowSettledPluginThreads"), showPlugins}}; }
+
+  // The document changes on the MC, which pushes it to the shell; the shell
+  // reads it back before the sidebar follows.
+  void setShowPlugins(bool show) {
+    showPlugins = show;
+    ++settingsVersion;
+    for (const int id : mc.subscribers(QStringLiteral("config"))) {
+      mc.send({{QStringLiteral("t"), QStringLiteral("config.settings")}, {QStringLiteral("id"), id}, {QStringLiteral("settings"), settingsDocument()}});
+    }
+    SettingsController* settings = native->controller<SettingsController>();
+    RC_ASSERT(halc2::prop::until([settings, this] { return settings->version() == settingsVersion; }));
   }
 
   SidebarController* sidebar() { return native->sidebar(); }
@@ -820,6 +859,7 @@ struct CreateThread : Command {
   std::string id = genThreadId();
   std::string project = *rc::gen::elementOf(kProjectIds);
   int title = *rc::gen::inRange(0, int(kTitles.size()));
+  bool plugin = *rc::gen::inRange(0, 3) == 0;
 
   explicit CreateThread(const Model&) {}
 
@@ -829,27 +869,28 @@ struct CreateThread : Command {
     RC_PRE(model.environments.at(environment).projects.count(project) > 0);
   }
   static void mutate(Environments& environments, const std::string& environment, const std::string& id, const std::string& project,
-                     int title, int now) {
+                     int title, bool plugin, int now) {
     Row row;
     row.project = project;
     row.title = title;
+    row.plugin = plugin;
     row.created = now;
     row.updated = now;
     environments[environment].threads[id] = row;
   }
   void apply(Model& model) const override {
-    mutate(model.environments, environment, id, project, title, model.now);
+    mutate(model.environments, environment, id, project, title, plugin, model.now);
     normalize(model);
   }
   void run(const Model& model, Sut& sut) const override {
     Model next = model;
     apply(next);
-    mutate(sut.truth, environment, id, project, title, sut.now);
+    mutate(sut.truth, environment, id, project, title, plugin, sut.now);
     sut.push(environment, id);
     sut.expect(next);
   }
   void show(std::ostream& os) const override {
-    os << "CreateThread(" << keyOf(environment, id) << " in " << project << " '" << kTitles[size_t(title)] << "')";
+    os << "CreateThread(" << keyOf(environment, id) << " in " << project << " '" << kTitles[size_t(title)] << "'" << (plugin ? " plugin" : "") << ")";
   }
 };
 
@@ -1203,6 +1244,10 @@ struct RowAction : Command {
   void checkPreconditions(const Model& model) const override {
     RC_PRE(model.connected);
     RC_PRE(livingKey(model.environments, key));
+    // The model does not follow the window, which keeps an open plugin thread
+    // listed (threads/sidebar-list.feature pins that).
+    const auto [environment, id] = split(key);
+    RC_PRE(action != "open" || !rowAt(model.environments, environment, id)->plugin);
   }
   void apply(Model& model) const override {
     if (action == "settle") {
@@ -1428,6 +1473,25 @@ struct ShowMore : Command {
   void show(std::ostream& os) const override { os << "ShowMore"; }
 };
 
+// Another client turns "Show plugin threads in Settled" on or off: the MC's
+// settings document changes and it tells the shell.
+struct ShowPlugins : Command {
+  explicit ShowPlugins(const Model&) {}
+
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.connected); }
+  void apply(Model& model) const override {
+    model.showPlugins = !model.showPlugins;
+    normalize(model);
+  }
+  void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
+    sut.setShowPlugins(next.showPlugins);
+    sut.expect(next);
+  }
+  void show(std::ostream& os) const override { os << "ShowPlugins"; }
+};
+
 // The MC holds its answers to commands, or gives them.
 struct Hold : Command {
   explicit Hold(const Model&) {}
@@ -1556,7 +1620,7 @@ struct NavThread : HistoryCommand {
   // The environments whose rows changed.
   std::vector<std::string> mutate(Environments& environments, int now) const {
     if (change == "create") {
-      CreateThread::mutate(environments, kOwn, id, "p1", 0, now);
+      CreateThread::mutate(environments, kOwn, id, "p1", 0, false, now);
       return {kOwn};
     }
     const std::string at = *where(environments);
@@ -1681,7 +1745,7 @@ private slots:
           0.5, rc::state::gen::commands(initial, rc::state::gen::execOneOfWithArgs<
                                                      CreateThread, CreateThread, CreateThread, ChangeThread, ChangeProject, MoveThread,
                                                      MoveThread, SetOnline, Membership, Tick, Resend, Disconnect, Reconnect, RowAction,
-                                                     RowAction, RowAction, MoveRow, DropRow, DropRow, Select, Scope, ShowMore, Hold>()));
+                                                     RowAction, RowAction, MoveRow, DropRow, DropRow, Select, Scope, ShowMore, ShowPlugins, Hold>()));
       rc::state::runAll(commands, initial, sut);
     }));
   }

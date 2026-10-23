@@ -372,6 +372,7 @@ export function createHost(options: HostOptions): Host {
       next.filter,
       next.projectScopeId,
       now(),
+      next.showSettledPluginThreads,
     );
 
   // Republish a key only when what it is derived from changed, so bindings
@@ -548,6 +549,7 @@ export function createHost(options: HostOptions): Host {
       prev.shell !== next.shell ||
       prev.expanded !== next.expanded ||
       prev.settledShown !== next.settledShown ||
+      prev.showSettledPluginThreads !== next.showSettledPluginThreads ||
       prev.selection !== next.selection ||
       prev.filter !== next.filter ||
       prev.projectScopeId !== next.projectScopeId

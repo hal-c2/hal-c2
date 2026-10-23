@@ -34,6 +34,8 @@ export interface StoreState {
   readonly expanded: ReadonlySet<string>;
   /** How many settled threads the shelf lists; "show more" lists another page. */
   readonly settledShown: number;
+  /** Whether Settled lists threads a plugin started (`sidebarShowSettledPluginThreads`). */
+  readonly showSettledPluginThreads: boolean;
   readonly selection: Selection | null;
   readonly detail: OrchestrationThread | null;
   /** Pagination state for the selected thread's bounded server snapshot. */
@@ -98,6 +100,8 @@ export interface Store {
   readonly setProjectScope: (projectId: string | null) => void;
   readonly setStatus: (status: string, kind?: StatusKind) => void;
   readonly setFilter: (filter: string) => void;
+  /** Follow the MC's `sidebarShowSettledPluginThreads`. */
+  readonly setShowSettledPluginThreads: (show: boolean) => void;
   /** Run a git stacked action on the selected thread's worktree (commitMessage for commit-bearing actions). */
   readonly runGitAction: (
     action: GitStackedAction,
@@ -130,6 +134,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     shell: null,
     expanded: new Set<string>([SIDEBAR_SETTLED_SECTION_ID]),
     settledShown: SIDEBAR_SETTLED_INITIAL_COUNT,
+    showSettledPluginThreads: false,
     selection: null,
     detail: null,
     threadPage: null,
@@ -159,6 +164,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
       state.filter,
       state.projectScopeId,
       now(),
+      state.showSettledPluginThreads,
     );
 
   const emit = () => {
@@ -328,6 +334,12 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     setStatus: (status, kind = "info") => set({ status, statusKind: kind }),
     setFilter: (filter) => {
       state = { ...state, filter };
+      ensureValidSelection(rowsNow());
+      emit();
+    },
+    setShowSettledPluginThreads: (showSettledPluginThreads) => {
+      if (showSettledPluginThreads === state.showSettledPluginThreads) return;
+      state = { ...state, showSettledPluginThreads };
       ensureValidSelection(rowsNow());
       emit();
     },

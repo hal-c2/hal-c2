@@ -216,6 +216,9 @@ struct Input {
   // (`settledPage` in the view); the open thread is listed past them besides.
   qsizetype settledLimit = kSettledPage;
   qsizetype settledPage = kSettledPage;
+  // Whether Settled lists the settled threads a plugin started, such as code
+  // reviews (`sidebarShowSettledPluginThreads`); the open one is listed either way.
+  bool showSettledPluginThreads = false;
 
   const ProjectGroup* group(const QString& key) const;
 };

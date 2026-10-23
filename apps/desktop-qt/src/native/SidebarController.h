@@ -168,6 +168,7 @@ private:
   sidebar::GroupingSettings m_grouping;
   QString m_timestampFormat = QStringLiteral("locale");
   QString m_threadSortOrder = QStringLiteral("updated_at");
+  bool m_showSettledPluginThreads = false;
   QList<sidebar::ProjectGroup> m_groups;
   sidebar::Nullable m_scope;
   sidebar::View m_view;
