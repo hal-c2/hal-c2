@@ -72,13 +72,23 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  @doc "Adds a message (`%{text, attachments}`) to the running turn of `run_id`; Claude takes it at once."
+  @doc """
+  Adds a message (`%{text, attachments}`) to the running turn of `run_id`; Claude takes it at once.
+  Non-timeout exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
+  """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case Registry.lookup(HalC2.Claude.Registry, thread_id) do
-      [{pid, _}] -> GenServer.call(pid, {:steer, run_id, message})
+      [{pid, _}] -> steer_call(pid, run_id, message)
       [] -> {:error, "no running turn"}
     end
+  end
+
+  # The handler only notifies the session, so the explicit budget waits on mailbox
+  # backlog alone; `HalC2.RuntimeSteer` owns which timeout means held.
+  defp steer_call(pid, run_id, message) do
+    timeout = Application.get_env(:hal_c2, :claude_steer_timeout_ms, 30_000)
+    HalC2.RuntimeSteer.call(pid, run_id, message, timeout)
   end
 
   @doc """

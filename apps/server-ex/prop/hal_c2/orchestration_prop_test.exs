@@ -5,8 +5,9 @@ defmodule HalC2.OrchestrationPropTest do
   starts a turn, waits in the queue, steers the running turn or restarts it; have the
   MC send the agent a message of its own (a `notification`, as a delegated task's
   result is); send a message again with its message id, as a client retrying after a
-  reconnect does;
-  cancel, edit, reorder and promote queued messages; resume a held queue; interrupt a turn;
+  reconnect does, or send the same steer twice at once;
+  cancel, edit, reorder and promote queued messages (and have Codex refuse to take a
+  promoted one, also after the thread was archived while Codex was asked); resume a held queue; interrupt a turn;
   crash a provider runtime mid-turn; release a thread's provider session as
   IdleSessions does; and restart the MC mid-turn (boot recovery). A message can also
   stop its turn on a usage limit, which holds the queue behind it; the user can then
@@ -23,8 +24,10 @@ defmodule HalC2.OrchestrationPropTest do
   as it starts, and the continuation, which completes, do not. After each command the test waits on the
   threads' streams until nothing is starting and the runs the command ended have
   ended, then compares each thread's projection with the model: thread state, runs
-  and their statuses in ordinal order (the order they started), the queue's order and positions, at most one active
-  run, and every user message exactly once, in the run it belongs to. A message of the
+  and their statuses in ordinal order (the order they started), the queue's order and
+  positions, at most one active run, and every user message exactly once, in the run
+  it belongs to. A message that steered a turn reached Codex once (the fake logs every
+  `turn/steer`) and is in the transcript ahead of the answer it got. A message of the
   MC's own is in the transcript as a notification, never as a user message, and while
   it is queued it cannot be edited or made to steer.
   """
@@ -53,7 +56,22 @@ defmodule HalC2.OrchestrationPropTest do
         File.mkdir_p!(work)
         {_, 0} = System.cmd("git", ~w(init -q -b main), cd: work)
         Process.put(:work, work)
-        Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
+        log = Path.join(home, "codex-requests.log")
+        Process.put(:codex_log, log)
+        Process.put(:reject_steer, Path.join(home, "reject-steer"))
+        Process.put(:hold_steer, Path.join(home, "hold-steer"))
+        Process.put(:refused_steers, [])
+        Process.put(:steer_log, {0, []})
+
+        Application.put_env(:hal_c2, :codex_command, [
+          "env",
+          "FAKE_CODEX_LOG=#{log}",
+          "FAKE_CODEX_REJECT_STEER=#{Process.get(:reject_steer)}",
+          "FAKE_CODEX_HOLD_STEER=#{Process.get(:hold_steer)}",
+          "python3",
+          "-u",
+          @fake_codex
+        ])
 
         HalC2.Prop.start_services([
           {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -121,6 +139,7 @@ defmodule HalC2.OrchestrationPropTest do
           oneof([:queue, :queue, :auto, :restart, :notice, :limit, :limit]),
           oneof(@instances)
         ]}},
+      {2, {:call, __MODULE__, :steer_twice, [tid, msg, oneof(@instances)]}},
       {1, {:call, __MODULE__, :rename, [tid, oneof(["Alpha", "Beta"])]}},
       {1, {:call, __MODULE__, :recover, [tid]}},
       {1, {:call, __MODULE__, :sweep, []}},
@@ -152,14 +171,45 @@ defmodule HalC2.OrchestrationPropTest do
           {2,
            let(
              [{t, m} <- oneof(sent), k <- range(1, 3)],
-             do: {:call, __MODULE__, :edit, [t, m, "wait edit #{k}"]}
+             do: {:call, __MODULE__, :edit, [t, m, "wait #{m} edit #{k}"]}
            )},
           {2,
            let(
              [{t, m} <- oneof(sent), {_, before} <- oneof([{nil, nil} | sent])],
              do: {:call, __MODULE__, :reorder, [t, m, before]}
            )},
-          {3, let({t, m} <- oneof(sent), do: {:call, __MODULE__, :promote, [t, m]})}
+          {3,
+           let(
+             [{t, m} <- oneof(sent), how <- oneof([:taken, :taken, :refused])],
+             do: {:call, __MODULE__, :promote, [t, m, how]}
+           )}
+        ]
+
+    # A promote is worth aiming at a message that is still queued.
+    queued = for {t, thread} <- threads, m <- thread.queue, do: {t, m}
+
+    on_queued =
+      if queued == [],
+        do: [],
+        else: [
+          {3,
+           let(
+             [{t, m} <- oneof(queued), how <- oneof([:taken, :refused])],
+             do: {:call, __MODULE__, :promote, [t, m, how]}
+           )}
+        ]
+
+    # Archiving while Codex is asked needs Codex to be asked: a running turn that can
+    # take the message.
+    steerable = for {t, thread} <- threads, m <- thread.queue, steers?(thread, m), do: {t, m}
+
+    on_queued =
+      if steerable == [],
+        do: on_queued,
+        else: [
+          {2,
+           let({t, m} <- oneof(steerable), do: {:call, __MODULE__, :promote, [t, m, :archived]})}
+          | on_queued
         ]
 
     running =
@@ -181,7 +231,7 @@ defmodule HalC2.OrchestrationPropTest do
       if(limited == [], do: [], else: [{4, {:call, __MODULE__, :recover, [oneof(limited)]}}]) ++
         if armed == [], do: [], else: [{4, {:call, __MODULE__, :sweep, []}}]
 
-    frequency(always ++ on_messages ++ on_running ++ on_limits)
+    frequency(always ++ on_messages ++ on_queued ++ on_running ++ on_limits)
   end
 
   def precondition(%{threads: threads}, {:call, _, :crash, [tid]}),
@@ -195,6 +245,11 @@ defmodule HalC2.OrchestrationPropTest do
 
   def precondition(%{threads: threads}, {:call, _, :restart, []}),
     do: Enum.any?(threads, fn {_, t} -> running(t) != nil end)
+
+  def precondition(%{threads: threads}, {:call, _, :promote, [tid, msg, :archived]}),
+    do:
+      match?(%{status: :live}, threads[tid]) and msg in threads[tid].queue and
+        steers?(threads[tid], msg)
 
   def precondition(%{threads: threads}, {:call, _, fun, [tid, msg | _]})
       when fun in [:cancel, :edit, :reorder, :promote, :resend],
@@ -210,6 +265,10 @@ defmodule HalC2.OrchestrationPropTest do
       _ -> state
     end
   end
+
+  # The second of two identical sends finds the first: they are one send.
+  def next_state(state, result, {:call, m, :steer_twice, [tid, msg, instance]}),
+    do: next_state(state, result, {:call, m, :send, [tid, msg, :auto, instance]})
 
   # A message the thread already has was sent: sending it again changes nothing, in
   # whatever state the first one is now (running, queued, steered, cancelled, edited).
@@ -396,9 +455,20 @@ defmodule HalC2.OrchestrationPropTest do
     end
   end
 
-  def next_state(state, _result, {:call, _, :promote, [tid, msg]}) do
+  # Codex is asked to take the message, the thread is archived meanwhile, and then
+  # Codex refuses: the message is not queued again, and the turn runs on.
+  def next_state(state, _result, {:call, _, :promote, [tid, msg, :archived]}) do
+    update(state, tid, fn thread ->
+      %{thread | queue: List.delete(thread.queue, msg)}
+      |> set_runs(&if(&1.msg == msg, do: %{&1 | status: :cancelled}, else: &1))
+      |> cancel_queue()
+      |> Map.put(:status, :archived)
+    end)
+  end
+
+  def next_state(state, _result, {:call, _, :promote, [tid, msg, how]}) do
     case promote_refusal(state, tid, msg) do
-      nil -> update(state, tid, &promoted(&1, msg))
+      nil -> update(state, tid, &promoted(&1, msg, how))
       _ -> state
     end
   end
@@ -488,7 +558,9 @@ defmodule HalC2.OrchestrationPropTest do
   defp expected_reply(state, :create, [tid]),
     do: if(state.threads[tid], do: {:error, "Thread #{tid} already exists."}, else: :ok)
 
-  defp expected_reply(state, :send, [tid | _]), do: refusal(state, tid, :send) || :ok
+  defp expected_reply(state, fun, [tid | _]) when fun in [:send, :steer_twice],
+    do: refusal(state, tid, :send) || :ok
+
   defp expected_reply(state, :rename, [tid, _]), do: refusal(state, tid, :rename) || :ok
 
   defp expected_reply(state, fun, [tid])
@@ -501,7 +573,11 @@ defmodule HalC2.OrchestrationPropTest do
   defp expected_reply(state, fun, [tid | _]) when fun in [:resume, :cancel, :reorder],
     do: refusal(state, tid, :queue) || :ok
 
-  defp expected_reply(state, :promote, [tid, msg]), do: promote_refusal(state, tid, msg) || :ok
+  defp expected_reply(_state, :promote, [_tid, _msg, :archived]),
+    do: {:error, :archived_meanwhile}
+
+  defp expected_reply(state, :promote, [tid, msg, _how]),
+    do: promote_refusal(state, tid, msg) || :ok
 
   defp expected_reply(state, :recover, [tid]),
     do:
@@ -523,6 +599,9 @@ defmodule HalC2.OrchestrationPropTest do
   defp reply_matches?({:error, :agents_own}, {:error, message}),
     do: message =~ ~r/^Queued run \S+ is the agent's own message/
 
+  defp reply_matches?({:error, :archived_meanwhile}, {:error, message}),
+    do: message =~ ~r/not queued again: the thread was archived\.$/
+
   defp reply_matches?(expected, reply), do: expected == reply
 
   defp update(state, tid, fun), do: update_in(state.threads[tid], fun)
@@ -530,6 +609,14 @@ defmodule HalC2.OrchestrationPropTest do
   defp set_runs(thread, fun), do: %{thread | runs: Enum.map(thread.runs, fun)}
 
   defp running(thread), do: Enum.find(thread.runs, &(&1.status == :running))
+
+  # A promote of this queued message asks the running turn's provider to take it.
+  defp steers?(thread, msg) do
+    run = running(thread)
+
+    run != nil and not thread.messages[msg].notice and
+      Enum.find(thread.runs, &(&1.msg == msg)).instance == run.instance
+  end
 
   defp end_running(thread, status),
     do: set_runs(thread, &if(&1.status == :running, do: %{&1 | status: status}, else: &1))
@@ -666,15 +753,16 @@ defmodule HalC2.OrchestrationPropTest do
   end
 
   # A queued message steers the running turn, or goes first in the queue when no turn
-  # runs. One for another instance interrupts the running turn and goes first.
-  defp promoted(thread, msg) do
+  # runs. One for another instance, or one the provider refuses to take, interrupts the
+  # running turn and goes first.
+  defp promoted(thread, msg, how) do
     instance = Enum.find(thread.runs, &(&1.msg == msg)).instance
 
     case running(thread) do
       nil ->
         %{thread | queue: [msg | List.delete(thread.queue, msg)]}
 
-      %{instance: other} when other != instance ->
+      %{instance: other} when other != instance or how == :refused ->
         %{thread | queue: [msg | List.delete(thread.queue, msg)]}
         |> end_running(:interrupted)
         |> start_next()
@@ -708,7 +796,8 @@ defmodule HalC2.OrchestrationPropTest do
         Map.new(thread.messages, fn {id, m} ->
           shown = if m.shown, do: {m.run, if(m.notice, do: "notification", else: "user_message")}
           {id, {m.text, m.run, shown}}
-        end)
+        end),
+      steered: for({id, m} <- thread.messages, m.run != id, do: m.text) |> Enum.sort()
     }
   end
 
@@ -744,6 +833,41 @@ defmodule HalC2.OrchestrationPropTest do
         true -> []
       end
     )
+  end
+
+  # The same steer sent twice at once, as a client retrying while the first is still on
+  # its way: Codex holds the first (`hold-steer`, as a refused-archived promote does)
+  # until the repeat has been decided, so the overlap does not depend on the
+  # scheduler. Both are answered alike.
+  def steer_twice(tid, msg, instance) do
+    steers = active_runs(tid, instance)
+    command = message(tid, msg, :auto, instance)
+    File.touch!(Process.get(:hold_steer))
+    first = Task.async(fn -> Orchestration.dispatch(command) end)
+
+    results =
+      case asked(tid, msg, first) do
+        :asked ->
+          repeat = Orchestration.dispatch(command)
+          File.rm!(Process.get(:hold_steer))
+          [Task.await(first, @wait_ms), repeat]
+
+        {:done, one} ->
+          File.rm!(Process.get(:hold_steer))
+          [one, Orchestration.dispatch(command)]
+
+        :timeout ->
+          File.rm!(Process.get(:hold_steer))
+          [Task.await(first, @wait_ms), Orchestration.dispatch(command)]
+      end
+
+    result =
+      case Enum.uniq_by(results, &outcome/1) do
+        [one] -> one
+        both -> {:unexpected, both}
+      end
+
+    reply(result, if(match?({:ok, _}, result), do: steers, else: []))
   end
 
   # The same message again, as first sent; a message the thread has ends no run.
@@ -851,8 +975,50 @@ defmodule HalC2.OrchestrationPropTest do
         "beforeRunId" => before && run_of(tid, before)
       })
 
-  def promote(tid, msg) do
+  # Codex holds the promoted message's `turn/steer` until the thread is archived, then
+  # refuses it.
+  def promote(tid, msg, :archived) do
+    asked = steer_requests()
+    File.touch!(Process.get(:hold_steer))
+    File.touch!(Process.get(:reject_steer))
+
+    task =
+      Task.async(fn ->
+        Orchestration.dispatch(%{
+          "type" => "queued-message.promote-to-steer",
+          "threadId" => tid,
+          "queuedRunId" => run_of(tid, msg),
+          "targetRunId" => List.first(active_runs(tid))
+        })
+      end)
+
+    result =
+      case asked(tid, msg, task) do
+        {:done, result} ->
+          File.rm!(Process.get(:hold_steer))
+          result
+
+        asked ->
+          if asked == :asked,
+            do:
+              {:ok, _} = Orchestration.dispatch(%{"type" => "thread.archive", "threadId" => tid})
+
+          File.rm!(Process.get(:hold_steer))
+          Task.await(task, @wait_ms)
+      end
+
+    File.rm!(Process.get(:reject_steer))
+    Process.put(:refused_steers, Process.get(:refused_steers) ++ (steer_requests() -- asked))
+    reply(result, [])
+  end
+
+  # A refused promote has Codex refuse every `turn/steer` it is sent meanwhile; their
+  # texts are taken back off the ones Codex took (`provider_steers/1`).
+  def promote(tid, msg, how) do
     ending = active_runs(tid)
+    reject = Process.get(:reject_steer)
+    asked = steer_requests()
+    if how == :refused, do: File.touch!(reject)
 
     result =
       Orchestration.dispatch(%{
@@ -862,7 +1028,31 @@ defmodule HalC2.OrchestrationPropTest do
         "targetRunId" => List.first(ending)
       })
 
+    if how == :refused do
+      File.rm!(reject)
+      Process.put(:refused_steers, Process.get(:refused_steers) ++ (steer_requests() -- asked))
+    end
+
     reply(result, if(match?({:ok, _}, result), do: ending, else: []))
+  end
+
+  # `:asked` once the promote put the message in the turn, and so asks Codex; its reply
+  # if it ended first.
+  defp asked(tid, msg, %Task{ref: ref} = task) do
+    if StreamState.get(current(tid), "turn-item")["turn-item:user:#{msg}"] do
+      :asked
+    else
+      receive do
+        {:hal_c2_stream, ^tid, _} ->
+          asked(tid, msg, task)
+
+        {^ref, result} ->
+          Process.demonitor(ref, [:flush])
+          {:done, result}
+      after
+        @wait_ms -> :timeout
+      end
+    end
   end
 
   def release(tid) do
@@ -948,16 +1138,14 @@ defmodule HalC2.OrchestrationPropTest do
 
   # The command's reply, and every thread as it is once the command's effects landed.
   defp reply(result, ending) do
-    reply =
-      case result do
-        {:ok, %{}} -> :ok
-        {:error, message} -> {:error, message}
-        other -> {:unexpected, other}
-      end
-
+    reply = outcome(result)
     deadline = System.monotonic_time(:millisecond) + @wait_ms
     {reply, Map.new(@threads, &{&1, settled(&1, ending, deadline)})}
   end
+
+  defp outcome({:ok, %{}}), do: :ok
+  defp outcome({:error, message}), do: {:error, message}
+  defp outcome(other), do: {:unexpected, other}
 
   # Waits on the thread's stream until no run is starting and the runs in `ending` have
   # ended. A run's end starts the next queued one off the runtime's process, so when
@@ -1041,9 +1229,13 @@ defmodule HalC2.OrchestrationPropTest do
                {:bad_positions,
                 Enum.map(runs, &{&1["userMessageId"], &1["status"], &1["queuePosition"]})}
 
+        user_messages =
+          for {id, %{"role" => "user"} = m} <- StreamState.get(state, "message"), do: {id, m}
+
         messages =
-          for {id, %{"role" => "user"} = m} <- StreamState.get(state, "message"), into: %{} do
+          for {id, m} <- user_messages, into: %{} do
             item = items["turn-item:user:#{id}"]
+            steered? = by_id[m["runId"]]["userMessageId"] != rename.(id)
 
             # Where the transcript has the message, and as what; a notification says
             # what the message reports and none of its text.
@@ -1057,6 +1249,10 @@ defmodule HalC2.OrchestrationPropTest do
 
                 item["type"] == "notification" and Map.has_key?(item, "text") ->
                   {:bad_item, item}
+
+                # The fake answers a steer in the turn it joined, after it.
+                steered? and not answered_after?(items, item, m["text"]) ->
+                  {:unanswered, item}
 
                 true ->
                   {by_id[item["runId"]]["userMessageId"], item["type"]}
@@ -1082,8 +1278,61 @@ defmodule HalC2.OrchestrationPropTest do
                  run["providerInstanceId"]}
             ),
           queue: queue,
-          messages: messages
+          messages: messages,
+          steered: provider_steers(Enum.map(user_messages, fn {_, m} -> m["text"] end))
         }
     end
+  end
+
+  defp answered_after?(items, item, text) do
+    Enum.any?(Map.values(items), fn answer ->
+      answer["text"] == "steered: " <> text and answer["runId"] == item["runId"] and
+        answer["ordinal"] > item["ordinal"]
+    end)
+  end
+
+  # The texts of the `turn/steer` requests Codex took for these messages, once for
+  # every request. Every generated text names its message (`wait m3`, `wait m3 edit
+  # 1`), so a text is one message's, and a message steered twice is in the list twice.
+  defp provider_steers(texts) do
+    texts = MapSet.new(texts)
+
+    (steer_requests() -- Process.get(:refused_steers))
+    |> Enum.filter(&MapSet.member?(texts, &1))
+    |> Enum.sort()
+  end
+
+  # The texts of every `turn/steer` Codex was sent, in order. Each call reads only
+  # the lines the log gained since the last (`:steer_log` holds where it stopped and
+  # what it read), up to the last complete one.
+  defp steer_requests do
+    {offset, texts} = Process.get(:steer_log)
+
+    added =
+      case File.open(Process.get(:codex_log), [:read, :binary]) do
+        {:ok, io} ->
+          {:ok, _} = :file.position(io, offset)
+          data = IO.binread(io, :eof)
+          File.close(io)
+          if is_binary(data), do: data, else: ""
+
+        {:error, :enoent} ->
+          ""
+      end
+
+    complete =
+      case :binary.matches(added, "\n") do
+        [] -> ""
+        newlines -> binary_part(added, 0, elem(List.last(newlines), 0) + 1)
+      end
+
+    texts =
+      texts ++
+        for line <- String.split(complete, "\n", trim: true),
+            %{"method" => "turn/steer", "params" => params} <- [JSON.decode!(line)],
+            do: hd(params["input"])["text"]
+
+    Process.put(:steer_log, {offset + byte_size(complete), texts})
+    texts
   end
 end
