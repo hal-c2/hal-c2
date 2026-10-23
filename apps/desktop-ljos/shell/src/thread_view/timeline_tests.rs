@@ -948,6 +948,57 @@ fn an_image_is_asked_for_once_until_it_expires() {
     assert_eq!(w.drain(), vec![Out::AttachmentWanted("image-1".into())]);
 }
 
+// runs-and-queue.feature: "A sent file shows its name, kind and size" and
+// "A sent attachment of a kind this client does not know is listed by name
+// only".
+#[test]
+fn a_sent_file_is_listed_by_name_kind_and_size() {
+    let mut w = World::new();
+    w.open();
+    let run = w.start_run(Some(0), "running");
+    let message = format!("message:{run}");
+    w.set(
+        "turn-item",
+        &message,
+        json!({"attachments": [
+            {"type": "image", "id": "image-1", "name": "cart.png"},
+            {"type": "file", "id": "file-1", "name": "report.pdf",
+             "mimeType": "application/pdf", "sizeBytes": 2 * 1024 * 1024},
+            {"type": "file", "id": "file-2", "name": "Makefile", "sizeBytes": 512},
+        ]}),
+    );
+    let row = w.row(&message);
+    assert_eq!(
+        w.role(row, Role::SentFiles),
+        json!([
+            {"id": "file-1", "name": "report.pdf", "detail": "PDF · 2.0 MiB"},
+            {"id": "file-2", "name": "Makefile", "detail": "512 bytes"},
+        ])
+    );
+    assert_eq!(w.role(row, Role::Attachments).as_array().unwrap().len(), 1);
+
+    let run = w.start_run(Some(0), "running");
+    let message = format!("message:{run}");
+    w.set(
+        "turn-item",
+        &message,
+        json!({"attachments": [{"type": "hologram", "id": "other-1", "name": "scene.holo"}]}),
+    );
+    let row = w.row(&message);
+    assert_eq!(
+        w.role(row, Role::SentFiles),
+        json!([{"id": "other-1", "name": "scene.holo", "detail": ""}])
+    );
+    // There is nothing to open.
+    assert_eq!(w.role(row, Role::Attachments), json!([]));
+    // Only a user message sends files.
+    let reply = w.add_item(
+        "assistant_message",
+        json!({"text": "Done", "attachments": [{"type": "file", "id": "f", "name": "a.txt"}]}),
+    );
+    assert_eq!(w.role(w.row(&reply), Role::SentFiles), json!([]));
+}
+
 // checkpoints.feature: reverting to a turn and editing from a message.
 #[test]
 fn a_reply_reverts_to_its_checkpoint_and_a_message_rewinds() {
