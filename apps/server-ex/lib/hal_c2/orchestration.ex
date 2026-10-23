@@ -1905,9 +1905,8 @@ defmodule HalC2.Orchestration do
 
   # Interrupts the promoted message's target, whose end starts the queue's head. A
   # target that has ended is left alone: the turn running now may be the promoted
-  # message's own. That is best effort, as runtimes stop whichever turn is current:
-  # one that ends and lets the message's own turn start after the check is the one
-  # stopped (#403).
+  # message's own. The interrupt is pinned to the target, so one that ends and lets
+  # the message's own turn start after the check is refused by the runtime (#403).
   defp restart_target(thread_id, target_id) do
     run = StreamState.get(HalC2.Streams.state(thread_id), "run")[target_id] || %{}
 
