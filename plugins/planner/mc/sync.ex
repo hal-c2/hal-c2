@@ -883,12 +883,10 @@ defmodule HalC2Plugins.Planner.Sync do
 
   # The issue `ref` of the task `id` related to the milestone or off it is no longer
   # misplaced in it, nor is the mark of another issue, which stays until its own
-  # correction took. A `ref` that is not an issue keeps the marks.
-  defp placed(%{"misplaced" => _at} = synced, _id, ref) do
-    if is_map(ref) and Map.has_key?(ref, "number"),
-      do: %{synced | "misplaced" => Map.delete(marks(synced), issue_key(ref))},
-      else: synced
-  end
+  # correction took. A `ref` that is not an issue (it lacks the repository or the
+  # number a mark is named by) keeps the marks.
+  defp placed(%{"misplaced" => _at} = synced, _id, %{"repository" => _, "number" => _} = ref),
+    do: %{synced | "misplaced" => Map.delete(marks(synced), issue_key(ref))}
 
   defp placed(synced, _id, _ref), do: synced
 
