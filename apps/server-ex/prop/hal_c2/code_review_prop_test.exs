@@ -146,6 +146,25 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
+  # The counterexample of hal-c2/hal-c2#446, replayed every run: a review stopped by the
+  # usage limit pauses the queue, the plugin is turned off and on again.
+  test "a paused plugin turned off reports nothing, and the pause again once it is on" do
+    Process.flag(:trap_exit, true)
+
+    cmds = [
+      {:set, {:var, 1}, {:call, __MODULE__, :start, ["acme/api#1"]}},
+      {:set, {:var, 2}, {:call, __MODULE__, :limited, [{"acme/api#1", 1}]}},
+      {:set, {:var, 3}, {:call, __MODULE__, :disable, [:plain]}},
+      {:set, {:var, 4}, {:call, __MODULE__, :enable, []}}
+    ]
+
+    begin_case()
+    {history, state, result} = run_commands(__MODULE__, cmds)
+    end_case()
+
+    assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
+  end
+
   # --- model ----------------------------------------------------------------------------
 
   # `reviews`: key → %{status, run (the run its thread is, nil before the first), seen
@@ -280,7 +299,9 @@ defmodule HalC2.CodeReviewPropTest do
       checkouts: checkouts(m),
       orphans: [],
       posts: Enum.sort(m.posts),
-      problems: if(m.paused, do: ["code-review reports: #{m.pause_text}"], else: [])
+      # A plugin turned off has no process to report from; its pause is saved with the
+      # reviews and shows again once it is on.
+      problems: if(m.enabled and m.paused, do: ["code-review reports: #{m.pause_text}"], else: [])
     }
 
     observed = %{observed | posts: Enum.sort(observed.posts)}
