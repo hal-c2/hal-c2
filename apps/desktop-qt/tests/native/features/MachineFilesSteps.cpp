@@ -23,11 +23,19 @@ struct MachineFolders {
   bool answers = false;
   // Without FUSE the MC says so instead of a path.
   bool canShow = true;
+  // On a platform with no folders yet (macOS, Windows) the MC names it instead.
+  QString unsupportedOn;
   // The editor calls made before the user acted.
   qsizetype callsBefore = 0;
 };
 
 const QString kThread = QStringLiteral("t-cart");
+
+QString unsupportedMessage(const QString& label, const QString& platform) {
+  return QStringLiteral("The file is on \"%1\". Opening another machine's files on %2 is not supported yet; "
+                        "edit it or copy its text in HAL-C2's file viewer.")
+      .arg(label, platform);
+}
 
 const FakeMc::Extension extension([](FakeMc& mc) {
   mc.onRpc(QStringLiteral("files.localPath"), [&mc](const FakeMc::Rpc& rpc) {
@@ -44,6 +52,13 @@ const FakeMc::Extension extension([](FakeMc& mc) {
       return;
     }
     const QString label = mc.peerLabels.value(environment, environment);
+    // As machine_files.ex message/2 words it.
+    if (!folders.unsupportedOn.isEmpty()) {
+      mc.reply(rpc, QJsonObject{{QStringLiteral("reason"), QStringLiteral("unsupported")},
+                                {QStringLiteral("machine"), label},
+                                {QStringLiteral("message"), unsupportedMessage(label, folders.unsupportedOn)}});
+      return;
+    }
     if (!folders.canShow) {
       mc.reply(rpc, QJsonObject{{QStringLiteral("reason"), QStringLiteral("no_fuse")},
                                 {QStringLiteral("machine"), label},
@@ -105,6 +120,9 @@ const Steps steps([] {
   step(QStringLiteral("this machine has no way to show another machine's folder"), [](World& world, const Captures&, const Table&) {
     world.mc.part<MachineFolders>().canShow = false;
   });
+  step(QStringLiteral("this machine is a Mac, which cannot show another machine's folder yet"), [](World& world, const Captures&, const Table&) {
+    world.mc.part<MachineFolders>().unsupportedOn = QStringLiteral("macOS");
+  });
 
   step(QStringLiteral("a thread of %1 runs on %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.mc.sendPeerRow(c[1], kThread,
@@ -151,6 +169,11 @@ const Steps steps([] {
     world.waitFor([&] { return toastTitles(world).contains(told); },
                   [&] { return QStringLiteral("\"%1\"; the toasts are %2").arg(told, show(world.state(QStringLiteral("toasts")))); });
     expect(startedSinceActing(world).isEmpty(), QStringLiteral("the MC was asked %1").arg(describe(startedSinceActing(world))));
+  });
+  step(QStringLiteral("the user is told the file is on %1 and to edit or copy it in HAL-C2's file viewer").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString told = unsupportedMessage(c[0], QStringLiteral("macOS"));
+    world.waitFor([&] { return toastTitles(world).contains(told); },
+                  [&] { return QStringLiteral("\"%1\"; the toasts are %2").arg(told, show(world.state(QStringLiteral("toasts")))); });
   });
 });
 

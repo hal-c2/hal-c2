@@ -6,9 +6,9 @@ import HalC2.Shell
 
 // The right panel's Files tab: the thread's workspace as the MC lists it,
 // from a WorkspaceFiles (Panel.files). The tree loads a folder when it is
-// expanded; typing searches the whole workspace. A file opens read-only
-// beside the tree, one row per line; an image shows as itself, and other media
-// open in the browser.
+// expanded; typing searches the whole workspace. A file opens beside the
+// tree, one row per line, to read, edit or copy whole; an image shows as
+// itself, and other media open in the browser.
 //
 //   FilesPanel { anchors.fill: parent; source: Panel.files }
 Rectangle {
@@ -141,6 +141,18 @@ Rectangle {
                     implicitHeight: 26
                     Accessible.description: root.source?.readOnlyReason ?? ""
                     onClicked: root.source.editing = !root.source.editing
+                }
+                ShellButton {
+                    objectName: "fileCopy"
+                    subtle: true
+                    visible: root.source?.fileStatus === "ready" && root.mediaKind.length === 0
+                    iconName: "copy"
+                    iconSize: 13
+                    iconTint: root.muted
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    Accessible.name: qsTr("Copy file contents")
+                    onClicked: Shell.dispatch("files.copyContents", {})
                 }
                 ShellButton {
                     objectName: "fileOpenInEditor"

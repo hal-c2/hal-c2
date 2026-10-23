@@ -18,7 +18,14 @@ interface MachinesWorld extends FilesWorld {
   machines?: Record<string, Record<string, string>>;
   /** This machine has no FUSE: the MC says what to install instead of a path. */
   noFolders?: boolean;
+  /** A platform with no folders yet (macOS, Windows): the MC names it instead. */
+  unsupportedOn?: string;
 }
+
+/** As machine_files.ex message/2 words it. */
+const unsupported = (machine: string, platform: string) =>
+  `The file is on "${machine}". Opening another machine's files on ${platform} is not supported yet; ` +
+  "edit it or copy its text in HAL-C2's file viewer.";
 
 const rootOf = (ctx: MachinesWorld, machine: string, project: string) => {
   const root = ctx.machines?.[machine]?.[project];
@@ -44,6 +51,13 @@ step("this machine has no way to show another machine's folder", (ctx: MachinesW
 });
 
 step(
+  "this machine is a Mac, which cannot show another machine's folder yet",
+  (ctx: MachinesWorld) => {
+    ctx.unsupportedOn = "macOS";
+  },
+);
+
+step(
   "a thread of {string} runs on {string}",
   async (ctx: MachinesWorld, project: string, machine: string) => {
     const root = rootOf(ctx, machine, project);
@@ -51,9 +65,11 @@ step(
     hasEditor(ctx, "VS Code");
     beforeBoot(ctx, () => {
       ctx.fake!.override("localPathFor", async (path) =>
-        ctx.noFolders
-          ? { problem: `The file is on "${machine}". To open it here, install FUSE 3 (fuse3).` }
-          : { path: `${FOLDERS}/${machine}${path}` },
+        ctx.unsupportedOn
+          ? { problem: unsupported(machine, ctx.unsupportedOn) }
+          : ctx.noFolders
+            ? { problem: `The file is on "${machine}". To open it here, install FUSE 3 (fuse3).` }
+            : { path: `${FOLDERS}/${machine}${path}` },
       );
     });
     await openOnWorkspace(ctx, root, project);
@@ -91,5 +107,14 @@ step(
     });
     expect(screen).toContain(statusLabel(ctx));
     expect(mcCalls(ctx, "shell.openInEditor")).toEqual([]);
+  },
+);
+
+step(
+  "the user is told the file is on {string} and to edit or copy it in HAL-C2's file viewer",
+  async (ctx: World, machine: string) => {
+    const screen = await settle(ctx);
+    expect(status(ctx)).toEqual({ kind: "error", text: unsupported(machine, "macOS") });
+    expect(screen).toContain(statusLabel(ctx));
   },
 );
