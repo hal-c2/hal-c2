@@ -56,7 +56,7 @@ colour, opacity and frame from the theme, `sidebarCollapsed`, `route`,
 `settingsActive` and `settingsSection`, the error overlay and the window
 commands built in), the bricks (`TitleBar`, `Sidebar`, `SettingsNav`,
 `SettingsHost`, `CentreHost`, `Workspace`, `GitActions`, `Composer`,
-`RightPanel`, `TerminalDrawer`, `Notifications`), the themed controls (`ShellCard`, `ShellButton`,
+`RightPanel`, `TerminalDrawer`, `ShellTabs`, `PluginPages`, `Notifications`), the themed controls (`ShellCard`, `ShellButton`,
 `ShellComboBox`, `ShellTextField`, `ShellMenu`, `ShellMenuItem`, `ShellIcon`,
 `WindowControls`), and the `HalC2.Shell` singletons: `Shell.state.<key>` for
 everything the shell publishes, `Shell.dispatch(action, payload)` to act,
@@ -64,7 +64,10 @@ everything the shell publishes, `Shell.dispatch(action, payload)` to act,
 `Theme.fontMono`, and `Runtime.reload()`. The centre of the window is a
 `CentreHost` showing `route.kind` and, while `settingsActive`, a
 `SettingsHost` showing `settingsSection` in its place with the composer
-hidden, as the examples do.
+hidden, as the examples do. MC plugins can add pages: a `ShellTabs` strip
+lists them after Threads (its `pages` is empty while there are none, so show
+it only when there are), and a `PluginPages` shows the selected one while
+`route.tab` is not `"threads"`, in place of the thread, composer and right panel.
 
 A broken `shell.qml` never locks you out: the built-in shell takes over with
 the error shown in an overlay.

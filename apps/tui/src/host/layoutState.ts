@@ -5,13 +5,28 @@ import {
   resolveChatVerticalLayout,
   type ChatColumnLayout,
   type ChatVerticalLayout,
-} from "../components/ChatView.layout.ts";
-import type { KeyBindingMode } from "../hooks/useKeyBindings.ts";
+} from "../layout.ts";
 
-/** Key-routing modes: the old TUI's focus modes, the new-thread draft, and `list` (the thread list
+/** Key-routing modes: the focus modes, the new-thread draft, and `list` (the thread list
  * has the keys; its "list" keymap is live). */
 export type TuiMode =
-  | KeyBindingMode
+  | "terminal"
+  | "imagePreview"
+  | "contextMenu"
+  | "command"
+  | "files"
+  | "settings"
+  | "confirmDelete"
+  | "revert"
+  | "diff"
+  | "select"
+  | "userInput"
+  | "rename"
+  | "filter"
+  | "commit"
+  | "project"
+  | "panel"
+  | "compose"
   | "newThread"
   | "list"
   | "join"

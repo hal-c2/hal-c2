@@ -7,7 +7,8 @@ import "js/changedFilesTree.js" as ChangedFilesTree
 // A thread's timeline: the rows of a TimelineModel (Threads.timeline), or any
 // model with its roles (rowId, kind, author, text, streaming, title, status,
 // statusLabel, marker, entries, hiddenCount, expanded, files, time, icon,
-// intent, attribution, meta, attachments, and optionally summary and summaryFailed).
+// intent, attribution, meta, attachments, and optionally summary, summaryFailed
+// and sentFiles).
 //
 //   Timeline { anchors.fill: parent; model: Threads.timeline }
 //
@@ -417,6 +418,12 @@ Item {
         property bool following: true
         property bool positioning: false
         property bool away: false
+        // The height each row was last laid out at, by row id. Heights from
+        // another column width or text size are forgotten: a row made again
+        // at one would snap to its own a moment later.
+        property var heights: ({})
+        readonly property string laidOutAt: [root.columnWidth, Theme.fontScale, Theme.fontUi, Theme.fontMono, Theme.fontSizeCode].join()
+        onLaidOutAtChanged: heights = {}
 
         function settleAway() {
             if (!moving && !dragging && !scrollBar.pressed)
@@ -427,6 +434,7 @@ Item {
         // Another thread's rows open at their latest output, however far
         // the last thread was scrolled.
         function restart() {
+            heights = {};
             heldIndex = -1;
             settlingIndex = -1;
             following = true;
@@ -632,7 +640,29 @@ Item {
             }
 
             width: ListView.view.width
-            height: body.item ? (body.item as Item).implicitHeight + row.gap : 0
+            height: madeHeight > 0 ? madeHeight : laidHeight
+            readonly property real laidHeight: body.item ? (body.item as Item).implicitHeight + row.gap : 0
+            // A row the list makes again (scrolled back to, or laid out
+            // afresh) starts at the height it last had. One that settled its
+            // height a frame later would push the rows after it down every
+            // time it was made, and a followed end with them.
+            property real madeHeight: view.heights[rowId] ?? 0
+            function remember() {
+                madeHeight = 0;
+                if (laidHeight > 0)
+                    view.heights[rowId] = laidHeight;
+            }
+            onLaidHeightChanged: if (madeHeight === 0 || laidHeight === madeHeight)
+                remember()
+            Component.onCompleted: if (madeHeight === 0 || laidHeight === madeHeight)
+                remember()
+            // What it settles at instead, as when the window was resized
+            // since, it takes once it has had the time to.
+            Timer {
+                running: row.madeHeight > 0
+                interval: 250
+                onTriggered: row.remember()
+            }
 
             Loader {
                 id: body
@@ -767,6 +797,65 @@ Item {
                                         font.pixelSize: Math.round(12 * Theme.fontScale)
                                         wrapMode: Text.NoWrap
                                         elide: Text.ElideMiddle
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // The other files sent with it, by name, kind and size.
+                    Flow {
+                        id: sentFiles
+                        readonly property var files: root.list(row.model.sentFiles)
+                        visible: files.length > 0
+                        anchors.right: parent.right
+                        width: Math.round(parent.width * 0.8)
+                        layoutDirection: Qt.RightToLeft
+                        spacing: 8
+                        Repeater {
+                            model: sentFiles.files
+                            delegate: Rectangle {
+                                id: sentFile
+
+                                required property var modelData
+
+                                objectName: "sentFile-" + modelData.id
+                                Accessible.role: Accessible.StaticText
+                                Accessible.name: (modelData.detail ?? "").length > 0 ? qsTr("%1, %2").arg(modelData.name).arg(modelData.detail) : (modelData.name ?? "")
+                                width: Math.min(sentFiles.width, fileRow.implicitWidth + 20)
+                                height: 32
+                                radius: 8
+                                color: root.messageColor
+                                border.color: root.borderColor
+
+                                Row {
+                                    id: fileRow
+                                    x: 10
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 6
+                                    ShellIcon {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        name: "file"
+                                        size: 14
+                                        color: root.iconColor
+                                    }
+                                    RowText {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        // The name gives way so the kind and size stay whole.
+                                        width: Math.max(0, Math.min(implicitWidth, sentFiles.width - 40 - (fileDetail.visible ? fileDetail.implicitWidth + fileRow.spacing : 0)))
+                                        text: sentFile.modelData.name ?? ""
+                                        color: root.messageTextColor
+                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        wrapMode: Text.NoWrap
+                                        elide: Text.ElideMiddle
+                                    }
+                                    RowText {
+                                        id: fileDetail
+                                        visible: text.length > 0
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: sentFile.modelData.detail ?? ""
+                                        color: root.mutedColor
+                                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                                        wrapMode: Text.NoWrap
                                     }
                                 }
                             }

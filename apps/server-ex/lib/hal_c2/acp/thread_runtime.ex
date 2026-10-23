@@ -37,7 +37,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
   alias HalC2.Acp.OpenCode
 
-  @state_version 9
+  @state_version 11
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -58,24 +58,33 @@ defmodule HalC2.Acp.ThreadRuntime do
     do: thread_id |> ensure() |> GenServer.call({:start_turn, turn}, 120_000)
 
   @spec interrupt(String.t(), String.t() | nil) :: :ok | {:error, String.t()}
-  def interrupt(thread_id, _run_id) do
+  def interrupt(thread_id, run_id) do
     case lookup(thread_id) do
       nil -> {:error, "no active ACP turn in this thread"}
-      pid -> GenServer.call(pid, :interrupt, 15_000)
+      pid -> GenServer.call(pid, {:interrupt, run_id}, 15_000)
     end
   end
 
   @doc """
   ACP has no way to add to a running prompt, but OpenCode's running loop takes a
   second `session/prompt` (`%{text, attachments}`, built like a turn's) into the
-  turn; both answer when the turn ends.
+  turn; both answer when the loop ends. One that arrives as the loop ends runs a loop
+  of its own, so the turn ends when the last of its prompts has answered. Non-timeout
+  exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active ACP turn in this thread"}
-      pid -> GenServer.call(pid, {:steer, run_id, message})
+      pid -> steer_call(pid, run_id, message)
     end
+  end
+
+  # The handler only starts the prompt, so the explicit budget waits on mailbox
+  # backlog alone; `HalC2.RuntimeSteer` owns which timeout means held.
+  defp steer_call(pid, run_id, message) do
+    timeout = Application.get_env(:hal_c2, :acp_steer_timeout_ms, 30_000)
+    HalC2.RuntimeSteer.call(pid, run_id, message, timeout)
   end
 
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}
@@ -102,7 +111,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   def rollback(thread_id, _plan) do
     reply =
       case Registry.lookup(@registry, thread_id) do
-        [{pid, _}] -> GenServer.call(pid, :rollback)
+        # One that stops as it is asked is as gone as one not found.
+        [{pid, _}] -> Orchestration.session_call(fn -> GenServer.call(pid, :rollback) end, :ok)
         [] -> :ok
       end
 
@@ -147,7 +157,16 @@ defmodule HalC2.Acp.ThreadRuntime do
        # The models the session's `model` option lists.
        options: [],
        turn: nil,
+       # The run the latest turn ran as, also one that failed to start: the run a
+       # client names to stop the work left running between turns.
+       last_run: nil,
+       # Whether the turn's prompt is out, or its answer waits for its steers'.
        prompt: nil,
+       # The turn's prompts the agent has not answered (`Connection.request/5`): its own
+       # (`:prompt`) and its steers (`:steer`), whose answers arrive in the order the
+       # agent sent them; and the answer that ends the turn so far (`answer/3`).
+       prompts: :gen_server.reqids_new(),
+       answer: nil,
        items: %{},
        buffer: %{},
        flush_timer: nil,
@@ -195,6 +214,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     state = %{
       state
       | turn: turn,
+        last_run: ids.run,
         items: %{},
         interrupted: false,
         subagents: subagents,
@@ -232,15 +252,52 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
-  def handle_call(:release, _from, %{turn: nil} = state),
-    do: {:stop, {:shutdown, :released}, :ok, state}
+  # It leaves the registry before it answers: the registry drops a dead runtime's key
+  # only when it gets to its exit, so a lookup right after the release would find a pid
+  # that is gone. `terminate/2` runs after that, with the key free: a turn may start a
+  # new runtime meanwhile, so for a moment two run for the thread, and nothing in
+  # `terminate/2` may count on having the thread to itself. What it ends there is
+  # named by ids from this runtime's own state (its work, background commands and
+  # subagents), which a replacement runtime never reuses, so its writes to the shared
+  # thread stream cannot touch the new runtime's work.
+  def handle_call(:release, _from, %{turn: nil} = state) do
+    Registry.unregister(@registry, state.thread_id)
+    {:stop, {:shutdown, :released}, :ok, state}
+  end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
 
-  def handle_call(:interrupt, _from, %{prompt: ref} = state) when ref != nil do
+  # Pinned to a run, the interrupt stops only that run's turn: a different
+  # turn that began since the caller read the run is not the caller's to stop.
+  def handle_call({:interrupt, run_id}, _from, %{turn: %{ids: %{run: other}}} = state)
+      when is_binary(run_id) and run_id != other,
+      do: {:reply, {:error, "no running turn"}, state}
+
+  # Between turns a stop naming a run that started before the latest turn's (a
+  # restart that read it as active) leaves the work that later run left, nor the agent
+  # (#474); one naming that run or a later one, on another provider, ends it.
+  def handle_call({:interrupt, run_id}, from, %{turn: nil, last_run: last} = state)
+      when is_binary(run_id) and is_binary(last) and run_id != last do
+    if HalC2.Orchestration.earlier_run?(state.thread_id, run_id, last),
+      do: {:reply, {:error, "no running turn"}, state},
+      else: handle_call(:interrupt, from, state)
+  end
+
+  def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
+
+  def handle_call(:interrupt, _from, %{prompt: prompt} = state) when prompt != nil do
     Connection.notify(state.conn, "session/cancel", %{"sessionId" => state.session_id})
-    state = cancel_requests(state)
-    {:reply, :ok, %{state | interrupted: true}}
+    state = %{cancel_requests(state) | interrupted: true}
+
+    # The turn's prompt already answered and only steers are still out: their
+    # answers are discarded for an interrupted turn (`answered/2`), so end it
+    # now instead of waiting on an agent that may never answer after a cancel.
+    if state.answer != nil do
+      {:noreply, state} = answered(state, state.answer)
+      {:reply, :ok, state}
+    else
+      {:reply, :ok, state}
+    end
   end
 
   # Between turns, stopping the thread stops its background work.
@@ -250,14 +307,12 @@ defmodule HalC2.Acp.ThreadRuntime do
       else: {:reply, {:error, "no running turn"}, state}
   end
 
-  def handle_call({:steer, run_id, message}, _from, %{agent: "opencode", prompt: ref} = state)
-      when ref != nil and not state.interrupted and state.turn.ids.run == run_id do
-    conn = state.conn
+  def handle_call({:steer, run_id, message}, _from, %{agent: "opencode", prompt: p} = state)
+      when p != nil and not state.interrupted and state.turn.ids.run == run_id do
     prompt = acp_prompt(Map.put(message, :ids, state.turn.ids), state.capabilities, false)
     params = %{"sessionId" => state.session_id, "prompt" => prompt}
-    # Its answer is the turn's, which the first prompt's already ends.
-    Task.start(fn -> Connection.call(conn, "session/prompt", params, :infinity) end)
-    {:reply, :ok, state}
+    prompts = Connection.request(state.conn, "session/prompt", params, :steer, state.prompts)
+    {:reply, :ok, %{state | prompts: prompts}}
   end
 
   def handle_call({:steer, _run_id, _message}, _from, state),
@@ -433,9 +488,67 @@ defmodule HalC2.Acp.ThreadRuntime do
     {:noreply, state}
   end
 
-  def handle_info({ref, result}, %{prompt: ref} = state) do
+  # A turn's prompt sent before a code upgrade to state v10 answers through its task.
+  def handle_info({ref, result}, %{prompt: ref} = state) when is_reference(ref) do
     Process.demonitor(ref, [:flush])
+    answer(state, :prompt, result)
+  end
 
+  def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
+    state =
+      if state.turn,
+        do: end_turn(state, "failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly"),
+        else: state
+
+    state = end_work(state, "failed")
+
+    {:noreply, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
+  end
+
+  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
+
+  def handle_info(message, state) do
+    case :gen_server.check_response(message, state.prompts, true) do
+      {{:reply, result}, label, prompts} ->
+        answer(%{state | prompts: prompts}, label, result)
+
+      # The connection went away before answering.
+      {{:error, _}, label, prompts} ->
+        answer(%{state | prompts: prompts}, label, {:error, :closed})
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  # One of the turn's prompts answered. A steer OpenCode took into the running loop
+  # answers with it; one that landed as the loop ended runs a loop of its own, which
+  # answers after the turn's prompt. So the last answer is the last loop's, success or
+  # failure, and it is the turn's once every prompt has answered. A steer answering
+  # before the turn's prompt ran in the prompt's loop, whose answer is the turn's.
+  # Interrupted, the turn ends at the first answer once its prompt's is in. Steer
+  # prompts still out then are dropped with the turn's request collection
+  # (`end_turn/3`): `HalC2.JsonRpc.Connection` has no per-request cancel, so each
+  # one's pending entry there (and the `send_request` monitor on it) is deliberately
+  # abandoned to the connection's lifetime — it goes when the agent eventually
+  # answers or its subprocess exits, and that late answer then matches no request
+  # here and is ignored. One entry per abandoned steer, for as long as the session's
+  # connection lives, is the whole cost. A late `session/update` from such a steer's
+  # own loop is likewise session-scoped: dropped while no turn runs, taken into a
+  # later turn on the same session if one started, as updates always are.
+  # Taking the last answer as the loop's relies on every prompt OpenCode took into one
+  # loop answering with that loop's one result. OpenCode 1.19 does: a prompt to a
+  # running session awaits the running loop's own result (`Runner.ensureRunning`), and
+  # each prompt's answer is built from it, so a joined steer answers as its loop did.
+  defp answer(state, label, result) do
+    answer = if label == :prompt or state.answer != nil, do: result
+
+    if answer != nil and (state.interrupted or :gen_server.reqids_size(state.prompts) == 0),
+      do: answered(state, answer),
+      else: {:noreply, %{state | answer: answer}}
+  end
+
+  defp answered(state, result) do
     {status, failure} =
       case result do
         _ when state.interrupted -> {"interrupted", nil}
@@ -460,20 +573,6 @@ defmodule HalC2.Acp.ThreadRuntime do
     # A turn that did not complete takes its background work, and earlier turns', down.
     {:noreply, if(status == "completed", do: state, else: stop_work(state, status))}
   end
-
-  def handle_info({:EXIT, conn, _reason}, %{conn: conn} = state) do
-    state =
-      if state.turn,
-        do: end_turn(state, "failed", "#{HalC2.Acp.label(state.agent)} exited unexpectedly"),
-        else: state
-
-    state = end_work(state, "failed")
-
-    {:noreply, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
-  end
-
-  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
-  def handle_info(_other, state), do: {:noreply, state}
 
   # The runtime or its provider plugin's supervisor crashed (not a stop): the turn
   # it was running ends, with what was buffered, so the thread shows the session is gone.
@@ -534,7 +633,12 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # Planning modes are read from the session's next config options.
   defp migrate(%{v: 8} = state),
-    do: state |> Map.merge(%{plan_modes: %{}, build_modes: %{}}) |> Map.put(:v, 9)
+    do: state |> Map.merge(%{plan_modes: %{}, build_modes: %{}}) |> Map.put(:v, 9) |> migrate()
+
+  defp migrate(%{v: 9} = state),
+    do: state |> Map.merge(%{v: 10, prompts: :gen_server.reqids_new(), answer: nil}) |> migrate()
+
+  defp migrate(%{v: 10} = state), do: Map.merge(state, %{v: 11, last_run: nil})
 
   # --- session -------------------------------------------------------------------
 
@@ -1994,7 +2098,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     state = state |> close_open_items(status) |> cancel_requests()
     finish(state, status, failure)
-    %{state | turn: nil, items: %{}}
+    %{state | turn: nil, items: %{}, prompts: :gen_server.reqids_new(), answer: nil}
   end
 
   @skill_mention ~r/(^|\s)\p{Sc}[a-zA-Z0-9]/u
@@ -2034,25 +2138,15 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # Sends the turn's prompt; its reply is the turn's end.
+  # Sends the turn's prompt; its answer ends the turn (`answer/3`). It is in the
+  # connection's mailbox before this returns, and a steer or a cancel this process sends
+  # the same connection later lands behind it, so the agent reads the prompt first.
   defp prompt(state, turn) do
     state = %{state | leaf: leaf(state)}
-    conn = state.conn
-    session_id = state.session_id
     prompt = acp_prompt(turn, state.capabilities, state.announce)
-    state = %{state | announce: false}
-
-    task =
-      Task.async(fn ->
-        Connection.call(
-          conn,
-          "session/prompt",
-          %{"sessionId" => session_id, "prompt" => prompt},
-          :infinity
-        )
-      end)
-
-    %{state | prompt: task.ref}
+    params = %{"sessionId" => state.session_id, "prompt" => prompt}
+    prompts = Connection.request(state.conn, "session/prompt", params, :prompt, state.prompts)
+    %{state | announce: false, prompt: true, prompts: prompts}
   end
 
   # The thread no longer holds an agent session (`HalC2.Acp.Antigravity.sessions/1`).

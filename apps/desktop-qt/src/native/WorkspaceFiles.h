@@ -1,11 +1,13 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QDateTime>
 #include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QString>
 #include <QTimer>
+#include <QUrl>
 
 #include <functional>
 #include <optional>
@@ -59,12 +61,21 @@ private:
 //
 // Markdown, CSV and HTML files show rendered (`renderedText`) until the user
 // asks for their source; the choice is kept per kind (sourceKinds, which the
-// owner saves on this device). A file the MC read whole from inside the
-// workspace can be edited (`setEditing`, `edit`): an edit is written with
+// owner saves on this device). A file the MC read whole can be edited,
+// one outside the workspace (opened by its full path) too (`setEditing`,
+// `edit`): an edit is written with
 // `projects.writeFile` half a second after the last one, and at once when the
 // file closes or another opens. A write the MC refuses keeps the edit and
-// says why (`saveProblem`, `saveFailed`). A Markdown task ticked in the
+// says why (`saveProblem`, `saveFailed`); one refused outside the workspace
+// for want of terminal access leaves such files there read-only
+// (`readOnlyReason`). A Markdown task ticked in the
 // rendered view (`toggleTask`) is written at once.
+//
+// A media file (mediaKindOf) is never read as text: the environment signs a
+// URL for it with `assets.createUrl` (`mediaUrl`), which the viewer loads.
+// The URL lasts an hour; opening the file again, or showing the tab, after
+// that signs a new one. A preview that fails to load (`mediaFailed`) leaves
+// the file in error, and `reloadFile` signs it again.
 class WorkspaceFiles : public QObject {
   Q_OBJECT
   Q_PROPERTY(FileTreeModel* tree READ tree CONSTANT)
@@ -92,6 +103,11 @@ class WorkspaceFiles : public QObject {
   Q_PROPERTY(QString text READ text NOTIFY textChanged)
   // What the file renders as: markdown, csv, html, or "" for plain text.
   Q_PROPERTY(QString renderKind READ renderKind NOTIFY fileChanged)
+  // What the open file previews as instead of text: image, video, audio, pdf,
+  // or "" for a file read as text.
+  Q_PROPERTY(QString mediaKind READ mediaKind NOTIFY fileChanged)
+  // Where the preview loads a media file from, once signed; else empty.
+  Q_PROPERTY(QUrl mediaUrl READ mediaUrl NOTIFY fileChanged)
   Q_PROPERTY(bool rendered READ rendered WRITE setRendered NOTIFY renderedChanged)
   // What the rendered view draws: Markdown (a CSV file's as a table, task
   // boxes as `task:<n>` links) or the HTML itself.
@@ -125,9 +141,10 @@ public:
   FileTreeModel* tree() { return &m_tree; }
   TextLinesModel* lines() { return &m_lines; }
 
-  // The workspace to browse: the environment it is on and its folder there.
-  // A new one forgets the tree, the search and the open file.
-  void setTarget(const QString& environmentId, const QString& root);
+  // The workspace to browse: the environment it is on and its folder there,
+  // and the thread it is for (which media URLs are signed for). A new
+  // workspace forgets the tree, the search and the open file.
+  void setTarget(const QString& environmentId, const QString& root, const QString& threadId = {});
   // Only a shown tab loads anything.
   void setActive(bool active);
 
@@ -147,7 +164,7 @@ public:
   QString fileStatus() const { return m_fileStatus; }
   QString fileProblem() const { return m_fileProblem; }
   QString truncatedNotice() const { return m_truncatedNotice; }
-  bool fileEmpty() const { return m_fileStatus == QLatin1String("ready") && m_lines.rowCount() == 0; }
+  bool fileEmpty() const { return m_fileStatus == QLatin1String("ready") && mediaKind().isEmpty() && m_lines.rowCount() == 0; }
   int revealLine() const { return m_revealLine; }
   // Whether long lines wrap: what the user chose here, else the word wrap
   // setting (setDefaultWrap).
@@ -156,11 +173,17 @@ public:
   void setDefaultWrap(bool wrap);
   QString text() const { return m_text; }
   QString renderKind() const;
+  // What a file previews as, by its extension: image, video, audio, pdf, or "".
+  static QString mediaKindOf(const QString& path);
+  QString mediaKind() const { return mediaKindOf(m_openPath); }
+  QUrl mediaUrl() const { return m_mediaUrl; }
   bool rendered() const;
   void setRendered(bool rendered);
   QString renderedText() const;
-  bool editable() const { return readOnlyReason().isEmpty() && m_fileStatus == QLatin1String("ready"); }
+  bool editable() const { return readOnlyReason().isEmpty() && m_fileStatus == QLatin1String("ready") && mediaKind().isEmpty(); }
   QString readOnlyReason() const;
+  // The open file is outside the workspace on an environment that refused such a write.
+  bool hostWritesRefused() const;
   bool editing() const { return m_editing; }
   void setEditing(bool editing);
   bool unsaved() const { return m_pending; }
@@ -176,8 +199,14 @@ public:
   // Opens a file in the viewer, at `line` when above 0, and reveals it in the tree.
   Q_INVOKABLE void openFile(const QString& path, int line = 0);
   Q_INVOKABLE void closeFile();
-  // Reads the open file again.
+  // Reads the open file again (signs a media file's URL again).
   Q_INVOKABLE void reloadFile();
+  // The preview could not load `url`: the open file is in error, unless the
+  // URL is no longer the one shown.
+  Q_INVOKABLE void mediaFailed(const QUrl& url);
+  // Hands the open media file's address to the browser (mediaOpened), signing
+  // it again first when it has run out.
+  Q_INVOKABLE void openMedia();
   // Lists the top folder again (after it failed).
   Q_INVOKABLE void reload();
   // Expands the folders above `path` (loading them as needed) and selects it.
@@ -201,12 +230,17 @@ signals:
   void sourceKindsChanged();
   // The MC would not write `path`.
   void saveFailed(const QString& path, const QString& problem);
+  // The browser is to open `url`, the open media file's address (openMedia).
+  void mediaOpened(const QUrl& url);
 
 private:
   void list(const QString& folder);
   void search();
   void walkReveal();
   void setText(const QString& text);
+  void signMedia(int request);
+  // The open media file has no URL that still works.
+  bool mediaExpired() const;
   // Writes a pending edit now; `closing` when the file is going away, so
   // nothing but a failure is heard of it.
   void save(bool closing = false);
@@ -219,6 +253,7 @@ private:
   TextLinesModel m_lines;
   QString m_environment;
   QString m_root;
+  QString m_thread;
   bool m_active = false;
   // The newest listing asked for of each folder: any other answer is stale.
   int m_listRequest = 0;
@@ -235,6 +270,11 @@ private:
   QString m_fileStatus = QStringLiteral("none");
   QString m_fileProblem;
   QString m_truncatedNotice;
+  QUrl m_mediaUrl;
+  // When the MC stops serving m_mediaUrl, a minute early.
+  QDateTime m_mediaExpires;
+  // The signing whose address openMedia is waiting for; else 0.
+  int m_openOnSign = 0;
   int m_revealLine = 0;
   QString m_revealing;
   QPointer<TimelineModel> m_timeline;
@@ -251,6 +291,9 @@ private:
   bool m_saving = false;
   int m_revision = 0;
   QString m_saveProblem;
+  // The environment that refused to write a file by its full path for want of
+  // terminal access (the session's scopes do not change while it lasts).
+  QString m_hostWritesRefusedOn;
   std::optional<bool> m_wrap;
   bool m_defaultWrap = false;
 };

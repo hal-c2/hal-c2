@@ -6,7 +6,11 @@
 #   packages/contracts/src/settings.ts (continueThreadsAfterServerUpdate)
 #   apps/server-ex/lib/hal_c2/orchestration/recovery.ex
 #   apps/server-ex/lib/hal_c2/orchestration/idle_sessions.ex
+#   apps/server-ex/lib/hal_c2/subprocess/orphans.ex
+#   https://github.com/hal-c2/hal-c2/issues/254 (provider CLIs left running by an MC that died)
+#   https://github.com/hal-c2/hal-c2/issues/387 (commands in a session of their own outlive that kill)
 #   apps/server-ex/lib/hal_c2/claude/thread_runtime.ex (background subagents and commands, also between turns)
+#   https://github.com/hal-c2/hal-c2/issues/474 (a stop naming an earlier run ended what a later run left)
 #   apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts (task_started, task_notification, pendingBackgroundTasks)
 #   apps/server-ex/lib/hal_c2/codex/thread_runtime.ex (commands left running in background terminals)
 #   apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts (settledTurns, terminalizeRunningCommandItems,
@@ -25,9 +29,10 @@
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2LimitRecovery)
 #   docs/user/ (continuing threads after an update)
 Feature: Recovering from restarts and releasing idle sessions
-  Provider processes die with the MC. At boot the engine ends every turn that
-  was cut off, so no thread is stuck running, and can ask cut-off threads to
-  continue. While the MC runs, a turn whose runtime crashes ends as failed, and
+  Provider processes stop with the MC, and ones an MC that died left running are
+  killed at its next boot, before any thread goes on. At boot the engine ends
+  every turn that was cut off, so no thread is stuck running, and can ask cut-off
+  threads to continue. While the MC runs, a turn whose runtime crashes ends as failed, and
   stopping a turn nothing drives any more ends it. The MC also stops provider
   processes that sat idle.
 
@@ -42,6 +47,29 @@ Feature: Recovering from restarts and releasing idle sessions
     And the running command item is interrupted
     And the answer stops streaming
     And the provider thread of "t1" is idle
+
+  @mc
+  Scenario: A provider process an MC that died left running is killed at its next boot
+    Given a provider process with a command in the background was running when the MC died
+    When the MC restarts
+    Then the provider process and its background command have been killed
+
+  # hal-c2/hal-c2#387: the boot kills the provider's process group, which a command
+  # that started a session or group of its own has left.
+  @backlog @mc
+  Scenario: A command a dead MC's provider ran in a session of its own is killed at the next boot
+    Given a provider process with a command in a session of its own was running when the MC died
+    When the MC restarts
+    Then the provider process and its background command have been killed
+
+  # The boot checks the group against its leader, so a provider that already
+  # exited (say, on its closed stdin) leaves its group's commands unsignalled:
+  # the other kill-reach limit HalC2.Subprocess.Orphans states.
+  @backlog @mc
+  Scenario: A command left in the group of a provider that already exited is killed at the next boot
+    Given a provider process had exited leaving a command in its group when the MC died
+    When the MC restarts
+    Then the provider process and its background command have been killed
 
   @mc
   Scenario: A native subagent thread left running by a restart is settled
@@ -253,6 +281,47 @@ Feature: Recovering from restarts and releasing idle sessions
       | action                        |
       | stops "t1"                    |
       | rewinds "t1" to its first run |
+
+  # A restart reads the run it stops before that run ends; by the time the stop
+  # arrives a later run may have left work running that is not the restart's to end.
+  @mc
+  Scenario: A stop naming an earlier run leaves the Claude work a later run left
+    Given thread "t1" left a Claude subagent and a command running in the background
+    When a client stops run 1 of "t1"
+    Then the stop is refused
+    And "t1" lists the subagent and the command as background work
+    When a client stops run 2 of "t1"
+    Then the subagent and the command of "t1" are interrupted
+
+  @mc @plugin-codex
+  Scenario: A stop naming an earlier run leaves the Codex command a later run left
+    Given thread "t1" left a Codex command running in the background
+    When a client stops run 1 of "t1"
+    Then the stop is refused
+    And "t1" lists the command "npm run dev" as background work
+    When a client stops run 2 of "t1"
+    Then the command of "t1" is interrupted
+
+  # The client's stop names the thread's latest run, wherever it ran.
+  @mc @plugin-codex
+  Scenario: A stop naming a later run on Claude ends the Codex command an earlier run left
+    Given thread "t1" left a Codex command running in the background
+    And "t1" ran its latest turn on Claude
+    When a client stops run 3 of "t1"
+    Then the command of "t1" is interrupted
+    And Codex is asked to terminate the command's terminal
+
+  # Stopping a running turn ends only that turn, as it does on one provider. The next
+  # stop comes between turns and ends the work an earlier run left.
+  @mc @plugin-codex
+  Scenario: A stop of a Claude turn leaves the Codex command an earlier run left
+    Given thread "t1" left a Codex command running in the background
+    And "t1" is running its latest turn on Claude
+    When a client stops run 3 of "t1"
+    Then run 3 of "t1" is interrupted
+    And "t1" lists the command "npm run dev" as background work
+    When a client stops run 3 of "t1"
+    Then the command of "t1" is interrupted
 
   # Codex leaves a unified exec process running when it interrupts a turn.
   @mc @plugin-codex

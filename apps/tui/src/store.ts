@@ -1,30 +1,44 @@
-import type { GitStackedAction, OrchestrationThread, VcsStatusResult } from "@hal-c2/contracts";
+import type {
+  GitActionFailureCta,
+  GitStackedAction,
+  OrchestrationThread,
+  VcsStatusResult,
+} from "@hal-c2/contracts";
 
 import type { OrchestrationShellSnapshot, TuiClient, TuiThreadPage } from "./connection.ts";
-import { gitActionNeedsCommitMessage } from "./gitActions.logic.ts";
+import { GitActionFailure, gitActionNeedsCommitMessage } from "./gitActions.logic.ts";
 import {
   buildRows,
+  SIDEBAR_SETTLED_INITIAL_COUNT,
+  SIDEBAR_SETTLED_PAGE,
   SIDEBAR_SETTLED_SECTION_ID,
   SIDEBAR_SNOOZED_SECTION_ID,
   type Row,
   type SidebarSection,
   type Selection,
   selectionEquals,
-} from "./components/Sidebar.logic.ts";
+} from "./sidebar.logic.ts";
 
-// The TUI's source of truth lives in this external store (read by ChatView via
-// useSyncExternalStore), not in React, so it survives re-renders and the
-// imperative subscription plumbing stays out of the component tree, at a scale
-// that fits a single-environment terminal client.
+// The TUI's source of truth lives in this external store, read by the QML shell
+// host, at a scale that fits a single-environment terminal client.
 
-/** Tone of a status-line message — drives its glyph + colour, like the web toasts. */
-export type StatusKind = "info" | "success" | "error" | "busy";
+/**
+ * Tone of a status-line message — drives its glyph + colour, like the web toasts.
+ * "warning" is the client declining the user's last input or action before trying
+ * it ("Enter a whole number of days", "Open a thread to edit its files."): it reads
+ * like an error but is not pinned (host/statusLog.ts), so it does not outlive the
+ * correction. "error" is for something that was attempted and failed, or a system
+ * state the user cannot fix by typing something else (offline, not connected).
+ */
+export type StatusKind = "info" | "success" | "warning" | "error" | "busy";
 
 export interface StoreState {
   readonly shell: OrchestrationShellSnapshot | null;
   readonly expanded: ReadonlySet<string>;
-  /** Projects whose full thread list has been loaded ("show more" activated). */
-  readonly loadedInFull: ReadonlySet<string>;
+  /** How many settled threads the shelf lists; "show more" lists another page. */
+  readonly settledShown: number;
+  /** Whether Settled lists threads a plugin started (`sidebarShowSettledPluginThreads`). */
+  readonly showSettledPluginThreads: boolean;
   readonly selection: Selection | null;
   readonly detail: OrchestrationThread | null;
   /** Pagination state for the selected thread's bounded server snapshot. */
@@ -50,6 +64,8 @@ export interface StoreState {
    * something, never on a timer. Null with no action running.
    */
   readonly gitProgress: GitProgress | null;
+  /** What the MC offers to fix the last action's failure; kept with `gitLog`. */
+  readonly gitRemedy: GitActionFailureCta | null;
 }
 
 /** How long a git action has run, in whole seconds ("7s", "1m 05s"). */
@@ -89,6 +105,8 @@ export interface Store {
   readonly setProjectScope: (projectId: string | null) => void;
   readonly setStatus: (status: string, kind?: StatusKind) => void;
   readonly setFilter: (filter: string) => void;
+  /** Follow the MC's `sidebarShowSettledPluginThreads`. */
+  readonly setShowSettledPluginThreads: (show: boolean) => void;
   /** Run a git stacked action on the selected thread's worktree (commitMessage for commit-bearing actions). */
   readonly runGitAction: (
     action: GitStackedAction,
@@ -120,7 +138,8 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
   let state: StoreState = {
     shell: null,
     expanded: new Set<string>([SIDEBAR_SETTLED_SECTION_ID]),
-    loadedInFull: new Set<string>(),
+    settledShown: SIDEBAR_SETTLED_INITIAL_COUNT,
+    showSettledPluginThreads: false,
     selection: null,
     detail: null,
     threadPage: null,
@@ -132,6 +151,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     gitBusy: false,
     gitLog: [],
     gitProgress: null,
+    gitRemedy: null,
   };
   const listeners = new Set<() => void>();
   let unsubShell: (() => void) | null = null;
@@ -145,11 +165,12 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     buildRows(
       state.shell,
       state.expanded,
-      state.loadedInFull,
+      state.settledShown,
       selectedThreadId(),
       state.filter,
       state.projectScopeId,
       now(),
+      state.showSettledPluginThreads,
     );
 
   const emit = () => {
@@ -300,8 +321,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     },
     loadMore: (id) => {
       if (id !== SIDEBAR_SETTLED_SECTION_ID) return;
-      const loadedInFull = new Set(state.loadedInFull).add(SIDEBAR_SETTLED_SECTION_ID);
-      set({ loadedInFull });
+      set({ settledShown: state.settledShown + SIDEBAR_SETTLED_PAGE });
     },
     toggleSection: (section) => {
       const id = section === "snoozed" ? SIDEBAR_SNOOZED_SECTION_ID : SIDEBAR_SETTLED_SECTION_ID;
@@ -323,22 +343,29 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
       ensureValidSelection(rowsNow());
       emit();
     },
+    setShowSettledPluginThreads: (showSettledPluginThreads) => {
+      if (showSettledPluginThreads === state.showSettledPluginThreads) return;
+      state = { ...state, showSettledPluginThreads };
+      ensureValidSelection(rowsNow());
+      emit();
+    },
     runGitAction: (action, commitMessage, runOptions = {}) => {
       if (state.gitBusy) return;
       const message = commitMessage?.trim();
       if (gitActionNeedsCommitMessage(action) && !message && !runOptions.generateMessage) {
-        set({ status: "Commit needs a message.", statusKind: "error" });
+        set({ status: "Commit needs a message.", statusKind: "warning" });
         return;
       }
       const cwd = currentCwd();
       if (!cwd) {
-        set({ status: "No worktree for git actions.", statusKind: "error" });
+        set({ status: "No worktree for git actions.", statusKind: "warning" });
         return;
       }
       const startedAtMs = Date.parse(now());
       set({
         gitBusy: true,
         gitLog: [],
+        gitRemedy: null,
         gitProgress: { stage: `Running ${action}…`, phase: null, startedAtMs, elapsedMs: 0 },
         status: `Running ${action}…`,
         statusKind: "busy",
@@ -395,6 +422,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
             ],
             status: `Git failed: ${String(error)}`,
             statusKind: "error",
+            gitRemedy: error instanceof GitActionFailure ? error.remedy : null,
           });
           // A failed action may have got part of the way (a commit made before the
           // push was refused): read the checkout again rather than wait for the stream.
@@ -407,13 +435,13 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
         });
     },
     dismissGitLog: () => {
-      if (state.gitLog.length > 0) set({ gitLog: [] });
+      if (state.gitLog.length > 0) set({ gitLog: [], gitRemedy: null });
     },
     pullGit: () => {
       if (state.gitBusy) return;
       const cwd = currentCwd();
       if (!cwd) {
-        set({ status: "No worktree for git actions.", statusKind: "error" });
+        set({ status: "No worktree for git actions.", statusKind: "warning" });
         return;
       }
       set({ gitBusy: true, status: "Pulling…", statusKind: "busy" });

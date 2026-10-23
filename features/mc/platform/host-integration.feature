@@ -91,6 +91,84 @@ Feature: The MC working with its host machine
     Then the host's file manager shows that folder
 
   @mc
+  Scenario: On Linux revealing a file shows the folder that holds it
+    Given a Linux host with a display and xdg-open installed
+    When a client reveals a file in the file manager
+    Then the host's file manager shows the folder that holds the file
+
+  # The file manager only ever shows folders. A workspace path is something an agent or a
+  # cloned repository controls, and handing a file to the host's opener runs whatever its
+  # type maps to: a shortcut, a script, an app.
+  @mc
+  Scenario Outline: On Linux opening a file in the file manager shows the folder that holds it
+    Given a Linux host with a display and xdg-open installed
+    When a client opens "<file>" in the file manager
+    Then the host's file manager shows the folder that holds the file
+
+    Examples:
+      | file           |
+      | README.md      |
+      | tool.desktop   |
+
+  # A trailing slash on a file's path must not make the opener treat the file as a folder.
+  @mc
+  Scenario: On Linux a file addressed with a trailing slash still shows the folder that holds it
+    Given a Linux host with a display and xdg-open installed
+    When a client opens the file "tool.desktop" addressed with a trailing slash in the file manager
+    Then the host's file manager shows the folder that holds the file
+
+  @mc
+  Scenario Outline: On a Mac opening a file in the file manager reveals it instead of opening it
+    Given the MC runs on macOS
+    When a client opens "<item>" in the file manager
+    Then Finder shows the file selected in its folder
+
+    Examples:
+      | item           |
+      | README.md      |
+      | setup.command  |
+      | Tool.app/      |
+
+  @mc
+  Scenario: On a Mac opening a plain folder in the file manager opens it in Finder
+    Given the MC runs on macOS
+    When a client opens a project folder in the file manager
+    Then Finder opens that folder
+
+  @mc
+  Scenario Outline: On Windows opening a file in the file manager selects it in Explorer
+    Given the MC runs on Windows
+    When a client opens "<item>" in the file manager
+    Then Explorer shows the file selected in its folder
+
+    Examples:
+      | item              |
+      | README.md         |
+      | notes.lnk         |
+      | Tools.{0000}/     |
+
+  @mc
+  Scenario: On Windows opening a plain folder in the file manager opens it in Explorer
+    Given the MC runs on Windows
+    When a client opens a project folder in the file manager
+    Then Explorer opens that folder
+
+  @mc
+  Scenario: A program the MC starts for a client does not stay attached to the MC
+    Given a Linux host with a display and xdg-open installed
+    When a client opens a file in the file manager
+    Then the program runs in a session of its own with no input or output shared with the MC
+    And the MC holds no process or port for it
+
+  @mc
+  Scenario: A host without setsid still starts the program in a session of its own
+    Given a Linux host with a display and xdg-open installed
+    And the host has no setsid program
+    When a client opens a file in the file manager
+    Then the program runs in a session of its own with no input or output shared with the MC
+    And the MC holds no process or port for it
+
+  @mc
   Scenario: Opening the file manager on a host without one fails
     Given a Linux host with no display
     When a client opens a folder in the file manager
@@ -139,13 +217,14 @@ Feature: The MC working with its host machine
     Then the server config arrives with the editors that were found
     And the file manager is not offered
 
-  @backlog @mc
+  @mc
   Scenario: On Windows the file manager selects the file in Explorer
-    Given the MC runs on Windows with PowerShell available
+    Given the MC runs on Windows
     When a client reveals a file in the file manager
     Then Explorer shows the file selected in its folder
 
-  @backlog @mc
+  # The MC selects a file with `explorer /select,`, which needs no PowerShell.
+  @dropped @mc
   Scenario: On Windows without PowerShell revealing a file is not offered
     Given the MC runs on Windows without PowerShell
     When a client reads the available editors
@@ -313,6 +392,91 @@ Feature: The MC working with its host machine
     Given the GitHub CLI on the host is not signed in
     When the MC sets up the git it starts
     Then git fetches "git@github.com:acme/shop.git" over SSH
+
+  @mc
+  Scenario Outline: Git stays on SSH where GitHub answers it, and goes to the GitHub CLI's sign-in where it refuses it
+    Given the GitHub CLI on the host is signed in to github.com
+    And an SSH agent runs on the host and SSH to GitHub <ssh>
+    When the MC sets up the git it starts
+    Then git fetches "git@github.com:acme/shop.git" over <transport>
+    And the GitHub CLI answers git's request for a GitHub credential
+
+    Examples:
+      | ssh         | transport |
+      | is answered | SSH       |
+      | is refused  | HTTPS     |
+
+  # Asking SSH is a network round trip, at boot and after every hot update.
+  @mc
+  Scenario: The MC does not wait for SSH to answer for GitHub
+    Given the GitHub CLI on the host is signed in to github.com
+    And an SSH agent runs on the host and SSH to GitHub hangs
+    When the MC begins setting up the git it starts
+    Then the MC is still asking whether SSH answers for GitHub
+    And git fetches "git@github.com:acme/shop.git" over HTTPS
+
+  @mc
+  Scenario: An SSH that runs past its time is stopped and leaves git on its route
+    Given the GitHub CLI on the host is signed in to github.com
+    And an SSH agent runs on the host and SSH to GitHub hangs
+    And SSH is given 1000 ms to answer
+    When the MC sets up the git it starts
+    Then the ssh the MC started has stopped
+    And git fetches "git@github.com:acme/shop.git" over HTTPS
+
+  # A network that is down for one boot does not move git off a route that works.
+  @mc
+  Scenario Outline: An SSH that cannot reach GitHub keeps the route git had
+    Given the GitHub CLI on the host is signed in to github.com
+    And an SSH agent runs on the host and SSH to GitHub <before>
+    And the MC sets up the git it starts
+    And an SSH agent runs on the host and SSH to GitHub cannot reach it
+    When the MC sets up the git it starts
+    Then git fetches "git@github.com:acme/shop.git" over <transport>
+
+    Examples:
+      | before      | transport |
+      | is answered | SSH       |
+      | is refused  | HTTPS     |
+
+  # Git as configured while signed out was never an answer from SSH.
+  @mc
+  Scenario: A sign-in made while SSH cannot reach GitHub goes over HTTPS
+    Given the GitHub CLI on the host is not signed in
+    And the MC sets up the git it starts
+    And the GitHub CLI signs in to github.com
+    And an SSH agent runs on the host and SSH to GitHub cannot reach it
+    When the MC sets up the git it starts
+    Then git fetches "git@github.com:acme/shop.git" over HTTPS
+
+  # Git matches its rules' prefixes by case, so each first character of an owner counts.
+  @mc
+  Scenario Outline: A user's own rule sending HTTPS to SSH does not send git back to SSH
+    Given the GitHub CLI on the host is signed in to github.com
+    And the user's own git config sends "https://github.com/" to SSH
+    When the MC sets up the git it starts
+    Then git fetches "https://github.com/<owner>/shop.git" over HTTPS
+    And git pushes to "https://github.com/<owner>/shop.git" over HTTPS
+
+    Examples:
+      | owner  |
+      | acme   |
+      | Acme   |
+      | 9lives |
+
+  # Git takes the longest matching prefix, and a pushInsteadOf over any insteadOf for a push.
+  @mc
+  Scenario Outline: A user's own rule for one owner still applies where git would take it
+    Given the GitHub CLI on the host is signed in to github.com
+    And the user's own git config has <rule> rule sending "https://github.com/acme/" to "git@github.com:acme/"
+    When the MC sets up the git it starts
+    Then git fetches "https://github.com/acme/shop.git" from "<fetch>"
+    And git pushes "https://github.com/acme/shop.git" to "<push>"
+
+    Examples:
+      | rule            | fetch                            | push                             |
+      | an insteadOf    | git@github.com:acme/shop.git     | https://github.com/acme/shop.git |
+      | a pushInsteadOf | https://github.com/acme/shop.git | git@github.com:acme/shop.git     |
 
   @mc
   Scenario Outline: A sign-in or sign-out reaches git already running at the next hot update

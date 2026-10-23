@@ -5,7 +5,7 @@
 #   apps/desktop-qt/src/native/ProjectController.cpp (addProjectBaseDirectory: where Add project browses from)
 #   apps/web/src/components/settings/SettingInheritance.tsx (reset buttons)
 #   apps/web/src/components/ChatView.tsx, ChatView.logic.ts, apps/web/src/rightPanelStore.ts (when proactive panels open and what holds them back)
-#   packages/contracts/src/settings.ts (sidebarProjectGroupingMode, autoResumeLimitedThreads, snoozeLimitedThreads, sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays, timestampFormat, responseStreamingMode, diffIgnoreWhitespace, diffFilesCollapsed, diffLayout, proactivePanelsEnabled, sendShortcut, followUpBehavior, continueThreadsAfterServerUpdate, newWorktreesStartFromOrigin, addProjectBaseDirectory, confirmThreadUnpin, confirmThreadArchive, confirmThreadDelete, confirmQuit, textGenerationModelSelection)
+#   packages/contracts/src/settings.ts (sidebarProjectGroupingMode, autoResumeLimitedThreads, snoozeLimitedThreads, sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays, sidebarShowSettledPluginThreads, timestampFormat, responseStreamingMode, diffIgnoreWhitespace, diffFilesCollapsed, diffLayout, proactivePanelsEnabled, sendShortcut, followUpBehavior, continueThreadsAfterServerUpdate, newWorktreesStartFromOrigin, addProjectBaseDirectory, confirmThreadUnpin, confirmThreadArchive, confirmThreadDelete, confirmQuit, textGenerationModelSelection)
 #   apps/server-ex/lib/hal_c2/settings.ex
 #   apps/server-ex/lib/hal_c2/orchestration/settlement.ex (sidebarAutoSettleOnMerge, sidebarAutoSettleAfterDays)
 #   apps/server-ex/lib/hal_c2/orchestration/recovery.ex (continueThreadsAfterServerUpdate)
@@ -18,6 +18,7 @@
 #   apps/mobile/src/features/settings/SettingsProjectGroupingRouteScreen.tsx
 #   apps/mobile/src/features/settings/autoSettleSettingsSync.ts
 #   Cross-domain: the General row enableProviderUpdateChecks is specified in settings/updates.feature.
+#   Cross-domain: the General row sidebarShowSettledPluginThreads ("Show plugin threads in Settled") is specified in threads/sidebar-list.feature.
 
 Feature: General settings
   The General section holds the everyday behaviour of threads, the composer, diffs and

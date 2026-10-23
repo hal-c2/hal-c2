@@ -9,11 +9,13 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
+  type ThreadPluginMark,
 } from "@hal-c2/contracts";
 import { deriveThreadCheckpointSummaries } from "@hal-c2/client-runtime/state/thread-checkpoints";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
+  latestUnheldRun,
 } from "@hal-c2/client-runtime/state/thread-execution";
 import { derivePendingBackgroundWork } from "@hal-c2/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
@@ -43,6 +45,8 @@ export type TuiThreadShell = Omit<OrchestrationThreadShell, "snoozedUntil" | "sn
     readonly moving?: OrchestrationV2ThreadMoveTarget | null;
     /** Set on the row a machine keeps for a thread that moved away (clusterClient.ts drops it). */
     readonly movedTo?: OrchestrationV2ThreadMoveTarget | null;
+    /** The plugin that started it, such as a code review. */
+    readonly plugin?: ThreadPluginMark | null;
     /** The label of the machine it lives on, when the shell spans several. */
     readonly machine?: string;
   };
@@ -187,6 +191,7 @@ export function presentTuiThreadShell(thread: OrchestrationV2ThreadShell): TuiTh
     backgroundLiveness: (thread.pendingBackgroundTasks?.length ?? 0) > 0 ? "working" : null,
     ...(thread.moving ? { moving: thread.moving } : {}),
     ...(thread.movedTo ? { movedTo: thread.movedTo } : {}),
+    ...(thread.plugin ? { plugin: thread.plugin } : {}),
   };
 }
 
@@ -566,22 +571,19 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
     projection.providerThreads.find((entry) => entry.id === thread.activeProviderThreadId) ??
     projection.providerThreads.at(-1);
   const contextUsage = providerThread?.contextUsage ?? null;
-  const pendingBackgroundTasks = derivePendingBackgroundWork({
-    latestRun: projection.runs.reduce<OrchestrationV2Run | null>(
-      (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
-      null,
-    ),
-    providerThreads: projection.providerThreads,
-    turnItems: projection.turnItems,
-    activeProviderThreadId: thread.activeProviderThreadId,
-    runs: projection.runs,
-  });
   // A queued message is not a turn yet: the latest turn is the newest run that began.
   const begun = projection.runs.filter((run) => run.status !== "queued");
   const settled =
     begun.length > 0 && begun.length < projection.runs.length
       ? { ...projection, runs: begun }
       : projection;
+  const pendingBackgroundTasks = derivePendingBackgroundWork({
+    latestRun: latestUnheldRun(projection),
+    providerThreads: projection.providerThreads,
+    turnItems: projection.turnItems,
+    activeProviderThreadId: thread.activeProviderThreadId,
+    runs: projection.runs,
+  });
   const latestRun = deriveLatestThreadRun(settled);
   const runtime = deriveThreadRuntime(settled);
   const proposedPlans = projection.plans.flatMap((plan) => {

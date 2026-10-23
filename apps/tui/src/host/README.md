@@ -34,6 +34,11 @@ from `threadView.ts` (below).
   the key hints for what has the keys (`hint`) cut to leave the status glyph
   and message (`label`, up to 32 cells, `kind` for its colour) their room. It
   follows the keys it is built from (`layout`, `threadHints`, `status`, ...).
+  An error stays pinned (`statusError`, `statusLog.ts`) until the user
+  dismisses it (`status.dismiss`: a click on it, or the palette) or a newer
+  error replaces it; a message that follows shows beside it (`pinned`, then
+  `label`), and a replacing "statusbar" plugin gives way (`errorPinned`).
+  `status.history` lists the last errors in a picker; choosing one copies it whole.
 - `contextMenu` (null when closed): the thread menu's `threadKey`, position,
   size, `rows` (items and separators) and highlighted index. Opening it never
   changes which thread is open.
@@ -315,17 +320,3 @@ User config lives in the TUI config dir (`userConfig.ts`), read before the
 terminal is taken over so a `keymap.json` that is not valid JSON stops the
 launch with a readable error: `plugins/` is loaded as a plugin directory,
 `HAL_C2_TUI_PLUGINS` adds files or directories (a path list), and `keymap.json`
-overrides keymaps (see "Keys and actions").
-
-## Where the rest of ChatView's state goes
-
-ChatView (`src/components/ChatView.tsx`) still owns the state below. Move it
-here as each brick lands, keeping one key per concern:
-
-| ChatView state                                        | Host key   |
-| ----------------------------------------------------- | ---------- |
-| `focus` (compose, filter, command, select, ...)       | `mode`     |
-| composer text, attachments, model/runtime/interaction | `composer` |
-| select overlay                                        | `overlay`  |
-| right panel plan surface                              | `layout`   |
-| image preview                                         | `overlay`  |

@@ -185,11 +185,17 @@ std::optional<Project> mostRecentProject(const QList<Project>& projects, const Q
 // archived and subagent rows the sidebar does not list either.
 std::optional<QString> fallbackAfterDelete(const QList<Thread>& threads, const QString& key, const QString& sortOrder);
 
+// The settled rows the shelf lists at a time.
+inline constexpr qsizetype kSettledPage = 50;
+
 struct Input {
   QList<ProjectGroup> projects;
   // The environment of the MC the shell runs against; its folders are the
   // ones the folder explorer lists.
   Nullable localEnvironmentId;
+  // Whether that MC runs on this machine (thisMachine::hosts), so a folder
+  // picked here is one of its folders.
+  bool localFolders = false;
   // Environments that are listed but unreachable; their rows stay, marked
   // offline, with the actions that need the environment off.
   QSet<QString> offlineEnvironments;
@@ -206,6 +212,13 @@ struct Input {
   // A snoozed row's wake time in the user's clock format ("tomorrow 9:00");
   // the row has none when unset.
   std::function<QString(const QString& snoozedUntil)> describeWake;
+  // How many settled rows are listed, and how many more `sidebar.more` lists
+  // (`settledPage` in the view); the open thread is listed past them besides.
+  qsizetype settledLimit = kSettledPage;
+  qsizetype settledPage = kSettledPage;
+  // Whether Settled lists the settled threads a plugin started, such as code
+  // reviews (`sidebarShowSettledPluginThreads`); the open one is listed either way.
+  bool showSettledPluginThreads = false;
 
   const ProjectGroup* group(const QString& key) const;
 };
@@ -217,8 +230,6 @@ struct View {
   QStringList orderedKeys;
   QSet<QString> parkedKeys;
 };
-
-inline constexpr int kSettledLimit = 50;
 
 View build(const QList<Thread>& threads, const Input& input, const Nullable& scopeProjectKey,
            const CapabilitiesFor& capabilitiesFor, qint64 nowMs);
@@ -263,6 +274,8 @@ struct CustomSnooze {
 };
 Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, const QTimeZone& zone);
 
+// Locale AM/PM separators with plain spaces (see plainSpaces in SidebarModel.cpp).
+QString plainSpaces(QString text);
 // "12-hour", "24-hour" or "locale", the timestampFormat setting.
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale);
 QList<SnoozePreset> snoozePresets(const QDateTime& now, const QString& timestampFormat,

@@ -39,6 +39,12 @@ defmodule HalC2.Plugins.ProviderAdapter do
   that calls `started/1` drives the turn: if it crashes before `finish/3`, the MC
   ends the turn as failed.
 
+  A turn names its provider instance (`turn.ids.instance`) and that instance's own
+  provider thread: another instance of one driver runs with its own settings, home and
+  account. The MC only calls `start_turn/2`, so replacing the thread's process is the
+  adapter's job: an adapter must replace a process serving a thread on one instance
+  when a turn names another (the bundled adapters do).
+
   The manifest's `provider:` map declares the rest (atom keys, all optional):
 
     * `driver`: the driver instances name (default: the plugin id).
@@ -70,9 +76,24 @@ defmodule HalC2.Plugins.ProviderAdapter do
   Without them, or when either fails, the thread moves and its next run there gets
   a summary of the conversation.
 
+  `interrupt/2` stops the turn running as `run_id` and answers `{:error, reason}`
+  when the adapter drives another run: the caller read `run_id` as active, and a
+  newer turn may have started since. A `nil` run id stops whichever turn runs.
+  Between turns an adapter that stops the work its turns left running answers
+  `{:error, reason}` for a run that started before its latest turn's
+  (`HalC2.Orchestration.earlier_run?/3`) and stops the work for that run, a later
+  one (a client stopping that work names the thread's latest run, which may have
+  run on another provider), or `nil`. A stop of the thread's active run reaches
+  only that run's adapter, so it leaves background work any adapter holds; a stop
+  between turns reaches every adapter.
+
   An adapter that declares `active_steering` implements `steer/3`: it hands
   `%{text, attachments}` (attachments shaped like a turn's) to the turn running as
-  `run_id`, or answers `{:error, reason}` when the provider does not take it.
+  `run_id`, or answers `{:error, reason}` when the provider does not take it. The
+  message is already recorded in the turn when `steer/3` is called and only an
+  `{:error, _}` (or an exit) takes it back out, so an adapter whose own call times
+  out after the request reached the provider answers `:ok` itself; a timeout exit
+  out of `steer/3` counts as a refusal.
   """
   use HalC2.Plugins.Kind
 
@@ -250,7 +271,9 @@ defmodule HalC2.Plugins.Extension do
     * `call(method, input, context)`: answers its UI parts (`plugins.call`) with
       `{:ok, json}` or `{:error, message}`.
     * `handle_event(event, context)`: a turn finished in a thread the plugin started,
-      `%{"type" => "turn.finished", "threadId", "status", "plugin" => mark}`; with
+      `%{"type" => "turn.finished", "threadId", "status", "plugin" => mark}`, plus
+      `"errorClass"`, `"error"` and `"resetAt"` when the turn failed (a usage limit
+      has class `"usage_limit"` and the time it resets); with
       `slack:read`, what happens in the MC's Slack (`HalC2.Slack.Bot`):
       `%{"type" => "slack.mention", "channel", "user", "userName", "text", "ts",
       "threadTs"}`, `slack.reply` (the same, in the thread of a message the bot posted,

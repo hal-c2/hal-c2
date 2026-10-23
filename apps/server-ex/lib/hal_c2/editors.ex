@@ -41,16 +41,13 @@ defmodule HalC2.Editors do
 
   @doc "Opens `cwd` (optionally `path:line[:column]`) in an editor, without waiting for it."
   def open(%{"cwd" => target, "editor" => "file-manager"} = input) do
-    case {file_manager(), input["reveal"]} do
-      {nil, _} ->
+    case file_manager() do
+      nil ->
         {:error,
          %{"_tag" => "ExternalLauncherUnsupportedEditorError", "editor" => "file-manager"}}
 
-      {"open", true} ->
-        launch("open", ["-R", target])
-
-      {command, _} ->
-        launch(command, [target])
+      command ->
+        launch(command, show(command, target, input["reveal"] == true))
     end
   end
 
@@ -174,6 +171,37 @@ defmodule HalC2.Editors do
 
   defp display?, do: Enum.any?(["DISPLAY", "WAYLAND_DISPLAY"], &(System.get_env(&1, "") != ""))
 
+  # The file manager only ever shows folders: a folder opens, anything else is shown
+  # selected in the folder that holds it. Handing a file to `open`, `explorer` or
+  # `xdg-open` runs whatever the desktop maps its type to, and the target is a workspace
+  # path an agent or a cloned repository controls (a planted shortcut, script or app).
+  # On macOS and Windows a folder opens only when it is a plain one: not a link, and with
+  # no extension, since `open` launches a `.app` bundle and Explorer runs a shell folder
+  # named `x.{CLSID}`. xdg-open has no way to select a file, so on Linux a file shows its
+  # folder. Explorer's `/select,` goes in an argument of its own so a path with a space
+  # is quoted on its own (written to Microsoft's documented form; unverified on a real
+  # Windows host, like #397).
+  defp show("xdg-open", target, _reveal) do
+    path = Path.expand(target)
+    [if(File.dir?(path), do: path, else: Path.dirname(path))]
+  end
+
+  # The path is expanded first so what is checked is what is opened: no trailing slash
+  # that makes `lstat` follow a link, no `..` that a link would take somewhere else.
+  defp show("open", target, reveal) do
+    path = Path.expand(target)
+    if reveal or not plain_folder?(path), do: ["-R", path], else: [path]
+  end
+
+  defp show("explorer", target, reveal) do
+    path = Path.expand(target)
+    windows = String.replace(path, "/", "\\")
+    if reveal or not plain_folder?(path), do: ["/select,", windows], else: [windows]
+  end
+
+  defp plain_folder?(path),
+    do: match?({:ok, %{type: :directory}}, File.lstat(path)) and Path.extname(path) == ""
+
   # `config :hal_c2, os_type:` stands in for `:os.type()` in tests.
   defp file_manager do
     case Application.get_env(:hal_c2, :os_type, :os.type()) do
@@ -188,9 +216,38 @@ defmodule HalC2.Editors do
     end
   end
 
-  # Editor CLIs hand off to the app and return; nothing waits on them.
+  # Editor CLIs hand off to the app and return; nothing waits on them. On Unix the app is
+  # started detached: in a session of its own and with its standard streams on /dev/null,
+  # so it outlives the MC and shares no pipe with it. Without that, a program that does
+  # not exit on its own (`xdg-open` starting a terminal editor with no terminal) kept the
+  # MC's end of the pipe open, and the process and its port stayed until the MC stopped.
+  # The shell returns as soon as it has started the program, so this does not wait on it.
   defp launch(command, args) do
-    Task.start(fn -> System.cmd(command, args, stderr_to_stdout: true) end)
+    case Application.get_env(:hal_c2, :os_type, :os.type()) do
+      {:win32, _} ->
+        Task.start(fn -> System.cmd(command, args, stderr_to_stdout: true) end)
+
+      _ ->
+        script = ~s("$@" </dev/null >/dev/null 2>&1 &)
+        System.cmd("/bin/sh", ["-c", script, "sh" | new_session() ++ [command | args]])
+    end
+
     {:ok, nil}
+  end
+
+  # The program that puts what it runs in a session of its own, so the desktop stopping
+  # the MC's process group does not take the editor with it. Linux has `setsid`; stock
+  # macOS does not, but ships perl. With neither, the program only loses the MC's pipes.
+  defp new_session do
+    cond do
+      setsid = System.find_executable("setsid") ->
+        [setsid]
+
+      perl = System.find_executable("perl") ->
+        [perl, "-MPOSIX", "-e", "POSIX::setsid(); exec @ARGV or die"]
+
+      true ->
+        []
+    end
   end
 end

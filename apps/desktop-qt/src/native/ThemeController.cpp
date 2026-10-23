@@ -1,6 +1,7 @@
 #include "ThemeController.h"
 
 #include <QColor>
+#include <QCoreApplication>
 #include <QFile>
 #include <QGuiApplication>
 #include <QJsonDocument>
@@ -31,12 +32,22 @@ const QString kLight = QStringLiteral("light");
 const QString kDark = QStringLiteral("dark");
 // The standard look's id.
 const QString kStandardId = QStringLiteral("hal-c2");
+// What the standard look is called wherever it is listed or drafted.
+const QString kStandardLabel = QStringLiteral("HAL-C2");
 
 const QString kSystem = QStringLiteral("system");
 const QString kCustomThemes = QStringLiteral("customThemes");
 // The wording of the theme failures.
 const QString kSaveFailed = QStringLiteral("Couldn't save theme selection");
 const QString kRemoveFailed = QStringLiteral("Couldn’t remove theme");
+
+// A draft as a new theme of its own: no id yet, and "<label> copy".
+QVariantMap asCopy(QVariantMap draft) {
+  draft.insert(QStringLiteral("id"), QString());
+  draft.insert(QStringLiteral("label"),
+               QCoreApplication::translate("ThemeController", "%1 copy").arg(draft.value(QStringLiteral("label")).toString()));
+  return draft;
+}
 
 // A theme's id from its name.
 QString idFromName(const QString& name) {
@@ -212,6 +223,10 @@ QList<ThemeController::Definition> ThemeController::definitions() const {
   const auto fromFile = [&](const QJsonObject& theme, const QString& source) -> std::optional<Definition> {
     const QString id = theme.value(QLatin1String("id")).toString();
     if (id.isEmpty() || data.reserved.contains(id)) return std::nullopt;
+    // A published theme may not take the standard look's id: it would offer a
+    // second "hal-c2" row beside it. A saved theme that already holds the id
+    // stays visible, as an old install's themes must.
+    if (source == QLatin1String("environment") && id == kStandardId) return std::nullopt;
     const QString appearance = appearanceOf(theme.value(QLatin1String("appearance")));
     QJsonObject base = data.defaults.value(appearance).toObject();
     // The seeded short form: a canvas and an accent, painted over the defaults.
@@ -316,7 +331,7 @@ void ThemeController::activate() {
     QList<CommandRegistry::Choice> choices;
     CommandRegistry::Choice standard;
     standard.id = QStringLiteral("theme:standard");
-    standard.title = QStringLiteral("HAL-C2");
+    standard.title = kStandardLabel;
     standard.current = drawn.isEmpty();
     standard.terms = {QStringLiteral("theme"), QStringLiteral("appearance")};
     standard.run = [this] { choose({}); };
@@ -371,17 +386,40 @@ void ThemeController::activate() {
 
 void ThemeController::setEditorOpen(bool open) {
   if (open == m_editorOpen) return;
-  // Opened by its toggle: on the theme drawn now. Closed: the draft goes.
-  if (open && m_editing.isEmpty()) m_editing = draft();
-  if (!open) m_editing.clear();
+  // Opened by its toggle: on the theme drawn now, or on the changes a press
+  // outside left behind. Closed: the draft goes.
+  if (open && m_editing.isEmpty()) {
+    m_editing = draft();
+    m_opened = m_editing;
+  }
+  if (!open) {
+    m_editing.clear();
+    // The explicit close drops the opened draft too; hideEditor() keeps it.
+    m_opened.clear();
+  }
+  setEditorShown(open);
+}
+
+// The editor closed by a press outside it: unsaved changes stay, so the toggle
+// opens it on them again. With none there is nothing to keep, and the draft goes.
+void ThemeController::hideEditor() {
+  if (!m_editorOpen) return;
+  if (m_editing == m_opened) m_editing.clear();
+  setEditorShown(false);
+}
+
+void ThemeController::setEditorShown(bool open) {
+  // A closing editor says it is closed before inspecting stops, so the
+  // focus-restore on inspectChanged can tell a pick in an open editor from
+  // a close while inspecting and leave a closing editor's focus alone.
+  m_editorOpen = open;
+  emit editingChanged();
+  emit editorOpenChanged();
   if (!open && (m_inspecting || !m_picked.isEmpty())) {
     m_inspecting = false;
     m_picked.clear();
     emit inspectChanged();
   }
-  m_editorOpen = open;
-  emit editingChanged();
-  emit editorOpenChanged();
 }
 
 void ThemeController::setInspecting(bool inspecting) {
@@ -412,6 +450,7 @@ void ThemeController::pick(const QString& color) {
 
 void ThemeController::edit(const QVariantMap& draft) {
   m_editing = draft;
+  m_opened = draft;
   emit editingChanged();
   setEditorOpen(true);
 }
@@ -478,7 +517,15 @@ bool ThemeController::cycleAppearance() {
 }
 
 QVariantMap ThemeController::draft(const QString& id) const {
-  const auto definition = find(id.isEmpty() ? m_resolvedId : id);
+  // With no id asked for, the draft starts from what is drawn. The standard
+  // look is drawn when resolve() landed on the standard id without a legacy
+  // saved theme of that id being chosen (as a whole or as the drawn half);
+  // this covers nothing chosen, a half for the other appearance, and a choice
+  // that no longer resolves. Its draft is then the standard look itself, not
+  // that legacy theme (an explicit id still finds it).
+  const QString selected = halves().value(m_appearance).toString();
+  const bool standardDrawn = id.isEmpty() && m_resolvedId == kStandardId && selected != kStandardId && themeId() != kStandardId;
+  const auto definition = standardDrawn ? std::nullopt : find(id.isEmpty() ? m_resolvedId : id);
   const QString appearance = definition && !colorsFor(*definition, m_appearance).isEmpty()
                                  ? m_appearance
                                  : (definition ? definition->appearance : m_appearance);
@@ -489,7 +536,7 @@ QVariantMap ThemeController::draft(const QString& id) const {
   }
   const bool editable = definition && definition->source == QLatin1String("custom");
   return {{QStringLiteral("id"), editable ? definition->id : QString()},
-          {QStringLiteral("label"), definition ? definition->label : QStringLiteral("HAL-C2")},
+          {QStringLiteral("label"), definition ? definition->label : kStandardLabel},
           {QStringLiteral("appearance"), appearance},
           {QStringLiteral("colors"), colors.toVariantMap()}};
 }
@@ -510,7 +557,7 @@ QString ThemeController::saveCustom(const QVariantMap& theme) {
     // A new theme: an id from its name no other theme or the standard look has.
     const QString base = idFromName(label);
     id = base;
-    for (int n = 2; builtIns().reserved.contains(id) || find(id); ++n) id = QStringLiteral("%1-%2").arg(base).arg(n);
+    for (int n = 2; builtIns().reserved.contains(id) || id == kStandardId || find(id); ++n) id = QStringLiteral("%1-%2").arg(base).arg(n);
   }
   const QJsonObject colors = canonicalColors(QJsonObject::fromVariantMap(theme.value(QStringLiteral("colors")).toMap()));
   const QJsonObject entry{{QStringLiteral("id"), id},
@@ -528,12 +575,14 @@ QString ThemeController::saveCustom(const QVariantMap& theme) {
 }
 
 QString ThemeController::duplicate(const QString& id) {
-  const auto definition = find(id);
-  if (!definition) return {};
-  QVariantMap copy = draft(id);
-  copy.insert(QStringLiteral("id"), QString());
-  copy.insert(QStringLiteral("label"), QStringLiteral("%1 copy").arg(definition->label));
-  return saveCustom(copy);
+  if (!find(id)) return {};
+  return saveCustom(asCopy(draft(id)));
+}
+
+QString ThemeController::duplicateStandard() {
+  return saveCustom(asCopy({{QStringLiteral("label"), kStandardLabel},
+                            {QStringLiteral("appearance"), m_appearance},
+                            {QStringLiteral("colors"), builtIns().standard.value(m_appearance).toObject().toVariantMap()}}));
 }
 
 void ThemeController::requestRemoveMany(const QStringList& ids) {
@@ -1048,7 +1097,7 @@ std::optional<QJsonObject> ThemeController::parseFile(const QByteArray& text, QS
   if (id.size() > 48 || !valid.match(id).hasMatch()) {
     return refuse(tr("Theme ids may only contain lowercase letters, numbers, and hyphens."));
   }
-  if (builtIns().reserved.contains(id)) return refuse(tr("The theme id \"%1\" is reserved.").arg(id));
+  if (builtIns().reserved.contains(id) || id == kStandardId) return refuse(tr("The theme id \"%1\" is reserved.").arg(id));
   for (const QJsonValue& value : builtIns().themes) {
     if (value.toObject().value(QLatin1String("id")).toString() == id) return refuse(tr("The theme id \"%1\" is reserved.").arg(id));
   }

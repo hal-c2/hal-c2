@@ -2,7 +2,7 @@ import OpenTUI
 
 // The open context menu (`Shell.state.contextMenu`, null when closed): a
 // rounded faint box at the host-clamped position over everything else
-// (ContextMenu.tsx). The pointer over an item highlights it, clicking runs it,
+//. The pointer over an item highlights it, clicking runs it,
 // clicking anywhere else dismisses the menu; the shell's keys move and choose
 // (`contextMenu.move`, `contextMenu.select`).
 Item {

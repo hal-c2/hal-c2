@@ -445,16 +445,34 @@ defmodule HalC2.Acp do
     # Apart, so one agent waiting on a sign-in does not hold up the others.
     instances()
     |> Enum.filter(&enabled?/1)
-    |> Task.async_stream(&load/1, timeout: :infinity, max_concurrency: 4)
+    |> Task.async_stream(
+      fn id -> read(id, locked(id, fn -> start_read(id) end)) end,
+      timeout: :infinity,
+      max_concurrency: 4
+    )
     |> Stream.run()
   end
 
-  # An agent enabled after boot is read in the background, once.
+  # An agent enabled after boot is read in the background, once: not while another
+  # read (this one's, a reload's or boot's) is under way.
   defp load_once(id) do
-    if :persistent_term.get({__MODULE__, id, :loading}, false) == false do
-      :persistent_term.put({__MODULE__, id, :loading}, true)
-      Task.start(fn -> load(id) end)
+    # Checked again under the lock, which a listing takes only when no read is under way.
+    if not loading?(id) do
+      generation = locked(id, fn -> if not loading?(id), do: start_read(id) end)
+      if generation, do: Task.start(fn -> read(id, generation) end)
     end
+  end
+
+  defp loading?(id), do: :persistent_term.get({__MODULE__, id, :loading}, false)
+
+  # Starts a read: a new generation, taken under the lock when the read is asked for
+  # (not when its task gets to run, so a read asked for earlier cannot overtake a
+  # later one), and `:loading`, so `entry/1` starts no second read meanwhile.
+  defp start_read(id) do
+    ref = make_ref()
+    :persistent_term.put({__MODULE__, id, :generation}, ref)
+    :persistent_term.put({__MODULE__, id, :loading}, true)
+    ref
   end
 
   @doc "Whether the MC's settings enable an instance (built-in agents are off by default)."
@@ -485,32 +503,101 @@ defmodule HalC2.Acp do
     end
   end
 
-  defp load(id) do
+  # A read that `forget/1` overtook says nothing: its agent may have been stopped under
+  # it (`{:error, :closed}`), and what it read would otherwise stand as the instance's
+  # state beside the read that replaced it. So the read keeps what it learns aside
+  # (`stage/3`) and publishes it under the lock `forget/1` takes, and only while the
+  # generation it was asked for in is still current. Each read takes a new generation
+  # (`start_read/1`), so of two concurrent reads (boot `load/0` and `reload/1` start
+  # theirs whether or not one is under way) only the most recently asked for may
+  # publish; the slower, possibly older-config one cannot win by finishing last. Lock-free
+  # `:persistent_term` readers can still see a brief torn state during those puts;
+  # the lock serializes the publish against `forget/1`, it does not make it atomic
+  # for readers. The session writers (`put_models/2`, `put_commands/2`,
+  # `put_unauthenticated/1`) take the same lock, so they cannot interleave with
+  # `forget/1`'s erases, but they are deliberately not generation-gated: they
+  # report what a live session currently offers (or that its account is gone),
+  # which stays authoritative for that session until the probe `forget/1`
+  # triggers publishes over it.
+  defp read(id, generation) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-acp-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
 
+    Process.put(staged_key(id), [])
+
     try do
-      case read_agent(id, dir) do
-        :ok ->
-          :persistent_term.erase({__MODULE__, id, :error})
-
-        {:error, :unauthenticated} ->
-          :persistent_term.put({__MODULE__, id, :error}, signed_out_message(id))
-          :persistent_term.put({__MODULE__, id, :unauthenticated}, true)
-
-        {:error, reason} ->
-          :persistent_term.put({__MODULE__, id, :error}, describe(reason))
-
-        _ ->
-          :ok
-      end
+      result = read_agent(id, dir)
+      # Worked out before the lock, which only `:persistent_term` work may run under.
+      error = error_message(id, result)
+      locked(id, fn -> publish(id, generation, result, error) end)
     catch
-      _, _ -> :ok
+      _, _ ->
+        # This read published nothing. While its generation is still current,
+        # clear `:loading` so the next `entry/1` starts another read instead
+        # of leaving the instance with neither models nor an error until a
+        # forget. (A superseded read leaves `:loading` to its successor.)
+        locked(id, fn ->
+          if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation,
+            do: :persistent_term.erase({__MODULE__, id, :loading})
+        end)
+
+        :ok
     after
+      Process.delete(staged_key(id))
       File.rm_rf(dir)
       HalC2.Settings.notify_providers()
     end
   end
+
+  defp error_message(id, {:error, :unauthenticated}), do: signed_out_message(id)
+  defp error_message(_id, {:error, reason}), do: describe(reason)
+  defp error_message(_id, _result), do: nil
+
+  defp publish(id, generation, result, error) do
+    if :persistent_term.get({__MODULE__, id, :generation}, nil) == generation do
+      for {key, value} <- Enum.reverse(Process.get(staged_key(id), [])),
+          do: publish_staged(id, key, value)
+
+      case result do
+        :ok ->
+          :persistent_term.erase({__MODULE__, id, :error})
+
+        {:error, :unauthenticated} ->
+          :persistent_term.put({__MODULE__, id, :error}, error)
+          :persistent_term.put({__MODULE__, id, :unauthenticated}, true)
+
+        {:error, _reason} ->
+          :persistent_term.put({__MODULE__, id, :error}, error)
+
+        _ ->
+          :ok
+      end
+    end
+  end
+
+  # A staged `:unauthenticated, false` (a successful generic `session/new`) clears
+  # the flag instead of storing `false`; other staged values are stored as read.
+  defp publish_staged(id, :unauthenticated, false),
+    do: :persistent_term.erase({__MODULE__, id, :unauthenticated})
+
+  defp publish_staged(id, key, value),
+    do: :persistent_term.put({__MODULE__, id, key}, value)
+
+  defp staged_key(id), do: {__MODULE__, :staged, id}
+
+  # What a read learned, kept until `load/1` publishes it. Returns `:ok` like the
+  # `:persistent_term.put/2` it replaces, so a read ending in `stage/3` still
+  # counts as a success in `publish/4`. Keyed per instance so a nested read of
+  # another instance cannot discard this read's staged values.
+  defp stage(id, key, value) do
+    Process.put(staged_key(id), [{key, value} | Process.get(staged_key(id), [])])
+    :ok
+  end
+
+  # Serializes a read's publication with `forget/1` for one instance, on this MC.
+  # Held by HalC2.Settings via forget/1: nothing under it may call Settings or wait on
+  # IO, only read and write `:persistent_term`.
+  defp locked(id, fun), do: :global.trans({{__MODULE__, id}, self()}, fun, [node()])
 
   # A probe's call, answering the agent meanwhile: a sign-in page it asks for waits
   # for a user (`HalC2.Acp.UrlAuth`), so the call may take as long as that allows.
@@ -560,20 +647,21 @@ defmodule HalC2.Acp do
   defp read_agent(id, dir, "pi", entry) do
     with :ok <- check_version(id, "pi", entry),
          {:ok, _args} <- HalC2.Pi.resolve_launch_args(setting(id, "launchArgs")) do
-      :persistent_term.put({__MODULE__, id, :capabilities}, %{})
+      stage(id, :capabilities, %{})
 
       case HalC2.Pi.discover(id, dir) do
         {:ok, %{models: models, commands: commands, skills: skills}} ->
-          :persistent_term.put({__MODULE__, id, :models}, [@pi_default | models])
-          :persistent_term.put({__MODULE__, id, :commands}, commands)
-          :persistent_term.put({__MODULE__, id, :skills}, skills)
-          :persistent_term.put({__MODULE__, id, :pi_signed_out}, models == [])
+          stage(id, :models, [@pi_default | models])
+          stage(id, :commands, commands)
+          stage(id, :skills, skills)
+          stage(id, :pi_signed_out, models == [])
 
         {:error, _} ->
-          :persistent_term.put({__MODULE__, id, :models}, [@pi_default])
+          stage(id, :models, [@pi_default])
 
-          :persistent_term.put(
-            {__MODULE__, id, :notice},
+          stage(
+            id,
+            :notice,
             "Pi is available, but HAL-C2 could not refresh its models and commands. The live session will retry startup."
           )
       end
@@ -587,8 +675,8 @@ defmodule HalC2.Acp do
   defp read_agent(id, dir, "muse", entry) do
     with :ok <- check_version(id, "muse", entry),
          {:ok, models} <- HalC2.Muse.discover(id, dir) do
-      :persistent_term.put({__MODULE__, id, :models}, models)
-      :persistent_term.put({__MODULE__, id, :muse_signed_out}, models == [])
+      stage(id, :models, models)
+      stage(id, :muse_signed_out, models == [])
       :ok
     end
   end
@@ -596,14 +684,15 @@ defmodule HalC2.Acp do
   defp read_agent(id, dir, driver, entry) do
     with :ok <- check_version(id, driver, entry) do
       with_agent(id, dir, fn conn, init ->
-        :persistent_term.put(
-          {__MODULE__, id, :version},
+        stage(
+          id,
+          :version,
           get_in(init, ["agentInfo", "version"]) || "unknown"
         )
 
-        :persistent_term.put({__MODULE__, id, :capabilities}, init["agentCapabilities"] || %{})
-        :persistent_term.put({__MODULE__, id, :auth_methods}, length(init["authMethods"] || []))
-        :persistent_term.put({__MODULE__, id, :meta}, init["_meta"] || %{})
+        stage(id, :capabilities, init["agentCapabilities"] || %{})
+        stage(id, :auth_methods, length(init["authMethods"] || []))
+        stage(id, :meta, init["_meta"] || %{})
 
         # Antigravity's models come from its sign-in and sessions
         # (`HalC2.Acp.Antigravity.account/1`); a probe session would need a Google login.
@@ -612,8 +701,12 @@ defmodule HalC2.Acp do
                else: call_serving(conn, id, "session/new", %{"cwd" => dir, "mcpServers" => []})
              ) do
           {:ok, session} ->
-            :persistent_term.put({__MODULE__, id, :config}, session["configOptions"] || [])
-            :persistent_term.put({__MODULE__, id, :models}, models(session))
+            stage(id, :config, session["configOptions"] || [])
+            stage(id, :models, models(session))
+            # Antigravity skips `session/new`, so its success proves no sign-in;
+            # its signed-out flag is owned by `HalC2.Acp.Antigravity` instead.
+            if driver != "antigravity", do: stage(id, :unauthenticated, false)
+            :ok
 
           # ACP's "authentication required".
           {:error, %{"code" => -32000}} ->
@@ -651,7 +744,7 @@ defmodule HalC2.Acp do
             |> then(&if(entry["name"], do: Map.put(&1, "subProvider", entry["name"]), else: &1))
           end
 
-        :persistent_term.put({__MODULE__, id, :models}, Enum.sort_by(models, & &1["name"]))
+        stage(id, :models, Enum.sort_by(models, & &1["name"]))
         :ok
 
       {:ok, status, _} when status in [401, 403] ->
@@ -679,7 +772,7 @@ defmodule HalC2.Acp do
 
     case Regex.run(~r/\d+\.\d+\.\d+/, output) do
       [version] ->
-        :persistent_term.put({__MODULE__, id, :version}, version)
+        stage(id, :version, version)
 
         if Version.compare(version, @pi_minimum) == :lt,
           do: {:error, "Pi #{version} is unsupported. Update to Pi #{@pi_minimum} or newer."},
@@ -715,7 +808,7 @@ defmodule HalC2.Acp do
             nil -> "unknown"
           end
 
-        :persistent_term.put({__MODULE__, id, :version}, version)
+        stage(id, :version, version)
         :ok
 
       :missing ->
@@ -1134,15 +1227,33 @@ defmodule HalC2.Acp do
     end
   end
 
-  @doc "Reads one instance's agent again, now."
+  @doc """
+  Reads one instance's agent again, now: what it reads is the instance's state when
+  this returns, unless a `forget/1` (a settings change) overtook it.
+  """
   def reload(id) do
-    forget(id)
-    if enabled?(id), do: load(id)
+    # Forgotten and started in one step, so no listing in between starts a read of
+    # its own that would supersede this one (#459). A settings change that disables
+    # the instance meanwhile forgets it after, which drops this read's generation.
+    enabled = enabled?(id)
+
+    case locked(id, fn ->
+           forget_now(id)
+           if enabled, do: start_read(id)
+         end) do
+      nil -> :ok
+      generation -> read(id, generation)
+    end
+
     :ok
   end
 
   @doc "Forgets what was read from an instance's agent, so it is probed again."
   def forget(id) do
+    locked(id, fn -> forget_now(id) end)
+  end
+
+  defp forget_now(id) do
     for key <- [
           :models,
           :version,
@@ -1161,7 +1272,20 @@ defmodule HalC2.Acp do
         ],
         do: :persistent_term.erase({__MODULE__, id, key})
 
+    # Erased, not bumped: `publish/4` compares against the `nil` default, which
+    # never equals a read's ref, and a forgotten (or deleted) instance leaves
+    # no generation entry behind.
+    :persistent_term.erase({__MODULE__, id, :generation})
     :ok
+  end
+
+  @doc """
+  Marks an instance signed out, under the lock `forget/1` takes, and tells
+  subscribed clients. Used by `HalC2.Acp.Antigravity.drop_account/1`.
+  """
+  def put_unauthenticated(id) do
+    locked(id, fn -> :persistent_term.put({__MODULE__, id, :unauthenticated}, true) end)
+    HalC2.Settings.notify_providers()
   end
 
   @doc """
@@ -1170,10 +1294,9 @@ defmodule HalC2.Acp do
   """
   def put_models(id, config_options) do
     if Enum.any?(config_options, &(&1["id"] == "model")) do
-      :persistent_term.put(
-        {__MODULE__, id, :models},
-        models(%{"configOptions" => config_options})
-      )
+      models = models(%{"configOptions" => config_options})
+
+      locked(id, fn -> :persistent_term.put({__MODULE__, id, :models}, models) end)
 
       HalC2.Settings.notify_providers()
     end
@@ -1225,21 +1348,33 @@ defmodule HalC2.Acp do
           |> put_text("description", command["description"])
         end
 
+      # Lock-free fast path for the common unchanged update; the lock (with a
+      # re-check) is only taken when something appears to have changed.
       changed =
-        :persistent_term.get({__MODULE__, id, :commands}, []) != slash or
-          :persistent_term.get({__MODULE__, id, :skills}, []) != skills
+        commands_changed?(id, slash, skills) and
+          locked(id, fn ->
+            changed = commands_changed?(id, slash, skills)
 
-      if changed do
-        :persistent_term.put({__MODULE__, id, :commands}, slash)
-        :persistent_term.put({__MODULE__, id, :skills}, skills)
-        HalC2.Settings.notify_providers()
-      end
+            if changed do
+              :persistent_term.put({__MODULE__, id, :commands}, slash)
+              :persistent_term.put({__MODULE__, id, :skills}, skills)
+            end
+
+            changed
+          end)
+
+      if changed, do: HalC2.Settings.notify_providers()
     end
 
     :ok
   end
 
   def put_commands(_id, _commands), do: :ok
+
+  defp commands_changed?(id, slash, skills),
+    do:
+      :persistent_term.get({__MODULE__, id, :commands}, []) != slash or
+        :persistent_term.get({__MODULE__, id, :skills}, []) != skills
 
   # Model ids the user added (`config.customModels`, slugs or `%{"slug", "name",
   # "capabilities"}`) follow the agent's own, skipping any the agent already offers.

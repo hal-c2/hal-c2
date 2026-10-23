@@ -46,6 +46,49 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
+  # Like `install/2`, but also reports whether the program's standard streams lead to
+  # /dev/null, then its process id and process group: `name`, the arguments, then
+  # `in out err pid pgid`. Only POSIX tools, so it runs on macOS as well as Linux.
+  defp install_probe(context, name) do
+    context = install(context, name)
+
+    File.write!(Path.join(context.bin, name), """
+    #!/usr/bin/env bash
+    exec 3<>/dev/tcp/127.0.0.1/$HAL_C2_TEST_LAUNCH_PORT
+    printf '%s\\x1f' "#{name}" "$@" >&3
+    for fd in 0 1 2; do
+      if [ /dev/fd/$fd -ef /dev/null ]; then printf 'null ' >&3; else printf 'other ' >&3; fi
+    done
+    printf '%s %s\\n' "$$" "$(ps -o pgid= -p $$ | tr -d ' ')" >&3
+    read -r -u 3 _
+    """)
+
+    context
+  end
+
+  # Takes setsid off PATH, leaving what the fake programs and the perl fallback need.
+  defp without_setsid(context) do
+    context = bin(context)
+    tools = Mc.tmp_dir(context.mc, "tools")
+
+    for tool <- ~w(env bash ps tr perl), path = System.find_executable(tool) do
+      File.ln_s!(path, Path.join(tools, tool))
+    end
+
+    World.put_os_env("PATH", context.bin <> ":" <> tools)
+    context
+  end
+
+  # The ports the MC has open to the shell or the program it starts for a client; other
+  # ports to external programs (the MC's own helpers) come and go on their own.
+  defp program_ports do
+    for p <- Port.list(),
+        {:name, name} <- [Port.info(p, :name)],
+        List.to_string(name) in ["/bin/sh", "/usr/bin/sh", "xdg-open"] or
+          String.ends_with?(List.to_string(name), "/xdg-open"),
+        do: p
+  end
+
   defp listen(%{launches: _} = context), do: context
 
   defp listen(context) do
@@ -77,7 +120,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   defp with_display(context) do
     World.put_app_env(:os_type, {:unix, :linux})
     World.put_os_env("DISPLAY", ":0")
-    install(context, "xdg-open")
+    context |> install("xdg-open") |> Map.put(:host, :linux)
   end
 
   defp headless(context) do
@@ -234,7 +277,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   step "a client opens a project folder in the file manager", context do
-    context = with_display(context)
+    context = if context[:host], do: context, else: with_display(context)
     folder = Mc.tmp_dir(context.mc, "project")
     context |> Map.put(:target, folder) |> open(%{"cwd" => folder, "editor" => "file-manager"})
   end
@@ -245,6 +288,54 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     assert argv == ["xdg-open", context.target]
     :gen_tcp.close(conn)
     context
+  end
+
+  step "a Linux host with a display and xdg-open installed", context do
+    with_display(context)
+  end
+
+  step "the host's file manager shows the folder that holds the file", context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["xdg-open", Path.dirname(context.target)]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step "a client opens a file in the file manager", context do
+    context = install_probe(context, "xdg-open")
+    file = Path.join(Mc.tmp_dir(context.mc, "project"), "README.md")
+    File.write!(file, "# hi\n")
+    before = program_ports()
+    context = context |> Map.put(:target, file) |> Map.put(:ports_before, before)
+    open(context, %{"cwd" => file, "editor" => "file-manager"})
+  end
+
+  step "the program runs in a session of its own with no input or output shared with the MC",
+       context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    [_name, _file, report] = argv
+    [fd0, fd1, fd2, pid, pgid] = String.split(report)
+    assert [fd0, fd1, fd2] == ["null", "null", "null"]
+
+    {mc_pgid, 0} = System.cmd("ps", ["-o", "pgid=", "-p", to_string(:os.getpid())])
+    refute pgid == String.trim(mc_pgid)
+    # A new session's leader is the only member of its process group.
+    assert pgid == pid
+    Map.put(context, :editor_conn, conn)
+  end
+
+  step "the MC holds no process or port for it", context do
+    # The program is still running, waiting on this socket.
+    assert program_ports() -- context.ports_before == []
+    assert :ok = :gen_tcp.send(context.editor_conn, "exit\n")
+    :gen_tcp.close(context.editor_conn)
+    context
+  end
+
+  step "the host has no setsid program", context do
+    without_setsid(context)
   end
 
   step "a Linux host with no display", context do
@@ -261,7 +352,61 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
   step "the MC runs on macOS", context do
     World.put_app_env(:os_type, {:unix, :darwin})
-    install(context, "open")
+    context |> install("open") |> Map.put(:host, :darwin)
+  end
+
+  step "the MC runs on Windows", context do
+    World.put_app_env(:os_type, {:win32, :nt})
+    context |> install("explorer") |> Map.put(:host, :windows)
+  end
+
+  # A name ending in "/" is made a folder. The client sends the path as written, the
+  # trailing slash included; the target is that path without it.
+  step ~r/^a client opens "(?<item>[^"]+)" in the file manager$/, %{args: [item]} = context do
+    cwd =
+      Path.join(Mc.tmp_dir(context.mc, "project"), item) <> if(item =~ ~r{/$}, do: "/", else: "")
+
+    target = String.trim_trailing(cwd, "/")
+
+    if String.ends_with?(cwd, "/"), do: File.mkdir_p!(target), else: File.write!(target, "x\n")
+
+    context
+    |> Map.put(:target, target)
+    |> open(%{"cwd" => cwd, "editor" => "file-manager"})
+  end
+
+  step ~r/^a client opens the file "(?<file>[^"]+)" addressed with a trailing slash in the file manager$/,
+       %{args: [file]} = context do
+    target = Path.join(Mc.tmp_dir(context.mc, "project"), file)
+    File.write!(target, "x\n")
+
+    context
+    |> Map.put(:target, target)
+    |> open(%{"cwd" => target <> "/", "editor" => "file-manager"})
+  end
+
+  step "Finder opens that folder", context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["open", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step "Explorer shows the file selected in its folder", context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["explorer", "/select,", String.replace(context.target, "/", "\\")]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step "Explorer opens that folder", context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["explorer", String.replace(context.target, "/", "\\")]
+    :gen_tcp.close(conn)
+    context
   end
 
   step "a client reveals a file in the file manager", context do
@@ -507,6 +652,13 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     # gh in a directory with a space, as under a home or install path that has one.
     dir = Mc.tmp_dir(context.mc, "gh cli")
     World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
+    # The host has no SSH agent unless a step gives it one (the developer's has), and
+    # git none of the developer's own config.
+    World.put_os_env("SSH_AUTH_SOCK", nil)
+    user_config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+    File.write!(user_config, "")
+    World.put_os_env("GIT_CONFIG_GLOBAL", user_config)
+    World.put_os_env("GIT_CONFIG_NOSYSTEM", "1")
     gh = Path.join(dir, "gh")
 
     File.write!(gh, """
@@ -524,15 +676,88 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     Map.put(context, :gh_config, config)
   end
 
+  # A stand-in for ssh: what `ssh -T git@github.com` gets from GitHub, as the row names.
+  step ~r/^an SSH agent runs on the host and SSH to GitHub (?<outcome>is answered|is refused|cannot reach it|hangs)$/,
+       %{args: [outcome]} = context do
+    dir = Mc.tmp_dir(context.mc, "ssh")
+    World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
+    World.put_os_env("SSH_AUTH_SOCK", Path.join(dir, "agent.sock"))
+    pid_file = Path.join(dir, "ssh.pid")
+
+    # GitHub greets a key it knows and exits 1; ssh exits 255 when it fails.
+    script =
+      case outcome do
+        "is answered" ->
+          "echo \"Hi acme! You've successfully authenticated, but GitHub does not provide shell access.\" >&2\nexit 1"
+
+        "is refused" ->
+          "echo 'git@github.com: Permission denied (publickey).' >&2\nexit 255"
+
+        "cannot reach it" ->
+          "echo 'ssh: Could not resolve hostname github.com: Name or service not known' >&2\nexit 255"
+
+        "hangs" ->
+          "echo $$ > '#{pid_file}'\nexec sleep 600"
+      end
+
+    File.write!(Path.join(dir, "ssh"), "#!/bin/sh\n#{script}\n")
+    File.chmod!(Path.join(dir, "ssh"), 0o755)
+    Map.put(context, :ssh_pid_file, pid_file)
+  end
+
+  step ~r/^SSH is given (?<ms>\d+) ms to answer$/, %{args: [ms]} = context do
+    World.put_app_env(:github_ssh_timeout, String.to_integer(ms))
+    context
+  end
+
+  step "the user's own git config sends \"https://github.com/\" to SSH", context do
+    config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+
+    File.write!(config, """
+    [url "git@github.com:"]
+    \tinsteadOf = https://github.com/
+    \tpushInsteadOf = https://github.com/
+    """)
+
+    World.put_os_env("GIT_CONFIG_GLOBAL", config)
+    context
+  end
+
+  step ~r/^the user's own git config has an? (?<rule>insteadOf|pushInsteadOf) rule sending "(?<from>[^"]+)" to "(?<to>[^"]+)"$/,
+       %{args: [rule, from, to]} = context do
+    config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+    File.write!(config, "[url \"#{to}\"]\n\t#{rule} = #{from}\n")
+    World.put_os_env("GIT_CONFIG_GLOBAL", config)
+    context
+  end
+
+  # Without waiting for SSH, as the upgrader at boot.
+  step "the MC begins setting up the git it starts", context do
+    set_up_git(context)
+  end
+
   step "the MC sets up the git it starts", context do
-    before = for {"GIT_CONFIG_" <> _ = name, value} <- System.get_env(), do: {name, value}
+    context = set_up_git(context)
 
-    ExUnit.Callbacks.on_exit(fn ->
-      for {"GIT_CONFIG_" <> _ = name, _} <- System.get_env(), do: System.delete_env(name)
-      System.put_env(before)
-    end)
+    if pid = context[:asking] do
+      ref = Process.monitor(pid)
+      # Asking ends once git has the answer, or at the time SSH is given.
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 30_000
+    end
 
-    :ok = HalC2.Git.use_gh_for_github()
+    context
+  end
+
+  step "the MC is still asking whether SSH answers for GitHub", context do
+    assert Process.alive?(context.asking)
+    context
+  end
+
+  step "the ssh the MC started has stopped", context do
+    os_pid = context.ssh_pid_file |> File.read!() |> String.trim()
+    # Exile's watcher stops the program after its owner dies, and says nothing when it
+    # has: this waits for that, never longer than its signals take with room to spare.
+    assert stopped_within?(os_pid, 250)
     context
   end
 
@@ -541,13 +766,15 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     Map.put(context, :agent_env, for({"GIT_CONFIG_" <> _ = n, v} <- System.get_env(), do: {n, v}))
   end
 
+  step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out)$/,
+       %{args: [change]} = context do
+    sign_in_or_out(context, change)
+    context
+  end
+
   step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out) and the MC is hot-updated$/,
        %{args: [change]} = context do
-    hosts = Path.join(context.gh_config, "hosts.yml")
-
-    if change == "signs out",
-      do: File.rm!(hosts),
-      else: File.write!(hosts, "github.com:\n    user: acme\n")
+    sign_in_or_out(context, change)
 
     # As an MC that runs as one: a test MC leaves its host alone otherwise.
     World.put_app_env(:start_mc, true)
@@ -578,6 +805,24 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
+  step ~r/^git fetches "(?<url>[^"]+)" from "(?<expected>[^"]+)"$/,
+       %{args: [url, expected]} = context do
+    {fetched, 0} = System.cmd("git", ["ls-remote", "--get-url", url], cd: context.mc.home)
+    assert String.trim(fetched) == expected
+    context
+  end
+
+  step ~r/^git pushes to "(?<url>[^"]+)" over HTTPS$/, %{args: [url]} = context do
+    assert pushes_to(context, url) == url
+    context
+  end
+
+  step ~r/^git pushes "(?<url>[^"]+)" to "(?<expected>[^"]+)"$/,
+       %{args: [url, expected]} = context do
+    assert pushes_to(context, url) == expected
+    context
+  end
+
   step "the GitHub CLI answers git's request for a GitHub credential", context do
     {answer, 0} =
       System.cmd(
@@ -589,5 +834,63 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
     assert answer =~ "password=from-gh"
     context
+  end
+
+  defp sign_in_or_out(context, change) do
+    hosts = Path.join(context.gh_config, "hosts.yml")
+
+    if change == "signs out",
+      do: File.rm!(hosts),
+      else: File.write!(hosts, "github.com:\n    user: acme\n")
+  end
+
+  defp pushes_to(context, url) do
+    repo = Mc.tmp_dir(context.mc, "push")
+    {_, 0} = System.cmd("git", ["init", "-q"], cd: repo)
+    {_, 0} = System.cmd("git", ["remote", "add", "origin", url], cd: repo)
+    {pushed, 0} = System.cmd("git", ["remote", "get-url", "--push", "origin"], cd: repo)
+    String.trim(pushed)
+  end
+
+  # Gone, or a zombie no one has reaped yet: either way it runs no more.
+  # `ps` rather than /proc, so it holds on macOS too.
+  defp stopped?(os_pid) do
+    case System.cmd("ps", ["-o", "stat=", "-p", to_string(os_pid)], stderr_to_stdout: true) do
+      {stat, 0} -> String.trim(stat) |> String.starts_with?("Z")
+      {_, _} -> true
+    end
+  end
+
+  defp set_up_git(context) do
+    before = for {"GIT_CONFIG_" <> _ = name, value} <- System.get_env(), do: {name, value}
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for {"GIT_CONFIG_" <> _ = name, _} <- System.get_env(), do: System.delete_env(name)
+      System.put_env(before)
+    end)
+
+    case HalC2.Git.use_gh_for_github() do
+      :ok ->
+        context
+
+      {:asking, pid} ->
+        # Stopped with the scenario, and its ssh with it, so none outlives the run.
+        ExUnit.Callbacks.on_exit(fn ->
+          ref = Process.monitor(pid)
+          Process.exit(pid, :kill)
+          receive do: ({:DOWN, ^ref, _, _, _} -> :ok)
+
+          with {:ok, os_pid} <- File.read(context[:ssh_pid_file] || ""),
+               do: stopped_within?(String.trim(os_pid), 250)
+        end)
+
+        Map.put(context, :asking, pid)
+    end
+  end
+
+  defp stopped_within?(_os_pid, 0), do: false
+
+  defp stopped_within?(os_pid, tries) do
+    stopped?(os_pid) || (Process.sleep(20) == :ok and stopped_within?(os_pid, tries - 1))
   end
 end

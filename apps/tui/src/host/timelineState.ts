@@ -3,7 +3,7 @@ import type { OrchestrationCheckpointSummary, OrchestrationThread } from "@hal-c
 import type { TuiQueuedMessage, TuiThreadExtras } from "../orchestrationV2Adapter.ts";
 import { shouldCollapseUserMessage } from "@hal-c2/shared/chatMessages";
 
-import { CHAT_CONTENT_MAX_WIDTH } from "../components/ChatView.layout.ts";
+import { CHAT_CONTENT_MAX_WIDTH } from "../layout.ts";
 import { deriveContextWindow, formatContextWindow } from "../contextWindow.ts";
 import { buildFileTree, collectDirPaths, flattenFileTree } from "../fileTree.ts";
 import { clip } from "../format.ts";

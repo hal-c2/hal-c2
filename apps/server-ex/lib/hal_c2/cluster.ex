@@ -10,10 +10,10 @@ defmodule HalC2.Cluster do
   taken from `members.json`), so no CA is needed and a change of membership applies
   from the next handshake.
 
-  Members run one HAL-C2 version: what they send each other is not kept compatible
-  between versions. The cookie is no secret but names the version, so the handshake
-  with a member on another version fails and it lists as not connected, with the
-  version it last reported, until both run the same one.
+  Members on different HAL-C2 versions connect and join like any others: the cookie is
+  one constant, and each lists the version the other last reported. What they send each
+  other is not kept compatible between versions, so a receiver ignores a message it
+  does not know rather than crash on it.
 
   The VM boots with `-proto_dist inet_tls -ssl_dist_optfile PATH -setcookie hal_c2`
   (rel/env.sh.eex, `mise run mc`) but unnamed. This process writes the TLS options to
@@ -78,8 +78,8 @@ defmodule HalC2.Cluster do
   def status, do: GenServer.call(__MODULE__, :status)
 
   @doc """
-  Takes up the version this MC moved to in place (`HalC2.Upgrade`): members are
-  dropped and found again, which only those on the same version are.
+  Takes up the version this MC moved to in place (`HalC2.Upgrade`) and tells the
+  connected members which one it runs now.
   """
   def version_changed, do: GenServer.cast(__MODULE__, :version_changed)
 
@@ -167,14 +167,17 @@ defmodule HalC2.Cluster do
   def describe(:other_version),
     do: "The two machines run different HAL-C2 versions; update both to the same one."
 
-  # A join the inviting machine refused: both versions, so the user sees which to update.
-  # An MC from before versions were checked sends none.
+  # A join an inviting machine from before members on other versions could join refused:
+  # both versions, so the user sees which to update. An MC from before that sends none.
   def describe({:other_version, joining, inviting}) do
     joining = joining || "a version too old to say (update it first)"
 
     "The two machines run different HAL-C2 versions: the joining machine runs #{joining}, " <>
       "the inviting one runs #{inviting}. Update both to the same one."
   end
+
+  def describe(:not_a_release),
+    do: "This machine runs HAL-C2 from a checkout, so it has no release to send."
 
   def describe(:wrong_machine),
     do: "The machine that answered is not the one the invite is from."
@@ -433,8 +436,7 @@ defmodule HalC2.Cluster do
   def handle_call({:admit, entry}, _from, state) do
     with %{"id" => id, "fingerprint" => fp} when is_binary(id) and is_binary(fp) <- entry,
          true <- id != state.id and Regex.match?(~r/^[0-9a-z][0-9a-z-]{0,62}$/, id),
-         true <- Regex.match?(@fingerprint, fp),
-         {:version, true} <- {:version, entry["version"] == HalC2.Upgrade.version()} do
+         true <- Regex.match?(@fingerprint, fp) do
       now = stamp(state.members)
 
       admitted = %{
@@ -453,11 +455,7 @@ defmodule HalC2.Cluster do
        {:ok, %{"id" => state.id, "port" => Epmd.listen_port(), "members" => state.members}},
        state}
     else
-      {:version, false} ->
-        {:reply, {:error, {:other_version, entry["version"], HalC2.Upgrade.version()}}, state}
-
-      _ ->
-        {:reply, {:error, :invalid_member}, state}
+      _ -> {:reply, {:error, :invalid_member}, state}
     end
   end
 
@@ -499,7 +497,7 @@ defmodule HalC2.Cluster do
   def handle_cast(:version_changed, %{off: nil} = state) do
     :ok = state.transport.version_changed(state.dir)
     state = state |> refresh_own() |> commit()
-    HalC2.Cluster.Discovery.poll()
+    tell_members(state)
     {:noreply, state}
   end
 
@@ -519,11 +517,14 @@ defmodule HalC2.Cluster do
   def handle_info({:nodedown, _mc}, state), do: {:noreply, state}
 
   def handle_info(:gossip, state) do
+    tell_members(state)
+    {:noreply, %{state | gossip: schedule_gossip()}}
+  end
+
+  defp tell_members(state) do
     for mc <- state.transport.connected(),
         member?(state.members[id_of(mc)]),
         do: state.transport.send(mc, {:merge, state.members})
-
-    {:noreply, %{state | gossip: schedule_gossip()}}
   end
 
   defp schedule_gossip,

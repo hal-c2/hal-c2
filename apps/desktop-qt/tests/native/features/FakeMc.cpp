@@ -126,12 +126,7 @@ QJsonObject FakeMc::shellMc(const QString& mc, bool online, const QJsonObject& e
 void FakeMc::sendSnapshot() {
   if (!m_socket || m_shellSubscription < 0) return;
   QJsonArray rows;
-  QJsonArray mcs{shellMc(name, true,
-                         label.isEmpty() ? QJsonObject{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("capabilities"), capabilities}}
-                                         : QJsonObject{{QStringLiteral("environmentId"), environmentId},
-                                                       {QStringLiteral("label"), label},
-                                                       {QStringLiteral("capabilities"), capabilities}},
-                         rows)};
+  QJsonArray mcs{shellMc(name, true, ownEnvironment(), rows)};
   for (const QString& environment : std::as_const(members)) {
     mcs.append(shellMc(peers.value(environment), !offline.contains(environment), peerEnvironment(environment), rows));
   }
@@ -145,9 +140,27 @@ void FakeMc::sendSnapshot() {
   send(frame);
 }
 
+QJsonObject FakeMc::ownEnvironment() const {
+  QJsonObject own{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("capabilities"), capabilities}};
+  if (!label.isEmpty()) own.insert(QStringLiteral("label"), label);
+  if (!platform.isEmpty()) own.insert(QStringLiteral("platform"), platform);
+  return own;
+}
+
+void FakeMc::announceEnvironment() {
+  if (!m_socket || m_shellSubscription < 0) return;
+  send({
+      {QStringLiteral("t"), QStringLiteral("shell.environment")},
+      {QStringLiteral("id"), m_shellSubscription},
+      {QStringLiteral("mc"), name},
+      {QStringLiteral("environment"), ownEnvironment()},
+  });
+}
+
 QJsonObject FakeMc::peerEnvironment(const QString& environment) const {
   QJsonObject descriptor{{QStringLiteral("environmentId"), environment}, {QStringLiteral("capabilities"), capabilities}};
   if (peerLabels.contains(environment)) descriptor.insert(QStringLiteral("label"), peerLabels.value(environment));
+  if (peerPlatforms.contains(environment)) descriptor.insert(QStringLiteral("platform"), peerPlatforms.value(environment));
   return descriptor;
 }
 

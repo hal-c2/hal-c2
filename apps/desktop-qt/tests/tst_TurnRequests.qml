@@ -234,6 +234,28 @@ Item {
             compare(lastAction().payload.runId, "run-3");
         }
 
+        // The MC keeps a queue after a restart; the card says so and offers
+        // to resume it, once at a time.
+        function test_aHeldQueueCanBeResumed() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({ queue: [{ runId: "run-2", text: "later" }] });
+            waitForRendering(root);
+            verify(!findChild(requests, "queueHeld").visible);
+            Shell.publishTurn({ queue: [{ runId: "run-2", text: "later" }], queueHeld: true, queueResuming: false });
+            waitForRendering(root);
+            verify(findChild(requests, "queueHeld").visible);
+            mouseClick(findChild(requests, "queueResume"));
+            compare(lastAction().action, "composer.queue.resume");
+            Shell.publishTurn({ queue: [{ runId: "run-2", text: "later" }], queueHeld: true, queueResuming: true });
+            waitForRendering(root);
+            verify(!findChild(requests, "queueResume").enabled);
+            compare(findChild(requests, "queueResume").text, "Resuming…");
+            // Folded, the held notice stays.
+            mouseClick(findChild(requests, "queueToggle"));
+            verify(!findChild(requests, "queueList").visible);
+            verify(findChild(requests, "queueHeld").visible);
+        }
+
         // A delegated task's result waits its turn under its title, with
         // nothing for the user to act on, in the same folding card.
         function test_waitingResultsStackUnderTheirTitles() {

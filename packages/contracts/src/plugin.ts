@@ -48,6 +48,7 @@ export const PluginPermissionId = Schema.Literals([
   "slack:write",
   "threads:read",
   "threads:create",
+  "threads:organize",
   "agentTools",
 ]);
 export type PluginPermissionId = typeof PluginPermissionId.Type;

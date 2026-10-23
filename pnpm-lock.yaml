@@ -122,9 +122,6 @@ importers:
       '@opentui/core':
         specifier: ^0.5.12
         version: 0.5.12(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
-      '@opentui/react':
-        specifier: ^0.5.12
-        version: 0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       '@xterm/headless':
         specifier: ^5.5.0
         version: 5.5.0
@@ -134,9 +131,6 @@ importers:
       opentui-qml:
         specifier: github:hal-c2/opentui-qml
         version: https://codeload.github.com/hal-c2/opentui-qml/tar.gz/1ecae5f5df6bb52ca468545ee9d499749b5c5bee(@opentui/react@0.5.12(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))(ws@8.21.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(react@19.2.6)(typescript@7.0.2)(web-tree-sitter@0.25.10(@types/emscripten@1.41.5))
-      react:
-        specifier: 19.2.6
-        version: 19.2.6
       sharp:
         specifier: 0.34.5
         version: 0.34.5
@@ -153,12 +147,6 @@ importers:
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
-      '@types/react':
-        specifier: ~19.2.14
-        version: 19.2.16
-      vite-plus:
-        specifier: 'catalog:'
-        version: 0.3.3(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
 
   infra/relay:
     dependencies:

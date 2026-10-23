@@ -109,7 +109,7 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
     const workspace = kit.workspace();
     const current = project();
     if (!workspace || !current) {
-      kit.status("Open a thread to run a script in its terminal.", "error");
+      kit.status("Open a thread to run a script in its terminal.", "warning");
       return;
     }
     lastRun.set(current.id, script.id);
@@ -186,7 +186,7 @@ export function createWorkspaceFeature(kit: FeatureKit): Feature {
           const copied = kit.copy(url);
           kit.status(
             copied ? "Link copied." : "This terminal has no clipboard access.",
-            copied ? "success" : "error",
+            copied ? "success" : "warning",
           );
           return;
         }

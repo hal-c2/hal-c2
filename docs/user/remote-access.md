@@ -4,7 +4,7 @@ Connect a phone, the terminal app, or another desktop app to HAL-C2 running on a
 machine. That machine must stay running and reachable while you work.
 
 Commands marked `mix` run in a source checkout, in `apps/server-ex`, as `mise exec -- mix <task>`.
-The MC file you [install](./install.md#command-line) has `cluster` and `threads`
+The MC file you [install](./install.md#command-line) has `pair`, `cluster` and `threads`
 commands of its own, shown below.
 
 ## HAL-C2 Connect
@@ -52,6 +52,7 @@ link**. From the command line, run, with the address a device can reach:
 
 ```bash
 mix hal_c2.pair http://<private-ip>:<port>
+hal-c2-service pair http://<private-ip>:<port>   # the installed MC file
 ```
 
 Scan the QR code on your phone or paste the pairing URL into the receiving app's
@@ -90,8 +91,12 @@ hal-c2-service cluster invite      # prints the link
 hal-c2-service cluster join LINK   # on the machine that joins
 ```
 
-Every machine of a cluster runs the same HAL-C2 version. A machine on another version
-stays listed but does not connect until it is updated. Removing a machine from the
+Machines of a cluster connect whatever HAL-C2 versions they run, but keep them on one
+version: features that span machines, such as moving a thread, can fail between
+versions. The Cluster page shows the version of each machine that runs another one, and
+**Send this version to the other machines** (in the terminal client, the command palette
+entry of that name) has each of them update to the version of the machine you are on,
+which hands them its release. Removing a machine from the
 Cluster page stops every member from admitting it, and its projects and threads leave
 the sidebar.
 
@@ -114,6 +119,34 @@ and so do links to it in the desktop app.
 
 To copy a thread between machines that are not in one cluster, see
 [Copying a thread to another machine](./thread-migration.md#copying-a-thread-to-another-machine).
+
+### Dev servers on another machine
+
+A thread on another machine runs its dev servers there. When you open one of its browser
+tabs in your own browser from the desktop app, or a `localhost` link in its replies, the
+machine you are connected to forwards that port, so the page opens on this machine's
+`localhost`, on the same port when it is free here. Only a port one of the thread's browser
+tabs has open is forwarded. The forward closes with the thread's last tab at that port, or
+when the other machine stops answering.
+
+This needs the desktop app connected to the machine it runs on, which reaches the rest of the
+cluster for it. Connected straight to another machine, a `localhost` link opens as it is, on
+your own machine.
+
+### Open another machine's files here
+
+When your client is connected to the HAL-C2 on the machine in front of you, opening a
+file of a thread on another machine of the cluster (in an editor, in the file manager,
+or from a path in a terminal) opens it with this machine's apps. HAL-C2 shows each other
+machine as a folder, named after it, under
+`~/.local/state/hal-c2/elixir/machines`, holding that machine's projects and worktrees at
+their own paths. Saving there saves on the other machine, and nothing is started there.
+
+This needs FUSE 3 on Linux (the `fuse3` package). macOS and Windows do not have it yet.
+A machine that is offline keeps its folder, but what is read through it fails until the
+machine is back. Only your user can open the folder. A client paired with a HAL-C2 on
+another computer, or reaching one through an SSH port forward, still can't open its
+files here.
 
 ### Balance new threads across machines
 
@@ -142,6 +175,7 @@ line:
 
 ```bash
 mix hal_c2.pair --tailscale
+hal-c2-service pair --tailscale   # the installed MC file
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
@@ -153,7 +187,7 @@ tailscale serve --https=443 off
 ```
 
 If that port is already in use, choose another with
-`--tailscale-serve-port`.
+`--tailscale-serve-port` (`pair --tailscale --tailscale-serve-port 8443`).
 
 ## Manage or revoke access
 

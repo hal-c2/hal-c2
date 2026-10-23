@@ -350,7 +350,7 @@ Rectangle {
                         Layout.fillWidth: true
                         visible: (root.detail.behindBy ?? 0) > 0
                         wrapMode: Text.Wrap
-                        text: qsTr("This branch is %n commit(s) behind its base.", "", root.detail.behindBy ?? 0)
+                        text: (root.detail.behindBy ?? 0) === 1 ? qsTr("This branch is %n commit behind its base.", "", 1) : qsTr("This branch is %n commits behind its base.", "", root.detail.behindBy ?? 0)
                         color: root.warningColor
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                     }

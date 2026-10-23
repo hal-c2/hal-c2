@@ -1,6 +1,6 @@
 // Adding a project (palette → Add project), host side: pick a source, then a
 // local folder to register, or a repository and the folder to clone it into.
-// Port of ChatView's add-project flow and AddProjectOverlay.tsx's rows; the
+// The add-project flow and its rows; the
 // AddProject brick paints `addProject` and dispatches `project.add.*`.
 import type { FilesystemBrowseResult, SourceControlDiscoveryResult } from "@hal-c2/contracts";
 import {
@@ -474,7 +474,7 @@ export function createAddProjectController(options: AddProjectControllerOptions)
       platform: client.hostPlatform,
     });
     if (!resolution.ok) {
-      store.setStatus(resolution.error, "error");
+      store.setStatus(resolution.error, "warning");
       return;
     }
     const existing = findProjectByPath(projects(), resolution.path);
@@ -506,7 +506,7 @@ export function createAddProjectController(options: AddProjectControllerOptions)
   const submitRepository = (current: Extract<Flow, { step: "repository" }>) => {
     const repositoryInput = query.trim();
     if (repositoryInput.length === 0) {
-      store.setStatus("Enter a repository or Git URL.", "error");
+      store.setStatus("Enter a repository or Git URL.", "warning");
       return;
     }
     if (current.source === "url") {
@@ -551,7 +551,7 @@ export function createAddProjectController(options: AddProjectControllerOptions)
       platform: client.hostPlatform,
     });
     if (!resolution.ok) {
-      store.setStatus(resolution.error, "error");
+      store.setStatus(resolution.error, "warning");
       return;
     }
     store.setStatus("Cloning repository…", "busy");
@@ -572,7 +572,7 @@ export function createAddProjectController(options: AddProjectControllerOptions)
     if (current.step === "source") {
       if (row?.kind !== "source") return;
       if (row.disabled) {
-        store.setStatus(row.description, "error");
+        store.setStatus(row.description, "warning");
         return;
       }
       if (row.source === "local") {

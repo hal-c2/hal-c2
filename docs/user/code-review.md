@@ -34,11 +34,20 @@ listed, but cannot be chosen yet.
 The plugin looks for pull requests every few minutes; **Look now** on the page
 looks at once. A commit is reviewed once. With **Review new pushes** on, a pull
 request is reviewed again when its head changes; with it off, it is marked as
-changed since its review.
+changed since its review. A pull request you asked for a review of is followed
+from then on: new pushes to it are picked up in either mode, and even if you
+later take its repository out of the watched list. Discarding its review stops
+following it. A re-review is told the previous review's findings, so it can say
+which of them the new commits address instead of raising them again.
+
+If the reviewing agent runs into its provider's usage limit, reviews pause
+until the limit resets: the review it stopped and the ones behind it wait in
+the queue instead of failing one by one, and the Reviews page says so.
 
 ## The agent and its prompt
 
-Pick the agent, its model and its access in the settings. Each review's agent
+Pick the agent, its model, what that model offers beside itself (its reasoning
+effort, most of all) and its access in the settings. Each review's agent
 works in a checkout of the pull request's head of its own, made from the plugin's
 own copy of the repository and fetched over HTTPS with your `gh` sign-in. Your
 repository is not touched, but if it runs commands it runs the pull request's code. Choose its
@@ -54,7 +63,12 @@ your changes to it. Each repository can have instructions of its own, and with
 ## What happens with the findings
 
 The agent reports a verdict, a summary and comments on lines. A comment on a
-line the pull request does not change goes into the summary instead.
+line the pull request does not change goes into the summary instead. Each
+comment can say how much it matters (high, medium or low, marked 🔴 🟡 🔵 when posted, with the findings listed at a glance at the end of the review) and carry a
+suggested fix, which is posted as a GitHub suggestion you can apply from the
+pull request. The agent also reads the pull request's description and the
+review comments already on it, so it can judge the change against what it says
+it does and leave out what someone else already raised.
 
 **Publishing** decides what reaches GitHub, for every repository or per
 repository:
@@ -75,6 +89,14 @@ a review, you are told why and the review keeps waiting with its comments.
 
 - **On the Reviews page** keeps review threads out of the thread list.
 - **As threads** and **Both** list them, marked with the state of their review.
+
+Changing this moves the review threads there already are, not only new ones.
+When a review is done — reported, published or failed — its thread is settled,
+so finished reviews leave your active list on their own. Unsettle one to bring
+it back; writing in it brings it back too. Settled reviews stay off the
+**Settled** shelf so they do not bury your own threads; search and the Reviews
+page still find them. Turn on **Show plugin threads in Settled** in Settings →
+General (or from the command palette in the terminal client) to list them there.
 
 The **Reviews** page is a tab next to **Threads** with every review by state, and
 the picked one's verdict, summary and comments. Publish, retry, dismiss comments

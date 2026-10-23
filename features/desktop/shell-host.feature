@@ -127,6 +127,15 @@ Feature: The desktop app runs its own MC
       Then the shell is told that MC's address and the MC's own access token
       And the desktop app starts no MC of its own
 
+    # At login the app can start before the background service's MC has said where it
+    # listens; the MC that gets the files first keeps them (mc-startup.feature).
+    @desktop
+    Scenario: An MC that takes the desktop's files while the desktop's own MC starts is used instead
+      Given the background service starts an MC on the files the desktop app's MC would use
+      When the user starts the desktop app before that MC says where it listens
+      Then the desktop app's own MC stops, refused the files
+      And the shell is told the service MC's address and its own access token
+
     @desktop
     Scenario: A running MC whose access token cannot be read stops the start
       Given the background service runs an MC on the files the desktop app's MC would use

@@ -2,6 +2,7 @@
 // it (the @desktop scenarios of features/connections/cluster.feature).
 
 #include <QClipboard>
+#include <QHash>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -24,6 +25,9 @@ struct FakeCluster {
   bool loopbackOnly = false;
   QString statusRefusal;
   QString joinRefusal;
+  // The version this machine runs, and why a member cannot take it, by label.
+  QString version;
+  QHash<QString, QString> updateRefusals;
   QList<QPair<QString, QJsonObject>> calls;
 };
 
@@ -34,6 +38,7 @@ QJsonObject clusterStatus(FakeMc& mc) {
       {QStringLiteral("label"), QStringLiteral("desk")},
       {QStringLiteral("mc"), mc.name},
       {QStringLiteral("addresses"), QJsonArray{QStringLiteral("desk:4369")}},
+      {QStringLiteral("version"), mc.part<FakeCluster>().version},
       {QStringLiteral("members"), mc.part<FakeCluster>().members},
   };
 }
@@ -73,6 +78,25 @@ void answerCluster(FakeMc& mc, const FakeMc::Rpc& rpc) {
                                        {QStringLiteral("addresses"), QJsonArray{host + QStringLiteral(":4369")}},
                                        {QStringLiteral("connected"), true}});
     result = clusterStatus(mc);
+  } else if (rpc.method == QLatin1String("cluster.update")) {
+    // Each connected member on another version takes this one, or says why not.
+    QJsonArray updates;
+    for (qsizetype index = 0; index < cluster.members.size(); ++index) {
+      QJsonObject member = cluster.members.at(index).toObject();
+      const QString from = member.value(QLatin1String("version")).toString();
+      if (!member.value(QLatin1String("connected")).toBool() || from.isEmpty() || from == cluster.version) continue;
+      const QString label = member.value(QLatin1String("label")).toString();
+      const QString outcome = cluster.updateRefusals.value(label, QStringLiteral("updated"));
+      updates.append(QJsonObject{{QStringLiteral("id"), member.value(QLatin1String("id"))},
+                                 {QStringLiteral("label"), label},
+                                 {QStringLiteral("from"), from},
+                                 {QStringLiteral("outcome"), outcome}});
+      if (outcome == QLatin1String("updated")) {
+        member.insert(QStringLiteral("version"), cluster.version);
+        cluster.members.replace(index, member);
+      }
+    }
+    result = QJsonObject{{QStringLiteral("version"), cluster.version}, {QStringLiteral("members"), updates}};
   } else if (rpc.method == QLatin1String("cluster.remove")) {
     const QString removed = rpc.payload.value(QLatin1String("id")).toString();
     for (qsizetype index = cluster.members.size() - 1; index >= 0; --index) {
@@ -113,6 +137,16 @@ const Steps steps([] {
                                             {QStringLiteral("connected"), match.captured(2) == QLatin1String("connected")}});
     }
   });
+  step(QStringLiteral("this machine runs %1 and is clustered with %1, which is connected on %1(?: and cannot update saying %1)?").arg(q),
+       [](World& world, const Captures& c, const Table&) {
+         fake(world).version = c[0];
+         fake(world).members.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("env-") + c[1]},
+                                               {QStringLiteral("label"), c[1]},
+                                               {QStringLiteral("addresses"), QJsonArray()},
+                                               {QStringLiteral("version"), c[2]},
+                                               {QStringLiteral("connected"), true}});
+         if (c.size() > 3 && !c[3].isEmpty()) fake(world).updateRefusals.insert(c[1], c[3]);
+       });
   step(QStringLiteral("the MC listens only on loopback"), [](World& world, const Captures&, const Table&) {
     fake(world).loopbackOnly = true;
   });
@@ -140,6 +174,9 @@ const Steps steps([] {
   step(QStringLiteral("the user removes %1 from the cluster").arg(q), [](World& world, const Captures& c, const Table&) {
     world.bridge().dispatch(QStringLiteral("cluster.remove"), QVariantMap{{QStringLiteral("id"), QStringLiteral("env-") + c[0]}});
   });
+  step(QStringLiteral("the user sends this machine's version to the other machines"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("cluster.update"), {});
+  });
   step(QStringLiteral("the user goes back from settings"), [](World& world, const Captures&, const Table&) {
     world.bridge().dispatch(QStringLiteral("settings.back"), {});
   });
@@ -151,6 +188,9 @@ const Steps steps([] {
   });
   step(QStringLiteral("the MC is asked for a cluster invite"), [clusterCall](World& world, const Captures&, const Table&) {
     expect(clusterCall(world, QStringLiteral("cluster.invite")).has_value(), QStringLiteral("the MC was not asked"));
+  });
+  step(QStringLiteral("the MC is asked to update the other machines"), [clusterCall](World& world, const Captures&, const Table&) {
+    expect(clusterCall(world, QStringLiteral("cluster.update")).has_value(), QStringLiteral("the MC was not asked"));
   });
   step(QStringLiteral("the MC is asked to join with %1").arg(q), [clusterCall](World& world, const Captures& c, const Table&) {
     const auto payload = clusterCall(world, QStringLiteral("cluster.join"));

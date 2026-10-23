@@ -27,6 +27,16 @@ SettingsPage {
         Shell.dispatch("sourceControlSettings." + name, payload ?? {});
     }
 
+    // A command in a sentence, `like this`, set in the monospace face (as the web
+    // sets the tool it names), for a rich-text label: the rest of the sentence
+    // is escaped as plain text, and so is the face's name (StyledText ignores a
+    // font face, so the span carries it as CSS).
+    function withCode(text) {
+        const escape = value => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+        const face = escape((Theme.fontMono.length > 0 ? Theme.fontMono : "monospace").replace(/['"\\;{}<>\u0000-\u001f\u007f]/g, ""));
+        return escape(text ?? "").replace(/`([^`\n]+)`/g, (match, code) => "<span style=\"font-family:'" + face + "'\">" + code + "</span>");
+    }
+
     objectName: "sourceControlSettings"
     title: qsTr("Source Control")
 
@@ -174,7 +184,9 @@ SettingsPage {
                     Caption {
                         objectName: "summary"
                         Layout.fillWidth: !tool.modelData.hasAccount
-                        text: tool.modelData.summary
+                        text: tool.sourceControl.withCode(tool.modelData.summary)
+                        textFormat: Text.RichText
+                        Accessible.name: (tool.modelData.summary ?? "").replace(/`/g, "")
                     }
 
                     Caption {
@@ -328,16 +340,41 @@ SettingsPage {
                 }
             }
 
-            ShellButton {
-                objectName: "scan"
+            // The button itself is disabled while it scans (focus, dimming and
+            // assistive state included); the hover tooltip lives on this wrapper,
+            // since a disabled button gets no hover of its own.
+            Item {
+                readonly property bool scanning: page.discovery?.scanning ?? false
+
+                objectName: "scanArea"
                 visible: (page.discovery?.status ?? "none") !== "none"
-                subtle: true
-                enabled: !(page.discovery?.scanning ?? false)
-                iconName: "refresh-cw"
-                Accessible.name: page.discovery?.scanning ? qsTr("Scanning server environment") : qsTr("Rescan server environment")
-                ToolTip.visible: hovered
-                ToolTip.text: page.discovery?.scanning ? qsTr("Scanning…") : qsTr("Rescan Git and hosting integrations")
-                onClicked: page.send("scan")
+                implicitWidth: scan.implicitWidth
+                implicitHeight: scan.implicitHeight
+
+                ShellButton {
+                    id: scan
+
+                    objectName: "scan"
+                    enabled: !parent.scanning
+                    subtle: true
+                    iconName: "refresh-cw"
+                    Accessible.name: parent.scanning ? qsTr("Scanning server environment") : qsTr("Rescan server environment")
+                    // The wrapper carries the tooltip; an icon-only ShellButton
+                    // would otherwise add its own from the accessible name.
+                    ToolTip.visible: false
+                    onClicked: page.send("scan")
+                }
+
+                // Passive, so the button under it keeps its own hover (and fill)
+                // and clicks while enabled.
+                HoverHandler {
+                    id: scanHover
+
+                    objectName: "scanHover"
+                }
+
+                ToolTip.visible: scanHover.hovered
+                ToolTip.text: scanning ? qsTr("Scanning…") : qsTr("Rescan Git and hosting integrations")
             }
         }
 

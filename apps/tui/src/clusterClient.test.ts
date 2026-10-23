@@ -22,6 +22,7 @@ function machine(name: string, status?: () => ClusterStatus) {
   const calls: string[] = [];
   const threadSubs = new Set<string>();
   const onThreads = new Map<string, (thread: Row) => void>();
+  const local = { here: true };
   const client = {
     subscribeShell: (callback: typeof onShell) => {
       onShell = callback;
@@ -57,9 +58,26 @@ function machine(name: string, status?: () => ClusterStatus) {
       calls.push(`interrupt ${threadId}`);
       return Promise.resolve();
     },
+    getServerConfig: () => {
+      calls.push("getServerConfig");
+      return Promise.resolve({ availableEditors: [] });
+    },
     listRefs: (cwd: string) => {
       calls.push(`listRefs ${cwd}`);
       return Promise.resolve([]);
+    },
+    writeFile: (cwd: string, relativePath: string) => {
+      calls.push(`writeFile ${cwd} ${relativePath}`);
+      return Promise.resolve();
+    },
+    // Hosted here unless the test says otherwise; asked about a member, the MC
+    // answers the folder it keeps for it.
+    localPathFor: (path: string, environmentId?: string) => {
+      calls.push(environmentId ? `localPathFor ${path} ${environmentId}` : `localPathFor ${path}`);
+      if (!local.here) return Promise.resolve({ problem: "elsewhere" });
+      return Promise.resolve({
+        path: environmentId ? `/machines/${environmentId}${path}` : path,
+      });
     },
     dispose: () => {
       calls.push("dispose");
@@ -71,6 +89,7 @@ function machine(name: string, status?: () => ClusterStatus) {
     client,
     calls,
     threadSubs,
+    local,
     pushShell: (snapshot: OrchestrationShellSnapshot) => onShell?.(snapshot),
     pushThread: (thread: Row) => onThreads.get(thread.id)?.(thread),
     connected: () => onPhase?.("connected" as TuiConnectionPhase),
@@ -230,6 +249,22 @@ describe("makeClusterClient", () => {
     expect(laptop.calls).toEqual(["interrupt alpha"]);
   });
 
+  it("Given a thread on another machine, when a file it shows is saved, then that machine writes it", async () => {
+    const { laptop, desktop, client } = await clustered();
+    laptop.pushShell(shell([{ id: "p-laptop", workspaceRoot: "/src/site" }], [{ id: "alpha" }]));
+    desktop.pushShell(shell([{ id: "p-desktop", workspaceRoot: "/src/shop" }], [{ id: "beta" }]));
+
+    await client.writeFile("/src/shop", "src/cart.ts", "cart");
+    // One the agent left outside the project goes by its full path, to the same machine.
+    await client.writeFile("/src/shop", "/tmp/report/menu.csv", "menu");
+
+    expect(desktop.calls).toEqual([
+      "writeFile /src/shop src/cart.ts",
+      "writeFile /src/shop /tmp/report/menu.csv",
+    ]);
+    expect(laptop.calls).toEqual([]);
+  });
+
   it("Given an open thread, when it moves to another machine, then it is followed there", async () => {
     const { laptop, desktop, client } = await clustered();
     laptop.pushShell(shell([], [{ id: "alpha" }]));
@@ -287,6 +322,68 @@ describe("makeClusterClient", () => {
       "listRefs /src/shop",
     ]);
     expect(laptop.calls).toEqual(["listRefs /src/shop"]);
+  });
+
+  describe("localPathFor", () => {
+    const withShop = async () => {
+      const setup = await clustered();
+      setup.laptop.pushShell(shell([{ id: "p-docs", workspaceRoot: "/src/docs" }], []));
+      setup.desktop.pushShell(shell([{ id: "p-shop", workspaceRoot: "/home/sam/shop" }], []));
+      return setup;
+    };
+
+    it("Given a checkout of this machine's MC, when it is opened, then the path is its own", async () => {
+      const { laptop, desktop, client } = await withShop();
+
+      expect(await client.localPathFor("/src/docs")).toEqual({ path: "/src/docs" });
+      expect(laptop.calls).toEqual(["localPathFor /src/docs"]);
+      expect(desktop.calls).toEqual([]);
+    });
+
+    it("Given a member on another machine, when its checkout is opened, then this machine's MC names the folder it keeps for it", async () => {
+      const { laptop, desktop, client } = await withShop();
+      desktop.local.here = false;
+
+      expect(await client.localPathFor("/home/sam/shop")).toEqual({
+        path: "/machines/env-desktop/home/sam/shop",
+      });
+      expect(laptop.calls).toEqual(["localPathFor /home/sam/shop env-desktop"]);
+    });
+
+    it("Given a member on another machine and a client that is not on the MC's machine, when its checkout is opened, then the client is told why not", async () => {
+      const { laptop, desktop, client } = await withShop();
+      desktop.local.here = false;
+      laptop.local.here = false;
+
+      expect(await client.localPathFor("/home/sam/shop")).toEqual({ problem: "elsewhere" });
+    });
+
+    it("Given a member on this machine, when its checkout is opened, then its own path is used and it starts the editor", async () => {
+      const { laptop, desktop, client } = await withShop();
+
+      expect(await client.localPathFor("/home/sam/shop")).toEqual({
+        path: "/home/sam/shop",
+        environmentId: "env-desktop",
+      });
+      expect(desktop.calls).toEqual(["localPathFor /home/sam/shop"]);
+      expect(laptop.calls).toEqual([]);
+
+      // The editors it offers are its own, from the config its socket brought.
+      await client.getServerConfig("/home/sam/shop");
+      expect(desktop.calls).toEqual(["localPathFor /home/sam/shop", "getServerConfig"]);
+      await client.getServerConfig();
+      expect(laptop.calls).toEqual(["getServerConfig"]);
+    });
+
+    it("Given a member on this machine and a client whose own MC is on another machine, when its checkout is opened, then the member still starts the editor", async () => {
+      const { laptop, client } = await withShop();
+      laptop.local.here = false;
+
+      expect(await client.localPathFor("/home/sam/shop")).toEqual({
+        path: "/home/sam/shop",
+        environmentId: "env-desktop",
+      });
+    });
   });
 
   it("Given two machines that use the same project id, when their shells arrive, then each machine's project stays its own", async () => {

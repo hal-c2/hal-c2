@@ -23,6 +23,12 @@
 
 class Brick;
 
+// The id of the machine the scenarios run on (thisMachine::id()), as an MC
+// on it serves it as `platform.machineId`.
+inline const QString kThisMachine = QStringLiteral("5e1f00000000000000000000000000000000000000000000000000000000c0de");
+// A machine that is not that one.
+inline const QString kOtherMachine = QStringLiteral("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1");
+
 // An action no controller handled, or one native code sent the bricks
 // (ShellBridge::actionRequested).
 struct BrickAction {
@@ -109,6 +115,9 @@ public:
   // before, and every answer to a command sent before, has been handled once
   // it returns.
   void sync();
+  // The MC serves its environment from `machine` (its `platform.machineId`),
+  // and the shell has heard it.
+  void servedFrom(const QString& machine);
 
   QList<BrickAction> actionsOf(const QString& type) const;
   QString describeBrickActions() const;

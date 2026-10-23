@@ -69,6 +69,7 @@ struct FakeCheckout {
   QString failPhase = QStringLiteral("commit");  // the stage a failing action fails in
   std::optional<int> held;
   QString failWith;
+  QJsonObject failCta;  // the failure's remedy (GitActionFailureCta), when it has one
   QString refusePull;
   QString refuseInit;
   QString refusePublish;
@@ -232,7 +233,9 @@ void run(FakeMc& mc, int id, const QJsonObject& input) {
     }
   }
   if (!git.failWith.isEmpty()) {
-    sendEvent(mc, id, {{QStringLiteral("kind"), QStringLiteral("action_failed")}, {QStringLiteral("phase"), git.failPhase}, {QStringLiteral("message"), git.failWith}});
+    QJsonObject failed{{QStringLiteral("kind"), QStringLiteral("action_failed")}, {QStringLiteral("phase"), git.failPhase}, {QStringLiteral("message"), git.failWith}};
+    if (!git.failCta.isEmpty()) failed.insert(QStringLiteral("cta"), git.failCta);
+    sendEvent(mc, id, failed);
     return;
   }
   if (git.waitAfterHook) {
@@ -983,6 +986,35 @@ const Steps steps([] {
     expect(!failure().isEmpty(), QStringLiteral("the failure went away by itself"));
     dispatch(world, QStringLiteral("notification.dismiss"), {{QStringLiteral("id"), failure().value(QStringLiteral("id"))}});
     expect(failure().isEmpty(), QStringLiteral("the shell still shows %1").arg(show(world.state(QStringLiteral("toasts")))));
+  });
+
+  // A refusal the MC knows the remedy of (errors.feature).
+  step(QStringLiteral("the push will be refused, offering %1 to (open|copy) %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    clean(fake(world));
+    fake(world).ahead = {QStringLiteral("Add tax")};
+    fake(world).failWith = QStringLiteral("git push failed: refused");
+    fake(world).failPhase = QStringLiteral("push");
+    const bool opens = c[1] == QLatin1String("open");
+    fake(world).failCta = {{QStringLiteral("kind"), opens ? QStringLiteral("open_url") : QStringLiteral("copy_command")},
+                           {QStringLiteral("label"), c[0]},
+                           {opens ? QStringLiteral("url") : QStringLiteral("command"), c[2]}};
+    settle(world);
+  });
+  step(QStringLiteral("the user chooses %1 on the failure").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return !toastTitled(world, QStringLiteral("Action failed")).isEmpty(); },
+                  [&] { return QStringLiteral("the failure; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
+    const QVariantMap failure = toastTitled(world, QStringLiteral("Action failed"));
+    for (const QVariant& action : failure.value(QStringLiteral("actions")).toList()) {
+      if (action.toMap().value(QStringLiteral("label")) != c[0]) continue;
+      dispatch(world, QStringLiteral("notification.action"),
+               {{QStringLiteral("id"), failure.value(QStringLiteral("id"))}, {QStringLiteral("actionId"), action.toMap().value(QStringLiteral("id"))}});
+      return;
+    }
+    fail(QStringLiteral("the failure is %1").arg(show(failure)));
+  });
+  step(QStringLiteral("the failure is still shown"), [](World& world, const Captures&, const Table&) {
+    expect(!toastTitled(world, QStringLiteral("Action failed")).isEmpty(),
+           QStringLiteral("the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))));
   });
 
   step(QStringLiteral("the MC fails the action with %1").arg(q), [](World& world, const Captures& c, const Table&) { fake(world).failWith = c[0]; });

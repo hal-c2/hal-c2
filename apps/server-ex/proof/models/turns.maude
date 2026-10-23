@@ -10,8 +10,9 @@ mod TURNS is
   protecting BOOL .
   protecting NAT .
 
-  sorts Rid Rids St Ghost Ph Slot Tm Why Item Conf Sys .
+  sorts Rid Rids Tgt St Ghost Ph Slot Tm Why Item Conf Sys .
   subsort Rid < Rids .
+  subsort Rid < Tgt .
   subsort St < Ghost .
   subsort Item < Conf .
 
@@ -19,6 +20,9 @@ mod TURNS is
   ops r1 r2 q : -> Rid [ctor] .
   op nil : -> Rids [ctor] .
   op _;_ : Rids Rids -> Rids [ctor assoc id: nil] .
+
+  --- The run an interrupt is pinned to (its `runId`), or none: then whichever runs.
+  op any : -> Tgt [ctor] .
 
   --- A run's status ("waiting" is "running" here), and the first status it ended
   --- with, or `open` while it has not ended: what absorbing means.
@@ -47,13 +51,21 @@ mod TURNS is
   --- The thread's provider runtime: no process, idle, inside its start_turn call for
   --- a run (begin_turn/2 of HalC2.Codex.ThreadRuntime), or driving a turn, asked to
   --- interrupt it or not. Its mailbox: start_turn calls, in the order they came (a
-  --- start that gave up waiting is ahead of any it let start), and an interrupt call.
+  --- start that gave up waiting is ahead of any it let start), and an interrupt call
+  --- with the run it is pinned to.
   ops none idle : -> Slot [ctor] .
   op begun : Rid -> Slot [ctor] .
   op turn : Rid Bool -> Slot [ctor] .
   op rt : Slot -> Item [ctor] .
   op mbox : Rids -> Item [ctor] .
-  op icall : -> Item [ctor] .
+  op icall : Tgt -> Item [ctor] .
+
+  --- Work a turn left running past its end (Codex's background terminals, Claude's
+  --- and Grok's background tasks), under the run of the runtime's latest turn, its
+  --- `last_run`: taking a turn takes it over. An interrupt that ended it keeps the
+  --- run it was under, for `stray`.
+  op work : Rid -> Item [ctor] .
+  op halted : Rid -> Item [ctor] .
 
   --- TurnWatch: the runtime's claim on a run, and a crash it has yet to act on.
   op claim : Rid -> Item [ctor] .
@@ -68,10 +80,13 @@ mod TURNS is
   --- How a runtime went: it crashed, was stopped, or released itself.
   ops crashed stopped released : -> Why [ctor] .
 
-  --- A client asking to interrupt the thread's run, and after the runtimes said no
-  --- running turn, interrupt_undriven/2; a client deleting the thread.
-  op intr : -> Item [ctor] .
-  op undriven : -> Item [ctor] .
+  --- A client asking to interrupt the run it read as active (which may have ended
+  --- by the time the runtime hears of it), and after the runtimes said no running
+  --- turn, interrupt_undriven/2 for that run; a client deleting the thread. `aimed`
+  --- keeps the run the client read, for `stray`.
+  op intr : Tgt -> Item [ctor] .
+  op undriven : Tgt -> Item [ctor] .
+  op aimed : Tgt -> Item [ctor] .
   op del : -> Item [ctor] .
 
   op faults : Nat -> Item [ctor] .
@@ -81,6 +96,7 @@ mod TURNS is
   op {_} : Conf -> Sys [ctor] .
 
   vars R R' : Rid .
+  var Y : Tgt .
   vars L L' : Rids .
   vars S S' : St .
   vars G G' : Ghost .
@@ -105,6 +121,24 @@ mod TURNS is
   op busy? : Conf -> Bool .
   eq busy?(run(R, S, H, G) C) = if on(S) then true else busy?(C) fi .
   eq busy?(C) = false [owise] .
+
+  op working? : Conf -> Bool .
+  eq working?(work(R) C) = true .
+  eq working?(C) = false [owise] .
+
+  --- handle_call({:start_turn, _}) makes the turn's run the latest (`last_run`), and
+  --- the work left running is the latest turn's.
+  op own : Rid Conf -> Conf .
+  eq own(R, work(R') C) = work(R) C .
+  eq own(R, C) = C [owise] .
+
+  --- end_background/2 for an interrupt, and for the runtime's own end.
+  op halt : Conf -> Conf .
+  eq halt(work(R) C) = halted(R) C .
+  eq halt(C) = C [owise] .
+  op unwork : Conf -> Conf .
+  eq unwork(work(R) C) = C .
+  eq unwork(C) = C [owise] .
 
   op claimed? : Rid Conf -> Bool .
   eq claimed?(R, claim(R) C) = true .
@@ -161,7 +195,8 @@ mod TURNS is
   op gone : Why Conf -> Conf .
   eq gone(W, claim(R) C) = (if W == crashed then down(R) else empty fi) gone(W, C) .
   eq gone(W, mbox(R ; L) C) = gone(W, mbox(L) cut(W, R, C)) .
-  eq gone(W, icall C) = undriven gone(W, C) .
+  eq gone(W, icall(Y) C) = undriven(Y) gone(W, C) .
+  eq gone(W, work(R) C) = gone(W, C) .
   eq gone(W, C) = C [owise] .
 
   --- decide_next/2: the first queued run not held.
@@ -188,11 +223,13 @@ mod TURNS is
     if S == queued or on(S) .
   eq cancel(C) = C [owise] .
 
-  --- interrupt_undriven/2: a running run nothing drives ends as interrupted.
-  op stopRun : Conf -> Conf .
-  ceq stopRun(run(R, running, H, G) C) = abandon(R, interrupted, run(R, running, H, G) C)
-    if not claimed?(R, C) .
-  eq stopRun(C) = C [owise] .
+  --- interrupt_undriven/2: the run it is pinned to, else the active one, ends as
+  --- interrupted if it is running and nothing drives it; a pinned run that ended
+  --- is refused, and no other run is touched.
+  op stopRun : Tgt Conf -> Conf .
+  ceq stopRun(Y, run(R, running, H, G) C) = abandon(R, interrupted, run(R, running, H, G) C)
+    if (Y == R or Y == any) /\ not claimed?(R, C) .
+  eq stopRun(Y, C) = C [owise] .
 
   --- An MC that stops loses its processes; Recovery.run/0 then settles the thread:
   --- queued runs are held, a run that never reached its provider goes back to the
@@ -200,13 +237,15 @@ mod TURNS is
   op wipe : Conf -> Conf .
   eq wipe(disp(R, P) C) = wipe(C) .
   eq wipe(mbox(R ; L) C) = wipe(mbox(nil) C) .
-  eq wipe(icall C) = wipe(C) .
+  eq wipe(icall(Y) C) = wipe(C) .
   eq wipe(claim(R) C) = wipe(C) .
   eq wipe(down(R) C) = wipe(C) .
   eq wipe(next C) = wipe(C) .
   eq wipe(stopper(B) C) = wipe(C) .
-  eq wipe(intr C) = wipe(C) .
-  eq wipe(undriven C) = wipe(C) .
+  eq wipe(intr(Y) C) = wipe(C) .
+  eq wipe(undriven(Y) C) = wipe(C) .
+  eq wipe(aimed(Y) C) = wipe(C) .
+  eq wipe(work(R) C) = wipe(C) .
   eq wipe(del C) = wipe(C) .
   eq wipe(timer(busy) C) = timer(ready) wipe(C) .
   ceq wipe(rt(X) C) = rt(none) wipe(C) if X =/= none .
@@ -251,9 +290,10 @@ mod TURNS is
 
   --- the runtime: HalC2.Codex.ThreadRuntime ------------------------------------------
 
-  --- handle_call({:start_turn, _}): it takes the turn, over any it had.
-  rl [take] : rt(idle) mbox(R ; L) => rt(begun(R)) mbox(L) .
-  rl [take] : rt(turn(R', I)) mbox(R ; L) => rt(begun(R)) mbox(L) .
+  --- handle_call({:start_turn, _}): it takes the turn, over any it had, and the work
+  --- left running.
+  rl [take] : { rt(idle) mbox(R ; L) C } => { rt(begun(R)) mbox(L) own(R, C) } .
+  rl [take] : { rt(turn(R', I)) mbox(R ; L) C } => { rt(begun(R)) mbox(L) own(R, C) } .
 
   --- begin_turn/2 there: the native turn started, it claims the run (TurnWatch.claim/2)
   --- and marks it running if it is still active, then replies. A run that ended
@@ -265,22 +305,34 @@ mod TURNS is
     if on(S) .
   eq started(R, C) = rt(idle) release(R, C) [owise] .
 
-  --- turn/completed: end_turn/3, TurnWriter.finish/3.
+  --- turn/completed: end_turn/3, TurnWriter.finish/3. A completed turn's work goes on;
+  --- an interrupted one ends it.
   rl [finish] :
     { rt(turn(R, I)) C }
-    => { rt(idle) finish(R, if I then interrupted else completed fi, C) } .
+    => { rt(idle) finish(R, if I then interrupted else completed fi, if I then halt(C) else C fi) } .
 
-  --- handle_call(:interrupt): turn/interrupt to a turn it drives; no running turn else.
-  rl [interrupted] : rt(turn(R, I)) icall => rt(turn(R, true)) .
-  rl [no-turn] : rt(idle) icall => rt(idle) undriven .
+  --- handle_call({:interrupt, run}): turn/interrupt to the turn it drives if that is
+  --- the pinned run's, or the interrupt is not pinned; no running turn else, and
+  --- for a turn it drives for another run, which began after the client read.
+  rl [interrupted] : rt(turn(R, I)) icall(R) => rt(turn(R, true)) .
+  rl [interrupted] : rt(turn(R, I)) icall(any) => rt(turn(R, true)) .
+  crl [stale-pin] : rt(turn(R', I)) icall(R) => rt(turn(R', I)) undriven(R) if R =/= R' .
+  crl [no-turn] : { rt(idle) icall(Y) C } => { rt(idle) undriven(Y) C } if not working?(C) .
+
+  --- Between turns, the work left running ends for an interrupt pinned to the latest
+  --- turn's run, or not pinned; one pinned to a run that started earlier is refused,
+  --- #474. The pinned run is r1, which starts first, so any other run is later.
+  rl [stop-work] : rt(idle) icall(R) work(R) => rt(idle) halted(R) .
+  rl [stop-work] : rt(idle) icall(any) work(R) => rt(idle) halted(R) .
+  crl [stale-pin] : rt(idle) icall(R) work(R') => rt(idle) work(R') undriven(R) if R =/= R' .
 
   --- run.interrupt: interrupt_any/2 ----------------------------------------------------
 
   --- Each runtime's interrupt/2: the call, or no runtime to call.
-  rl [interrupt-any] : intr rt(none) => undriven rt(none) .
-  crl [interrupt-any] : intr rt(X) => icall rt(X) if X =/= none .
+  rl [interrupt-any] : intr(Y) rt(none) => undriven(Y) rt(none) .
+  crl [interrupt-any] : intr(Y) rt(X) => icall(Y) rt(X) if X =/= none .
 
-  rl [interrupt-undriven] : { undriven C } => { stopRun(C) } .
+  rl [interrupt-undriven] : { undriven(Y) C } => { stopRun(Y, C) } .
 
   --- thread.delete: deleted_thread/2 and archived_queue/2, then stop_runtimes/1 ------
 
@@ -335,7 +387,11 @@ mod TURNS is
     { rt(begun(R)) faults(s F) C } => { rt(idle) finish(R, failed, answered(R, C)) faults(F) } .
 
   --- The app-server exits under a turn: the runtime ends it as failed.
-  rl [exit] : { rt(turn(R, I)) faults(s F) C } => { rt(idle) finish(R, failed, C) faults(F) } .
+  rl [exit] : { rt(turn(R, I)) faults(s F) C } => { rt(idle) finish(R, failed, unwork(C)) faults(F) } .
+
+  --- The turn completes leaving work running past its end.
+  crl [background] : { rt(turn(R, false)) C } => { rt(idle) finish(R, completed, work(R) C) }
+    if not working?(C) .
 
   --- The MC stops and starts again.
   rl [restart] : { faults(s F) C } => { settle(wipe(C)) faults(F) } .
@@ -343,31 +399,42 @@ mod TURNS is
   --- states -------------------------------------------------------------------------
 
   --- r1 was just dispatched to start, with q queued behind it; a client sends r2, and
-  --- perhaps asks to interrupt or deletes the thread.
-  op turns : Nat Bool Bool Tm -> Sys .
-  eq turns(F, I, B, T) =
+  --- perhaps deletes the thread or asks to interrupt: either r1, which it read as
+  --- active, or (`any`) whatever runs. By the time the interrupt arrives r1 may have
+  --- ended and r2 or q be running.
+  op turns : Nat Conf Bool Tm -> Sys .
+  var Q : Conf .
+  eq turns(F, Q, B, T) =
     { thread(false) run(r1, starting, false, open) run(q, queued, false, open) queue(q)
       disp(r1, begin) client(r2) rt(none) mbox(nil) timer(T) faults(F)
-      (if I then intr else empty fi) (if B then del else empty fi) } .
+      aim(Q) (if B then del else empty fi) } .
+  op aim : Conf -> Conf .
+  eq aim(intr(Y)) = intr(Y) aimed(Y) .
+  eq aim(Q) = Q [owise] .
 
   --- Two runs active at once; a run that ended changing status; a run that failed;
-  --- nothing left to do.
-  ops twice flipped failed? settled : Sys -> Bool .
+  --- an interrupt pinned to one run ending another as interrupted (a restart, which
+  --- interrupts what runs, forgets the interrupt it cut off), or the work another
+  --- left running; nothing left to do.
+  ops twice flipped failed? stray settled : Sys -> Bool .
   ceq twice({ run(R, S, H, G) run(R', S', B, G') C }) = true if on(S) /\ on(S') .
   eq twice({ C }) = false [owise] .
   ceq flipped({ run(R, S, H, S') C }) = true if S =/= S' .
   eq flipped({ C }) = false [owise] .
   eq failed?({ run(R, failed, H, G) C }) = true .
   eq failed?({ C }) = false [owise] .
+  ceq stray({ aimed(R) run(R', S, H, interrupted) C }) = true if R =/= R' .
+  ceq stray({ aimed(R) halted(R') C }) = true if R =/= R' .
+  eq stray({ C }) = false [owise] .
   eq settled({ client(R) C }) = false .
   eq settled({ disp(R, P) C }) = false .
   eq settled({ mbox(R ; L) C }) = false .
-  eq settled({ icall C }) = false .
+  eq settled({ icall(Y) C }) = false .
   eq settled({ next C }) = false .
   eq settled({ down(R) C }) = false .
   eq settled({ stopper(B) C }) = false .
-  eq settled({ intr C }) = false .
-  eq settled({ undriven C }) = false .
+  eq settled({ intr(Y) C }) = false .
+  eq settled({ undriven(Y) C }) = false .
   eq settled({ del C }) = false .
   eq settled({ run(R, starting, H, G) C }) = false .
   eq settled({ run(R, running, H, G) C }) = false .

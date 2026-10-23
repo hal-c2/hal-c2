@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { resolveEditorCommand, type EditorCommand } from "../../promptEditor.ts";
+import { TRUNCATED_READ_ONLY } from "../filesState.ts";
 import { errorText, payloadField, type Feature, type FeatureKit } from "./kit.ts";
 
 export interface EditorOptions {
@@ -77,7 +78,7 @@ export function createEditorFeature(kit: FeatureKit, options: EditorOptions): Fe
             copied
               ? `Your edit of ${path} is on the clipboard.`
               : "This terminal has no clipboard access.",
-            copied ? "success" : "error",
+            copied ? "success" : "warning",
           );
         } else kit.status(`Kept ${path} as it is on disk.`, "info");
       },
@@ -87,17 +88,23 @@ export function createEditorFeature(kit: FeatureKit, options: EditorOptions): Fe
   const edit = (path: string, line: number | null) => {
     const workspace = kit.workspace();
     if (!workspace) {
-      kit.status("Open a thread to edit its files.", "error");
+      kit.status("Open a thread to edit its files.", "warning");
       return;
     }
     const { cwd } = workspace;
     void kit.track(
       (async () => {
-        const original = await client.readFile(cwd, path);
-        if (original === null) {
+        const read = await client.readFile(cwd, path);
+        if (read === null) {
           kit.status(`Could not read ${path}.`, "error");
           return;
         }
+        // Only its first 1 MB was read: saving that would cut the file short.
+        if (read.truncated) {
+          kit.status(TRUNCATED_READ_ONLY, "warning");
+          return;
+        }
+        const original = read.contents;
         const dir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "hal-c2-edit-"));
         try {
           const file = NodePath.join(dir, NodePath.basename(path));
@@ -111,7 +118,7 @@ export function createEditorFeature(kit: FeatureKit, options: EditorOptions): Fe
             return;
           }
           const onDisk = await client.readFile(cwd, path);
-          if (onDisk !== original) {
+          if (onDisk?.contents !== original) {
             resolveConflict(cwd, path, edited);
             return;
           }

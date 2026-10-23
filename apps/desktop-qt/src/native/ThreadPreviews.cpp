@@ -1,5 +1,6 @@
 #include "ThreadPreviews.h"
 
+#include <QHostAddress>
 #include <QJsonArray>
 #include <QSet>
 
@@ -8,6 +9,7 @@
 #include <utility>
 
 #include "McClient.h"
+#include "ThisMachine.h"
 
 namespace {
 
@@ -61,6 +63,16 @@ std::optional<QJsonObject> after(const QJsonObject& event, const std::optional<Q
   }
   if (event.value(QLatin1String("snapshot")).isObject()) return event.value(QLatin1String("snapshot")).toObject();
   return current;
+}
+
+// A dev server's address on the machine it names: one only that machine reaches.
+bool loopback(const QUrl& url) {
+  if (url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https")) return false;
+  return thisMachine::loopbackHost(url.host());
+}
+
+int portOf(const QUrl& url) {
+  return url.port(url.scheme() == QLatin1String("https") ? 443 : 80);
 }
 
 }  // namespace
@@ -218,7 +230,7 @@ void ThreadPreviews::navigate(const QString& tabId, const QString& address) {
   const int generation = m_generation;
   m_client->call(this, m_environment, QStringLiteral("preview.navigate"),
                  QJsonObject{{QStringLiteral("threadId"), m_thread}, {QStringLiteral("tabId"), tabId}, {QStringLiteral("url"), target}},
-                 [this, generation, url, target](const QJsonValue& result, const std::optional<QString>& error) {
+                 [this, generation, url, target, environmentId = m_environment, threadId = m_thread, mc = m_mc](const QJsonValue& result, const std::optional<QString>& error) {
                    if (error) {
                      m_notify(QStringLiteral("error"), QStringLiteral("Could not open the page"), *error);
                      return;
@@ -231,7 +243,92 @@ void ThreadPreviews::navigate(const QString& tabId, const QString& address) {
                      m_writeRecents(recents.mid(0, maxRecents));
                      emit suggestionsChanged();
                    }
-                   m_open(url);
+                   // The thread it was asked for, though another may show by now.
+                   openFor(url, environmentId, threadId, mc);
+                 });
+}
+
+void ThreadPreviews::openAddress(const QString& address) {
+  const QUrl url(address);
+  if (!forwards(url, m_environment, m_thread, m_mc)) {
+    m_open(url);
+    return;
+  }
+  // The rows are the thread's tabs only while they are followed; otherwise
+  // the MC says which there are.
+  if (m_active && !m_listing && m_status == QLatin1String("ready")) {
+    openThroughTab(url, m_environment, m_thread, m_mc, m_rows);
+    return;
+  }
+  m_client->call(this, m_environment, QStringLiteral("preview.list"), QJsonObject{{QStringLiteral("threadId"), m_thread}},
+                 [this, url, environmentId = m_environment, threadId = m_thread, mc = m_mc](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (error) {
+                     m_notify(QStringLiteral("error"), QStringLiteral("Could not open the page"), *error);
+                     return;
+                   }
+                   QList<QJsonObject> tabs;
+                   for (const QJsonValue& session : result.toObject().value(QLatin1String("sessions")).toArray()) tabs.append(session.toObject());
+                   openThroughTab(url, environmentId, threadId, mc, tabs);
+                 });
+}
+
+void ThreadPreviews::openThroughTab(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc,
+                                    const QList<QJsonObject>& tabs) {
+  // The thread's MC forwards only a port one of its tabs names, so a link
+  // from elsewhere (a reply) gets a tab first.
+  for (const QJsonObject& snapshot : tabs) {
+    const QUrl at(navOf(snapshot).value(QLatin1String("url")).toString());
+    if (loopback(at) && portOf(at) == portOf(url)) {
+      openFor(url, environmentId, threadId, mc);
+      return;
+    }
+  }
+  const int generation = m_generation;
+  m_client->call(this, environmentId, QStringLiteral("preview.open"),
+                 QJsonObject{{QStringLiteral("threadId"), threadId}, {QStringLiteral("url"), url.toString()}},
+                 [this, generation, url, environmentId, threadId, mc](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (error) {
+                     m_notify(QStringLiteral("error"), QStringLiteral("Could not open the page"), *error);
+                     return;
+                   }
+                   // A row only for the thread shown: the list this follows may
+                   // have come after the user went to another.
+                   if (generation == m_generation && environmentId == m_environment && threadId == m_thread && result.isObject() &&
+                       m_status == QLatin1String("ready")) {
+                     upsert(result.toObject());
+                   }
+                   openFor(url, environmentId, threadId, mc);
+                 });
+}
+
+bool ThreadPreviews::forwards(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc) const {
+  const QString connected = m_client->environment();
+  // A thread on the connected MC, or on none the cluster knows, opens as it is,
+  // and so does any when the connected MC is on another machine: its forward
+  // would listen there.
+  return loopback(url) && !threadId.isEmpty() && !mc.isEmpty() && !connected.isEmpty() && environmentId != connected &&
+         (!m_connectedHere || m_connectedHere());
+}
+
+void ThreadPreviews::openFor(const QUrl& url, const QString& environmentId, const QString& threadId, const QString& mc) {
+  if (!forwards(url, environmentId, threadId, mc)) {
+    m_open(url);
+    return;
+  }
+  const int port = portOf(url);
+  m_client->call(this, m_client->environment(), QStringLiteral("preview.forward"),
+                 QJsonObject{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("threadId"), threadId}, {QStringLiteral("port"), port}},
+                 [this, url, port](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (error) {
+                     m_notify(QStringLiteral("error"), QStringLiteral("Could not open the page"), *error);
+                     return;
+                   }
+                   QUrl forwarded = url;
+                   forwarded.setPort(result.toObject().value(QLatin1String("port")).toInt(port));
+                   // The forward listens at 127.0.0.1, and at ::1 only where
+                   // this machine has IPv6, never at 127.0.0.1's aliases.
+                   if (!QHostAddress(forwarded.host()).isNull()) forwarded.setHost(QStringLiteral("127.0.0.1"));
+                   m_open(forwarded);
                  });
 }
 
@@ -331,7 +428,7 @@ void ThreadPreviews::open(const QString& tabId) {
   const int row = rowOf(tabId);
   if (row < 0) return;
   const QString url = navOf(m_rows.at(row)).value(QLatin1String("url")).toString();
-  if (!url.isEmpty()) m_open(QUrl(url));
+  if (!url.isEmpty()) openAddress(url);
 }
 
 void ThreadPreviews::close(const QString& tabId) {

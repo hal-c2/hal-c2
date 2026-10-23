@@ -12,9 +12,9 @@ import {
   isSelectable,
   moveContextMenuIndex,
   resolveContextMenuLayout,
-} from "../components/ContextMenu.logic.ts";
+} from "../contextMenu.logic.ts";
 import { clip } from "../format.ts";
-import type { Row } from "../components/Sidebar.logic.ts";
+import type { Row } from "../sidebar.logic.ts";
 import { projectLabel, type TuiThreadShell } from "../orchestrationV2Adapter.ts";
 import type { Store } from "../store.ts";
 import { THEME } from "../theme.ts";
@@ -26,7 +26,7 @@ import { chunk, styled, type StyledText } from "./styledText.ts";
 
 /**
  * One painted line of the open menu: a divider or an item (`index` into
- * `items`), with its text as ContextMenu.tsx draws it; an active item sits on
+ * `items`), with its text as ContextMenu.qml draws it; an active item sits on
  * the selected background.
  */
 export type TuiContextMenuRow =
@@ -276,7 +276,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
     const copied = ctx.copyToClipboard?.(value) ?? false;
     store.setStatus(
       copied ? `${label} copied.` : "Clipboard not supported by this terminal.",
-      copied ? "success" : "error",
+      copied ? "success" : "warning",
     );
   };
 
@@ -316,7 +316,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
       case "snooze":
         // The same rule the server enforces: a thread that waits on the user stays in view.
         if (!canSnooze(thread, { now: ctx.now() })) {
-          store.setStatus("This thread is waiting on you and cannot be snoozed.", "error");
+          store.setStatus("This thread is waiting on you and cannot be snoozed.", "warning");
           return;
         }
         return openSubmenu(thread, snoozeMenu(thread));
@@ -352,7 +352,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
   const rename = (thread: TuiThreadShell, raw: string) => {
     const title = raw.trim();
     if (title.length === 0) {
-      store.setStatus("Thread title cannot be empty", "error");
+      store.setStatus("Thread title cannot be empty", "warning");
       return;
     }
     if (title === thread.title) return;
@@ -467,7 +467,7 @@ export function createThreadActions(ctx: ThreadActionsContext) {
         return true;
       }
       case "contextMenu.hover": {
-        // The pointer over an item selects it (ContextMenu.tsx's onMouseMove).
+        // The pointer over an item selects it (ContextMenu.qml's hover).
         const index = Number(field(payload, "index"));
         if (!menu || index === menu.selectedIndex || !isSelectable(menu.items[index])) return true;
         menu = { ...menu, selectedIndex: index };

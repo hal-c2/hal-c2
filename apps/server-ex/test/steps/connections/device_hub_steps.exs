@@ -47,9 +47,16 @@ defmodule HalC2.Steps.Connections.DeviceHub do
     context
   end
 
+  # An empty home and PATH, so the lookup finds neither the developer's SDK in ~/Android
+  # nor an `adb` on PATH (the `on_path` candidate in `HalC2.Devices.android_sdk/0`). Both
+  # last the rest of the scenario, which only probes with `System.find_executable/1`.
   step "no Android SDK is installed", context do
-    System.delete_env("ANDROID_HOME")
-    System.delete_env("ANDROID_SDK_ROOT")
+    context
+    |> put_env("HOME", Mc.tmp_dir(context.mc, "home"))
+    |> put_env("PATH", Mc.tmp_dir(context.mc, "path"))
+    |> put_env("ANDROID_HOME", nil)
+    |> put_env("ANDROID_SDK_ROOT", nil)
+
     assert HalC2.Devices.platform_reason("android") =~ "Android SDK was not found"
     context
   end

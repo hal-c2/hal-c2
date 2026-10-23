@@ -15,13 +15,11 @@
     ],
     "types": ["node", "bun"],
     "lib": ["ESNext", "esnext.disposable", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/react",
     // opentui-qml ships source that fails this repo's strict flags; see types/.
     "paths": {
       "opentui-qml": ["./types/opentui-qml.d.ts"],
       "opentui-qml/testing": ["./types/opentui-qml-testing.d.ts"]
     }
   },
-  "include": ["src", "features"]
+  "include": ["src", "features", "build.ts"]
 }

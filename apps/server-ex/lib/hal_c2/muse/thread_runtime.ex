@@ -24,9 +24,9 @@ defmodule HalC2.Muse.ThreadRuntime do
   alias HalC2.JsonRpc.Connection
   alias HalC2.Muse
   alias HalC2.Orchestration
-  alias HalC2.Orchestration.Entities
+  alias HalC2.Orchestration.{Entities, NativeSubagent}
 
-  @state_version 3
+  @state_version 4
   @registry HalC2.Muse.Registry
   # Muse's "overloaded" and "backpressured": the command may be sent again.
   @retryable [-32001, -32031]
@@ -34,6 +34,10 @@ defmodule HalC2.Muse.ThreadRuntime do
   @hidden_tools ~w(write_todos request_user_input workflow)
   # Muse's own bookkeeping, not part of the conversation shown.
   @skipped_items ~w(userMessage reminderChild)
+  # A subagent ends only on a status Muse is known to end one with: its answer comes
+  # once, so a status not seen before is taken as still running, not as a failure that
+  # would drop the answer after it. One that never ends ends with the turn.
+  @subagent_ended ~w(completed failed cancelled canceled)
   # Muse caps a question's free-text answer.
   @max_free_text 500
 
@@ -42,20 +46,35 @@ defmodule HalC2.Muse.ThreadRuntime do
     do: thread_id |> ensure() |> GenServer.call({:start_turn, turn}, 120_000)
 
   @spec interrupt(String.t(), String.t() | nil) :: :ok | {:error, String.t()}
-  def interrupt(thread_id, _run_id) do
+  def interrupt(thread_id, run_id) do
     case lookup(thread_id) do
       nil -> {:error, "no active Muse turn in this thread"}
-      pid -> GenServer.call(pid, :interrupt, 35_000)
+      pid -> GenServer.call(pid, {:interrupt, run_id}, 35_000)
     end
   end
 
-  @doc "A `turn/steer` into the running turn, built from `%{text, attachments}` like a turn's."
+  @doc """
+  A `turn/steer` into the running turn, built from `%{text, attachments}` like a turn's.
+  Non-timeout exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
+  """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active Muse turn in this thread"}
-      pid -> GenServer.call(pid, {:steer, run_id, message}, 35_000)
+      pid -> steer_call(pid, run_id, message)
     end
+  end
+
+  # `HalC2.RuntimeSteer` owns which timeout means held; the budget stays the
+  # public calls' 35s, so a command never outlives its caller. One divergence
+  # from `RuntimeSteer`'s model: the handler's `command/5` catches a nested
+  # `Connection.call` timeout itself, closes the connection and answers a
+  # refusal (`{:error, "Muse Code did not answer turn/steer"}`) instead of
+  # propagating the exit, so a steer that may still land is taken back out of
+  # the turn while its session drops — the host is out of step either way.
+  defp steer_call(pid, run_id, message) do
+    timeout = Application.get_env(:hal_c2, :muse_steer_timeout_ms, 35_000)
+    HalC2.RuntimeSteer.call(pid, run_id, message, timeout)
   end
 
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}
@@ -117,6 +136,9 @@ defmodule HalC2.Muse.ThreadRuntime do
        items: %{},
        # Muse's items as last seen (itemId -> item), for revisions and deltas.
        muse: %{},
+       # Muse's subagents of the running turn (itemId -> the subagent as last shown, or
+       # :tool for one a v3 runtime showed as a tool call before a hot update).
+       subs: %{},
        buffer: %{},
        flush_timer: nil,
        interrupted: false,
@@ -141,6 +163,7 @@ defmodule HalC2.Muse.ThreadRuntime do
       | turn: turn,
         items: %{},
         muse: %{},
+        subs: %{},
         native: Muse.command_id(),
         joined: MapSet.new(),
         compact: false,
@@ -165,10 +188,25 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   # IdleSessions' release: a runtime that took a turn since the thread looked idle keeps it.
-  def handle_call(:release, _from, %{turn: nil} = state),
-    do: {:stop, {:shutdown, :released}, :ok, state}
+  # It leaves the registry before it answers: the registry drops a dead runtime's key
+  # only when it gets to its exit, so a lookup right after the release would find a pid
+  # that is gone. `terminate/2` runs after that, with the key free: a turn may start a
+  # new runtime meanwhile, so for a moment two run for the thread, and nothing in
+  # `terminate/2` may count on having the thread to itself.
+  def handle_call(:release, _from, %{turn: nil} = state) do
+    Registry.unregister(@registry, state.thread_id)
+    {:stop, {:shutdown, :released}, :ok, state}
+  end
 
   def handle_call(:release, _from, state), do: {:reply, :busy, state}
+
+  # Pinned to a run, the interrupt stops only that run's turn: a different
+  # turn that began since the caller read the run is not the caller's to stop.
+  def handle_call({:interrupt, run_id}, _from, %{turn: %{ids: %{run: other}}} = state)
+      when is_binary(run_id) and run_id != other,
+      do: {:reply, {:error, "no running turn"}, state}
+
+  def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
 
   # Muse cannot stop a compaction; closing its host does.
   def handle_call(:interrupt, _from, %{turn: turn, compact: true} = state) when turn != nil do
@@ -304,6 +342,13 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   # Every older state shape migrates forward here.
   defp migrate(%{v: @state_version} = state), do: state
+
+  # v4 shows Muse's subagents as subagents. One the running turn already showed as a
+  # tool call stays one, so it is not shown twice.
+  defp migrate(%{v: 3} = state) do
+    subs = for {id, %{"kind" => "subagent"}} <- state[:muse] || %{}, into: %{}, do: {id, :tool}
+    state |> Map.merge(%{v: 4, subs: subs}) |> migrate()
+  end
 
   # v3 knows whether Muse started the running turn; one running at the update has.
   defp migrate(%{v: 2} = state), do: state |> Map.merge(%{v: 3, started: true}) |> migrate()
@@ -806,7 +851,78 @@ defmodule HalC2.Muse.ThreadRuntime do
     end
   end
 
-  defp item(state, item) do
+  # Muse's own subagent is a provider-native subagent: its objective is the child
+  # thread's prompt, what Muse says it is doing the progress, its result the answer.
+  # The child's own transcript (`childSessionId`) is not streamed.
+  defp item(state, %{"kind" => "subagent"} = item) do
+    case state.subs[item["itemId"]] do
+      :tool -> tool_item(state, item)
+      entry -> subagent_item(state, item, entry)
+    end
+  end
+
+  defp item(state, item), do: tool_item(state, item)
+
+  defp subagent_item(state, item, entry) do
+    ended? = item["status"] in @subagent_ended
+    # Its turn item goes after the text before it; a progress tick allocates none.
+    state = if entry == nil or ended?, do: flush(state), else: state
+    id = item["itemId"]
+
+    # Muse's item ids are the turn's, so the subagent's is scoped to the run as the
+    # other items' are (`native/2`). Its task is the first revision's, as the item that
+    # starts a subagent names its objective (upstream's Muse adapter takes the child
+    # thread's title and prompt from it too).
+    entry =
+      entry ||
+        (
+          task = subagent_task(item)
+
+          %{
+            sub: NativeSubagent.start(state.turn.ids, native(state, item), task),
+            progress: nil,
+            prompt: task["prompt"],
+            done: false
+          }
+        )
+
+    entry =
+      cond do
+        # Settled: a later revision cannot reopen it (its answer came once).
+        entry.done ->
+          entry
+
+        # The ended item may be the first to say what it did, when Muse sends fewer
+        # revisions or one first seen ended.
+        ended? ->
+          status = status(item)
+          entry = progressed(entry, item)
+          sub = NativeSubagent.finish(entry.sub, status, subagent_result(item, status))
+          %{entry | sub: sub, done: true}
+
+        true ->
+          progressed(entry, item)
+      end
+
+    %{state | subs: Map.put(state.subs, id, entry)}
+  end
+
+  defp progressed(entry, item) do
+    progress = subagent_progress(item)
+
+    # Started without a task (the started item named no objective and said
+    # nothing yet): the first thing Muse says it is doing becomes it.
+    entry =
+      if progress != nil and Map.get(entry, :prompt) == "",
+        do: %{entry | sub: NativeSubagent.prompt(entry.sub, progress), prompt: progress},
+        else: entry
+
+    if progress != nil and progress != entry.progress,
+      do: %{entry | sub: NativeSubagent.progress(entry.sub, progress), progress: progress},
+      else: entry
+  end
+
+  defp tool_item(state, item) do
     status = status(item)
 
     if item["kind"] == "toolCall" and item["tool"] in @hidden_tools and status != "failed" do
@@ -821,6 +937,82 @@ defmodule HalC2.Muse.ThreadRuntime do
         else: finish_item(state, native, status, &Map.merge(&1, fields))
     end
   end
+
+  # The item's fields are Muse's shape of the day: a value of some other shape than
+  # the text it has been so far degrades this subagent, not the turn.
+  defp subagent_task(item) do
+    objective = non_empty(item["objective"], nil)
+
+    title =
+      case objective && String.trim(objective) do
+        text when text in [nil, ""] -> non_empty(item["role"], "Muse agent")
+        text -> text |> String.split("\n") |> hd() |> String.slice(0, 80)
+      end
+
+    # Upstream's `objective ?? fallbackText ?? ""`: without an objective, what
+    # Muse says the subagent is doing is the child's task, not a blank prompt.
+    %{"prompt" => objective || subagent_progress(item) || "", "title" => title}
+  end
+
+  # What the running subagent is doing: Muse's one-line summary. Its control state
+  # ("starting", "resultReady") is protocol, not progress; the item's status shows it runs.
+  defp subagent_progress(item), do: non_empty(item["fallbackText"], nil)
+
+  # The answer: the result's text, else its summary. One that did not complete shows
+  # Muse's reason and what it answered before it stopped, as the tool-call rendering
+  # did (`tool/2` joins the two). What it was doing (its `fallbackText`, which the ended
+  # item still carries) is its progress, never its answer. A result that is not the map
+  # Muse has sent so far carries no answer to read out of it.
+  defp subagent_result(item, status) do
+    result = if is_map(item["result"]), do: item["result"], else: %{}
+    answer = Enum.find([result["text"], result["summary"]], &non_empty(&1, nil))
+
+    if status == "completed" do
+      answer
+    else
+      [non_empty(item["failureReason"], nil), answer]
+      |> Enum.reject(&is_nil/1)
+      |> case do
+        [] -> nil
+        parts -> Enum.join(parts, "\n")
+      end
+    end
+  end
+
+  # Interim (#447): Muse's subagents still running when the turn ends end with
+  # it, unanswered — as interrupted when the turn completed, so none reads as
+  # finished work, and an answer Muse sends later is dropped. That is not the
+  # behaviour HAL-C2 wants: upstream's Muse adapter keeps a subagent that
+  # outlives a *completed* turn as the thread's background work and publishes
+  # its answer when it lands (only failed/cancelled/interrupted endings settle
+  # it), as the MC's Claude adapter does. The ledger records that as the
+  # `@backlog` scenario "A Muse Code subagent still running when its turn
+  # completes answers afterwards" (`features/providers/muse.feature`); until it
+  # lands, "interrupted" is the honest label for work shown as stopped. The
+  # exception is a subagent last seen in a status Muse is not known to run or
+  # end one with: that status may have been a new way of ending it, and no
+  # later revision is coming, so an answer already on that item is kept
+  # (progress still never is one).
+  defp end_subagents(state, status) do
+    status = if status == "completed", do: "interrupted", else: status
+
+    Enum.each(state.subs, fn
+      {id, %{done: false, sub: sub}} ->
+        NativeSubagent.finish(sub, status, unrecognized_answer(state.muse[id], status))
+
+      _ ->
+        :ok
+    end)
+
+    state
+  end
+
+  defp unrecognized_answer(%{"status" => raw} = item, status) when is_binary(raw) do
+    if raw != "inProgress" and raw not in @subagent_ended,
+      do: subagent_result(item, status)
+  end
+
+  defp unrecognized_answer(_item, _status), do: nil
 
   # Text streams through deltas; the completed item's text is authoritative.
   defp text_item(state, item, kind) do
@@ -922,34 +1114,54 @@ defmodule HalC2.Muse.ThreadRuntime do
   # Unrecognized terminal states never show as successful work.
   def status(%{"status" => "inProgress"}), do: "running"
   def status(%{"status" => "cancelled"}), do: "cancelled"
+  # The spelling Muse's todos already come in both ways (`session/todoListChanged`).
+  def status(%{"status" => "canceled"}), do: "cancelled"
 
   def status(%{"status" => "completed", "kind" => "compaction", "outcome" => outcome})
       when outcome not in [nil, "compacted"],
       do: "failed"
 
   def status(%{"status" => "completed"}), do: "completed"
+  def status(%{"status" => "failed"}), do: "failed"
   def status(_item), do: "failed"
 
   @doc false
-  # A Muse tool, subagent or workflow as a turn item: `{kind, fields}`.
+  # A Muse tool, subagent or workflow as a turn item: `{kind, fields}`. The fields
+  # read out of the item are Muse's shape of the day, as on the subagent path
+  # (`subagent_result/2`): a value of some other shape than the text it has been
+  # so far degrades this item, not the turn.
   def tool(item, status) do
     args = decode_args(item["args"])
-    name = item["tool"] || item["kind"]
+    name = non_empty(item["tool"], nil) || non_empty(item["kind"], nil)
+    result = if is_map(item["result"]), do: item["result"], else: %{}
+    first_binary = fn values -> Enum.find(values, &is_binary/1) end
 
     title =
       case item["kind"] do
-        "subagent" -> item["objective"] || item["role"] || "Muse agent"
-        "workflow" -> item["entryId"] || "Workflow"
-        _ -> name
+        "subagent" ->
+          non_empty(item["objective"], nil) || non_empty(item["role"], "Muse agent")
+
+        "workflow" ->
+          non_empty(item["entryId"], "Workflow")
+
+        _ ->
+          name
       end
 
     detail =
-      if status == "failed", do: item["failureReason"] || "Muse reported #{item["status"]}."
+      if status == "failed",
+        do:
+          non_empty(item["failureReason"], nil) ||
+            "Muse reported #{non_empty(item["status"], status)}."
+
+    summary =
+      if is_list(item["summary"]),
+        do: item["summary"] |> Enum.filter(&is_binary/1) |> Enum.join("\n")
 
     text =
-      item["visibleOutput"] || get_in(item, ["result", "summary"]) || item["text"] ||
-        (is_list(item["summary"]) && Enum.join(item["summary"], "\n")) || item["finalSummary"] ||
-        item["fallbackText"] || item["objective"] || ""
+      first_binary.([item["visibleOutput"], result["summary"], item["text"]]) ||
+        summary ||
+        first_binary.([item["finalSummary"], item["fallbackText"], item["objective"]]) || ""
 
     output = [detail, text] |> Enum.filter(&(&1 not in [nil, ""])) |> Enum.join("\n")
     title = if detail, do: "#{title}: #{detail}", else: title
@@ -1350,7 +1562,9 @@ defmodule HalC2.Muse.ThreadRuntime do
   # --- end of turn -------------------------------------------------------------------
 
   defp end_turn(state, status, failure) do
-    state = state |> flush() |> close_open_items(status) |> cancel_requests()
+    state =
+      state |> flush() |> end_subagents(status) |> close_open_items(status) |> cancel_requests()
+
     finish(state, status, failure)
 
     %{
@@ -1359,6 +1573,7 @@ defmodule HalC2.Muse.ThreadRuntime do
         last_ids: state.turn.ids,
         items: %{},
         muse: %{},
+        subs: %{},
         joined: MapSet.new(),
         compact: false
     }

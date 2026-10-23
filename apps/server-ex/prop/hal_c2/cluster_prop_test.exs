@@ -156,13 +156,11 @@ defmodule HalC2.ClusterPropTest do
     if member?(state, id), do: update_in(state.connected, &MapSet.put(&1, id)), else: state
   end
 
-  def next_state(state, _result, {:call, _, :version_changed, []}),
-    do: %{state | connected: MapSet.new()}
-
   def next_state(state, _result, _call), do: state
 
-  defp admissible?(state, id, fp, version) do
-    id != state.own and id != "Bad_id" and fp in @fingerprints and version == :current
+  # Whatever version the machine runs.
+  defp admissible?(state, id, fp, _version) do
+    id != state.own and id != "Bad_id" and fp in @fingerprints
   end
 
   defp put_member(state, id, fp, label, addresses, member) do
@@ -188,11 +186,8 @@ defmodule HalC2.ClusterPropTest do
 
     answer =
       cond do
-        not admissible?(state, id, fp, :current) ->
+        not admissible?(state, id, fp, version) ->
           result == {:error, :invalid_member}
-
-        version != :current ->
-          match?({:error, {:other_version, "0.0.0-other", _}}, result)
 
         true ->
           match?({:ok, %{"id" => own, "members" => _}} when own == state.own, result) and
@@ -226,8 +221,10 @@ defmodule HalC2.ClusterPropTest do
     told_ok and observed?(state, next, seen)
   end
 
-  # The gossip timer: the table to every connected member, and to no one else.
-  def postcondition(state, {:call, _, :tick, []}, {_result, seen}) do
+  # The gossip timer, and a version taken up in place, which keeps every connection:
+  # the table to every connected member, and to no one else.
+  def postcondition(state, {:call, _, call, []}, {_result, seen})
+      when call in [:tick, :version_changed] do
     told = for {mc, {:merge, _}} <- seen.sent, do: mc
 
     Enum.sort(told) == Enum.sort(Enum.map(state.connected, &Cluster.mc_name/1)) and

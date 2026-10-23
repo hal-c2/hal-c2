@@ -300,7 +300,23 @@ export function makeClusterClient(
     switchRef: (cwd, refName) => clientForPath(cwd).switchRef(cwd, refName),
     listEntries: (cwd) => clientForPath(cwd).listEntries(cwd),
     readFile: (cwd, relativePath) => clientForPath(cwd).readFile(cwd, relativePath),
+    // Saved where it was read: by the workspace, also for a full path outside it.
+    writeFile: (cwd, relativePath, contents) =>
+      clientForPath(cwd).writeFile(cwd, relativePath, contents),
     readFileBase64: (cwd, relativePath) => clientForPath(cwd).readFileBase64(cwd, relativePath),
+    // A member on this machine starts the editor itself (`mcCall` to its environment), so
+    // the client's own MC may be on another machine. Another member's files are in the
+    // folder the client's own MC keeps for it, and that MC starts it.
+    // Its config comes in on the member's own socket: the MC has no method that reads it.
+    getServerConfig: (cwd) => clientForPath(cwd).getServerConfig(),
+    localPathFor: async (path) => {
+      const owner = clientForPath(path);
+      if (owner === home) return home.localPathFor(path);
+      const id = [...members.values()].find((machine) => machine.client === owner)?.id;
+      const local = await owner.localPathFor(path);
+      if (id === undefined) return local;
+      return "path" in local ? { ...local, environmentId: id } : home.localPathFor(path, id);
+    },
     dispose: async () => {
       stopHome?.();
       stopConnection?.();

@@ -72,7 +72,7 @@ export function createContextFeature(kit: FeatureKit): Feature {
 
   const attach = (record: KnownComposerContextRecord, said: string) => {
     if (kit.addContext(record)) kit.status(said, "success");
-    else kit.status("Open a thread to attach context to its prompt.", "error");
+    else kit.status("Open a thread to attach context to its prompt.", "warning");
   };
 
   /** The screen's lines without the blank rows under the output. */
