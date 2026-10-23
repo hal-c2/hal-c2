@@ -12,7 +12,9 @@
 # MC on the user's machine shows each member's share as a folder of its own through FUSE.
 # The user's own editor and file manager open a file of another machine from that folder.
 # Linux only for now: on macOS (FUSE-T or macFUSE) and Windows (WinFsp) files.localPath
-# answers that opening another machine's files is not supported yet.
+# answers that opening another machine's files is not supported yet, and points at
+# HAL-C2's own file viewer, which edits and copies the file through the MC it is on
+# (file-viewer-and-editing.feature).
 Feature: Files on another machine
   A thread's files live on the machine its MC runs on. The user's own editor, file manager
   and terminal links open them all the same, from a folder this machine keeps for each
@@ -97,4 +99,13 @@ Feature: Files on another machine
     And a thread of "shop" runs on "devbox"
     When the user opens "src/cart.ts" in "VS Code"
     Then the user is told the file is on "devbox" and what to install to open it here
+    And nothing is started on "devbox"
+
+  # machine_files_test.exs has the MC's words; here the clients pass them on.
+  @desktop @tui
+  Scenario: A machine that cannot show the folder yet points at HAL-C2's file viewer
+    Given this machine is a Mac, which cannot show another machine's folder yet
+    And a thread of "shop" runs on "devbox"
+    When the user opens "src/cart.ts" in "VS Code"
+    Then the user is told the file is on "devbox" and to edit or copy it in HAL-C2's file viewer
     And nothing is started on "devbox"

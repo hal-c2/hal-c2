@@ -240,6 +240,20 @@ defmodule HalC2.MachineFilesTest do
              "The file is on \"devbox\". To open it here, install FUSE 3 (fuse3)."
   end
 
+  test "a platform without the folders points at HAL-C2's own file viewer", ctx do
+    Application.put_env(:hal_c2, :machine_files_fake_available, {:error, :unsupported})
+    server = start(ctx)
+
+    capture_log(fn -> put_cluster(ctx, server, [{node(), @devbox}]) end)
+    refute_received {:opened, _}
+
+    assert MachineFiles.local_path("env-devbox", "/home/me/a.ts", server) ==
+             {:error, :unsupported, "devbox"}
+
+    assert MachineFiles.message(:unsupported, "devbox") =~
+             ~r/^The file is on "devbox"\. Opening another machine's files on .+ is not supported yet; edit it or copy its text in HAL-C2's file viewer\.$/
+  end
+
   test "files.localPath answers with the path, or the reason and the machine", ctx do
     server = start(ctx)
     put_cluster(ctx, server, [{node(), @devbox}])

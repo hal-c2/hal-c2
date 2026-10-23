@@ -100,8 +100,15 @@ defmodule HalC2.MachineFiles do
   def message(reason, nil), do: message(reason, "another machine")
   def message(:no_fuse, label), do: on(label, "To open it here, install FUSE 3 (fuse3).")
 
-  def message(:unsupported, label),
-    do: on(label, "Opening another machine's files on #{platform()} is not supported yet.")
+  # HAL-C2's own file viewer reads and writes through the MC that owns the file,
+  # so it is the way left where no folder can be shown.
+  def message(:unsupported, label) do
+    on(
+      label,
+      "Opening another machine's files on #{platform()} is not supported yet; " <>
+        "edit it or copy its text in HAL-C2's file viewer."
+    )
+  end
 
   def message(:no_helper, label),
     do: on(label, "This install is missing its machine-files helper; reinstall HAL-C2.")
