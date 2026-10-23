@@ -41,21 +41,13 @@ defmodule HalC2.Editors do
 
   @doc "Opens `cwd` (optionally `path:line[:column]`) in an editor, without waiting for it."
   def open(%{"cwd" => target, "editor" => "file-manager"} = input) do
-    case {file_manager(), input["reveal"]} do
-      {nil, _} ->
+    case file_manager() do
+      nil ->
         {:error,
          %{"_tag" => "ExternalLauncherUnsupportedEditorError", "editor" => "file-manager"}}
 
-      {"open", true} ->
-        launch("open", ["-R", target])
-
-      # xdg-open has no way to select a file, and opening the file would start whatever
-      # the desktop maps its type to; showing the folder is what "reveal" means here.
-      {"xdg-open", true} ->
-        launch("xdg-open", [if(File.dir?(target), do: target, else: Path.dirname(target))])
-
-      {command, _} ->
-        launch(command, [target])
+      command ->
+        launch(command, show(command, target, input["reveal"] == true))
     end
   end
 
@@ -178,6 +170,37 @@ defmodule HalC2.Editors do
   defp absolute?(path), do: Path.type(path) == :absolute
 
   defp display?, do: Enum.any?(["DISPLAY", "WAYLAND_DISPLAY"], &(System.get_env(&1, "") != ""))
+
+  # The file manager only ever shows folders: a folder opens, anything else is shown
+  # selected in the folder that holds it. Handing a file to `open`, `explorer` or
+  # `xdg-open` runs whatever the desktop maps its type to, and the target is a workspace
+  # path an agent or a cloned repository controls (a planted shortcut, script or app).
+  # On macOS and Windows a folder opens only when it is a plain one: not a link, and with
+  # no extension, since `open` launches a `.app` bundle and Explorer runs a shell folder
+  # named `x.{CLSID}`. xdg-open has no way to select a file, so on Linux a file shows its
+  # folder. Explorer's `/select,` goes in an argument of its own so a path with a space
+  # is quoted on its own (written to Microsoft's documented form; unverified on a real
+  # Windows host, like #397).
+  defp show("xdg-open", target, _reveal) do
+    path = Path.expand(target)
+    [if(File.dir?(path), do: path, else: Path.dirname(path))]
+  end
+
+  # The path is expanded first so what is checked is what is opened: no trailing slash
+  # that makes `lstat` follow a link, no `..` that a link would take somewhere else.
+  defp show("open", target, reveal) do
+    path = Path.expand(target)
+    if reveal or not plain_folder?(path), do: ["-R", path], else: [path]
+  end
+
+  defp show("explorer", target, reveal) do
+    path = Path.expand(target)
+    windows = String.replace(path, "/", "\\")
+    if reveal or not plain_folder?(path), do: ["/select,", windows], else: [windows]
+  end
+
+  defp plain_folder?(path),
+    do: match?({:ok, %{type: :directory}}, File.lstat(path)) and Path.extname(path) == ""
 
   # `config :hal_c2, os_type:` stands in for `:os.type()` in tests.
   defp file_manager do
