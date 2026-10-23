@@ -274,7 +274,7 @@ Feature: Viewing and editing files
       When the user opens "docs/guide.md"
       Then every button above the file is inside the file's column
       And the file tree gives way before the buttons do
-      And a tab too narrow to leave the tree room shows the file alone
+      And a tab too narrow to leave the tree room for ten characters of a name at the user's font size shows the file alone
 
     @desktop
     Scenario: The rendered or source choice is remembered on this device
