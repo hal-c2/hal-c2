@@ -252,10 +252,11 @@ impl Composer {
         if let Some(trigger) = &trigger
             && suggestions.is_empty()
         {
-            // A path search says nothing until it has answered.
+            // A path search says nothing until it has answered. A bare `@`
+            // is not searched, so it says so at once, as the web's menu did.
             let waiting = trigger.kind == "path"
-                && (trigger.query.is_empty()
-                    || self.paths.target != target
+                && !trigger.query.is_empty()
+                && (self.paths.target != target
                     || self.paths.query != trigger.query
                     || !self.paths.done);
             let empty = model::empty_text(&trigger.kind);
