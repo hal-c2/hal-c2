@@ -102,7 +102,9 @@ step("the push will go through and the user pushes from the panel again", async 
   await moveTo(ctx, "Push");
   await pressKey(ctx, "Enter");
   await settle(ctx);
-  expect(ctx.fake!.gitCalls.filter((call) => call.action === "push")).toHaveLength(2);
+  expect(
+    ctx.fake!.gitCalls.filter((call) => "action" in call && call.action === "push"),
+  ).toHaveLength(2);
 });
 
 step("the user chooses {string} on the failure", async (ctx: World, label: string) => {
