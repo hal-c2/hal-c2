@@ -2860,9 +2860,18 @@ defmodule HalC2.Steps.Planning.Planner do
 
   # Lets go of what waits on `gate` until `task` is done, whichever of the calls
   # on the gate reach GitHub first; returns the task's result.
-  defp answer_until(gate, task) do
+  #
+  # A word written before gh reads the gate is thrown away when it closes, so each pass
+  # writes it again; no receipt says gh got there, so the passes are capped and a call
+  # that never reaches gh fails the scenario with the task's state instead of hanging it.
+  defp answer_until(gate, task, passes \\ 30)
+
+  defp answer_until(_gate, task, 0),
+    do: flunk("a call never got its answer from GitHub: #{inspect(Process.info(task.pid))}")
+
+  defp answer_until(gate, task, passes) do
     release(gate, "answer")
-    Task.yield(task, 1_000) || answer_until(gate, task)
+    Task.yield(task, 1_000) || answer_until(gate, task, passes - 1)
   end
 
   step "the user moves {string} from {string} to {string}, then back, and the first answer is reported to the planner again",
