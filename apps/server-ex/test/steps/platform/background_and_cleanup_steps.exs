@@ -96,7 +96,12 @@ defmodule HalC2.Steps.Platform.BackgroundAndCleanup do
         fields
       )
 
-    {_, context} = World.call!(policy(context), "server.reportHostPowerState", snapshot)
+    # Over a socket of its own: a client following the policy reads its frames from the
+    # socket it follows on, and the call's wait for its reply skips (drops) a push that
+    # lands before it.
+    {_, context} =
+      World.call!(policy(context), "server.reportHostPowerState", snapshot, "host-reporter")
+
     await_policy(&(&1["hostPower"] == snapshot))
     context
   end
