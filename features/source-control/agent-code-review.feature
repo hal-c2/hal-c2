@@ -543,6 +543,15 @@ Feature: Agent code review
       Then #12 is reviewed on this machine
 
     @mc
+    Scenario: The review moves to another machine when its machine's agent reaches its usage limit
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too, one review at a time
+      And "laptop" is reviewing #11 and has #12 queued
+      And this machine shows #12 queued on "laptop"
+      When the agent on "laptop" reaches its usage limit
+      Then #12 is reviewed on this machine
+
+    @mc
     Scenario: A commit two machines reviewed while apart is posted once
       Given "code-review" watches "acme/api" automatically
       And the user's machine "laptop" in the cluster watches "acme/api" automatically too

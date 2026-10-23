@@ -646,16 +646,13 @@ defmodule HalC2Plugins.CodeReview do
 
       keys ->
         reviews = Enum.reduce(keys, state.reviews, &put_in(&2[&1]["elsewhere"], nil))
-        server = self()
-        settings = state.settings
-        known = reviews
-        spawn_link(fn -> send(server, {:polled, look(settings, known)}) end)
-        {:noreply, %{state | reviews: reviews} |> changed()}
+        {:noreply, %{state | reviews: reviews} |> look_again() |> changed()}
     end
   end
 
   # Another machine's queued and claimed reviews changed: where the reviews this
-  # machine leaves to others run is read again, without a look at GitHub.
+  # machine leaves to others run is read again, without a look at GitHub, unless one
+  # is no other machine's any more.
   def handle_info(:peer_claims, state) do
     heads = for {key, review} <- state.reviews, left?(review), into: %{}, do: {key, review["headSha"]}
     server = self()
@@ -679,12 +676,26 @@ defmodule HalC2Plugins.CodeReview do
           into: %{},
           do: {key, Map.put(review, "elsewhere", seen[key])}
 
-    if reviews == %{},
-      do: {:noreply, state},
-      else: {:noreply, %{state | reviews: Map.merge(state.reviews, reviews)} |> changed()}
+    released? = Enum.any?(reviews, fn {_key, review} -> review["elsewhere"] == nil end)
+    state = %{state | reviews: Map.merge(state.reviews, reviews)}
+
+    cond do
+      reviews == %{} -> {:noreply, state}
+      released? -> {:noreply, state |> look_again() |> changed()}
+      true -> {:noreply, changed(state)}
+    end
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  # Looks at the pull requests now, for reviews another machine let go of.
+  defp look_again(state) do
+    server = self()
+    settings = state.settings
+    known = state.reviews
+    spawn_link(fn -> send(server, {:polled, look(settings, known)}) end)
+    state
+  end
 
   # A review this machine has not taken up at its head, which another may have.
   defp left?(review),
@@ -1749,7 +1760,13 @@ defmodule HalC2Plugins.CodeReview do
   # review missing that is still this machine's. The other machines hear of a
   # change, so where they show a review running is not left stale until they look.
   defp share_claims(state) do
-    rows = for {key, review} <- state.reviews, row = claim_row(review), do: {key, row}
+    rows =
+      for {key, review} <- state.reviews,
+          row = claim_row(review),
+          # Paused at the agent's usage limit, what waits in the queue is left to others.
+          not (paused?(state) and row["status"] == "queued"),
+          do: {key, row}
+
     before = :ets.tab2list(__MODULE__)
     :ets.insert(__MODULE__, rows)
     keys = MapSet.new(rows, &elem(&1, 0))

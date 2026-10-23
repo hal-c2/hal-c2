@@ -1227,8 +1227,27 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
        %{args: [label, running, queued]} = context do
     context = context |> open(running) |> open(queued)
     assert {:ok, _} = on_plugin(context, label, "refresh")
-    {_, context} = await_peer(context, running, &(&1["checkout"] && &1["status"] == "running"))
+
+    {review, context} =
+      await_peer(context, running, &(&1["checkout"] && &1["status"] == "running"))
+
     {_, context} = await_peer(context, queued, &(&1["status"] == "queued"))
+    Map.put(context, :peer_thread, review["threadId"])
+  end
+
+  step "the agent on {string} reaches its usage limit", %{args: [label]} = context do
+    reset = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+
+    event = %{
+      "type" => "turn.finished",
+      "threadId" => context.peer_thread,
+      "status" => "failed",
+      "errorClass" => "usage_limit",
+      "error" => "Subscription quota exhausted.",
+      "resetAt" => reset
+    }
+
+    Machines.on(context, label, HalC2Plugins.CodeReview, :handle_event, [event, %{}])
     context
   end
 
