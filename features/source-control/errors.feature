@@ -145,6 +145,16 @@ Feature: When source control goes wrong
     When the user commits from the terminal client
     Then the user sees that the commit phase failed and the hook printed "lint failed"
 
+  # The remedy row is the panel's first: it takes the highlight, and gives it
+  # back to the action the user was on when it goes.
+  @tui
+  Scenario: The terminal client highlights the fix a failure offers
+    Given the push will be refused, offering "Copy command" to copy "gh auth refresh -s workflow"
+    When the user pushes from the terminal client
+    Then the highlighted git action is "Copy command"
+    When the push will go through and the user pushes from the panel again
+    Then the highlighted git action is "Push"
+
   # Legacy: apps/server/src/vcs/GitVcsDriverCore.ts (fetchFailureDetail)
   @mc @backlog
   Scenario Outline: A fetch that fails says what to check

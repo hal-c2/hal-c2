@@ -9,6 +9,7 @@ import {
   focusPanel,
   gitState,
   hostMode,
+  moveTo,
   runAction,
   runFromPanel,
   scm,
@@ -89,6 +90,20 @@ step(
     });
   },
 );
+
+step("the highlighted git action is {string}", async (ctx: World, label: string) => {
+  await settle(ctx);
+  const git = gitState(ctx);
+  expect(git.actions[git.selectedIndex]?.label).toBe(label);
+});
+
+step("the push will go through and the user pushes from the panel again", async (ctx: World) => {
+  ctx.fake!.setGitOutcome({ kind: "succeed" });
+  await moveTo(ctx, "Push");
+  await pressKey(ctx, "Enter");
+  await settle(ctx);
+  expect(ctx.fake!.gitCalls.filter((call) => call.action === "push")).toHaveLength(2);
+});
 
 step("the user chooses {string} on the failure", async (ctx: World, label: string) => {
   expect(gitState(ctx).actions[0]).toMatchObject({ id: "remedy", label });

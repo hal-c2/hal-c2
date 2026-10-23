@@ -225,6 +225,11 @@ export function createSourceControl(deps: {
   };
 
   const publish = (prev: StoreState | null, next: StoreState) => {
+    // The remedy row sits first: a failure that offers one highlights it, and
+    // when it goes the highlight stays on the action it was on.
+    const hadRemedy = Boolean(prev?.gitRemedy);
+    if (!hadRemedy && next.gitRemedy) gitIndex = 0;
+    else if (hadRemedy && !next.gitRemedy) gitIndex = Math.max(0, gitIndex - 1);
     if (
       !prev ||
       prev.vcsStatus !== next.vcsStatus ||
