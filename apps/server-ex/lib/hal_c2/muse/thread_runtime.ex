@@ -53,13 +53,28 @@ defmodule HalC2.Muse.ThreadRuntime do
     end
   end
 
-  @doc "A `turn/steer` into the running turn, built from `%{text, attachments}` like a turn's."
+  @doc """
+  A `turn/steer` into the running turn, built from `%{text, attachments}` like a turn's.
+  Non-timeout exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
+  """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do
     case lookup(thread_id) do
       nil -> {:error, "no active Muse turn in this thread"}
-      pid -> GenServer.call(pid, {:steer, run_id, message}, 35_000)
+      pid -> steer_call(pid, run_id, message)
     end
+  end
+
+  # `HalC2.RuntimeSteer` owns which timeout means held; the budget stays the
+  # public calls' 35s, so a command never outlives its caller. One divergence
+  # from `RuntimeSteer`'s model: the handler's `command/5` catches a nested
+  # `Connection.call` timeout itself, closes the connection and answers a
+  # refusal (`{:error, "Muse Code did not answer turn/steer"}`) instead of
+  # propagating the exit, so a steer that may still land is taken back out of
+  # the turn while its session drops — the host is out of step either way.
+  defp steer_call(pid, run_id, message) do
+    timeout = Application.get_env(:hal_c2, :muse_steer_timeout_ms, 35_000)
+    HalC2.RuntimeSteer.call(pid, run_id, message, timeout)
   end
 
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}

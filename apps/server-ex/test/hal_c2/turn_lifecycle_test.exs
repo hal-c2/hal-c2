@@ -96,9 +96,9 @@ defmodule HalC2.TurnLifecycleTest do
     await_statuses(thread_id, ["failed", "failed"])
   end
 
-  # An interrupt pinned to a run stops that run's turn only: the scheduled-run
-  # cleanup reads its run as active, and a queued user turn can have taken the
-  # thread's session before the interrupt reaches it.
+  # An interrupt pinned to a run stops that run's turn only: its caller read the
+  # run as active, and a newer turn can have taken the thread's session before
+  # the interrupt reaches it (#403).
   test "an interrupt pinned to another run leaves the running turn alone",
        %{thread_id: thread_id} do
     {:ok, _} = send_message(thread_id, "m1")

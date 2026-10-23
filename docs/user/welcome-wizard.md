@@ -16,9 +16,11 @@ You can add more computers before continuing:
   [HAL-C2 Connect](./remote-access.md#hal-c2-connect)), and keep its MC running so the computer
   stays available.
 - **Add a computer** connects directly to an MC on your network or tailnet.
-  Run `mix hal_c2.pair --tailscale` on that computer and paste the pairing link.
+  Run `pair --tailscale` on that computer (`./hal-c2-mc-<version>-<platform> pair --tailscale`
+  with the [installed MC file](./install.md#command-line), `mix hal_c2.pair --tailscale` from a
+  checkout) and paste the pairing link.
   For a LAN address, start the MC with `HAL_C2_MC_HOST=<address>` and run
-  `mix hal_c2.pair http://<address>:<port>`.
+  `pair http://<address>:<port>` the same way.
 
 Saved computers and computers discovered through HAL-C2 Connect are selected by
 default. Uncheck any you do not want to set up; this does not disconnect them.

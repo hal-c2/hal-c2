@@ -66,7 +66,9 @@ defmodule HalC2.Pi.ThreadRuntime do
   staggered pair — one that expired would report a refused steer as taken.
   Every steer is eventually replied (answered, taken on its answer timer,
   released with the held refusals, or answered as the turn ends), and a
-  runtime that stops surfaces as this call's exit, as it did before.
+  runtime that stops surfaces as this call's exit, which the caller must treat
+  as a refusal. That is why Pi alone does not steer through `HalC2.RuntimeSteer`:
+  its answer timer, not a call timeout, says when Pi is taken to hold a steer.
   """
   @spec steer(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def steer(thread_id, run_id, message) do

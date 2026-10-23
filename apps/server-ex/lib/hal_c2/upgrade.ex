@@ -236,7 +236,7 @@ defmodule HalC2.Upgrade do
     services = services()
 
     with {:ok, report} <- HalC2.Hot.reload(hot) do
-      pending = after_hot_update(hot, services)
+      pending = run_after_hot_update(hot, services)
       {:ok, Map.put(report, :needs_restart, Enum.map(restart, &elem(&1, 0)) ++ pending)}
     end
   end
@@ -246,7 +246,25 @@ defmodule HalC2.Upgrade do
   # the plugins directory, and the GitHub CLI's sign-in.
   # `services` are the specs the application listed before the update; it returns
   # what still needs a restart (`start_new_services/1`).
-  defp after_hot_update(beams, services) do
+  # Called by name, never locally: the caller is the module version being replaced, and
+  # a local call would run its old copy of this step rather than the one just loaded.
+  # That makes it a contract between versions: every older MC calls it on the version it
+  # just loaded, so its name, arity and the shape of `services` and of what it returns stay
+  # as they are while any MC that calls it this way may still update. The first update to
+  # the version that started calling it by name still ran the old copy, from the old caller.
+  # The other direction exists too: a hot update to a bundle built before this step went
+  # public (a rollback or pin) has no public step to call, so callers go through
+  # `run_after_hot_update/2`, which asks for a restart there instead of crashing after
+  # the code swap.
+  @doc false
+  def run_after_hot_update(beams, services) do
+    if function_exported?(__MODULE__, :after_hot_update, 2),
+      do: __MODULE__.after_hot_update(beams, services),
+      else: [__MODULE__]
+  end
+
+  @doc false
+  def after_hot_update(beams, services) do
     pending =
       if List.keymember?(beams, HalC2.Application, 0), do: start_new_services(services), else: []
 
@@ -564,7 +582,7 @@ defmodule HalC2.Upgrade do
     services = services()
 
     with {:ok, _report} <- HalC2.Hot.reload(beams) do
-      case after_hot_update(beams, services) do
+      case run_after_hot_update(beams, services) do
         [] -> :ok
         pending -> {:error, {:restart_for, pending}}
       end

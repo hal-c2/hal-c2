@@ -53,7 +53,24 @@ defmodule HalC2.Upgrade.Source do
   def put(version, platform, source_path) do
     target = archive_path(version, platform)
     File.mkdir_p!(Path.dirname(target))
-    File.cp!(source_path, target)
+    # Copy beside the archive and rename, like `receive_part/3` and
+    # `download/2`: a fetch hashing mid-copy otherwise sees a torn archive,
+    # drops the good unpack, and fails until retried. A stopped copy leaves
+    # only the temp file; the previous archive stays whole.
+    temp = target <> ".put-#{System.unique_integer([:positive])}"
+
+    try do
+      File.cp!(source_path, temp)
+      File.rename!(temp, target)
+    rescue
+      error ->
+        # A failed copy must not leak a bundle-sized temp per retry (the
+        # disk-full copy that failed is the likeliest retry); a hard kill
+        # can still leave one, which fetch ignores.
+        File.rm(temp)
+        reraise error, __STACKTRACE__
+    end
+
     File.write!(target <> ".sha256", sha256(target))
     :ok
   end
@@ -81,8 +98,6 @@ defmodule HalC2.Upgrade.Source do
     if sha256(incoming) == sum do
       File.rename!(incoming, target)
       File.write!(target <> ".sha256", sum)
-      # A bundle for the same version unpacked before is stale now.
-      File.rm_rf!(Path.join(cache_dir(version), "bundle-#{platform}"))
       :ok
     else
       File.rm(incoming)
@@ -314,12 +329,41 @@ defmodule HalC2.Upgrade.Source do
     end
   end
 
+  # An unpacked bundle is the archive's only while the stamp beside it holds the archive's
+  # SHA-256 and the archive still hashes to it: whichever source replaced the archive,
+  # and wherever an unpack or a writer stopped, a bundle of the same version built again
+  # is unpacked again. Hashing on the fast path too closes the window where a writer
+  # replaced the archive but not yet its checksum after the source checked it.
+  # The source checked the archive just before, but a writer outside `HalC2.Upgrade` (or
+  # a cleanup) may have taken its checksum since.
   defp unpack(version, platform) do
-    dir = Path.join(cache_dir(version), "bundle-#{platform}")
+    checksum = archive_path(version, platform) <> ".sha256"
 
-    if HalC2.Upgrade.manifest(dir) != nil do
+    case File.read(checksum) do
+      {:ok, sum} ->
+        unpack(version, platform, String.trim(sum))
+
+      {:error, reason} ->
+        {:error,
+         %{
+           "_tag" => "ServerSelfUpdateError",
+           "reason" =>
+             "The bundle's checksum #{checksum} could not be read: #{:file.format_error(reason)}"
+         }}
+    end
+  end
+
+  defp unpack(version, platform, sum) do
+    dir = unpacked_dir(version, platform)
+    stamp = dir <> ".sha256"
+
+    archive = archive_path(version, platform)
+
+    if File.read(stamp) == {:ok, sum} and File.regular?(archive) and
+         sha256_if_present(archive) == sum and HalC2.Upgrade.manifest(dir) != nil do
       {:ok, dir}
     else
+      File.rm(stamp)
       File.rm_rf!(dir)
       File.mkdir_p!(dir)
 
@@ -328,7 +372,20 @@ defmodule HalC2.Upgrade.Source do
              {:cwd, String.to_charlist(dir)}
            ]) do
         :ok ->
-          {:ok, dir}
+          # A writer outside the upgrade server may have replaced the archive since
+          # its checksum was read; only stamp what was actually checked.
+          if sha256_if_present(archive_path(version, platform)) == sum do
+            File.write!(stamp, sum)
+            {:ok, dir}
+          else
+            File.rm_rf!(dir)
+
+            {:error,
+             %{
+               "_tag" => "ServerSelfUpdateError",
+               "reason" => "The bundle changed while it was unpacked; update again."
+             }}
+          end
 
         {:error, reason} ->
           {:error,
@@ -411,6 +468,17 @@ defmodule HalC2.Upgrade.Source do
 
   defp archive_path(version, platform),
     do: Path.join(cache_dir(version), file_name(version, platform))
+
+  defp unpacked_dir(version, platform),
+    do: Path.join(cache_dir(version), "bundle-#{platform}")
+
+  # An archive a writer outside the upgrade server took mid-unpack is simply
+  # not the sum: the unpack answers "the bundle changed" instead of raising.
+  defp sha256_if_present(path) do
+    sha256(path)
+  rescue
+    File.Error -> nil
+  end
 
   defp sha256(path) do
     path

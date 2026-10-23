@@ -70,9 +70,17 @@ defmodule HalC2.Plugins.ProviderAdapter do
   Without them, or when either fails, the thread moves and its next run there gets
   a summary of the conversation.
 
+  `interrupt/2` stops the turn running as `run_id` and answers `{:error, reason}`
+  when the adapter drives another run: the caller read `run_id` as active, and a
+  newer turn may have started since. A `nil` run id stops whichever turn runs.
+
   An adapter that declares `active_steering` implements `steer/3`: it hands
   `%{text, attachments}` (attachments shaped like a turn's) to the turn running as
-  `run_id`, or answers `{:error, reason}` when the provider does not take it.
+  `run_id`, or answers `{:error, reason}` when the provider does not take it. The
+  message is already recorded in the turn when `steer/3` is called and only an
+  `{:error, _}` (or an exit) takes it back out, so an adapter whose own call times
+  out after the request reached the provider answers `:ok` itself; a timeout exit
+  out of `steer/3` counts as a refusal.
   """
   use HalC2.Plugins.Kind
 
