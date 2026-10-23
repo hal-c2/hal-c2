@@ -493,6 +493,12 @@ export function buildTuiRuntime(options: TuiOptions): TuiRuntime {
 /** Where the loopback connection is: first connect, live, or retrying after a drop. */
 export type TuiConnectionPhase = "connecting" | "connected" | "reconnecting";
 
+/** A workspace file as `readFile` reads it. */
+export interface TuiFileText {
+  readonly contents: string;
+  readonly truncated: boolean;
+}
+
 export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   readonly hostPlatform: NodeJS.Platform;
   /** Live connection phase (emits the current one first). Returns an unsubscribe fn. */
@@ -695,8 +701,11 @@ export interface TuiClient extends TuiFeatureClient, TuiSettingsClient {
   ) => Promise<ImagePreview | null>;
   /** List the workspace's files + directories (bounded index) for the file browser. */
   readonly listEntries: (cwd: string) => Promise<ReadonlyArray<ProjectEntry>>;
-  /** Read a workspace file's contents, or null on failure. */
-  readonly readFile: (cwd: string, relativePath: string) => Promise<string | null>;
+  /**
+   * Read a workspace file's text, or null on failure. `truncated`: the file is
+   * larger than the MC reads whole (1 MB), and `contents` is only its start.
+   */
+  readonly readFile: (cwd: string, relativePath: string) => Promise<TuiFileText | null>;
   /** Read a bounded workspace file as base64 for attachment preparation. */
   readonly readFileBase64: (
     cwd: string,
@@ -1353,7 +1362,7 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
       runtime
         .runPromise(
           request(WS_METHODS.projectsReadFile, { cwd, relativePath }).pipe(
-            Effect.map((r) => r.contents),
+            Effect.map((r): TuiFileText => ({ contents: r.contents, truncated: r.truncated })),
           ),
         )
         .catch(() => null),

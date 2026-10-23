@@ -53,7 +53,8 @@ async function openConversation(ctx: TakeWorld) {
   ];
   await openThread(ctx, { ...thread(), messages } as never, {
     getAttachmentUrl: async () => LINK,
-    readFile: async (_cwd, path) => (path === "src/cart.ts" ? CART : null),
+    readFile: async (_cwd, path) =>
+      path === "src/cart.ts" ? { contents: CART, truncated: false } : null,
   });
   await settle(ctx);
 }

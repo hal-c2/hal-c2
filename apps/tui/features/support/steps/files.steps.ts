@@ -73,7 +73,8 @@ export async function openOnWorkspace(ctx: FilesWorld, workspaceRoot: string, na
     readFile: async (_cwd, path) => {
       const error = ctx.readErrors?.[path];
       if (error) throw new Error(error);
-      return ctx.files![path] ?? null;
+      const contents = ctx.files![path];
+      return contents === undefined ? null : { contents, truncated: false };
     },
   });
   await boot(ctx);
