@@ -1726,6 +1726,78 @@ defmodule HalC2.OrchestrationTest do
                Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
     end
 
+    # A restart's interrupt for a run that ended before it arrived names an earlier
+    # run than the one that left the command (#474); a client's stop names the latest.
+    test "an interrupt between turns pinned to an earlier run leaves the command running",
+         %{log: log} do
+      thread_id = launch("start the dev server in the background")
+      [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
+
+      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.("run:earlier"))
+      assert [%{"status" => "running"}] = commands(thread_id)
+      assert terminated(log) == []
+
+      assert {:ok, _} = Orchestration.dispatch(pinned.(run_id))
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      assert [%{"status" => "interrupted"}] = commands(thread_id)
+    end
+
+    # The latest run went to another provider; the command an earlier Codex run left
+    # is still the thread's latest run's to stop, as the client's stop names it.
+    test "an interrupt pinned to a later run on another provider stops the command",
+         %{log: log} do
+      thread_id = launch("start the dev server in the background")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "haiku"}}
+      {:ok, _} = send_message(thread_id, "msg-claude", "hello", claude)
+      [_, %{"id" => latest}] = runs(await_statuses(thread_id, ["completed", "completed"]))
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{
+                 "type" => "run.interrupt",
+                 "threadId" => thread_id,
+                 "runId" => latest
+               })
+
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+
+      assert [%{"status" => "interrupted"}] =
+               Enum.filter(commands(thread_id), &(&1["nativeItemRef"]["nativeId"] == "cmd-bg"))
+
+      assert [%{"processId" => "4275"}] = terminated(log)
+    end
+
+    # Codex holds the command an earlier run left while Claude runs the latest. The
+    # stop reaches Claude's turn, before Codex or not, and like a stop of a turn on
+    # one provider it leaves the command; the next stop, between turns, ends it.
+    test "an interrupt pinned to a turn on another provider stops the turn, then the command",
+         %{log: log} do
+      thread_id = launch("start the dev server in the background")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+      claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "haiku"}}
+      {:ok, _} = send_message(thread_id, "msg-claude", "wait for me", claude)
+      [_, %{"id" => latest}] = runs(await_statuses(thread_id, ["completed", "running"]))
+      stop = %{"type" => "run.interrupt", "threadId" => thread_id, "runId" => latest}
+
+      cmd_bg = fn ->
+        Enum.filter(commands(thread_id), &(&1["nativeItemRef"]["nativeId"] == "cmd-bg"))
+      end
+
+      assert {:ok, _} = Orchestration.dispatch(stop)
+      _ = await_statuses(thread_id, ["completed", "interrupted"])
+      assert [%{"status" => "running"}] = cmd_bg.()
+      assert terminated(log) == []
+
+      assert {:ok, _} = Orchestration.dispatch(stop)
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      assert [%{"status" => "interrupted"}] = cmd_bg.()
+      assert [%{"processId" => "4275"}] = terminated(log)
+    end
+
     test "an interrupted turn terminates the command it started", %{log: log} do
       thread_id = launch("start the dev server in the background and wait")
       _ = await_run(thread_id, "running")
@@ -1881,6 +1953,23 @@ defmodule HalC2.OrchestrationTest do
 
       assert {:error, _} =
                Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    end
+
+    test "an interrupt between turns pinned to an earlier run leaves the work and the agent" do
+      thread_id = launch("work in the background", "grok")
+      [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      conn = :sys.get_state(runtime_pid(thread_id)).conn
+      pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
+
+      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.("run:earlier"))
+      assert Process.alive?(conn)
+      assert ["running", "running"] = Enum.map(background_items(thread_id), & &1["status"])
+
+      ref = Process.monitor(conn)
+      assert {:ok, _} = Orchestration.dispatch(pinned.(run_id))
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      assert_receive {:DOWN, ^ref, :process, _, _}
     end
 
     test "an interrupted turn ends the work it started, and the agent" do
@@ -2066,6 +2155,63 @@ defmodule HalC2.OrchestrationTest do
       # With nothing left to stop, a second stop is refused as before.
       assert {:error, _} =
                Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+    end
+
+    # Claude's work outlives a restart of the Codex turn after it, as Codex's own work
+    # outlives a restart of a Codex turn: interrupt-and-send reaches only the turn.
+    test "a restart of a turn on another provider leaves Claude's work and process" do
+      :ok = HalC2.Shell.subscribe(self())
+      thread_id = launch("work in the background", "claudeAgent")
+      _ = await_run(thread_id, "completed")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      session = :sys.get_state(pid).session
+      codex = %{"modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"}}
+      {:ok, _} = send_message(thread_id, "m2", "wait for it", codex)
+      _ = await_statuses(thread_id, ["completed", "running"])
+
+      {:ok, _} =
+        send_message(
+          thread_id,
+          "m3",
+          "say done",
+          Map.merge(codex, %{
+            "dispatchMode" => %{"type" => "start_immediately"},
+            "deliveryIntent" => "restart"
+          })
+        )
+
+      _ = await_statuses(thread_id, ["completed", "interrupted", "completed"])
+      assert Process.alive?(session)
+
+      assert ["running", "running"] =
+               current(thread_id)
+               |> StreamState.list("turn-item")
+               |> Enum.filter(&(&1["type"] in ["subagent", "command_execution"]))
+               |> Enum.map(& &1["status"])
+    end
+
+    test "an interrupt between turns pinned to an earlier run leaves Claude's work and process" do
+      :ok = HalC2.Shell.subscribe(self())
+      thread_id = launch("work in the background", "claudeAgent")
+      [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
+      await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 2))
+      [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, thread_id)
+      session = :sys.get_state(pid).session
+      pinned = &%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => &1}
+
+      assert {:error, "no running turn"} = Orchestration.dispatch(pinned.("run:earlier"))
+      assert Process.alive?(session)
+
+      assert ["running", "running"] =
+               current(thread_id)
+               |> StreamState.list("turn-item")
+               |> Enum.filter(&(&1["type"] in ["subagent", "command_execution"]))
+               |> Enum.map(& &1["status"])
+
+      assert {:ok, _} = Orchestration.dispatch(pinned.(run_id))
+      await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      refute Process.alive?(session)
     end
 
     test "releasing a Claude process ends the background work it ran" do

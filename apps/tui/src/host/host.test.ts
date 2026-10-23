@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
+import { DEFAULT_SERVER_SETTINGS } from "@hal-c2/contracts";
+
 import { fakeClient, shell } from "../../features/support/fakeClient.ts";
 import type { OrchestrationShellSnapshot } from "../connection.ts";
 import { createHost } from "./host.ts";
@@ -68,6 +70,45 @@ describe("createHost", () => {
     host.resize({ columns: 60, rows: 20 });
     expect(get("size")).toEqual({ columns: 60, rows: 20 });
     expect(get("layout").sidebarVisible).toBe(false);
+  });
+
+  it("lists settled plugin threads as the MC's setting says, whichever device changed it", async () => {
+    const { host, connect, emitShell, settings, get } = boot();
+    connect();
+    const settled = { settledOverride: "settled", updatedAt: NOW, session: null, latestTurn: null };
+    emitShell(
+      shell([
+        { id: "t1", projectId: "p1", title: "Fix login", ...settled },
+        {
+          id: "t2",
+          projectId: "p1",
+          title: "Review 1",
+          ...settled,
+          plugin: { id: "code-review", kind: "review", listed: true },
+        },
+      ] as unknown as OrchestrationShellSnapshot["threads"]),
+    );
+    await host.settled();
+    expect(get("sidebar").settledTotal).toBe(1);
+
+    // Another device turns it on; the MC pushes its settings to every client.
+    settings.emitServerSettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      sidebarShowSettledPluginThreads: true,
+    });
+    expect(get("sidebar").settledTotal).toBe(2);
+    // A config read answers with the config the session connected with; it does not undo that.
+    host.dispatch("providers.refresh");
+    await host.settled();
+    expect(get("sidebar").settledTotal).toBe(2);
+
+    // Reconnected after it was turned off meanwhile: the new session's snapshot says so.
+    settings.emitServerSettings({
+      ...DEFAULT_SERVER_SETTINGS,
+      sidebarShowSettledPluginThreads: false,
+    });
+    expect(get("sidebar").settledTotal).toBe(1);
+    host.destroy();
   });
 
   it("logs an unknown action once", () => {

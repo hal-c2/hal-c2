@@ -43,6 +43,9 @@
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
 #   apps/desktop-qt/src/native/FileActionsController.cpp (files.copyContents, the palette's "Copy file contents")
 #   apps/tui/src/host/filesState.ts, apps/tui/src/keymap.ts (files.viewer.copy, "c" in the viewer)
+#   apps/tui/src/host/features/editor.ts (a file larger than 1 MB opens read-only in $EDITOR too)
+#   apps/tui/features/support/steps/files.steps.ts, files-viewer.steps.ts
+#   apps/desktop-qt/tests/native/features/FilesViewerSteps.cpp
 
 Feature: Viewing and editing files
   The user can read any text file in a project, preview media, and make small edits that
@@ -561,7 +564,7 @@ Feature: Viewing and editing files
       When the user closes the file
       Then the change is written to "src/app.ts"
 
-    @desktop
+    @desktop @tui
     Scenario Outline: Some files open read-only
       When the user opens <file>
       Then the file cannot be edited
@@ -584,7 +587,8 @@ Feature: Viewing and editing files
         | on another machine of the cluster    |
 
     # The client learns the session's scopes from the MC's refusal, and keeps such
-    # files read-only for that environment from then on.
+    # files read-only from then on: for that environment on the desktop, for that
+    # thread's workspace on the TUI (its files controller knows only the workspace).
     @desktop @tui
     Scenario: A file outside the project turns read-only when the MC refuses to save it
       Given this device was paired without terminal access
@@ -602,6 +606,20 @@ Feature: Viewing and editing files
       When the user copies the file's text <from>
       Then the whole of "src/app.ts" is on the clipboard
       And the user is told the file's text was copied
+
+      Examples:
+        | from                     |
+        | from the viewer          |
+        | from the command palette |
+
+    # The MC reads a file only up to its first 1 MB, so that is all the viewer has to copy.
+    @shared @backlog-mobile
+    Scenario Outline: Copying a file larger than one megabyte copies its first megabyte and says so
+      Given "logs/big.log" in "shop" is 3 MB
+      And the user is reading "logs/big.log" in the viewer
+      When the user copies the file's text <from>
+      Then the first megabyte of "logs/big.log" is on the clipboard
+      And the user is told only the first 1 MB of "logs/big.log" was copied
 
       Examples:
         | from                     |

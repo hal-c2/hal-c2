@@ -36,6 +36,8 @@ var general = [
       description: "Sidebar threads with no activity for this long settle automatically.",
       daysTitle: "Days of inactivity before auto-settle",
       daysDescription: "Any new activity un-settles a thread automatically.", min: 1, max: 90 },
+    { key: "sidebarShowSettledPluginThreads", kind: "switch", title: "Show plugin threads in Settled",
+      description: "List settled threads a plugin started, such as code reviews. Search and the plugin's page find them either way." },
 
     { section: "Behavior" },
     { key: "notificationMode", kind: "select", title: "Thread notifications",

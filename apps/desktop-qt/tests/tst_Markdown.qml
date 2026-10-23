@@ -206,6 +206,20 @@ Item {
             verify(after[5].text.indexOf("9%") >= 0, "the row that grew shows its new text");
         }
 
+        // A table made again (a list bringing its row back) is already as tall
+        // as it stays: one that grew a frame later would push everything after
+        // it down, and a timeline following its end would jump.
+        function test_tableIsMeasuredWhenMade() {
+            const long = "a cell long enough to wrap onto more than one line once the column is capped";
+            let text = "| Issue | What | Who |\n|---|---|---|\n";
+            for (let i = 0; i < 6; ++i)
+                text += "| #" + i + " | " + long + " | " + long + " |\n";
+            const md = make(text);
+            const made = md.implicitHeight;
+            wait(50);
+            compare(md.implicitHeight, made, "the table keeps the height it was made with");
+        }
+
         function test_tableCopiesAsMarkdownAndCsv() {
             const md = make("| Region | Rate |\n|---|---:|\n| EU, north | 21% |\n| a\\|b | \"q\" |");
             const table = findChild(md, "markdownTable");

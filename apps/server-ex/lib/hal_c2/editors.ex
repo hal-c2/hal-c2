@@ -6,6 +6,8 @@ defmodule HalC2.Editors do
   whatever the user set as their default text editor is offered too, as `default`.
   """
 
+  require Logger
+
   # {id, commands, base args, how a `path:line:column` target is passed}
   @editors [
     {"cursor", ["cursor"], ["--classic"], :goto},
@@ -58,7 +60,7 @@ defmodule HalC2.Editors do
         {:error, %{"_tag" => "ExternalLauncherUnsupportedEditorError", "editor" => "default"}}
 
       {command, args} ->
-        launch(command, args ++ [Regex.replace(~r/:\d+(?::\d+)?$/, target, "")])
+        launch(command, with_file(args, Regex.replace(~r/:\d+(?::\d+)?$/, target, "")))
     end
   end
 
@@ -83,6 +85,55 @@ defmodule HalC2.Editors do
     end
   end
 
+  # The default editor's arguments with `file` in them: where the registered command line
+  # puts it (`{:file, "--open=%1"}`, from Windows), else last. Only the placeholders that
+  # stand for the file (`%1`, `%L`, `%l`, `%*`) decide that: an argument holding only
+  # other parameters (`%S`, `%2`) is no place for the file, so it still goes last. An
+  # argument that is left empty (a bare `%2`, which the shell fills with the extra
+  # parameter there is none of) is dropped, as the shell's command line parsing drops it.
+  # A quoted bare placeholder (`"%2"`) drops too, where the shell would pass one empty
+  # argument instead: quoting is already lost by the split, so this is a deliberate
+  # small divergence from the shell.
+  defp with_file(args, file) do
+    substituted =
+      Enum.flat_map(args, fn
+        {:file, template} ->
+          case String.replace(template, file_placeholder(), &placeholder_value(&1, file)) do
+            "" -> []
+            arg -> [arg]
+          end
+
+        arg ->
+          [arg]
+      end)
+
+    if Enum.any?(args, &file_argument?/1), do: substituted, else: substituted ++ [file]
+  end
+
+  # Whether the argument names the file, which is what decides against appending it last.
+  defp file_argument?({:file, template}), do: String.match?(template, ~r/%[1lL*]/)
+  defp file_argument?(_), do: false
+
+  # The shell parameters of a registered command line. `%1`, `%L` and `%l` stand for the
+  # file, and so does `%*` (all arguments), as the file is the only one given. The others
+  # get what the shell gives a program started without them: `%S` the show command
+  # (normal), `%H` and `%I` no window or DDE handle, `%W` the file's directory (the
+  # working directory Explorer would start the editor in) and `%2` to `%9` the extra
+  # parameters (there are none). The values are
+  # put in by a function because a replacement string would read the backslashes of a
+  # Windows path (`\\2`) as group references.
+  defp file_placeholder, do: ~r/%[1lL*SHIW2-9]/
+
+  defp placeholder_value("%S", _file), do: "1"
+  defp placeholder_value("%" <> parameter, _file) when parameter in ["H", "I"], do: "0"
+
+  defp placeholder_value("%W", file), do: Path.dirname(file)
+
+  defp placeholder_value("%" <> parameter, _file) when parameter in ~w(2 3 4 5 6 7 8 9),
+    do: ""
+
+  defp placeholder_value(_file_parameter, file), do: file
+
   defp args(style, target) do
     case {style, Regex.run(~r/^(.*?):(\d+)(?::(\d+))?$/, target)} do
       {:goto, [_ | _]} -> ["--goto", target]
@@ -94,14 +145,15 @@ defmodule HalC2.Editors do
 
   # How to launch the user's default text editor, or nil without one. On Linux that is the
   # desktop entry `xdg-mime` names for text/plain, run through `gio launch`, which also
-  # opens a terminal for terminal editors such as Neovim.
+  # opens a terminal for terminal editors such as Neovim. On macOS it is `open -t`, on
+  # Windows the program registered for `.txt`.
   defp default_editor do
     case Application.get_env(:hal_c2, :os_type, :os.type()) do
       {:unix, :darwin} ->
         {"open", ["-t"]}
 
       {:win32, _} ->
-        nil
+        windows_text_editor()
 
       _ ->
         with true <- display?(),
@@ -115,24 +167,227 @@ defmodule HalC2.Editors do
     end
   end
 
-  # The desktop entry id xdg-mime names for text/plain, or "". It runs while a client
-  # waits for the server config, so a hung xdg-mime (a broken D-Bus or desktop session)
-  # counts as no default after 2 s; killing the task takes xdg-mime with it.
-  defp text_plain_handler(xdg_mime) do
+  # The program Windows opens `.txt` files with, from the registry through `reg query`: the
+  # user's choice, else the class registered for the extension, and that class's
+  # `shell\open\command`. Nil without one. A Store app's class names no command line (it
+  # activates through `DelegateExecute`), and `reg` then prints the localized text
+  # "(value not set)" as the data, so the program must resolve to an executable: that also
+  # drops an association to an uninstalled editor, and a command line whose program is an
+  # unquoted path with spaces (`C:\Program Files\Editor\e.exe %1` splits to program
+  # `C:\Program`, which counts as no editor: a rooted, drive-relative or UNC program word
+  # without an extension is refused before the lookup, as on Windows the lookup would try
+  # executable extensions on it and run a planted `C:\Program.exe`, #409). Prefix matching
+  # stays out on purpose: if it is ever added it must try the longest join of leading words first,
+  # never CreateProcess's shortest-first order, which runs a planted `C:\Program.exe`.
+  # Two more divergences from Explorer: the `UserChoice`
+  # `Hash` is not validated (Windows ignores a choice whose hash does not match) and
+  # `UserChoiceLatest` is not read, so the MC can name an editor Explorer would not use.
+  # Like xdg-mime, it runs while a client waits for the server config, so the queries
+  # share one 2 s deadline (`lookup/2`). On timeout the task is killed, which closes its
+  # port but may leave a hung `reg.exe` to exit on its own: the deadline protects the
+  # client, not the process table.
+  #
+  # `available/0` runs on every server config build (and so on unrelated requests such
+  # as the auth session), and each lookup spawns up to three `reg.exe` processes, so the
+  # answer, nil included, is kept for `:windows_editor_cache_ms` (a minute by default;
+  # tests set 0). An association changed in the meantime shows up within that minute.
+  defp windows_text_editor do
+    ttl = Application.get_env(:hal_c2, :windows_editor_cache_ms, 60_000)
+    now = System.monotonic_time(:millisecond)
+
+    case ttl > 0 && :persistent_term.get({__MODULE__, :windows_editor}, nil) do
+      {expires, editor} when expires > now ->
+        editor
+
+      _ ->
+        editor = lookup(&registered_text_editor/0, nil)
+        if ttl > 0, do: :persistent_term.put({__MODULE__, :windows_editor}, {now + ttl, editor})
+        editor
+    end
+  end
+
+  # Runs `fun` in a task for at most 2 s: a lookup that hangs, raises (a program path that
+  # is not valid UTF-8, a vanished executable) or exits counts as `default`, and never
+  # takes the caller down with it.
+  defp lookup(fun, default) do
     task =
       Task.async(fn ->
         try do
-          Exile.stream!([xdg_mime, "query", "default", "text/plain"], stderr: :disable)
-          |> Enum.join()
+          fun.()
         rescue
-          _ -> ""
+          _ -> default
+        catch
+          _, _ -> default
         end
       end)
 
     case Task.yield(task, 2_000) || Task.shutdown(task, :brutal_kill) do
-      {:ok, id} -> String.trim(id)
-      nil -> ""
+      {:ok, value} -> value
+      _ -> default
     end
+  end
+
+  defp registered_text_editor do
+    explorer = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts"
+
+    # The `UserChoice` ProgId is taken as it stands (see `windows_text_editor/0`).
+    with reg when reg != nil <- System.find_executable("reg"),
+         editor when editor != nil <- windows_editor(reg, explorer) do
+      editor
+    else
+      _ -> nil
+    end
+  end
+
+  # The editor that opens `.txt` files: the `shell\open\command` of the class the
+  # user's choice names, else the class registered for the extension. A choice naming
+  # a class with no usable command falls through to the extension's class. That is a
+  # deliberate divergence from Explorer for a Store app's `DelegateExecute` class:
+  # the choice is valid and Explorer would open it, but no command line can launch
+  # it, so the MC offers the extension's editor rather than none. A genuinely broken
+  # choice (an uninstalled editor) falls through the same way. Nil without either.
+  defp windows_editor(reg, explorer) do
+    with nil <-
+           editor_of_class(
+             reg,
+             reg_class(reg, [explorer <> "\\.txt\\UserChoice", "/v", "ProgId"])
+           ) do
+      editor_of_class(reg, reg_class(reg, ["HKCR\\.txt", "/ve"]))
+    end
+  end
+
+  # The class a registry value names, or nil.
+  defp reg_class(reg, args) do
+    case reg_value(reg, args) do
+      {_, class} -> class
+      nil -> nil
+    end
+  end
+
+  # The editor a registry class opens text files in, or nil. Only `REG_EXPAND_SZ`
+  # command data holds `%VAR%` for the shell to expand; a `REG_SZ` command line keeps
+  # its percent signs literally, as the shell leaves them.
+  defp editor_of_class(_reg, nil), do: nil
+
+  defp editor_of_class(reg, class) do
+    # A ProgId is a single key name, or `Applications\<exe>` when the user picked
+    # an executable in the Open With dialog. Anything else with a path separator
+    # in it would walk the lookup to an unrelated key, so it names no editor (and
+    # the extension's class gets its chance, as with any unusable choice).
+    if class =~ ~r/\A[^\\\/]+\z/ or class =~ ~r/\AApplications\\[^\\\/]+\z/,
+      do: editor_of_named_class(reg, class),
+      else: nil
+  end
+
+  defp editor_of_named_class(reg, class) do
+    case reg_value(reg, ["HKCR\\#{class}\\shell\\open\\command", "/ve"]) do
+      nil ->
+        nil
+
+      {type, line} ->
+        line = if type == "REG_EXPAND_SZ", do: expand_variables(line), else: line
+
+        with [program | args] <- command_words(line),
+             false <- extensionless_windows_path?(program),
+             command when command != nil <- System.find_executable(program) do
+          {command,
+           for arg <- args do
+             if String.match?(arg, file_placeholder()), do: {:file, arg}, else: arg
+           end}
+        else
+          _ -> nil
+        end
+    end
+  end
+
+  # An unquoted program path with spaces splits to its first word (`C:\Program`),
+  # and on Windows `find_executable` would try PATHEXT extensions on it, so a
+  # planted `C:\Program.exe` would be offered and run (#409). An extensionless
+  # program word that names a Windows place (a drive, rooted or not: `C:\`, `C:/`,
+  # `C:Program`; a root: `\Program` or `/Program`, both rooted on the current drive;
+  # or a UNC share) therefore counts as no editor, on every host. A bare name such as
+  # `notepad` is looked up on PATH.
+  defp extensionless_windows_path?(program) do
+    String.match?(program, ~r/\A([A-Za-z]:|[\\\/])/) and Path.extname(program) == ""
+  end
+
+  # The `{type, data}` of the value `reg query` prints for `args`, or nil. `reg` writes
+  # in the console's code page, so a path with characters outside ASCII can come back
+  # as invalid UTF-8, which counts as no value (no editor offered); a PowerShell query
+  # or `chcp 65001` would read it.
+  defp reg_value(reg, args) do
+    with {out, 0} <- System.cmd(reg, ["query" | args], stderr_to_stdout: true),
+         [_, type, data] <- Regex.run(~r/^\s+\S.*?\s+(REG_[A-Z_]+)\s+(\S.*?)\s*$/m, out),
+         true <- String.valid?(data) do
+      {type, data}
+    else
+      _ -> nil
+    end
+  end
+
+  # `%SystemRoot%` and the like, as REG_EXPAND_SZ data holds them; `%1` is not one.
+  defp expand_variables(line) do
+    Regex.replace(~r/%([A-Za-z_][A-Za-z0-9_()]*)%/, line, fn all, name ->
+      System.get_env(name) || all
+    end)
+  end
+
+  # A Windows command line split into arguments by the MSVC CRT rules (not
+  # `CommandLineToArgvW`, which toggles quoting on a doubled quote instead): white space
+  # separates arguments outside quotes, and a quote starts or ends quoted text inside an
+  # argument (`--dir="C:\My Data"` is one argument). The CRT reading is the useful one
+  # here because the editor's own runtime re-parses the final command line. Backslashes
+  # only count before a quote: 2n of them give n backslashes and the quote opens or
+  # closes quoted text, 2n+1 give n backslashes and a literal quote. Inside quoted text
+  # a doubled quote is one literal quote and the text stays quoted (`"a""b"` is `a"b`).
+  @doc false
+  def command_words(line), do: split_words(line, nil, false, [])
+
+  defp split_words("", nil, _quoted, words), do: Enum.reverse(words)
+  defp split_words("", word, _quoted, words), do: Enum.reverse([word | words])
+
+  defp split_words(<<c, rest::binary>>, word, false, words) when c in [?\s, ?\t],
+    do: split_words(rest, nil, false, if(word, do: [word | words], else: words))
+
+  defp split_words(<<?\\, _::binary>> = line, word, quoted, words) do
+    [slashes] = Regex.run(~r/^\\+/, line)
+    count = byte_size(slashes)
+    rest = binary_part(line, count, byte_size(line) - count)
+
+    case rest do
+      <<?", after_quote::binary>> ->
+        word = (word || "") <> String.duplicate("\\", div(count, 2))
+
+        if rem(count, 2) == 1,
+          do: split_words(after_quote, word <> ~s("), quoted, words),
+          else: split_words(after_quote, word, not quoted, words)
+
+      _ ->
+        split_words(rest, (word || "") <> slashes, quoted, words)
+    end
+  end
+
+  defp split_words(<<?", ?", rest::binary>>, word, true, words),
+    do: split_words(rest, (word || "") <> ~s("), true, words)
+
+  defp split_words(<<?", rest::binary>>, word, quoted, words),
+    do: split_words(rest, word || "", not quoted, words)
+
+  defp split_words(<<c, rest::binary>>, word, quoted, words),
+    do: split_words(rest, (word || "") <> <<c>>, quoted, words)
+
+  # The desktop entry id xdg-mime names for text/plain, or "". It runs while a client
+  # waits for the server config, so a hung xdg-mime (a broken D-Bus or desktop session)
+  # counts as no default after 2 s; killing the task takes xdg-mime with it.
+  defp text_plain_handler(xdg_mime) do
+    lookup(
+      fn ->
+        Exile.stream!([xdg_mime, "query", "default", "text/plain"], stderr: :disable)
+        |> Enum.join()
+      end,
+      ""
+    )
+    |> String.trim()
   end
 
   # The file of desktop entry `id`, searched for as the XDG base directory spec says: a
@@ -225,7 +480,7 @@ defmodule HalC2.Editors do
   defp launch(command, args) do
     case Application.get_env(:hal_c2, :os_type, :os.type()) do
       {:win32, _} ->
-        Task.start(fn -> System.cmd(command, args, stderr_to_stdout: true) end)
+        launch_detached(command, args)
 
       _ ->
         script = ~s("$@" </dev/null >/dev/null 2>&1 &)
@@ -233,6 +488,48 @@ defmodule HalC2.Editors do
     end
 
     {:ok, nil}
+  end
+
+  # On Windows the editor is spawned detached: no standard streams, and the port is
+  # closed as soon as the program starts, so nothing waits on it and nothing it writes
+  # is buffered. A default editor can be a GUI program that stays open until the user
+  # closes it; `System.cmd` in a task pinned a task and a port for that whole lifetime.
+  # A program that cannot be found or started still counts as launched, as it did in
+  # the task, but both cases log a warning, since the caller has no channel for the
+  # failure. The close is isolated from that rescue: a program that exits before the
+  # close runs still counts as started, never as failed.
+  # Accepted divergences from Explorer, unverified on a real Windows host (tracked in
+  # #397): these apply to every Windows launch through `launch/2`, not just the
+  # default editor — named editors and the file manager go through here too.
+  # Whether `.cmd`/`.bat` shims run is unverified: `:spawn_executable` is
+  # CreateProcess-backed, but Elixir's `System.cmd` docs warn batch files run
+  # implicitly through `cmd.exe` on the path that shares this primitive, and
+  # named editors (VS Code, Cursor and friends) typically resolve through
+  # PATHEXT to a `.cmd` shim. If they do run, untrusted arguments must not
+  # reach a batch file (the BatBadBut risk); if they do not, such editors
+  # start nothing. A real Windows host must settle which (#397);
+  # `:hide` with `:nouse_stdio` suits a GUI program, while a registered console editor
+  # gets no console and no standard streams; and `:spawn_executable` builds the
+  # CreateProcess command line from `args`, so a spaced target path or an embedded
+  # quote round-trips only as far as OTP's Windows quoting is correct.
+  defp launch_detached(command, args) do
+    with path when path != nil <- System.find_executable(command) do
+      port = Port.open({:spawn_executable, path}, [:binary, :nouse_stdio, :hide, args: args])
+
+      try do
+        Port.close(port)
+      rescue
+        ArgumentError -> :ok
+      end
+    else
+      _ ->
+        Logger.warning("program failed to start: #{inspect(command)}: not found")
+        nil
+    end
+  rescue
+    error ->
+      Logger.warning("program failed to start: #{inspect(command)}: #{inspect(error)}")
+      nil
   end
 
   # The program that puts what it runs in a session of its own, so the desktop stopping

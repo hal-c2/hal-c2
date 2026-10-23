@@ -49,6 +49,7 @@ const QList<Row>& rows() {
       {"snoozeLimitedThreads", false, false},
       {"sidebarAutoSettleOnMerge", false, true},
       {"sidebarAutoSettleAfterDays", false, 3},
+      {"sidebarShowSettledPluginThreads", false, false},
       {"notificationMode", true, QStringLiteral("off")},
       {"inAppNotificationsEnabled", true, false},
       {"timestampFormat", true, QStringLiteral("locale")},

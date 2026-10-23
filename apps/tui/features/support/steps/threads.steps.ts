@@ -328,6 +328,63 @@ function addSettled(ctx: World, count: number): void {
 step("there are {int} settled threads", (ctx: World, count: number) => addSettled(ctx, count));
 step("more settled threads than the shelf shows at first", (ctx: World) => addSettled(ctx, 15));
 
+// Threads a plugin settles as it finishes them, as the code-review plugin does.
+step("{int} settled threads a plugin started", (ctx: World, count: number) => {
+  for (let i = 1; i <= count; i += 1) {
+    addThread(ctx, `Review ${i}`, {
+      ...settledFields(ctx, i * 30 * 60_000),
+      plugin: { id: "code-review", kind: "review", listed: true },
+    });
+  }
+});
+
+const settledTitles = (ctx: World) =>
+  threadRows(ctx)
+    .filter((row) => row.thread.section === "settled")
+    .map((row) => row.thread.title);
+
+step("{int} settled threads are shown", async (ctx: World, count: number) => {
+  await ui(ctx);
+  expect(settledTitles(ctx)).toHaveLength(count);
+});
+
+step("the settled section counts {int} threads", async (ctx: World, count: number) => {
+  // What its header reads once folded ("Settled (3)").
+  await ui(ctx);
+  const header = sidebar(ctx).rows.find(
+    (row) => row.kind === "section" && row.section === "settled",
+  );
+  expect(header?.kind === "section" ? header.count : null).toBe(count);
+});
+
+step("{string} is among the settled threads", async (ctx: World, title: string) => {
+  await ui(ctx);
+  expect(settledTitles(ctx)).toContain(title);
+  expect(await snapshot(ctx)).toContain(title);
+});
+
+step(/^the user turns (on|off) "Show plugin threads in Settled"$/, (ctx: World, turn) =>
+  chooseCommand(
+    ctx,
+    turn === "on" ? "Show plugin threads in Settled" : "Hide plugin threads from Settled",
+  ),
+);
+
+// Another client writes the MC's setting, and the MC pushes its settings to this one.
+step(
+  /^"Show plugin threads in Settled" is turned (on|off) on another device$/,
+  async (ctx: World, turn) => {
+    // The client is running and connected before another device changes anything.
+    await ui(ctx);
+    const fake = ctx.fake!;
+    fake.server.settings = {
+      ...fake.server.settings,
+      sidebarShowSettledPluginThreads: turn === "on",
+    };
+    fake.settings.emitServerSettings(fake.server.settings);
+  },
+);
+
 step("the user looks at the settled section", async (ctx: World) => {
   await ui(ctx);
 });
@@ -340,10 +397,9 @@ step("the first {int} settled threads are shown", async (ctx: World, count: numb
   expect(await snapshot(ctx)).not.toContain(`Settled ${String(count + 1).padStart(2, "0")}`);
 });
 
-step("the user can show more", async (ctx: World) => {
-  const total = env(ctx).threads.filter((thread) => thread.settledOverride === "settled").length;
-  await clickText(ctx, "Show ");
-  expect(threadRows(ctx).filter((row) => row.thread.section === "settled")).toHaveLength(total);
+step("the user shows more settled threads", async (ctx: World) => {
+  // A page of 25 at a time, which the row says.
+  await clickText(ctx, "Show 25 more");
 });
 
 step("the user selects a settled thread beyond the first page", async (ctx: ThreadsWorld) => {

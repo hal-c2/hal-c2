@@ -104,9 +104,11 @@ NativeWindow::NativeWindow(NativeShell* shell, const QString& id, ShellBridge* b
       connect(drafts, &DraftController::changed, workspace, &WorkspaceController::refresh);
     }
   }
-  // And groups, orders and dates them as this device's preferences say.
+  // And groups, orders and dates them as this device's preferences say, and
+  // lists settled plugin threads as the MC's settings say.
   if (auto* settings = controller<SettingsController>()) {
     connect(settings, &SettingsController::deviceChanged, &m_sidebar, &SidebarController::refresh);
+    connect(settings, &SettingsController::settingsChanged, &m_sidebar, &SidebarController::refresh);
   }
 }
 

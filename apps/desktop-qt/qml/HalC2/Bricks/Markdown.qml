@@ -643,8 +643,14 @@ Item {
                         implicitWidth: naturalWidth
                         implicitHeight: footer.y + footer.height
                         onExpandedChanged: measureCells.restart()
+                        // Made as tall as it stays: a table that grew a frame
+                        // later would push the rows after it in a list down.
+                        // Cells made later, as a list's spare rows are, are
+                        // measured once they are there.
                         Component.onCompleted: {
                             syncLines();
+                            measure();
+                            tableBody.forceLayout();
                             measureCells.restart();
                         }
 
@@ -691,7 +697,7 @@ Item {
                                             return box ? box.text : null;
                                         }
                                         width: tableScroll.contentWidth
-                                        height: cellRow.height + 1
+                                        height: cellRow.rowHeight + 1
                                         Row {
                                             id: cellRow
                                             Repeater {
@@ -732,7 +738,7 @@ Item {
                                             }
                                         }
                                         Rectangle {
-                                            y: cellRow.height
+                                            y: cellRow.rowHeight
                                             width: parent.width
                                             height: 1
                                             color: Qt.alpha(root.borderColor, root.borderColor.a * 0.6)
