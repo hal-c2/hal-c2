@@ -35,8 +35,8 @@ defmodule HalC2.AcpReadsPropTest do
     end
   end
 
-  # Every probe of the instance's agent connects to the case, says where it runs, and
-  # waits for the label it then answers as its only model.
+  # Every probe of the instance's agent connects to the case, says the case's token and
+  # where it runs, and waits for the label it then answers as its only model.
   defp start_case do
     dir = HalC2.Prop.scratch_home("acp-reads")
     HalC2.Prop.start_services([HalC2.Settings])
@@ -47,12 +47,13 @@ defmodule HalC2.AcpReadsPropTest do
 
     {:ok, port} = :inet.port(listen)
     case_pid = self()
-    acceptor = spawn_link(fn -> accept(listen, case_pid) end)
+    token = Integer.to_string(System.unique_integer([:positive]))
+    acceptor = spawn_link(fn -> accept(listen, case_pid, token) end)
 
     agents =
       Map.new([:a, :b], fn name ->
         path = Path.join(dir, "agent-#{name}")
-        File.write!(path, agent(port))
+        File.write!(path, agent(port, token))
         File.chmod!(path, 0o755)
         {name, path}
       end)
@@ -76,23 +77,40 @@ defmodule HalC2.AcpReadsPropTest do
     HalC2.Prop.stop_services()
   end
 
-  # Ends when the case closes the listening socket.
-  defp accept(listen, case_pid) do
+  # Ends when the case closes the listening socket. Each connection is checked apart,
+  # so one that says nothing cannot hold up the agents behind it.
+  defp accept(listen, case_pid, token) do
     with {:ok, socket} <- :gen_tcp.accept(listen) do
-      {:ok, cwd} = :gen_tcp.recv(socket, 0, 10_000)
-      :ok = :gen_tcp.controlling_process(socket, case_pid)
-      send(case_pid, {:probe, socket, String.trim(cwd)})
-      accept(listen, case_pid)
+      checker = spawn(fn -> receive do: (:owned -> probe(socket, case_pid, token)) end)
+
+      if :gen_tcp.controlling_process(socket, checker) == :ok,
+        do: send(checker, :owned),
+        else: :gen_tcp.close(socket)
+
+      accept(listen, case_pid, token)
     end
   end
 
-  defp agent(port) do
+  # Anything on the machine may connect to the case's port, such as a client still
+  # retrying a server that had the port before: only a connection that says this
+  # case's token is one of its agents, so no other is given a read's label.
+  defp probe(socket, case_pid, token) do
+    with {:ok, line} <- :gen_tcp.recv(socket, 0, 10_000),
+         [^token, cwd] <- String.split(String.trim(line), " ", parts: 2),
+         :ok <- :gen_tcp.controlling_process(socket, case_pid) do
+      send(case_pid, {:probe, socket, cwd})
+    else
+      _ -> :gen_tcp.close(socket)
+    end
+  end
+
+  defp agent(port, token) do
     """
     #!/usr/bin/env python3
     import json, os, socket, sys
     request = json.loads(sys.stdin.readline())
     case = socket.create_connection(("127.0.0.1", #{port}))
-    case.sendall((os.getcwd() + "\\n").encode())
+    case.sendall(("#{token} " + os.getcwd() + "\\n").encode())
     label = case.makefile().readline().strip()
     def answer(request, result):
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
