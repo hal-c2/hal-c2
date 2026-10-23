@@ -8,13 +8,13 @@ import type {
 } from "@hal-c2/contracts/shell";
 
 import type { OrchestrationShellSnapshot } from "../connection.ts";
-import { LIST_PANE_WIDTH } from "../components/ChatView.layout.ts";
+import { LIST_PANE_WIDTH } from "../layout.ts";
 import {
   type Row,
   type Selection,
   selectionEquals,
   type SidebarSection,
-} from "../components/Sidebar.logic.ts";
+} from "../sidebar.logic.ts";
 import { padClip } from "../format.ts";
 import { projectLabel, type TuiThreadShell } from "../orchestrationV2Adapter.ts";
 import {
@@ -58,7 +58,7 @@ export interface TuiSidebarThread extends ShellSidebarThread {
 
 /** What every list row carries: its painted lines and where it sits in the list. */
 interface RowLines {
-  /** The row's lines as the OpenTUI client draws them (Sidebar.tsx). */
+  /** The row's lines as the sidebar draws them. */
   readonly lines: ReadonlyArray<StyledText>;
   /** Its first line, counted from the top of the list. */
   readonly top: number;
@@ -238,7 +238,7 @@ function toSidebarThread(
   };
 }
 
-/** The lines of one list row, as Sidebar.tsx draws them at `innerWidth` cells. */
+/** The lines of one list row, as the sidebar draws them at `innerWidth` cells. */
 function rowLines(
   row: Row,
   selected: boolean,

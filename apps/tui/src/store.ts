@@ -10,12 +10,10 @@ import {
   type SidebarSection,
   type Selection,
   selectionEquals,
-} from "./components/Sidebar.logic.ts";
+} from "./sidebar.logic.ts";
 
-// The TUI's source of truth lives in this external store (read by ChatView via
-// useSyncExternalStore), not in React, so it survives re-renders and the
-// imperative subscription plumbing stays out of the component tree, at a scale
-// that fits a single-environment terminal client.
+// The TUI's source of truth lives in this external store, read by the QML shell
+// host, at a scale that fits a single-environment terminal client.
 
 /**
  * Tone of a status-line message — drives its glyph + colour, like the web toasts.

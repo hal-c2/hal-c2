@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import type { TuiThreadShell as OrchestrationThreadShell } from "../orchestrationV2Adapter.ts";
-import type { OrchestrationShellSnapshot } from "../connection.ts";
+import type { TuiThreadShell as OrchestrationThreadShell } from "./orchestrationV2Adapter.ts";
+import type { OrchestrationShellSnapshot } from "./connection.ts";
 import {
   buildRows,
   nextSidebarRefreshAt,
@@ -11,7 +11,7 @@ import {
   SIDEBAR_SETTLED_SECTION_ID,
   SIDEBAR_SNOOZED_SECTION_ID,
   selectionEquals,
-} from "./Sidebar.logic.ts";
+} from "./sidebar.logic.ts";
 
 const NOW = "2026-07-28T12:00:00.000Z";
 

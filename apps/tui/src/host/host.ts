@@ -10,12 +10,8 @@ import { createComputed, createPropertyMap, createRoot, type PropertyMap } from 
 
 import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
 import type { ImageDecoder } from "../composerAttachments.ts";
-import { resolveSidebarListViewport } from "../components/ChatView.layout.ts";
-import {
-  buildRows,
-  nextSidebarRefreshAt,
-  SIDEBAR_SETTLED_SECTION_ID,
-} from "../components/Sidebar.logic.ts";
+import { resolveSidebarListViewport } from "../layout.ts";
+import { buildRows, nextSidebarRefreshAt, SIDEBAR_SETTLED_SECTION_ID } from "../sidebar.logic.ts";
 import { KEYBINDING_GROUPS, KEYMAP_LAYERS, KEYMAP_PARITY } from "../keymap.ts";
 import { PROJECT_ACTION_RUN_PREFIX, projectActionKeymap } from "../projectActions.ts";
 import type { EditorCommand } from "../promptEditor.ts";

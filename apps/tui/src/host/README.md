@@ -320,17 +320,3 @@ User config lives in the TUI config dir (`userConfig.ts`), read before the
 terminal is taken over so a `keymap.json` that is not valid JSON stops the
 launch with a readable error: `plugins/` is loaded as a plugin directory,
 `HAL_C2_TUI_PLUGINS` adds files or directories (a path list), and `keymap.json`
-overrides keymaps (see "Keys and actions").
-
-## Where the rest of ChatView's state goes
-
-ChatView (`src/components/ChatView.tsx`) still owns the state below. Move it
-here as each brick lands, keeping one key per concern:
-
-| ChatView state                                        | Host key   |
-| ----------------------------------------------------- | ---------- |
-| `focus` (compose, filter, command, select, ...)       | `mode`     |
-| composer text, attachments, model/runtime/interaction | `composer` |
-| select overlay                                        | `overlay`  |
-| right panel plan surface                              | `layout`   |
-| image preview                                         | `overlay`  |

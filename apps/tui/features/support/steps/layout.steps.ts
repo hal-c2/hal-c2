@@ -10,7 +10,7 @@ import {
   LIST_PANE_WIDTH,
   MIN_TERMINAL_DRAWER_ROWS,
   MIN_TIMELINE_ROWS,
-} from "../../../src/components/ChatView.layout.ts";
+} from "../../../src/layout.ts";
 import type { TuiLayoutState } from "../../../src/host/layoutState.ts";
 import type { TuiStatusRowState } from "../../../src/host/statusState.ts";
 import { THEME } from "../../../src/theme.ts";

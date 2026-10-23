@@ -1,6 +1,6 @@
 // Adding a project (palette → Add project), host side: pick a source, then a
 // local folder to register, or a repository and the folder to clone it into.
-// Port of ChatView's add-project flow and AddProjectOverlay.tsx's rows; the
+// The add-project flow and its rows; the
 // AddProject brick paints `addProject` and dispatches `project.add.*`.
 import type { FilesystemBrowseResult, SourceControlDiscoveryResult } from "@hal-c2/contracts";
 import {

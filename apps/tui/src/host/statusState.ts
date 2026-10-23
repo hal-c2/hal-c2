@@ -24,7 +24,7 @@ export interface TuiStatusRowInput {
 }
 
 /**
- * Published under `statusRow`: the main column's bottom row, as ChatView.tsx
+ * Published under `statusRow`: the main column's bottom row, as StatusLine.qml
  * draws it. `hint` (dim) is cut to leave `label` (the status glyph and
  * message, in the status colour) its room of up to 32 cells. While an error is
  * pinned and a newer message has come after it, `pinned` carries the error

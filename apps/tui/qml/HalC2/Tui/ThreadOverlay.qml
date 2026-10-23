@@ -1,7 +1,6 @@
 import OpenTUI
 
-// The delete confirmation (`Shell.state.overlay` of kind "confirmDelete",
-// ConfirmDeleteMenu in ThreadOverlays.tsx): a rounded error box above the
+// The delete confirmation (`Shell.state.overlay` of kind "confirmDelete"): a rounded error box above the
 // prompt. y confirms, n or Esc cancels (shell keys). Renaming is a prompt in
 // the composer's place (Composer).
 Rectangle {
