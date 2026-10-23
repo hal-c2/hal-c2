@@ -96,6 +96,17 @@ bool shown(World& world, const QString& objectName) {
   return found && found->isVisible();
 }
 
+// Whether the shell shows copying's "File contents copied" toast, saying `description`.
+bool toldCopied(World& world, const QString& description) {
+  for (const QVariant& toast : at(world.state(QStringLiteral("toasts")), QStringLiteral("items")).toList()) {
+    if (at(toast, QStringLiteral("type")) == QLatin1String("success") && at(toast, QStringLiteral("title")) == QLatin1String("File contents copied") &&
+        at(toast, QStringLiteral("description")).toString() == description) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // The file in the viewer, with the panel on screen.
 void view(World& world, const QString& path) {
   ensureViewerFile(world, path);
@@ -422,11 +433,18 @@ const Steps steps([] {
     expect(!wanted.isEmpty() && world.clipboard == wanted, QStringLiteral("the clipboard holds \"%1\"").arg(world.clipboard));
   });
   step(QStringLiteral("the user is told the file's text was copied"), [](World& world, const Captures&, const Table&) {
-    bool told = false;
-    for (const QVariant& toast : at(world.state(QStringLiteral("toasts")), QStringLiteral("items")).toList()) {
-      told = told || (at(toast, QStringLiteral("type")) == QLatin1String("success") && at(toast, QStringLiteral("title")) == QLatin1String("File contents copied"));
-    }
-    expect(told, QStringLiteral("the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))));
+    expect(toldCopied(world, files(world).openPath()), QStringLiteral("the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))));
+  });
+  // The MC sends a file's first 1 MB, marked truncated (PanelSteps' "is 3 MB").
+  step(QStringLiteral("the first megabyte of %1 is on the clipboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString wanted = fakeFiles(world.mc).files.value(c[0]);
+    world.sync();
+    expect(fakeFiles(world.mc).truncated.contains(c[0]) && !wanted.isEmpty() && world.clipboard == wanted,
+           QStringLiteral("the clipboard holds \"%1\"").arg(world.clipboard));
+  });
+  step(QStringLiteral("the user is told only the first 1 MB of %1 was copied").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(toldCopied(world, QStringLiteral("Only the first 1 MB of %1.").arg(c[0])),
+           QStringLiteral("the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))));
   });
 
   step(QStringLiteral("%1 has the unticked task %1").arg(q), [](World& world, const Captures& c, const Table&) {

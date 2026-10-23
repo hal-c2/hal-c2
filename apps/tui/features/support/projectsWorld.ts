@@ -55,7 +55,8 @@ function install(ctx: ProjectsWorld, mc: ProjectsMc): void {
   fake.override("readFile", (async (cwd: string, relativePath: string) => {
     const path = `${cwd}/${relativePath}`;
     if (mc.unreadable.has(path)) return null;
-    return mc.files.get(path) ?? null;
+    const contents = mc.files.get(path);
+    return contents === undefined ? null : { contents, truncated: false };
   }) as never);
 }
 

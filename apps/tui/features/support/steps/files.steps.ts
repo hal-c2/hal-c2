@@ -27,6 +27,8 @@ export interface FilesWorld extends World {
   listedPaths?: string[];
   listError?: string;
   readErrors?: Record<string, string>;
+  /** Files larger than the MC reads whole: `files` holds the first 1 MB it sends. */
+  truncated?: Set<string>;
   /** Stands in for the user's editor once a step sets it. */
   runEditor?: NonNullable<HostOptions["runEditor"]>;
 }
@@ -73,7 +75,10 @@ export async function openOnWorkspace(ctx: FilesWorld, workspaceRoot: string, na
     readFile: async (_cwd, path) => {
       const error = ctx.readErrors?.[path];
       if (error) throw new Error(error);
-      return ctx.files![path] ?? null;
+      const contents = ctx.files![path];
+      return contents === undefined
+        ? null
+        : { contents, truncated: ctx.truncated?.has(path) ?? false };
     },
   });
   await boot(ctx);

@@ -157,6 +157,9 @@ function rowLine(row: FlatTreeRow, active: boolean, nameRoom: number, palette: P
   );
 }
 
+/** Why a file the MC read only the start of cannot be edited (the desktop says the same). */
+export const TRUNCATED_READ_ONLY = "Files larger than 1 MB open read-only.";
+
 /** Why a file outside the project cannot be saved once the MC refused it (the desktop says the same). */
 export const HOST_WRITE_REFUSED =
   "Saving a file outside the project needs terminal access, which this device was not paired with.";
@@ -193,6 +196,8 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     status: TuiFileViewerState["status"];
     lines: string[];
     top: number;
+    /** Larger than the MC reads whole: `lines` are its first 1 MB. */
+    truncated?: boolean;
     /** Shown as its text although it could be rendered. */
     source?: boolean;
     /** The rendering, laid out to `renderedWidth`. */
@@ -204,9 +209,19 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
   /**
    * Workspaces whose MC refused a write by full path: their files outside the
    * project open read-only from then on. The client learns its scopes only so.
+   * Keyed by workspace, as the controller knows a thread's workspace and not its
+   * environment (the cluster client routes by path), so another project on the
+   * same MC is refused once more before it turns read-only; the desktop keys it
+   * by environment.
    */
   const hostWritesRefused = new Set<string>();
-  const readOnly = (path: string) => path.startsWith("/") && hostWritesRefused.has(cwd);
+  /** Why the viewer's file cannot be edited here, or null. */
+  const readOnly = (file: { path: string; truncated?: boolean }) =>
+    file.truncated
+      ? TRUNCATED_READ_ONLY
+      : file.path.startsWith("/") && hostWritesRefused.has(cwd)
+        ? HOST_WRITE_REFUSED
+        : null;
   /** The inside of the viewer's frame. */
   const viewerWidth = () => Math.max(8, options.width() - 4);
   /** The lines the viewer shows: the rendering, or null for the file's text. */
@@ -371,13 +386,13 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     publish();
     track(
       client.readFile(cwd, path).then(
-        (content) => {
+        (file) => {
           if (token !== viewGeneration || !viewer) return;
-          if (content === null) viewer = { ...viewer, status: "error" };
+          if (file === null) viewer = { ...viewer, status: "error" };
           else {
-            const lines = content.split("\n");
+            const lines = file.contents.split("\n");
             const top = line ? Math.min(Math.max(0, line - 1), Math.max(0, lines.length - 1)) : 0;
-            viewer = { ...viewer, status: "ready", lines, top };
+            viewer = { ...viewer, status: "ready", lines, top, truncated: file.truncated };
           }
           publish();
         },
@@ -502,8 +517,9 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
 
   const startEdit = () => {
     if (!viewer || viewer.status !== "ready" || viewer.edit) return;
-    if (readOnly(viewer.path)) {
-      options.status?.(HOST_WRITE_REFUSED, "warning");
+    const why = readOnly(viewer);
+    if (why !== null) {
+      options.status?.(why, "warning");
       return;
     }
     viewer.edit = { text: viewer.lines.join("\n"), seq: ++editSeq, save: "saved" };
@@ -594,12 +610,15 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     return `${above}${path}`;
   };
 
-  /** The viewer's file, whole as it was read, on the clipboard. */
+  /** The viewer's file, as it was read, on the clipboard: only its start when it is over 1 MB. */
   const copyContents = () => {
     if (!viewer || viewer.status !== "ready") return;
     const text = viewer.edit ? viewer.edit.text : viewer.lines.join("\n");
-    if (options.copy?.(text)) options.status?.("File contents copied.", "success");
-    else options.status?.("Clipboard not supported by this terminal.", "warning");
+    if (options.copy?.(text)) {
+      if (viewer.truncated) {
+        options.status?.(`File contents copied: only the first 1 MB of ${viewer.path}.`, "warning");
+      } else options.status?.("File contents copied.", "success");
+    } else options.status?.("Clipboard not supported by this terminal.", "warning");
   };
 
   const back = () => {
@@ -730,7 +749,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
                           action: "files.viewer.toggleSource",
                         },
                       ]),
-                  ...(readOnly(viewer.path)
+                  ...(readOnly(viewer) !== null
                     ? []
                     : [{ title: "Edit file here", action: "files.editor.open" }]),
                   ...(viewer.status === "ready"
