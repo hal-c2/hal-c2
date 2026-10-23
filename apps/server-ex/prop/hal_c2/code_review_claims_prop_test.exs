@@ -25,7 +25,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   - the `reviews` snapshot, `elsewhere` included, and the topic clients follow, match
     the model;
   - a publish is refused, and nothing posted, exactly when the connected laptop has
-    published the reviewed commit;
+    published the reviewed commit or is restarting its plugin;
   - when the laptop leaves, or tells it no longer has a review this machine left to
     it, that review is looked at again at once; one it still has, or may have while
     its plugin restarts, shows where it is now;
@@ -385,11 +385,17 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   defp step(m, {:call, _, :publish, [key]}) do
     case m.reviews[key] do
       %{status: :waiting, reviewed: reviewed} = r ->
-        if {reviewed, "published"} in Enum.map(laptop_rows(m, key), &Tuple.delete_at(&1, 2)) do
-          {put_review(m, key, %{r | publish_error: true}), :refused}
-        else
-          m = put_review(m, key, %{r | status: :published, publish_error: false})
-          {%{m | posts: m.posts ++ [{key, reviewed}]}, :ok}
+        cond do
+          {reviewed, "published"} in Enum.map(laptop_rows(m, key), &Tuple.delete_at(&1, 2)) ->
+            {put_review(m, key, %{r | publish_error: true}), :refused}
+
+          # The laptop cannot say whether it posted, so the post waits for it.
+          m.laptop and m.restarting ->
+            {put_review(m, key, %{r | publish_error: true}), :restarting}
+
+          true ->
+            m = put_review(m, key, %{r | status: :published, publish_error: false})
+            {%{m | posts: m.posts ++ [{key, reviewed}]}, :ok}
         end
 
       _ ->
@@ -781,9 +787,11 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
       {:error, %{"message" => message}} ->
         observe(
-          if message =~ "laptop already posted its review of this commit.",
-            do: :refused,
-            else: :error
+          cond do
+            message =~ "laptop already posted its review of this commit." -> :refused
+            message =~ "laptop is restarting code review; try again." -> :restarting
+            true -> :error
+          end
         )
     end
   end

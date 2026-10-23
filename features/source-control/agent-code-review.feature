@@ -562,6 +562,18 @@ Feature: Agent code review
       And the user publishes the review of #12
       Then it is not posted, as "laptop" already posted its review of this commit
 
+    @mc
+    Scenario: A commit is not posted while a machine that may have posted it restarts code review
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" is apart from this machine
+      And the pull request #12 is opened on "acme/api"
+      And both machines reviewed #12 and "laptop" posted its review
+      When "laptop" is back in the cluster
+      And code review on "laptop" is restarting
+      And the user publishes the review of #12
+      Then it is not posted, as "laptop" is restarting code review
+
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The reviews page shows which machine reviews a pull request
       Given the review of #12 is running on the user's machine "laptop"

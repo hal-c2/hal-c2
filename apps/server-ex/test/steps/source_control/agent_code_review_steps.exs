@@ -1311,6 +1311,25 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  # The plugin's server is gone and its supervisor held, so the plugin runs without
+  # what it holds until the scenario ends.
+  step "code review on {string} is restarting", %{args: [label]} = context do
+    pid = Machines.on(context, label, Process, :whereis, [HalC2Plugins.CodeReview])
+    {:parent, sup} = Machines.on(context, label, Process, :info, [pid, :parent])
+    :ok = Machines.on(context, label, :sys, :suspend, [sup])
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 5_000
+    context
+  end
+
+  step "it is not posted, as {string} is restarting code review", %{args: [label]} = context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "#{label} is restarting code review; try again."
+    assert World.cli_calls(context, "pulls/12/reviews") == []
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------------------
 
   # Saves `patch` over the plugin's settings, which restarts it.

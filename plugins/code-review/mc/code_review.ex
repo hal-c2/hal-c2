@@ -1680,19 +1680,26 @@ defmodule HalC2Plugins.CodeReview do
 
     # Two machines that reviewed the same commit while apart post it once: the
     # post and its outcome are under one lock across the machines connected now.
+    # A machine whose plugin is restarting cannot say whether it posted, so the
+    # post waits for it.
     :global.trans(
       {{__MODULE__, {:post, review["key"]}}, self()},
       fn ->
+        answers = Host.peers(@id, :claims, [[review["key"]]])
+        restarting = Enum.find(answers, &(&1["result"] == :restarting))
+
         posted =
           Enum.find(
-            peer_claims([review["key"]]),
+            rows(answers),
             &(&1["sha"] == review["reviewedSha"] and &1["status"] == "published")
           )
 
         result =
-          if posted,
-            do: {:error, "#{posted["machine"]} already posted its review of this commit."},
-            else: Host.pull_requests(@id, "submitReview", input)
+          cond do
+            posted -> {:error, "#{posted["machine"]} already posted its review of this commit."}
+            restarting -> {:error, "#{restarting["machine"]} is restarting code review; try again."}
+            true -> Host.pull_requests(@id, "submitReview", input)
+          end
 
         case result do
           {:ok, _} ->
