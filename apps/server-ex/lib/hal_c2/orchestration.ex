@@ -1761,9 +1761,12 @@ defmodule HalC2.Orchestration do
     Logger.debug("a session call read as stopped exited with #{inspect(why)}")
   end
 
-  # A runtime that dies as it is asked leaves its turn to `interrupt_undriven/2`.
+  # A runtime that dies as it is asked leaves its turn to `interrupt_undriven/2`, and
+  # one whose registry is not running (an MC started without it) holds nothing to stop.
   defp interrupted?(runtime, thread_id, run_id) do
     runtime.interrupt(thread_id, run_id) == :ok
+  rescue
+    ArgumentError -> false
   catch
     :exit, _ -> false
   end
