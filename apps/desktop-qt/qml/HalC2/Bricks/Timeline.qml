@@ -418,6 +418,12 @@ Item {
         property bool following: true
         property bool positioning: false
         property bool away: false
+        // The height each row was last laid out at, by row id. Heights from
+        // another column width or text size are forgotten: a row made again
+        // at one would snap to its own a moment later.
+        property var heights: ({})
+        readonly property string laidOutAt: [root.columnWidth, Theme.fontScale, Theme.fontUi, Theme.fontMono, Theme.fontSizeCode].join()
+        onLaidOutAtChanged: heights = {}
 
         function settleAway() {
             if (!moving && !dragging && !scrollBar.pressed)
@@ -428,6 +434,7 @@ Item {
         // Another thread's rows open at their latest output, however far
         // the last thread was scrolled.
         function restart() {
+            heights = {};
             heldIndex = -1;
             settlingIndex = -1;
             following = true;
@@ -633,7 +640,29 @@ Item {
             }
 
             width: ListView.view.width
-            height: body.item ? (body.item as Item).implicitHeight + row.gap : 0
+            height: madeHeight > 0 ? madeHeight : laidHeight
+            readonly property real laidHeight: body.item ? (body.item as Item).implicitHeight + row.gap : 0
+            // A row the list makes again (scrolled back to, or laid out
+            // afresh) starts at the height it last had. One that settled its
+            // height a frame later would push the rows after it down every
+            // time it was made, and a followed end with them.
+            property real madeHeight: view.heights[rowId] ?? 0
+            function remember() {
+                madeHeight = 0;
+                if (laidHeight > 0)
+                    view.heights[rowId] = laidHeight;
+            }
+            onLaidHeightChanged: if (madeHeight === 0 || laidHeight === madeHeight)
+                remember()
+            Component.onCompleted: if (madeHeight === 0 || laidHeight === madeHeight)
+                remember()
+            // What it settles at instead, as when the window was resized
+            // since, it takes once it has had the time to.
+            Timer {
+                running: row.madeHeight > 0
+                interval: 250
+                onTriggered: row.remember()
+            }
 
             Loader {
                 id: body
