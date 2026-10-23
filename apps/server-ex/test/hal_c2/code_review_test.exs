@@ -318,6 +318,28 @@ defmodule HalC2.CodeReviewTest do
     _ = context
   end
 
+  test "the last display saved is the one review threads end with", context do
+    review = start_review()
+    thread_id = review["threadId"]
+    hook = {__MODULE__, :hold, [thread_id, Process.whereis(@server), self()]}
+    Application.put_env(:hal_c2, :streams_hook, hook)
+    on_exit(fn -> Application.delete_env(:hal_c2, :streams_hook) end)
+
+    # The listing for the page is held on its way to the thread...
+    put_settings(%{"display" => "page"})
+    assert_receive {:held, unlisting}, 5_000
+    Application.delete_env(:hal_c2, :streams_hook)
+
+    # ...while the threads are shown again, and lands after it.
+    put_settings(%{"display" => "threads"})
+    settle([unlisting])
+    send(unlisting, :go)
+    settle()
+
+    assert %{"plugin" => %{"listed" => true}} = thread(thread_id)
+    _ = context
+  end
+
   test "a review runs with the model options picked in the settings", context do
     save_settings(%{"modelOptions" => %{"reasoningEffort" => "high", "effort" => "high"}})
     review = start_review()
@@ -450,11 +472,32 @@ defmodule HalC2.CodeReviewTest do
 
   # --- helpers ----------------------------------------------------------------------------
 
+  # A `:streams_hook`: holds the first of the plugin's processes on its way to
+  # `thread_id`'s stream until it is sent `:go`, and tells `test` it is held.
+  def hold(thread_id, server, test, :ensured, thread_id) do
+    {:links, links} = Process.info(self(), :links)
+
+    if server in links do
+      send(test, {:held, self()})
+      receive do: (:go -> :ok)
+    end
+
+    :ok
+  end
+
+  def hold(_thread_id, _server, _test, _stage, _stream_id), do: :ok
+
   defp thread(thread_id) do
     HalC2.StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id]
   end
 
   defp save_settings(overrides) do
+    put_settings(overrides)
+    settle()
+  end
+
+  # Saves the settings without waiting for what the plugin does with them.
+  defp put_settings(overrides) do
     settings =
       Map.merge(
         %{
@@ -472,7 +515,6 @@ defmodule HalC2.CodeReviewTest do
       )
 
     {:ok, _} = HalC2.Plugins.handle("saveSettings", %{"id" => @id, "settings" => settings})
-    settle()
   end
 
   defp start_review do
@@ -497,15 +539,16 @@ defmodule HalC2.CodeReviewTest do
     GenServer.call(@server, :snapshot)["reviews"] |> Enum.find(&(&1["key"] == @key))
   end
 
-  # Returns once the plugin has nothing in flight and has heard from what ended.
-  defp settle do
+  # Returns once the plugin has nothing in flight but the processes `held`, and has
+  # heard from what ended.
+  defp settle(held \\ []) do
     pid = Process.whereis(@server)
     {:parent, parent} = Process.info(pid, :parent)
     # Runs, posts and the look are all linked; what the plugin monitors besides
     # them includes whatever it is calling, such as the file server.
     {:links, links} = Process.info(pid, :links)
 
-    case Enum.filter(links, &(is_pid(&1) and &1 != parent)) do
+    case Enum.filter(links, &(is_pid(&1) and &1 != parent and &1 not in held)) do
       [] ->
         :sys.get_state(pid)
         :ok
@@ -514,7 +557,7 @@ defmodule HalC2.CodeReviewTest do
         refs = Enum.map(kids, &Process.monitor/1)
         assert_receive {:DOWN, ref, :process, _, _} when is_reference(ref), 15_000
         Enum.each(refs, &Process.demonitor(&1, [:flush]))
-        settle()
+        settle(held)
     end
   end
 

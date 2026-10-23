@@ -292,22 +292,37 @@ defmodule HalC2Plugins.CodeReview do
        failures: 0,
        poll_backoff: 1,
        # The next look's timer, armed while none runs.
-       timer: nil
+       timer: nil,
+       # The process listing the review threads as the display says, while one does.
+       lister: nil
      }, {:continue, :announce}}
   end
 
   @impl GenServer
   def handle_continue(:announce, state) do
-    list_threads(state)
-    {:noreply, announce(state)}
+    {:noreply, state |> list_threads() |> announce()}
   end
 
   # The display setting reaches the review threads there already are: each known
-  # thread is listed as it now says.
+  # thread is listed as it now says. A listing still going is called off, and gone,
+  # before this one starts, so the last display saved is the one the threads end with.
   defp list_threads(state) do
     listed = listed?(state.settings)
     thread_ids = for {_, %{"threadId" => id}} <- state.reviews, is_binary(id), do: id
-    spawn_link(fn -> Enum.each(thread_ids, &organize(&1, %{"listed" => listed})) end)
+    before = state.lister
+    if before, do: Process.exit(before, :kill)
+
+    lister =
+      spawn_link(fn ->
+        if before do
+          ref = Process.monitor(before)
+          receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+        end
+
+        Enum.each(thread_ids, &organize(&1, %{"listed" => listed}))
+      end)
+
+    %{state | lister: lister}
   end
 
   defp listed?(settings), do: settings["display"] != "page"
@@ -337,7 +352,7 @@ defmodule HalC2Plugins.CodeReview do
     old = state.settings
     state = %{state | settings: settings}
     state = if settings["pollMinutes"] != old["pollMinutes"], do: rearm(state), else: state
-    if listed?(settings) != listed?(old), do: list_threads(state)
+    state = if listed?(settings) != listed?(old), do: list_threads(state), else: state
     {:reply, :ok, state |> pump() |> changed()}
   end
 
@@ -537,11 +552,10 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  # A run launches its thread as the display said when it started; a save since then
-  # lists it as the display says now.
-  def handle_cast({:launched, thread_id, listed}, state) do
-    now = listed?(state.settings)
-    if listed != now, do: spawn_link(fn -> organize(thread_id, %{"listed" => now}) end)
+  # A run launches its thread as the display said when it started; a save since then,
+  # which may have come before the thread was there to list, lists the threads again.
+  def handle_cast({:launched, listed}, state) do
+    state = if listed != listed?(state.settings), do: list_threads(state), else: state
     {:noreply, state}
   end
 
@@ -625,6 +639,7 @@ defmodule HalC2Plugins.CodeReview do
     {:noreply, %{state | timer: arm(state)}}
   end
 
+  def handle_info({:EXIT, pid, _reason}, %{lister: pid} = state), do: {:noreply, %{state | lister: nil}}
   def handle_info(_message, state), do: {:noreply, state}
 
   # --- looking at the watched repositories ----------------------------------------------
@@ -1214,7 +1229,7 @@ defmodule HalC2Plugins.CodeReview do
       end
 
     case result do
-      {:ok, _} -> GenServer.cast(__MODULE__, {:launched, thread_id, listed?(settings)})
+      {:ok, _} -> GenServer.cast(__MODULE__, {:launched, listed?(settings)})
       {:error, error} -> GenServer.cast(__MODULE__, {:start_failed, key, thread_id, message(error)})
     end
   rescue

@@ -24,6 +24,7 @@ defmodule HalC2.CodeReviewPropTest do
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
     and the look for pull requests, and leaves no checkout no review points at;
   - a settings save keeps them going, and starts queued reviews when it makes room;
+  - each review's thread is listed with the threads as the display last saved says;
   - the `reviews` snapshot, and the topic clients follow, match the model;
   - the plugin process is only replaced when the step restarts it.
   """
@@ -201,7 +202,13 @@ defmodule HalC2.CodeReviewPropTest do
   def initial_state do
     look(%{
       enabled: true,
-      settings: %{publishing: "draft", concurrency: 2, activation: "selective", new_pushes: false},
+      settings: %{
+        publishing: "draft",
+        concurrency: 2,
+        activation: "selective",
+        new_pushes: false,
+        display: "threads"
+      },
       prs: Map.new(@keys, &{&1, %{open: true, head: 1, broken: false}}),
       reviews: %{},
       runs: %{},
@@ -287,7 +294,8 @@ defmodule HalC2.CodeReviewPropTest do
             {"publishing", oneof(~w(local draft automatic))},
             {"concurrency", oneof([1, 2])},
             {"activation", oneof(~w(automatic selective))},
-            {"reviewNewPushes", boolean()}
+            {"reviewNewPushes", boolean()},
+            {"display", oneof(~w(page threads both))}
           ])
         ]}}
     ]
@@ -320,6 +328,7 @@ defmodule HalC2.CodeReviewPropTest do
       reply: reply,
       view: view(m),
       threads: for({key, runs} <- m.runs, runs != [], into: %{}, do: {key, runs}),
+      listed: listed(m),
       checkouts: checkouts(m),
       orphans: [],
       posts: Enum.sort(m.posts),
@@ -478,7 +487,8 @@ defmodule HalC2.CodeReviewPropTest do
         "publishing" => :publishing,
         "concurrency" => :concurrency,
         "activation" => :activation,
-        "reviewNewPushes" => :new_pushes
+        "reviewNewPushes" => :new_pushes,
+        "display" => :display
       }[field]
 
     # The running plugin takes it as it is: the next look reads the rest.
@@ -692,6 +702,16 @@ defmodule HalC2.CodeReviewPropTest do
     # A pause is saved with the reviews, so it stands across the restart; the
     # run of failures that may have led to it is not.
     look(%{m | reviews: reviews, held_runs: [], held_pubs: [], failures: 0})
+  end
+
+  # Whether the thread each review shows, once it has one, is listed with the threads.
+  defp listed(%{enabled: false}), do: :off
+
+  defp listed(m) do
+    for {key, %{run: k, status: s}} when k != nil and s not in [:queued, :ready] <- m.reviews,
+        Enum.at(m.runs[key], k - 1),
+        into: %{},
+        do: {key, m.settings.display != "page"}
   end
 
   defp view(%{enabled: false}), do: :off
@@ -1010,7 +1030,7 @@ defmodule HalC2.CodeReviewPropTest do
 
     Process.put(:cr_pid, pid)
 
-    view =
+    {view, listed} =
       if pid do
         snapshot = GenServer.call(@server, :snapshot)
         if snapshot["problem"], do: problem("code-review reports: #{snapshot["problem"]}")
@@ -1019,15 +1039,16 @@ defmodule HalC2.CodeReviewPropTest do
         if Process.get(:cr_topic) != published,
           do: problem("the reviews topic is behind: #{inspect(Process.get(:cr_topic))}")
 
-        Enum.map(snapshot["reviews"], &review_view/1)
+        {Enum.map(snapshot["reviews"], &review_view/1), listing(snapshot)}
       else
-        :off
+        {:off, :off}
       end
 
     %{
       reply: reply,
       view: view,
       threads: threads(),
+      listed: listed,
       checkouts: length(checkout_dirs()),
       orphans: orphans(),
       posts: posts(),
@@ -1063,6 +1084,14 @@ defmodule HalC2.CodeReviewPropTest do
   defp head(nil), do: nil
   defp head(sha), do: Map.get(fx().heads, sha, {:unknown, sha})
 
+  # Whether the thread each review shows, where there is one, is listed with the threads.
+  defp listing(snapshot) do
+    for %{"key" => key, "threadId" => tid} when is_binary(tid) <- snapshot["reviews"],
+        thread = thread(tid),
+        into: %{},
+        do: {key, thread["plugin"]["listed"]}
+  end
+
   # Whether each run seen has its thread.
   defp threads do
     for {key, tids} <- Process.get(:cr_tids), into: %{} do
@@ -1070,9 +1099,11 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
-  defp thread?(tid) do
+  defp thread?(tid), do: thread(tid) != nil
+
+  defp thread(tid) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(tid))
-    HalC2.StreamState.get(state, "thread")[tid] != nil
+    HalC2.StreamState.get(state, "thread")[tid]
   end
 
   defp checkout_dirs,
@@ -1393,7 +1424,8 @@ defmodule HalC2.CodeReviewPropTest do
           "publishing" => "draft",
           "concurrency" => 2,
           "reviewNewPushes" => false,
-          "readReviewMd" => false
+          "readReviewMd" => false,
+          "display" => "threads"
         }
       })
 
