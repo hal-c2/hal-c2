@@ -345,7 +345,23 @@ defmodule HalC2.Rpc do
     setReaction setFilesViewed requestReviewers setLabels
   )
 
-  @doc "The session scope a client needs to call `method`."
+  @doc """
+  The session scope a client needs to call `method` with `payload`. A
+  `projects.writeFile` by an absolute path overwrites a file anywhere on the host the
+  MC can write (`HalC2.Workspace.write_file/1`), as a shell in a terminal can, so it
+  needs `terminal:operate`; a session paired without it can save inside the project
+  only. Every other call needs what its method does (`required_scope/1`).
+  """
+  @spec required_scope(String.t(), term()) :: String.t()
+  def required_scope("projects.writeFile", %{"relativePath" => path}) when is_binary(path) do
+    if Path.type(path) == :absolute,
+      do: "terminal:operate",
+      else: required_scope("projects.writeFile")
+  end
+
+  def required_scope(method, _payload), do: required_scope(method)
+
+  @doc "The session scope a client needs to call `method`, whatever it passes."
   @spec required_scope(String.t()) :: String.t()
   def required_scope("terminal." <> _), do: "terminal:operate"
   def required_scope("review." <> _), do: "review:write"

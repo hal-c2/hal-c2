@@ -1128,19 +1128,34 @@ defmodule HalC2.Steps.Planning.Planner do
   end
 
   step "the user starts work on {string}", %{args: [title]} = context do
-    context = ensure(context, title)
-    ids = [item!(context, title)["id"]]
-
-    {reply, context} =
-      plugin(context, "run", %{"action" => action_id(context, "Start work"), "itemIds" => ids})
-
-    assert {:ok, %{"run" => run}} = reply
-    Map.put(context, :run, run)
+    start_work(context, title)
   end
 
   # The launch's call to the worktree setup exits, with no process to answer it.
   step "the MC cannot set up worktrees", context do
     :ok = ExUnit.Callbacks.stop_supervised(HalC2.WorktreeSetup)
+    context
+  end
+
+  # The launch's call to the worktree setup waits on a process that tells the scenario
+  # who called, and never answers.
+  step "the MC's worktree setup holds every start", context do
+    :ok = ExUnit.Callbacks.stop_supervised(HalC2.WorktreeSetup)
+    test = self()
+    holder = ExUnit.Callbacks.start_supervised!({Task, fn -> hold_setups(test) end})
+    Process.register(holder, HalC2.WorktreeSetup)
+    context
+  end
+
+  step "the user starts work on {string} and its thread start is killed",
+       %{args: [title]} = context do
+    context = start_work(context, title)
+    # The launcher's call to the held setup times out 5s after it is made, so the kill
+    # follows the call at once and its wait stays under that.
+    assert_receive {:setup_held, launcher}, 4_000
+    ref = Process.monitor(launcher)
+    Process.exit(launcher, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, :killed}, 3_000
     context
   end
 
@@ -2095,6 +2110,17 @@ defmodule HalC2.Steps.Planning.Planner do
     answers_late(context, number, title, %{"stdout" => %{"number" => number}}, true)
   end
 
+  step "GitHub refuses renaming \#{int} to {string}", %{args: [number, title]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [JSON.encode!(%{"title" => title})],
+        "exit" => 1,
+        "stderr" => "HTTP 422: Validation Failed\n"
+      }
+    ])
+  end
+
   step "GitHub answers renaming \#{int} to {string} late, taking it",
        %{args: [number, title]} = context do
     answers_late(context, number, title, %{"stdout" => %{"number" => number}})
@@ -2313,6 +2339,97 @@ defmodule HalC2.Steps.Planning.Planner do
        %{args: [number, first, second]} = context do
     task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
     {renaming, context} = rename_late(context, task, first)
+    context = update_task(context, number, %{"title" => second})
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  step "the user renames \#{int}'s task to {string}, then {string} is restarted before GitHub answers",
+       %{args: [number, title, id]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  # A restart of the MC itself, which a restart of the plugin within one VM cannot reach:
+  # the push of the run before has no runner this run knows.
+  step "the user renames \#{int}'s task to {string}, then {string} is restarted by a new MC run before GitHub answers",
+       %{args: [number, title, id]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    context = restart_as_new_mc_run(context, id)
+    answer_late(context)
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  step "the user renames \#{int}'s task to {string}, then {string} is stopped while GitHub answers and started again",
+       %{args: [number, title, id]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    {_, context} = World.call!(context, "plugins.disable", %{"id" => id})
+    answer_late(context)
+
+    {_, context} =
+      World.call!(context, "plugins.enable", %{"id" => id, "acceptPermissions" => []})
+
+    assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    context
+  end
+
+  # The push's runner stops after the restart took the push on, before GitHub answers.
+  step "the user renames \#{int}'s task to {string}, then {string} is restarted and the push is stopped before GitHub answers",
+       %{args: [number, title, id]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, title)
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+    runner = restored_runner()
+    ref = Process.monitor(runner)
+    Process.exit(runner, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, :killed}, 5_000
+    {_, context} = await_topic(context, "plan", &(item(&1, title)["syncError"] != nil))
+
+    # Killing the runner may have taken GitHub's call with it.
+    release(context.gh_gate, "answer")
+    Task.shutdown(renaming, :brutal_kill)
+    context
+  end
+
+  step "the user renames \#{int}'s task to {string}, then to {string}, then {string} is restarted before GitHub answers",
+       %{args: [number, first, second, id]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, first)
+    context = update_task(context, number, %{"title" => second})
+
+    # The restarted plugin's first look waits, so it has read no project when GitHub
+    # answers the rename.
+    gate = Path.join(context.mc.home, "look-gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    wait = "if [ -p '#{gate}' ]; then cat '#{gate}' > /dev/null; rm -f '#{gate}'; fi"
+    listing = Map.put(listed(context, number, second), "run", wait)
+    context = World.cli_rules(context, [listing])
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
+
+    # Whatever happens, the look is let go, or it would wedge the plugin's poll.
+    try do
+      answer_late(context)
+      assert {{:ok, _}, _} = Task.await(renaming, 30_000)
+    after
+      release(gate, "go")
+    end
+
+    context
+  end
+
+  step "the user renames \#{int}'s task to {string}, then {string} is restarted and the user renames it to {string} before GitHub answers",
+       %{args: [number, first, id, second]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+    {renaming, context} = rename_late(context, task, first)
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
     context = update_task(context, number, %{"title" => second})
     answer_late(context)
     assert {{:ok, _}, _} = Task.await(renaming, 30_000)
@@ -2621,6 +2738,246 @@ defmodule HalC2.Steps.Planning.Planner do
       }
     ])
     |> Map.merge(%{gh_gate: gate, gh_gates: Map.put(context[:gh_gates] || %{}, title, gate)})
+  end
+
+  # Moves `title` from one milestone to another and back while GitHub holds the
+  # first move, answers that move, and waits with the move back in flight: the
+  # flight has then answered one leg and chained the next. Returns the first
+  # move's own call, still running its runner.
+  defp move_answered_back(context, title, from, to) do
+    %{mc: mc} = context
+
+    move = fn from, to ->
+      call = %{
+        "id" => @id,
+        "method" => "moveToMilestone",
+        "input" => move_input(context, title, from, to)
+      }
+
+      Task.async(fn -> Mc.call(Mc.connect(mc), mc.environment, "plugins.call", call) end)
+    end
+
+    in? = fn milestone ->
+      fn plan ->
+        item(plan, title)["id"] in (item(plan, milestone) || %{"after" => []})["after"]
+      end
+    end
+
+    moving = move.(from, to)
+    {_, context} = await_topic(context, "plan", in?.(to))
+    back = move.(to, from)
+    {_, context} = await_topic(context, "plan", in?.(from))
+    answer_late(context, to)
+
+    # The first move's taking lands on the plan — the issue's milestone is the
+    # one moved to — in the same decision that answers the flight and chains
+    # the move back, so the plan announcing it is the receipt to wait on.
+    {_, context} =
+      await_topic(context, "plan", fn plan ->
+        issue = item(plan, title)["issue"] || %{}
+        issue["milestone"] == context.milestones[to]
+      end)
+
+    # The projects the moves' changes read, for reporting again below as a
+    # runner does (`report_again/2`); a restart in between leaves the new
+    # server with none until it looks.
+    {:ok, projects} = HalC2.Plugins.Host.projects(@id)
+    {{moving, back}, Map.put(context, :push_projects, projects)}
+  end
+
+  # The flight that has answered a leg: a move is pushed by the milestone that
+  # holds the task, so it is that item's flight, not the task's. Read once the
+  # taking is known to have happened (a plan or GitHub receipt); a flight's
+  # token, legs and answered report are not published, so this is a white-box
+  # seam like `restored_runner/0` below.
+  defp answered_flight do
+    %{pushing: pushing} = :sys.get_state(HalC2Plugins.Planner)
+    Enum.find(pushing, fn {_id, flight} -> flight[:answered] != nil end)
+  end
+
+  # Answers the gate of the milestone moved back to until both moves' calls
+  # are done: the chained push and the move back's own push each wait on it.
+  defp await_moves(context, from, tasks) do
+    answer_late(context, from)
+
+    for task <- tasks do
+      case Task.yield(task, 5_000) do
+        {:ok, {{:ok, _}, _}} ->
+          :ok
+
+        nil ->
+          answer_late(context, from)
+          assert {{:ok, _}, _} = Task.await(task, 30_000)
+      end
+    end
+  end
+
+  # Sends the flight's answered report to the planner once more, as a runner
+  # whose reply was lost does — through `report/7`'s wrapper, with the
+  # projects its change read, which a restarted server has none of until it
+  # looks; returns what the planner answers with it.
+  defp report_again(projects, id, flight) do
+    {error, extra} = flight.answered
+
+    GenServer.call(
+      HalC2Plugins.Planner,
+      {:projects, projects, {:pushed, id, flight.token, flight.answered_leg, error, extra}}
+    )
+  end
+
+  # Runs the push a resend was answered with and reports it, as the runner that
+  # lost its reply does next; returns what the planner answers with the report.
+  defp run_reply(projects, id, flight, {:push, leg, ops, synced}) do
+    {error, extra} = HalC2Plugins.Planner.Sync.run(ops, synced)
+
+    GenServer.call(
+      HalC2Plugins.Planner,
+      {:projects, projects, {:pushed, id, flight.token, leg, error, extra}}
+    )
+  end
+
+  # The runner whose reply was lost, played by the scenario: the flight's own
+  # runner did get the reply and is running its leg, so it is suspended while
+  # `fun` resends the answered report and runs what that is answered with, and
+  # resumed after to find the flight settled without it.
+  defp as_lost_runner(runner, fun) do
+    true = :erlang.suspend_process(runner)
+
+    try do
+      fun.()
+    after
+      :erlang.resume_process(runner)
+    end
+  end
+
+  # The milestone or task whose flight `id` was has no push left, and is synced.
+  defp assert_settled(context, id) do
+    %{pushing: pushing} = :sys.get_state(HalC2Plugins.Planner)
+    refute Map.has_key?(pushing, id), "#{id} still has a push in flight"
+    item = Enum.find(plan!(context)["items"], &(&1["id"] == id))
+    refute item["syncError"], "#{item["title"]} is marked as not synced: #{item["syncError"]}"
+  end
+
+  # Lets go of what waits on `gate` until `task` is done, whichever of the calls
+  # on the gate reach GitHub first; returns the task's result.
+  #
+  # A word written before gh reads the gate is thrown away when it closes, so each pass
+  # writes it again; no receipt says gh got there, so the passes are capped and a call
+  # that never reaches gh fails the scenario with the task's state instead of hanging it.
+  defp answer_until(gate, task, passes \\ 30)
+
+  defp answer_until(_gate, task, 0),
+    do: flunk("a call never got its answer from GitHub: #{inspect(Process.info(task.pid))}")
+
+  defp answer_until(gate, task, passes) do
+    release(gate, "answer")
+    Task.yield(task, 1_000) || answer_until(gate, task, passes - 1)
+  end
+
+  step "the user moves {string} from {string} to {string}, then back, and the first answer is reported to the planner again",
+       %{args: [title, from, to]} = context do
+    {{moving, back}, context} = move_answered_back(context, title, from, to)
+    {id, flight} = answered_flight() || flunk("no answered push is in flight")
+    assert report_again(context.push_projects, id, flight) == flight.answered_reply
+    await_moves(context, from, [moving, back])
+    context
+  end
+
+  step "the user moves {string} from {string} to {string}, then back, {string} is restarted, and the first answer is reported to the planner again",
+       %{args: [title, from, to, plugin]} = context do
+    {{moving, back}, context} = move_answered_back(context, title, from, to)
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => plugin})
+    {id, flight} = answered_flight() || flunk("no answered push is in flight")
+    projects = context.push_projects
+    gate = context.gh_gates[from]
+
+    as_lost_runner(flight.runner, fn ->
+      # Decided again from what the first taking saved, with the projects its
+      # change read, the resend is answered with the correction that taking
+      # left: the issue goes to the milestone the plan moved it back to.
+      reply = report_again(projects, id, flight)
+
+      assert {:push, _leg, [{"update", %{"number" => number, "milestone" => milestone}, _}], _} =
+               reply
+
+      assert number == item(plan!(context), title)["issue"]["number"]
+      assert milestone == context.milestones[from]
+      running = Task.async(fn -> run_reply(projects, id, flight, reply) end)
+      assert {:ok, :ok} = answer_until(gate, running)
+    end)
+
+    # The real runner's own leg, held at GitHub, is no longer the flight's.
+    for task <- [moving, back], do: assert({:ok, {{:ok, _}, _}} = answer_until(gate, task))
+    assert_settled(context, id)
+    context
+  end
+
+  # The first change waits on GitHub's rename while the plan switches boards (a
+  # restart) and the task changes again, so GitHub's answer chains a push under
+  # the new board, which GitHub holds too; then the plugin restarts and the first
+  # answer is reported again by the runner that lost its reply.
+  step "the user renames \#{int}'s task to {string} and moves it to end on {string}, then {string} switches to the board {string} and the user renames it to {string} and moves it to end on {string}, then {string} is restarted and the first answer is reported to the planner again",
+       %{args: [number, first, due, @id, board, second, due_again, plugin]} = context do
+    task = task_of(plan!(context), number) || flunk("no task follows ##{number}")
+
+    rename = fn title ->
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdin" => [JSON.encode!(%{"title" => title})],
+        "stdout" => %{"number" => number}
+      }
+    end
+
+    # The chained rename says when it reaches GitHub, then waits for its answer.
+    started = Path.join(context.mc.home, "gh-started")
+    gate = Path.join(context.mc.home, "gh-gate-chained")
+    for fifo <- [started, gate], do: {_, 0} = System.cmd("mkfifo", [fifo])
+    wait = "echo > '#{started}'; cat '#{gate}' > /dev/null"
+    context = World.cli_rules(context, [Map.put(rename.(second), "run", wait)])
+
+    {changing, context} = change_late(context, task, %{"title" => first, "due" => due})
+    context = save(context, %{"board" => board})
+    context = update_task(context, number, %{"title" => second, "due" => due_again})
+    {:ok, projects} = HalC2.Plugins.Host.projects(@id)
+    answer_late(context)
+    # The chained push at GitHub is the receipt that the first answer was taken.
+    {:ok, _} = File.read(started, [:raw])
+    {_, context} = World.call!(context, "plugins.restart", %{"id" => plugin})
+    {id, flight} = answered_flight() || flunk("no answered push is in flight")
+    context = World.cli_rules(context, [rename.(second)])
+
+    reply =
+      as_lost_runner(flight.runner, fn ->
+        reply = report_again(projects, id, flight)
+        assert run_reply(projects, id, flight, reply) == :ok
+        # The real runner's chained rename answers while it is suspended.
+        File.write!(gate, "answer", [:raw])
+        reply
+      end)
+
+    assert {{:ok, _}, _} = Task.await(changing, 30_000)
+    assert_settled(context, id)
+    Map.put(context, :reported_again, reply)
+  end
+
+  # The board map of a push's add of #`number` to `board`, as `Sync.board_pushes/4`
+  # makes it.
+  step "the answer reported again adds \#{int} to {string}", %{args: [number, board]} = context do
+    [owner, n] = String.split(board, "/")
+    n = String.to_integer(n)
+    assert {:push, _leg, ops, _synced} = context.reported_again
+
+    assert Enum.any?(
+             ops,
+             &match?(
+               {:board, %{"owner" => ^owner, "number" => ^n, "item" => %{"number" => ^number}},
+                _},
+               &1
+             )
+           ),
+           "the answer does not add ##{number} to #{board}: #{inspect(ops)}"
+
+    context
   end
 
   step "the user moves {string} from {string} to {string}, then {string} from {string} to {string} and out of it, before GitHub answers",
@@ -3480,6 +3837,38 @@ defmodule HalC2.Steps.Planning.Planner do
     context
   end
 
+  # The white-box seams the restart scenarios cannot reach from outside: simulating
+  # a new MC run erases the planner's run-id persistent term, and naming a restored
+  # push's runner reads the server's pushing state. Both live here so a change to
+  # that representation has one place to update.
+  defp restart_as_new_mc_run(context, id) do
+    {_, context} = World.call!(context, "plugins.disable", %{"id" => id})
+    # Erased while the plugin is stopped, so no save of the old server can mint the new
+    # run's id and stamp the saved push with it.
+    :persistent_term.erase({HalC2Plugins.Planner, :run})
+
+    {_, context} =
+      World.call!(context, "plugins.enable", %{"id" => id, "acceptPermissions" => []})
+
+    context
+  end
+
+  defp restored_runner do
+    %{pushing: %{} = pushing} = :sys.get_state(HalC2Plugins.Planner)
+    assert [%{runner: runner}] = Map.values(pushing)
+    runner
+  end
+
+  # Lets go of whatever waits on the fifo `gate`, if anything does: a read-write open
+  # does not wait for a reader the way a write does, and a fifo already gone (a gate
+  # script removes its own once read) is nothing waiting.
+  defp release(gate, word) do
+    with {:ok, file} <- File.open(gate, [:read, :write, :raw]) do
+      :ok = :file.write(file, word)
+      File.close(file)
+    end
+  end
+
   # Lets the late rename's gh answer, once it is waiting. The fifo is opened raw: through
   # the file server, the open would hold every other file call until gh reads it, the
   # rename's own on its way to gh included.
@@ -3516,10 +3905,13 @@ defmodule HalC2.Steps.Planning.Planner do
 
   # Renames `task` to `title` in a client of its own, as another window's would, so the
   # rename can wait on GitHub while the scenario goes on; returns once the plan has it.
-  defp rename_late(context, task, title) do
+  defp rename_late(context, task, title), do: change_late(context, task, %{"title" => title})
+
+  # `rename_late/3` with any `fields` that hold a title.
+  defp change_late(context, task, %{"title" => title} = fields) do
     %{mc: mc} = context
     call = %{"id" => @id, "method" => "updateItem"}
-    input = %{"id" => task["id"], "fields" => %{"title" => title}}
+    input = %{"id" => task["id"], "fields" => fields}
 
     renaming =
       Task.async(fn ->
@@ -3534,6 +3926,25 @@ defmodule HalC2.Steps.Planning.Planner do
     plan = plan!(context)
     ids = Enum.map([title, from, to], &(item(plan, &1) || flunk("the plan has no #{&1}"))["id"])
     Enum.zip(["id", "from", "to"], ids) |> Map.new()
+  end
+
+  defp start_work(context, title) do
+    context = ensure(context, title)
+    ids = [item!(context, title)["id"]]
+
+    {reply, context} =
+      plugin(context, "run", %{"action" => action_id(context, "Start work"), "itemIds" => ids})
+
+    assert {:ok, %{"run" => run}} = reply
+    Map.put(context, :run, run)
+  end
+
+  defp hold_setups(test) do
+    receive do
+      {:"$gen_call", {caller, _}, {:start, _, _, _, _, _}} -> send(test, {:setup_held, caller})
+    end
+
+    hold_setups(test)
   end
 
   defp update_task(context, number, fields) do

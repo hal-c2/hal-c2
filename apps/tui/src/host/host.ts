@@ -10,12 +10,8 @@ import { createComputed, createPropertyMap, createRoot, type PropertyMap } from 
 
 import type { TuiClient, TuiConnectionPhase } from "../connection.ts";
 import type { ImageDecoder } from "../composerAttachments.ts";
-import { resolveSidebarListViewport } from "../components/ChatView.layout.ts";
-import {
-  buildRows,
-  nextSidebarRefreshAt,
-  SIDEBAR_SETTLED_SECTION_ID,
-} from "../components/Sidebar.logic.ts";
+import { resolveSidebarListViewport } from "../layout.ts";
+import { buildRows, nextSidebarRefreshAt, SIDEBAR_SETTLED_SECTION_ID } from "../sidebar.logic.ts";
 import { KEYBINDING_GROUPS, KEYMAP_LAYERS, KEYMAP_PARITY } from "../keymap.ts";
 import { PROJECT_ACTION_RUN_PREFIX, projectActionKeymap } from "../projectActions.ts";
 import type { EditorCommand } from "../promptEditor.ts";
@@ -367,11 +363,12 @@ export function createHost(options: HostOptions): Host {
     buildRows(
       next.shell,
       next.expanded,
-      next.loadedInFull,
+      next.settledShown,
       next.selection?.kind === "thread" ? next.selection.id : null,
       next.filter,
       next.projectScopeId,
       now(),
+      next.showSettledPluginThreads,
     );
 
   // Republish a key only when what it is derived from changed, so bindings
@@ -547,7 +544,8 @@ export function createHost(options: HostOptions): Host {
       !prev ||
       prev.shell !== next.shell ||
       prev.expanded !== next.expanded ||
-      prev.loadedInFull !== next.loadedInFull ||
+      prev.settledShown !== next.settledShown ||
+      prev.showSettledPluginThreads !== next.showSettledPluginThreads ||
       prev.selection !== next.selection ||
       prev.filter !== next.filter ||
       prev.projectScopeId !== next.projectScopeId
@@ -711,6 +709,7 @@ export function createHost(options: HostOptions): Host {
       else if (mode === "fileEdit") setMode("files");
     },
     publish: (next) => state.set("files", next),
+    copy: (text) => options.copyToClipboard?.(text) === true,
     attach: (path) => composer!.dispatch("composer.attach", { path }),
     canAttach: () => {
       const context = composer!.context();

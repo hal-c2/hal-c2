@@ -1,5 +1,6 @@
-// What tests/prop/tst_WorkspaceFilesProp.cpp found in WorkspaceFiles, and how
-// a media file previews from the address its environment signs.
+// What tests/prop/tst_WorkspaceFilesProp.cpp and tst_WorkspaceFilesSaveProp.cpp
+// found in WorkspaceFiles, and how a media file previews from the address its
+// environment signs.
 
 #include <QtTest>
 
@@ -67,6 +68,36 @@ class WorkspaceFilesRegression : public QObject {
   Q_OBJECT
 
 private slots:
+  // A write by full path refused for want of terminal access left the edit
+  // pending, and opening a project file next wrote that edit into it.
+  void anEditRefusedOutsideTheWorkspaceIsNotWrittenToTheNextFile() {
+    Held held;
+    QList<FakeMc::Rpc> writes;
+    held.mc.onRpc(QStringLiteral("projects.writeFile"), [&held, &writes](const FakeMc::Rpc& rpc) {
+      writes.append(rpc);
+      held.mc.refuse(rpc, QStringLiteral("terminal:operate is required"),
+                     QJsonObject{{QStringLiteral("_tag"), QStringLiteral("EnvironmentScopeRequiredError")},
+                                 {QStringLiteral("requiredScope"), QStringLiteral("terminal:operate")}});
+    });
+    QVERIFY(held.ready());
+    WorkspaceFiles files(&held.client);
+    files.setSaveDelay(0);
+    files.setTarget(QStringLiteral("env-b"), QStringLiteral("/w"));
+    files.openFile(QStringLiteral("/tmp/y.txt"));
+    QVERIFY(held.asked(1));
+    held.mc.reply(held.calls.at(0), QJsonObject{{QStringLiteral("contents"), QStringLiteral("y\n")}});
+    QVERIFY(held.settled());
+    files.edit(QStringLiteral("y edited\n"));
+    QVERIFY(QTest::qWaitFor([&] { return !files.saveProblem().isEmpty(); }));
+    QVERIFY(!files.editable());
+    QCOMPARE(writes.size(), 1);
+
+    files.openFile(QStringLiteral("a.txt"));
+    QVERIFY(held.settled());
+    QCOMPARE(writes.size(), 1);
+    QCOMPARE(writes.first().payload.value(QLatin1String("relativePath")).toString(), QStringLiteral("/tmp/y.txt"));
+  }
+
   // Two listings of one folder answered out of order: the older one, read
   // before the agent changed the workspace, replaced the newer.
   void anOlderListingAnsweredLateIsDropped() {

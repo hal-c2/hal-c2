@@ -215,7 +215,7 @@ async function expectPanelHint(ctx: World, text: string): Promise<void> {
 
 step("the reason given is {string}", expectPanelHint);
 
-// --- the panel as RightPanel.tsx draws it ---
+// --- the panel as RightPanel.qml draws it ---
 
 /** The panel's rows inside its border and padding. */
 async function panelRows(ctx: World): Promise<string[]> {

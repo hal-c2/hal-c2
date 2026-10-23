@@ -29,10 +29,11 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   # Installs `name` as a program that reports its arguments to this test over TCP and
-  # then stays running until the test hangs up.
-  defp install(context, name) do
+  # then stays running until the test hangs up. `file` is the name it is stored under
+  # when that differs from the name it reports (a Windows editor path needs an extension).
+  defp install(context, name, file \\ nil) do
     context = bin(context) |> listen()
-    path = Path.join(context.bin, name)
+    path = Path.join(context.bin, file || name)
 
     File.write!(path, """
     #!/usr/bin/env bash
@@ -120,7 +121,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   defp with_display(context) do
     World.put_app_env(:os_type, {:unix, :linux})
     World.put_os_env("DISPLAY", ":0")
-    install(context, "xdg-open")
+    context |> install("xdg-open") |> Map.put(:host, :linux)
   end
 
   defp headless(context) do
@@ -167,6 +168,16 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   step "the file manager is listed last", context do
     assert List.last(context.server_config["availableEditors"]) == "file-manager"
     context
+  end
+
+  step ~r/^a client opens the path "(?<file>[^"]+)" in the default editor$/,
+       %{args: [file]} = context do
+    context |> Map.put(:target, file) |> open(%{"cwd" => file, "editor" => "default"})
+  end
+
+  step ~r/^the MC runs on Windows and Notepad is registered through the variable in '(?<line>[^']+)'$/,
+       %{args: [line]} = context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line)
   end
 
   step ~r/^a client opens "(?<file>[^"]+)" at line (?<line>\d+) column (?<column>\d+) in (?!the default editor)(?<editor>.+)$/,
@@ -231,6 +242,274 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     |> install("gio")
   end
 
+  # A Windows host whose `reg` answers for the .txt association: the user's choice
+  # (the ProgId in the answers, else the class registered for .txt) names `txtfile`, whose open
+  # command is the `notepad` that reports to this test.
+  defp windows_host(context, answers, line \\ ~s("NOTEPAD" %1), type \\ "REG_EXPAND_SZ") do
+    World.put_app_env(:os_type, {:win32, :nt})
+    # Stored as notepad.exe: the MC refuses an extensionless Windows path word, so the
+    # fake editor needs an extension to resolve, which Linux runs fine.
+    context = install(context, "notepad", "notepad.exe")
+    # What a registered line can name with %...%, as %SystemRoot% is on a real host.
+    World.put_os_env("HAL_C2_TEST_EDITORS", context.bin)
+
+    command =
+      "    (Default)    #{type}    " <>
+        String.replace(line, "NOTEPAD", Path.join(context.bin, "notepad.exe"))
+
+    progid =
+      Enum.find_value(answers, fn {_key, value} ->
+        case String.split(value) do
+          ["ProgId", "REG_SZ", class] -> class
+          _ -> nil
+        end
+      end)
+
+    # A class the choice names has the command only when it is an application the user
+    # picked: any other ProgId (`brokenfile`) names no command, so the lookup has to fall
+    # through to the class registered for .txt.
+    command_keys =
+      if progid && String.starts_with?(progid, "Applications\\"),
+        do: ["txtfile", progid],
+        else: ["txtfile"]
+
+    body =
+      ~s|case "$2" in\n| <>
+        Enum.map_join(answers, fn {key, value} ->
+          # printf reads backslash escapes in its format, so a value holding
+          # one (a ProgId like Applications\notepad.exe) doubles it.
+          escaped = String.replace(value, "\\", "\\\\")
+          ~s|  *'#{key}'*) printf '\\r\\nHKEY\\r\\n#{escaped}\\r\\n' ;;\n|
+        end) <>
+        Enum.map_join(command_keys, fn class ->
+          ~s|  *'HKCR\\#{class}\\shell\\open\\command'*) printf '\\r\\nHKEY\\r\\n%s\\r\\n' '#{command}' ;;\n|
+        end) <>
+        ~s|  *) exit 1 ;;\nesac|
+
+    install_script(context, "reg", body)
+  end
+
+  # The first word of an unquoted program path with spaces (`C:\Program` of
+  # `C:\Program Files\...`) is a real executable here, named literally (legal on
+  # Linux), so only the MC's refusal of such a word, not a failed lookup, leaves the
+  # default editor unoffered. A word rooted at `/` (`/Program`) cannot be created, so it
+  # is rebased into this scenario's bin directory, which keeps the leading `/`.
+  step ~r/^the MC runs on Windows and Notepad is registered with the unquoted command line '(?<line>[^']+)'$/,
+       %{args: [line]} = context do
+    context = bin(context)
+    [word | rest] = String.split(line, " ", parts: 2)
+    file = word
+    word = if String.starts_with?(word, "/"), do: context.bin <> word, else: word
+    line = Enum.join([word | rest], " ")
+
+    context
+    |> windows_host([{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line)
+    |> install(file)
+  end
+
+  step "the MC runs on Windows and opens text files in Notepad", context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}])
+  end
+
+  step "the MC runs on Windows and the user's chosen program is the application notepad.exe",
+       context do
+    windows_host(context, [
+      {"UserChoice", "    ProgId    REG_SZ    Applications\\notepad.exe"}
+    ])
+  end
+
+  step ~r/^the MC runs on Windows and Notepad is registered with the command line '(?<line>[^']+)'$/,
+       %{args: [line]} = context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line)
+  end
+
+  step "the MC runs on Windows and the class registered for .txt opens text files in Notepad",
+       context do
+    windows_host(context, [{"HKCR\\.txt", "    (Default)    REG_SZ    txtfile"}])
+  end
+
+  # The user's choice names a class with no usable command (a Store app's
+  # `DelegateExecute` class answers nothing here), but the class registered for
+  # .txt opens text files in Notepad.
+  step "the MC runs on Windows and the chosen program names no command line but the class registered for .txt opens text files in Notepad",
+       context do
+    windows_host(context, [
+      {"UserChoice", "    ProgId    REG_SZ    brokenfile"},
+      {"HKCR\\.txt", "    (Default)    REG_SZ    txtfile"}
+    ])
+  end
+
+  step ~r/^the MC runs on Windows and Notepad is registered with the (?<type>REG_SZ|REG_EXPAND_SZ) command line '(?<line>[^']+)'$/,
+       %{args: [type, line]} = context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line, type)
+  end
+
+  # A Store app registers no command line, so `reg query /ve` prints a placeholder as data.
+  step "the MC runs on Windows and the text association names no command line", context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], "(value not set)")
+  end
+
+  # `path` is printf escapes: bytes that are not UTF-8 (`\377`) or a NUL (`\000`) in
+  # the program of the registered command line.
+  step ~r/^the MC runs on Windows and reg prints the program path "(?<path>[^"]+)"$/,
+       %{args: [path]} = context do
+    World.put_app_env(:os_type, {:win32, :nt})
+
+    body =
+      """
+      case "$2" in
+        *UserChoice*) printf '\\r\\nHKEY\\r\\n    ProgId    REG_SZ    txtfile\\r\\n' ;;
+        *'HKCR\\txtfile\\shell\\open\\command'*) printf '\\r\\nHKEY\\r\\n    (Default)    REG_SZ    "#{path}" %%1\\r\\n' ;;
+        *) exit 1 ;;
+      esac
+      """
+
+    install_script(bin(context), "reg", body)
+  end
+
+  # The registry's answers are kept for a minute, and `reg` logs each query it gets.
+  step "the MC runs on Windows and keeps the registry's answer for a minute", context do
+    World.put_app_env(:windows_editor_cache_ms, 60_000)
+    :persistent_term.erase({HalC2.Editors, :windows_editor})
+    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase({HalC2.Editors, :windows_editor}) end)
+
+    context =
+      windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}])
+
+    log = Path.join(context.bin, "reg.log")
+    script = Path.join(context.bin, "reg")
+    [shebang, body] = script |> File.read!() |> String.split("\n", parts: 2)
+    File.write!(script, shebang <> "\necho query >> '#{log}'\n" <> body)
+    Map.put(context, :reg_log, log)
+  end
+
+  step "a client reads the MC's server config a second time", context do
+    context = Map.put(context, :queries_after_first, registry_queries(context))
+
+    client =
+      World.client(context)
+      |> Mc.sub(10, %{"type" => "config", "environment" => context.mc.environment})
+
+    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 10))
+    context |> World.put_client(client) |> Map.put(:server_config, frame["config"])
+  end
+
+  step "the registry was not queried again", context do
+    assert context.queries_after_first > 0
+    assert registry_queries(context) == context.queries_after_first
+    context
+  end
+
+  defp registry_queries(context) do
+    case File.read(context.reg_log) do
+      {:ok, log} -> log |> String.split("\n", trim: true) |> length()
+      {:error, _} -> 0
+    end
+  end
+
+  step "the MC runs on Windows and reg never answers", context do
+    World.put_app_env(:os_type, {:win32, :nt})
+    install_script(bin(context), "reg", "exec sleep 30")
+  end
+
+  step "the MC runs on Windows with no program for text files", context do
+    World.put_app_env(:os_type, {:win32, :nt})
+    install_script(bin(context), "reg", "exit 1")
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["notepad", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  # The fake editor is still running (it waits for the hangup): a launch that
+  # waits on it, or buffers what it writes, would still hold its port here.
+  step ~r/^Windows opens "[^"]+" in Notepad and the MC holds no port for it$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["notepad", context.target]
+
+    names =
+      for port <- Port.list(),
+          {:name, name} <- [Port.info(port, :name)],
+          do: List.to_string(name)
+
+    refute Enum.any?(names, &String.ends_with?(&1, "/notepad")),
+           "the MC still holds a port for the running editor: #{inspect(names)}"
+
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the file where the command line puts it$/,
+       context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+
+    assert argv == [
+             "notepad",
+             "--visit",
+             context.target,
+             "--funcall",
+             "whitespace-mode",
+             "--file=" <> context.target,
+             "--user-data-dir=C:\\Editor Data",
+             "--name=a\"b",
+             "C:\\Dir\\"
+           ]
+
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the other parameters filled in$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    # %S is "1", a bare %2 is dropped, %W is the file's directory, %H and %I are "0".
+    assert argv == [
+             "notepad",
+             context.target,
+             "1",
+             "--dir=#{Path.dirname(context.target)}",
+             "0",
+             "0"
+           ]
+
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the file appended after the other parameters$/,
+       context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    # %S names no file, so the file goes last even though the line holds a placeholder.
+    assert argv == ["notepad", "1", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the quoted empty parameter dropped$/,
+       context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    # A quoted "%2" drops like the bare one, where the shell would pass one empty argument.
+    assert argv == ["notepad", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the doubled quotes read as quotes$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["notepad", context.target, "say \"hi\" there"]
+    :gen_tcp.close(conn)
+    context
+  end
+
   step "DISPLAY is set but empty and there is no Wayland display", context do
     World.put_os_env("DISPLAY", "")
     World.put_os_env("WAYLAND_DISPLAY", nil)
@@ -277,7 +556,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   step "a client opens a project folder in the file manager", context do
-    context = with_display(context)
+    context = if context[:host], do: context, else: with_display(context)
     folder = Mc.tmp_dir(context.mc, "project")
     context |> Map.put(:target, folder) |> open(%{"cwd" => folder, "editor" => "file-manager"})
   end
@@ -352,7 +631,61 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
   step "the MC runs on macOS", context do
     World.put_app_env(:os_type, {:unix, :darwin})
-    install(context, "open")
+    context |> install("open") |> Map.put(:host, :darwin)
+  end
+
+  step "the MC runs on Windows", context do
+    World.put_app_env(:os_type, {:win32, :nt})
+    context |> install("explorer") |> Map.put(:host, :windows)
+  end
+
+  # A name ending in "/" is made a folder. The client sends the path as written, the
+  # trailing slash included; the target is that path without it.
+  step ~r/^a client opens "(?<item>[^"]+)" in the file manager$/, %{args: [item]} = context do
+    cwd =
+      Path.join(Mc.tmp_dir(context.mc, "project"), item) <> if(item =~ ~r{/$}, do: "/", else: "")
+
+    target = String.trim_trailing(cwd, "/")
+
+    if String.ends_with?(cwd, "/"), do: File.mkdir_p!(target), else: File.write!(target, "x\n")
+
+    context
+    |> Map.put(:target, target)
+    |> open(%{"cwd" => cwd, "editor" => "file-manager"})
+  end
+
+  step ~r/^a client opens the file "(?<file>[^"]+)" addressed with a trailing slash in the file manager$/,
+       %{args: [file]} = context do
+    target = Path.join(Mc.tmp_dir(context.mc, "project"), file)
+    File.write!(target, "x\n")
+
+    context
+    |> Map.put(:target, target)
+    |> open(%{"cwd" => target <> "/", "editor" => "file-manager"})
+  end
+
+  step "Finder opens that folder", context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["open", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step "Explorer shows the file selected in its folder", context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["explorer", "/select,", String.replace(context.target, "/", "\\")]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step "Explorer opens that folder", context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["explorer", String.replace(context.target, "/", "\\")]
+    :gen_tcp.close(conn)
+    context
   end
 
   step "a client reveals a file in the file manager", context do
@@ -598,6 +931,13 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     # gh in a directory with a space, as under a home or install path that has one.
     dir = Mc.tmp_dir(context.mc, "gh cli")
     World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
+    # The host has no SSH agent unless a step gives it one (the developer's has), and
+    # git none of the developer's own config.
+    World.put_os_env("SSH_AUTH_SOCK", nil)
+    user_config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+    File.write!(user_config, "")
+    World.put_os_env("GIT_CONFIG_GLOBAL", user_config)
+    World.put_os_env("GIT_CONFIG_NOSYSTEM", "1")
     gh = Path.join(dir, "gh")
 
     File.write!(gh, """
@@ -615,15 +955,88 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     Map.put(context, :gh_config, config)
   end
 
+  # A stand-in for ssh: what `ssh -T git@github.com` gets from GitHub, as the row names.
+  step ~r/^an SSH agent runs on the host and SSH to GitHub (?<outcome>is answered|is refused|cannot reach it|hangs)$/,
+       %{args: [outcome]} = context do
+    dir = Mc.tmp_dir(context.mc, "ssh")
+    World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
+    World.put_os_env("SSH_AUTH_SOCK", Path.join(dir, "agent.sock"))
+    pid_file = Path.join(dir, "ssh.pid")
+
+    # GitHub greets a key it knows and exits 1; ssh exits 255 when it fails.
+    script =
+      case outcome do
+        "is answered" ->
+          "echo \"Hi acme! You've successfully authenticated, but GitHub does not provide shell access.\" >&2\nexit 1"
+
+        "is refused" ->
+          "echo 'git@github.com: Permission denied (publickey).' >&2\nexit 255"
+
+        "cannot reach it" ->
+          "echo 'ssh: Could not resolve hostname github.com: Name or service not known' >&2\nexit 255"
+
+        "hangs" ->
+          "echo $$ > '#{pid_file}'\nexec sleep 600"
+      end
+
+    File.write!(Path.join(dir, "ssh"), "#!/bin/sh\n#{script}\n")
+    File.chmod!(Path.join(dir, "ssh"), 0o755)
+    Map.put(context, :ssh_pid_file, pid_file)
+  end
+
+  step ~r/^SSH is given (?<ms>\d+) ms to answer$/, %{args: [ms]} = context do
+    World.put_app_env(:github_ssh_timeout, String.to_integer(ms))
+    context
+  end
+
+  step "the user's own git config sends \"https://github.com/\" to SSH", context do
+    config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+
+    File.write!(config, """
+    [url "git@github.com:"]
+    \tinsteadOf = https://github.com/
+    \tpushInsteadOf = https://github.com/
+    """)
+
+    World.put_os_env("GIT_CONFIG_GLOBAL", config)
+    context
+  end
+
+  step ~r/^the user's own git config has an? (?<rule>insteadOf|pushInsteadOf) rule sending "(?<from>[^"]+)" to "(?<to>[^"]+)"$/,
+       %{args: [rule, from, to]} = context do
+    config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+    File.write!(config, "[url \"#{to}\"]\n\t#{rule} = #{from}\n")
+    World.put_os_env("GIT_CONFIG_GLOBAL", config)
+    context
+  end
+
+  # Without waiting for SSH, as the upgrader at boot.
+  step "the MC begins setting up the git it starts", context do
+    set_up_git(context)
+  end
+
   step "the MC sets up the git it starts", context do
-    before = for {"GIT_CONFIG_" <> _ = name, value} <- System.get_env(), do: {name, value}
+    context = set_up_git(context)
 
-    ExUnit.Callbacks.on_exit(fn ->
-      for {"GIT_CONFIG_" <> _ = name, _} <- System.get_env(), do: System.delete_env(name)
-      System.put_env(before)
-    end)
+    if pid = context[:asking] do
+      ref = Process.monitor(pid)
+      # Asking ends once git has the answer, or at the time SSH is given.
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 30_000
+    end
 
-    :ok = HalC2.Git.use_gh_for_github()
+    context
+  end
+
+  step "the MC is still asking whether SSH answers for GitHub", context do
+    assert Process.alive?(context.asking)
+    context
+  end
+
+  step "the ssh the MC started has stopped", context do
+    os_pid = context.ssh_pid_file |> File.read!() |> String.trim()
+    # Exile's watcher stops the program after its owner dies, and says nothing when it
+    # has: this waits for that, never longer than its signals take with room to spare.
+    assert stopped_within?(os_pid, 250)
     context
   end
 
@@ -632,13 +1045,15 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     Map.put(context, :agent_env, for({"GIT_CONFIG_" <> _ = n, v} <- System.get_env(), do: {n, v}))
   end
 
+  step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out)$/,
+       %{args: [change]} = context do
+    sign_in_or_out(context, change)
+    context
+  end
+
   step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out) and the MC is hot-updated$/,
        %{args: [change]} = context do
-    hosts = Path.join(context.gh_config, "hosts.yml")
-
-    if change == "signs out",
-      do: File.rm!(hosts),
-      else: File.write!(hosts, "github.com:\n    user: acme\n")
+    sign_in_or_out(context, change)
 
     # As an MC that runs as one: a test MC leaves its host alone otherwise.
     World.put_app_env(:start_mc, true)
@@ -669,6 +1084,24 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
+  step ~r/^git fetches "(?<url>[^"]+)" from "(?<expected>[^"]+)"$/,
+       %{args: [url, expected]} = context do
+    {fetched, 0} = System.cmd("git", ["ls-remote", "--get-url", url], cd: context.mc.home)
+    assert String.trim(fetched) == expected
+    context
+  end
+
+  step ~r/^git pushes to "(?<url>[^"]+)" over HTTPS$/, %{args: [url]} = context do
+    assert pushes_to(context, url) == url
+    context
+  end
+
+  step ~r/^git pushes "(?<url>[^"]+)" to "(?<expected>[^"]+)"$/,
+       %{args: [url, expected]} = context do
+    assert pushes_to(context, url) == expected
+    context
+  end
+
   step "the GitHub CLI answers git's request for a GitHub credential", context do
     {answer, 0} =
       System.cmd(
@@ -680,5 +1113,63 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
     assert answer =~ "password=from-gh"
     context
+  end
+
+  defp sign_in_or_out(context, change) do
+    hosts = Path.join(context.gh_config, "hosts.yml")
+
+    if change == "signs out",
+      do: File.rm!(hosts),
+      else: File.write!(hosts, "github.com:\n    user: acme\n")
+  end
+
+  defp pushes_to(context, url) do
+    repo = Mc.tmp_dir(context.mc, "push")
+    {_, 0} = System.cmd("git", ["init", "-q"], cd: repo)
+    {_, 0} = System.cmd("git", ["remote", "add", "origin", url], cd: repo)
+    {pushed, 0} = System.cmd("git", ["remote", "get-url", "--push", "origin"], cd: repo)
+    String.trim(pushed)
+  end
+
+  # Gone, or a zombie no one has reaped yet: either way it runs no more.
+  # `ps` rather than /proc, so it holds on macOS too.
+  defp stopped?(os_pid) do
+    case System.cmd("ps", ["-o", "stat=", "-p", to_string(os_pid)], stderr_to_stdout: true) do
+      {stat, 0} -> String.trim(stat) |> String.starts_with?("Z")
+      {_, _} -> true
+    end
+  end
+
+  defp set_up_git(context) do
+    before = for {"GIT_CONFIG_" <> _ = name, value} <- System.get_env(), do: {name, value}
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for {"GIT_CONFIG_" <> _ = name, _} <- System.get_env(), do: System.delete_env(name)
+      System.put_env(before)
+    end)
+
+    case HalC2.Git.use_gh_for_github() do
+      :ok ->
+        context
+
+      {:asking, pid} ->
+        # Stopped with the scenario, and its ssh with it, so none outlives the run.
+        ExUnit.Callbacks.on_exit(fn ->
+          ref = Process.monitor(pid)
+          Process.exit(pid, :kill)
+          receive do: ({:DOWN, ^ref, _, _, _} -> :ok)
+
+          with {:ok, os_pid} <- File.read(context[:ssh_pid_file] || ""),
+               do: stopped_within?(String.trim(os_pid), 250)
+        end)
+
+        Map.put(context, :asking, pid)
+    end
+  end
+
+  defp stopped_within?(_os_pid, 0), do: false
+
+  defp stopped_within?(os_pid, tries) do
+    stopped?(os_pid) || (Process.sleep(20) == :ok and stopped_within?(os_pid, tries - 1))
   end
 end

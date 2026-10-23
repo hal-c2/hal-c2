@@ -796,11 +796,11 @@ export function makeV3Session(input: {
     const projectFiles = <R extends { readonly cwd: string }, E>(
       tag: string,
       decodeError: (detail: unknown) => Option.Option<E>,
-      fallback: (request: R, message: string) => E,
+      fallback: (request: R, message: string, cause: unknown) => E,
     ) =>
       forward(tag, (request: R, message, cause) =>
         decodeError(cause instanceof ClusterRpcError ? cause.detail : undefined).pipe(
-          Option.getOrElse(() => fallback(request, message)),
+          Option.getOrElse(() => fallback(request, message, cause)),
         ),
       );
 
@@ -1442,11 +1442,14 @@ export function makeV3Session(input: {
       [WS_METHODS.projectsWriteFile]: projectFiles(
         WS_METHODS.projectsWriteFile,
         Schema.decodeUnknownOption(ProjectWriteFileError),
-        (request: ProjectWriteFileInput) =>
+        // The refusal stays in `cause`: a session without terminal access may not
+        // write by full path (EnvironmentScopeRequiredError), and a client says so.
+        (request: ProjectWriteFileInput, _message, cause) =>
           new ProjectWriteFileError({
             cwd: request.cwd,
             relativePath: request.relativePath,
             failure: "operation_failed",
+            cause,
           }),
       ),
       [WS_METHODS.subscribeWorktreeSetup]: worktreeSetup,

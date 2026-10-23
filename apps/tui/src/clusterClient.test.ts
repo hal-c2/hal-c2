@@ -66,6 +66,10 @@ function machine(name: string, status?: () => ClusterStatus) {
       calls.push(`listRefs ${cwd}`);
       return Promise.resolve([]);
     },
+    writeFile: (cwd: string, relativePath: string) => {
+      calls.push(`writeFile ${cwd} ${relativePath}`);
+      return Promise.resolve();
+    },
     // Hosted here unless the test says otherwise; asked about a member, the MC
     // answers the folder it keeps for it.
     localPathFor: (path: string, environmentId?: string) => {
@@ -243,6 +247,22 @@ describe("makeClusterClient", () => {
 
     expect(desktop.calls).toEqual(["interrupt beta"]);
     expect(laptop.calls).toEqual(["interrupt alpha"]);
+  });
+
+  it("Given a thread on another machine, when a file it shows is saved, then that machine writes it", async () => {
+    const { laptop, desktop, client } = await clustered();
+    laptop.pushShell(shell([{ id: "p-laptop", workspaceRoot: "/src/site" }], [{ id: "alpha" }]));
+    desktop.pushShell(shell([{ id: "p-desktop", workspaceRoot: "/src/shop" }], [{ id: "beta" }]));
+
+    await client.writeFile("/src/shop", "src/cart.ts", "cart");
+    // One the agent left outside the project goes by its full path, to the same machine.
+    await client.writeFile("/src/shop", "/tmp/report/menu.csv", "menu");
+
+    expect(desktop.calls).toEqual([
+      "writeFile /src/shop src/cart.ts",
+      "writeFile /src/shop /tmp/report/menu.csv",
+    ]);
+    expect(laptop.calls).toEqual([]);
   });
 
   it("Given an open thread, when it moves to another machine, then it is followed there", async () => {

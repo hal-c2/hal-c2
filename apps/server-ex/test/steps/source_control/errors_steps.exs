@@ -53,6 +53,90 @@ defmodule HalC2.Steps.SourceControl.Errors do
     Map.put(context, :head_before, World.git!(context.cwd, ~w(rev-parse HEAD)))
   end
 
+  step "GitHub refuses the push because the sign-in lacks the workflow scope", context do
+    hook = Path.join([context.bare, "hooks", "pre-receive"])
+
+    File.write!(hook, """
+    #!/bin/sh
+    echo 'refusing to allow an OAuth App to create or update workflow `.github/workflows/ci.yml` without `workflow` scope' >&2
+    exit 1
+    """)
+
+    File.chmod!(hook, 0o755)
+    File.write!(Path.join(context.cwd, "cart.ts"), "export const cart = []\n")
+    context
+  end
+
+  step "GitHub refuses the push because the token lacks the workflows permission", context do
+    hook = Path.join([context.bare, "hooks", "pre-receive"])
+
+    File.write!(hook, """
+    #!/bin/sh
+    echo 'refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission' >&2
+    exit 1
+    """)
+
+    File.chmod!(hook, 0o755)
+    File.write!(Path.join(context.cwd, "cart.ts"), "export const cart = []\n")
+    context
+  end
+
+  # The Background's origin is GitHub's `acme/<project>` already.
+  step "the repository's remote is the GitHub one {string}", %{args: [repository]} = context do
+    assert context.repository == repository
+    context
+  end
+
+  step "the repository's remote is not on GitHub", context do
+    World.git!(context.cwd, ["remote", "set-url", "origin", context.bare])
+    context
+  end
+
+  step "the failure says the push changes a workflow file and the sign-in lacks the workflow scope",
+       context do
+    assert World.failure(context) =~
+             "GitHub refused it because it changes a workflow file and the sign-in that " <>
+               "pushed lacks the workflow scope."
+
+    context
+  end
+
+  step "the failure says the GitHub App that pushed lacks the Workflows permission", context do
+    failure = World.failure(context)
+    assert failure =~ "the GitHub App whose token pushed lacks the Workflows permission"
+    assert failure =~ "Grant the App read and write access to Workflows"
+    refute failure =~ "gh auth refresh"
+    context
+  end
+
+  step "the failure tells a user pushing with the GitHub CLI's sign-in to run {string}",
+       %{args: [command]} = context do
+    assert World.failure(context) =~
+             "If this machine pushes with the GitHub CLI's sign-in, run `#{command}`"
+
+    context
+  end
+
+  step "the failure offers {string} to copy {string}", %{args: [label, command]} = context do
+    assert %{"kind" => "copy_command", "label" => ^label, "command" => ^command} =
+             failure_cta(context)
+
+    context
+  end
+
+  step "the failure offers {string} to open {string}", %{args: [label, url]} = context do
+    assert %{"kind" => "open_url", "label" => ^label, "url" => ^url} = failure_cta(context)
+    context
+  end
+
+  step "the failure offers nothing to do", context do
+    World.failure(context)
+    assert failure_cta(context) == nil
+    context
+  end
+
+  defp failure_cta(context), do: List.last(context.git_events)["cta"]
+
   step "the commit is kept and the status shows the branch ahead of its upstream", context do
     refute World.git!(context.cwd, ~w(rev-parse HEAD)) == context.head_before
     {status, context} = World.call!(context, "vcs.refreshStatus", %{"cwd" => context.cwd})

@@ -634,6 +634,13 @@ Feature: Planner
       And "API" is not started and no thread is linked to it
 
     @mc
+    Scenario: Work whose thread start is killed fails rather than holding its turn
+      Given the MC's worktree setup holds every start
+      When the user starts work on "API" and its thread start is killed
+      Then the run is failed saying its thread could not start
+      And "API" is not started and no thread is linked to it
+
+    @mc
     Scenario: Work waiting its turn fails if its task is removed first
       Given "planner" runs one action at a time
       And the user started work on "API"
@@ -1499,6 +1506,112 @@ Feature: Planner
       When the user renames #7's task to "Rate limiting", then to "Rate limits" before GitHub answers
       Then GitHub names #7 "Rate limits" last
       And #7's task is named "Rate limits" and marked as synced
+
+    # A restart of the plugin keeps the changes GitHub has, so it still hears how they
+    # went and the next change still waits for them.
+    @mc
+    Scenario: A rename made after a restart of the plugin while an earlier one waits on GitHub is the one GitHub keeps
+      Given "planner" syncs "acme/api" both ways
+      And GitHub takes renaming #7 to "Rate limiting" late and to "Rate limits" at once
+      When the user renames #7's task to "Rate limiting", then "planner" is restarted and the user renames it to "Rate limits" before GitHub answers
+      Then GitHub names #7 "Rate limits" last
+      And #7's task is named "Rate limits" and marked as synced
+
+    # The restarted plugin has read no project yet when GitHub answers, so the push that
+    # follows the answer does not wait on a look.
+    @mc
+    Scenario: A rename made before a restart of the plugin is pushed when GitHub answers the one before it
+      Given "planner" syncs "acme/api" both ways
+      And GitHub takes renaming #7 to "Rate limiting" late and to "Rate limits" at once
+      When the user renames #7's task to "Rate limiting", then to "Rate limits", then "planner" is restarted before GitHub answers
+      Then GitHub names #7 "Rate limits" last
+      And #7's task is named "Rate limits" and marked as synced
+
+    # The push of an MC run before is not one this run can hear from, so its task is
+    # marked and its next change sends what GitHub lacks again.
+    @mc
+    Scenario: A push of an earlier MC run is marked as stopped when the plugin starts
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, taking it
+      When the user renames #7's task to "Rate limiting", then "planner" is restarted by a new MC run before GitHub answers
+      Then #7's task is marked as not synced
+
+    # GitHub's answer arrives while the plugin is down; the push is reported again
+    # when it starts, so its task is not left waiting on a dead report. The report
+    # retries only while the plugin is back within 30 seconds (see `report/7` in
+    # the planner); a plugin stopped for longer loses it as a stopped push.
+    @mc
+    Scenario: A change GitHub answers while the plugin is stopped is told to it when it starts again
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, taking it
+      When the user renames #7's task to "Rate limiting", then "planner" is stopped while GitHub answers and started again
+      Then #7's task is named "Rate limiting" and marked as synced
+
+    # A report that landed while its reply was lost is answered with the push it
+    # was answered with, not taken again: the move it carries is not applied twice
+    # and the chained move back still goes.
+    @mc
+    Scenario: An answered move reported again is answered with the move it was answered with
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub takes moving #7 to "Launch" late
+      And GitHub takes moving #7 to "Beta" late
+      When the user moves "Issue 7" from "Beta" to "Launch", then back, and the first answer is reported to the planner again
+      Then #7's task is in the milestone "Beta" and not "Launch"
+      And #7's task is marked as synced
+
+    # The same report across a restart, whose answered reply was not saved, is
+    # known by the leg it answers and decided again the same way.
+    @mc
+    Scenario: An answered move reported again after a restart is decided again
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub takes moving #7 to "Launch" late
+      And GitHub takes moving #7 to "Beta" late
+      When the user moves "Issue 7" from "Beta" to "Launch", then back, "planner" is restarted, and the first answer is reported to the planner again
+      Then #7's task is in the milestone "Beta" and not "Launch"
+      And #7's task is marked as synced
+
+    # A board item a push added is of the board it was pushed under. Decided again
+    # after a restart, the answered leg is still that board's, though the push
+    # chained after it went under the board the plan switched to.
+    @mc
+    Scenario: An answer reported again after a restart does not keep the item of a board the plan left
+      Given "planner" syncs "acme/api" both ways with the board "acme/3"
+      And the board "acme/3" holds #5 and not #7
+      And the board "acme/4" holds #5 and not #7
+      And the plugin looks at GitHub
+      And GitHub answers renaming #7 to "Rate limiting" late, taking it
+      When the user renames #7's task to "Rate limiting" and moves it to end on "2026-11-09", then "planner" switches to the board "acme/4" and the user renames it to "Rate limits" and moves it to end on "2026-11-16", then "planner" is restarted and the first answer is reported to the planner again
+      Then the answer reported again adds #7 to "acme/4"
+      And #7's task is marked as synced
+
+    # A chained leg refused just as the leg before it was is that leg's own
+    # report, not a resend of the first: it settles as the task's sync error
+    # instead of being answered with itself forever.
+    @mc
+    Scenario: A chained rename refused as the one before it was settles as not synced
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, refusing it
+      And GitHub refuses renaming #7 to "Rate limits"
+      When the user renames #7's task to "Rate limiting", then to "Rate limits" before GitHub answers
+      Then #7's task is marked as not synced
+
+    @mc
+    Scenario: A push whose runner stops after a restart of the plugin is marked as stopped
+      Given "planner" syncs "acme/api" both ways
+      And GitHub answers renaming #7 to "Rate limiting" late, taking it
+      When the user renames #7's task to "Rate limiting", then "planner" is restarted and the push is stopped before GitHub answers
+      Then #7's task is marked as not synced
+
+    @mc
+    Scenario: A change GitHub takes after a restart of the plugin clears the mark of one it refused
+      Given "planner" syncs "acme/api" both ways
+      And GitHub refuses changes to #7
+      And the user renames #7's task to "Rate limiting"
+      And GitHub answers renaming #7 to "Rate limits" late, taking it
+      When the user renames #7's task to "Rate limits", then "planner" is restarted before GitHub answers
+      Then #7's task is named "Rate limits" and marked as synced
 
     @mc
     Scenario: A change GitHub answers after its task was unlinked does not mark the task

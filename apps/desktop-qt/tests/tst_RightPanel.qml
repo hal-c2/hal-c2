@@ -273,6 +273,7 @@ Item {
         when: windowShown
 
         function cleanup() {
+            Theme.fontScale = 1;
             Shell.reset();
             Panel.diff = null;
             Panel.files = null;
@@ -684,6 +685,34 @@ Item {
             files.width = Math.floor(viewer.Layout.minimumWidth) + files.explorerMinimum;
             tryVerify(() => !explorer.visible, 5000, "the tree gives way to the file");
             tryVerify(() => toggle.activeFocus, 5000, "focus lands on the toggle that brings the tree back");
+        }
+
+        // The tree's floor is in font metrics, not px: it holds a row's icon and about
+        // ten characters at the user's font size, so a larger font asks for more room.
+        function test_theTreeMinimumFollowsTheFontScale() {
+            const source = createTemporaryObject(fakeFiles, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const before = files.explorerMinimum;
+            verify(before > 72, "room for ten characters, not a 72px sliver: " + before);
+            try {
+                Theme.fontScale = 2;
+                tryVerify(() => files.explorerMinimum > before + 40, 5000, "a doubled font asks for more room: " + files.explorerMinimum);
+            } finally {
+                Theme.fontScale = 1;
+            }
+            tryVerify(() => files.explorerMinimum === before);
+        }
+
+        // A name the narrow tree elides is still reachable in full: the entry's
+        // accessible description carries the path (the hover tooltip shows it when elided).
+        function test_aTreeEntryCarriesItsFullPathForAssistiveTech() {
+            const source = createTemporaryObject(fakeFiles, root);
+            source.tree = createTemporaryObject(fakeTree, root);
+            const files = createTemporaryObject(filesComponent, root, { source: source });
+            const entry = findChild(files, "filesEntry-src/app.ts");
+            tryVerify(() => entry && entry.visible);
+            compare(entry.Accessible.name, "app.ts");
+            compare(entry.Accessible.description, "src/app.ts");
         }
 
         // Hiding the tree from its toggle (here through the preference the

@@ -67,6 +67,12 @@ public:
   QDateTime now() const { return m_now(); }
   void setLocale(const QLocale& locale) { m_locale = locale; }
   void setTimeZone(const QTimeZone& zone) { m_zone = zone; }
+  // The settled shelf lists a page of rows at a time; `sidebar.more` lists
+  // the next page too. Tests shorten the page.
+  void setSettledPage(qsizetype page) {
+    m_settledPage = page;
+    m_settledShown = page;
+  }
 
   void refresh();
   // The draft `id` was edited in some window: refreshes when its row here
@@ -162,9 +168,12 @@ private:
   sidebar::GroupingSettings m_grouping;
   QString m_timestampFormat = QStringLiteral("locale");
   QString m_threadSortOrder = QStringLiteral("updated_at");
+  bool m_showSettledPluginThreads = false;
   QList<sidebar::ProjectGroup> m_groups;
   sidebar::Nullable m_scope;
   sidebar::View m_view;
+  qsizetype m_settledPage = sidebar::kSettledPage;
+  qsizetype m_settledShown = sidebar::kSettledPage;
   QSet<QString> m_pending;
   QTimeZone m_zone = QTimeZone::systemTimeZone();
   // The threads the custom snooze question is about.

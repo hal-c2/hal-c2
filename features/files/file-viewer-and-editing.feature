@@ -1,5 +1,6 @@
 # Sources:
 #   apps/server-ex/lib/hal_c2/workspace.ex (read_file, write_file, path checks)
+#   apps/server-ex/lib/hal_c2/rpc.ex (required_scope/2: a write by full path needs terminal:operate)
 #   apps/server-ex/lib/hal_c2/attachments.ex (assets.createUrl: the signed address a media file previews from)
 #   apps/server/src/workspace/WorkspaceFileSystem.ts, WorkspacePaths.ts (read limits, binary guard, path checks)
 #   apps/server-ex/lib/hal_c2/editors.ex (shell.openInEditor)
@@ -40,10 +41,16 @@
 #   apps/server-ex/lib/hal_c2/attachments.ex (assets.createUrl: workspace-file, media-file)
 #   apps/desktop-qt/qml/HalC2/Bricks/FilesPanel.qml
 #   apps/desktop-qt/tests/native/features/PanelSteps.cpp
+#   apps/desktop-qt/src/native/FileActionsController.cpp (files.copyContents, the palette's "Copy file contents")
+#   apps/tui/src/host/filesState.ts, apps/tui/src/keymap.ts (files.viewer.copy, "c" in the viewer)
+#   apps/tui/src/host/features/editor.ts (a file larger than 1 MB opens read-only in $EDITOR too)
+#   apps/tui/features/support/steps/files.steps.ts, files-viewer.steps.ts
+#   apps/desktop-qt/tests/native/features/FilesViewerSteps.cpp
 
 Feature: Viewing and editing files
   The user can read any text file in a project, preview media, and make small edits that
-  save themselves. Paths never escape the project.
+  save themselves. A path in the project never escapes it; a file the agent left elsewhere
+  on its machine is opened, and edited, by its full path.
 
   Background:
     Given a connected environment with the project "shop"
@@ -112,7 +119,7 @@ Feature: Viewing and editing files
       Given the host has the file "/home/sam/notes/todo.txt"
       When a client reads "/home/sam/notes/todo.txt" from "shop"
       Then the file's contents are returned
-      And the file is marked as one that cannot be written back
+      And the file comes back under its full path
 
     @tui
     Scenario: The terminal client shows an opened file with syntax colouring
@@ -270,7 +277,7 @@ Feature: Viewing and editing files
       When the user opens "docs/guide.md"
       Then every button above the file is inside the file's column
       And the file tree gives way before the buttons do
-      And a tab too narrow to leave the tree room shows the file alone
+      And a tab too narrow to leave the tree room for ten characters of a name at the user's font size shows the file alone
 
     @desktop
     Scenario: The rendered or source choice is remembered on this device
@@ -508,6 +515,43 @@ Feature: Viewing and editing files
       When a client writes "src/new/deep.ts" in "shop"
       Then "src/new/deep.ts" exists with the written contents
 
+    # What an agent wrote outside the project (a report in /tmp the thread links to)
+    # is edited where it is, on the machine whose MC read it. Only a file that is
+    # there already, and that the viewer could read whole as text, is written: the
+    # project's MC makes nothing new outside the project.
+    @mc
+    Scenario: A file on the host outside the project is written back by its full path
+      Given the host has the file "/home/sam/notes/todo.txt"
+      When a client writes "/home/sam/notes/todo.txt" in "shop"
+      Then "/home/sam/notes/todo.txt" has the written contents
+
+    @mc
+    Scenario Outline: Only a text file already on the host is written by its full path
+      Given the host has <file> at "<path>"
+      When a client writes "<path>" in "shop"
+      Then the MC answers that "<path>" <reason>
+      And nothing at "<path>" changed
+
+      Examples:
+        | file                         | path                     | reason                                    |
+        | nothing                      | /home/sam/notes/new.txt  | is outside the project and not there yet  |
+        | a folder                     | /home/sam/notes          | is not a file                             |
+        | a binary file                | /home/sam/notes/db.bin   | is not a text file                        |
+        | a text file larger than 1 MB | /home/sam/notes/big.log  | is larger than 1 MB                       |
+
+    # A write by full path reaches any such file on the host, as far as a shell in a
+    # terminal does, so it takes the session's terminal access. A session paired
+    # without it saves inside the project only.
+    @mc
+    Scenario: A session without terminal access cannot save a file outside the project
+      Given the host has the file "/home/sam/notes/todo.txt"
+      And a client paired without terminal access
+      When that client writes "/home/sam/notes/todo.txt" in "shop"
+      Then the MC answers that client that terminal:operate is required
+      And nothing at "/home/sam/notes/todo.txt" changed
+      When that client writes "src/app.ts" in "shop"
+      Then "src/app.ts" exists with the written contents
+
     @desktop @tui
     Scenario: Edits save themselves shortly after the user stops typing
       Given the user is editing "src/app.ts"
@@ -520,7 +564,7 @@ Feature: Viewing and editing files
       When the user closes the file
       Then the change is written to "src/app.ts"
 
-    @desktop
+    @desktop @tui
     Scenario Outline: Some files open read-only
       When the user opens <file>
       Then the file cannot be edited
@@ -528,7 +572,59 @@ Feature: Viewing and editing files
       Examples:
         | file                                    |
         | a file larger than one megabyte         |
-        | a file outside the project on the host  |
+
+    # The thread's own MC reads and writes it, wherever that MC runs.
+    @desktop @tui
+    Scenario Outline: A file outside the project the agent left can be edited
+      Given the thread is <where>
+      And the agent wrote "/tmp/report/menu.csv" outside the project
+      When the user opens "/tmp/report/menu.csv" and edits it
+      Then the change is written to "/tmp/report/menu.csv" on the thread's machine
+
+      Examples:
+        | where                                |
+        | on this computer                     |
+        | on another machine of the cluster    |
+
+    # The client learns the session's scopes from the MC's refusal, and keeps such
+    # files read-only from then on: for that environment on the desktop, for that
+    # thread's workspace on the TUI (its files controller knows only the workspace).
+    @desktop @tui
+    Scenario: A file outside the project turns read-only when the MC refuses to save it
+      Given this device was paired without terminal access
+      And the agent wrote "/tmp/report/menu.csv" outside the project
+      When the user opens "/tmp/report/menu.csv" and edits it
+      Then the user is told saving outside the project needs terminal access
+      And the file cannot be edited
+
+    # Copying takes the text anywhere, also where no folder on this machine shows the
+    # file (files-on-another-machine.feature). The phone layout has no file viewer
+    # yet; the tablet's is the desktop's FilesPanel.
+    @shared @backlog-mobile
+    Scenario Outline: The open file's text is copied whole
+      Given the user is reading "src/app.ts" in the viewer
+      When the user copies the file's text <from>
+      Then the whole of "src/app.ts" is on the clipboard
+      And the user is told the file's text was copied
+
+      Examples:
+        | from                     |
+        | from the viewer          |
+        | from the command palette |
+
+    # The MC reads a file only up to its first 1 MB, so that is all the viewer has to copy.
+    @shared @backlog-mobile
+    Scenario Outline: Copying a file larger than one megabyte copies its first megabyte and says so
+      Given "logs/big.log" in "shop" is 3 MB
+      And the user is reading "logs/big.log" in the viewer
+      When the user copies the file's text <from>
+      Then the first megabyte of "logs/big.log" is on the clipboard
+      And the user is told only the first 1 MB of "logs/big.log" was copied
+
+      Examples:
+        | from                     |
+        | from the viewer          |
+        | from the command palette |
 
     @desktop
     Scenario: Ticking a Markdown task writes the file
@@ -586,7 +682,6 @@ Feature: Viewing and editing files
         | action | path                 |
         | reads  | ../secrets.txt       |
         | writes | ../secrets.txt       |
-        | writes | /etc/hosts           |
         | reads  | link-to-home/.bashrc |
 
     # Legacy: apps/server/src/workspace/WorkspacePaths.ts (resolveRelativePathWithinRoot)

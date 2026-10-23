@@ -14,8 +14,8 @@ defmodule HalC2.LocalServers do
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
-  def unsubscribe(pid), do: GenServer.cast(__MODULE__, {:unsubscribe, pid})
+  def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
+  def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
   @impl true
   def init(nil) do
@@ -30,17 +30,16 @@ defmodule HalC2.LocalServers do
   end
 
   @impl true
-  def handle_call({:subscribe, pid}, _from, state) do
-    watchers = Map.put_new_lazy(state.watchers, pid, fn -> Process.monitor(pid) end)
+  def handle_call({:subscribe, pid, ref}, _from, state) do
+    watchers = HalC2.Watchers.add(state.watchers, pid, ref)
     state = %{state | watchers: watchers}
     state = if state.list, do: state, else: scan(state)
     {:reply, {:ok, state.list}, schedule(state)}
   end
 
   @impl true
-  def handle_cast({:unsubscribe, pid}, state) do
-    {ref, watchers} = Map.pop(state.watchers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
+  def handle_cast({:unsubscribe, pid, ref}, state) do
+    watchers = HalC2.Watchers.remove(state.watchers, pid, ref)
     {:noreply, %{state | watchers: watchers}}
   end
 
@@ -55,11 +54,7 @@ defmodule HalC2.LocalServers do
       state = scan(state)
 
       if state.list["servers"] != previous,
-        do:
-          for(
-            {pid, _} <- state.watchers,
-            do: send(pid, {:hal_c2_local_servers, node(), state.list})
-          )
+        do: HalC2.Watchers.notify(state.watchers, {:hal_c2_local_servers, node(), state.list})
 
       {:noreply, schedule(state)}
     end

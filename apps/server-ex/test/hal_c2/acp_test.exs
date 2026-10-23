@@ -312,6 +312,65 @@ defmodule HalC2.AcpTest do
     refute models =~ "stale"
   end
 
+  test "a reload publishes what it read when a listing asks for the agent meanwhile",
+       %{tmp_dir: dir} do
+    started = Path.join(dir, "started")
+    release = Path.join(dir, "release")
+    probes = Path.join(dir, "probes")
+    {_, 0} = System.cmd("mkfifo", [started, release])
+    grok = Path.join(dir, "grok")
+
+    # The reload's probe holds its `initialize` until released. Any other probe
+    # never answers, so a read started beside the reload cannot stand in for it.
+    File.write!(grok, """
+    #!/usr/bin/env python3
+    import json, os, sys
+    request = json.loads(sys.stdin.readline())
+    first = not os.path.exists("#{probes}")
+    open("#{probes}", "a").write("probe\\n")
+    if first:
+        open("#{started}", "w").write("held\\n")
+        open("#{release}").read()
+        def answer(request, result):
+            print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
+        answer(request, {"protocolVersion": 1, "agentInfo": {"version": "9.9.9"}, "agentCapabilities": {}})
+        model = {"id": "model", "currentValue": "reloaded", "options": [{"value": "reloaded", "name": "Reloaded"}]}
+        answer(json.loads(sys.stdin.readline()), {"sessionId": "s", "configOptions": [model]})
+    sys.stdin.read()
+    """)
+
+    File.chmod!(grok, 0o755)
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "providerInstances" => %{
+            "grok" => %{
+              "driver" => "grok",
+              "enabled" => true,
+              "config" => %{"binaryPath" => grok}
+            }
+          }
+        },
+        0
+      )
+
+    on_exit(fn -> HalC2.Acp.forget("grok") end)
+
+    reload = Task.async(fn -> HalC2.Acp.reload("grok") end)
+    port = Port.open({:spawn_executable, "/bin/cat"}, [:binary, args: [started]])
+    assert_receive {^port, {:data, "held\n"}}, 10_000
+
+    # A client lists the providers while the reload's agent is still answering.
+    assert %{"models" => []} = HalC2.Acp.entry("grok")
+
+    File.write!(release, "go\n")
+    assert :ok = Task.await(reload, 10_000)
+
+    assert inspect(:persistent_term.get({HalC2.Acp, "grok", :models}, nil)) =~ "reloaded"
+    assert File.read!(probes) == "probe\n"
+  end
+
   # Reads the grok instance from a fake agent that, holding the read's `initialize`
   # (`request`), waits until the test has forgotten the instance and then runs `script`
   # (Python). Returns once that read has published what it would and finished. The agent

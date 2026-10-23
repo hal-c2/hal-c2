@@ -679,6 +679,15 @@ describe("ClientSettings composer collapse", () => {
   });
 });
 
+describe("ServerSettings settled plugin threads", () => {
+  it("keeps plugin threads out of Settled until turned on", () => {
+    expect(decodeServerSettings({}).sidebarShowSettledPluginThreads).toBe(false);
+    const input = { sidebarShowSettledPluginThreads: true };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+  });
+});
+
 describe("ServerSettings thread settlement", () => {
   it("defaults merge settlement on and inactivity settlement to three days", () => {
     const settings = decodeServerSettings({});

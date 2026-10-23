@@ -1,5 +1,5 @@
 // Pure helpers for the "edit the prompt in $EDITOR" flow (^G). The side-effecting
-// suspend/spawn/restore lives in ChatView; this is the testable part.
+// suspend/spawn/restore lives in the host; this is the testable part.
 
 export interface EditorCommand {
   readonly cmd: string;
