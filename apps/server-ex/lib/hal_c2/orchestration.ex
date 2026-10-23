@@ -1788,7 +1788,9 @@ defmodule HalC2.Orchestration do
   defp interrupted?(runtime, thread_id, run_id) do
     runtime.interrupt(thread_id, run_id) == :ok
   rescue
-    ArgumentError -> false
+    # Any other error out of an adapter is a bug, and must not read as nothing to stop.
+    error in ArgumentError ->
+      if error.message =~ "unknown registry", do: false, else: reraise(error, __STACKTRACE__)
   catch
     :exit, _ -> false
   end
