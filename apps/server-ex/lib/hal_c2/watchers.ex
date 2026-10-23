@@ -17,7 +17,8 @@ defmodule HalC2.Watchers do
   read as a subscription without one.
   """
 
-  @type entry :: {reference(), MapSet.t()}
+  # A bare `reference()` is the legacy entry kept from before refs.
+  @type entry :: {reference(), MapSet.t()} | reference()
   @type t :: %{pid() => entry}
 
   @doc "Adds `pid`'s subscription `ref`, monitoring `pid` if it holds no other."

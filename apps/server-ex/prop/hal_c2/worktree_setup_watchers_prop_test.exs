@@ -113,8 +113,13 @@ defmodule HalC2.WorktreeSetupWatchersPropTest do
     {:monitored_by, by} = Process.info(pid, :monitored_by)
     Process.exit(pid, :kill)
 
-    if server in by,
-      do: receive(do: ({:trace, ^server, :receive, {:DOWN, _, :process, ^pid, _}} -> :ok))
+    if server in by do
+      receive do
+        {:trace, ^server, :receive, {:DOWN, _, :process, ^pid, _}} -> :ok
+      after
+        5_000 -> raise "the server never received the :DOWN of #{inspect(pid)}"
+      end
+    end
 
     Process.put({__MODULE__, :pids}, Map.delete(Process.get({__MODULE__, :pids}, %{}), watcher))
     observe()
