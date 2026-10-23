@@ -17,7 +17,7 @@ use hal_c2_shell::json::Json;
 use hal_c2_shell::thread_view::agents::AgentsModel;
 use hal_c2_shell::thread_view::pull_request_review::PullRequestReview;
 use hal_c2_shell::thread_view::workspace_files::WorkspaceFiles;
-use ljos::prelude::ObjectId;
+use ljos::prelude::{ObjectId, Platform, RecordedUrls};
 use ljos::system::{HostPrefs, report_system_prefs};
 use serde_json::json;
 
@@ -410,6 +410,67 @@ fn a_large_turn_opens_the_diff_when_proactive_panels_are_on() {
     open(&hub, "t2");
     checkpoints(&hub, "t2", &[("cp-9", 1, 1)]);
     assert_eq!(panel(&hub)["isOpen"], false);
+}
+
+/// A web address in the conversation (ThreadView's openLink) opens in the
+/// browser; a dev server's on a thread of another MC of the cluster opens
+/// through the connected MC's forward to it, after a tab there names its
+/// port (features/preview/remote.feature).
+#[test]
+fn a_dev_server_on_another_mcs_thread_opens_through_the_forward() {
+    let hub = Hub::clustered();
+    hub.mc.set_ready(&hub.engine, true);
+    let opened = RecordedUrls::default();
+    Platform::of(&hub.engine).set_open_url(Rc::new(opened.clone()));
+    let open_address = |url: &str| hub.dispatch("thread.openAddress", json!({"url": url}));
+    hub.mc.frame(
+        &hub.engine,
+        "shell",
+        "",
+        json!({"t": "shell", "mcs": [
+            {"mc": "a", "online": true, "epoch": "e", "rev": 1, "environment": {"environmentId": "env-1", "label": "Here"}},
+            {"mc": "b", "online": true, "epoch": "e", "rev": 1, "environment": {"environmentId": "env-2", "label": "There"}},
+        ], "rows": [
+            ["b", "p2", "project", {"id": "p2", "title": "P", "workspaceRoot": "/w"}],
+            ["b", "t2", "thread", {"id": "t2", "projectId": "p2", "title": "T2"}],
+        ]}),
+    );
+    // Off a thread there is no machine to reach it on but this one.
+    open_address("http://localhost:3000/");
+    assert_eq!(opened.urls(), ["http://localhost:3000/"]);
+    hub.dispatch("thread.open", json!({"key": "env-2:t2"}));
+    open_address("http://localhost:3000/app?q=1");
+    // The previews are hidden: the thread's MC says which tabs there are,
+    // and opens one for the address.
+    hub.mc.answer_on(
+        &hub.engine,
+        "env-2",
+        "preview.list",
+        Ok(json!({"sessions": [], "serverEpoch": "e", "revision": 1})),
+    );
+    let tab = json!({"threadId": "t2", "tabId": "tab-1",
+        "navStatus": {"_tag": "Loading", "url": "http://localhost:3000/app?q=1"}});
+    hub.mc
+        .answer_on(&hub.engine, "env-2", "preview.open", Ok(tab));
+    let forward = hub
+        .mc
+        .pending_on("env-1", "preview.forward")
+        .expect("the connected MC is asked to forward");
+    assert_eq!(
+        hub.mc.calls.borrow()[forward].2,
+        json!({"environmentId": "env-2", "threadId": "t2", "port": 3000})
+    );
+    hub.mc
+        .reply(&hub.engine, forward, Ok(json!({"port": 41000})));
+    assert_eq!(
+        opened.urls().last().map(String::as_str),
+        Some("http://localhost:41000/app?q=1")
+    );
+    open_address("https://example.com/");
+    assert_eq!(
+        opened.urls().last().map(String::as_str),
+        Some("https://example.com/")
+    );
 }
 
 #[test]
