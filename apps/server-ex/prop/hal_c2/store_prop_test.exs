@@ -1,7 +1,8 @@
 defmodule HalC2.StorePropTest do
   @moduledoc """
   `HalC2.Store` against a model of the event log: a list of events per stream, the
-  snapshots, sidebar rows, indexed messages and meta values last put, the store's id,
+  snapshots, sidebar rows, indexed messages and meta values last put (and not deleted),
+  the store's id,
   and the next `seq`. Commands append batches (some of which fail and must leave no
   trace), read streams back in every way the MC reads them, put the derived rows,
   search the indexed messages, and restart the store, which must lose nothing it
@@ -70,8 +71,12 @@ defmodule HalC2.StorePropTest do
         {1,
          {:call, __MODULE__, :append_failing,
           [batches(state), oneof([:first, :last]), stream_id()]}},
-        {2, {:call, __MODULE__, :put_meta, [oneof(["k1", "k2"]), utf8()]}},
-        {1, {:call, __MODULE__, :meta, [oneof(["k1", "k2"])]}},
+        {2, {:call, __MODULE__, :put_meta, [meta_key(), utf8()]}},
+        {1, {:call, __MODULE__, :delete_meta, [meta_key()]}},
+        {1, {:call, __MODULE__, :meta, [meta_key()]}},
+        {1, {:call, __MODULE__, :metas, [oneof(["k", "p.", "p", "p.\u{10FFFF}"])]}},
+        {2, {:call, __MODULE__, :stream_tail, [stream_id()]}},
+        {1, {:call, __MODULE__, :streams_present, [resize(4, list(stream_id()))]}},
         {1, {:call, __MODULE__, :list_streams, []}},
         {1, {:call, __MODULE__, :checkpoint, []}},
         {4, {:call, __MODULE__, :reduce_stream, [stream_id(), after_seq(state), read_opts()]}},
@@ -121,6 +126,9 @@ defmodule HalC2.StorePropTest do
   end
 
   defp at, do: integer(1_700_000_000_000, 1_800_000_000_000)
+
+  # Keys that share prefixes, down to the last code point.
+  defp meta_key, do: oneof(["k1", "k2", "p.1", "p.2", "p_3", "p.\u{10FFFF}x", "p/"])
   defp after_seq(state), do: oneof([0, integer(0, state.seq + 1)])
 
   defp read_opts do
@@ -187,6 +195,9 @@ defmodule HalC2.StorePropTest do
   def next_state(state, _result, {:call, _, :put_meta, [key, value]}),
     do: put_in(state.meta[key], value)
 
+  def next_state(state, _result, {:call, _, :delete_meta, [key]}),
+    do: %{state | meta: Map.delete(state.meta, key)}
+
   def next_state(%{store_id: nil} = state, result, {:call, _, :store_id, []}),
     do: %{state | store_id: result}
 
@@ -245,6 +256,21 @@ defmodule HalC2.StorePropTest do
   end
 
   def postcondition(state, {:call, _, :meta, [key]}, result), do: result == state.meta[key]
+
+  def postcondition(state, {:call, _, :metas, [prefix]}, result),
+    do: result == Map.filter(state.meta, fn {key, _} -> String.starts_with?(key, prefix) end)
+
+  def postcondition(state, {:call, _, :stream_tail, [id]}, result) do
+    events = Map.get(state.streams, id, %{events: []}).events
+
+    last =
+      with %{} = e <- List.last(events), do: {e.kind, e.entity, json_roundtrip(e.patch), e.at}
+
+    result == {length(events), last}
+  end
+
+  def postcondition(state, {:call, _, :streams_present, [ids]}, result),
+    do: result == MapSet.new(Enum.filter(ids, &known?(state, &1)))
 
   def postcondition(state, {:call, _, :store_id, []}, result) do
     if state.store_id,
@@ -333,6 +359,10 @@ defmodule HalC2.StorePropTest do
 
   def put_meta(key, value), do: Store.put_meta(key, value)
   def meta(key), do: Store.meta(Store.home_path(), key)
+  def delete_meta(key), do: Store.delete_meta(key)
+  def metas(prefix), do: Store.metas(Store.home_path(), prefix)
+  def stream_tail(id), do: Store.stream_tail(Store.home_path(), id)
+  def streams_present(ids), do: Store.streams_present(Store.home_path(), ids)
   def list_streams, do: Store.list_streams(Store.home_path())
   def store_id, do: Store.id()
   def store_path, do: Store.path()
