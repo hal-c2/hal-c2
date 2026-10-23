@@ -60,6 +60,136 @@ Feature: The MC working with its host machine
     Then macOS opens "src/app.ts" in its default text editor
 
   @mc
+  Scenario: On Windows the default editor is the one Windows opens text files in
+    Given the MC runs on Windows and opens text files in Notepad
+    When a client reads the MC's server config
+    Then the default editor is listed first
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad
+
+  @mc
+  Scenario: On Windows a program the user picked in the Open With dialog is the default editor
+    Given the MC runs on Windows and the user's chosen program is the application notepad.exe
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad
+
+  @mc
+  Scenario: On Windows the MC holds nothing open for the editor it started
+    Given the MC runs on Windows and opens text files in Notepad
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad and the MC holds no port for it
+
+  @mc
+  Scenario: On Windows a text association without a chosen program still names the editor
+    Given the MC runs on Windows and the class registered for .txt opens text files in Notepad
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad
+
+  @mc
+  Scenario: On Windows a chosen program without a command line falls back to the class registered for .txt
+    Given the MC runs on Windows and the chosen program names no command line but the class registered for .txt opens text files in Notepad
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad
+
+  @mc
+  Scenario: On Windows the file goes where the registered command line puts it
+    Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" --visit "%1" --funcall whitespace-mode --file=%1 --user-data-dir="C:\Editor Data" --name=a\"b "C:\Dir\\"'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad with the file where the command line puts it
+
+  @mc
+  Scenario: On Windows the other shell parameters of the registered command line get what the shell gives
+    Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" "%1" %S %2 --dir=%W %H %I'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad with the other parameters filled in
+
+  @mc
+  Scenario: On Windows the file is appended when the registered command line names no file placeholder
+    Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" %S'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad with the file appended after the other parameters
+
+  @mc
+  Scenario: On Windows a quoted bare placeholder is dropped like the shell's unquoted one
+    Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" "%1" "%2"'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad with the quoted empty parameter dropped
+
+  @mc
+  Scenario: On Windows a doubled quote inside quoted text is one quote
+    Given the MC runs on Windows and Notepad is registered with the command line '"NOTEPAD" "%1" "say ""hi"" there"'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad with the doubled quotes read as quotes
+
+  @mc
+  Scenario: On Windows a path with backslashes reaches the editor as it is
+    Given the MC runs on Windows and opens text files in Notepad
+    When a client opens the path "C:\Projects\2024\app.ts" in the default editor
+    Then Windows opens "C:\Projects\2024\app.ts" in Notepad
+
+  @mc
+  Scenario: On Windows the registered command line may name its program with a variable and take the file as %L
+    Given the MC runs on Windows and Notepad is registered through the variable in '"%HAL_C2_TEST_EDITORS%/notepad.exe" %L'
+    When a client opens "src/app.ts" at line 12 column 4 in the default editor
+    Then Windows opens "src/app.ts" in Notepad
+
+  @mc
+  Scenario: On Windows a REG_SZ command line keeps its variables unexpanded
+    Given the MC runs on Windows and Notepad is registered with the REG_SZ command line '"%HAL_C2_TEST_EDITORS%/notepad.exe" %1'
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+  @mc
+  Scenario Outline: On Windows an unquoted program path with spaces offers no default editor
+    Given the MC runs on Windows and Notepad is registered with the unquoted command line '<line>'
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+    Examples:
+      | line                                  |
+      | C:\Program Files\Editor\editor.exe %1   |
+      | C:Program Files\Editor\editor.exe %1    |
+      | \Program Files\Editor\editor.exe %1     |
+      | /Program Files/Editor/editor.exe %1     |
+
+  @mc
+  Scenario: A Windows host's text association is looked up once for the server configs read within a minute
+    Given the MC runs on Windows and keeps the registry's answer for a minute
+    When a client reads the MC's server config
+    And a client reads the MC's server config a second time
+    Then the registry was not queried again
+    And the default editor is listed first
+
+  @mc
+  Scenario: A hung registry lookup does not hold up the server config on Windows
+    Given the MC runs on Windows and reg never answers
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+  @mc
+  Scenario Outline: A registered program path the MC cannot read does not offer a default editor on Windows
+    Given the MC runs on Windows and reg prints the program path "<path>"
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+    Examples:
+      | path       |
+      | \377\376   |
+      | a\000b    |
+
+  @mc
+  Scenario: On Windows a Store app's text association does not offer a default editor
+    Given the MC runs on Windows and the text association names no command line
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+  @mc
+  Scenario: A Windows host without a text association does not offer a default editor
+    Given the MC runs on Windows with no program for text files
+    When a client reads the MC's server config
+    Then the default editor is not offered
+
+  @mc
   Scenario: A default editor installed in a vendor folder is found by its id
     Given the host's default text editor is "acme-editor.desktop", installed as "acme/editor.desktop"
     When a client reads the MC's server config

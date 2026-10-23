@@ -29,10 +29,11 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   # Installs `name` as a program that reports its arguments to this test over TCP and
-  # then stays running until the test hangs up.
-  defp install(context, name) do
+  # then stays running until the test hangs up. `file` is the name it is stored under
+  # when that differs from the name it reports (a Windows editor path needs an extension).
+  defp install(context, name, file \\ nil) do
     context = bin(context) |> listen()
-    path = Path.join(context.bin, name)
+    path = Path.join(context.bin, file || name)
 
     File.write!(path, """
     #!/usr/bin/env bash
@@ -169,6 +170,16 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
+  step ~r/^a client opens the path "(?<file>[^"]+)" in the default editor$/,
+       %{args: [file]} = context do
+    context |> Map.put(:target, file) |> open(%{"cwd" => file, "editor" => "default"})
+  end
+
+  step ~r/^the MC runs on Windows and Notepad is registered through the variable in '(?<line>[^']+)'$/,
+       %{args: [line]} = context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line)
+  end
+
   step ~r/^a client opens "(?<file>[^"]+)" at line (?<line>\d+) column (?<column>\d+) in (?!the default editor)(?<editor>.+)$/,
        %{args: [file, line, column, editor]} = context do
     {command, id} = Map.fetch!(@editors, editor)
@@ -229,6 +240,274 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     |> with_display()
     |> install_script("xdg-mime", ~s([ "$*" = "query default text/plain" ] && echo #{id}))
     |> install("gio")
+  end
+
+  # A Windows host whose `reg` answers for the .txt association: the user's choice
+  # (the ProgId in the answers, else the class registered for .txt) names `txtfile`, whose open
+  # command is the `notepad` that reports to this test.
+  defp windows_host(context, answers, line \\ ~s("NOTEPAD" %1), type \\ "REG_EXPAND_SZ") do
+    World.put_app_env(:os_type, {:win32, :nt})
+    # Stored as notepad.exe: the MC refuses an extensionless Windows path word, so the
+    # fake editor needs an extension to resolve, which Linux runs fine.
+    context = install(context, "notepad", "notepad.exe")
+    # What a registered line can name with %...%, as %SystemRoot% is on a real host.
+    World.put_os_env("HAL_C2_TEST_EDITORS", context.bin)
+
+    command =
+      "    (Default)    #{type}    " <>
+        String.replace(line, "NOTEPAD", Path.join(context.bin, "notepad.exe"))
+
+    progid =
+      Enum.find_value(answers, fn {_key, value} ->
+        case String.split(value) do
+          ["ProgId", "REG_SZ", class] -> class
+          _ -> nil
+        end
+      end)
+
+    # A class the choice names has the command only when it is an application the user
+    # picked: any other ProgId (`brokenfile`) names no command, so the lookup has to fall
+    # through to the class registered for .txt.
+    command_keys =
+      if progid && String.starts_with?(progid, "Applications\\"),
+        do: ["txtfile", progid],
+        else: ["txtfile"]
+
+    body =
+      ~s|case "$2" in\n| <>
+        Enum.map_join(answers, fn {key, value} ->
+          # printf reads backslash escapes in its format, so a value holding
+          # one (a ProgId like Applications\notepad.exe) doubles it.
+          escaped = String.replace(value, "\\", "\\\\")
+          ~s|  *'#{key}'*) printf '\\r\\nHKEY\\r\\n#{escaped}\\r\\n' ;;\n|
+        end) <>
+        Enum.map_join(command_keys, fn class ->
+          ~s|  *'HKCR\\#{class}\\shell\\open\\command'*) printf '\\r\\nHKEY\\r\\n%s\\r\\n' '#{command}' ;;\n|
+        end) <>
+        ~s|  *) exit 1 ;;\nesac|
+
+    install_script(context, "reg", body)
+  end
+
+  # The first word of an unquoted program path with spaces (`C:\Program` of
+  # `C:\Program Files\...`) is a real executable here, named literally (legal on
+  # Linux), so only the MC's refusal of such a word, not a failed lookup, leaves the
+  # default editor unoffered. A word rooted at `/` (`/Program`) cannot be created, so it
+  # is rebased into this scenario's bin directory, which keeps the leading `/`.
+  step ~r/^the MC runs on Windows and Notepad is registered with the unquoted command line '(?<line>[^']+)'$/,
+       %{args: [line]} = context do
+    context = bin(context)
+    [word | rest] = String.split(line, " ", parts: 2)
+    file = word
+    word = if String.starts_with?(word, "/"), do: context.bin <> word, else: word
+    line = Enum.join([word | rest], " ")
+
+    context
+    |> windows_host([{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line)
+    |> install(file)
+  end
+
+  step "the MC runs on Windows and opens text files in Notepad", context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}])
+  end
+
+  step "the MC runs on Windows and the user's chosen program is the application notepad.exe",
+       context do
+    windows_host(context, [
+      {"UserChoice", "    ProgId    REG_SZ    Applications\\notepad.exe"}
+    ])
+  end
+
+  step ~r/^the MC runs on Windows and Notepad is registered with the command line '(?<line>[^']+)'$/,
+       %{args: [line]} = context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line)
+  end
+
+  step "the MC runs on Windows and the class registered for .txt opens text files in Notepad",
+       context do
+    windows_host(context, [{"HKCR\\.txt", "    (Default)    REG_SZ    txtfile"}])
+  end
+
+  # The user's choice names a class with no usable command (a Store app's
+  # `DelegateExecute` class answers nothing here), but the class registered for
+  # .txt opens text files in Notepad.
+  step "the MC runs on Windows and the chosen program names no command line but the class registered for .txt opens text files in Notepad",
+       context do
+    windows_host(context, [
+      {"UserChoice", "    ProgId    REG_SZ    brokenfile"},
+      {"HKCR\\.txt", "    (Default)    REG_SZ    txtfile"}
+    ])
+  end
+
+  step ~r/^the MC runs on Windows and Notepad is registered with the (?<type>REG_SZ|REG_EXPAND_SZ) command line '(?<line>[^']+)'$/,
+       %{args: [type, line]} = context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line, type)
+  end
+
+  # A Store app registers no command line, so `reg query /ve` prints a placeholder as data.
+  step "the MC runs on Windows and the text association names no command line", context do
+    windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], "(value not set)")
+  end
+
+  # `path` is printf escapes: bytes that are not UTF-8 (`\377`) or a NUL (`\000`) in
+  # the program of the registered command line.
+  step ~r/^the MC runs on Windows and reg prints the program path "(?<path>[^"]+)"$/,
+       %{args: [path]} = context do
+    World.put_app_env(:os_type, {:win32, :nt})
+
+    body =
+      """
+      case "$2" in
+        *UserChoice*) printf '\\r\\nHKEY\\r\\n    ProgId    REG_SZ    txtfile\\r\\n' ;;
+        *'HKCR\\txtfile\\shell\\open\\command'*) printf '\\r\\nHKEY\\r\\n    (Default)    REG_SZ    "#{path}" %%1\\r\\n' ;;
+        *) exit 1 ;;
+      esac
+      """
+
+    install_script(bin(context), "reg", body)
+  end
+
+  # The registry's answers are kept for a minute, and `reg` logs each query it gets.
+  step "the MC runs on Windows and keeps the registry's answer for a minute", context do
+    World.put_app_env(:windows_editor_cache_ms, 60_000)
+    :persistent_term.erase({HalC2.Editors, :windows_editor})
+    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase({HalC2.Editors, :windows_editor}) end)
+
+    context =
+      windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}])
+
+    log = Path.join(context.bin, "reg.log")
+    script = Path.join(context.bin, "reg")
+    [shebang, body] = script |> File.read!() |> String.split("\n", parts: 2)
+    File.write!(script, shebang <> "\necho query >> '#{log}'\n" <> body)
+    Map.put(context, :reg_log, log)
+  end
+
+  step "a client reads the MC's server config a second time", context do
+    context = Map.put(context, :queries_after_first, registry_queries(context))
+
+    client =
+      World.client(context)
+      |> Mc.sub(10, %{"type" => "config", "environment" => context.mc.environment})
+
+    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 10))
+    context |> World.put_client(client) |> Map.put(:server_config, frame["config"])
+  end
+
+  step "the registry was not queried again", context do
+    assert context.queries_after_first > 0
+    assert registry_queries(context) == context.queries_after_first
+    context
+  end
+
+  defp registry_queries(context) do
+    case File.read(context.reg_log) do
+      {:ok, log} -> log |> String.split("\n", trim: true) |> length()
+      {:error, _} -> 0
+    end
+  end
+
+  step "the MC runs on Windows and reg never answers", context do
+    World.put_app_env(:os_type, {:win32, :nt})
+    install_script(bin(context), "reg", "exec sleep 30")
+  end
+
+  step "the MC runs on Windows with no program for text files", context do
+    World.put_app_env(:os_type, {:win32, :nt})
+    install_script(bin(context), "reg", "exit 1")
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["notepad", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  # The fake editor is still running (it waits for the hangup): a launch that
+  # waits on it, or buffers what it writes, would still hold its port here.
+  step ~r/^Windows opens "[^"]+" in Notepad and the MC holds no port for it$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["notepad", context.target]
+
+    names =
+      for port <- Port.list(),
+          {:name, name} <- [Port.info(port, :name)],
+          do: List.to_string(name)
+
+    refute Enum.any?(names, &String.ends_with?(&1, "/notepad")),
+           "the MC still holds a port for the running editor: #{inspect(names)}"
+
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the file where the command line puts it$/,
+       context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+
+    assert argv == [
+             "notepad",
+             "--visit",
+             context.target,
+             "--funcall",
+             "whitespace-mode",
+             "--file=" <> context.target,
+             "--user-data-dir=C:\\Editor Data",
+             "--name=a\"b",
+             "C:\\Dir\\"
+           ]
+
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the other parameters filled in$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    # %S is "1", a bare %2 is dropped, %W is the file's directory, %H and %I are "0".
+    assert argv == [
+             "notepad",
+             context.target,
+             "1",
+             "--dir=#{Path.dirname(context.target)}",
+             "0",
+             "0"
+           ]
+
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the file appended after the other parameters$/,
+       context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    # %S names no file, so the file goes last even though the line holds a placeholder.
+    assert argv == ["notepad", "1", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the quoted empty parameter dropped$/,
+       context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    # A quoted "%2" drops like the bare one, where the shell would pass one empty argument.
+    assert argv == ["notepad", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step ~r/^Windows opens "[^"]+" in Notepad with the doubled quotes read as quotes$/, context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["notepad", context.target, "say \"hi\" there"]
+    :gen_tcp.close(conn)
+    context
   end
 
   step "DISPLAY is set but empty and there is no Wayland display", context do
