@@ -373,10 +373,14 @@ defmodule HalC2.Store do
 
       :ok = Sqlite3.bind(stmt, [seq])
 
-      case Sqlite3.step(db, stmt) do
-        {:row, [kind, entity, patch, at]} -> {count, {kind, entity, decode_patch(patch), at}}
-        :done -> {count, nil}
-      end
+      tail =
+        case Sqlite3.step(db, stmt) do
+          {:row, [kind, entity, patch, at]} -> {kind, entity, decode_patch(patch), at}
+          :done -> nil
+        end
+
+      :ok = Sqlite3.release(db, stmt)
+      {count, tail}
     end)
   end
 
