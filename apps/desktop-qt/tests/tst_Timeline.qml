@@ -72,15 +72,43 @@ Item {
         }
     }
 
+    // The size of a desktop window's conversation.
+    Component {
+        id: tallTimelineComponent
+        Timeline {
+            width: 833
+            height: 555
+            model: rows
+        }
+    }
+
+    readonly property int roomyHeight: 700
+    // How far from the end a scrolled-up thread is put, past the host's room: a
+    // wheel notch travels a fraction of it, so the tests that scroll one notch
+    // down cannot reach the end. How far a notch travels is a platform and
+    // user setting, so this stays a heuristic on the down side: on an
+    // aggressively configured machine one notch could still reach the end.
+    // The up side no longer relies on it: scrollUp verifies the distance.
+    readonly property int scrollMargin: 300
+
     // A host that gives the timeline more room while the user reads, as the
     // composer resting on one line does (Composer.conversationScrolled).
     Component {
         id: roomyTimelineComponent
         Timeline {
             width: 600
-            height: scrolledAway ? 700 : 400
+            height: scrolledAway ? root.roomyHeight : 400
             model: rows
         }
+    }
+
+    // Something else in the window that draws a frame when it ticks.
+    Text {
+        id: clock
+        property int ticks: 0
+        x: 0
+        y: 0
+        text: ticks
     }
 
     TestCase {
@@ -125,11 +153,38 @@ Item {
             rows.setProperty(last, "text", rows.get(last).text + "\n\nAnother paragraph of the reply, written just now.");
         }
 
-        function scrollUp(timeline) {
+        // Scrolls up until the end is more than `room` (the height the host has
+        // when the scroll ends, which a roomy host only makes after the first
+        // notch, so it is the caller's to give) plus the margin away.
+        // How far a wheel notch carries is the platform's and the machine's: a
+        // short scroll would leave the room the host makes showing the end,
+        // which is not mid-thread. The margin is what the tests that then
+        // scroll one notch down rely on, whatever the batch overshoots by, and
+        // what absorbs a row measured late shortening the way to the end.
+        function scrollUp(timeline, room) {
             const list = view(timeline);
-            for (let i = 0; i < 5; ++i)
-                mouseWheel(list, list.width / 2, list.height / 2, 0, 360);
-            tryVerify(() => !list.moving && !timeline.following, 5000, "scrolling up stops following");
+            const farUp = () => list.originY + list.contentHeight - list.contentY > room + root.scrollMargin;
+            for (let i = 0; i < 20 && !farUp(); ++i) {
+                for (let notch = 0; notch < 5; ++notch)
+                    mouseWheel(list, list.width / 2, list.height / 2, 0, 360);
+                tryVerify(() => !list.moving && !timeline.following, 5000, "scrolling up stops following");
+            }
+            verify(farUp(), "the thread is scrolled well away from its end");
+        }
+
+        // Lays the end of the list out until its height stops changing: the rows
+        // there are measured as they come into view. tryVerify waits between
+        // its polls for the event loop to run, so two equal readings are a
+        // frame apart, with the layout run before each.
+        function settleAtEnd(list) {
+            let measured = -1;
+            tryVerify(() => {
+                list.forceLayout();
+                list.positionViewAtEnd();
+                const settled = list.contentHeight === measured;
+                measured = list.contentHeight;
+                return settled && atEnd(list);
+            }, 5000, "the rows at the end are measured");
         }
 
         // Scenario: The view follows new output while the user is at the end
@@ -147,7 +202,7 @@ Item {
         function test_scrollingAwayStopsFollowing() {
             const timeline = longThread();
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, timeline.height);
             const contentY = list.contentY;
             const before = list.contentHeight;
             grow();
@@ -164,7 +219,7 @@ Item {
         function test_returnsToTheEnd() {
             const timeline = longThread();
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, timeline.height);
             const jump = findChild(timeline, "jumpToLatest");
             mouseClick(jump);
             tryVerify(() => atEnd(list) && timeline.following, 5000, "the latest output is shown");
@@ -198,7 +253,7 @@ Item {
         function test_jumpToTheEndIsAKeyboardButton() {
             const timeline = longThread();
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, timeline.height);
             const jump = findChild(timeline, "jumpToLatest");
             compare(jump.Accessible.role, Accessible.Button);
             compare(jump.Accessible.name, "Scroll to end");
@@ -277,7 +332,7 @@ Item {
             wait(0);
             verify(!timeline.following, "the room made does not count as the user returning");
             verify(timeline.scrolledAway, "the room stays made");
-            compare(timeline.height, 700);
+            compare(timeline.height, root.roomyHeight);
             verify(findChild(timeline, "jumpToLatest").visible);
         }
 
@@ -287,8 +342,12 @@ Item {
             const list = view(timeline);
             mouseWheel(list, list.width / 2, 100, 0, 120);
             tryVerify(() => timeline.scrolledAway && !list.moving, 5000, "the host makes room once the scroll ends");
-            // The room made shows the end, without the user scrolling there.
-            list.positionViewAtEnd();
+            // The room made shows the end, without the user scrolling there. The
+            // rows at the end are measured as they come into view, so the end
+            // is laid out until it stops changing before the user scrolls down
+            // to it: a row measured under a wheel in flight moves the list and
+            // the view stops following.
+            settleAtEnd(list);
             verify(!timeline.following);
             // Down where the list goes no further.
             mouseWheel(list, list.width / 2, 100, 0, -120);
@@ -302,7 +361,7 @@ Item {
         function test_scrollingDownMidThreadOnlyScrolls() {
             const timeline = longThread(roomyTimelineComponent);
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, root.roomyHeight);
             const away = list.contentY;
             mouseWheel(list, list.width / 2, 100, 0, -120);
             tryVerify(() => !list.moving && list.contentY > away, 5000, "the view scrolls down");
@@ -314,7 +373,7 @@ Item {
         function test_scrollingDownOverTheJumpButtonMidThreadOnlyScrolls() {
             const timeline = longThread(roomyTimelineComponent);
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, root.roomyHeight);
             const jump = findChild(timeline, "jumpToLatest");
             verify(jump.visible);
             mouseWheel(jump, jump.width / 2, jump.height / 2, 0, -120);
@@ -324,11 +383,111 @@ Item {
             verify(!atEnd(list));
         }
 
+        // A reply taller than the view with a table in it, made again each time
+        // the list lays it out.
+        function tableReply() {
+            const words = "words that run on long enough to wrap the column they are in onto a second line";
+            let text = "A paragraph before the table, " + words + ".\n\nAnother one, " + words + ".\n\n";
+            text += "| Item | Finding | Now |\n|---|---|---|\n";
+            for (let i = 0; i < 16; ++i)
+                text += "| #" + (400 + i) + " | `code` and " + words + " | a worker fixing it, with " + words + " |\n";
+            text += "\nThese are still going:\n";
+            for (let i = 0; i < 3; ++i)
+                text += "- **#" + (470 + i) + ":** " + words + ".\n";
+            return text + "\nA paragraph after the list, " + words + ".";
+        }
+
+        function test_aTableAboveTheEndHoldsStill_data() {
+            // How tall the table is made and settles depends on the font, so a
+            // few lengths of thread after it.
+            return [8, 11, 14].map(after => ({
+                        tag: after + " rows after the table",
+                        after: after
+                    }));
+        }
+
+        // Scenario: The end of the thread holds still while nothing new is written
+        function test_aTableAboveTheEndHoldsStill(data) {
+            rows.clear();
+            for (let i = 0; i < 10; ++i) {
+                rows.append(root.row({
+                    rowId: "message-" + i,
+                    text: "Message " + i
+                }));
+            }
+            rows.append(root.row({
+                rowId: "reply",
+                text: tableReply()
+            }));
+            for (let i = 0; i < data.after; ++i) {
+                rows.append(root.row({
+                    rowId: "after-" + i,
+                    text: "The loops are still running. I'll wait for them."
+                }));
+            }
+            const timeline = createTemporaryObject(tallTimelineComponent, root);
+            const list = view(timeline);
+            // Frames drawn elsewhere in the window, as the Agents panel's clock
+            // draws them, are what a view that cannot settle moves on. The
+            // first ones let the rows laid out last settle their heights.
+            for (let i = 0; i < 20; ++i) {
+                ++clock.ticks;
+                wait(16);
+            }
+            let moves = 0;
+            const count = () => ++moves;
+            list.contentYChanged.connect(count);
+            for (let i = 0; i < 30; ++i) {
+                ++clock.ticks;
+                wait(16);
+            }
+            list.contentYChanged.disconnect(count);
+            compare(moves, 0, "the view holds still");
+            verify(atEnd(list) && list.itemAtIndex(rows.count - 1), "the last row is in view");
+        }
+
+        // Scenario: The end of the thread holds still while nothing new is written
+        function test_rowsMadeAgainAfterAResizeHoldStill() {
+            const words = "words that run on long enough to wrap the column they are in onto another line";
+            rows.clear();
+            for (let i = 0; i < 40; ++i) {
+                rows.append(root.row({
+                    rowId: "message-" + i,
+                    text: "Message " + i + ", " + words + ", and " + words + "."
+                }));
+            }
+            const timeline = createTemporaryObject(tallTimelineComponent, root);
+            const list = view(timeline);
+            settleAtEnd(list);
+            // The rows at the end are dropped, and made again in a narrower
+            // column, where they wrap onto more lines.
+            list.forceActiveFocus();
+            tryVerify(() => list.activeFocus, 2000, "the conversation has the keyboard");
+            keyClick(Qt.Key_Home);
+            verify(!list.itemAtIndex(rows.count - 1), "the last row is dropped");
+            timeline.width = 500;
+            keyClick(Qt.Key_End);
+            tryVerify(() => atEnd(list) && timeline.following, 5000, "End returns to the end");
+            for (let i = 0; i < 6; ++i) {
+                ++clock.ticks;
+                wait(16);
+            }
+            let moves = 0;
+            const count = () => ++moves;
+            list.contentYChanged.connect(count);
+            for (let i = 0; i < 30; ++i) {
+                ++clock.ticks;
+                wait(16);
+            }
+            list.contentYChanged.disconnect(count);
+            compare(moves, 0, "the rows made again do not snap to another height");
+        }
+
         // Scenario: Another thread opens at its end however far the last was scrolled
         function test_anotherThreadOpensAtItsEnd() {
             const timeline = longThread(roomyTimelineComponent);
             const list = view(timeline);
-            scrollUp(timeline);
+            scrollUp(timeline, root.roomyHeight);
             tryVerify(() => timeline.scrolledAway, 5000);
             otherRows.clear();
             for (let i = 0; i < 30; ++i) {
@@ -533,6 +692,27 @@ Item {
             tryVerify(() => loaded.pictured, 2000, "the image is drawn");
             verify(!visibleIn(findText(question, "cart.png")), "a drawn image needs no name");
             verify(visibleIn(findText(question, "checkout.png")), "an image still on its way is named");
+        }
+
+        // Scenario: A sent file shows its name, kind and size
+        function test_userMessageShowsItsFiles() {
+            actionRows.clear();
+            actionRows.append(root.row({
+                rowId: "question",
+                author: "user",
+                text: "",
+                sentFiles: [{
+                    id: "file-1",
+                    name: "recording.mov",
+                    detail: "MOV · 15.1 MiB"
+                }]
+            }));
+            const timeline = createTemporaryObject(actionTimelineComponent, root);
+            const list = view(timeline);
+            tryVerify(() => list.itemAtIndex(0) !== null);
+            const question = list.itemAtIndex(0);
+            verify(visibleIn(findText(question, "recording.mov")), "the file is named");
+            verify(visibleIn(findText(question, "MOV · 15.1 MiB")), "with its kind and size");
         }
 
         // The opacity a thing is drawn with, through its parents.

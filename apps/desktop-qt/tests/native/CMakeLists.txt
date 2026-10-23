@@ -104,6 +104,9 @@ add_executable(tst_ThemeResolution tst_ThemeResolution.cpp)
 target_compile_definitions(tst_ThemeResolution PRIVATE HAL_C2_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../..")
 target_link_libraries(tst_ThemeResolution PRIVATE hal_c2_native Qt6::Test)
 add_test(NAME ThemeResolution COMMAND tst_ThemeResolution)
+add_executable(tst_ThisMachine tst_ThisMachine.cpp)
+target_link_libraries(tst_ThisMachine PRIVATE hal_c2_native Qt6::Test)
+add_test(NAME ThisMachine COMMAND tst_ThisMachine)
 set_tests_properties(ThemeResolution PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
 # Regressions the property tests (tests/prop) found, one tst_*Regression.cpp
 # each, picked up on the next build.

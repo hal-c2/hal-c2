@@ -2,8 +2,10 @@
 
 #include <QCache>
 #include <QClipboard>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QLocale>
 #include <QRegularExpression>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -295,6 +297,8 @@ QString markerDetail(const QJsonObject& item) {
   const QString type = text(item, QLatin1String("type"));
   if (type == QLatin1String("fork")) return QStringLiteral("Continues in %1").arg(text(item, QLatin1String("targetThreadId")));
   if (type == QLatin1String("thread_created")) return text(item, QLatin1String("title"));
+  // A worker's result, which the card under its title shows.
+  if (const auto notice = timeline::noticeOf(item); notice && !notice->workerThreadId.isEmpty()) return notice->detail;
   return {};
 }
 
@@ -762,10 +766,21 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
     if (kind == QLatin1String("run")) m_agentsTouched = true;
     // Runs, attempts and requests change fold labels, visibility and the
     // working state; they change far less often than items.
+    const QJsonValue wasOrdinal = existed ? current->value(QLatin1String("ordinal")) : QJsonValue();
     if (next) {
       byKind.insert(id, *next);
     } else {
       byKind.remove(id);
+    }
+    // A renumbered run (it took its start ordinal) moves its windowed
+    // entities' cached run_ord with it: re-cache them, or restore()/park()
+    // would filter and trim by the stale ordinal until they next change.
+    if (kind == QLatin1String("run") && existed && next && wasOrdinal != next->value(QLatin1String("ordinal"))) {
+      for (const QString& windowed : kWindowed) {
+        for (auto it = m_entities[windowed].cbegin(); it != m_entities[windowed].cend(); ++it) {
+          if (text(*it, QLatin1String("runId")) == id) m_dirty.insert({windowed, it.key()});
+        }
+      }
     }
     return true;
   }
@@ -870,13 +885,51 @@ QList<TimelineModel::Row> TimelineModel::project() const {
              !interruptRequested.contains(runId));
   };
 
+  // The thread's latest run, as the MC's (HalC2.Projection.Shell.latest_run/1): a
+  // run held for the user that never started (still queued, or cancelled while
+  // held) waits numbered above the run that passed it. Equal ordinals (legacy runs
+  // stored without one read 0) go to the later-starting run for runs with an item
+  // here: a run is as new as its first item in timeline order. That is start
+  // order, where the MC's tie-break is newest *made*; for legacy ties where a
+  // later-made run passed an earlier-made one the two can disagree on the pick.
+  // Runs
+  // with no item here (none created yet, or outside the window) are settled by id
+  // instead, where the MC would take the newest made; the pick never depends on
+  // hash order either way. The item index is built only when the highest ordinal
+  // actually ties, so the common case is one pass over the runs.
+  const auto heldNeverStarted = [](const QJsonObject& run) {
+    const QString status = text(run, QLatin1String("status"));
+    return (status == QLatin1String("queued") || status == QLatin1String("cancelled")) &&
+           run.value(QLatin1String("queueHeld")).toBool();
+  };
   QString latestRun;
   double latestOrdinal = -1;
+  bool latestTied = false;
   for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
+    if (heldNeverStarted(*it)) continue;
     const double ordinal = it->value(QLatin1String("ordinal")).toDouble();
     if (ordinal > latestOrdinal) {
       latestOrdinal = ordinal;
       latestRun = it.key();
+      latestTied = false;
+    } else if (ordinal == latestOrdinal) {
+      latestTied = true;
+    }
+  }
+  if (latestTied) {
+    QHash<QString, int> firstItem;
+    for (int i = 0; i < m_order.size(); ++i) {
+      const QString runId = text(items.value(m_order.at(i)), QLatin1String("runId"));
+      if (!runId.isEmpty() && !firstItem.contains(runId)) firstItem.insert(runId, i);
+    }
+    int latestFirst = -1;
+    for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
+      if (heldNeverStarted(*it) || it->value(QLatin1String("ordinal")).toDouble() != latestOrdinal) continue;
+      const int first = firstItem.value(it.key(), -1);
+      if (first > latestFirst || (first == latestFirst && it.key() > latestRun)) {
+        latestFirst = first;
+        latestRun = it.key();
+      }
     }
   }
 
@@ -1239,6 +1292,7 @@ QHash<int, QByteArray> TimelineModel::roleNames() const {
       {ModelRole, "agentModel"}, {PullRequestUrlRole, "pullRequestUrl"},
       {MessageIdRole, "messageId"},
       {AttachmentsRole, "attachments"},
+      {SentFilesRole, "sentFiles"},
       {WarningRole, "warning"},
   };
 }
@@ -1401,6 +1455,10 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       if (type == QLatin1String("user_message") && text(item, QLatin1String("createdBy")) == QLatin1String("agent")) {
         return text(item, QLatin1String("senderThreadId"));
       }
+      // A finished worker's notification opens the worker's thread.
+      if (row.kind == QLatin1String("marker")) {
+        if (const auto notice = timeline::noticeOf(item)) return notice->workerThreadId;
+      }
       return QString();
     case PullRequestUrlRole: {
       if (row.kind != QLatin1String("message")) return QString();
@@ -1474,6 +1532,27 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         });
       }
       return images;
+    }
+    case SentFilesRole: {
+      QVariantList files;
+      if (type != QLatin1String("user_message")) return files;
+      for (const QJsonValue& value : item.value(QLatin1String("attachments")).toArray()) {
+        const QJsonObject attachment = value.toObject();
+        const QString kind = text(attachment, QLatin1String("type"));
+        if (kind == QLatin1String("image")) continue;
+        const QString name = text(attachment, QLatin1String("name"));
+        QString detail;
+        if (kind == QLatin1String("file")) {
+          const QString suffix = QFileInfo(name).suffix().toUpper();
+          const QString size = QLocale(QLocale::English, QLocale::UnitedStates)
+                                   .formattedDataSize(attachment.value(QLatin1String("sizeBytes")).toInteger(), 1, QLocale::DataSizeIecFormat);
+          detail = suffix.isEmpty() ? size : QStringLiteral("%1 · %2").arg(suffix, size);
+        }
+        files.append(QVariantMap{{QStringLiteral("id"), text(attachment, QLatin1String("id"))},
+                                 {QStringLiteral("name"), name},
+                                 {QStringLiteral("detail"), detail}});
+      }
+      return files;
     }
     case FilesRole: {
       QVariantList files;

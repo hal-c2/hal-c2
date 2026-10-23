@@ -200,6 +200,32 @@ const Steps steps([] {
     startNotifiedRun(world, {{QStringLiteral("source"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("delegated_task")}, {QStringLiteral("taskIds"), QJsonArray{kTask}}}},
                              {QStringLiteral("outcome"), QStringLiteral("completed")}, {QStringLiteral("summary"), c[0] + QStringLiteral(" finished")}});
   });
+  // The same, as the MC now records it: it names the worker and carries its result.
+  step(QStringLiteral("a task the agent delegated as %1 finished with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    listChildThread(world);
+    startNotifiedRun(world, {{QStringLiteral("source"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("delegated_task")}, {QStringLiteral("taskIds"), QJsonArray{kTask}}}},
+                             {QStringLiteral("outcome"), QStringLiteral("completed")}, {QStringLiteral("summary"), c[0] + QStringLiteral(" finished")},
+                             {QStringLiteral("workerThreadId"), kChild}, {QStringLiteral("workerTitle"), c[0]}, {QStringLiteral("detail"), c[1]}});
+  });
+  step(QStringLiteral("the worker's notification reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const int row = rowOf(world, QStringLiteral("marker"));
+    expect(role(timeline(world), row, TimelineModel::TitleRole) == c[0], describe(timeline(world)));
+    expect(drawn(world, QStringLiteral("workerResultTitle"))->property("text") == c[0], QStringLiteral("the notification is not drawn as a card for \"%1\"").arg(c[0]));
+    expect(!draws(world, QStringLiteral("markerTitle")), QStringLiteral("the notification is drawn as a plain divider"));
+    expect(!draws(world, QStringLiteral("messageAttribution")), QStringLiteral("the notification is drawn as someone's message"));
+  });
+  step(QStringLiteral("the worker's result %1 is hidden until the user opens it").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(role(timeline(world), rowOf(world, QStringLiteral("marker")), TimelineModel::TextRole) == c[0], describe(timeline(world)));
+    expect(!draws(world, QStringLiteral("workerResultText")), QStringLiteral("the result is shown before it is opened"));
+    click(world, QStringLiteral("workerResultToggle"));
+    expect(drawn(world, QStringLiteral("workerResultText"))->property("text") == c[0], QStringLiteral("the opened result does not read \"%1\"").arg(c[0]));
+  });
+  step(QStringLiteral("the notification links to the worker's thread"), [](World& world, const Captures&, const Table&) {
+    expect(role(timeline(world), rowOf(world, QStringLiteral("marker")), TimelineModel::ThreadRole) == kChild, describe(timeline(world)));
+    click(world, QStringLiteral("workerResultTitle"));
+    world.waitFor([&] { return shownThread(world) == key(world, kChild); },
+                  [&] { return QStringLiteral("the worker's thread to open; the window shows %1").arg(shownThread(world)); });
+  });
   step(QStringLiteral("a thread stored the failed result of the delegated task %1 as a user message").arg(q), [](World& world, const Captures& c, const Table&) {
     listChildThread(world);
     const QString run = startRun(world);
@@ -213,6 +239,11 @@ const Steps steps([] {
     // claude/thread_runtime.ex wake.
     startNotifiedRun(world, {{QStringLiteral("source"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("background_task")}}},
                              {QStringLiteral("outcome"), QStringLiteral("updated")}, {QStringLiteral("summary"), QStringLiteral("Background activity updated")}});
+  });
+  step(QStringLiteral("a pull request the thread owns woke its agent because its checks failed"), [](World& world, const Captures&, const Table&) {
+    // pull_requests/wakes.ex wake.
+    startNotifiedRun(world, {{QStringLiteral("source"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("pull_request")}, {QStringLiteral("pullRequests"), QJsonArray{QStringLiteral("github.com/acme/app#12")}}}},
+                             {QStringLiteral("outcome"), QStringLiteral("failed")}, {QStringLiteral("summary"), QStringLiteral("acme/app#12: checks failing")}});
   });
   step(QStringLiteral("a thread stored the agent's own wake-up as a user message"), [](World& world, const Captures&, const Table&) {
     const QString run = startRun(world);

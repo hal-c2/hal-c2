@@ -838,10 +838,19 @@ export const OrchestrationV2Notification = Schema.Struct({
       kind: Schema.Literals(["background_task", "background_command", "monitor"]),
       nativeRef: Schema.optional(OrchestrationV2ProviderRef),
     }),
+    Schema.Struct({
+      kind: Schema.Literal("pull_request"),
+      // Link keys (`host/repository#number`) of the pull requests that changed.
+      pullRequests: Schema.Array(TrimmedNonEmptyString),
+    }),
   ]),
   // Item status describes this timeline record; outcome describes the reported work.
   outcome: Schema.Literals(["completed", "failed", "cancelled", "updated", "unknown"]),
   summary: TrimmedNonEmptyString,
+  // The worker that produced a delegated task's result: its thread (to open) and title,
+  // with `detail` its result text, capped by the MC (the full text is in that thread).
+  workerThreadId: Schema.optional(ThreadId),
+  workerTitle: Schema.optional(Schema.String),
   detail: Schema.optional(Schema.String),
 });
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
@@ -1592,6 +1601,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
    * to forward to it, and the thread itself is listed by the machine it is on.
    */
   movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadMoveTarget)),
+  /** The plugin that started the thread, as `OrchestrationV2AppThread.plugin`. */
+  plugin: Schema.optional(Schema.NullOr(ThreadPluginMark)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -2252,6 +2263,26 @@ export const OrchestrationV2StoredEventJson = Schema.Struct({
 });
 export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJson.Type;
 
+// Where a delegated task's subagent works. Omitted is the parent's own checkout
+// (`inherit`); the rest need a full-access/default parent.
+export const OrchestrationV2DelegatedTaskWorkspace = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("inherit") }),
+  Schema.Struct({ type: Schema.Literal("root") }),
+  Schema.Struct({
+    type: Schema.Literal("existing_worktree"),
+    worktreePath: TrimmedNonEmptyString,
+    branch: Schema.optional(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("worktree"),
+    baseRef: Schema.optional(TrimmedNonEmptyString),
+    branch: Schema.optional(TrimmedNonEmptyString),
+    startFromOrigin: Schema.optional(Schema.Boolean),
+  }),
+]);
+export type OrchestrationV2DelegatedTaskWorkspace =
+  typeof OrchestrationV2DelegatedTaskWorkspace.Type;
+
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread.create"),
@@ -2620,6 +2651,7 @@ export const OrchestrationV2Command = Schema.Union([
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
+    workspace: Schema.optional(OrchestrationV2DelegatedTaskWorkspace),
     // Omitted behaves as "settled_only" (no wake while the parent has a live
     // run); producers that want fire-and-forget wakes must set "always".
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
@@ -2794,6 +2826,12 @@ export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /** Allows snapshot fallbacks to contain a bounded, pageable history window. */
   acceptBoundedSnapshot: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Where the timeline the client already holds starts (a snapshot's
+   * `historyCursor`; null: the whole thread), so a replacement subscription keeps the
+   * earlier turns the user paged in. Only protocol-3 servers read it.
+   */
+  historyCursor: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
 });
 export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2SubscribeThreadInput.Type;
 
@@ -2814,36 +2852,6 @@ export const OrchestrationV2ThreadDetailSnapshot = Schema.Struct({
   latestLocalTurnOrdinal: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
 });
 export type OrchestrationV2ThreadDetailSnapshot = typeof OrchestrationV2ThreadDetailSnapshot.Type;
-
-/**
- * Progressive cold open: full control-plane projection arrays with only a
- * recent window of timeline rows. `historyCursor` is opaque; clients must not
- * parse it. Resume live events with `afterSequence = snapshotSequence`.
- */
-export const OrchestrationV2ThreadBoundedSnapshot = Schema.Struct({
-  snapshotSequence: NonNegativeInt,
-  projection: OrchestrationV2ThreadProjection,
-  historyCursor: Schema.NullOr(TrimmedNonEmptyString),
-  hasMoreHistory: Schema.Boolean,
-  /**
-   * Max local turn ordinal over the authoritative full projection turnItems.
-   * Clients use this as a partial-timeline watermark when the bounded window
-   * has no local rows (inherited-only).
-   */
-  latestLocalTurnOrdinal: Schema.NullOr(NonNegativeInt),
-  /** True when complete turns or required live control state exceed the usual byte budget. */
-  payloadBudgetExceeded: Schema.optional(Schema.Boolean),
-});
-export type OrchestrationV2ThreadBoundedSnapshot = typeof OrchestrationV2ThreadBoundedSnapshot.Type;
-
-/** Older timeline page for progressive history. Rows are chronological. */
-export const OrchestrationV2ThreadHistoryPage = Schema.Struct({
-  snapshotSequence: NonNegativeInt,
-  items: Schema.Array(OrchestrationV2ProjectedTurnItem),
-  nextCursor: Schema.NullOr(TrimmedNonEmptyString),
-  hasMoreHistory: Schema.Boolean,
-});
-export type OrchestrationV2ThreadHistoryPage = typeof OrchestrationV2ThreadHistoryPage.Type;
 
 export const OrchestrationV2ThreadStreamItem = Schema.Union([
   Schema.Struct({

@@ -448,7 +448,7 @@ defmodule HalC2.AgentSessions do
     driver = thread.source
     at = iso(thread.updated_ms)
     created = hd(thread.messages).created_at
-    provider_thread_id = "provider-thread:#{driver}:#{thread_id}"
+    provider_thread_id = Entities.provider_thread_id(driver, thread_id)
     model = thread.model || @default_models[driver]
 
     app_thread =

@@ -34,7 +34,15 @@ run after that starts the version the MC last moved to. It listens on
 | Keep it running in the background (macOS, Linux) | `./hal-c2-mc-<version>-<platform> install`   |
 | Inspect the background service                   | `./hal-c2-mc-<version>-<platform> status`    |
 | Restart the background service                   | `./hal-c2-mc-<version>-<platform> restart`   |
+| Print a link that pairs a client with this MC    | `./hal-c2-mc-<version>-<platform> pair`      |
 | Stop and remove the background service           | `./hal-c2-mc-<version>-<platform> uninstall` |
+
+To pair a phone, the terminal app, or another desktop app with the MC, run `pair`
+while the MC is running and open the link it prints in the client (it works once,
+for five minutes). For a client on another machine, name an address it can reach
+(`pair http://<private-ip>:<port>`) or use `pair --tailscale`; see
+[Remote access](./remote-access.md#pair-over-a-lan-or-private-network). Use the same
+`HAL_C2_HOME` or `HAL_C2_MC_HOME` as the MC if you gave it one.
 
 See [Running in the background](./background-service.md) for what the service does.
 An MC moves to a newer version from the client's update notice, and passes it on to

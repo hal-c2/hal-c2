@@ -8,6 +8,7 @@ defmodule HalC2.Application do
     children =
       if Application.fetch_env!(:hal_c2, :start_mc) do
         :ok = HalC2.Desktop.configure()
+        :ok = lock_home()
         :ok = prepare_files()
         children()
       else
@@ -30,13 +31,22 @@ defmodule HalC2.Application do
   """
   def children do
     [
+      # Boot took the home's lock (`lock_home/0`); an MC updated in place takes it here.
+      HalC2.HomeLock,
       # Distribution starts here, before anything reads `node()`.
       HalC2.Cluster,
+      # Before anything starts or resumes a provider: kills the programs an MC
+      # that died left running, so no thread gets a second agent, and records
+      # every program started from here on. It needs only its files, which
+      # `prepare_files/0` already made.
+      HalC2.Subprocess.Orphans,
       {HalC2.Store, path: HalC2.Store.home_path()},
       HalC2.Auth,
       HalC2.Settings,
       HalC2.Streams,
       HalC2.Shell,
+      # The other members' files, as folders on this machine.
+      HalC2.MachineFiles,
       # Turns this MC was running when it stopped end as interrupted.
       %{id: :recovery, start: {HalC2.Orchestration.Recovery, :start_link, []}},
       HalC2.Orchestration.TurnWatch,
@@ -55,6 +65,8 @@ defmodule HalC2.Application do
       HalC2.ScheduledTasks,
       HalC2.ProjectClones,
       HalC2.Preview,
+      # Dev servers on another MC, reached from this machine's browser.
+      HalC2.PreviewForward,
       HalC2.PreviewAutomation,
       HalC2.LocalServers,
       HalC2.Devices,
@@ -62,6 +74,7 @@ defmodule HalC2.Application do
       HalC2.PullRequests.Refreshes,
       HalC2.PullRequests.Discovery,
       HalC2.PullRequests.Sync,
+      HalC2.PullRequests.Wakes,
       HalC2.Orchestration.Settlement,
       # Threads stopped on a usage limit resume at the reset, where the user asked.
       HalC2.Orchestration.LimitRecovery,
@@ -92,8 +105,6 @@ defmodule HalC2.Application do
       HalC2.Web,
       # server-runtime.json, once the listener is bound; removed first on the way down.
       HalC2.RuntimeRecord,
-      # HAL-C2 Connect: the managed tunnel, the startup link, activity publishing.
-      HalC2.Connect.Supervisor,
       # Turns the restart cut off go on, where the user asked for that.
       Supervisor.child_spec({Task, &HalC2.Orchestration.Recovery.continue/0}, id: :continue),
       # Projects that ask for it are brought up to date.
@@ -101,6 +112,28 @@ defmodule HalC2.Application do
       # Members of this machine's cluster are connected once everything is up.
       HalC2.Cluster.Discovery
     ]
+  end
+
+  # The exit status of an MC that found its HAL-C2 home in use. The desktop app's host
+  # (apps/desktop-qt/host/elixirMc.ts) then uses the MC already running there.
+  @home_in_use 73
+
+  # One MC per home (`HalC2.HomeLock`). A background service waits its turn, since
+  # its supervisor would only start it again; anything else stops at once. The release
+  # service's wrapper says so with HAL_C2_SERVICE, a unit run from a checkout with
+  # HAL_C2_WAIT_FOR_HOME (`HalC2.Service`).
+  defp lock_home do
+    HalC2.Paths.mkdir_private!(HalC2.Paths.data_dir())
+    wait = "1" in [System.get_env("HAL_C2_SERVICE"), System.get_env("HAL_C2_WAIT_FOR_HOME")]
+
+    case HalC2.HomeLock.acquire(wait: wait) do
+      :ok ->
+        :ok
+
+      {:error, :held} ->
+        IO.puts(:stderr, "Another MC is already running on #{HalC2.Paths.data_dir()}.")
+        System.halt(@home_in_use)
+    end
   end
 
   @doc """
@@ -117,6 +150,16 @@ defmodule HalC2.Application do
     HalC2.Paths.ensure!()
     # The tokens of the environments an MC linked to outside its cluster, before MCs
     # connected only by clustering.
-    HalC2.Connect.Secrets.delete("environment-links")
+    HalC2.Secrets.delete("environment-links")
+    forget_connect()
+  end
+
+  # HAL-C2 Connect, the relay MCs once linked to, is gone. A linked MC left its
+  # credentials, replay guards and sign-in behind, every one a `cloud-*` secret, and
+  # its relay client (cloudflared) in the cache.
+  defp forget_connect do
+    HalC2.Secrets.delete_prefixed("cloud-")
+    File.rm_rf(Path.join([HalC2.Paths.cache_dir(), "tools", "cloudflared"]))
+    :ok
   end
 end

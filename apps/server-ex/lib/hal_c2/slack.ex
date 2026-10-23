@@ -17,8 +17,9 @@ defmodule HalC2.Slack do
   `failed` and forgets them; a Slack unreachable, rate limiting or failing in any other
   way keeps retrying with them.
 
-  Watchers (`subscribe/2`) get `{:hal_c2_slack, node(), refs, status}` on every change,
-  and the plugins granted `slack:read` a `slack.status` event when it connects or stops,
+  Watchers (`subscribe/2`) get `{:hal_c2_slack, node(), status}` on every change (one
+  that subscribed under a ref gets it wrapped as `HalC2.Watchers` sends it), and the
+  plugins granted `slack:read` a `slack.status` event when it connects or stops,
   in order.
   """
 
@@ -100,17 +101,13 @@ defmodule HalC2.Slack do
   def disconnect, do: GenServer.call(__MODULE__, :disconnect)
 
   @doc """
-  Sends `pid` `{:hal_c2_slack, node(), refs, status}` on every change, once however many
-  subscriptions it holds, until it unsubscribes each `ref` it subscribed under or exits;
-  answers the status now. `refs` are the subscriptions the change was sent to: one made
-  after it was sent (a change can still sit in the mailbox) answered a newer status.
+  Sends `pid` `{:hal_c2_slack, node(), status}` on every change until it unsubscribes
+  `ref` or exits; answers the status now. Under a `ref`, the message comes as
+  `{:hal_c2_watched, refs, message}` (`HalC2.Watchers`).
   """
   def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
 
-  @doc """
-  Lets go of `pid`'s subscription `ref` only. A socket's unsubscribe can arrive after its
-  next subscribe (`:erpc.cast` runs in a process of its own), so it cannot drop that one.
-  """
+  @doc "Lets go of `pid`'s subscription `ref` only."
   def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
   @doc """
@@ -493,7 +490,6 @@ defmodule HalC2.Slack do
       conn: nil,
       retries: 0,
       timer: nil,
-      # pid => {monitor, the refs it subscribed under}.
       watchers: %{},
       # What the watchers were last told.
       seen: nil
@@ -548,37 +544,20 @@ defmodule HalC2.Slack do
 
   def handle_call(:disconnect, _from, state) do
     state = supersede(state)
-    HalC2.Connect.Secrets.delete(@secret)
+    HalC2.Secrets.delete(@secret)
     state = %{state | gen: state.gen + 1, want: nil, tokens: nil, error: nil, retries: 0}
     state = state |> lose() |> phase(:off) |> drive() |> publish()
     {:reply, {:ok, view(state)}, state}
   end
 
   def handle_call({:subscribe, pid, ref}, _from, state) do
-    {monitor, refs} =
-      Map.get_lazy(state.watchers, pid, fn -> {Process.monitor(pid), MapSet.new()} end)
-
-    watchers = Map.put(state.watchers, pid, {monitor, MapSet.put(refs, ref)})
+    watchers = HalC2.Watchers.add(state.watchers, pid, ref)
     {:reply, {:ok, view(state)}, %{state | watchers: watchers}}
   end
 
   @impl true
-  def handle_cast({:unsubscribe, pid, ref}, state) do
-    case state.watchers do
-      %{^pid => {monitor, refs}} ->
-        refs = MapSet.delete(refs, ref)
-
-        if MapSet.size(refs) == 0 do
-          Process.demonitor(monitor, [:flush])
-          {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
-        else
-          {:noreply, %{state | watchers: Map.put(state.watchers, pid, {monitor, refs})}}
-        end
-
-      _ ->
-        {:noreply, state}
-    end
-  end
+  def handle_cast({:unsubscribe, pid, ref}, state),
+    do: {:noreply, %{state | watchers: HalC2.Watchers.remove(state.watchers, pid, ref)}}
 
   @impl true
   def handle_info({ref, result}, %{job: %{ref: ref} = job} = state) do
@@ -604,10 +583,7 @@ defmodule HalC2.Slack do
   end
 
   def handle_info({:DOWN, ref, :process, pid, _}, state) do
-    case state.watchers do
-      %{^pid => {^ref, _}} -> {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
-      _ -> {:noreply, state}
-    end
+    {:noreply, %{state | watchers: HalC2.Watchers.down(state.watchers, ref, pid)}}
   end
 
   def handle_info({:retry, gen}, %{gen: gen, tokens: tokens} = state) when tokens != nil do
@@ -652,7 +628,7 @@ defmodule HalC2.Slack do
     if job.tokens != state.tokens do
       {bot, app} = job.tokens
 
-      HalC2.Connect.Secrets.put(
+      HalC2.Secrets.put(
         @secret,
         JSON.encode!(%{"botToken" => bot, "appToken" => app})
       )
@@ -672,7 +648,7 @@ defmodule HalC2.Slack do
 
   # A user's tokens Slack refused are not kept; the stored ones it now refuses are forgotten.
   defp settle(state, job, {:error, :refused, message}) do
-    HalC2.Connect.Secrets.delete(@secret)
+    HalC2.Secrets.delete(@secret)
     state = %{state | tokens: nil, error: message, dirty: true} |> phase(:failed)
     if job.from, do: GenServer.reply(job.from, {:error, message})
     state
@@ -684,7 +660,7 @@ defmodule HalC2.Slack do
 
     cond do
       from != nil ->
-        HalC2.Connect.Secrets.delete(@secret)
+        HalC2.Secrets.delete(@secret)
         GenServer.reply(from, {:error, message})
         %{state | tokens: nil} |> phase(:failed)
 
@@ -715,12 +691,16 @@ defmodule HalC2.Slack do
 
   defp supersede(state), do: state
 
-  # Forgets the live connection (its processes are stopped by the next attempt).
+  # Forgets the live connection (its processes are stopped by the next attempt). Its
+  # socket stops acking first: until the next attempt tears it down it would ack events
+  # the bot, with no identity, drops, and Slack does not deliver an acked event again.
   defp lose(state) do
     if state.timer, do: Process.cancel_timer(state.timer)
 
-    for {ref, _} <- (state.conn && state.conn.refs) || %{},
-        do: Process.demonitor(ref, [:flush])
+    for {ref, socket} <- (state.conn && state.conn.refs) || %{} do
+      Process.demonitor(ref, [:flush])
+      HalC2.Slack.Socket.deactivate(socket)
+    end
 
     :ets.delete_all_objects(@cache)
     %{state | conn: nil, timer: nil, identity: nil, dirty: state.dirty or state.conn != nil}
@@ -744,11 +724,7 @@ defmodule HalC2.Slack do
     view = view(state)
 
     if view != state.seen,
-      do:
-        for(
-          {pid, {_, refs}} <- state.watchers,
-          do: send(pid, {:hal_c2_slack, node(), MapSet.to_list(refs), view})
-        )
+      do: HalC2.Watchers.notify(state.watchers, {:hal_c2_slack, node(), view})
 
     %{state | seen: view}
   end
@@ -768,7 +744,7 @@ defmodule HalC2.Slack do
   end
 
   defp stored_tokens do
-    with bytes when is_binary(bytes) <- HalC2.Connect.Secrets.get(@secret),
+    with bytes when is_binary(bytes) <- HalC2.Secrets.get(@secret),
          {:ok, %{"botToken" => bot, "appToken" => app}} when is_binary(bot) and is_binary(app) <-
            JSON.decode(bytes) do
       {bot, app}

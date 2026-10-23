@@ -160,7 +160,11 @@ defmodule HalC2.Pi do
   def extension_path do
     path = Path.join([HalC2.Paths.cache_dir(), "pi", "pi-hal-c2-mcp-extension.ts"])
 
-    source = File.read!(Application.app_dir(:hal_c2, "priv/pi/hal-c2-mcp-extension.ts"))
+    # The extension carries the same orchestration instructions every other provider gets.
+    source =
+      Application.app_dir(:hal_c2, "priv/pi/hal-c2-mcp-extension.ts")
+      |> File.read!()
+      |> String.replace(~s("__HAL_C2_INSTRUCTIONS__"), JSON.encode!(HalC2.Mcp.instructions()))
 
     if File.read(path) != {:ok, source} do
       File.mkdir_p!(Path.dirname(path))

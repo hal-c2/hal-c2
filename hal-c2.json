@@ -4,13 +4,14 @@
   "scripts": [
     {
       "name": "Setup Worktree",
-      "command": "vp i && ln -sf $HAL_C2_PROJECT_ROOT/.env .env && ln -sf $HAL_C2_PROJECT_ROOT/infra/relay/.env infra/relay/.env",
+      "command": "mise trust && vp i && ln -sf \"$HAL_C2_PROJECT_ROOT/.env\" .env && (cd apps/server-ex && mise exec -- mix deps.get)",
       "icon": "configure",
-      "runOnWorktreeCreate": true
+      "runOnWorktreeCreate": true,
+      "async": false
     },
     {
       "name": "Setup Worktree (Windows)",
-      "command": "vp i && New-Item -ItemType SymbolicLink -Path .env -Target \"$env:HAL_C2_PROJECT_ROOT\\.env\" -Force && New-Item -ItemType SymbolicLink -Path \"infra\\relay\\.env\" -Target \"$env:HAL_C2_PROJECT_ROOT\\infra\\relay\\.env\" -Force",
+      "command": "vp i && New-Item -ItemType SymbolicLink -Path .env -Target \"$env:HAL_C2_PROJECT_ROOT\\.env\" -Force",
       "icon": "configure",
       "runOnWorktreeCreate": true
     }

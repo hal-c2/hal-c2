@@ -116,7 +116,8 @@ defmodule HalC2.Acp.Antigravity.Auth do
     case Connection.call(conn, "session/new", %{"cwd" => cwd, "mcpServers" => []}, 120_000) do
       {:ok, %{} = session} ->
         Connection.stop(conn)
-        :persistent_term.erase({HalC2.Acp, instance, :unauthenticated})
+        # No bare erase of `:unauthenticated` here: `put_account/2` forgets
+        # the instance under the ACP lock, which erases the same key.
         Antigravity.put_account(instance, HalC2.Acp.session_models(session))
         :ok
 

@@ -10,6 +10,7 @@
 #   apps/server/src/provider/Layers/piThinkingCapabilities.ts, apps/server/src/textGeneration/PiTextGeneration.ts
 
 @plugin-pi @mc
+# Pi has no built-in subagents, so the subagents setting (features/settings/subagents.feature) has nothing to turn off here.
 Feature: Pi
   Pi uses the user's existing Pi installation with its own models, logins, extensions,
   skills and session files. Pi is early access.
@@ -544,7 +545,6 @@ Feature: Pi
     When the user attaches a PDF to a Pi message
     Then Pi receives the line "[Attachment saved at" followed by the file's path
 
-  @backlog
   Scenario Outline: A message sent while Pi works joins the run or starts one
     Given a Pi turn that <state>
     When the user steers the thread with "also update the docs"
@@ -554,6 +554,37 @@ Feature: Pi
       | state                                  | outcome                                        |
       | is still working                       | the message is queued into the running work    |
       | went idle just before the steer landed | the message starts new work in the same turn   |
+
+  Scenario: A message Pi refuses while it works is an error for its sender
+    Given a Pi turn that is still working
+    When the user steers the thread with a message Pi refuses
+    Then the sender hears Pi did not take the message
+    And the Pi turn runs on without it
+
+  Scenario: Two messages Pi declines once its run settled are each sent on their own
+    Given a Pi turn that went idle just before two steers landed
+    When the user steers the thread with two messages at once that Pi declines
+    Then each message is sent on its own after the turn
+
+  Scenario: A message Pi never answers once its run settled stays in the turn
+    Given a Pi turn that went idle just before the steer landed
+    When the user steers the thread with a message Pi never answers
+    Then the turn ends with the message in it
+
+  Scenario: A message Pi exits on is sent on its own once the turn failed
+    Given a Pi turn that is still working
+    When the user steers the thread with a message Pi exits on
+    Then the message is sent on its own after the turn
+
+  Scenario: A message Pi has not answered when the user stops the turn is not sent again
+    Given a Pi turn that is still working
+    When the user steers the thread with a message Pi holds and stops the turn
+    Then the stopped turn ends with the message in it and no new turn starts
+
+  Scenario: A message Pi declines after the user stopped its settled turn is not sent again
+    Given a Pi turn that went idle just before the steer landed
+    When the user steers the thread with a message Pi declines after the turn is stopped
+    Then the stopped turn ends with the message in it and no new turn starts
 
   @backlog
   Scenario: Steering a Pi thread with /compact compacts instead of prompting

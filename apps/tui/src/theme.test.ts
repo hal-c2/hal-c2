@@ -145,6 +145,7 @@ describe("statusGlyphColor", () => {
   it("Given each tone, then it returns the matching glyph", () => {
     expect(statusGlyphColor("success").glyph).toBe("✓");
     expect(statusGlyphColor("error").glyph).toBe("✗");
+    expect(statusGlyphColor("warning").glyph).toBe("!");
     expect(statusGlyphColor("busy").glyph).toBe("⟳");
     expect(statusGlyphColor("info").glyph).toBe("·");
   });

@@ -106,6 +106,7 @@ defmodule HalC2.Rpc do
 
   def handle("filesystem.browse", input), do: HalC2.Projects.browse(input)
   def handle("shell.openInEditor", input), do: HalC2.Editors.open(input)
+  def handle("files.localPath", input), do: HalC2.MachineFiles.handle_rpc(input)
   def handle("server.discoverSourceControl", input), do: HalC2.SourceControl.discover(input)
   def handle("sourceControl.lookupRepository", input), do: HalC2.SourceControl.lookup(input)
   def handle("sourceControl.cloneRepository", input), do: HalC2.SourceControl.clone(input)
@@ -139,6 +140,7 @@ defmodule HalC2.Rpc do
   def handle("preview.refresh", input), do: HalC2.Preview.refresh(input)
   def handle("preview.close", input), do: HalC2.Preview.close(input)
   def handle("preview.list", input), do: HalC2.Preview.list(input)
+  def handle("preview.forward", input), do: HalC2.PreviewForward.request(input)
 
   def handle("previewAutomation.respond", input) do
     :ok = HalC2.PreviewAutomation.respond(input)
@@ -240,7 +242,6 @@ defmodule HalC2.Rpc do
   def handle("terminal.restart", input), do: HalC2.Terminal.restart(input)
   def handle("terminal.close", input), do: HalC2.Terminal.close(input)
   def handle("terminal.list", input), do: HalC2.Terminal.list(input)
-  def handle("cloud.getRelayClientStatus", _), do: {:ok, HalC2.Connect.RelayClient.resolve()}
   # This machine's cluster (`HalC2.Cluster`); a client joins it to another with an invite.
   def handle("cluster.status", _input), do: {:ok, HalC2.Cluster.status()}
   def handle("cluster.invite", input), do: cluster(HalC2.Cluster.invite(input || %{}))
@@ -251,6 +252,13 @@ defmodule HalC2.Rpc do
   def handle("cluster.remove", %{"id" => id}) when is_binary(id) do
     case HalC2.Cluster.remove(id) do
       :ok -> {:ok, HalC2.Cluster.status()}
+      error -> cluster(error)
+    end
+  end
+
+  def handle("cluster.update", _input) do
+    case HalC2.Upgrade.update_members() do
+      {:ok, version, updates} -> {:ok, %{"version" => version, "members" => members_of(updates)}}
       error -> cluster(error)
     end
   end
@@ -294,6 +302,25 @@ defmodule HalC2.Rpc do
          "message" => HalC2.Cluster.describe(reason)
        }}
 
+  # Each member's update with the id and label the cluster knows it by.
+  defp members_of(updates) do
+    known =
+      try do
+        HalC2.Cluster.status()["members"] || []
+      catch
+        :exit, _ -> []
+      end
+      |> Map.new(&{Atom.to_string(HalC2.Cluster.mc_name(&1["id"])), &1})
+
+    for %{"mc" => mc} = update <- updates do
+      member = known[mc] || %{}
+
+      update
+      |> Map.delete("mc")
+      |> Map.merge(%{"id" => member["id"], "label" => member["label"] || mc})
+    end
+  end
+
   # Methods a session with `orchestration:read` alone may call; every other method
   # changes something.
   @reads ~w(
@@ -307,7 +334,8 @@ defmodule HalC2.Rpc do
     server.reportClientActivity server.getBackgroundPolicy server.searchAcpRegistry
     server.listAcpRegistrySessions server.listAcpRegistryProviders scheduledTasks.list
     sourceControl.lookupRepository projects.listEntries projects.readFile
-    projects.searchContents projects.searchEntries filesystem.browse agentSessions.scan
+    projects.searchContents projects.searchEntries filesystem.browse files.localPath
+    agentSessions.scan
     assets.createUrl vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
     slack.status slack.manifest
   )
@@ -316,7 +344,23 @@ defmodule HalC2.Rpc do
     setReaction setFilesViewed requestReviewers setLabels
   )
 
-  @doc "The session scope a client needs to call `method`."
+  @doc """
+  The session scope a client needs to call `method` with `payload`. A
+  `projects.writeFile` by an absolute path overwrites a file anywhere on the host the
+  MC can write (`HalC2.Workspace.write_file/1`), as a shell in a terminal can, so it
+  needs `terminal:operate`; a session paired without it can save inside the project
+  only. Every other call needs what its method does (`required_scope/1`).
+  """
+  @spec required_scope(String.t(), term()) :: String.t()
+  def required_scope("projects.writeFile", %{"relativePath" => path}) when is_binary(path) do
+    if Path.type(path) == :absolute,
+      do: "terminal:operate",
+      else: required_scope("projects.writeFile")
+  end
+
+  def required_scope(method, _payload), do: required_scope(method)
+
+  @doc "The session scope a client needs to call `method`, whatever it passes."
   @spec required_scope(String.t()) :: String.t()
   def required_scope("terminal." <> _), do: "terminal:operate"
   def required_scope("review." <> _), do: "review:write"
@@ -327,8 +371,6 @@ defmodule HalC2.Rpc do
       when m in ~w(createPairingLink revokePairingLink revokeClient revokeOtherClients),
       do: "access:write"
 
-  def required_scope("cloud.getRelayClientStatus"), do: "relay:read"
-  def required_scope("cloud." <> _), do: "relay:write"
   def required_scope("cluster.status"), do: "access:read"
   def required_scope("cluster." <> _), do: "access:write"
 

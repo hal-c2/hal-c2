@@ -86,6 +86,44 @@ defmodule HalC2.WorkspaceTest do
              })
   end
 
+  test "a file outside the root is written back by its full path only when it is text already there",
+       %{root: root, tmp_dir: dir} do
+    outside = Path.join(dir, "outside")
+
+    write =
+      &Workspace.write_file(%{"cwd" => root, "relativePath" => &1, "contents" => "edited\n"})
+
+    secret = Path.join(outside, "secret.txt")
+
+    assert {:ok, %{"relativePath" => ^secret}} = write.(secret)
+    assert File.read!(secret) == "edited\n"
+
+    # A link outside the root writes the file it names, which stays a link.
+    File.ln_s!(secret, Path.join(outside, "alias.txt"))
+    File.write!(secret, "before")
+    assert {:ok, _} = write.(Path.join(outside, "alias.txt"))
+    assert File.read!(secret) == "edited\n"
+    assert {:ok, %File.Stat{type: :symlink}} = File.lstat(Path.join(outside, "alias.txt"))
+
+    File.write!(Path.join(outside, "data.bin"), <<0, 1, 2>>)
+    File.write!(Path.join(outside, "big.log"), String.duplicate("x", 1_048_577))
+
+    for {path, failure} <- [
+          {"new/file.txt", "workspace_path_outside_root"},
+          {"data.bin", "binary_file"},
+          {"big.log", "operation_failed"},
+          {".", "path_not_file"}
+        ] do
+      full = Path.join(outside, path)
+      before = File.regular?(full) && File.read!(full)
+
+      assert {:error, %{"_tag" => "ProjectWriteFileError", "failure" => ^failure}} = write.(full)
+      assert (File.regular?(full) && File.read!(full)) == before
+    end
+
+    refute File.exists?(Path.join(outside, "new"))
+  end
+
   for ripgrep <- ["rg", nil] do
     @tag ripgrep: ripgrep
     test "contents search literally or by regex, falling back from a bad regex (#{ripgrep || "git grep"})",

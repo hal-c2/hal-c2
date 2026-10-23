@@ -8,6 +8,7 @@
 #include "McClient.h"
 #include "ShellBridge.h"
 #include "ShellStore.h"
+#include "ThreadMenuController.h"
 #include "ToastController.h"
 #include "WorkspaceController.h"
 
@@ -490,7 +491,24 @@ void GitController::onActionFrame(const QJsonObject& frame) {
     }
   } else if (kind == QLatin1String("action_failed")) {
     finishAction();
-    toasts()->show(QStringLiteral("error"), QStringLiteral("Action failed"), text(event, "message"), {}, 0);
+    // A failure with a known remedy offers it (GitActionFailureCta): the page that
+    // fixes it, or the command that does, copied.
+    const QJsonObject cta = event.value(QLatin1String("cta")).toObject();
+    std::optional<ToastController::Action> remedy;
+    if (text(cta, "kind") == QLatin1String("open_url")) {
+      const QUrl url(text(cta, "url"));
+      remedy = ToastController::Action{text(cta, "label"), [this, url] { m_bridge->openExternal(url); }};
+    } else if (text(cta, "kind") == QLatin1String("copy_command")) {
+      // The failure stays up to read while the command is run.
+      const QString command = text(cta, "command");
+      remedy = ToastController::Action{text(cta, "label"),
+                                       [this, command] {
+                                         NativeShell::of(this)->controller<ThreadMenuController>()->copy(
+                                             command, QStringLiteral("Command copied"), QStringLiteral("Failed to copy the command"));
+                                       },
+                                       true};
+    }
+    toasts()->show(QStringLiteral("error"), QStringLiteral("Action failed"), text(event, "message"), remedy, 0);
   } else if (kind == QLatin1String("action_finished")) {
     const QJsonObject result = event.value(QLatin1String("result")).toObject();
     finishAction();

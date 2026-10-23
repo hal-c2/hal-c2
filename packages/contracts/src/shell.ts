@@ -90,6 +90,8 @@ export const ShellSidebarState = Schema.Struct({
   snoozed: Schema.Array(ShellSidebarThread),
   settled: Schema.Array(ShellSidebarThread),
   settledTotal: Schema.Number,
+  /** How many more settled rows `sidebar.more` lists. */
+  settledPage: Schema.Number,
   drafts: Schema.Array(ShellSidebarDraft),
   activeThreadKey: Schema.NullOr(Schema.String),
   activeDraftId: Schema.NullOr(Schema.String),
@@ -656,6 +658,8 @@ export const ShellAction = Schema.Union([
     projectKey: Schema.NullOr(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literal("sidebar.toggle") }),
+  /** Lists the next page of the settled shelf. */
+  Schema.Struct({ type: Schema.Literal("sidebar.more") }),
   Schema.Struct({ type: Schema.Literal("project.add") }),
   Schema.Struct({ type: Schema.Literal("project.remove"), projectKey: Schema.String }),
   Schema.Struct({ type: Schema.Literal("project.folder.open"), path: Schema.String }),

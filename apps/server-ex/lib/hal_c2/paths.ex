@@ -32,6 +32,9 @@ defmodule HalC2.Paths do
   @kinds [:config, :data, :state, :cache]
   @legacy [".hal-c2", ".t3"]
 
+  @doc "The old home directory names under a user's home (`~/.hal-c2`, `~/.t3`)."
+  def legacy_names, do: @legacy
+
   @doc "The MC's settings, keybindings and themes."
   def config_dir, do: dirs().config
   @doc "The MC's database, secrets, attachments, worktrees and other data it cannot get back."

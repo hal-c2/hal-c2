@@ -1,12 +1,14 @@
 defmodule HalC2.StorePropTest do
   @moduledoc """
   `HalC2.Store` against a model of the event log: a list of events per stream, the
-  snapshots, sidebar rows, indexed messages and meta values last put, the store's id,
+  snapshots, sidebar rows, indexed messages and meta values last put (and not deleted),
+  the store's id,
   and the next `seq`. Commands append batches (some of which fail and must leave no
   trace), read streams back in every way the MC reads them, put the derived rows,
   search the indexed messages, and restart the store, which must lose nothing it
   acknowledged. `HalC2.StoreParallelPropTest` runs the same model with concurrent
-  appenders and readers.
+  appenders and readers, and `HalC2.StoreRestartPropTest` with concurrent writers and
+  restarts.
   """
 
   use ExUnit.Case, async: false
@@ -54,20 +56,28 @@ defmodule HalC2.StorePropTest do
       store_id: nil
     }
 
-  def command(state), do: commands_for(state, true)
+  def command(state), do: commands_for(state, :sequential)
 
-  @doc "The commands a state allows; concurrent runs leave out the one that stops the store."
-  def commands_for(state, restarts?) do
+  @doc """
+  The commands a state allows. Concurrent callers (`:parallel`) leave out the one that
+  stops the store; concurrent callers around restarts (`:restarting`, which restarts the
+  store itself) leave out the calls that rightly fail while no store runs: a cast to it,
+  asking it for its id, and resolving its file through it (`Store.path/0`).
+  """
+  def commands_for(state, mode) do
     frequency(
       [
         {6, {:call, __MODULE__, :append, [batches(state), at()]}},
         {1,
          {:call, __MODULE__, :append_failing,
           [batches(state), oneof([:first, :last]), stream_id()]}},
-        {2, {:call, __MODULE__, :put_meta, [oneof(["k1", "k2"]), utf8()]}},
-        {1, {:call, __MODULE__, :meta, [oneof(["k1", "k2"])]}},
+        {2, {:call, __MODULE__, :put_meta, [meta_key(), utf8()]}},
+        {1, {:call, __MODULE__, :delete_meta, [meta_key()]}},
+        {1, {:call, __MODULE__, :meta, [meta_key()]}},
+        {1, {:call, __MODULE__, :metas, [oneof(["k", "p.", "p", "p.\u{10FFFF}"])]}},
+        {2, {:call, __MODULE__, :stream_tail, [stream_id()]}},
+        {1, {:call, __MODULE__, :streams_present, [resize(4, list(stream_id()))]}},
         {1, {:call, __MODULE__, :list_streams, []}},
-        {1, {:call, __MODULE__, :store_id, []}},
         {1, {:call, __MODULE__, :checkpoint, []}},
         {4, {:call, __MODULE__, :reduce_stream, [stream_id(), after_seq(state), read_opts()]}},
         {2,
@@ -78,9 +88,16 @@ defmodule HalC2.StorePropTest do
          {:call, __MODULE__, :put_shell,
           [stream_id(), integer(0, max(state.seq, 1)), oneof(["thread", "project"]), entity()]}},
         {1, {:call, __MODULE__, :list_shell, []}},
-        {3, {:call, __MODULE__, :index_messages, [stream_id(), messages(), state.clock]}},
         {3, {:call, __MODULE__, :search_messages, [needle(), integer(1, 6)]}}
-      ] ++ if(restarts?, do: [{1, {:call, __MODULE__, :restart, []}}], else: [])
+      ] ++
+        if(mode == :restarting,
+          do: [],
+          else: [
+            {1, {:call, __MODULE__, :store_id, []}},
+            {1, {:call, __MODULE__, :store_path, []}},
+            {3, {:call, __MODULE__, :index_messages, [stream_id(), messages(), state.clock]}}
+          ]
+        ) ++ if(mode == :sequential, do: [{1, {:call, __MODULE__, :restart, []}}], else: [])
     )
   end
 
@@ -109,6 +126,9 @@ defmodule HalC2.StorePropTest do
   end
 
   defp at, do: integer(1_700_000_000_000, 1_800_000_000_000)
+
+  # Keys that share prefixes, down to the last code point.
+  defp meta_key, do: oneof(["k1", "k2", "p.1", "p.2", "p_3", "p.\u{10FFFF}x", "p/"])
   defp after_seq(state), do: oneof([0, integer(0, state.seq + 1)])
 
   defp read_opts do
@@ -175,6 +195,9 @@ defmodule HalC2.StorePropTest do
   def next_state(state, _result, {:call, _, :put_meta, [key, value]}),
     do: put_in(state.meta[key], value)
 
+  def next_state(state, _result, {:call, _, :delete_meta, [key]}),
+    do: %{state | meta: Map.delete(state.meta, key)}
+
   def next_state(%{store_id: nil} = state, result, {:call, _, :store_id, []}),
     do: %{state | store_id: result}
 
@@ -234,11 +257,31 @@ defmodule HalC2.StorePropTest do
 
   def postcondition(state, {:call, _, :meta, [key]}, result), do: result == state.meta[key]
 
+  def postcondition(state, {:call, _, :metas, [prefix]}, result),
+    do: result == Map.filter(state.meta, fn {key, _} -> String.starts_with?(key, prefix) end)
+
+  def postcondition(state, {:call, _, :stream_tail, [id]}, result) do
+    events = Map.get(state.streams, id, %{events: []}).events
+
+    last =
+      with %{} = e <- List.last(events), do: {e.kind, e.entity, json_roundtrip(e.patch), e.at}
+
+    result == {length(events), last}
+  end
+
+  def postcondition(state, {:call, _, :streams_present, [ids]}, result),
+    do: result == MapSet.new(Enum.filter(ids, &known?(state, &1)))
+
   def postcondition(state, {:call, _, :store_id, []}, result) do
     if state.store_id,
       do: result == state.store_id,
       else: is_binary(result) and byte_size(result) == 16
   end
+
+  # Resolved through the running store, unlike the reads above, so the model
+  # keeps pinning that readers find the live store's file.
+  def postcondition(_state, {:call, _, :store_path, []}, result),
+    do: result == Store.home_path()
 
   def postcondition(_state, {:call, _, :checkpoint, []}, result) do
     # A checkpoint that finds another one running does nothing and says so.
@@ -284,13 +327,18 @@ defmodule HalC2.StorePropTest do
     Store.append(if(where == :first, do: [bad | batches], else: batches ++ [bad]))
   end
 
+  # Reads open the file the case started the store on (`Store.home_path/0`), which
+  # needs no store running, so they also run while `HalC2.StoreRestartPropTest`
+  # restarts it.
   def reduce_stream(id, after_seq, opts),
-    do: Store.reduce_stream(Store.path(), id, after_seq, [], &[&1 | &2], opts) |> Enum.reverse()
+    do:
+      Store.reduce_stream(Store.home_path(), id, after_seq, [], &[&1 | &2], opts)
+      |> Enum.reverse()
 
   def put_snapshot(id, seq, value), do: Store.put_snapshot(id, seq, value)
-  def get_snapshot(id), do: Store.get_snapshot(Store.path(), id)
+  def get_snapshot(id), do: Store.get_snapshot(Store.home_path(), id)
   def put_shell(id, seq, kind, row), do: Store.put_shell(id, seq, {kind, row})
-  def list_shell, do: Store.list_shell(Store.path())
+  def list_shell, do: Store.list_shell(Store.home_path())
 
   # Indexing is a cast; a call to the store from the same process returns after it.
   def index_messages(id, messages, clock) do
@@ -306,13 +354,18 @@ defmodule HalC2.StorePropTest do
 
   def search_messages(needle, limit) do
     escaped = String.replace(needle, ["!", "%", "_"], &("!" <> &1))
-    Store.search_messages(Store.path(), "%" <> escaped <> "%", limit)
+    Store.search_messages(Store.home_path(), "%" <> escaped <> "%", limit)
   end
 
   def put_meta(key, value), do: Store.put_meta(key, value)
-  def meta(key), do: Store.meta(Store.path(), key)
-  def list_streams, do: Store.list_streams(Store.path())
+  def meta(key), do: Store.meta(Store.home_path(), key)
+  def delete_meta(key), do: Store.delete_meta(key)
+  def metas(prefix), do: Store.metas(Store.home_path(), prefix)
+  def stream_tail(id), do: Store.stream_tail(Store.home_path(), id)
+  def streams_present(ids), do: Store.streams_present(Store.home_path(), ids)
+  def list_streams, do: Store.list_streams(Store.home_path())
   def store_id, do: Store.id()
+  def store_path, do: Store.path()
   def checkpoint, do: Store.checkpoint()
 
   # Stopping and starting again must keep everything acknowledged.
@@ -358,5 +411,67 @@ defmodule HalC2.StoreParallelPropTest do
   defdelegate next_state(state, result, call), to: Model
   defdelegate postcondition(state, call, result), to: Model
 
-  def command(state), do: Model.commands_for(state, false)
+  def command(state), do: Model.commands_for(state, :parallel)
+end
+
+defmodule HalC2.StoreRestartPropTest do
+  @moduledoc """
+  The store's model with concurrent writers and readers while the store restarts: a
+  write waits out a restart (hal-c2/hal-c2#399), so every write is acknowledged once
+  and lands once, and some order of the calls explains every result.
+  """
+
+  use ExUnit.Case, async: false
+  use PropCheck
+  use PropCheck.StateM
+
+  alias HalC2.Store
+  alias HalC2.StorePropTest, as: Model
+
+  @moduletag timeout: :infinity
+  @moduletag capture_log: true
+
+  property "concurrent writes land once, however the store restarts among them",
+    numtests: HalC2.Prop.numtests(100),
+    max_size: 20 do
+    forall cmds <- parallel_commands(__MODULE__) do
+      trap_exit do
+        HalC2.Prop.scratch_home("store-restart")
+        sup = HalC2.Prop.start_services([{Store, path: Store.home_path()}])
+        # The branches run in processes of their own, which do not have the case's
+        # process dictionary.
+        :persistent_term.put({__MODULE__, :services}, sup)
+        {sequential, parallel, result} = run_parallel_commands(__MODULE__, cmds)
+        HalC2.Prop.stop_services()
+
+        (result == :ok)
+        |> when_fail(IO.puts(HalC2.Prop.report(cmds, sequential, parallel, result)))
+        |> aggregate(command_names(cmds))
+      end
+    end
+  end
+
+  defdelegate initial_state, to: Model
+  defdelegate precondition(state, call), to: Model
+  defdelegate next_state(state, result, call), to: Model
+  defdelegate postcondition(state, call, result), to: Model
+
+  def command(state),
+    do:
+      frequency([
+        {12, Model.commands_for(state, :restarting)},
+        {1, {:call, __MODULE__, :restart, []}}
+      ])
+
+  # Stops the store and starts it again. Another branch may be restarting it too, and
+  # have started it first.
+  def restart do
+    sup = :persistent_term.get({__MODULE__, :services})
+    :ok = Supervisor.terminate_child(sup, Store)
+
+    case Supervisor.restart_child(sup, Store) do
+      {:ok, _} -> :ok
+      {:error, :running} -> :ok
+    end
+  end
 end

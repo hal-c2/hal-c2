@@ -37,10 +37,15 @@ defmodule HalC2.WorktreeSetup do
     GenServer.call(__MODULE__, {:start, thread_id, run_id, project, strategy, message_text})
   end
 
-  @doc "Adds `pid` as a subscriber; returns the snapshot, or nil when none is tracked."
-  def subscribe(thread_id, pid), do: GenServer.call(__MODULE__, {:subscribe, thread_id, pid})
+  @doc """
+  Adds `pid` as a subscriber under `ref` (`HalC2.Watchers`); returns the snapshot, or nil
+  when none is tracked.
+  """
+  def subscribe(thread_id, pid, ref \\ nil),
+    do: GenServer.call(__MODULE__, {:subscribe, thread_id, pid, ref})
 
-  def unsubscribe(thread_id, pid), do: GenServer.cast(__MODULE__, {:unsubscribe, thread_id, pid})
+  def unsubscribe(thread_id, pid, ref \\ nil),
+    do: GenServer.cast(__MODULE__, {:unsubscribe, thread_id, pid, ref})
 
   @doc "`worktreeSetup.cancel`: stops a setup that has not handed off to the agent."
   def cancel(%{"threadId" => thread_id}),
@@ -89,9 +94,9 @@ defmodule HalC2.WorktreeSetup do
     {:reply, :ok, state}
   end
 
-  def handle_call({:subscribe, thread_id, pid}, _from, state) do
-    Process.monitor(pid)
-    watchers = Map.update(state.watchers, thread_id, MapSet.new([pid]), &MapSet.put(&1, pid))
+  def handle_call({:subscribe, thread_id, pid, ref}, _from, state) do
+    thread_watchers = HalC2.Watchers.add(Map.get(state.watchers, thread_id, %{}), pid, ref)
+    watchers = Map.put(state.watchers, thread_id, thread_watchers)
     {:reply, get_in(state.setups, [thread_id, :snapshot]), %{state | watchers: watchers}}
   end
 
@@ -135,8 +140,14 @@ defmodule HalC2.WorktreeSetup do
   end
 
   @impl true
-  def handle_cast({:unsubscribe, thread_id, pid}, state) do
-    {:noreply, update_in(state.watchers, &drop_watcher(&1, thread_id, pid))}
+  def handle_cast({:unsubscribe, thread_id, pid, ref}, state) do
+    watchers =
+      case HalC2.Watchers.remove(Map.get(state.watchers, thread_id, %{}), pid, ref) do
+        empty when empty == %{} -> Map.delete(state.watchers, thread_id)
+        thread_watchers -> Map.put(state.watchers, thread_id, thread_watchers)
+      end
+
+    {:noreply, %{state | watchers: watchers}}
   end
 
   @impl true
@@ -168,9 +179,31 @@ defmodule HalC2.WorktreeSetup do
     end
   end
 
-  def handle_info({:DOWN, _ref, :process, pid, _}, state) do
-    watchers = Map.new(state.watchers, fn {id, pids} -> {id, MapSet.delete(pids, pid)} end)
+  def handle_info({:DOWN, ref, :process, pid, _}, state) do
+    watchers =
+      for {id, w} <- state.watchers,
+          w = HalC2.Watchers.down(w, ref, pid),
+          w != %{},
+          into: %{},
+          do: {id, w}
+
     {:noreply, %{state | watchers: watchers}}
+  end
+
+  # A server updated in place (`HalC2.Hot`) from before subscriptions had refs kept each
+  # thread's watchers as a set of pids, watched without one.
+  @impl true
+  def code_change(_old, state, _extra) do
+    watchers =
+      Map.new(state.watchers, fn
+        {id, %MapSet{} = pids} ->
+          {id, Enum.reduce(pids, %{}, &HalC2.Watchers.add(&2, &1, nil))}
+
+        entry ->
+          entry
+      end)
+
+    {:ok, %{state | watchers: watchers}}
   end
 
   # How a preparation failure is recorded on the run.
@@ -198,12 +231,11 @@ defmodule HalC2.WorktreeSetup do
   defp broadcast(state, thread_id) do
     snapshot = state.setups[thread_id].snapshot
 
-    for pid <- Map.get(state.watchers, thread_id, []),
-        do: send(pid, {:hal_c2_worktree_setup, thread_id, snapshot})
+    HalC2.Watchers.notify(
+      Map.get(state.watchers, thread_id, %{}),
+      {:hal_c2_worktree_setup, thread_id, snapshot}
+    )
   end
-
-  defp drop_watcher(watchers, thread_id, pid),
-    do: Map.update(watchers, thread_id, MapSet.new(), &MapSet.delete(&1, pid))
 
   # A cancelled setup leaves nothing behind: no worktree, no workspace on the thread.
   defp cleanup(thread_id, setup) do

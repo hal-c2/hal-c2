@@ -29,7 +29,7 @@ defmodule HalC2.SlackTest do
     do: %{"botToken" => bot, "appToken" => app}
 
   defp await_state(state) do
-    assert_receive {:hal_c2_slack, _, _, %{"state" => ^state} = status}, 10_000
+    assert_receive {:hal_c2_slack, _, %{"state" => ^state} = status}, 10_000
     status
   end
 
@@ -209,6 +209,52 @@ defmodule HalC2.SlackTest do
     refute Slack.first_delivery?("EvEarly")
   end
 
+  # A connect forgets the identity at once, but the connection it replaces lives until the
+  # attempt tears it down; an event it acked then would be dropped by a bot that does not
+  # know who it is, and Slack would not send it again.
+  test "an event Slack sends while a connect replaces the connection is left unacked" do
+    {:ok, _} = Slack.connect(tokens())
+    {:ok, _} = Slack.subscribe(self())
+    FakeSlack.hello(true)
+
+    # The attempt cannot tear the old socket down while the supervisor is suspended; it is
+    # resumed however the assertions end, or the next test would find it stalled.
+    :sys.suspend(HalC2.Slack.Connections)
+    connecting = Task.async(fn -> Slack.connect(tokens()) end)
+
+    try do
+      await_state("connecting")
+
+      mention = %{
+        "type" => "app_mention",
+        "channel" => "CPLAN",
+        "user" => "UDANA",
+        "text" => "<@UHAL> hi",
+        "ts" => "1800000000.2"
+      }
+
+      FakeSlack.event(mention, %{"event_id" => "EvReplaced"})
+      FakeSlack.ping()
+      # The socket takes frames in order, so an ack would have come before the pong.
+      assert_receive :fake_slack_pong, 5_000
+      refute_received {:fake_slack_ack, _}
+    after
+      :sys.resume(HalC2.Slack.Connections)
+    end
+
+    assert {:ok, %{"state" => "connected"}} = Task.await(connecting)
+    refute_received {:fake_slack_ack, _}
+    assert Slack.first_delivery?("EvReplaced")
+  end
+
+  test "a socket that does not answer a deactivation is killed, as it could still ack" do
+    silent = spawn(fn -> Process.sleep(:infinity) end)
+    ref = Process.monitor(silent)
+
+    assert :ok = HalC2.Slack.Socket.deactivate(silent, 20)
+    assert_receive {:DOWN, ^ref, :process, ^silent, :killed}
+  end
+
   # What the connection's tasks (its attempt, the events it handed on) were doing is done.
   defp await_tasks do
     for pid <- Task.Supervisor.children(HalC2.Slack.Tasks) do
@@ -283,7 +329,7 @@ defmodule HalC2.SlackTest do
 
   # The first status pushed that carries an error.
   defp await_error do
-    assert_receive {:hal_c2_slack, _, _, %{"error" => error} = status} when error != nil, 10_000
+    assert_receive {:hal_c2_slack, _, %{"error" => error} = status} when error != nil, 10_000
     status
   end
 
@@ -291,7 +337,7 @@ defmodule HalC2.SlackTest do
     {:ok, _} = Slack.connect(tokens())
     stop_supervised!(Slack)
 
-    HalC2.Connect.Secrets.put(
+    HalC2.Secrets.put(
       "slack",
       JSON.encode!(%{"botToken" => "xoxb-revoked", "appToken" => FakeSlack.app_token()})
     )

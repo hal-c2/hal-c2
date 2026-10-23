@@ -2,6 +2,10 @@ import Config
 
 # Tests start the pieces they need under their own supervisors.
 config :hal_c2, start_mc: false
+
+# Nothing is mounted unless a test starts `HalC2.MachineFiles` itself; peers have no
+# config and leave it off too.
+config :hal_c2, machine_files: false
 config :logger, level: :warning
 
 # Text generation never reaches a real model; tests that need it set a fake.
@@ -30,3 +34,6 @@ config :hal_c2, fj_keys_paths: []
 # The cluster process never gossips on its own clock; tests that need it send it
 # `:gossip`.
 config :hal_c2, cluster_gossip: :timer.hours(24)
+
+# Every Windows editor scenario fakes its own `reg`, so none may see another's answer.
+config :hal_c2, windows_editor_cache_ms: 0

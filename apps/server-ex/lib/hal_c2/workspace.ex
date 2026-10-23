@@ -8,7 +8,14 @@ defmodule HalC2.Workspace do
   that are not ignored), else from a bounded walk; at most 25,000, kept a few seconds
   (`invalidate/1` drops them when a turn ends). Content search runs ripgrep, or git
   grep where ripgrep is missing. Writes, and reads by a relative path, stay inside
-  the workspace root, symlinks included.
+  the workspace root, symlinks included; a write by an absolute path only replaces a
+  text file already there, as one read by that path is edited.
+
+  That write reaches any such file the MC's user can write (`~/.bashrc` as much as a
+  report the agent left in `/tmp`), which is as much as a shell can do, so a session
+  needs `terminal:operate` for it (`HalC2.Rpc.required_scope/2`, which the socket
+  checks before the call goes to the member that owns the environment). Nothing here
+  ties the path to the thread.
   """
 
   use GenServer
@@ -81,7 +88,7 @@ defmodule HalC2.Workspace do
   `projects.readFile`: up to 1 MB of a text file inside the root, or up to 10 MB of
   an image as base64 (`encoding: "base64"`, for attaching it). An absolute path
   reads a file on the host in place (one an agent left elsewhere); it comes back
-  under that path, which clients cannot write back.
+  under that path, which `write_file/1` writes back.
   """
   def read_file(%{"cwd" => cwd, "relativePath" => relative} = input) do
     error = &file_error("ProjectReadFileError", input, &1, &2)
@@ -98,7 +105,7 @@ defmodule HalC2.Workspace do
         base64? ->
           {:ok, result(shown, Base.encode64(contents), size, size > max)}
 
-        String.valid?(contents) and not String.contains?(contents, <<0>>) ->
+        text?(contents) ->
           {:ok, result(shown, contents, size, size > max)}
 
         true ->
@@ -130,19 +137,66 @@ defmodule HalC2.Workspace do
   defp chat_image?(path),
     do: String.downcase(Path.extname(path)) in @chat_image_extensions
 
-  @doc "`projects.writeFile`: writes a file inside the root, creating its folders."
+  @doc """
+  `projects.writeFile`: writes a file inside the root, creating its folders. An
+  absolute path writes back a file on the host that `read_file/1` read in place (one
+  an agent left elsewhere): only a text file that is there already and that the
+  viewer could read whole, so nothing is created outside the root. That needs a
+  session with `terminal:operate` (see the moduledoc).
+  """
   def write_file(%{"cwd" => cwd, "relativePath" => relative, "contents" => contents} = input) do
     error = &file_error("ProjectWriteFileError", input, &1, &2)
 
     with {:ok, root} <- root(cwd, "ProjectWriteFileError"),
-         {:ok, path} <- inside(root, relative, error),
-         :ok <- mkdir(Path.dirname(path), error),
-         {:ok, path} <- inside(root, relative, error),
+         {:ok, path, shown} <- write_target(root, relative, error),
          :ok <- write(path, contents, error) do
       invalidate(root)
-      {:ok, %{"relativePath" => normalize(relative)}}
+      {:ok, %{"relativePath" => shown}}
     end
   end
+
+  defp write_target(root, relative, error) do
+    if Path.type(relative) == :absolute do
+      with {:ok, path} <- existing_text(real(relative), relative, error),
+           do: {:ok, path, relative}
+    else
+      with {:ok, path} <- inside(root, relative, error),
+           :ok <- mkdir(Path.dirname(path), error),
+           {:ok, path} <- inside(root, relative, error),
+           do: {:ok, path, normalize(relative)}
+    end
+  end
+
+  # A file outside the root is written only where `read_file/1` would have given the
+  # viewer all of it as text.
+  defp existing_text(path, shown, error) do
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :regular, size: size}} when size <= @read_max_bytes ->
+        case read_head(path, @read_max_bytes, error) do
+          {:ok, current} ->
+            if text?(current),
+              do: {:ok, path},
+              else: error.("binary_file", "'#{shown}' is not a text file.")
+
+          failure ->
+            failure
+        end
+
+      {:ok, %File.Stat{type: :regular}} ->
+        error.("operation_failed", "'#{shown}' is larger than 1 MB.")
+
+      {:ok, %File.Stat{}} ->
+        error.("path_not_file", "'#{shown}' is not a file.")
+
+      {:error, _} ->
+        error.(
+          "workspace_path_outside_root",
+          "'#{shown}' is outside the workspace, where only a file that is already there can be saved."
+        )
+    end
+  end
+
+  defp text?(contents), do: String.valid?(contents) and not String.contains?(contents, <<0>>)
 
   @doc "`projects.searchContents`: lines matching a literal or a regex."
   def search_contents(%{"cwd" => cwd, "query" => query} = input) do
@@ -532,22 +586,36 @@ defmodule HalC2.Workspace do
     end
   end
 
-  defp within?(root, path), do: path == root or String.starts_with?(path, root <> "/")
+  @doc "Whether `path` is `root` or under it; both absolute and normalized."
+  def within?(root, path), do: path == root or String.starts_with?(path, root <> "/")
 
-  # The real path of `path`, or of its nearest existing ancestor joined with the rest.
-  defp real(path), do: real(Path.split(Path.expand(path)), "/", 0)
+  @doc """
+  The real path of `path`, or of its nearest existing ancestor joined with the rest:
+  what a path under a root must still be under once symlinks resolve
+  (`HalC2.MachineFiles.Share` holds another machine's reads to the same rule).
+  Resolved one name at a time as the kernel does: a `..` leaves the directory a
+  link led to, not the link's name.
+  """
+  def real(path), do: real(Path.split(Path.absname(path)), "/", 0)
 
   # A link loop resolves no further than this.
   defp real(parts, acc, links) when links > 40, do: Path.join([acc | parts])
   defp real([], acc, _links), do: acc
-  defp real(["/" | rest], acc, links), do: real(rest, acc, links)
+  defp real(["/" | rest], _acc, links), do: real(rest, "/", links)
+  defp real(["." | rest], acc, links), do: real(rest, acc, links)
+  defp real([".." | rest], acc, links), do: real(rest, Path.dirname(acc), links)
 
   defp real([part | rest], acc, links) do
     next = Path.join(acc, part)
 
-    case File.read_link(next) do
-      {:ok, target} -> real(Path.split(Path.expand(target, acc)) ++ rest, "/", links + 1)
-      {:error, _} -> real(rest, next, links)
+    # Not through the file server (`HalC2.MachineFiles.Share` runs this).
+    case :prim_file.read_link(next) do
+      {:ok, target} ->
+        target = IO.chardata_to_string(target)
+        real(Path.split(target) ++ rest, acc, links + 1)
+
+      {:error, _} ->
+        real(rest, next, links)
     end
   end
 

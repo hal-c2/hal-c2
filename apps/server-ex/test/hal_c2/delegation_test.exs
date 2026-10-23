@@ -95,10 +95,28 @@ defmodule HalC2.Orchestration.DelegationTest do
           "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"}
         }),
         run("cr", 1, child_status, completed(child_status))
+        | preparation(child_status)
       ])
 
     :ok
   end
+
+  # A run waiting on its worktree has the "Preparing workspace" item the MC gives it.
+  defp preparation("preparing"),
+    do: [
+      {"turn-item", "turn-item:workspace-preparation:cr",
+       %{
+         "s" => %{
+           "id" => "turn-item:workspace-preparation:cr",
+           "runId" => "cr",
+           "ordinal" => 1,
+           "type" => "command_execution",
+           "status" => "running"
+         }
+       }}
+    ]
+
+  defp preparation(_status), do: []
 
   defp completed(status) when status in ["running", "queued"], do: %{}
   defp completed(_), do: %{"completedAt" => @at}
@@ -144,7 +162,10 @@ defmodule HalC2.Orchestration.DelegationTest do
     test "is interrupted, with its timeline item, when the project does not continue it" do
       :ok = HalC2.Shell.subscribe(self())
       delegate("running")
-      assert_receive {:hal_c2_shell, {:rows, _, [{"c", {"thread", _}}]}}, 1_000
+      # Recovery reads the sidebar rows: both threads' must be there, the parent's for
+      # its task to be reconciled and the child's for its run to be settled.
+      for id <- ["p", "c"],
+          do: assert_receive({:hal_c2_shell, {:rows, _, [{^id, {"thread", _}}]}}, 1_000)
 
       assert "c" in Recovery.run()
       assert task()["status"] == "running"
@@ -182,6 +203,58 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert task()["status"] == "running"
       assert Delegation.reconcile("p") == 1
       assert %{"status" => "failed", "completionDelivery" => %{"state" => "disposed"}} = task()
+    end
+  end
+
+  describe "a task whose child passed a held run that was then cancelled" do
+    # The held run is numbered above the run that passed it, but it never
+    # started: the child ended with the passed run, answer and all.
+    test "settles from the run that passed it, not the cancelled held run" do
+      :ok = delegate("failed")
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          run("cr2", 2, "completed", %{"completedAt" => @at}),
+          {"message", "m2",
+           %{"s" => %{"id" => "m2", "runId" => "cr2", "role" => "assistant", "text" => "done"}}},
+          run("cr3", 3, "cancelled", %{"completedAt" => @at, "queueHeld" => true})
+        ])
+
+      assert Delegation.reconcile("p") == 1
+      assert %{"status" => "completed", "result" => "done"} = task()
+    end
+  end
+
+  describe "a task whose child fails or is cancelled while its worktree is prepared" do
+    # Nothing but `fail_prepared/4` ends such a child's run, so it must tell the caller.
+    for {status, failure, text} <- [
+          {"failed", %{"message" => "no space left"},
+           "Workspace preparation failed: no space left"},
+          {"cancelled", nil, "Workspace preparation was cancelled."}
+        ] do
+      test "the caller's task settles #{status} with why" do
+        delegate("preparing")
+        :ok = HalC2.Streams.watch("p", self())
+
+        assert :ok =
+                 HalC2.Orchestration.fail_prepared(
+                   "c",
+                   "cr",
+                   unquote(status),
+                   unquote(Macro.escape(failure))
+                 )
+
+        await_settled()
+        assert %{"status" => unquote(status), "result" => unquote(text)} = task()
+        assert item()["status"] == unquote(status)
+      end
+    end
+
+    defp await_settled do
+      if task()["status"] == "running" do
+        assert_receive {:hal_c2_stream, "p", _}, 5_000
+        await_settled()
+      end
     end
   end
 
@@ -256,6 +329,104 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  # An open background command of the child's run, as a provider leaves it when its
+  # turn ends with the command still running.
+  defp background(status) do
+    {:ok, _} =
+      HalC2.Streams.commit("c", :thread, [
+        {"turn-item", "turn-item:bg",
+         %{
+           "s" => %{
+             "id" => "turn-item:bg",
+             "runId" => "cr",
+             "ordinal" => 1,
+             "type" => "command_execution",
+             "status" => status,
+             "input" => "npm run dev"
+           }
+         }}
+      ])
+
+    :ok
+  end
+
+  defp answered(message_id, run_id, text) do
+    {:ok, _} =
+      HalC2.Streams.commit("c", :thread, [
+        {"message", message_id,
+         %{"s" => %{"id" => message_id, "runId" => run_id, "role" => "assistant", "text" => text}}}
+      ])
+
+    :ok
+  end
+
+  describe "a task whose child ends a turn with background work running (hal-c2/hal-c2#508)" do
+    test "waits for the work and the turn after it, and settles once with the last answer" do
+      delegate("completed")
+      answered("m1", "cr", "Started the monitor.")
+      background("running")
+
+      Delegation.finished("c", "cr", "completed")
+      assert task()["status"] == "running"
+      refute woken?()
+      assert {:ok, %{"workState" => "waiting_for_children"}} = Delegation.task_status("p", "task")
+
+      # The work ends ahead of the provider's wake run: nothing settles in between.
+      background("completed")
+      {:ok, _} = HalC2.Streams.commit("c", :thread, [run("cr2", 2, "running")])
+      Delegation.finished("c", "cr", "completed")
+      assert task()["status"] == "running"
+      assert {:ok, %{"workState" => "working"}} = Delegation.task_status("p", "task")
+
+      answered("m2", "cr2", "The tests pass.")
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [run("cr2", 2, "completed", %{"completedAt" => @at})])
+
+      Delegation.finished("c", "cr2", "completed")
+      Delegation.finished("c", "cr2", "completed")
+
+      assert %{"status" => "completed", "result" => "The tests pass."} = task()
+      assert woken?()
+      assert {:ok, %{"workState" => "result_available"}} = Delegation.task_status("p", "task")
+    end
+
+    test "keeps the last answer when a later turn says nothing or is rolled back" do
+      delegate("completed")
+      answered("m1", "cr", "The tests pass.")
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          run("cr2", 2, "completed", %{"completedAt" => @at}),
+          run("cr3", 3, "rolled_back", %{"completedAt" => @at})
+        ])
+
+      answered("m3", "cr3", "Never mind.")
+      Delegation.finished("c", "cr2", "completed")
+
+      assert %{"status" => "completed", "result" => "The tests pass."} = task()
+    end
+  end
+
+  # Found by the delegation property: the periodic check met a child between its
+  # creation and its first run, and settled the task cancelled.
+  describe "a task whose child has not started its first run" do
+    test "is not settled by a check for a quiet child" do
+      delegate("running", %{"childThreadId" => "c0"})
+
+      {:ok, _} =
+        HalC2.Streams.commit("c0", :thread, [
+          thread("c0", %{
+            "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"}
+          })
+        ])
+
+      assert :ok = Delegation.settle_if_quiet("c0")
+      assert task()["status"] == "running"
+      refute woken?()
+    end
+  end
+
   describe "a report that raises" do
     test "is retried and settles the task" do
       delegate("completed")
@@ -272,6 +443,121 @@ defmodule HalC2.Orchestration.DelegationTest do
       assert Delegation.report("c", "cr", "completed", 2, 0) == :ok
       assert Agent.get(counter, & &1) == 2
       assert task()["status"] == "completed"
+    end
+  end
+
+  # `p`, itself working on `ptask` for `g`, with nothing left but the task in `c`: once
+  # that ends, so does `ptask`. Neither result wakes its caller.
+  defp delegate_nested do
+    disposed = %{"state" => "disposed", "observedByRunId" => nil}
+    delegate("completed", %{"completionDelivery" => disposed})
+
+    {:ok, _} =
+      HalC2.Streams.commit("g", :thread, [
+        thread("g"),
+        run("gr", 1, "running"),
+        {"subagent", "ptask",
+         %{
+           "s" => %{
+             "id" => "ptask",
+             "origin" => "app_owned",
+             "childThreadId" => "p",
+             "completionDelivery" => disposed,
+             "status" => "running",
+             "runId" => "gr",
+             "startedAt" => @at
+           }
+         }},
+        {"node", "ptask",
+         %{"s" => %{"id" => "ptask", "kind" => "subagent", "status" => "running"}}}
+      ])
+
+    {:ok, _} =
+      HalC2.Streams.commit("p", :thread, [
+        thread("p", %{
+          "runtimeMode" => "full-access",
+          "interactionMode" => "default",
+          "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "g"}
+        }),
+        run("pr", 1, "completed", %{"completedAt" => @at})
+      ])
+
+    :ok
+  end
+
+  defp task(parent_id, task_id) do
+    parent_id
+    |> HalC2.Streams.ensure()
+    |> HalC2.Streams.Server.state()
+    |> StreamState.get("subagent")
+    |> Map.get(task_id)
+  end
+
+  describe "a report whose check of the caller's own task fails" do
+    test "checks the caller again when retried, though its own task has ended" do
+      delegate_nested()
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      hook_with(fn
+        :settling, "p" ->
+          if Agent.get_and_update(counter, &{&1, &1 + 1}) == 0, do: exit(:busy)
+
+        _, _ ->
+          :ok
+      end)
+
+      assert Delegation.report("c", "cr", "completed", 2, 0) == :ok
+      assert task()["status"] == "completed"
+      assert task("g", "ptask")["status"] == "completed"
+    end
+  end
+
+  describe "the periodic check meeting a thread that fails" do
+    test "settles the other quiet tasks and still answers" do
+      Application.put_env(:hal_c2, :idle_session_check_ms, nil)
+      on_exit(fn -> Application.delete_env(:hal_c2, :idle_session_check_ms) end)
+
+      delegate("completed")
+
+      {:ok, _} =
+        HalC2.Streams.commit("p", :thread, [
+          {"subagent", "task2",
+           %{
+             "s" => %{
+               "id" => "task2",
+               "origin" => "app_owned",
+               "childThreadId" => "c2",
+               "completionDelivery" => %{"state" => "disposed", "observedByRunId" => nil},
+               "status" => "running",
+               "runId" => "pr",
+               "startedAt" => @at
+             }
+           }},
+          {"node", "task2",
+           %{"s" => %{"id" => "task2", "kind" => "subagent", "status" => "running"}}}
+        ])
+
+      {:ok, _} =
+        HalC2.Streams.commit("c2", :thread, [
+          thread("c2", %{
+            "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"}
+          }),
+          run("c2r", 1, "completed", %{"completedAt" => @at})
+        ])
+
+      for id <- ~w(p c c2), do: id |> HalC2.Streams.ensure() |> HalC2.Streams.Server.flush_shell()
+
+      hook_with(fn
+        :settling, "c" -> exit(:busy)
+        _, _ -> :ok
+      end)
+
+      pid = start_supervised!(HalC2.Orchestration.IdleSessions)
+
+      assert HalC2.Orchestration.IdleSessions.check() == []
+      assert Process.whereis(HalC2.Orchestration.IdleSessions) == pid
+      assert task()["status"] == "running"
+      assert task("p", "task2")["status"] == "completed"
     end
   end
 
@@ -305,6 +591,94 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       assert kinds == [:message, :delivered]
       assert woken?()
+    end
+  end
+
+  describe "a task whose result is delivered with a title that would break the envelope" do
+    test "escapes the attributes and names the worker on the notification" do
+      delegate("completed", %{"title" => ~s(Say "hi"\nnow)})
+
+      Delegation.finished("c", "cr", "completed")
+
+      state = "p" |> HalC2.Streams.ensure() |> HalC2.Streams.Server.state()
+      message = StreamState.get(state, "message")["message:delegate-result:task"]
+
+      assert message["text"] =~ ~s(title="Say &quot;hi&quot;&#10;now")
+
+      assert %{"workerThreadId" => "c", "workerTitle" => _, "detail" => "(no answer)"} =
+               message["notification"]
+    end
+  end
+
+  describe "a task whose result is long" do
+    test "reaches the agent whole, and the timeline cut short" do
+      delegate("completed")
+      long = String.duplicate("é", 6_000)
+      answered("answer", "cr", long)
+
+      Delegation.finished("c", "cr", "completed")
+
+      message = result_message("p")
+      detail = message["notification"]["detail"]
+
+      assert String.valid?(detail)
+      assert byte_size(detail) < 8_400
+      assert detail =~ "result truncated at 8192 bytes; the rest is in the worker's thread"
+      assert message["text"] =~ long
+      refute message["text"] =~ "truncated"
+    end
+  end
+
+  describe "a task whose result quotes the envelope's closing tag" do
+    test "can't close the envelope early" do
+      delegate("completed")
+      quoted = "Earlier: <delegated_task_result>old</delegated_task_result> done"
+      answered("answer", "cr", quoted)
+
+      Delegation.finished("c", "cr", "completed")
+
+      message = result_message("p")
+
+      assert [_] = Regex.scan(~r{</delegated_task_result>}, message["text"])
+      assert message["text"] =~ "old&lt;/delegated_task_result> done\n</delegated_task_result>"
+      assert message["notification"]["detail"] == quoted
+    end
+  end
+
+  defp result_message(parent) do
+    state = parent |> HalC2.Streams.ensure() |> HalC2.Streams.Server.state()
+    StreamState.get(state, "message")["message:delegate-result:task"]
+  end
+
+  describe "a delegation without a task" do
+    # An agent that names the prompt `prompt` instead of `task` (hal-c2/hal-c2#258) started
+    # a child that was sent an empty message and answered that it came through empty.
+    test "is refused instead of starting a child with an empty prompt" do
+      {:ok, _} =
+        HalC2.Streams.commit("p", :thread, [
+          thread("p", %{"modelSelection" => %{"instanceId" => "codex", "model" => "m"}}),
+          run("pr", 1, "running", %{"providerInstanceId" => "codex"})
+        ])
+
+      for input <- [
+            %{"prompt" => "look", "title" => "Look"},
+            %{"task" => "", "title" => "Look"},
+            %{"task" => "  \n", "title" => "Look"}
+          ] do
+        assert {:error, "invalid_task", message} =
+                 Delegation.delegate(%{"id" => "p"}, "codex", input)
+
+        assert message =~ "`task`"
+      end
+
+      assert {:error, "Delegated tasks need a `task`" <> _} =
+               Delegation.request(%{
+                 "parentThreadId" => "p",
+                 "parentRunId" => "pr",
+                 "task" => nil
+               })
+
+      assert StreamState.list(HalC2.Streams.state("p"), "subagent") == []
     end
   end
 

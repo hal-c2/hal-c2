@@ -128,7 +128,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["r"],
       },
       { keys: "e", description: "Files: edit in $EDITOR", chords: ["e"] },
-      { keys: "c", description: "Diff: note a line for the prompt", chords: ["c"] },
+      {
+        keys: "c",
+        description: "Diff: note a line for the prompt · File: copy its text",
+        chords: ["c"],
+      },
       {
         keys: "Tab · ^Enter",
         description: "Add project: browse ⇄ edit · run the action",
@@ -299,6 +303,7 @@ export const KEYMAP_LAYERS = {
     s: "files.viewer.toggleSource",
     i: "files.editor.open",
     o: "files.openInEditor",
+    c: "files.viewer.copy",
     "ctrl+k": "palette.open",
     e: "files.edit",
     r: "files.refresh",

@@ -31,6 +31,88 @@ Feature: Changing model and provider mid-thread
     And a thread-model-selection-updated event is recorded
     And the next run continues the same provider conversation
 
+  # Another instance of a provider runs in its own home and account, so it cannot resume
+  # the session the thread has on the first: it starts its own with the conversation
+  # handed over, and the first keeps its session for when the thread comes back.
+  @mc
+  Scenario: Moving to another instance of the same provider starts a conversation there
+    Given a second Codex instance "codex-work" with its own home
+    When the user switches "t1" to "codex-work" with model "gpt-5.4"
+    Then the next run starts on "codex-work"
+    And a new provider thread is started for "codex-work"
+    And the provider receives the earlier conversation before "where are we"
+    And the run answers on the Codex thread "codex-work-thread-1"
+    When the user switches "t1" back to "codex" and sends a message
+    Then the run resumes the provider thread "codex" had
+
+  # Before each instance had its own, a thread kept the session of whichever instance of
+  # the provider it ran on, under the provider's id.
+  @mc
+  Scenario: A thread from before instances had their own sessions keeps each instance's conversation
+    Given a second Codex instance "codex-work" with its own home
+    And "t1" last ran on "codex-work" when instances shared a provider thread
+    When the user switches "t1" to "codex-work" with model "gpt-5.4"
+    Then the next run starts on "codex-work"
+    And the run resumes the provider thread "codex-work" had
+    When the user switches "t1" back to "codex" and sends a message
+    Then the provider receives the earlier conversation before "where are we"
+    And the run answers on the Codex thread "native-thread-1"
+    And the session "codex" runs "t1" in is its own
+
+  # Its runs named the shared session too: one another instance ran is still that
+  # instance's to fork, after the provider's own instance has taken the shared id over.
+  @mc
+  Scenario: A fork of a run from before instances had their own sessions forks that instance's conversation
+    Given a second Codex instance "codex-work" with its own home
+    And the latest run of "t1" ran on "codex-work" when instances shared a provider thread
+    When the user switches "t1" back to "codex" and sends a message
+    And the user forks "t1" after its second run and sends on "codex-work"
+    Then the fork's first turn forks the Codex thread "codex-work-thread-1" after "codex-work-turn-2"
+    And the provider thread of "t1" on "codex-work" names that instance's session
+
+  # The provider's own instance starts a new conversation when it takes the shared id
+  # back, so its runs from before then are no longer in a conversation it has.
+  @mc
+  Scenario: A fork of the provider's own run from before instances had their own sessions gets the conversation
+    Given a second Codex instance "codex-work" with its own home
+    And the latest run of "t1" ran on "codex-work" when instances shared a provider thread
+    When the user switches "t1" back to "codex" and sends a message
+    And the user forks "t1" after its first run and sends on "codex"
+    Then the fork's first turn starts a new Codex thread with the conversation
+
+  # The shared provider thread named only the conversation of the instance that ran
+  # there last. Another instance's runs from before are in none it has, even once it has
+  # started one of its own.
+  @mc
+  Scenario: A fork of a run another instance ran before the last one to share the provider thread gets the conversation
+    Given a second Codex instance "codex-work" with its own home
+    And another Codex instance "codex-other" with its own home
+    And the first run of "t1" ran on "codex-other" when instances shared a provider thread
+    And the latest run of "t1" ran on "codex-work" when instances shared a provider thread
+    When the user switches "t1" to "codex-other" with model "gpt-5.4"
+    Then the next run starts on "codex-other"
+    And the run answers on the Codex thread "codex-other-thread-1"
+    When the user forks "t1" after its first run and sends on "codex-other"
+    Then the fork's first turn starts a new Codex thread with the conversation
+
+  @mc
+  Scenario: A session carried to a thread from before instances had their own sessions continues on its instance
+    Given a second Codex instance "codex-work" with its own home
+    And "t1" last ran on "codex-work" when instances shared a provider thread and moved here with its session
+    When the user switches "t1" to "codex-work" with model "gpt-5.4"
+    Then the next run starts on "codex-work"
+    And the run continues the carried Codex session "codex-work-carried"
+
+  # A Codex runtime from before it recorded its instance (updated in place) does not know
+  # which account its app-server runs as.
+  @mc
+  Scenario: A Codex runtime updated in place starts the other instance's Codex for its run
+    Given a second Codex instance "codex-work" with its own home
+    And the Codex runtime of "t1" was started before it recorded its instance
+    When the user switches "t1" to "codex-work" with model "gpt-5.4"
+    Then the next run starts on "codex-work"
+    And the run answers on the Codex thread "codex-work-thread-1"
+
   @mc @shared @backlog-desktop @backlog-mobile
   Scenario: Context occupancy survives a model change
     Given "t1" has used 80 percent of its provider context

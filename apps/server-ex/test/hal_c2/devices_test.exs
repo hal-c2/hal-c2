@@ -34,6 +34,60 @@ defmodule HalC2.DevicesTest do
     :ok
   end
 
+  test "the Android platform reason is returned, not raised, when no home is set", %{
+    tmp_dir: dir
+  } do
+    # A HOME-less process (e.g. a system service): no explicit SDK, no home
+    # candidates, no adb on PATH. HalC2.Paths.user_home/0 would raise here.
+    saved =
+      for name <- ["ANDROID_HOME", "ANDROID_SDK_ROOT", "HOME", "PATH"],
+          do: {name, System.get_env(name)}
+
+    on_exit(fn ->
+      for {name, value} <- saved do
+        if value, do: System.put_env(name, value), else: System.delete_env(name)
+      end
+    end)
+
+    System.delete_env("ANDROID_HOME")
+    System.delete_env("ANDROID_SDK_ROOT")
+    System.put_env("PATH", dir)
+
+    # An empty HOME is no home: it must not make the candidates
+    # cwd-relative and find an SDK under the working directory. (Deleting
+    # HOME would not do: the lookup falls back to the OS home, which is
+    # this host's answer, not a deterministic one.)
+    trap = Path.join([dir, "Android", "Sdk"])
+    tool(Path.join([trap, "platform-tools", "adb"]), "fake_adb.sh")
+    tool(Path.join([trap, "emulator", "emulator"]), "fake_emulator.sh")
+    tool(Path.join([trap, "cmdline-tools", "latest", "bin", "avdmanager"]), "fake_emulator.sh")
+    System.put_env("HOME", "")
+
+    File.cd!(dir, fn ->
+      assert HalC2.Devices.platform_reason("android") =~ "Android SDK was not found"
+
+      # A whitespace-only explicit SDK home is no home either, not a
+      # cwd-relative candidate that finds the trap.
+      System.put_env("ANDROID_HOME", "   ")
+      assert HalC2.Devices.platform_reason("android") =~ "Android SDK was not found"
+      System.delete_env("ANDROID_HOME")
+
+      # A whitespace-only HOME is no home either: "   " joined as a path
+      # is cwd-relative and would find an SDK planted under it.
+      ws_trap = Path.join([dir, "   ", "Android", "Sdk"])
+      tool(Path.join([ws_trap, "platform-tools", "adb"]), "fake_adb.sh")
+      tool(Path.join([ws_trap, "emulator", "emulator"]), "fake_emulator.sh")
+
+      tool(
+        Path.join([ws_trap, "cmdline-tools", "latest", "bin", "avdmanager"]),
+        "fake_emulator.sh"
+      )
+
+      System.put_env("HOME", "   ")
+      assert HalC2.Devices.platform_reason("android") =~ "Android SDK was not found"
+    end)
+  end
+
   test "devices list once enabled, and a thread opens and closes one" do
     assert {:ok, %{"hostStatus" => "disabled", "devices" => []}} = HalC2.Devices.list(%{})
 

@@ -196,6 +196,41 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     context
   end
 
+  # --- provider processes an MC that died left running ------------------------------------
+
+  # A stand-in provider whose `sleep` is a command it left in the background; it holds
+  # stdout too, so end of file means both are gone. The MC "dies" by its record naming
+  # an MC that is gone, as one from a VM that was killed does; the program itself keeps
+  # running, owned by this test.
+  step "a provider process with a command in the background was running when the MC died",
+       context do
+    {:ok, sub} =
+      HalC2.Subprocess.start(["sh", "-c", ~s(sleep 60 & while read l; do echo "$l"; done)])
+
+    pid = HalC2.Subprocess.os_pid(sub)
+    dir = HalC2.Subprocess.Orphans.dir()
+
+    [path] =
+      for name <- File.ls!(dir),
+          path = Path.join(dir, name),
+          match?(%{"pid" => ^pid}, JSON.decode!(File.read!(path))),
+          do: path
+
+    record = JSON.decode!(File.read!(path))
+    gone = Map.put(record["mc"], "started", "an earlier boot")
+    File.write!(path, JSON.encode!(%{record | "mc" => gone}))
+    Map.put(context, :orphan, sub)
+  end
+
+  step "the provider process and its background command have been killed", context do
+    sub = context.orphan
+    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+    exit_ref = sub.proc.exit_ref
+    # Killed by SIGKILL.
+    assert_receive {^exit_ref, {:ok, 137}}
+    context
+  end
+
   # --- a runtime crashing mid-turn ---------------------------------------------------------
 
   # A call no runtime handles crashes it, as a bug in any of its callbacks would.
@@ -224,6 +259,51 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
       })
 
     assert {:ok, _} = reply
+    context
+  end
+
+  # The stop a client sends naming the run it saw, as a restart does.
+  step "a client stops run {int} of {string}", %{args: [ordinal, thread]} = context do
+    %{"id" => run_id} = Enum.find(World.runs(context, thread), &(&1["ordinal"] == ordinal))
+
+    {reply, context} =
+      World.dispatch(context, %{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, thread),
+        "runId" => run_id
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "{string} ran its latest turn on Claude", %{args: [thread]} = context do
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+    context = World.dispatch_message(context, thread, "Hi", claude)
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_run(context, thread, &(&1["ordinal"] == 3 and &1["status"] == "completed"))
+    context
+  end
+
+  step "{string} is running its latest turn on Claude", %{args: [thread]} = context do
+    claude = %{"modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}}
+    context = World.dispatch_message(context, thread, "wait for me", claude)
+    assert {:ok, _} = context.reply, "message.dispatch failed: #{inspect(context.reply)}"
+    World.await_run(context, thread, &(&1["ordinal"] == 3 and &1["status"] == "running"))
+    context
+  end
+
+  step "run {int} of {string} is interrupted", %{args: [ordinal, thread]} = context do
+    World.await_run(
+      context,
+      thread,
+      &(&1["ordinal"] == ordinal and &1["status"] == "interrupted")
+    )
+
+    context
+  end
+
+  step "the stop is refused", context do
+    assert {:error, _, _} = context.reply
     context
   end
 

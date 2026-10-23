@@ -153,9 +153,9 @@ public:
     if (m_active) return;
     m_active = true;
     auto* navigation = NativeShell::of(this)->controller<NavigationController>();
-    connect(navigation, &NavigationController::changed, this, [this, navigation] {
-      const NavigationController::Route& route = navigation->route();
-      const bool open = route.kind == QLatin1String("settings") && route.section == kSection;
+    const auto route = [this, navigation] {
+      const NavigationController::Route& current = navigation->route();
+      const bool open = current.kind == QLatin1String("settings") && current.section == kSection;
       if (open == m_open) return;
       m_open = open;
       if (!open) {
@@ -163,8 +163,11 @@ public:
         m_link = {};
       }
       follow();
-    });
+    };
+    connect(navigation, &NavigationController::changed, this, route);
     connect(scope(), &SettingsScopeController::changed, this, &ScheduledTasksController::follow);
+    // A window restored on this page has its route before this activates.
+    route();
     publish();
   }
 

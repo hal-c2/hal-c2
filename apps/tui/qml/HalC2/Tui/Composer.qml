@@ -1,6 +1,6 @@
 import OpenTUI
 
-// The prompt, like ChatComposer in ComposerDock: a rounded faint box as wide
+// The prompt: a rounded faint box as wide
 // as `composer.surfaceWidth`, centred in the conversation column, holding the
 // agent's question, the attachment chips, the editor row and the footer; the
 // checkout context (`composer.context`) sits under it. The editor row is the
@@ -11,8 +11,8 @@ import OpenTUI
 // an attachment (`composer.paste` returns true and the text is not inserted).
 // The editor is as tall as the host's layout says (`layout.editorRows`).
 // Renaming a thread, writing a commit message or pasting a cluster invite
-// swaps the box for a one-line prompt in the accent colour (ChatComposer's
-// rename and commit modes).
+// swaps the box for a one-line prompt in the accent colour (the rename and
+// commit modes).
 Item {
     id: dock
     objectName: "composerDock"

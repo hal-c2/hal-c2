@@ -11,11 +11,10 @@ defmodule HalC2.Auth do
       scopes.
     * A bearer token buys a WebSocket ticket (5 minutes, single use), which the
       client puts in the socket URL so the long-lived token never appears there.
-    * An exchange proven with a DPoP key (`HalC2.Auth.Dpop`; a HAL-C2 Connect device, or any
-      client that sends a proof) makes a session bound to that key for 1 hour: each
-      request carries `Authorization: DPoP <token>` and a fresh proof
-      (`authenticate/1`); a bound token is never accepted as a bearer. A HAL-C2 Connect
-      device renews through the relay; open sockets are unaffected.
+    * An exchange proven with a DPoP key (`HalC2.Auth.Dpop`, from any client that sends
+      a proof) makes a session bound to that key for 1 hour: each request carries
+      `Authorization: DPoP <token>` and a fresh proof (`authenticate/1`); a bound token
+      is never accepted as a bearer. Open sockets are unaffected when it expires.
     * With a reusable development credential (`HAL_C2_DEV_AUTH_TOKEN`, dev builds
       only), that credential is itself an administrative session in every MC's
       own store, so one browser signs in to every worktree on a host.
@@ -46,8 +45,8 @@ defmodule HalC2.Auth do
   @admin_scopes @standard_scopes ++ ~w(access:read access:write relay:write)
   @desktop_ttl :timer.hours(24)
   @tickets __MODULE__.Tickets
-  # `{{:socket, pid}, session_id}`, `{{:watcher, pid}, monitor}` and `{:revision, n}`,
-  # the last access-list event's.
+  # `{{:socket, pid}, session_id}`, `{{:watcher, pid}, entry}` (`HalC2.Watchers`) and
+  # `{:revision, n}`, the last access-list event's.
   @live __MODULE__.Live
   @tables [@tickets, HalC2.Auth.Dpop.table(), @live]
   @heir __MODULE__.Heir
@@ -71,7 +70,7 @@ defmodule HalC2.Auth do
     {"auth_pairing", "label", "TEXT"},
     {"auth_pairing", "scopes", "TEXT"},
     {"auth_pairing", "created_at", "INTEGER"},
-    # HAL-C2 Connect credentials: the DPoP key thumbprint that must redeem them.
+    # Credentials bound to a device key: the DPoP key thumbprint that must redeem them.
     {"auth_pairing", "proof_jkt", "TEXT"},
     {"auth_sessions", "id", "TEXT"},
     {"auth_sessions", "last_connected_at", "INTEGER"},
@@ -110,8 +109,8 @@ defmodule HalC2.Auth do
   @doc """
   Exchanges a pairing token for `{:ok, access_token, expires_in_s, scopes}`.
   `client` describes who asked: `label`, `device_type`, `os`, `user_agent`,
-  `proof_jkt`, the DPoP key it proved and the token is bound to (a HAL-C2 Connect
-  credential needs its own), and `scopes` to ask for fewer than the credential grants
+  `proof_jkt`, the DPoP key it proved and the token is bound to (a credential
+  minted for a key needs that one), and `scopes` to ask for fewer than the credential grants
   (`{:error, :scope_not_granted}` when it asks for more).
   """
   @spec exchange(String.t(), map) ::
@@ -330,9 +329,12 @@ defmodule HalC2.Auth do
   """
   def prune, do: GenServer.call(__MODULE__, :prune)
 
-  @doc "Watches the access list; replies with its revision and snapshot."
-  def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
-  def unsubscribe(pid), do: GenServer.cast(__MODULE__, {:unsubscribe, pid})
+  @doc """
+  Watches the access list under `ref` (`HalC2.Watchers`); replies with its revision and
+  snapshot.
+  """
+  def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
+  def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
   # --- server ------------------------------------------------------------------
 
@@ -345,8 +347,8 @@ defmodule HalC2.Auth do
     # Sockets and watchers of the last run stay registered.
     for [pid] <- :ets.match(@live, {{:socket, :"$1"}, :_}), do: Process.monitor(pid)
 
-    for [pid] <- :ets.match(@live, {{:watcher, :"$1"}, :_}),
-        do: :ets.insert(@live, {{:watcher, pid}, Process.monitor(pid)})
+    for {{:watcher, pid}, entry} <- :ets.match_object(@live, {{:watcher, :_}, :_}),
+        do: :ets.insert(@live, {{:watcher, pid}, HalC2.Watchers.monitor_entry(entry, pid)})
 
     path = HalC2.Store.path()
     with_db(path, &ensure_schema/1)
@@ -443,9 +445,14 @@ defmodule HalC2.Auth do
     {:reply, length(revoked), broadcast(state, removed_clients(revoked))}
   end
 
-  def handle_call({:subscribe, pid}, _from, state) do
-    if :ets.lookup(@live, {:watcher, pid}) == [],
-      do: :ets.insert(@live, {{:watcher, pid}, Process.monitor(pid)})
+  def handle_call({:subscribe, pid, ref}, _from, state) do
+    entry =
+      case :ets.lookup(@live, {:watcher, pid}) do
+        [{_, entry}] -> entry
+        [] -> nil
+      end
+
+    :ets.insert(@live, {{:watcher, pid}, HalC2.Watchers.add_entry(entry, pid, ref)})
 
     snapshot = %{"pairingLinks" => links(state.path), "clientSessions" => clients(state)}
     {:reply, {:ok, revision(), snapshot}, state}
@@ -470,8 +477,14 @@ defmodule HalC2.Auth do
     end
   end
 
-  def handle_cast({:unsubscribe, pid}, state) do
-    for {_, ref} <- :ets.take(@live, {:watcher, pid}), do: Process.demonitor(ref, [:flush])
+  def handle_cast({:unsubscribe, pid, ref}, state) do
+    with [{key, entry}] <- :ets.lookup(@live, {:watcher, pid}) do
+      case HalC2.Watchers.remove_entry(entry, ref) do
+        nil -> :ets.delete(@live, key)
+        entry -> :ets.insert(@live, {key, entry})
+      end
+    end
+
     {:noreply, state}
   end
 
@@ -744,8 +757,8 @@ defmodule HalC2.Auth do
       revision = :ets.update_counter(@live, :revision, 1, {:revision, 0})
       message = %{"version" => 1, "revision" => revision, "type" => type, "payload" => payload}
 
-      for [pid] <- :ets.match(@live, {{:watcher, :"$1"}, :_}),
-          do: send(pid, {:hal_c2_auth_access, message})
+      for {{:watcher, pid}, entry} <- :ets.match_object(@live, {{:watcher, :_}, :_}),
+          do: HalC2.Watchers.tell(pid, entry, {:hal_c2_auth_access, message})
 
       state
     end)

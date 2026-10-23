@@ -79,29 +79,61 @@ defmodule HalC2.Upgrade do
   @doc """
   Updates to `version` from its bundle archive at `path` on this machine
   (`mix hal_c2.upgrade --release`), as `update/2` does from a fetched one. The MCs
-  clustered with this one update first, taking the bundle from it: members only
-  connect to members on their own version, so afterwards they could not. How each
-  went is the result's `members`.
+  clustered with this one update first, taking the bundle from it before this one
+  restarts. How each went is the result's `members`.
   """
   def update_from(path, version) do
     if File.regular?(path) do
       :ok = HalC2.Upgrade.Source.put(version, platform(), path)
       input = %{"targetVersion" => version}
-      # Off this process, which is left none of the members' messages.
-      members = Task.async(fn -> update_members(input) end) |> Task.await(:infinity)
+      members = update_members(Node.list(), input)
       with {:ok, result} <- update(input), do: {:ok, Map.put(result, "members", members)}
     else
       failure("#{path} is not a bundle.")
     end
   end
 
-  # A member that moved to the new version drops its connections, this one among
-  # them, so its going down counts as the end of its update too.
+  @doc """
+  `cluster.update`: has every connected member on another version update to the one
+  this MC runs, taking the bundle from it. `{:ok, version, [%{"mc", "from", "outcome"}]}`
+  with the version sent, or `{:error, :not_a_release}` when this MC runs from a checkout
+  and has no bundle.
+  """
+  def update_members do
+    if release_root() do
+      target = version()
+      others = for mc <- Node.list(), (from = version_of(mc)) != target, do: {mc, from}
+      if others != [], do: :ok = HalC2.Upgrade.Source.ensure_own(target)
+      outcomes = update_members(Enum.map(others, &elem(&1, 0)), %{"targetVersion" => target})
+
+      {:ok, target,
+       for(
+         {{_mc, from}, outcome} <- Enum.zip(others, outcomes),
+         do: Map.put(outcome, "from", from)
+       )}
+    else
+      {:error, :not_a_release}
+    end
+  end
+
+  defp version_of(mc) do
+    :erpc.call(mc, __MODULE__, :version, [], 5_000)
+  catch
+    _, _ -> nil
+  end
+
+  # A member that restarts to take the new version says so (`complete`) before it drops
+  # its connections; one that goes down without saying may have lost the network or
+  # crashed while installing, so its update is unconfirmed.
   #
   # They all get `@members_timeout` between them, which leaves this MC's own update
   # its time within what `mix hal_c2.upgrade --release` waits for an answer.
-  defp update_members(input) do
-    members = Node.list()
+  defp update_members(members, input) do
+    # Off the caller, which is left none of the members' messages.
+    Task.async(fn -> await_members(members, input) end) |> Task.await(:infinity)
+  end
+
+  defp await_members(members, input) do
     deadline = System.monotonic_time(:millisecond) + @members_timeout
     for mc <- members, do: Node.monitor(mc, true)
     started = :erpc.multicall(members, __MODULE__, :start, [input, self()], 15_000)
@@ -110,14 +142,21 @@ defmodule HalC2.Upgrade do
       outcome =
         with {:ok, :ok} <- reply do
           receive do
-            {:hal_c2_server_update, ^mc, %{"type" => "complete"}} -> "updated"
-            {:hal_c2_server_update, ^mc, {:error, %{"reason" => reason}}} -> reason
-            {:nodedown, ^mc} -> "left to run it"
+            # A restart is complete before it happens: only a member that loaded the
+            # version in place runs it already.
+            {:hal_c2_server_update, ^mc, %{"type" => "complete"}} ->
+              if version_of(mc) == input["targetVersion"], do: "updated", else: "restarting on it"
+
+            {:hal_c2_server_update, ^mc, {:error, %{"reason" => reason}}} ->
+              reason
+
+            {:nodedown, ^mc} ->
+              "the connection dropped before it finished"
           after
             max(deadline - System.monotonic_time(:millisecond), 0) -> "has not finished"
           end
         else
-          _ -> "cannot be updated from another MC"
+          _ -> "cannot be updated from another machine"
         end
 
       %{"mc" => Atom.to_string(mc), "outcome" => outcome}
@@ -197,7 +236,7 @@ defmodule HalC2.Upgrade do
     services = services()
 
     with {:ok, report} <- HalC2.Hot.reload(hot) do
-      pending = after_hot_update(hot, services)
+      pending = run_after_hot_update(hot, services)
       {:ok, Map.put(report, :needs_restart, Enum.map(restart, &elem(&1, 0)) ++ pending)}
     end
   end
@@ -207,7 +246,25 @@ defmodule HalC2.Upgrade do
   # the plugins directory, and the GitHub CLI's sign-in.
   # `services` are the specs the application listed before the update; it returns
   # what still needs a restart (`start_new_services/1`).
-  defp after_hot_update(beams, services) do
+  # Called by name, never locally: the caller is the module version being replaced, and
+  # a local call would run its old copy of this step rather than the one just loaded.
+  # That makes it a contract between versions: every older MC calls it on the version it
+  # just loaded, so its name, arity and the shape of `services` and of what it returns stay
+  # as they are while any MC that calls it this way may still update. The first update to
+  # the version that started calling it by name still ran the old copy, from the old caller.
+  # The other direction exists too: a hot update to a bundle built before this step went
+  # public (a rollback or pin) has no public step to call, so callers go through
+  # `run_after_hot_update/2`, which asks for a restart there instead of crashing after
+  # the code swap.
+  @doc false
+  def run_after_hot_update(beams, services) do
+    if function_exported?(__MODULE__, :after_hot_update, 2),
+      do: __MODULE__.after_hot_update(beams, services),
+      else: [__MODULE__]
+  end
+
+  @doc false
+  def after_hot_update(beams, services) do
     pending =
       if List.keymember?(beams, HalC2.Application, 0), do: start_new_services(services), else: []
 
@@ -275,8 +332,9 @@ defmodule HalC2.Upgrade do
   @impl true
   def init(nil) do
     # Here rather than in HalC2.Application, which a hot update cannot change: the
-    # agents, terminals and pulls started after this reach GitHub through gh too.
-    :ok = HalC2.Git.use_gh_for_github()
+    # agents, terminals and pulls started after this reach GitHub through gh too. It
+    # asks SSH off this process, so the services after this one do not wait for it.
+    _ = HalC2.Git.use_gh_for_github()
     {:ok, nil, {:continue, :outcome}}
   end
 
@@ -394,6 +452,7 @@ defmodule HalC2.Upgrade do
         set_start_version(root, target)
         :persistent_term.put({__MODULE__, :version}, target)
         HalC2.Cluster.version_changed()
+        HalC2.Shell.announce()
         record(Map.put(outcome, "status", "committed"))
         announce()
         Logger.info("upgraded in place to #{target} (#{length(modules)} modules)")
@@ -524,7 +583,7 @@ defmodule HalC2.Upgrade do
     services = services()
 
     with {:ok, _report} <- HalC2.Hot.reload(beams) do
-      case after_hot_update(beams, services) do
+      case run_after_hot_update(beams, services) do
         [] -> :ok
         pending -> {:error, {:restart_for, pending}}
       end

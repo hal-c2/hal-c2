@@ -23,6 +23,7 @@
 #include "TerminalController.h"
 #include "SettingsController.h"
 #include "ShellBridge.h"
+#include "ThisMachine.h"
 #include "WorkspaceController.h"
 
 QList<NativeControllerRegistration>& nativeControllerRegistry() {
@@ -103,9 +104,11 @@ NativeWindow::NativeWindow(NativeShell* shell, const QString& id, ShellBridge* b
       connect(drafts, &DraftController::changed, workspace, &WorkspaceController::refresh);
     }
   }
-  // And groups, orders and dates them as this device's preferences say.
+  // And groups, orders and dates them as this device's preferences say, and
+  // lists settled plugin threads as the MC's settings say.
   if (auto* settings = controller<SettingsController>()) {
     connect(settings, &SettingsController::deviceChanged, &m_sidebar, &SidebarController::refresh);
+    connect(settings, &SettingsController::settingsChanged, &m_sidebar, &SidebarController::refresh);
   }
 }
 
@@ -160,6 +163,7 @@ void NativeWindow::activate() {
 NativeShell::NativeShell(ShellBridge* bridge, QObject* parent)
     : QObject(parent), m_client(this), m_store(&m_client, this), m_sharedBridge(bridge) {
   g_shell = this;
+  bridge->setMcHere(mcHere());
   // Static initialisers register in link order; name order keeps it stable.
   m_registrations = nativeControllerRegistry();
   std::sort(m_registrations.begin(), m_registrations.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
@@ -183,7 +187,12 @@ NativeShell::~NativeShell() {
   // Windows (and their controllers) before the shared controllers they use.
   m_windows.clear();
   m_shared.clear();
+  m_sharedBridge->setMcHere({});
   if (g_shell == this) g_shell = nullptr;
+}
+
+std::function<bool()> NativeShell::mcHere() {
+  return [this] { return thisMachine::hosts(m_store, m_client, m_client.environment()); };
 }
 
 NativeWindow* NativeShell::of(const QObject* controller) {
@@ -233,6 +242,7 @@ NativeWindow* NativeShell::openWindow(const QString& id) {
   auto bridge = std::make_unique<ShellBridge>();
   bridge->setLocalFolderImportEnabled(m_sharedBridge->localFolderImportEnabled());
   bridge->setMcOrigin(m_sharedBridge->mcOrigin());
+  bridge->setMcHere(mcHere());
   ShellBridge* raw = bridge.get();
   m_windows.push_back(std::make_unique<NativeWindow>(this, windowId, raw, std::move(bridge)));
   NativeWindow* window = m_windows.back().get();

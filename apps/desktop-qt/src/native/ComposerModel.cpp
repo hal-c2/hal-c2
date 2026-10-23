@@ -842,6 +842,8 @@ Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>&
   });
   Queued queued;
   for (const QJsonObject& run : waiting) {
+    // Held is the queue's, listed run or not; the card shows it only with a run to list.
+    queued.held = queued.held || run.value(QLatin1String("queueHeld")).toBool();
     const QString runId = run.value(QLatin1String("id")).toString();
     const auto found = messages.constFind(run.value(QLatin1String("userMessageId")).toString());
     if (found == messages.cend()) continue;
@@ -851,7 +853,8 @@ Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>&
       const std::optional<timeline::Notice> notice = timeline::noticeOf(message);
       queued.waiting.append(QVariantMap{{QStringLiteral("runId"), runId},
                                         {QStringLiteral("summary"), notice && !notice->summary.isEmpty() ? notice->summary : QStringLiteral("Notification")},
-                                        {QStringLiteral("outcome"), notice ? notice->outcome : QString()}});
+                                        {QStringLiteral("outcome"), notice ? notice->outcome : QString()},
+                                        {QStringLiteral("workerThreadId"), notice ? notice->workerThreadId : QString()}});
       continue;
     }
     queued.queue.append(QVariantMap{{QStringLiteral("runId"), runId}, {QStringLiteral("text"), message.value(QLatin1String("text")).toString()}});

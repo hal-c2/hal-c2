@@ -70,6 +70,83 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
     |> Map.merge(%{waiting: call, run: Process.monitor(run)})
   end
 
+  # The run's prompt has landed and its turn is running in the task's
+  # thread, driven by the runtime, while the run itself is still in
+  # flight: the fake fire sends the prompt (as `fire/3` does for a task
+  # with a thread), then wedges, as a slow launch would leave it. The
+  # "run now" call stays unanswered on its own socket meanwhile.
+  step "a task whose run's turn is already running in its thread", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on("Triage", "codex", "hello")
+
+    World.await_runs(context, "Triage", ["completed"])
+    thread = World.thread_id(context, "Triage")
+
+    context =
+      save_task(context, %{
+        "threadId" => thread,
+        "prompt" => "wait for me",
+        "schedule" => every(60)
+      })
+
+    id = context.task["id"]
+    test = self()
+
+    World.put_app_env(:scheduled_tasks_fire, fn task, fire_key ->
+      {:ok, _} =
+        HalC2.Orchestration.dispatch(%{
+          "type" => "message.dispatch",
+          "commandId" => "scheduled-task:#{fire_key}",
+          "threadId" => task["threadId"],
+          "messageId" => "scheduled-task-message:#{fire_key}",
+          "scheduledTaskId" => task["id"],
+          "text" => task["prompt"],
+          "attachments" => [],
+          "modelSelection" => task["modelSelection"],
+          "createdBy" => task["createdBy"],
+          "creationSource" => task["creationSource"],
+          "dispatchMode" => %{"type" => "queue_after_active"}
+        })
+
+      send(test, :scheduled_prompt_sent)
+
+      receive do
+        :release -> {:ok, %{}}
+      end
+    end)
+
+    shape = %{"type" => "scheduledTasks", "mc" => Atom.to_string(node())}
+    waiter = context |> World.client("waiter") |> Mc.sub(7, shape)
+    call = System.unique_integer([:positive])
+    waiter = Mc.rpc(waiter, context.mc.environment, call, "scheduledTasks.runNow", %{"id" => id})
+
+    {_frame, waiter} =
+      Mc.await(waiter, fn frame ->
+        frame["t"] == "scheduledTasks" and
+          Enum.any?(frame["tasks"], &(&1["id"] == id and &1["lastRunStatus"] == "running"))
+      end)
+
+    receive do
+      :scheduled_prompt_sent -> :ok
+    after
+      5_000 -> flunk("the run's prompt was never sent")
+    end
+
+    World.await_runs(context, "Triage", ["completed", "running"])
+    [run] = for {pid, %{id: ^id}} <- :sys.get_state(HalC2.ScheduledTasks).runs, do: pid
+
+    context
+    |> World.put_client("waiter", waiter)
+    |> Map.merge(%{waiting: call, run: Process.monitor(run)})
+  end
+
+  step "the turn its run started is interrupted", context do
+    World.await_runs(context, "Triage", ["completed", "interrupted"])
+    context
+  end
+
   step "a task that runs every hour", context do
     context = context |> save_task(%{"schedule" => every(60)}) |> pass(60)
     assert %{"runCount" => 1, "lastRunStatus" => "succeeded"} = task(context)
@@ -93,6 +170,17 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
 
   # A run that cannot finish: its thread's stream is held, so sending the prompt waits.
   step "a task is running", context do
+    start_running(context)
+  end
+
+  # The same held run, with the hour a run gets shortened so the scenario can
+  # see it pass. The cap must be set before the run starts.
+  step "a task is running and its prompt is never sent", context do
+    World.put_app_env(:scheduled_tasks_run_timeout_ms, 1_000)
+    start_running(context)
+  end
+
+  defp start_running(context) do
     context = World.create_thread(context, "Triage", "api")
     thread = World.thread_id(context, "Triage")
     context = save_task(context, %{"threadId" => thread, "schedule" => every(60)})
@@ -103,6 +191,20 @@ defmodule HalC2.Steps.Settings.ScheduledTasks do
     assert %{runs: runs, tasks: tasks} = :sys.get_state(HalC2.ScheduledTasks)
     assert map_size(runs) == 1
     assert tasks[context.task["id"]]["lastRunStatus"] == "running"
+    context
+  end
+
+  # The cap ends the run; `settle/0` waits on the service's own notifications
+  # until no run is in flight, which is the receipt that it did.
+  step "the run's hour passes without it finishing", context do
+    settle()
+    context
+  end
+
+  step "the task's last run failed with {string}", %{args: [message]} = context do
+    assert %{"lastRunStatus" => "failed", "lastRunError" => ^message, "runCount" => 1} =
+             task(context)
+
     context
   end
 

@@ -127,6 +127,8 @@ public:
   QString environmentId = QStringLiteral("env-a");
   // The MC's environment's label, when it has one ("This machine" otherwise).
   QString label;
+  // The MC's environment's `platform` (its `machineId`), when a scenario gives it one.
+  QJsonObject platform;
   QMap<QString, QJsonObject> threads;
   QMap<QString, QJsonObject> projects;
   QList<QUrl> connections;
@@ -171,12 +173,17 @@ public:
   QHash<QString, QString> peers;
   // A member's label, when its environment has one.
   QHash<QString, QString> peerLabels;
+  // A member's `platform` (its `machineId`), when it has one; join() again
+  // announces a change.
+  QHash<QString, QJsonObject> peerPlatforms;
   // Members whose MC is down: their rows stay, and requests for them fail.
   QSet<QString> offline;
   // Each member's rows, by environment then id: [id, kind, row].
   QHash<QString, QMap<QString, QJsonArray>> peerRows;
 
   void sendSnapshot();
+  // The MC's own environment changed (`shell.environment`): its label or platform.
+  void announceEnvironment();
   // Another MC joins this one's cluster, announced as the shell announces it
   // on nodeup: its environment, whether it is online, and its rows.
   void join(const QString& peer, const QString& peerEnvironment);
@@ -211,6 +218,7 @@ private:
   void onMessage(QWebSocket* socket, const QString& text);
   void dispatchCommand(const Rpc& rpc);
   QJsonObject peerEnvironment(const QString& environment) const;
+  QJsonObject ownEnvironment() const;
   // The MC's rows as they are now, by id: [id, kind, row].
   QMap<QString, QJsonArray> rowsOf(const QString& mc) const;
   // One MC of a `shell` frame, and its rows the client lacks appended to `rows`.

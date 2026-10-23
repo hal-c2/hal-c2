@@ -46,9 +46,6 @@ service is still installed and will start at the next login.
 
 Windows background services are not supported.
 
-HAL-C2 Connect can offer service installation during setup, but the two are managed
-separately. Signing out of HAL-C2 Connect does not stop or uninstall the service.
-
 ## Troubleshooting
 
 Start with `<mc> status` on the host. It prints the log path and, on Linux,
@@ -69,8 +66,7 @@ ssh -t your-server 'sudo loginctl enable-linger "$(id -un)"'
 ```
 
 Then retry service setup as your normal user. Run only the `loginctl` command
-with sudo; running HAL-C2 as root creates a separate installation and Connect
-identity. Without administrator access, run the MC file in a terminal and keep
+with sudo; running HAL-C2 as root creates a separate installation. Without administrator access, run the MC file in a terminal and keep
 that session open.
 
 | Status problem                          | Next step                                                                                                                      |
@@ -89,8 +85,15 @@ Downloads, it may need Full Disk Access for the executable listed in
 The service has no SSH agent, so an SSH key with a passphrase cannot reach your
 remotes from it. GitHub still works when the GitHub CLI is signed in
 (`gh auth login`): HAL-C2 and its agents reach `git@github.com:` remotes over HTTPS
-with that sign-in. Signing in or out later takes effect when HAL-C2 next starts or
-updates.
+with that sign-in, even if your own git config sends all of `https://github.com/`
+to SSH or a mirror. A rule of yours for one owner, such as `https://github.com/acme/`,
+still applies: an `insteadOf` rule applies to fetches, and a `pushInsteadOf` rule to pushes.
+Signing in or out later takes effect when HAL-C2 next starts or updates.
 
-For failures after signing in to HAL-C2 Connect, see
-[connection troubleshooting](./remote-access.md#hal-c2-connect-troubleshooting).
+Where an SSH agent is running and GitHub accepts SSH from that machine, HAL-C2
+leaves git on SSH instead, and the GitHub CLI's sign-in still answers for
+`https://github.com/` remotes. It checks when it starts or updates, without holding
+up either; if GitHub cannot be reached then, git stays on SSH if it was on it and
+goes over HTTPS otherwise. If a
+push that changes a workflow is refused for a missing `workflow` scope and you push
+with the GitHub CLI's sign-in, run `gh auth refresh -s workflow` on that machine.

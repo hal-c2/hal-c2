@@ -308,6 +308,56 @@ defmodule HalC2.AuthTest do
     assert length(HalC2.Auth.clients()) == 2
   end
 
+  test "saving a file by its full path needs terminal:operate, checked before the call is routed",
+       %{port: port, tmp_dir: dir} do
+    start_supervised!(HalC2.Workspace)
+    project = Path.join(dir, "shop")
+    File.mkdir_p!(project)
+    outside = Path.join(dir, "notes.txt")
+    File.write!(outside, "- buy milk\n")
+
+    {phone, _} =
+      paired_socket(port, HalC2.Auth.standard_scopes() -- ["terminal:operate"], "Phone")
+
+    # A member the shell knows but cannot reach: a call routed there would not come back
+    # as a scope refusal.
+    send(HalC2.Shell, {:nodeup, :member@nowhere})
+
+    GenServer.cast(
+      HalC2.Shell,
+      {:peer_environment, :member@nowhere, %{"environmentId" => "env-member"}}
+    )
+
+    :sys.get_state(HalC2.Shell)
+
+    write = %{"cwd" => project, "relativePath" => outside, "contents" => "rm -rf ~\n"}
+
+    phone =
+      for environment <- [HalC2.Environment.id(), "env-member"], reduce: phone do
+        phone ->
+          {reply, phone} = call(phone, "projects.writeFile", write, environment)
+
+          assert {:error,
+                  %{
+                    "_tag" => "EnvironmentScopeRequiredError",
+                    "requiredScope" => "terminal:operate"
+                  }} =
+                   reply
+
+          phone
+      end
+
+    assert File.read!(outside) == "- buy milk\n"
+
+    {reply, _} = call(phone, "projects.writeFile", %{write | "relativePath" => "src/app.ts"})
+    assert {:ok, %{"relativePath" => "src/app.ts"}} = reply
+
+    {terminal, _} = paired_socket(port, HalC2.Auth.standard_scopes(), "Laptop")
+    {reply, _} = call(terminal, "projects.writeFile", %{write | "contents" => "- buy eggs\n"})
+    assert {:ok, %{"relativePath" => ^outside}} = reply
+    assert File.read!(outside) == "- buy eggs\n"
+  end
+
   test "a desktop bootstrap line sets where the MC listens and keeps its state" do
     previous = for key <- [:home, :port, :host], do: {key, Application.fetch_env(:hal_c2, key)}
 

@@ -1,10 +1,12 @@
 #include "WorkspaceFiles.h"
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QHash>
 #include <QLocale>
 #include <QRegularExpression>
+#include <QTimeZone>
 
 #include <functional>
 
@@ -89,7 +91,8 @@ WorkspaceFiles::WorkspaceFiles(McClient* client, QObject* parent) : QObject(pare
   });
 }
 
-void WorkspaceFiles::setTarget(const QString& environmentId, const QString& root) {
+void WorkspaceFiles::setTarget(const QString& environmentId, const QString& root, const QString& threadId) {
+  m_thread = threadId;
   if (environmentId == m_environment && root == m_root) return;
   // An edit of the workspace being left is written there.
   save(true);
@@ -122,6 +125,8 @@ void WorkspaceFiles::setActive(bool active) {
   } else if (m_active && std::exchange(m_stale, false)) {
     m_tree.refresh();
   }
+  // The preview loads again when the tab shows, so needs a URL that works.
+  if (m_active && m_fileStatus == QLatin1String("ready") && mediaExpired()) reloadFile();
 }
 
 void WorkspaceFiles::setTimeline(TimelineModel* timeline) {
@@ -247,7 +252,7 @@ void WorkspaceFiles::openFile(const QString& path, int line) {
     if (std::exchange(m_editing, false)) emit renderedChanged();
   }
   m_openLine = line;
-  if (path == m_openPath && m_fileStatus == QLatin1String("ready")) {
+  if (path == m_openPath && m_fileStatus == QLatin1String("ready") && !mediaExpired()) {
     // Already here: just go to the line.
     m_revealLine = line > 0 ? std::clamp(line, 1, std::max(1, m_lines.rowCount())) : 0;
     emit revealRequested();
@@ -266,7 +271,9 @@ void WorkspaceFiles::reloadFile() {
   m_fileProblem.clear();
   m_truncatedNotice.clear();
   m_truncated = false;
+  m_mediaUrl.clear();
   emit fileChanged();
+  if (!mediaKind().isEmpty()) return signMedia(request);
   m_client->call(this, m_environment, QStringLiteral("projects.readFile"),
                  QJsonObject{{QStringLiteral("cwd"), m_root}, {QStringLiteral("relativePath"), m_openPath}},
                  [this, request](const QJsonValue& result, const std::optional<QString>& error) {
@@ -292,6 +299,69 @@ void WorkspaceFiles::reloadFile() {
                  });
 }
 
+void WorkspaceFiles::signMedia(int request) {
+  // A path in the workspace is the thread's file; a full path is served only
+  // as a media file. With no thread, the workspace folder names itself. The
+  // path is the thread's machine's, so a Windows one counts here too.
+  static const QRegularExpression full(QStringLiteral(R"(^(/|\\\\|[A-Za-z]:[/\\]))"));
+  const bool outside = full.match(m_openPath).hasMatch();
+  QJsonObject resource{{QStringLiteral("path"), m_openPath}};
+  if (m_thread.isEmpty()) {
+    resource.insert(QStringLiteral("_tag"), QStringLiteral("draft-workspace-file"));
+    resource.insert(QStringLiteral("cwd"), m_root);
+  } else {
+    resource.insert(QStringLiteral("_tag"), outside ? QStringLiteral("media-file") : QStringLiteral("workspace-file"));
+    resource.insert(QStringLiteral("threadId"), m_thread);
+  }
+  m_client->call(this, m_environment, QStringLiteral("assets.createUrl"), QJsonObject{{QStringLiteral("resource"), resource}},
+                 [this, request](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (request != m_fileRequest) return;
+                   const QString relative = result.toObject().value(QLatin1String("relativeUrl")).toString();
+                   setText({});
+                   if (error || relative.isEmpty()) {
+                     m_fileStatus = QStringLiteral("error");
+                     m_fileProblem = error && !error->isEmpty() ? *error : QStringLiteral("Unable to load this file.");
+                     emit fileChanged();
+                     return;
+                   }
+                   // The cluster hands the address to the member that signed
+                   // it. It stops working a minute before the MC says, so a
+                   // preview asked for at the last moment still loads.
+                   m_mediaUrl = m_client->origin().resolved(QUrl(relative));
+                   m_mediaExpires = QDateTime::fromMSecsSinceEpoch(
+                       qint64(result.toObject().value(QLatin1String("expiresAt")).toDouble()) - 60'000, QTimeZone::UTC);
+                   m_fileStatus = QStringLiteral("ready");
+                   emit fileChanged();
+                   if (std::exchange(m_openOnSign, 0) == request) emit mediaOpened(m_mediaUrl);
+                 });
+}
+
+void WorkspaceFiles::openMedia() {
+  if (mediaKind().isEmpty()) return;
+  if (m_fileStatus == QLatin1String("ready") && !mediaExpired()) {
+    emit mediaOpened(m_mediaUrl);
+    return;
+  }
+  reloadFile();
+  m_openOnSign = m_fileRequest;
+}
+
+bool WorkspaceFiles::mediaExpired() const {
+  return !mediaKind().isEmpty() && (m_mediaUrl.isEmpty() || QDateTime::currentDateTimeUtc() >= m_mediaExpires);
+}
+
+void WorkspaceFiles::mediaFailed(const QUrl& url) {
+  if (url.isEmpty() || url != m_mediaUrl || m_fileStatus != QLatin1String("ready")) return;
+  static const QHash<QString, QString> nouns{{QStringLiteral("image"), QStringLiteral("image")},
+                                             {QStringLiteral("video"), QStringLiteral("video")},
+                                             {QStringLiteral("audio"), QStringLiteral("audio")},
+                                             {QStringLiteral("pdf"), QStringLiteral("document")}};
+  m_mediaUrl.clear();
+  m_fileStatus = QStringLiteral("error");
+  m_fileProblem = tr("The %1 could not be loaded.").arg(nouns.value(mediaKind(), QStringLiteral("file")));
+  emit fileChanged();
+}
+
 void WorkspaceFiles::closeFile() {
   // What the user typed is written before the file goes.
   save(true);
@@ -305,6 +375,7 @@ void WorkspaceFiles::closeFile() {
   m_fileProblem.clear();
   m_truncatedNotice.clear();
   m_truncated = false;
+  m_mediaUrl.clear();
   setText({});
   if (!m_saveProblem.isEmpty()) {
     m_saveProblem.clear();
@@ -428,6 +499,22 @@ QString WorkspaceFiles::renderKind() const {
   return m_fileStatus == QLatin1String("ready") ? kinds.value(extensionOf(m_openPath)) : QString();
 }
 
+QString WorkspaceFiles::mediaKindOf(const QString& path) {
+  // What the MC serves as media (its media extensions), less HTML, which renders as text.
+  static const QHash<QString, QString> kinds = [] {
+    QHash<QString, QString> kinds;
+    const auto add = [&kinds](const char* kind, std::initializer_list<const char*> extensions) {
+      for (const char* extension : extensions) kinds.insert(QLatin1String(extension), QLatin1String(kind));
+    };
+    add("image", {"png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico"});
+    add("video", {"mp4", "webm", "mov", "m4v"});
+    add("audio", {"mp3", "wav", "ogg", "oga", "opus", "m4a", "aac", "flac"});
+    add("pdf", {"pdf"});
+    return kinds;
+  }();
+  return kinds.value(extensionOf(path));
+}
+
 bool WorkspaceFiles::rendered() const {
   const QString kind = renderKind();
   return !kind.isEmpty() && !m_editing && !m_sourceKinds.contains(kind);
@@ -466,12 +553,33 @@ QString WorkspaceFiles::renderedText() const {
   return out;
 }
 
+namespace {
+
+// A file outside the workspace, opened by its full path.
+bool hostPath(const QString& path) {
+  return path.startsWith(QLatin1Char('/')) || path.contains(QLatin1String(":\\"));
+}
+
+QString hostWriteRefusal() {
+  return WorkspaceFiles::tr("Saving a file outside the project needs terminal access, which this device was not paired with.");
+}
+
+}  // namespace
+
 QString WorkspaceFiles::readOnlyReason() const {
   if (m_fileStatus != QLatin1String("ready")) return {};
   if (m_truncated) return tr("Files larger than 1 MB open read-only.");
-  // Only a path inside the workspace can be written back.
-  if (m_openPath.startsWith(QLatin1Char('/')) || m_openPath.contains(QLatin1String(":\\"))) return tr("Files outside the project open read-only.");
+  // A file outside the workspace is written back by its full path, by the MC
+  // that read it; one that is not text it refuses (saveFailed). Such a write
+  // reaches any file on that machine, so it needs the terminal access this
+  // device may have been paired without; once refused, the others there open
+  // read-only too.
+  if (hostWritesRefused()) return hostWriteRefusal();
   return {};
+}
+
+bool WorkspaceFiles::hostWritesRefused() const {
+  return !m_hostWritesRefusedOn.isEmpty() && m_hostWritesRefusedOn == m_environment && hostPath(m_openPath);
 }
 
 void WorkspaceFiles::setEditing(bool editing) {
@@ -518,22 +626,46 @@ void WorkspaceFiles::toggleTask(int index) {
 void WorkspaceFiles::save(bool closing) {
   m_saveDelay.stop();
   if (!m_pending || m_openPath.isEmpty() || m_root.isEmpty()) return;
+  if (hostWritesRefused()) {
+    // Refused already: the edit stays on screen, unsaved, until the file goes,
+    // and is never written to the file opened next.
+    if (closing) m_pending = false;
+    return;
+  }
   // One write at a time: the next goes when this one is answered.
   if (m_saving && !closing) return;
   const QString path = m_openPath;
   const QString root = m_root;
   const int revision = m_revision;
   const int request = m_fileRequest;
+  const QString environment = m_environment;
   m_saving = !closing;
   if (closing) m_pending = false;
   m_client->call(this, m_environment, QStringLiteral("projects.writeFile"),
                  QJsonObject{{QStringLiteral("cwd"), root}, {QStringLiteral("relativePath"), path}, {QStringLiteral("contents"), m_text}},
-                 [this, path, root, revision, request, closing](const QJsonValue&, const std::optional<QString>& error) {
-                   const QString problem = error ? (error->isEmpty() ? QStringLiteral("Unable to save this file.") : *error) : QString();
+                 [this, path, root, environment, revision, request, closing](const QJsonValue& detail, const std::optional<QString>& error) {
+                   // A session without terminal access may not write outside the workspace (Rpc.required_scope/2).
+                   const QJsonObject refusal = error ? detail.toObject() : QJsonObject();
+                   const bool hostRefused = refusal.value(QLatin1String("_tag")) == QLatin1String("EnvironmentScopeRequiredError") &&
+                                            refusal.value(QLatin1String("requiredScope")) == QLatin1String("terminal:operate");
+                   if (hostRefused) m_hostWritesRefusedOn = environment;
+                   const QString problem = hostRefused ? hostWriteRefusal()
+                                           : error     ? (error->isEmpty() ? QStringLiteral("Unable to save this file.") : *error)
+                                                       : QString();
                    if (error) emit saveFailed(path, problem);
                    // The file closed, or another opened, meanwhile.
                    if (closing || path != m_openPath || root != m_root || request != m_fileRequest) return;
                    m_saving = false;
+                   if (hostRefused) {
+                     // The file is read-only now; the view shows the edit that was not saved, to copy.
+                     m_saveProblem = problem;
+                     m_editing = false;
+                     m_lines.setText(m_text);
+                     emit renderedChanged();
+                     emit fileChanged();
+                     emit saveChanged();
+                     return;
+                   }
                    if (error) {
                      // The edit stays, to be written with the next one.
                      m_saveProblem = problem;

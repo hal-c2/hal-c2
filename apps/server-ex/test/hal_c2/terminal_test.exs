@@ -60,6 +60,44 @@ defmodule HalC2.TerminalTest do
       %{input: %{"threadId" => "thread-1", "terminalId" => "term-1", "cwd" => dir}}
     end
 
+    test "a state from before the attach capture gains its field on upgrade" do
+      assert {:ok, %{attach_capture: nil}} = Terminal.code_change(0, %{}, nil)
+    end
+
+    # A terminal whose suspend timed out during a hot reload never ran
+    # `code_change/3`, so it keeps running the new code with a state that
+    # has no `attach_capture` field. Attaching to it must not crash it
+    # (and its shell with it).
+    test "attaching to a terminal whose state predates the attach capture works",
+         %{input: input} do
+      assert {:ok, %{"status" => "running"}} = Terminal.attach(input, self())
+      [{pid, _}] = Registry.lookup(HalC2.Terminal.Registry, {"thread-1", "term-1"})
+      :sys.replace_state(pid, &Map.delete(&1, :attach_capture))
+
+      assert {:ok, %{"status" => "running"}} = Terminal.attach(input, self())
+      assert [{^pid, _}] = Registry.lookup(HalC2.Terminal.Registry, {"thread-1", "term-1"})
+      assert :sys.get_state(pid).attach_capture == nil
+
+      {:ok, nil} = Terminal.write(Map.put(input, "data", "echo still-here\n"))
+      await_output("still-here")
+    end
+
+    # The error an attach's failed start produces reaches the attacher once:
+    # as the plain event the attach handler sends, not again as a capture.
+    test "a shell that cannot start tells the attaching pid its error once", %{input: input} do
+      System.put_env("SHELL", "/nonexistent/sh")
+      Application.put_env(:hal_c2, :terminal_shells, [])
+      on_exit(fn -> Application.delete_env(:hal_c2, :terminal_shells) end)
+
+      assert {:ok, %{"status" => "error"}} = Terminal.attach(input, self())
+
+      key = {input["threadId"], input["terminalId"]}
+      assert_received {:hal_c2_terminal, ^key, %{"type" => "error", "message" => message}}
+      assert message =~ "No shell found"
+      refute_received {:hal_c2_terminal_attach, ^key, %{"type" => "error"}}
+      refute_received {:hal_c2_terminal, ^key, %{"type" => "error"}}
+    end
+
     test "a shell runs commands, resizes, clears, and reports its exit", %{input: input} do
       assert {:ok, %{"status" => "running", "pid" => pid, "label" => "Terminal 1"}} =
                Terminal.attach(Map.merge(input, %{"cols" => 80, "rows" => 24}), self())

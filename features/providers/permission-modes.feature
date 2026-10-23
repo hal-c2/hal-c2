@@ -201,6 +201,8 @@ Feature: Permission modes
     When the user opens the permission mode choices
     Then auto is not offered
 
+  # A provider that can change a running turn's access takes it at once instead; Muse
+  # Code does (providers/muse.feature).
   @tui
   Scenario: Changing the mode mid-thread applies from the next turn
     Given a supervised thread with a running turn

@@ -14,7 +14,9 @@ defmodule HalC2.SlackPropTest do
   and app or in another, or mention it and disconnect while the MC asks Slack who wrote it,
   and have Slack deliver a mention again (as it does when an ack was lost), however the
   connection changed since, or connect while Slack mentions the bot straight after hello,
-  before the service has made the connection its own. After every step the status must
+  before the service has made the connection its own, or while a connect replaces the
+  connection (the old socket must not ack it, as the bot no longer knows who it is, and
+  Slack delivers it again). After every step the status must
   match the model and never carry a token, and the secret store must hold tokens
   exactly when the model keeps them. At the end of a case the plugin granted
   `slack:read` must have heard every connect and every stop (`slack.status`), in the
@@ -192,6 +194,7 @@ defmodule HalC2.SlackPropTest do
             if(state.up,
               do: [
                 {1, {:call, __MODULE__, :read_across_reconnect, []}},
+                {2, {:call, __MODULE__, :mention_during_replace, [state.sent]}},
                 {1, {:call, __MODULE__, :read_across_change, []}}
               ],
               else: []
@@ -236,6 +239,9 @@ defmodule HalC2.SlackPropTest do
   def precondition(state, {:call, _, :read_across_reconnect, _}),
     do: state.phase == :connected and state.up
 
+  def precondition(state, {:call, _, :mention_during_replace, [n]}),
+    do: state.phase == :connected and state.up and n >= state.sent
+
   def precondition(state, {:call, _, :read_across_change, _}),
     do: state.phase == :connected and state.up
 
@@ -264,6 +270,12 @@ defmodule HalC2.SlackPropTest do
   def next_state(state, _result, {:call, _, :mention_at_hello, [n]}) do
     state = next_state(state, nil, {:call, __MODULE__, :connect, [:good]})
     next_state(state, nil, {:call, __MODULE__, :mention, [:ours, n]})
+  end
+
+  # Unacked by the socket the connect replaced, so not heard until Slack delivers it again.
+  def next_state(state, _result, {:call, _, :mention_during_replace, [n]}) do
+    state = next_state(state, nil, {:call, __MODULE__, :connect, [:good]})
+    %{state | sent: n + 1, events: Map.put(state.events, n, :stale)}
   end
 
   # Connected afresh twice: once to start from empty caches, once under the reads.
@@ -390,6 +402,10 @@ defmodule HalC2.SlackPropTest do
 
   defp replied?(state, {:call, _, :mention_at_hello, _}, {connected, heard}) do
     heard == :heard and replied?(state, {:call, __MODULE__, :connect, [:good]}, connected)
+  end
+
+  defp replied?(state, {:call, _, :mention_during_replace, _}, {connected, acked}) do
+    acked == false and replied?(state, {:call, __MODULE__, :connect, [:good]}, connected)
   end
 
   defp replied?(state, {:call, _, :read_across_reconnect, []}, {connected, read_again}) do
@@ -531,6 +547,52 @@ defmodule HalC2.SlackPropTest do
     :sys.resume(HalC2.Slack)
     connected = Task.await(connecting, @wait)
     {connected, heard_mention(n)}
+  end
+
+  # Connects again while the supervisor of connections is suspended, so the attempt cannot
+  # tear the old socket down: the service has forgotten the bot's identity, and the old
+  # socket, which Slack still sends to, must not ack the mention. Answers the connect and
+  # whether it acked.
+  def mention_during_replace(n) do
+    # Acks of earlier mentions come before the pong of a ping sent after them.
+    FakeSlack.hello(true)
+    FakeSlack.ping()
+
+    receive do
+      :fake_slack_pong -> :ok
+    after
+      @wait -> exit(:socket_never_ponged)
+    end
+
+    flush_fake()
+    watch()
+    :sys.suspend(HalC2.Slack.Connections)
+    connecting = Task.async(fn -> connect(:good) end)
+
+    # Resumed however this ends: a suspended supervisor would stall the runs after it.
+    acked =
+      try do
+        receive_state("connecting")
+        FakeSlack.event(mention_event(n, :ours), %{"event_id" => event_id(n)})
+        FakeSlack.ping()
+
+        # The socket takes frames in order, so an ack would have come before the pong.
+        receive do
+          :fake_slack_pong -> :ok
+        after
+          @wait -> exit(:socket_never_took_the_mention)
+        end
+
+        receive do
+          {:fake_slack_ack, _} -> true
+        after
+          0 -> false
+        end
+      after
+        :sys.resume(HalC2.Slack.Connections)
+      end
+
+    {Task.await(connecting, @wait), acked}
   end
 
   # Reads the channels while one of them changes: the list read before the change must
@@ -730,8 +792,8 @@ defmodule HalC2.SlackPropTest do
 
   defp receive_error do
     receive do
-      {:hal_c2_slack, _, _, %{"error" => error}} when error != nil -> error
-      {:hal_c2_slack, _, _, _} -> receive_error()
+      {:hal_c2_slack, _, %{"error" => error}} when error != nil -> error
+      {:hal_c2_slack, _, _} -> receive_error()
     after
       @wait -> exit(:slack_never_failed)
     end
@@ -747,7 +809,7 @@ defmodule HalC2.SlackPropTest do
 
   defp flush do
     receive do
-      {:hal_c2_slack, _, _, _} -> flush()
+      {:hal_c2_slack, _, _} -> flush()
     after
       0 -> :ok
     end
@@ -762,10 +824,21 @@ defmodule HalC2.SlackPropTest do
     end
   end
 
+  # Acks, pongs and socket opens and closes told to this process earlier.
+  defp flush_fake do
+    receive do
+      {:fake_slack_ack, _} -> flush_fake()
+      :fake_slack_pong -> flush_fake()
+      {:fake_slack_socket, _} -> flush_fake()
+    after
+      0 -> :ok
+    end
+  end
+
   defp receive_state(state) do
     receive do
-      {:hal_c2_slack, _, _, %{"state" => ^state}} -> :ok
-      {:hal_c2_slack, _, _, _} -> receive_state(state)
+      {:hal_c2_slack, _, %{"state" => ^state}} -> :ok
+      {:hal_c2_slack, _, _} -> receive_state(state)
     after
       @wait -> exit({:slack_never_became, state})
     end

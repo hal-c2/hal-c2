@@ -38,8 +38,8 @@ defmodule HalC2.Devices do
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
   @doc "Adds a watcher; returns the current `DeviceServiceState`."
-  def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
-  def unsubscribe(pid), do: GenServer.cast(__MODULE__, {:unsubscribe, pid})
+  def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
+  def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
   def state, do: GenServer.call(__MODULE__, :state)
 
   @doc "The running hub's loopback origin, or nil. Never starts it."
@@ -459,13 +459,40 @@ defmodule HalC2.Devices do
   defp os_type, do: Application.get_env(:hal_c2, :os_type) || :os.type()
 
   defp android_sdk do
-    home = System.user_home() || ""
+    # Not HalC2.Paths.user_home/0: that raises when no home can be determined
+    # (e.g. a system service), and platform_reason/1's contract is to return
+    # a reason string. With `HOME` unset the OS account's home below stands
+    # in and does contribute candidates; only an empty `HOME` (truthy, so no
+    # fallback) or an undeterminable OS home contributes none — an empty home
+    # used as a candidate would make the paths cwd-relative.
+    home_candidates =
+      case System.get_env("HOME") || System.user_home() do
+        home when is_binary(home) ->
+          # A whitespace-only home joined as a path is cwd-relative.
+          if String.trim(home) == "",
+            do: [],
+            else: [
+              Path.join([home, "Library", "Android", "sdk"]),
+              Path.join([home, "Android", "Sdk"])
+            ]
+
+        _ ->
+          []
+      end
 
     explicit =
       Enum.find_value(["ANDROID_HOME", "ANDROID_SDK_ROOT"], fn name ->
+        # Trim first: a whitespace-only value trimmed to "" would otherwise
+        # become a cwd-relative candidate like an empty home would.
         case System.get_env(name) do
-          value when is_binary(value) and value != "" -> String.trim(value)
-          _ -> nil
+          value when is_binary(value) ->
+            case String.trim(value) do
+              "" -> nil
+              trimmed -> trimmed
+            end
+
+          _ ->
+            nil
         end
       end)
 
@@ -475,12 +502,7 @@ defmodule HalC2.Devices do
         adb -> [adb |> resolve_link() |> Path.dirname() |> Path.dirname()]
       end
 
-    candidates =
-      if explicit,
-        do: [explicit],
-        else:
-          [Path.join([home, "Library", "Android", "sdk"]), Path.join([home, "Android", "Sdk"])] ++
-            on_path
+    candidates = if explicit, do: [explicit], else: home_candidates ++ on_path
 
     Enum.find_value(candidates, %{root: nil}, fn root ->
       adb = File.exists?(Path.join([root, "platform-tools", "adb"]))
@@ -1077,8 +1099,8 @@ defmodule HalC2.Devices do
   end
 
   @impl true
-  def handle_call({:subscribe, pid}, _from, state) do
-    watchers = Map.put_new_lazy(state.watchers, pid, fn -> Process.monitor(pid) end)
+  def handle_call({:subscribe, pid, ref}, _from, state) do
+    watchers = HalC2.Watchers.add(state.watchers, pid, ref)
     {:reply, {:ok, state.view}, %{state | watchers: watchers}}
   end
 
@@ -1222,9 +1244,8 @@ defmodule HalC2.Devices do
   end
 
   @impl true
-  def handle_cast({:unsubscribe, pid}, state) do
-    {ref, watchers} = Map.pop(state.watchers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
+  def handle_cast({:unsubscribe, pid, ref}, state) do
+    watchers = HalC2.Watchers.remove(state.watchers, pid, ref)
     {:noreply, %{state | watchers: watchers}}
   end
 
@@ -1473,7 +1494,7 @@ defmodule HalC2.Devices do
 
   defp publish(state, fun) do
     view = state.view |> fun.() |> Map.put("revision", state.view["revision"] + 1)
-    for {pid, _} <- state.watchers, do: send(pid, {:hal_c2_devices, node(), view})
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_devices, node(), view})
     %{state | view: view}
   end
 

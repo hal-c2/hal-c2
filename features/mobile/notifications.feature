@@ -1,20 +1,19 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13340
 #   docs/user/mobile-notifications.md
 #   apps/mobile/src/features/agent-awareness/ (push registration, live activity arming, channels)
 #   apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
 #   apps/mobile/modules/hal-c2-agent-notifications
 #   apps/mobile/src/Stack.tsx (notification navigation)
-# Agent activity publishing on the environment is specified in features/connections/.
-# This file covers what the phone does with it.
+# The @dropped scenarios were HAL-C2 Connect's relay push (and connections/agent-activity-publishing.feature);
+# the MC now pushes through the user's UnifiedPush distributor. This file covers what the phone does with it.
 
 Feature: Push notifications and live agent activity
-  A phone signed in to HAL-C2 Connect is told when an agent finishes, fails, needs approval or
-  asks a question, and can follow ongoing work from the lock screen.
+  A phone is told when an agent finishes, fails, needs approval or asks a question, and can
+  follow ongoing work from the lock screen.
 
   Background:
-    Given the user is signed in to HAL-C2 Connect on the phone
-    And the phone uses "My MacBook" through HAL-C2 Connect
-    And "My MacBook" publishes agent activity
+    Given the phone is paired with "My MacBook"
 
   @backlog @mobile
   Scenario: Turning on device notifications registers the phone
@@ -35,7 +34,8 @@ Feature: Push notifications and live agent activity
     When the user turns off device notifications
     Then the phone's notification settings for HAL-C2 open
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: A registration that fails says so and can be retried
     Given the relay rejects the phone's registration
     When the user turns on device notifications
@@ -43,7 +43,8 @@ Feature: Push notifications and live agent activity
     When the user tries again
     Then the phone registers with the relay again
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: Notifications require HAL-C2 Connect
     Given the user is signed out of HAL-C2 Connect
     When the user opens notification settings
@@ -68,6 +69,31 @@ Feature: Push notifications and live agent activity
       | fails                          |
       | needs approval for a command   |
       | asks the user a question       |
+
+  # Replaces the HAL-C2 Connect relay: the MC pushes itself, through a distributor the user runs or picks.
+  @backlog @mc @mobile
+  Scenario Outline: The MC pushes alerts through the UnifiedPush distributor the user picked
+    Given the user picked "ntfy" as the phone's UnifiedPush distributor
+    And device notifications are on
+    And the app is in the background
+    When an agent in "Fix checkout" <event>
+    Then "My MacBook" sends the alert to the phone's endpoint at that distributor
+    And the phone shows an alert for "Fix checkout"
+    And no HAL-C2-hosted service carries the alert
+
+    Examples:
+      | event                    |
+      | finishes its turn        |
+      | fails                    |
+      | needs the user's input   |
+
+  # The MC pushes on its own, so a restart must not replay work it already reported.
+  @backlog @mc @mobile
+  Scenario: A restarted MC does not alert about work that finished before it started
+    Given "My MacBook" has several threads whose turns finished days ago
+    And device notifications are on
+    When the MC starts
+    Then no alert is pushed for those threads
 
   @backlog @mobile
   Scenario: Tapping an alert opens the thread
@@ -97,13 +123,15 @@ Feature: Push notifications and live agent activity
     When an agent in "Fix checkout" finishes its turn
     Then the phone shows an alert for "Fix checkout"
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: An environment that does not publish activity sends no alerts
     Given "Office Mac" does not publish agent activity
     When an agent on "Office Mac" finishes its turn
     Then the phone shows no alert
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: A directly paired environment alone gives no background alerts
     Given the phone reaches "Home Server" only over the local network
     And the app is in the background
@@ -129,7 +157,8 @@ Feature: Push notifications and live agent activity
     When the user sends a message in "Add search"
     Then the lock screen shows a single card covering both threads
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: No live activity starts when the environment does not publish activity
     Given "My MacBook" does not publish agent activity
     When the user sends a message in "Fix checkout"
@@ -159,13 +188,15 @@ Feature: Push notifications and live agent activity
     And the user is offered the live update settings
 
   # Likely already implemented: apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: A build without HAL-C2 Connect says notifications are unavailable
     Given the installed app build was made without HAL-C2 Connect
     When the user opens notification settings
     Then the user is told notifications require HAL-C2 Connect in this build
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: Device notifications show as on only when the phone is allowed and registered
     Given the system allows HAL-C2 notifications
     And the relay has not registered the phone
@@ -181,21 +212,24 @@ Feature: Push notifications and live agent activity
     And the user returns to the app
     Then notification settings show the phone as allowed
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: Live activity updates ask the user to sign in first
     Given the user is signed out of HAL-C2 Connect
     When the user turns live activity updates on
     Then the user is told live activity updates need HAL-C2 Connect to be delivered
     And the user can continue to sign in
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: A live activity preference left on after signing out can be turned off
     Given the user is signed out of HAL-C2 Connect
     And live activity updates were left on
     When the user turns the live activity preference off
     Then live activity updates stay off the next time the user signs in
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario Outline: Turning on live activity updates says how many environments are linked
     Given the phone has <count> environments
     When the user turns live activity updates on
@@ -216,21 +250,24 @@ Feature: Push notifications and live agent activity
     And the user is offered to open the system settings
     And live activity updates stay off
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: Live activity updates that cannot be turned on stay off
     Given the relay cannot be reached
     When the user turns live activity updates on
     Then the user is told live activity updates are unavailable
     And live activity updates stay off
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: Live activity updates that cannot be turned off stay on
     Given live activity updates are on
     And the relay cannot be reached
     When the user turns live activity updates off
     Then live activity updates stay on
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: Live activity updates turned on before the phone is registered start later
     Given the relay rejects the phone's registration
     When the user turns live activity updates on
@@ -246,7 +283,7 @@ Feature: Push notifications and live agent activity
   @backlog @mobile
   Scenario: Opening the app while no agent is working starts no lock screen card
     Given live activity updates are on
-    And no agent is working in any linked environment
+    And no agent is working in any environment
     When the user opens the app
     Then the lock screen shows no agent activity
 
@@ -257,14 +294,16 @@ Feature: Push notifications and live agent activity
     When the user opens the app
     Then the lock screen shows that agent work is in progress for "Fix checkout"
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: Opening the app again with nothing changed does not register the phone again
     Given the relay has registered the phone for this account
     And the notification settings have not changed
     When the user closes and opens the app
     Then the phone is not registered with the relay a second time
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario Outline: The phone is registered again when what the relay knows about it changes
     Given the relay has registered the phone for this account
     When <change>
@@ -277,14 +316,16 @@ Feature: Push notifications and live agent activity
       | the app is updated to a new version         |
       | the user changes the live activity setting  |
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: A later registration that fails does not turn notifications off
     Given the relay has registered the phone for this account
     And the relay cannot be reached
     When the app tries to register the phone again
     Then device notifications are still shown as on
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: Signing in on a phone with notifications already allowed registers it without asking
     Given the system already allows HAL-C2 notifications
     And the user is signed out of HAL-C2 Connect
@@ -320,7 +361,8 @@ Feature: Push notifications and live agent activity
     Then "Fix checkout" is shown once
     And going back does not show "Fix checkout" again
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: Signing out ends lock screen activity and stops alerts
     Given the lock screen shows agent work in progress
     When the user signs out of HAL-C2 Connect
@@ -344,11 +386,11 @@ Feature: Push notifications and live agent activity
     Then the phone shows no alert
 
   @backlog @mobile
-  Scenario: An alert the relay delivers again is shown only once
+  Scenario: An alert delivered twice is shown only once
     Given device notifications are on
     And the app is in the background
     When an agent in "Fix checkout" finishes its turn
-    And the relay delivers the same alert again
+    And the same alert is delivered again
     Then the phone shows one alert for "Fix checkout"
 
   @backlog @mobile
@@ -380,7 +422,7 @@ Feature: Push notifications and live agent activity
   @backlog @mobile
   Scenario: Repeated updates for a dismissed run do not bring its card back
     Given the user dismissed the agent activity card for "Fix checkout"
-    When the relay repeats the finished update for "Fix checkout"
+    When the finished update for "Fix checkout" is delivered again
     Then no agent activity card is shown
 
   @backlog @mobile
@@ -410,7 +452,7 @@ Feature: Push notifications and live agent activity
     And the app is in the foreground
     When an agent in "Fix checkout" finishes its turn
     And the app goes to the background
-    And the relay delivers the same alert again
+    And the same alert is delivered again
     Then the phone shows no alert
 
   @backlog @mobile
@@ -420,7 +462,7 @@ Feature: Push notifications and live agent activity
     And the system has blocked notifications for HAL-C2
     When an agent in "Fix checkout" finishes its turn
     And the user allows HAL-C2 notifications in the system settings
-    And the relay delivers the same alert again
+    And the same alert is delivered again
     Then the phone shows an alert for "Fix checkout"
 
   @backlog @mobile
@@ -514,7 +556,8 @@ Feature: Push notifications and live agent activity
     When an agent in "Fix checkout" finishes its turn
     Then the lock screen does not show the thread's title or text
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; push no longer goes through a hosted relay.
+  @dropped @mobile
   Scenario: Switching accounts removes the previous account's cards and ignores its late alerts
     Given the lock screen shows agent work in progress for "Fix checkout"
     When the user signs in with another account

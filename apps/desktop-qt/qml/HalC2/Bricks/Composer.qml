@@ -5,6 +5,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import HalC2.Shell
+import "js/providerIcons.js" as ProviderIcons
 
 // The prompt: text input, model/effort/mode pickers, send/stop, with the
 // checkout context strip welded under it. Rendered from Shell.state.composer
@@ -29,6 +30,13 @@ Rectangle {
     readonly property color canvas: Theme.palette.color("canvas", "#0f0f12")
     readonly property color outline: Qt.alpha(Theme.palette.color("text", "#e4e4e7"), 0.05)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
+    // Claude's mark colour, as the provider icon draws it: its fill for a light or dark theme.
+    // A missing variant falls back to the glyph's other fill; the literal is
+    // only for a build without the glyph at all.
+    readonly property color claudeOrange: {
+        const dark = ProviderIcons.darkFor(foreground);
+        return ProviderIcons.fill("claudeAgent", dark) ?? ProviderIcons.fill("claudeAgent", !dark) ?? "#d97757";
+    }
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color secondary: Theme.palette.color("secondaryLabel", "#a1a1aa")
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")
@@ -460,7 +468,6 @@ Rectangle {
                             color: composer.foreground
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                             elide: Text.ElideMiddle
                             Layout.maximumWidth: parent.width * 0.5
                         }
@@ -470,7 +477,6 @@ Rectangle {
                             text: suggestion.modelData.description
                             color: composer.muted
                             font.pixelSize: Math.round(12 * Theme.fontScale)
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                             elide: Text.ElideMiddle
                         }
                     }
@@ -493,7 +499,6 @@ Rectangle {
                 text: composer.ready && composer.model.suggestionsEmptyText ? composer.model.suggestionsEmptyText : ""
                 color: composer.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
-                font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
             }
         }
 
@@ -540,7 +545,6 @@ Rectangle {
                     text: qsTr("Stash")
                     color: composer.muted
                     font.pixelSize: Math.round(12 * Theme.fontScale)
-                    font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                 }
 
                 Text {
@@ -611,7 +615,6 @@ Rectangle {
                             text: stashRow.modelData.snippet
                             color: composer.foreground
                             font.pixelSize: Math.round(12 * Theme.fontScale)
-                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                             elide: Text.ElideRight
                             Accessible.name: qsTr("Restore stashed prompt: %1").arg(text)
                         }
@@ -688,7 +691,6 @@ Rectangle {
                         text: qsTr("Editing a queued message")
                         color: composer.muted
                         font.pixelSize: Math.round(12 * Theme.fontScale)
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                     }
 
                     ShellButton {
@@ -827,7 +829,6 @@ Rectangle {
                                         elide: Text.ElideRight
                                         color: composer.muted
                                         font.pixelSize: Math.round(12 * Theme.fontScale)
-                                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                                     }
 
                                     ShellTextField {
@@ -1125,6 +1126,9 @@ Rectangle {
                                     readonly property bool fast: optionItem.modelData.id === "fastMode"
                                     iconName: fast && checked ? "zap" : ""
                                     iconSize: 14
+                                    // The bolt is filled, in Claude's orange on a Claude model.
+                                    iconFilled: fast && checked
+                                    iconTint: fast && checked && modelPicker.activeInstance?.driverKind === "claudeAgent" ? Qt.alpha(composer.claudeOrange, 0.8) : tint
                                     text: fast ? optionItem.modelData.label : qsTr("%1 %2").arg(optionItem.modelData.label).arg(checked ? qsTr("On") : qsTr("Off"))
                                     Accessible.name: qsTr("%1, %2").arg(optionItem.modelData.label).arg(checked ? qsTr("on") : qsTr("off"))
                                     Accessible.checkable: true
@@ -1194,7 +1198,6 @@ Rectangle {
                         text: vim.modeLabel
                         color: composer.muted
                         font.pixelSize: Math.round(11 * Theme.fontScale)
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                         Accessible.name: qsTr("Vim mode: %1").arg(text)
                     }
 
@@ -1408,7 +1411,6 @@ Rectangle {
                         color: composer.secondary
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                         font.weight: Font.Medium
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                     }
                 }
 
@@ -1419,7 +1421,7 @@ Rectangle {
                 // PR badge.
                 Rectangle {
                     readonly property var pr: contextStrip.wsReady && contextStrip.ws.git ? contextStrip.ws.git.pullRequest : null
-                    readonly property color prColor: pr === null ? "transparent" : pr.state === "merged" ? Theme.palette.color("info", "#a78bfa") : pr.state === "closed" ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#34d399")
+                    readonly property color prColor: pr === null ? "transparent" : pr.state === "merged" ? Theme.palette.color("merged", "#a855f7") : pr.state === "closed" ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#34d399")
 
                     visible: pr !== null && contextStrip.ws.canOpenPullRequest
                     implicitWidth: prLabel.implicitWidth + 8
@@ -1443,7 +1445,6 @@ Rectangle {
                         color: parent.prColor
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                         font.weight: Font.Medium
-                        font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                     }
                 }
 
@@ -1637,7 +1638,6 @@ Rectangle {
                                             text: branchRow.modelData.name
                                             color: branchRow.modelData.isRemote ? composer.muted : composer.foreground
                                             font.pixelSize: Math.round(13 * Theme.fontScale)
-                                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                                             elide: Text.ElideMiddle
                                         }
 
@@ -1646,7 +1646,6 @@ Rectangle {
                                             text: branchRow.badge
                                             color: Qt.alpha(composer.muted, 0.45)
                                             font.pixelSize: Math.round(10 * Theme.fontScale)
-                                            font.family: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
                                         }
                                     }
                                 }

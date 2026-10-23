@@ -11,9 +11,6 @@ defmodule HalC2.Service do
   still found by its path; `status` and `uninstall` see it, and installing again
   replaces it.
 
-  HAL-C2 Connect offers to install it (`mix hal_c2.connect`), but the two are managed
-  separately: signing out of HAL-C2 Connect never stops or removes the service.
-
   `systemctl`, `loginctl` and `launchctl` are looked up as `:<exe>_command` in the
   app env first, so tests can stand in for the service manager; `:service_user_home`
   replaces the user's home directory the unit is written under.
@@ -422,6 +419,7 @@ defmodule HalC2.Service do
         "WorkingDirectory=#{quote_value(cwd)}",
         for({name, dir} <- chosen_home(), do: "Environment=#{name}=#{quote_value(dir)}"),
         "Environment=PATH=#{quote_value(System.get_env("PATH", ""))}",
+        "Environment=HAL_C2_WAIT_FOR_HOME=1",
         "ExecStart=#{Enum.map_join(argv, " ", &quote_value/1)}",
         "KillMode=mixed",
         "OOMPolicy=continue",
@@ -450,7 +448,8 @@ defmodule HalC2.Service do
     log = x.(log_path())
 
     env =
-      Enum.map_join([{"PATH", System.get_env("PATH", "")} | chosen_home()], "\n", fn {k, v} ->
+      [{"PATH", System.get_env("PATH", "")}, {"HAL_C2_WAIT_FOR_HOME", "1"} | chosen_home()]
+      |> Enum.map_join("\n", fn {k, v} ->
         "    <key>#{k}</key>\n    <string>#{x.(v)}</string>"
       end)
 

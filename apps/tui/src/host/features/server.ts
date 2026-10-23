@@ -3,6 +3,7 @@ import {
   ProviderInstanceId,
   type ServerConfig,
   type ServerProvider,
+  type ServerSettings,
 } from "@hal-c2/contracts";
 
 import type { TuiSettingsExtraGroup } from "../settingsState.ts";
@@ -43,14 +44,22 @@ const updatable = (provider: ServerProvider) =>
 
 /**
  * The server from the terminal: its providers (refresh, update, add an
- * instance with its key), the defaults new threads start with, and the relay
- * client. Everything lists in settings; changes run from the palette.
+ * instance with its key) and the defaults new threads start with. Everything
+ * lists in settings; changes run from the palette.
  */
 export function createServerFeature(kit: FeatureKit): Feature {
   const { client } = kit;
   let config: ServerConfig | null = null;
+  /**
+   * The settings as the MC last pushed them, which another device may have changed.
+   * They win over `config.settings`, since an MC session answers `getServerConfig`
+   * with the config it connected with (client-runtime's v3/session.ts).
+   */
+  let pushed: ServerSettings | null = null;
+  const settings = () => pushed ?? config?.settings ?? null;
 
   const changed = () => {
+    kit.store.setShowSettledPluginThreads(showsPluginThreads());
     kit.settingsChanged();
     kit.commandsChanged();
   };
@@ -66,7 +75,12 @@ export function createServerFeature(kit: FeatureKit): Feature {
         () => {},
       ),
     );
+  const applySettings = (next: ServerSettings) => {
+    pushed = next;
+    changed();
+  };
   const providers = () => config?.providers ?? [];
+  const showsPluginThreads = () => settings()?.sidebarShowSettledPluginThreads === true;
 
   const refresh = () => {
     kit.status("Refreshing providers…", "busy");
@@ -123,7 +137,7 @@ export function createServerFeature(kit: FeatureKit): Feature {
   };
 
   const chooseDefaultWorkspace = () => {
-    const current = config?.settings.defaultThreadEnvMode === "worktree" ? "worktree" : "local";
+    const current = settings()?.defaultThreadEnvMode === "worktree" ? "worktree" : "local";
     kit.menu({
       title: "new threads start in",
       options: [
@@ -142,7 +156,8 @@ export function createServerFeature(kit: FeatureKit): Feature {
       onChoose: (mode) => {
         void kit.track(
           client.updateSettings({ defaultThreadEnvMode: mode as "local" | "worktree" }).then(
-            async () => {
+            async (next) => {
+              applySettings(next);
               await load();
               kit.status(
                 `New threads start in ${mode === "worktree" ? "a new worktree" : "the current checkout"}.`,
@@ -156,11 +171,30 @@ export function createServerFeature(kit: FeatureKit): Feature {
     });
   };
 
+  /** Settled threads a plugin started (code reviews): listed in Settled, or left to search. */
+  const toggleSettledPluginThreads = () => {
+    const show = !showsPluginThreads();
+    void kit.track(
+      client.updateSettings({ sidebarShowSettledPluginThreads: show }).then(
+        (next) => {
+          applySettings(next);
+          kit.status(
+            show
+              ? "Settled lists the threads plugins started."
+              : "Threads plugins started stay out of Settled; search still finds them.",
+            "success",
+          );
+        },
+        (error: unknown) => kit.status(`Could not save: ${errorText(error)}`, "error"),
+      ),
+    );
+  };
+
   /** Driver, then a name, then the key: three short questions, one request. */
   const addInstance = () => {
     const drivers = [...new Set(providers().map((provider) => provider.driver as string))];
     if (drivers.length === 0) {
-      kit.status("The server reports no provider drivers.", "error");
+      kit.status("The server reports no provider drivers.", "warning");
       return;
     }
     kit.menu({
@@ -176,7 +210,7 @@ export function createServerFeature(kit: FeatureKit): Feature {
           placeholder: `Like "${driver} work"`,
           onSubmit: (name) => {
             if (name === "") {
-              kit.status("An instance needs a name.", "error");
+              kit.status("An instance needs a name.", "warning");
               return;
             }
             const variable = API_KEY_VARIABLE[driver] ?? `${driver.toUpperCase()}_API_KEY`;
@@ -191,7 +225,7 @@ export function createServerFeature(kit: FeatureKit): Feature {
   };
   const createInstance = (driver: string, name: string, variable: string, key: string) => {
     if (key === "") {
-      kit.status("No key given; nothing was added.", "error");
+      kit.status("No key given; nothing was added.", "warning");
       return;
     }
     const slug = name
@@ -214,7 +248,8 @@ export function createServerFeature(kit: FeatureKit): Feature {
           },
         )
         .then(
-          async () => {
+          async (next) => {
+            applySettings(next);
             await load();
             kit.status(`Added ${name}; its key is stored as a secret.`, "success");
           },
@@ -223,63 +258,10 @@ export function createServerFeature(kit: FeatureKit): Feature {
     );
   };
 
-  /** The relay client HAL-C2 Connect uses: whether the server has it, and installing it there. */
-  const checkRelay = () => {
-    kit.status("Checking the relay client…", "busy");
-    void kit.track(
-      client.relayStatus().then(
-        (relay) => {
-          if (relay.status === "available") {
-            kit.status(`The relay client ${relay.version} is installed.`, "success");
-            return;
-          }
-          if (relay.status === "unsupported") {
-            kit.status(
-              `The relay client does not run on ${relay.platform} ${relay.arch}.`,
-              "error",
-            );
-            return;
-          }
-          kit.status(`The relay client is missing (${relay.version}).`, "error");
-          kit.menu({
-            title: "relay client is missing",
-            options: [
-              {
-                label: `Install the relay client ${relay.version}`,
-                description: "Downloads it on the server; remote access needs it.",
-                value: "install",
-              },
-              { label: "Not now", description: "Remote access stays unavailable.", value: "skip" },
-            ],
-            onChoose: (choice) => {
-              if (choice === "install") installRelay();
-            },
-          });
-        },
-        (error: unknown) => kit.status(`Could not check the relay: ${errorText(error)}`, "error"),
-      ),
-    );
-  };
-  const installRelay = () => {
-    kit.status("Installing the relay client…", "busy");
-    void kit.track(
-      client
-        .installRelay((stage) =>
-          kit.status(`Installing the relay client: ${stage.replaceAll("_", " ")}…`, "busy"),
-        )
-        .then(
-          (relay) =>
-            relay?.status === "available"
-              ? kit.status(`The relay client ${relay.version} is installed.`, "success")
-              : kit.status("The relay client did not install.", "error"),
-          (error: unknown) => kit.status(`Relay install failed: ${errorText(error)}`, "error"),
-        ),
-    );
-  };
-
   const settingsGroups = (): TuiSettingsExtraGroup[] => {
-    if (!config) return [];
-    const instances = config.settings.providerInstances ?? {};
+    const current = settings();
+    if (!config || !current) return [];
+    const instances = current.providerInstances ?? {};
     const rows: Array<readonly [string, string]> = providers().map(
       (provider) => [providerName(provider), providerSummary(provider)] as const,
     );
@@ -302,18 +284,22 @@ export function createServerFeature(kit: FeatureKit): Feature {
         rows: [
           [
             "new threads",
-            config.settings.defaultThreadEnvMode === "worktree"
-              ? "New worktree"
-              : "Current checkout",
+            current.defaultThreadEnvMode === "worktree" ? "New worktree" : "Current checkout",
           ],
         ],
+      },
+      {
+        title: "Settled",
+        rows: [["plugin threads", showsPluginThreads() ? "Listed" : "Hidden"]],
       },
     ];
   };
 
   // The composer reads the config itself at start.
   void load(false);
+  const stopSettings = client.subscribeServerSettings(applySettings);
   return {
+    dispose: stopSettings,
     settingsGroups,
     commands: () => [
       {
@@ -344,10 +330,12 @@ export function createServerFeature(kit: FeatureKit): Feature {
         action: "settings.defaultWorkspace",
       },
       {
-        id: "relay.check",
-        title: "Relay client",
-        keywords: "remote access connect cloudflared install tunnel",
-        action: "relay.check",
+        id: "settings.settledPluginThreads",
+        title: showsPluginThreads()
+          ? "Hide plugin threads from Settled"
+          : "Show plugin threads in Settled",
+        keywords: "settings sidebar settled plugin code review threads",
+        action: "settings.settledPluginThreads",
       },
     ],
     dispatch: (action, payload) => {
@@ -366,8 +354,8 @@ export function createServerFeature(kit: FeatureKit): Feature {
         case "settings.defaultWorkspace":
           chooseDefaultWorkspace();
           return true;
-        case "relay.check":
-          checkRelay();
+        case "settings.settledPluginThreads":
+          toggleSettledPluginThreads();
           return true;
         default:
           return false;

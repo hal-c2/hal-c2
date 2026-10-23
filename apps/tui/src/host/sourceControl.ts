@@ -51,6 +51,7 @@ export function createSourceControl(deps: {
       width: deps.width(),
       log: current().gitLog,
       progress: current().gitProgress,
+      remedy: current().gitRemedy,
     });
   const publishGit = () => {
     const next = gitState();
@@ -113,6 +114,15 @@ export function createSourceControl(deps: {
     );
   };
 
+  /** A failure's remedy to the clipboard, or shown whole where the terminal has none. */
+  const copyRemedy = (text: string, what: "Link" | "Command") => {
+    const copied = deps.copyToClipboard?.(text) ?? false;
+    store.setStatus(
+      copied ? `${what} copied: ${text}` : `${what === "Link" ? "Open" : "Run"}: ${text}`,
+      copied ? "success" : "info",
+    );
+  };
+
   const activate = (index: number) => {
     const action = gitState().actions[index];
     if (!action) return;
@@ -121,7 +131,12 @@ export function createSourceControl(deps: {
       return;
     }
     if (action.kind === "url" && action.url) {
-      copyPrUrl(action.url);
+      if (action.id === "remedy") copyRemedy(action.url, "Link");
+      else copyPrUrl(action.url);
+      return;
+    }
+    if (action.kind === "copy" && action.command) {
+      copyRemedy(action.command, "Command");
       return;
     }
     if (action.kind === "pull") {
@@ -210,12 +225,18 @@ export function createSourceControl(deps: {
   };
 
   const publish = (prev: StoreState | null, next: StoreState) => {
+    // The remedy row sits first: a failure that offers one highlights it, and
+    // when it goes the highlight stays on the action it was on.
+    const hadRemedy = Boolean(prev?.gitRemedy);
+    if (!hadRemedy && next.gitRemedy) gitIndex = 0;
+    else if (hadRemedy && !next.gitRemedy) gitIndex = Math.max(0, gitIndex - 1);
     if (
       !prev ||
       prev.vcsStatus !== next.vcsStatus ||
       prev.gitBusy !== next.gitBusy ||
       prev.gitProgress !== next.gitProgress ||
-      prev.gitLog !== next.gitLog
+      prev.gitLog !== next.gitLog ||
+      prev.gitRemedy !== next.gitRemedy
     ) {
       publishGit();
     }

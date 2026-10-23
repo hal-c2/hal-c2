@@ -21,8 +21,13 @@
 # (session/tokenUsage), {"contextAfter": {"usedTokens", "windowTokens"}} (session/contextUsage
 # once the turn has completed; with "late": true, as the next turn/start arrives), {"childShell": command} (a workflow child asks, offering
 # no way to approve unless "approvable", for "requirements" approvals), {"todos": [{"text",
-# "status"}]} (session/todoListChanged), {"waitInterrupt": true} (until turn/interrupt, or a
-# turn/steer, which it answers with "steered: <text>"). Without a match the reply names the conversation so
+# "status"}]} (session/todoListChanged), {"subagent": {"objective", "role", "progress", "answer",
+# "summary", "status", "failure", "progressStatus"}} (a subagent item: started, updated with
+# "progress" as its fallbackText (in status "progressStatus", default inProgress), and completed
+# with "answer" as its result text, "summary" as its result summary and "status" (default
+# completed); no "answer" leaves it running), {"waitInterrupt": true} (until turn/interrupt, or a
+# turn/steer, which it answers with "steered: <text>"). With "interruptFails" turn/interrupt
+# answers an error, and with "interruptHangs" it is never answered. Without a match the reply names the conversation so
 # far.
 import json, os, queue, sys, threading, uuid
 
@@ -152,7 +157,9 @@ def run_turn(sid, turn, text, params):
     history = session["history"]
     session["history"] = history + [text]
     save_session(sid, session)
-    allow = session.get("approvalMode") == "allowAll"
+    # Read per step: the MC can change the session's approval mode mid-turn.
+    def allows():
+        return load_session(sid).get("approvalMode") == "allowAll"
     notify("turn/started", {"sessionId": sid, "turnId": turn})
     steps = next((t["steps"] for t in config().get("turns", []) if t["match"] in text), None)
     if steps is None:
@@ -163,6 +170,7 @@ def run_turn(sid, turn, text, params):
         if "text" in step:
             say(sid, turn, step["text"])
         elif "shell" in step:
+            allow = allows()
             approved = allow or ask(sid, turn, {"kind": "shell", "command": step["shell"]}, [
                 {"choiceId": "once", "decision": "approved", "scope": "once"},
                 {"choiceId": "session", "decision": "approvedForSession", "scope": "session"},
@@ -174,6 +182,7 @@ def run_turn(sid, turn, text, params):
             log({"tool": {"name": "shell", "approved": approved, "asked": not allow}})
             tool(sid, turn, "shell", {"command": step["shell"]}, "ok", approved)
         elif "edit" in step:
+            allow = allows()
             approved = allow or ask(sid, turn, {"kind": "fileAccess", "access": "write", "path": step["edit"]}, [
                 {"choiceId": "allow", "decision": "approved", "scope": "once"},
                 {"choiceId": "deny", "decision": "denied", "scope": "once"},
@@ -208,6 +217,34 @@ def run_turn(sid, turn, text, params):
                 terminal = "cancelled"
                 break
             log({"tool": {"name": "shell", "approved": approved, "asked": True}})
+        elif "subagent" in step or "subagents" in step:
+            # Several run at once: each starts, then each progresses, then each ends. One
+            # with "itemId" keeps that id; one "seenEnded" is sent only as it ends, its
+            # progress on the ended item.
+            subs = step.get("subagents") or [step["subagent"]]
+            its = []
+            for sub in subs:
+                it = item(turn, "subagent", "inProgress", 1, itemId=sub.get("itemId"),
+                          subagentId="sub-" + uuid.uuid4().hex[:8],
+                          objective=sub["objective"], role=sub.get("role", "worker"),
+                          controlStatus="starting", childSessionId="child-" + uuid.uuid4().hex[:8])
+                if not sub.get("seenEnded"):
+                    emit_item(sid, "item/started", it)
+                its.append(it)
+            for i, sub in enumerate(subs):
+                if sub.get("progress"):
+                    its[i] = dict(its[i], revision=2, controlStatus="running",
+                                  status=sub.get("progressStatus", "inProgress"),
+                                  fallbackText=sub["progress"])
+                    if not sub.get("seenEnded"):
+                        emit_item(sid, "item/updated", its[i])
+            for it, sub in zip(its, subs):
+                if "answer" in sub:
+                    emit_item(sid, "item/completed", dict(
+                        it, revision=3, status=sub.get("status", "completed"),
+                        controlStatus="resultReady", failureReason=sub.get("failure"),
+                        result={"summary": sub.get("summary", ""), "text": sub["answer"],
+                                "artifactRefs": [], "evidenceRefs": []}))
         elif "todos" in step:
             notify("session/todoListChanged", {"sessionId": sid, "items": step["todos"]})
         elif "contextAfter" in step and step.get("late"):
@@ -305,6 +342,10 @@ def handle(msg):
         text = "".join(p.get("text", "") for p in params["input"] if p["type"] == "text")
         reply({"turnId": state["turn"]})
         events.put(("steer", text))
+    elif method == "turn/interrupt" and config().get("interruptFails"):
+        error(-32603, "internal error")
+    elif method == "turn/interrupt" and config().get("interruptHangs"):
+        pass
     elif method == "turn/interrupt":
         reply({})
         if state["turn"] == params.get("turnId"):

@@ -41,8 +41,11 @@ Item {
     readonly property color mutedColor: Theme.palette.color("textMuted", "#8b8b93")
     readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
 
-    // Where web addresses go: the system browser (tests keep them in).
-    property var openExternally: url => Qt.openUrlExternally(url)
+    // Where web addresses go: the system browser, a dev server on another MC's
+    // machine through the connected MC's forward (tests keep them in).
+    property var openExternally: url => Shell.dispatch("thread.openAddress", {
+            url: url
+        })
 
     // Web addresses leave the app; anything else is a path in the project.
     function openLink(link) {

@@ -51,6 +51,12 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
       signal (containers, Windows, unknown DMI), on servers that predate it, or
       when a newer server names a kind this build cannot draw. */
   machine: ForwardCompatibleOptional(EnvironmentMachineKind),
+  /** Lowercase hex SHA-256 of the host's machine id, the bytes Qt's
+      `QSysInfo::machineUniqueId()` returns there. A client compares it with its
+      own to know whether the environment runs on the machine the user sits at,
+      the only place it may start an editor or a file manager. Absent when the
+      host has none, or on servers that predate it. */
+  machineId: Schema.optionalKey(Schema.String),
 });
 
 /**
@@ -178,12 +184,6 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can durably mark running provider turns before a self-update and
       continue them after the replacement process starts. */
   serverUpdateThreadContinuation: Schema.optionalKey(Schema.Boolean),
-  /** Agent-activity publishes (push notifications and Live Activities)
-      currently leave this environment: the publish opt-in is enabled and the
-      relay link credentials exist. Clients skip seeding a Live Activity when
-      this is false — no update would ever repaint it. Absent on older
-      servers, which may still publish, so only an explicit false skips. */
-  agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
   /** Server runs repository clones for new projects in the background and
       streams their progress (`projectClone.*`, `subscribeProjectClones`).
       Absent on older servers, where clients must clone with the blocking

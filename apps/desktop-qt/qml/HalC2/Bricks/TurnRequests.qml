@@ -24,6 +24,10 @@ Item {
     readonly property var plan: shown ? turn.plan ?? null : null
     readonly property var queue: shown ? turn.queue : []
     readonly property var waiting: shown ? turn.waiting ?? [] : []
+    // The MC keeps the queue for the user (after a restart or a usage limit)
+    // until it is resumed.
+    readonly property bool queueHeld: shown && turn.queueHeld === true
+    readonly property bool queueResuming: shown && turn.queueResuming === true
     property int approvalIndex: 0
     readonly property var approval: approvals.length > 0 ? approvals[Math.min(approvalIndex, approvals.length - 1)] : null
     readonly property var question: questions.length > 0 ? questions[0] : null
@@ -523,7 +527,7 @@ Item {
                         }
                         Text {
                             Layout.fillWidth: true
-                            text: qsTr("Queued")
+                            text: requests.queueHeld ? qsTr("Queue held") : qsTr("Queued")
                             color: requests.muted
                             font.family: requests.uiFont
                             font.pixelSize: Math.round(12 * Theme.fontScale)
@@ -540,6 +544,40 @@ Item {
                             size: 13
                             color: requests.muted
                         }
+                    }
+                }
+
+                // A held queue says its messages are safe and offers the way on.
+                RowLayout {
+                    objectName: "queueHeld"
+                    visible: requests.queueHeld
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 32
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 6
+                    spacing: 6
+
+                    ShellIcon {
+                        name: "pause"
+                        size: 13
+                        color: requests.muted
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("Messages stay saved until you resume.")
+                        color: requests.foreground
+                        font.family: requests.uiFont
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                    }
+                    ShellButton {
+                        objectName: "queueResume"
+                        implicitHeight: 24
+                        subtle: true
+                        text: requests.queueResuming ? qsTr("Resuming…") : qsTr("Resume queue")
+                        enabled: !requests.queueResuming
+                        onClicked: Shell.dispatch("composer.queue.resume", {})
                     }
                 }
 
@@ -651,7 +689,11 @@ Item {
 
                                 required property var modelData
 
+                                // The worker whose result this waits to deliver; its thread opens.
+                                readonly property string worker: modelData.workerThreadId ?? ""
+
                                 objectName: "queueWaiting-" + modelData.runId
+                                Accessible.role: notice.worker.length > 0 ? Accessible.Link : Accessible.StaticText
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 28
                                 Layout.leftMargin: 24
@@ -664,6 +706,19 @@ Item {
                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                                 elide: Text.ElideRight
                                 maximumLineCount: 1
+                                font.underline: notice.worker.length > 0 && waitingHover.hovered
+
+                                HoverHandler {
+                                    id: waitingHover
+                                    enabled: notice.worker.length > 0
+                                    cursorShape: Qt.PointingHandCursor
+                                }
+                                TapHandler {
+                                    enabled: notice.worker.length > 0
+                                    onTapped: Shell.dispatch("rightPanel.openThread", {
+                                        threadKey: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":") + 1) + notice.worker
+                                    })
+                                }
                             }
                         }
                     }

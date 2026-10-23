@@ -727,7 +727,12 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   const ProjectGroup* scoped = scopeProjectKey ? input.group(*scopeProjectKey) : nullptr;
   std::optional<QSet<QString>> scopedProjectKeys;
   if (scoped) scopedProjectKeys = QSet<QString>(scoped->memberKeys.begin(), scoped->memberKeys.end());
-  const Partition sections = partition(threads, scopedProjectKeys, capabilitiesFor, nowMs);
+  Partition sections = partition(threads, scopedProjectKeys, capabilitiesFor, nowMs);
+  // Hidden before the shelf pages and counts; search and the plugin's page still find them.
+  if (!input.showSettledPluginThreads) {
+    const QString open = input.activeThreadKey.value_or(QString());
+    sections.settled.removeIf([&open](const Thread& thread) { return !thread.pluginId.isEmpty() && thread.key() != open; });
+  }
 
   QHash<QString, QString> projectNames;
   for (const ProjectGroup& group : input.projects) projectNames.insert(group.key, group.summary.value(QStringLiteral("displayName")).toString());
@@ -805,7 +810,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   const QVariantList pinned = convert(sections.pinned, false, false, unlimited);
   const QVariantList active = convert(sections.active, false, false, unlimited);
   const QVariantList snoozed = convert(sections.snoozed, true, true, unlimited);
-  const QVariantList settled = convert(sections.settled, false, true, kSettledLimit);
+  const QVariantList settled = convert(sections.settled, false, true, input.settledLimit);
 
   QVariantList projects;
   for (const ProjectGroup& group : input.projects) {
@@ -838,6 +843,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   view.state = QVariantMap{
       {QStringLiteral("localEnvironmentId"), nullable(input.localEnvironmentId)},
       {QStringLiteral("localProjects"), localProjects},
+      {QStringLiteral("localFolders"), input.localFolders},
       {QStringLiteral("projects"), projects},
       {QStringLiteral("scopeProjectKey"), nullable(scopeProjectKey)},
       {QStringLiteral("pinned"), pinned},
@@ -845,6 +851,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
       {QStringLiteral("snoozed"), snoozed},
       {QStringLiteral("settled"), settled},
       {QStringLiteral("settledTotal"), sections.settled.size()},
+      {QStringLiteral("settledPage"), input.settledPage},
       {QStringLiteral("drafts"), drafts},
       {QStringLiteral("activeThreadKey"), nullable(input.activeThreadKey)},
       {QStringLiteral("activeDraftId"), input.activeDraftId},
@@ -969,10 +976,26 @@ Nullable resolveCustomSnooze(const CustomSnooze& input, const QDateTime& now, co
   return formatIso(wake);
 }
 
+// Newer CLDR data puts a narrow no-break space (U+202F) before AM and PM. It
+// all but vanishes in the monospace meta lines ("8:46AM"), so the stamp
+// carries a plain space. Every such space in the stamp becomes one, not only
+// the one before AM/PM. Some locales use a no-break space (U+00A0) for the
+// same separator, so both are replaced. The stamp and the snooze labels built
+// from it are short labels where a break at that space costs nothing, so they
+// give up the no-break property; this is why it is done here and not in the
+// timeline's stamp alone. The two QML stamps that cannot call this helper
+// (ComposerUsageLimits.qml, ConnectionsSettings.qml) repeat the same
+// character set in a regex; extend both if this set ever grows.
+QString plainSpaces(QString text) {
+  return text.replace(QChar(0x202F), QLatin1Char(' ')).replace(QChar(0x00A0), QLatin1Char(' '));
+}
+
 QString timeOfDay(const QDateTime& local, const QString& timestampFormat, const QLocale& locale) {
-  if (timestampFormat == QLatin1String("12-hour")) return locale.toString(local.time(), QStringLiteral("h:mm AP"));
-  if (timestampFormat == QLatin1String("24-hour")) return locale.toString(local.time(), QStringLiteral("HH:mm"));
-  return locale.toString(local.time(), QLocale::ShortFormat);
+  QString time;
+  if (timestampFormat == QLatin1String("12-hour")) time = locale.toString(local.time(), QStringLiteral("h:mm AP"));
+  else if (timestampFormat == QLatin1String("24-hour")) time = locale.toString(local.time(), QStringLiteral("HH:mm"));
+  else time = locale.toString(local.time(), QLocale::ShortFormat);
+  return plainSpaces(time);
 }
 
 QList<SnoozePreset> snoozePresets(const QDateTime& now, const QString& timestampFormat,

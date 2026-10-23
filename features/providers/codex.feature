@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-codex.md
 #   docs/internals/providers.md (Codex async questions, shadow homes, update ownership)
@@ -116,6 +117,27 @@ Feature: Codex
     When a Codex turn starts
     Then Codex can call the HAL-C2 tools for this thread
 
+  Scenario: Codex keeps its own subagents unless the subagents setting says otherwise
+    Given the project allows the HAL-C2 tools
+    When a Codex turn starts
+    Then Codex is started with its subagent features left on
+
+  Scenario: Codex's subagents are off when agents use HAL-C2 workers
+    Given the project allows the HAL-C2 tools
+    And the subagents setting is HAL-C2 workers
+    When a Codex turn starts
+    Then Codex is started with its subagent features turned off
+    And Codex is told to delegate with "delegate_task"
+
+  # Codex takes its features only when its thread starts; the turns' instructions follow them.
+  Scenario: A Codex thread keeps the subagents choice it started with
+    Given the project allows the HAL-C2 tools
+    And the subagents setting is HAL-C2 workers
+    When a Codex turn starts
+    And the subagents setting is the provider's own
+    And the user sends another message to the Codex thread
+    Then every Codex turn of the thread is told to delegate with "delegate_task"
+
   Scenario: Codex starts with the launch arguments configured for it
     Given the Codex instance has launch arguments configured
     When a Codex session starts
@@ -174,6 +196,13 @@ Feature: Codex
     When the user signs in to the second instance
     Then both instances see the same Codex sessions and settings
     And each keeps its own login and model list
+
+  Scenario: Two Codex accounts keep their own usage limits
+    Given a shared Codex home and a second Codex instance with its own shadow home
+    And the user signs in to the second instance
+    When both Codex instances' usage has been checked
+    And a turn on the second Codex instance reports its usage
+    Then each Codex account keeps its own usage limits
 
   # Blocked: needs "Several Codex accounts share one Codex home" first.
   @backlog @blocked
@@ -781,3 +810,17 @@ Feature: Codex
     Given the model manifest cannot be fetched
     When the MC checks Codex
     Then Codex's status is reported from the manifest the MC already has
+
+  # Statuses are the MC's: broken, unsupported, graceful (shown as limited) or unknown.
+  # No range names a version until the policy adds one, so the in-range rows are unknown.
+  @backlog
+  Scenario Outline: The version Codex runs decides whether this HAL-C2 release supports it
+    Given Codex version "<version>" is installed
+    When the MC checks Codex
+    Then Codex is reported as "<status>" for this HAL-C2 release
+
+    Examples:
+      | version         | status  |
+      | 0.128.0         | broken  |
+      | 0.129.0         | unknown |
+      | 0.129.0-alpha.1 | unknown |

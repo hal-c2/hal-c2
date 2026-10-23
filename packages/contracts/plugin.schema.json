@@ -92,6 +92,7 @@
               "slack:write",
               "threads:read",
               "threads:create",
+              "threads:organize",
               "agentTools"
             ]
           },

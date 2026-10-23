@@ -1,12 +1,14 @@
 defmodule HalC2.TailscaleServe do
   @moduledoc """
-  Publishes this MC over Tailscale Serve HTTPS for `mix hal_c2.pair --tailscale`: the
+  Publishes this MC over Tailscale Serve HTTPS for `pair --tailscale` (`HalC2.Pair`): the
   machine's MagicDNS name fronts the local listener, and tailscaled keeps the mapping
   across MC restarts.
 
-  A mapping already on the HTTPS port is reused when it reaches this environment
-  and never replaced otherwise. The check probes the mapping's local target, which
-  answers without waiting for a certificate.
+  A mapping already on the HTTPS port is reused only when it is a loopback
+  alias of the very listener being published (same port, another loopback
+  host) answering with this environment's id, and never replaced otherwise.
+  The id is public at the well-known endpoint, so it is a sanity check, not
+  proof; the loopback-same-port shape is what the reuse trusts.
 
   The `tailscale` executable comes from `config :hal_c2, tailscale_command: [...]`.
   """
@@ -15,11 +17,22 @@ defmodule HalC2.TailscaleServe do
 
   def default_port, do: @default_port
 
-  @doc "Maps HTTPS `serve_port` on the tailnet to `local_port`; `{:ok, base_url}` or `{:error, message}`."
-  @spec publish(pos_integer, pos_integer) :: {:ok, String.t()} | {:error, String.t()}
-  def publish(local_port, serve_port \\ @default_port) do
+  @doc """
+  Maps HTTPS `serve_port` on the tailnet to `local_port`; `{:ok, base_url}` or
+  `{:error, message}`. `expected_id` is the environment id of the MC being
+  published, which an existing mapping to another address must answer with to
+  be reused; nil means this process's own MC (`HalC2.Environment.id/0`). A
+  caller publishing *another* MC (a cross-profile `pair`) must pass that MC's
+  id: this process's identity is its own home's, not the published one's.
+  `command_name` is the caller's CLI when it has one, named in the hint for a
+  taken port; nil (an RPC caller) gets the hint without a CLI flag.
+  """
+  @spec publish(pos_integer, pos_integer, String.t() | nil, String.t() | nil) ::
+          {:ok, String.t()} | {:error, String.t()}
+  def publish(local_port, serve_port \\ @default_port, expected_id \\ nil, command_name \\ nil) do
     with {:ok, name} <- magic_dns_name(),
-         :ok <- claim(name, serve_port, "http://127.0.0.1:#{local_port}") do
+         :ok <-
+           claim(name, serve_port, "http://127.0.0.1:#{local_port}", expected_id, command_name) do
       {:ok, base_url(name, serve_port)}
     else
       {:taken, message} -> {:error, message}
@@ -37,7 +50,7 @@ defmodule HalC2.TailscaleServe do
     target = "http://127.0.0.1:#{local_port}"
 
     with {:ok, name} <- magic_dns_name(),
-         {:taken, _} <- claim(name, @default_port, target) do
+         {:taken, _} <- claim(name, @default_port, target, nil, nil) do
       publish(local_port, local_port)
     else
       :ok -> publish(local_port)
@@ -62,41 +75,105 @@ defmodule HalC2.TailscaleServe do
     end
   end
 
-  defp claim(name, port, target) do
+  defp claim(name, port, target, expected_id, command_name) do
     case mapping(name, port) do
       nil -> serve(port, target)
       ^target -> :ok
-      other -> check_existing(other, port)
+      other -> check_existing(other, target, port, expected_id, command_name)
     end
   end
 
-  # Another target on the port: fine only if it is this environment.
-  defp check_existing(target, port) do
-    request = {String.to_charlist(target <> "/.well-known/hal-c2/environment"), []}
+  @doc """
+  The environment id an MC at `url` answers with at its well-known identity
+  endpoint: a non-empty id, or nil when it answers with none (or not at all).
+  The one probe behind every check of whose token a mapping or a link is
+  minted for (`check_existing/5`, `HalC2.Pair`'s located id).
+  """
+  @spec environment_id_at(String.t() | nil) :: String.t() | nil
+  def environment_id_at(url) when is_binary(url) do
+    request = {String.to_charlist(url <> "/.well-known/hal-c2/environment"), []}
 
-    case :httpc.request(:get, request, [timeout: 2_000], body_format: :binary) do
-      {:ok, {{_, 200, _}, _, body}} ->
-        case JSON.decode(body) do
-          {:ok, %{"environmentId" => id}} ->
-            if id == HalC2.Environment.id(),
-              do: :ok,
-              else:
-                {:taken,
-                 "Tailscale Serve on HTTPS port #{port} already fronts a different HAL-C2 server. Pass --tailscale-serve-port to `mix hal_c2.pair` to publish this one on another port."}
+    with {:ok, {{_, 200, _}, _, body}} <-
+           :httpc.request(:get, request, [timeout: 2_000], body_format: :binary),
+         {:ok, %{"environmentId" => id}} when is_binary(id) and id != "" <- JSON.decode(body) do
+      id
+    else
+      _ -> nil
+    end
+  end
+
+  def environment_id_at(_url), do: nil
+
+  # Another target on the port: fine only if it is this very listener reached
+  # under another loopback host, answering with the published environment's
+  # id. Anything else — a non-loopback target, another port, a forwarder — is
+  # refused without trusting its self-reported id: that id is served
+  # unauthenticated, so a match is a sanity check, not proof of whose mapping
+  # it is. An expected id of "" (a located MC whose id could be neither read
+  # nor asked for) matches nothing — notably not a target in the same degraded
+  # state answering "": the mapping is refused, not blessed.
+  # Neither branch probed its target, so it may front anything at all: the
+  # message does not claim a HAL-C2 server.
+  defp unverified(port, command_name),
+    do:
+      "Tailscale Serve on HTTPS port #{port} already fronts something whose identity could not be verified as this one. #{port_hint(command_name)}"
+
+  defp check_existing(other, target, port, expected_id, command_name) do
+    expected = expected_id || HalC2.Environment.id()
+
+    cond do
+      not loopback_alias?(other, target) ->
+        # Not probed (its self-reported id is not trusted), so do not claim
+        # it fronts a different server: it may front this very MC under a
+        # non-loopback address, or nothing HAL-C2 at all.
+        {:taken, unverified(port, command_name)}
+
+      expected == "" ->
+        {:taken, unverified(port, command_name)}
+
+      true ->
+        case environment_id_at(other) do
+          ^expected ->
+            :ok
+
+          nil ->
+            occupied(port, command_name)
 
           _ ->
-            occupied(port)
+            {:taken,
+             "Tailscale Serve on HTTPS port #{port} already fronts a different HAL-C2 server. #{port_hint(command_name)}"}
         end
-
-      _ ->
-        occupied(port)
     end
   end
 
-  defp occupied(port),
+  defp loopback_alias?(other, target) do
+    with %URI{host: host, port: port} when is_binary(host) <- URI.parse(other),
+         %URI{port: ^port} <- URI.parse(target) do
+      loopback_host?(host)
+    else
+      _ -> false
+    end
+  end
+
+  defp loopback_host?("localhost"), do: true
+
+  defp loopback_host?(host) do
+    case :inet.parse_address(String.to_charlist(host)) do
+      {:ok, {127, _, _, _}} -> true
+      {:ok, {0, 0, 0, 0, 0, 0, 0, 1}} -> true
+      _ -> false
+    end
+  end
+
+  defp occupied(port, command_name),
     do:
       {:taken,
-       "HTTPS port #{port} on the tailnet already serves something that is not a HAL-C2 server. Pass --tailscale-serve-port to `mix hal_c2.pair` to publish this one on another port."}
+       "HTTPS port #{port} on the tailnet already serves something that is not a HAL-C2 server. #{port_hint(command_name)}"}
+
+  defp port_hint(nil), do: "Publish this one on another Tailscale Serve port."
+
+  defp port_hint(command_name),
+    do: "Pass --tailscale-serve-port to `#{command_name}` to publish this one on another port."
 
   defp mapping(name, port) do
     case run(["serve", "status", "--json"]) do

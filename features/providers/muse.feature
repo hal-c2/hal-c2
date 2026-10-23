@@ -138,6 +138,67 @@ Feature: Muse Code
     Given Muse Code shares a plan with a step it cancelled
     Then the plan leaves the cancelled step out
 
+  Scenario: A Muse Code subagent is shown as a subagent with its progress and answer
+    Given Muse Code delegates a review to a subagent that reports progress and answers
+    Then the subagent is shown as a child of the turn with its progress and its answer
+    And the user can open the subagent's own thread with its task and its answer
+
+  Scenario: A Muse Code subagent that fails shows why
+    Given Muse Code delegates a review to a subagent that fails
+    Then the subagent is shown as failed with Muse's reason
+
+  Scenario: Muse Code subagents running at once each show their own progress and answer
+    Given Muse Code delegates two reviews to subagents that run at once
+    Then each subagent is shown with its own progress and its own answer
+
+  Scenario: A Muse Code subagent first reported as done shows what it did
+    Given Muse Code delegates a review to a subagent it first reports as done
+    Then the subagent is shown with what it did and its answer
+
+  Scenario: Muse Code subagents in different turns are different subagents
+    Given Muse Code delegates a review to a subagent in each of two turns
+    Then each turn's subagent is its own, with its own thread
+
+  Scenario: A Muse Code subagent that answers only with a summary shows the summary
+    Given Muse Code delegates a review to a subagent that answers only with a summary
+    Then the subagent's answer is its summary
+
+  Scenario: A Muse Code subagent that Muse cancels shows as cancelled
+    Given Muse Code delegates a review to a subagent it cancels
+    Then the subagent is shown as cancelled, without an answer
+
+  Scenario: A Muse Code subagent that fails without a reason shows what it answered
+    Given Muse Code delegates a review to a subagent that fails without a reason after answering in part
+    Then the subagent is shown as failed with what it answered
+
+  Scenario: A Muse Code subagent that fails with a reason after answering in part shows both
+    Given Muse Code delegates a review to a subagent that fails with a reason after answering in part
+    Then the subagent is shown as failed with Muse's reason and what it answered
+
+  Scenario: A Muse Code subagent Muse ends in the other spelling of cancelled shows as cancelled
+    Given Muse Code delegates a review to a subagent it cancels in the other spelling after answering in part
+    Then the subagent is shown as cancelled with what it answered
+
+  # Muse may name states of its own; only one it ends a subagent with ends it.
+  Scenario: A Muse Code subagent in a state Muse has not named before is still running
+    Given Muse Code delegates a review to a subagent it reports in a state of its own before it answers
+    Then the subagent is shown running, then with its answer
+
+  Scenario: A Muse Code subagent ended in a status HAL-C2 has not seen keeps its answer
+    Given Muse Code delegates a review to a subagent it ends with a status HAL-C2 has not seen
+    Then the subagent is shown as stopped with the turn, with the answer it had already sent
+
+  # Upstream's Muse adapter keeps a subagent that outlives a completed turn as
+  # the thread's background work and publishes its answer when it lands; only
+  # failed, cancelled or interrupted endings settle it. Until the MC does that
+  # (#447), such a subagent is settled as interrupted at turn end — so work
+  # shown as stopped never reads as finished — and a later answer is dropped.
+  @backlog
+  Scenario: A Muse Code subagent still running when its turn completes answers afterwards
+    Given Muse Code delegates a review to a subagent and the turn completes first
+    When the subagent answers after the turn has ended
+    Then the subagent is shown with its answer in its own thread
+
   Scenario: Muse Code offers only supervised and full access
     When the user opens the permission mode choices in a Muse Code thread
     Then supervised and full access are offered
@@ -152,6 +213,12 @@ Feature: Muse Code
       | mode        | outcome                |
       | supervised  | asked for approval     |
       | full access | allowed without asking |
+
+  Scenario: Switching a running Muse Code turn to full access stops it asking
+    Given Muse Code asked to run the first of two commands
+    When the user switches the Muse Code thread to full access
+    Then the waiting command is approved without the user
+    And Muse Code runs the second command without asking
 
   Scenario: A Muse Code workflow's request with a second requirement is approved for it too
     Given the thread runs Muse Code in full access
@@ -199,6 +266,16 @@ Feature: Muse Code
     When the user stops the turn
     Then Muse Code stops working and the turn is shown as interrupted
 
+  Scenario Outline: Stopping a Muse Code turn that will not stop closes its host
+    Given a Muse Code turn is running on a Muse that <answers> its interrupt
+    When the user stops the turn
+    Then the turn is shown as interrupted and its Muse host is closed
+
+    Examples:
+      | answers       |
+      | refuses       |
+      | never answers |
+
   Scenario: /compact compacts the Muse Code conversation
     Given a Muse Code thread with history
     When the user sends "/compact" to Muse Code
@@ -219,3 +296,10 @@ Feature: Muse Code
     Given Muse Code is installed and enabled
     When the user opens the model choices for generated text
     Then no Muse Code model is offered
+
+  # features/settings/subagents.feature: the setting is not wired for Muse yet.
+  @backlog @mc
+  Scenario: Muse Code's own subagents are turned off when agents use HAL-C2 workers
+    Given the subagents setting is HAL-C2 workers
+    When a Muse Code session is started
+    Then it has no built-in subagent tool, if Muse Code can turn it off

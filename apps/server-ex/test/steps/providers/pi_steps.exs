@@ -718,7 +718,9 @@ defmodule HalC2.Steps.Providers.Pi do
     assert [%{"status" => "completed", "childThreadId" => child_id, "result" => answer} = task] =
              StreamState.list(state, "subagent")
 
-    assert answer == "Reply to Write the release notes after []"
+    # The fake echoes its prompt: the MC's worker preamble, then the task.
+    assert "Reply to You are a HAL-C2 worker " <> _ = answer
+    assert String.ends_with?(answer, "\nTask:\nWrite the release notes after []")
 
     assert [%{"childThreadId" => ^child_id, "nodeId" => node_id}] =
              StreamState.list(state, "turn-item") |> Enum.filter(&(&1["type"] == "subagent"))
@@ -729,11 +731,245 @@ defmodule HalC2.Steps.Providers.Pi do
     assert %{"lineage" => %{"parentThreadId" => ^thread_id, "relationshipToParent" => "subagent"}} =
              StreamState.get(child, "thread")[child_id]
 
-    assert [{"user", "Write the release notes"}, {"assistant", ^answer}] =
+    assert [{"user", task_text}, {"assistant", ^answer}] =
              child
              |> StreamState.list("message")
              |> Enum.sort_by(& &1["createdAt"])
              |> Enum.map(&{&1["role"], &1["text"]})
+
+    assert String.ends_with?(task_text, "\nTask:\nWrite the release notes")
+
+    context
+  end
+
+  # --- steering ---
+
+  # Pi's turn says something, then waits: for a steer to join its work ("is still
+  # working"), or until one or two steers reach it only after it settled, as ones sent
+  # just as its run ended do ("went idle ...").
+  step ~r/^a Pi turn that (?<state>is still working|went idle just before (?:the steer|two steers) landed)$/,
+       %{args: [state]} = context do
+    wait =
+      case state do
+        "is still working" -> %{"waitAbort" => true}
+        "went idle just before the steer landed" -> %{"settleOnSteer" => 1}
+        _two -> %{"settleOnSteer" => 2}
+      end
+
+    turns = [
+      %{"match" => "a steered task", "steps" => [%{"text" => "Working on it."}, wait]}
+    ]
+
+    context =
+      context
+      |> with_turns(turns)
+      |> FakeAcp.thread()
+      |> FakeAcp.send_message("please do a steered task")
+
+    World.await_stream(World.thread_id(context, context.thread), fn state ->
+      Enum.any?(StreamState.list(state, "turn-item"), &(&1["type"] == "assistant_message"))
+    end)
+
+    context
+  end
+
+  step "the user steers the thread with {string}", %{args: [text]} = context do
+    {:ok, _} = steer(context, text)
+    Map.put(context, :steered, text)
+  end
+
+  defp steer(context, text) do
+    HalC2.Orchestration.dispatch(%{
+      "type" => "message.dispatch",
+      "commandId" => "cmd-#{System.unique_integer([:positive])}",
+      "threadId" => World.thread_id(context, context.thread),
+      "messageId" => "msg-#{System.unique_integer([:positive])}",
+      "text" => text,
+      "attachments" => [],
+      "deliveryIntent" => "steer"
+    })
+  end
+
+  # The fake declines a steer that says "decline" once it reaches Pi after the run
+  # settled; the turn settles only once both have reached it, so both are out at once.
+  step "the user steers the thread with two messages at once that Pi declines", context do
+    texts = ["decline the first", "decline the second"]
+
+    for reply <- texts |> Enum.map(&Task.async(fn -> steer(context, &1) end)) |> Task.await_many(),
+        do: assert({:ok, _} = reply)
+
+    Map.put(context, :steered, texts)
+  end
+
+  # Each message runs as a message of its own once the steered turn ended: completed
+  # when Pi declined it, failed when Pi exited.
+  step ~r/^(?:each|the) message is sent on its own after the turn$/, context do
+    state = FakeAcp.await_runs(context, 1 + length(List.wrap(context.steered)))
+    [turn | own] = state |> StreamState.list("run") |> Enum.sort_by(& &1["ordinal"])
+    assert turn["status"] == Map.get(context, :ended, "completed")
+    messages = Map.new(StreamState.list(state, "message"), &{&1["id"], &1})
+
+    assert Enum.sort(for run <- own, do: messages[run["userMessageId"]]["text"]) ==
+             Enum.sort(List.wrap(context.steered))
+
+    assert Enum.all?(own, &(&1["status"] == "completed"))
+    context
+  end
+
+  # The fake never answers a steer that says "ignore" once its run settled; the runtime
+  # gives it a short answer budget here.
+  step "the user steers the thread with a message Pi never answers", context do
+    Application.put_env(:hal_c2, :pi_steer_answer_ms, 200)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :pi_steer_answer_ms) end)
+    {:ok, _} = steer(context, "ignore this one")
+    Map.put(context, :steered, "ignore this one")
+  end
+
+  step "the turn ends with the message in it", context do
+    state = FakeAcp.await_runs(context, 1)
+    assert [%{"status" => "completed", "id" => run}] = StreamState.list(state, "run")
+
+    assert Enum.any?(
+             StreamState.list(state, "message"),
+             &(&1["role"] == "user" and &1["text"] == context.steered and &1["runId"] == run)
+           )
+
+    context
+  end
+
+  # The fake exits on a steer that says "vanish", before answering it.
+  step "the user steers the thread with a message Pi exits on", context do
+    {:ok, _} = steer(context, "vanish now")
+    Map.merge(context, %{steered: "vanish now", ended: "failed"})
+  end
+
+  # The fake takes a steer that says "hold" in without answering it while the turn
+  # waits, so it is still out when the abort reaches it and Pi settles the turn.
+  step "the user steers the thread with a message Pi holds and stops the turn", context do
+    steered = Task.async(fn -> steer(context, "hold this thought") end)
+    await_steer_sent(context, "hold this thought")
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    assert {:ok, _} = Task.await(steered)
+    Map.put(context, :steered, "hold this thought")
+  end
+
+  # The fake declines a steer that says "decline after stop" only once the abort
+  # reaches it: the run already settled (the runtime holds the settle for the
+  # steer's answer), the user stops the turn, and only then does Pi refuse.
+  step "the user steers the thread with a message Pi declines after the turn is stopped",
+       context do
+    steered = Task.async(fn -> steer(context, "decline after stop this one") end)
+    await_steer_sent(context, "decline after stop this one")
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread)
+      })
+
+    assert {:ok, _} = Task.await(steered, 15_000)
+    Map.put(context, :steered, "decline after stop this one")
+  end
+
+  step "the stopped turn ends with the message in it and no new turn starts", context do
+    state = FakeAcp.await_runs(context, 1)
+    assert [%{"status" => "interrupted", "id" => run}] = StreamState.list(state, "run")
+
+    assert Enum.any?(
+             StreamState.list(state, "message"),
+             &(&1["role"] == "user" and &1["text"] == context.steered and &1["runId"] == run)
+           )
+
+    context
+  end
+
+  # The fake received the steer prompt with `text`, so the runtime has it out. The
+  # fake writes its log from another OS process; there is no message to wait on.
+  defp await_steer_sent(context, text, deadline \\ nil) do
+    deadline = deadline || System.monotonic_time(:millisecond) + 5_000
+
+    sent? =
+      Enum.any?(
+        FakeAcp.received_type(context, "prompt"),
+        &(&1["streamingBehavior"] == "steer" and &1["message"] == text)
+      )
+
+    cond do
+      sent? ->
+        :ok
+
+      System.monotonic_time(:millisecond) > deadline ->
+        flunk("Pi was never sent the steer #{inspect(text)}")
+
+      true ->
+        receive do
+        after
+          20 -> await_steer_sent(context, text, deadline)
+        end
+    end
+  end
+
+  # The fake refuses a steer that says "refuse", as Pi rejects one before accepting it.
+  step "the user steers the thread with a message Pi refuses", context do
+    reply =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread),
+        "messageId" => "msg-#{System.unique_integer([:positive])}",
+        "text" => "refuse this one",
+        "attachments" => [],
+        "deliveryIntent" => "steer"
+      })
+
+    Map.put(context, :steer_reply, reply)
+  end
+
+  step "the sender hears Pi did not take the message", context do
+    assert {:error, message} = context.steer_reply
+    assert message =~ "Pi did not take the message into its running turn"
+    assert message =~ "Pi cannot take this message now"
+    context
+  end
+
+  step "the Pi turn runs on without it", context do
+    state = World.stream(context, context.thread)
+    assert [%{"status" => "running"}] = StreamState.list(state, "run")
+    refute Enum.any?(StreamState.list(state, "message"), &(&1["text"] == "refuse this one"))
+    context
+  end
+
+  # One run, which Pi's answer to the steer ends.
+  defp steered_turn(context) do
+    state = FakeAcp.await_runs(context, 1)
+    assert [%{"status" => "completed"}] = StreamState.list(state, "run")
+
+    assert Enum.any?(
+             FakeAcp.received_type(context, "prompt"),
+             &(&1["streamingBehavior"] == "steer")
+           )
+
+    replies(context)
+  end
+
+  step "the message is queued into the running work", context do
+    assert "steered: #{context.steered}" in steered_turn(context)
+    context
+  end
+
+  step "the message starts new work in the same turn", context do
+    assert Enum.any?(
+             steered_turn(context),
+             &String.starts_with?(&1, "Reply to #{context.steered}")
+           )
 
     context
   end

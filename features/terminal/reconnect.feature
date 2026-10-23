@@ -14,7 +14,7 @@
 #   apps/tui/src/components/ThreadTerminalDrawer.tsx (snapshot replay, 128 KiB tail)
 #   apps/tui/src/connection.ts (subscribeTerminal, subscribeTerminalMetadata)
 #   apps/web/src/components/TerminalEventSync.tsx
-#   Cross-domain: connections/ owns relay and tunnel transport; mc/ owns cluster routing.
+#   Cross-domain: connections/ owns remote transport; mc/ owns cluster routing.
 
 Feature: Reattaching to terminals
   A terminal outlives the client that opened it. Any client, on any device, can attach later
@@ -34,6 +34,15 @@ Feature: Reattaching to terminals
       Given two clients attached to the same terminal
       When one client runs "date"
       Then both clients receive the date
+
+    @mc
+    Scenario: Two pages of one client attached to one terminal each see its output
+      Given one client attached twice to the same terminal
+      When the terminal prints "for both pages"
+      Then both pages receive "for both pages"
+      When one page leaves
+      And the terminal prints "still here"
+      Then the other page receives "still here"
 
     @mc
     Scenario: Attaching to an unknown terminal with a folder opens it
@@ -62,6 +71,17 @@ Feature: Reattaching to terminals
       When the client disconnects
       Then the shell keeps running
       And its output keeps being recorded
+
+    # A terminal on another MC drops a client's socket when the link between the
+    # MCs blips; typing still reached the shell, but nothing came back.
+    @mc
+    Scenario: A terminal lost with its MC is attached again when the MC is back
+      Given a client attached to a running terminal
+      When the terminal's MC leaves the cluster for a moment
+      Then the client is told in the terminal that the connection was lost
+      When the terminal's MC is back
+      Then the client is asked to attach again
+      And attaching again follows the terminal's output
 
     # Legacy: apps/server/src/terminal/Manager.test.ts (keeps attach streams live when a terminal id is
     #   closed and reopened)

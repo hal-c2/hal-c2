@@ -48,6 +48,23 @@ describe("ServerSettings response streaming", () => {
   });
 });
 
+describe("ServerSettings native subagents", () => {
+  it("keeps the provider's own subagents by default", () => {
+    expect(decodeServerSettings({}).nativeSubagents).toBe("provider");
+  });
+
+  it.each(["provider", "hal-c2"])("round-trips %s", (nativeSubagents) => {
+    const input = { nativeSubagents };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+  });
+
+  it("rejects other values in snapshots and writes", () => {
+    expect(() => decodeServerSettings({ nativeSubagents: "off" })).toThrow();
+    expect(() => decodeServerSettingsPatch({ nativeSubagents: "off" })).toThrow();
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
@@ -676,6 +693,15 @@ describe("ClientSettings composer collapse", () => {
     const decoded = decodeClientSettings({ composerCollapseOnBlur: false });
     expect(decoded.composerCollapseOnScroll).toBe(true);
     expect(decoded).not.toHaveProperty("composerCollapseOnBlur");
+  });
+});
+
+describe("ServerSettings settled plugin threads", () => {
+  it("keeps plugin threads out of Settled until turned on", () => {
+    expect(decodeServerSettings({}).sidebarShowSettledPluginThreads).toBe(false);
+    const input = { sidebarShowSettledPluginThreads: true };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
 

@@ -1,0 +1,248 @@
+import {
+  projectLabel,
+  type TuiThreadShell as OrchestrationThreadShell,
+} from "./orchestrationV2Adapter.ts";
+import {
+  effectiveSnoozed,
+  QUEUED_TURN_START_GRACE_MS,
+} from "@hal-c2/client-runtime/state/thread-settled";
+
+import type { OrchestrationShellSnapshot } from "./connection.ts";
+
+export const SIDEBAR_SNOOZED_SECTION_ID = "sidebar-v2:snoozed";
+export const SIDEBAR_SETTLED_SECTION_ID = "sidebar-v2:settled";
+export const SIDEBAR_SETTLED_INITIAL_COUNT = 10;
+/** How many more settled threads each "show more" lists. */
+export const SIDEBAR_SETTLED_PAGE = 25;
+const MINUTE_MS = 60 * 1_000;
+
+export type SidebarSection = "active" | "snoozed" | "settled";
+
+export type Selection =
+  | { readonly kind: "project"; readonly id: string }
+  | { readonly kind: "thread"; readonly id: string }
+  | { readonly kind: "section"; readonly id: string }
+  | { readonly kind: "more"; readonly id: string };
+
+export type Row =
+  | {
+      readonly kind: "thread";
+      readonly id: string;
+      readonly thread: OrchestrationThreadShell;
+      readonly section: SidebarSection;
+      readonly projectTitle: string;
+      readonly timestamp: string;
+    }
+  | {
+      readonly kind: "section";
+      readonly id: string;
+      readonly section: Exclude<SidebarSection, "active">;
+      readonly title: string;
+      readonly count: number;
+      readonly expanded: boolean;
+    }
+  | {
+      readonly kind: "more";
+      readonly id: string;
+      readonly section: "settled";
+      readonly hiddenCount: number;
+    };
+
+export function selectionEquals(selection: Selection | null, row: Row): boolean {
+  return selection !== null && selection.kind === row.kind && selection.id === row.id;
+}
+
+function timestampMs(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function activeOrder(left: OrchestrationThreadShell, right: OrchestrationThreadShell): number {
+  return (
+    timestampMs(right.createdAt) - timestampMs(left.createdAt) || left.id.localeCompare(right.id)
+  );
+}
+
+export function settledTimestamp(thread: OrchestrationThreadShell): string {
+  if (timestampMs(thread.settledAt) > 0) return thread.settledAt!;
+  const candidates = [
+    thread.latestUserMessageAt,
+    thread.latestTurn?.requestedAt,
+    thread.latestTurn?.startedAt,
+    thread.latestTurn?.completedAt,
+    thread.updatedAt,
+  ];
+  let latest = thread.updatedAt;
+  for (const candidate of candidates) {
+    if (timestampMs(candidate) > timestampMs(latest)) latest = candidate ?? latest;
+  }
+  return latest;
+}
+
+/** Earliest clock boundary that can change sidebar partitioning or timestamps. */
+export function nextSidebarRefreshAt(
+  shell: OrchestrationShellSnapshot | null,
+  nowMs: number,
+): number | null {
+  if (!shell || shell.threads.length === 0 || !Number.isFinite(nowMs)) return null;
+  let next = Math.floor(nowMs / MINUTE_MS) * MINUTE_MS + MINUTE_MS;
+  const consider = (candidate: number) => {
+    if (Number.isFinite(candidate) && candidate > nowMs && candidate < next) next = candidate;
+  };
+
+  for (const thread of shell.threads) {
+    // Auto-settle is projected by the server, so only snooze wakes and the
+    // queued-turn grace period are clock boundaries here.
+    consider(timestampMs(thread.snoozedUntil));
+    consider(timestampMs(thread.latestUserMessageAt) + QUEUED_TURN_START_GRACE_MS + 1);
+  }
+  return next;
+}
+
+function selectedThread(
+  threads: readonly OrchestrationThreadShell[],
+  selectedThreadId: string | null,
+): OrchestrationThreadShell | null {
+  if (selectedThreadId === null) return null;
+  return threads.find((thread) => thread.id === selectedThreadId) ?? null;
+}
+
+function keepSelectedVisible(
+  visible: readonly OrchestrationThreadShell[],
+  all: readonly OrchestrationThreadShell[],
+  selectedThreadId: string | null,
+): OrchestrationThreadShell[] {
+  const selected = selectedThread(all, selectedThreadId);
+  if (!selected || visible.some((thread) => thread.id === selected.id)) return [...visible];
+  return [...visible, selected];
+}
+
+/**
+ * Flat Sidebar V2 model. Projects filter the list; they no longer own nested
+ * thread rows.
+ *
+ * - `expanded` contains the snoozed/settled section ids.
+ * - `settledShown` is how many settled threads are listed: the first page,
+ *   and SIDEBAR_SETTLED_PAGE more per "show more".
+ *
+ * Settled threads a plugin started (code reviews) are left out of the shelf
+ * and its count unless `showSettledPluginThreads`; the filter and the
+ * selection still reach them.
+ */
+export function buildRows(
+  shell: OrchestrationShellSnapshot | null,
+  expanded: ReadonlySet<string>,
+  settledShown: number,
+  selectedThreadId: string | null,
+  filter = "",
+  projectScopeId: string | null = null,
+  now = new Date().toISOString(),
+  showSettledPluginThreads = false,
+): Row[] {
+  if (!shell) return [];
+
+  const projectTitleById = new Map(
+    shell.projects.map((project) => [project.id as string, projectLabel(project)] as const),
+  );
+  const needle = filter.trim().toLowerCase();
+  const visibleThreads = shell.threads.filter((thread) => {
+    if (thread.archivedAt != null) return false;
+    if (projectScopeId !== null && thread.projectId !== projectScopeId) return false;
+    if (needle.length === 0) return true;
+    const projectTitle = projectTitleById.get(thread.projectId as string) ?? thread.projectId;
+    return (
+      thread.title.toLowerCase().includes(needle) || projectTitle.toLowerCase().includes(needle)
+    );
+  });
+
+  const active: OrchestrationThreadShell[] = [];
+  const snoozed: OrchestrationThreadShell[] = [];
+  const settled: OrchestrationThreadShell[] = [];
+  for (const thread of visibleThreads) {
+    // Snooze is the stronger lifecycle statement and therefore wins over a
+    // settled thread, matching the web UI. The server projects settlement,
+    // including auto-settle, into settledOverride.
+    if (effectiveSnoozed(thread, { now })) {
+      snoozed.push(thread);
+    } else if (thread.settledOverride === "settled") {
+      const hidden =
+        thread.plugin != null &&
+        !showSettledPluginThreads &&
+        needle.length === 0 &&
+        thread.id !== selectedThreadId;
+      if (!hidden) settled.push(thread);
+    } else {
+      active.push(thread);
+    }
+  }
+
+  active.sort(activeOrder);
+  snoozed.sort(
+    (left, right) =>
+      timestampMs(left.snoozedUntil) - timestampMs(right.snoozedUntil) ||
+      left.id.localeCompare(right.id),
+  );
+  settled.sort(
+    (left, right) =>
+      timestampMs(settledTimestamp(right)) - timestampMs(settledTimestamp(left)) ||
+      left.id.localeCompare(right.id),
+  );
+
+  const rowFor = (thread: OrchestrationThreadShell, section: SidebarSection): Row => ({
+    kind: "thread",
+    id: thread.id,
+    thread,
+    section,
+    projectTitle: projectTitleById.get(thread.projectId as string) ?? thread.projectId,
+    timestamp: section === "settled" ? settledTimestamp(thread) : thread.updatedAt,
+  });
+
+  const rows: Row[] = active.map((thread) => rowFor(thread, "active"));
+  const searchExpanded = needle.length > 0;
+  if (snoozed.length > 0) {
+    const sectionExpanded = searchExpanded || expanded.has(SIDEBAR_SNOOZED_SECTION_ID);
+    rows.push({
+      kind: "section",
+      id: SIDEBAR_SNOOZED_SECTION_ID,
+      section: "snoozed",
+      title: "Snoozed",
+      count: snoozed.length,
+      expanded: sectionExpanded,
+    });
+    const shown = sectionExpanded ? snoozed : keepSelectedVisible([], snoozed, selectedThreadId);
+    rows.push(...shown.map((thread) => rowFor(thread, "snoozed")));
+  }
+
+  if (settled.length > 0) {
+    const sectionExpanded = searchExpanded || expanded.has(SIDEBAR_SETTLED_SECTION_ID);
+    rows.push({
+      kind: "section",
+      id: SIDEBAR_SETTLED_SECTION_ID,
+      section: "settled",
+      title: "Settled",
+      count: settled.length,
+      expanded: sectionExpanded,
+    });
+    const preview = settled.slice(0, settledShown);
+    const shown = sectionExpanded
+      ? keepSelectedVisible(preview, settled, selectedThreadId)
+      : keepSelectedVisible([], settled, selectedThreadId);
+    rows.push(...shown.map((thread) => rowFor(thread, "settled")));
+    const hidden = settled.length - shown.length;
+    if (sectionExpanded && hidden > 0) {
+      rows.push({
+        kind: "more",
+        id: SIDEBAR_SETTLED_SECTION_ID,
+        section: "settled",
+        hiddenCount: hidden,
+      });
+    }
+  }
+  return rows;
+}
+
+/** Active thread cards use three content lines plus one line of separation. */
+export function rowHeight(row: Row): number {
+  return row.kind === "thread" && row.section === "active" ? 4 : 1;
+}

@@ -12,7 +12,11 @@ import {
 } from "@hal-c2/contracts";
 import * as DateTime from "effect/DateTime";
 
-import { presentTuiShell, presentTuiThread } from "./orchestrationV2Adapter.ts";
+import {
+  presentTuiShell,
+  presentTuiThread,
+  type TuiThreadExtras,
+} from "./orchestrationV2Adapter.ts";
 
 const now = DateTime.makeUnsafe("2026-08-11T10:00:00.000Z");
 const projectId = ProjectId.make("project-1");
@@ -199,6 +203,50 @@ describe("orchestration V2 TUI presentation", () => {
     expect(result.threads[1]?.archivedAt).toBe("2026-08-11T10:00:00.000Z");
   });
 
+  it("links a delegated result's notification to its worker and previews the result", () => {
+    const base = projection();
+    const notice = (fields: Record<string, unknown>) => {
+      const item = {
+        ...base.turnItems[0],
+        id: TurnItemId.make("turn-item:user:message:result"),
+        type: "notification",
+        source: { kind: "delegated_task", taskIds: ["task:1"] },
+        outcome: "completed",
+        summary: "Tax tests finished",
+        ...fields,
+      };
+      return presentTuiThread({
+        ...base,
+        turnItems: [item],
+        visibleTurnItems: [{ ...base.visibleTurnItems[0]!, item, sourceItemId: item.id }],
+      } as never).activities[0];
+    };
+
+    expect(
+      notice({
+        workerThreadId: "thread:child",
+        workerTitle: "Tax tests",
+        detail: "12 tests added",
+      }),
+    ).toMatchObject({
+      summary: "Tax tests finished",
+      payload: {
+        title: "Tax tests finished",
+        detail: "12 tests added",
+        childThreadId: "thread:child",
+        status: "completed",
+      },
+    });
+    expect(notice({ workerThreadId: "thread:child", outcome: "failed" })).toMatchObject({
+      payload: { status: "failed", childThreadId: "thread:child" },
+    });
+    expect(notice({ workerThreadId: "thread:child", outcome: "cancelled" })).toMatchObject({
+      payload: { status: "stopped", childThreadId: "thread:child" },
+    });
+    // One recorded before the MC named the worker has no link.
+    expect(notice({})?.payload).not.toHaveProperty("childThreadId");
+  });
+
   it("maps visible V2 turn items into timeline activities", () => {
     const result = presentTuiThread(projection());
 
@@ -269,5 +317,33 @@ describe("orchestration V2 TUI presentation", () => {
     } as never);
 
     expect(result.messages.map((entry) => entry.id as string)).toEqual(["typed", "reply", "sent"]);
+  });
+
+  it("keeps the background work of a run a held queued message waits behind", () => {
+    const base = projection();
+    const run = (id: string, ordinal: number, fields: Record<string, unknown>) => ({
+      id: RunId.make(id),
+      threadId,
+      ordinal,
+      requestedAt: now,
+      startedAt: fields.status === "queued" ? null : now,
+      completedAt: fields.status === "queued" ? null : now,
+      ...fields,
+    });
+    // "A" was held; "B" passed it and finished, and "A" moved up behind it.
+    const result = presentTuiThread({
+      ...base,
+      runs: [
+        run("run-a", 3, { status: "queued", queueHeld: true, queuePosition: 1 }),
+        run("run-b", 2, { status: "completed", queuePosition: null }),
+      ],
+      providerThreads: [
+        { id: "pt-1", pendingBackgroundTasks: [{ taskId: "bg-1", description: "dev server" }] },
+      ],
+    } as never);
+
+    expect((result as TuiThreadExtras).pendingBackgroundTasks).toEqual([
+      { taskId: "bg-1", description: "dev server" },
+    ]);
   });
 });

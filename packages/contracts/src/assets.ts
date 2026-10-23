@@ -17,7 +17,7 @@ export const AssetResource = Schema.Union([
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   }),
   // One file served in place from anywhere the environment host can read:
-  // images, videos, HTML, and PDF. An absolute path may lie outside the
+  // images, videos, audio, HTML, and PDF. An absolute path may lie outside the
   // workspace; a relative one resolves against the thread's workspace.
   Schema.TaggedStruct("media-file", {
     threadId: ThreadId,

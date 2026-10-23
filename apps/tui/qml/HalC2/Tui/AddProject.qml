@@ -1,6 +1,6 @@
 import OpenTUI
 
-// Adding a project, from `Shell.state.addProject` (AddProjectOverlay.tsx): a
+// Adding a project, from `Shell.state.addProject`: a
 // rounded accent box above the prompt with the field and its action, the
 // step's title and keys, the repository being cloned, and the source or
 // folder rows. Tab moves the keys between the field and the list.

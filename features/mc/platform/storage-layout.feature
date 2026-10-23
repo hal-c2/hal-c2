@@ -12,6 +12,7 @@
 #   apps/server-ex/config/runtime.exs (HAL_C2_MC_HOME, HAL_C2_HOME)
 #   apps/server-ex/rel/env.sh.eex (the release's home)
 #   apps/server-ex/README.md (Run, Release: where the MC keeps its state)
+#   apps/server-ex/lib/hal_c2/subprocess/orphans.ex (the pids of its programs)
 #   apps/desktop-qt/src/StoragePaths.cpp, apps/desktop-qt/src/main.cpp (--home-dir, --dev, shell config dir, web profile, --base-dir for the hosted server)
 #   apps/desktop-qt/scripts/dev-qt.mjs (`mise run desktop` starts the shell with --dev)
 #   packages/shared/src/desktopAppControlSocket.ts, apps/desktop/src/app/DesktopAppActivation.ts (desktop app control socket)
@@ -241,11 +242,95 @@ Feature: Where HAL-C2 keeps its files
       Then it prints a pairing link for that server
 
     @mc
+    Scenario: Pairing the installed server over Tailscale from a checkout reuses its own Serve mapping
+      Given the installed server is running with no HAL-C2 home configured
+      And Tailscale already serves that server at another loopback address
+      When a developer asks a checkout for the installed server's pairing link over Tailscale
+      Then it prints a Tailscale pairing link for that server
+
+    @mc
     Scenario: Asking for the installed server's pairing link when it is not running says so
       Given a development server is running with no HAL-C2 home configured
       When a developer asks a checkout for the installed server's pairing link
       Then the developer is told the installed server is not running
       And no pairing token is made
+
+    @mc
+    Scenario: The installed server's own pair command never pairs with a development server
+      Given a development server is running with no HAL-C2 home configured
+      When an operator runs the installed server's own pair command
+      Then the operator is told the installed server is not running
+      And no pairing token is made
+
+    @mc
+    Scenario: The installed server's single file never pairs with a development server
+      Given a development server is running with no HAL-C2 home configured
+      When an operator runs "pair" on the installed MC's command line
+      Then the operator is told the installed server is not running
+
+    @mc
+    Scenario: The installed server's own pair command pairs with the server of a chosen home
+      Given HAL_C2_MC_HOME is "/srv/mc"
+      And the server of that home is running
+      When an operator runs the installed server's own pair command
+      Then it prints a pairing link for that server
+
+    @mc
+    Scenario: The installed server's own pair command says so when the server of a chosen home is not running
+      Given a development server is running with no HAL-C2 home configured
+      And HAL_C2_MC_HOME is "/srv/mc"
+      When an operator runs the installed server's own pair command
+      Then the operator is told the installed server is not running
+      And no store is made at the chosen home
+
+    @mc
+    Scenario: The installed server's own pair command pairs with the server of a HAL-C2 root
+      Given HAL_C2_HOME is "/srv/hal-c2"
+      And the server of that home is running
+      When an operator runs the installed server's own pair command
+      Then it prints a pairing link for that server
+
+    @mc
+    Scenario: A checkout is not told to leave --release out when the server of a chosen home is not running
+      Given HAL_C2_MC_HOME is "/srv/mc"
+      When a developer asks a checkout for the installed server's pairing link
+      Then the developer is told the installed server is not running
+      And the developer is not told to leave --release out
+
+    # A checkout's own server ignores HAL_C2_HOME, but the installed server it names is
+    # still the one a checkout's --release pairs with.
+    @mc
+    Scenario Outline: Asking for the installed server's pairing link keeps a chosen home
+      Given <variable> is "<home>"
+      And the server of that home is running
+      When a developer asks a checkout for the installed server's pairing link
+      Then it prints a pairing link for that server
+
+      Examples:
+        | variable       | home        |
+        | HAL_C2_MC_HOME | /srv/mc     |
+        | HAL_C2_HOME    | /srv/hal-c2 |
+
+    @mc
+    Scenario: A checkout pairs with the installed server though its shell names a HAL-C2 root with no server running
+      Given the installed server is running with no HAL-C2 home configured
+      And HAL_C2_HOME is "/srv/hal-c2" in the developer's shell
+      When a developer asks a checkout for a pairing link
+      Then it prints a pairing link for that server
+
+    @mc
+    Scenario: A checkout with no server of its own pairs with the server of its HAL-C2 root
+      Given HAL_C2_HOME is "/srv/hal-c2"
+      And the server of that home is running
+      When a developer asks a checkout for a pairing link
+      Then it prints a pairing link for that server
+
+    @mc
+    Scenario: The installed server's single file pairs with the server of a HAL-C2 root
+      Given HAL_C2_HOME is "/srv/hal-c2"
+      And the server of that home is running
+      When an operator runs "pair" on the installed MC's command line
+      Then it prints a pairing link for that server
 
   Rule: The MC's files are sorted by kind
 
@@ -279,6 +364,7 @@ Feature: Where HAL-C2 keeps its files
         | scheduled tasks                 | ~/.local/share/hal-c2/elixir/scheduled-tasks.json |
         | device hub state                | ~/.local/share/hal-c2/elixir/device               |
         | server, trace and provider logs | ~/.local/state/hal-c2/elixir/logs                 |
+        | the pids of its programs        | ~/.local/state/hal-c2/elixir/subprocesses         |
         | downloaded tools                | ~/.cache/hal-c2/elixir/tools                      |
         | the ACP registry                | ~/.cache/hal-c2/elixir/acp-registry               |
         | the Pi cache                    | ~/.cache/hal-c2/elixir/pi                         |
@@ -346,7 +432,6 @@ Feature: Where HAL-C2 keeps its files
         | attachments                       | ~/.local/share/hal-c2/attachments             |
         | secrets                           | ~/.local/share/hal-c2/secrets                 |
         | its environment id                | ~/.local/share/hal-c2/environment-id          |
-        | HAL-C2 Connect sign-in            | ~/.local/share/hal-c2/clerk-tokens.json       |
         | saved environments                | ~/.local/share/hal-c2/saved-environments.json |
         | the connection catalog            | ~/.local/share/hal-c2/connection-catalog.json |
         | browser captures                  | ~/.local/share/hal-c2/browser-artifacts       |

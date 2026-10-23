@@ -401,7 +401,7 @@ export class ProjectListEntriesError extends Schema.TaggedError<ProjectListEntri
 export const ProjectReadFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   // Workspace-relative, or an absolute host path for a file outside the
-  // workspace. Only workspace-relative paths can be written back.
+  // workspace, which projects.writeFile writes back by the same path.
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
   encoding: Schema.optional(Schema.Literals(["utf8", "base64"])),
 });
@@ -474,6 +474,10 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
 
 export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  // Workspace-relative, created if missing; or an absolute host path, which
+  // only overwrites a text file of at most 1 MB that is already there. That is
+  // any such file on the host, not only one the agent wrote, so an absolute
+  // path needs the terminal:operate scope, as a shell reaches as far.
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
 });

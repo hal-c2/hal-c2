@@ -718,6 +718,34 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  # --- one quota per account -----------------------------------------------------------
+
+  step "both Codex instances' usage has been checked", context do
+    Mc.ensure(HalC2.ProviderUsageLimits)
+    :ok = HalC2.ProviderUsageLimits.refresh(["codex", @second])
+    # The account arrives as a cast the probe sent; this call lands after it.
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "a turn on the second Codex instance reports its usage", context do
+    context = World.launch_on(context, "Work", @second, "how close is the rate limit")
+    World.await_runs(context, "Work", ["completed"])
+    # The turn's update is a cast; this call lands after it.
+    :sys.get_state(HalC2.ProviderUsageLimits)
+    context
+  end
+
+  step "each Codex account keeps its own usage limits", context do
+    codex = HalC2.ProviderUsageLimits.get("codex")
+    work = HalC2.ProviderUsageLimits.get(@second)
+
+    assert %{"usedPercent" => 42} = Enum.find(codex["windows"], &(&1["id"] == "primary"))
+    assert %{"usedPercent" => 77} = Enum.find(work["windows"], &(&1["id"] == "primary"))
+    context
+  end
+
   # --- subagents -------------------------------------------------------------------------
 
   # The fake's spawnAgent tool call starts the thread native-child-1, which answers.
@@ -922,6 +950,76 @@ Red"} <- StreamState.get(state, "message")[message],
     assert {200, %{"result" => %{"structuredContent" => listed}}} = HalC2.Mcp.handle(auth, body)
     assert listed["currentThreadId"] == World.thread_id(context, @thread)
     context
+  end
+
+  step "Codex is started with its subagent features left on", context do
+    refute get_in(codex_thread_config(context), ["features"])
+    context
+  end
+
+  step "Codex is started with its subagent features turned off", context do
+    assert get_in(codex_thread_config(context), ["features"]) ==
+             %{"multi_agent" => false, "multi_agent_v2" => false}
+
+    context
+  end
+
+  step "Codex is told to delegate with {string}", %{args: [tool]} = context do
+    start =
+      World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+
+    assert get_in(start, [
+             "in",
+             "params",
+             "collaborationMode",
+             "settings",
+             "developer_instructions"
+           ]) =~
+             "Delegate child work with `#{tool}`"
+
+    context
+  end
+
+  step "the user sends another message to the Codex thread", context do
+    {{:ok, _}, context} = World.send_message(context, @thread, "again")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "every Codex turn of the thread is told to delegate with {string}",
+       %{args: [tool]} = context do
+    starts =
+      context
+      |> World.provider_log("codex")
+      |> Enum.filter(&(get_in(&1, ["in", "method"]) == "turn/start"))
+
+    assert length(starts) == 2
+
+    for start <- starts,
+        do:
+          assert(
+            get_in(start, [
+              "in",
+              "params",
+              "collaborationMode",
+              "settings",
+              "developer_instructions"
+            ]) =~
+              "Delegate child work with `#{tool}`"
+          )
+
+    context
+  end
+
+  defp codex_thread_config(context) do
+    start =
+      World.await_provider_log(
+        context,
+        "codex",
+        &(get_in(&1, ["in", "method"]) == "thread/start")
+      )
+
+    get_in(start, ["in", "params", "config"]) || %{}
   end
 
   step "a Codex thread with three turns", context do

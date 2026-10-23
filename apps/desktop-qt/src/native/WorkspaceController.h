@@ -113,10 +113,33 @@ public:
   // (SettingsController::config()), or the one watched on the other machine
   // the route is on (empty until it arrives).
   QJsonObject environmentConfig() const;
-  // Opens `path` on the route's environment in `editorId` (the preferred one
-  // when empty), or shows it in the file manager (`reveal`). False when the
-  // environment has no such editor.
+  // The ServerConfig of this machine, whose editors and file manager open the
+  // route's files: environmentConfig() when the route runs here, else the
+  // shell's own (SettingsController::config()).
+  QJsonObject localConfig() const;
+  // Opens `path` of the route's environment in `editorId` of this machine
+  // (the preferred one when empty), or shows it in the file manager
+  // (`reveal`), through openHere(). False when this machine has no such editor.
   bool openInEditor(const QString& editorId, const QString& path, bool reveal = false);
+  // Where a file of an environment is on this machine: `path`, and the MC on
+  // this machine that starts apps there (`launcher`), or why there is none
+  // (`problem`, what the user is told).
+  struct LocalPath {
+    QString path;
+    QString launcher;
+    QString problem;
+  };
+  // `path` on `environmentId` as a path on this machine, handed to `done`.
+  // Every editor and file manager the shell starts goes through it: another
+  // cluster member's files are in the folder the shell's MC mounts for it.
+  void localPathFor(const QString& environmentId, const QString& path, std::function<void(const LocalPath&)> done);
+  // Starts `editor` (`file-manager` with `reveal`) on this machine at `path`
+  // of `environmentId`, through an MC that runs here; never on another
+  // machine. When localPathFor() has nothing it tells the user why.
+  // `failure` titles the toast of an MC that could not start it, and `done`
+  // hears its error (empty on success) instead when set.
+  void openHere(const QString& environmentId, const QString& path, const QString& editor, bool reveal,
+                const QString& failure, std::function<void(const std::optional<QString>&)> done = {});
 
 signals:
   // The route's thread, its root or worktree changed.

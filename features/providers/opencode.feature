@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-opencode.md
 #   docs/internals/providers.md (OpenCode server per thread, full-access replies once)
@@ -162,6 +163,29 @@ Feature: OpenCode
     Given an OpenCode turn is running
     When the user sends a follow-up message
     Then OpenCode receives the message during the running turn
+
+  Scenario: A message sent as an OpenCode turn ends is answered in that turn
+    Given an OpenCode turn is running that ends as it is steered
+    When the user sends a follow-up message
+    Then OpenCode's answer to the message is the turn's
+
+  Scenario: A message OpenCode answers after the turn's loop failed ends the turn with its answer
+    Given an OpenCode turn is running that fails as it is steered
+    When the user sends a follow-up message
+    Then OpenCode's answer to the message is the turn's
+
+  Scenario: A message whose own OpenCode loop fails fails the turn
+    Given an OpenCode turn is running that ends as it is steered
+    When the user steers the OpenCode turn with "look here, its loop fails"
+    Then the OpenCode turn fails with "The steer's loop failed"
+
+  Scenario: Stopping an OpenCode turn ends it while a message sent into it goes unanswered
+    Given an OpenCode turn is running that ends as it is steered
+    And the user steers the OpenCode turn with "this is never answered"
+    And the user steers the OpenCode turn with "this keeps working"
+    And OpenCode answers the turn's prompt and the message in a loop of its own
+    When the user stops the turn
+    Then the OpenCode turn is interrupted
 
   Scenario: A running OpenCode command shows what it runs and its output so far
     Given an OpenCode turn is running
@@ -648,3 +672,10 @@ Feature: OpenCode
     When the interval passes, or the user changes an OpenCode setting
     Then no OpenCode status check is run and no OpenCode server is started for one
     But OpenCode's status is checked when the user refreshes provider status
+
+  # features/settings/subagents.feature: the setting is not wired for OpenCode yet.
+  @backlog @mc
+  Scenario: OpenCode's own subagent tool is turned off when agents use HAL-C2 workers
+    Given the subagents setting is HAL-C2 workers
+    When an OpenCode session is started
+    Then its task permission is denied, through the config OpenCode is started with

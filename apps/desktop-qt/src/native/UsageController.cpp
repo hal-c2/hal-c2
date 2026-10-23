@@ -88,7 +88,8 @@ int placeOf(const QJsonObject& bucket, const QJsonObject& window, bool hourly) {
 }
 
 // `2 PM` in `zone`. An hour the clocks repeat when they fall back says its
-// zone too.
+// zone too. The explicit "h AP" pattern carries a literal ASCII space, so
+// unlike timeOfDay's ShortFormat branch it cannot gain a no-break space.
 QString hourName(const QDateTime& instant, const QTimeZone& zone) {
   const QDateTime local = instant.toTimeZone(zone);
   const QString name = english().toString(local.time(), QStringLiteral("h AP"));

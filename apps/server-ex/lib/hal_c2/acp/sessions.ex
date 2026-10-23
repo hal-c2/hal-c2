@@ -79,7 +79,7 @@ defmodule HalC2.Acp.Sessions do
 
   defp write_thread(thread_id, instance, project_id, session_id, input) do
     at = Entities.now()
-    provider_thread_id = "provider-thread:#{instance}:#{thread_id}"
+    provider_thread_id = Entities.provider_thread_id(instance, thread_id)
 
     thread =
       Entities.thread(

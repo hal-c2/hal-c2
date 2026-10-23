@@ -1,5 +1,4 @@
-// The workspace file browser (palette → Browse files), host side. Like
-// FilesView.tsx it takes the conversation pane's place with the workspace as a
+// The workspace file browser (palette → Browse files), host side. It takes the conversation pane's place with the workspace as a
 // tree, folders collapsed, and opens a file in the same pane. The listing and the open file live here; the
 // FilesPanel and FileViewer bricks only paint `files` and dispatch `files.*`.
 import type { ProjectEntry } from "@hal-c2/contracts";
@@ -14,6 +13,7 @@ import { clip } from "../format.ts";
 import { fileGlyph, fileTypeColor } from "../icons.ts";
 import { ansi, type Palette, THEME } from "../theme.ts";
 import type { StatusKind } from "../store.ts";
+import { FILES_ELSEWHERE, type LocalPath } from "../thisMachine.ts";
 import { chunk, markdownLines, plainText, styled, type StyledText } from "./styledText.ts";
 
 /** Rows the panel's border and header take. */
@@ -72,7 +72,7 @@ export interface TuiFilesState {
 
 export interface FilesControllerOptions {
   readonly client: Pick<TuiClient, "listEntries" | "readFile"> &
-    Partial<Pick<TuiClient, "mcCall" | "getServerConfig" | "writeFile">>;
+    Partial<Pick<TuiClient, "mcCall" | "getServerConfig" | "writeFile" | "localPathFor">>;
   /** The status row's message (saves, the editor that was opened). */
   readonly status?: (text: string, kind?: StatusKind) => void;
   /** The editor opened or closed: it has the keys while open. */
@@ -89,6 +89,8 @@ export interface FilesControllerOptions {
   readonly attach?: (path: string) => void;
   /** The prompt can take another attachment (offers "Attach image"). */
   readonly canAttach?: () => boolean;
+  /** Put text on the system clipboard; false when the terminal cannot. */
+  readonly copy?: (text: string) => boolean;
 }
 
 export interface FilesController {
@@ -155,6 +157,30 @@ function rowLine(row: FlatTreeRow, active: boolean, nameRoom: number, palette: P
   );
 }
 
+/** Why a file the MC read only the start of cannot be edited (the desktop says the same). */
+export const TRUNCATED_READ_ONLY = "Files larger than 1 MB open read-only.";
+
+/** Why a file outside the project cannot be saved once the MC refused it (the desktop says the same). */
+export const HOST_WRITE_REFUSED =
+  "Saving a file outside the project needs terminal access, which this device was not paired with.";
+
+/**
+ * The MC refused a write by full path: this session was paired without
+ * terminal:operate (apps/server-ex lib/hal_c2/rpc.ex required_scope/2). The
+ * refusal's detail rides on the write error's `cause` (client-runtime's session).
+ */
+const hostWriteRefused = (error: unknown) => {
+  type Detail = { readonly _tag?: unknown; readonly requiredScope?: unknown };
+  const failure = error as {
+    readonly detail?: Detail;
+    readonly cause?: { readonly detail?: Detail };
+  };
+  const detail = failure?.cause?.detail ?? failure?.detail;
+  return (
+    detail?._tag === "EnvironmentScopeRequiredError" && detail.requiredScope === "terminal:operate"
+  );
+};
+
 export function createFilesController(options: FilesControllerOptions): FilesController {
   const { client } = options;
   const palette = options.palette ?? THEME;
@@ -170,6 +196,8 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     status: TuiFileViewerState["status"];
     lines: string[];
     top: number;
+    /** Larger than the MC reads whole: `lines` are its first 1 MB. */
+    truncated?: boolean;
     /** Shown as its text although it could be rendered. */
     source?: boolean;
     /** The rendering, laid out to `renderedWidth`. */
@@ -178,6 +206,22 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     edit?: { text: string; seq: number; save: TuiFileViewerState["save"] } | undefined;
   } | null = null;
   let editSeq = 0;
+  /**
+   * Workspaces whose MC refused a write by full path: their files outside the
+   * project open read-only from then on. The client learns its scopes only so.
+   * Keyed by workspace, as the controller knows a thread's workspace and not its
+   * environment (the cluster client routes by path), so another project on the
+   * same MC is refused once more before it turns read-only; the desktop keys it
+   * by environment.
+   */
+  const hostWritesRefused = new Set<string>();
+  /** Why the viewer's file cannot be edited here, or null. */
+  const readOnly = (file: { path: string; truncated?: boolean }) =>
+    file.truncated
+      ? TRUNCATED_READ_ONLY
+      : file.path.startsWith("/") && hostWritesRefused.has(cwd)
+        ? HOST_WRITE_REFUSED
+        : null;
   /** The inside of the viewer's frame. */
   const viewerWidth = () => Math.max(8, options.width() - 4);
   /** The lines the viewer shows: the rendering, or null for the file's text. */
@@ -255,7 +299,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
       hint: viewer?.edit
         ? `  ·  ${viewer.edit.save === "error" ? "not saved" : viewer.edit.save === "pending" ? "saving…" : "saved"} · Esc done`
         : viewer
-          ? // `i` (edit) and `o` (the environment's editor) are in the palette and the key reference.
+          ? // `i` (edit), `o` (the environment's editor) and `c` (copy) are in the palette and the key reference.
             `  ·  PgUp/PgDn scroll · ${renderable ? `s ${rendering ? "source" : "rendered"} · ` : ""}Esc back`
           : attach
             ? "  ·  ↑/↓ select · Enter attach · Esc close"
@@ -302,7 +346,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     viewer = null;
     options.setOpen(true);
     publish();
-    loadEditors();
+    loadEditors(token, workspace);
     track(
       client.listEntries(workspace).then(
         (entries) => {
@@ -342,13 +386,13 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     publish();
     track(
       client.readFile(cwd, path).then(
-        (content) => {
+        (file) => {
           if (token !== viewGeneration || !viewer) return;
-          if (content === null) viewer = { ...viewer, status: "error" };
+          if (file === null) viewer = { ...viewer, status: "error" };
           else {
-            const lines = content.split("\n");
+            const lines = file.contents.split("\n");
             const top = line ? Math.min(Math.max(0, line - 1), Math.max(0, lines.length - 1)) : 0;
-            viewer = { ...viewer, status: "ready", lines, top };
+            viewer = { ...viewer, status: "ready", lines, top, truncated: file.truncated };
           }
           publish();
         },
@@ -431,6 +475,7 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     const edit = viewer?.edit;
     if (!viewer || !edit || edit.save === "saved") return;
     const { path } = viewer;
+    const workspace = cwd;
     const text = edit.text;
     const call = client.writeFile
       ? client.writeFile(cwd, path, text)
@@ -449,6 +494,18 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
           publish();
         },
         (error: unknown) => {
+          if (path.startsWith("/") && hostWriteRefused(error)) {
+            hostWritesRefused.add(workspace);
+            options.status?.(`Could not save ${path}: ${HOST_WRITE_REFUSED}`, "error");
+            if (viewer?.path !== path || !viewer.edit) return;
+            // The edit stays on screen, unsaved, and the file is read-only now.
+            viewer.lines = viewer.edit.text.split("\n");
+            viewer.rendered = undefined;
+            viewer.edit = undefined;
+            options.setEditing?.(false);
+            publish();
+            return;
+          }
           if (viewer?.path !== path || !viewer.edit) return;
           viewer.edit.save = "error";
           options.status?.(`Could not save ${path}: ${errorText(error)}`, "error");
@@ -460,6 +517,11 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
 
   const startEdit = () => {
     if (!viewer || viewer.status !== "ready" || viewer.edit) return;
+    const why = readOnly(viewer);
+    if (why !== null) {
+      options.status?.(why, "warning");
+      return;
+    }
     viewer.edit = { text: viewer.lines.join("\n"), seq: ++editSeq, save: "saved" };
     options.setEditing?.(true);
     publish();
@@ -479,20 +541,31 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
     publish();
   };
 
-  /** The editors the environment can launch, by `EDITORS` id and label. */
+  /** The editors the MC that starts one for the workspace can launch, by `EDITORS` id and label. */
   let editors: ReadonlyArray<{ readonly id: string; readonly label: string }> = [];
-  const loadEditors = () => {
-    if (!client.getServerConfig) return;
+  const loadEditors = (token: number, workspace: string) => {
+    const { getServerConfig, localPathFor } = client;
+    if (!getServerConfig) return;
+    const where: Promise<LocalPath | null> = localPathFor
+      ? localPathFor(workspace)
+      : Promise.resolve(null);
     track(
-      client.getServerConfig().then(
-        (config) => {
-          editors = (config.availableEditors ?? []).flatMap((id) => {
-            const known = EDITORS.find((editor) => editor.id === id);
-            return known && known.id !== "file-manager" ? [{ id, label: known.label }] : [];
-          });
-        },
-        () => {},
-      ),
+      where
+        .then((local) => {
+          // A cluster member on this machine offers its own (localPathFor).
+          const member = local !== null && "path" in local && local.environmentId !== undefined;
+          return member ? getServerConfig(workspace) : getServerConfig();
+        })
+        .then(
+          (config) => {
+            if (token !== generation) return;
+            editors = (config.availableEditors ?? []).flatMap((id) => {
+              const known = EDITORS.find((editor) => editor.id === id);
+              return known && known.id !== "file-manager" ? [{ id, label: known.label }] : [];
+            });
+          },
+          () => {},
+        ),
     );
   };
 
@@ -504,16 +577,48 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
       return;
     }
     const { path } = viewer;
+    const mcCall = client.mcCall;
+    const failed = (error: unknown) =>
+      options.status?.(`Could not open ${path} in ${editor.label}: ${errorText(error)}`, "error");
+    // Never on the machine the files are on unless the user sits at it.
+    const local: Promise<LocalPath> = client.localPathFor
+      ? client.localPathFor(cwd)
+      : Promise.resolve({ problem: FILES_ELSEWHERE });
     track(
-      client.mcCall("shell.openInEditor", { cwd: `${cwd}/${path}`, editor: editor.id }).then(
-        () => options.status?.(`Opened ${path} in ${editor.label}.`, "success"),
-        (error: unknown) =>
-          options.status?.(
-            `Could not open ${path} in ${editor.label}: ${errorText(error)}`,
-            "error",
-          ),
-      ),
+      local.then((root) => {
+        if (!("path" in root)) {
+          options.status?.(root.problem, "error");
+          return;
+        }
+        return mcCall(
+          "shell.openInEditor",
+          { cwd: localFile(root.path, path), editor: editor.id },
+          root.environmentId,
+        ).then(() => options.status?.(`Opened ${path} in ${editor.label}.`, "success"), failed);
+      }, failed),
     );
+  };
+
+  /**
+   * `path` where this machine sees the workspace at `local`. One the agent left
+   * outside the workspace is opened by its full path, which sits under the same
+   * folder as the workspace does.
+   */
+  const localFile = (local: string, path: string) => {
+    if (!path.startsWith("/")) return `${local}/${path}`;
+    const above = local.endsWith(cwd) ? local.slice(0, local.length - cwd.length) : "";
+    return `${above}${path}`;
+  };
+
+  /** The viewer's file, as it was read, on the clipboard: only its start when it is over 1 MB. */
+  const copyContents = () => {
+    if (!viewer || viewer.status !== "ready") return;
+    const text = viewer.edit ? viewer.edit.text : viewer.lines.join("\n");
+    if (options.copy?.(text)) {
+      if (viewer.truncated) {
+        options.status?.(`File contents copied: only the first 1 MB of ${viewer.path}.`, "warning");
+      } else options.status?.("File contents copied.", "success");
+    } else options.status?.("Clipboard not supported by this terminal.", "warning");
   };
 
   const back = () => {
@@ -582,6 +687,9 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
           viewer = { ...viewer, source: !viewer.source, top: 0 };
           publish();
           return true;
+        case "files.viewer.copy":
+          if (open) copyContents();
+          return true;
         case "files.editor.open":
           if (open) startEdit();
           return true;
@@ -641,7 +749,12 @@ export function createFilesController(options: FilesControllerOptions): FilesCon
                           action: "files.viewer.toggleSource",
                         },
                       ]),
-                  { title: "Edit file here", action: "files.editor.open" },
+                  ...(readOnly(viewer) !== null
+                    ? []
+                    : [{ title: "Edit file here", action: "files.editor.open" }]),
+                  ...(viewer.status === "ready"
+                    ? [{ title: "Copy file contents", action: "files.viewer.copy" }]
+                    : []),
                   ...editors.map((editor) => ({
                     title: `Open file in ${editor.label}`,
                     action: "files.openInEditor",

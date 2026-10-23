@@ -33,6 +33,10 @@ Popup {
         json.clear();
         json.forceActiveFocus();
     }
+    // Escape, a press outside and Cancel all leave the same way: whatever
+    // still waits on a choice, or just an error, is dropped. A choice
+    // already made settled it, so closing after it cancels nothing.
+    onClosed: if (conflicted || Themes.importError.length > 0) Themes.resolveImport("cancel")
 
     background: Rectangle {
         radius: Theme.radius
@@ -111,10 +115,7 @@ Popup {
                 objectName: "cancel"
                 subtle: true
                 text: qsTr("Cancel")
-                onClicked: {
-                    Themes.resolveImport("cancel");
-                    dialog.close();
-                }
+                onClicked: dialog.close()
             }
 
             ShellButton {

@@ -44,14 +44,17 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     assert %{"relationshipToParent" => "subagent", "parentThreadId" => ^parent_id} =
              StreamState.get(child, "thread")[child_id]["lineage"]
 
-    assert [context.task] ==
+    # The child's one message is the task after the MC's worker preamble.
+    assert [text] =
              for(
                %{"role" => "user", "text" => text} <- StreamState.list(child, "message"),
                do: text
              )
 
-    # The provider was given the task alone, with none of the parent's conversation.
-    assert context.task in World.started_turns(context)
+    assert String.ends_with?(text, "\nTask:\n" <> context.task)
+
+    # The provider was given that message alone, with none of the parent's conversation.
+    assert text in World.started_turns(context)
     context
   end
 
@@ -190,6 +193,46 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     run = StreamState.get(state, "run")[context.waiting_run["id"]]
     assert run["status"] == "queued"
     assert StreamState.get(state, "message")[run["userMessageId"]]["text"] =~ "12 tests added"
+    context
+  end
+
+  step "the parent's notification names the worker's thread and carries {string}",
+       %{args: [result]} = context do
+    state = World.stream(context, World.current(context))
+    child_id = context.delegated["childThreadId"]
+
+    assert [message] =
+             Enum.filter(StreamState.list(state, "message"), &(&1["delegatedCompletion"] != nil))
+
+    assert %{
+             "workerThreadId" => ^child_id,
+             "workerTitle" => title,
+             "detail" => ^result
+           } = message["notification"]
+
+    assert title != ""
+    context
+  end
+
+  step "the worker's first message says it is from the parent", context do
+    child_id = context.delegated["childThreadId"]
+    parent_id = World.thread_id(context, World.current(context))
+
+    assert [%{"senderThreadId" => ^parent_id, "createdBy" => "agent"}] =
+             for(
+               ["message", _, %{"role" => "user"} = message] <- read_thread(context, child_id),
+               do: message
+             )
+
+    context
+  end
+
+  step "the user can open the parent", context do
+    parent_id = World.thread_id(context, World.current(context))
+
+    assert [%{"id" => ^parent_id}] =
+             for(["thread", ^parent_id, thread] <- read_thread(context, parent_id), do: thread)
+
     context
   end
 

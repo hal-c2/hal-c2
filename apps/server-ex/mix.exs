@@ -21,7 +21,12 @@ defmodule HalC2.MixProject do
         hal_c2: [
           include_executables_for: [:unix],
           strip_beams: true,
-          steps: [:assemble, &stage_cursor_acp/1, &write_upgrade_manifest/1]
+          steps: [
+            :assemble,
+            &stage_cursor_acp/1,
+            &stage_machine_files/1,
+            &write_upgrade_manifest/1
+          ]
         ]
       ]
     ]
@@ -96,6 +101,24 @@ defmodule HalC2.MixProject do
     release
   end
 
+  # The machine-files helper (native/machine-files, HalC2.MachineFiles.Helper) in
+  # priv/bin. It is Linux-only for now; elsewhere the MC says it is not supported.
+  defp stage_machine_files(release) do
+    if :os.type() == {:unix, :linux} do
+      root = Path.expand("../..", __DIR__)
+      manifest = Path.join(root, "native/machine-files/Cargo.toml")
+      run!("cargo", ["build", "--locked", "--release", "--manifest-path", manifest], root)
+
+      target = Path.join([release.path, "lib", "hal_c2-#{release.version}", "priv", "bin"])
+      File.mkdir_p!(target)
+      built = Path.join(root, "native/machine-files/target/release/hal-c2-machine-files")
+      File.cp!(built, Path.join(target, "hal-c2-machine-files"))
+      File.chmod!(Path.join(target, "hal-c2-machine-files"), 0o755)
+    end
+
+    release
+  end
+
   # `mix features [--backlog] [glob ...] [-- mix test args]` runs the repo's `@mc`
   # Gherkin scenarios (`features/`) and nothing else. Globs are relative to `features/`
   # and default to every file; `--backlog` (or INCLUDE_BACKLOG=1) also runs the
@@ -160,13 +183,16 @@ defmodule HalC2.MixProject do
   defp write_upgrade_manifest(release) do
     rel = Path.join([release.path, "releases", release.version])
     own = Path.join([release.path, "lib", "hal_c2-#{release.version}"])
+    root = Path.expand("../..", __DIR__)
 
     digest = fn paths ->
       paths
       |> Enum.sort()
       # sys.config names its own release directory, which changes with every version.
       |> Enum.map(
-        &{Path.relative_to(&1, release.path) |> String.replace(release.version, "{version}"),
+        &{Path.relative_to(&1, release.path)
+         |> Path.relative_to(root)
+         |> String.replace(release.version, "{version}"),
          &1 |> File.read!() |> String.replace(release.version, "{version}")}
       )
       |> :erlang.term_to_binary()
@@ -195,8 +221,14 @@ defmodule HalC2.MixProject do
               name != :hal_c2 and not properties[:otp_app?],
               do: app
         ),
-      # Packages installed for the build machine's platform, which no other can use.
-      "packages" => digest.([Path.join(own, "priv/cursor-acp/package.json")]),
+      # Packages built for the build machine's platform, which no other can use: by
+      # their sources, so a bundle from another platform with the same ones is as good.
+      "packages" =>
+        digest.(
+          [Path.join(own, "priv/cursor-acp/package.json")] ++
+            Enum.map(~w(Cargo.toml Cargo.lock), &Path.join(root, "native/machine-files/#{&1}")) ++
+            Path.wildcard(Path.join(root, "native/machine-files/src/*.rs"))
+        ),
       "config" =>
         digest.(
           for f <- ~w(sys.config runtime.exs vm.args),

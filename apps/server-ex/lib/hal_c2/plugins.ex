@@ -150,22 +150,26 @@ defmodule HalC2.Plugins do
 
   def handle(method, _input), do: {:error, "plugins.#{method} is not served by this MC yet"}
 
-  @doc "Sends `{:hal_c2_plugins, mc, list}` to `pid` on every change; returns the list."
-  def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
+  @doc """
+  Sends `{:hal_c2_plugins, mc, list}` to `pid` on every change, under `ref`
+  (`HalC2.Watchers`); returns the list.
+  """
+  def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
 
-  @doc "Stops what `subscribe/1` started."
-  def unsubscribe(pid), do: GenServer.cast(__MODULE__, {:unsubscribe, pid})
+  @doc "Stops what `subscribe/2` started."
+  def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
   @doc """
   Sends `{:hal_c2_plugin_topic, mc, id, topic, value}` to `pid` whenever plugin `id`
-  publishes on `topic`; answers `{:ok, value}` with what it last published, or nil.
+  publishes on `topic`, under `ref` (`HalC2.Watchers`); answers `{:ok, value}` with
+  what it last published, or nil.
   """
-  def subscribe_topic(pid, id, topic),
-    do: GenServer.call(__MODULE__, {:subscribe_topic, pid, id, topic})
+  def subscribe_topic(pid, id, topic, ref \\ nil),
+    do: GenServer.call(__MODULE__, {:subscribe_topic, pid, id, topic, ref})
 
-  @doc "Stops what `subscribe_topic/3` started."
-  def unsubscribe_topic(pid, id, topic),
-    do: GenServer.cast(__MODULE__, {:unsubscribe_topic, pid, id, topic})
+  @doc "Stops what `subscribe_topic/4` started."
+  def unsubscribe_topic(pid, id, topic, ref \\ nil),
+    do: GenServer.cast(__MODULE__, {:unsubscribe_topic, pid, id, topic, ref})
 
   @doc "Plugin `id` publishes `value` on `topic` (`HalC2.Plugins.Host.publish/3`)."
   def publish(id, topic, value),
@@ -436,7 +440,7 @@ defmodule HalC2.Plugins do
   `status`, unless a client has the thread in the foreground
   (`HalC2.BackgroundPolicy.watched?/1`).
   """
-  def turn_finished(thread_id, status) do
+  def turn_finished(thread_id, status, failure \\ nil) do
     channels = running("notificationChannel")
     thread = fn -> thread(thread_id) end
 
@@ -453,12 +457,16 @@ defmodule HalC2.Plugins do
     with %{"plugin" => %{"id" => owner} = mark} <- thread.(),
          {^owner, module, settings, sup} <- List.keyfind(runs("extension"), owner, 0),
          true <- function_exported?(module, :handle_event, 2) do
-      event = %{
-        "type" => "turn.finished",
-        "threadId" => thread_id,
-        "status" => status,
-        "plugin" => mark
-      }
+      # The failure rides along so the owner can tell a usage limit (wait for its
+      # reset) from a turn that simply failed.
+      event =
+        %{
+          "type" => "turn.finished",
+          "threadId" => thread_id,
+          "status" => status,
+          "plugin" => mark
+        }
+        |> Map.merge(failure_event(failure))
 
       context = %{id: owner, settings: settings, thread_id: thread_id}
 
@@ -471,6 +479,14 @@ defmodule HalC2.Plugins do
 
     :ok
   end
+
+  defp failure_event(%{"class" => class} = failure) when is_binary(class) do
+    %{"errorClass" => class, "error" => failure["message"], "resetAt" => failure["resetAt"]}
+  end
+
+  defp failure_event(%{"message" => message}) when is_binary(message), do: %{"error" => message}
+  defp failure_event(message) when is_binary(message), do: %{"error" => message}
+  defp failure_event(_failure), do: %{}
 
   @doc """
   Hands a Slack event (`HalC2.Slack.Bot`, `HalC2.Slack`) to every running extension
@@ -610,9 +626,9 @@ defmodule HalC2.Plugins do
       do: :ets.new(@watchers, [:named_table, :protected, :set] ++ HalC2.Heir.option(@heir))
 
     # A topic's last value has no watcher (`nil` filters it out) and stays as it was.
-    for {key, _ref} <- :ets.tab2list(@watchers),
+    for {key, entry} <- :ets.tab2list(@watchers),
         pid = watcher(key),
-        do: :ets.insert(@watchers, {key, Process.monitor(pid)})
+        do: :ets.insert(@watchers, {key, HalC2.Watchers.monitor_entry(entry, pid)})
 
     state = %{dir: dir, supervisor: supervisor, plugins: %{}, refs: %{}}
 
@@ -736,13 +752,13 @@ defmodule HalC2.Plugins do
     end
   end
 
-  def handle_call({:subscribe, pid}, _from, state) do
-    watch({:list, pid})
+  def handle_call({:subscribe, pid, ref}, _from, state) do
+    watch({:list, pid}, ref)
     {:reply, list(state), state}
   end
 
-  def handle_call({:subscribe_topic, pid, id, topic}, _from, state) do
-    watch({:topic, id, topic, pid})
+  def handle_call({:subscribe_topic, pid, id, topic, ref}, _from, state) do
+    watch({:topic, id, topic, pid}, ref)
 
     last =
       case :ets.lookup(@watchers, {:last, id, topic}) do
@@ -807,19 +823,20 @@ defmodule HalC2.Plugins do
   # so it is no one's. Workers the host already heard of are kept by `code_change/3`.
   def handle_cast({:worker, _id, _pid}, state), do: {:noreply, state}
 
-  def handle_cast({:unsubscribe, pid}, state) do
-    unwatch({:list, pid})
+  def handle_cast({:unsubscribe, pid, ref}, state) do
+    unwatch({:list, pid}, ref)
     {:noreply, state}
   end
 
-  def handle_cast({:unsubscribe_topic, pid, id, topic}, state) do
-    unwatch({:topic, id, topic, pid})
+  def handle_cast({:unsubscribe_topic, pid, id, topic, ref}, state) do
+    unwatch({:topic, id, topic, pid}, ref)
     {:noreply, state}
   end
 
   def handle_cast({:publish, id, topic, value}, state) do
-    for [pid] <- :ets.match(@watchers, {{:topic, id, topic, :"$1"}, :_}),
-        do: send(pid, {:hal_c2_plugin_topic, node(), id, topic, value})
+    for {{:topic, _, _, pid}, entry} <-
+          :ets.match_object(@watchers, {{:topic, id, topic, :_}, :_}),
+        do: HalC2.Watchers.tell(pid, entry, {:hal_c2_plugin_topic, node(), id, topic, value})
 
     :ets.insert(@watchers, {{:last, id, topic}, value})
     {:noreply, state}
@@ -909,14 +926,24 @@ defmodule HalC2.Plugins do
     {:ok, %{state | plugins: plugins, refs: refs}}
   end
 
-  # One monitor per watched list or topic, so dropping one leaves the others.
-  defp watch(key) do
-    if :ets.lookup(@watchers, key) == [],
-      do: :ets.insert(@watchers, {key, Process.monitor(watcher(key))})
+  # One `HalC2.Watchers` entry per watched list or topic, so dropping one leaves the others.
+  defp watch(key, ref) do
+    entry =
+      case :ets.lookup(@watchers, key) do
+        [{_, entry}] -> entry
+        [] -> nil
+      end
+
+    :ets.insert(@watchers, {key, HalC2.Watchers.add_entry(entry, watcher(key), ref)})
   end
 
-  defp unwatch(key) do
-    for {_, ref} <- :ets.take(@watchers, key), do: Process.demonitor(ref, [:flush])
+  defp unwatch(key, ref) do
+    with [{_, entry}] <- :ets.lookup(@watchers, key) do
+      case HalC2.Watchers.remove_entry(entry, ref) do
+        nil -> :ets.delete(@watchers, key)
+        entry -> :ets.insert(@watchers, {key, entry})
+      end
+    end
   end
 
   defp watcher({:list, pid}), do: pid
@@ -1144,12 +1171,38 @@ defmodule HalC2.Plugins do
     end
   end
 
-  # A module that fails to compile is unloaded, though its processes still run the
-  # old code; the file's last good modules are loaded again.
+  # The file's last good modules are loaded again wherever the code now loaded is not
+  # theirs: a module that failed to compile is unloaded, and one a refused update loaded
+  # is current (`unload/1` cannot delete it while the last good code, now the module's old
+  # code, is still being run). Loading needs the old code gone, so a process still in it is
+  # killed: running the last good version is worth more than finishing a call in it, and
+  # its supervisor starts it again.
   defp restore([%{file: file, binaries: binaries} | _]) do
-    for {module, binary} <- binaries, :code.is_loaded(module) == false do
-      :code.soft_purge(module)
+    for {module, binary} <- binaries, not current?(module, binary) do
+      purge(module, file)
       :code.load_binary(module, String.to_charlist(file), binary)
+      # The refused version is now the old code; a process still in it would keep the
+      # next update from loading.
+      purge(module, file)
+    end
+  end
+
+  defp purge(module, file) do
+    unless :code.soft_purge(module) do
+      Logger.warning(
+        "plugin #{Path.basename(file)}: stopping processes still in #{inspect(module)}"
+      )
+
+      :code.purge(module)
+    end
+  end
+
+  defp current?(module, binary) do
+    with true <- :code.is_loaded(module) != false,
+         {:ok, {^module, md5}} <- :beam_lib.md5(binary) do
+      md5 == module.module_info(:md5)
+    else
+      _ -> false
     end
   end
 
@@ -1641,8 +1694,8 @@ defmodule HalC2.Plugins do
   defp push(state) do
     list = list(state)
 
-    for [pid] <- :ets.match(@watchers, {{:list, :"$1"}, :_}),
-        do: send(pid, {:hal_c2_plugins, node(), list})
+    for {{:list, pid}, entry} <- :ets.match_object(@watchers, {{:list, :_}, :_}),
+        do: HalC2.Watchers.tell(pid, entry, {:hal_c2_plugins, node(), list})
 
     state
   end

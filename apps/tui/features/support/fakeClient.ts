@@ -3,6 +3,7 @@ import {
   type ClusterMember,
   type ClusterStatus,
   DEFAULT_SERVER_SETTINGS,
+  type GitActionFailureCta,
   type GitRunStackedActionResult,
   type GitStackedAction,
   type OrchestrationThread,
@@ -19,6 +20,7 @@ import type {
   TuiConnectionPhase,
   TuiThreadPage,
 } from "../../src/connection.ts";
+import { GitActionFailure } from "../../src/gitActions.logic.ts";
 import { flattenModelOptions } from "../../src/models.ts";
 import { fakeFeatureClient, fakeGitProgress, type FakeServer } from "./fakeFeatureClient.ts";
 import { fakeSettingsMc, type FakeSettingsMc } from "./fakeSettingsMc.ts";
@@ -159,6 +161,7 @@ const UNRECORDED = new Set([
   "subscribeTerminalMetadata",
   "subscribeTerminal",
   "getServerConfig",
+  "localPathFor",
   "listModels",
   "listTerminalIds",
   "clusterStatus",
@@ -167,6 +170,7 @@ const UNRECORDED = new Set([
   "subscribeScheduledTasks",
   "subscribeResourceTelemetry",
   "subscribeUsageLimits",
+  "subscribeServerSettings",
   "subscribeAuthAccess",
   "readSettings",
 ]);
@@ -228,6 +232,8 @@ export function fakeClient({
     }) as never,
   switchRef = async (_cwd: string, refName: string) => ({ refName }) as never,
   getServerConfig = async () => ({ settings: DEFAULT_SERVER_SETTINGS }) as never,
+  // The fake MC runs on this machine.
+  localPathFor = async (path: string) => ({ path }),
   listModels = providers
     ? async () => flattenModelOptions(providers)
     : async () =>
@@ -287,6 +293,7 @@ export function fakeClient({
   readonly listRefs?: TuiClient["listRefs"];
   readonly switchRef?: TuiClient["switchRef"];
   readonly getServerConfig?: TuiClient["getServerConfig"];
+  readonly localPathFor?: TuiClient["localPathFor"];
   readonly listModels?: TuiClient["listModels"];
   readonly listTerminalIds?: TuiClient["listTerminalIds"];
   readonly implementPlan?: TuiClient["implementPlan"];
@@ -348,6 +355,8 @@ export function fakeClient({
       localOnly: false,
     },
     joinRefusal: null,
+    version: null,
+    updateRefusals: {},
   };
   const clusterStatus = (): ClusterStatus => ({
     clustered: true,
@@ -355,6 +364,7 @@ export function fakeClient({
     label: "This machine",
     mc: "hal-c2-env-local",
     addresses: ["192.168.1.20:47730"],
+    ...(cluster.version === null ? {} : { version: cluster.version }),
     members: cluster.members,
   });
   let connectionPhase: TuiConnectionPhase = "connecting";
@@ -410,7 +420,8 @@ export function fakeClient({
   const settleGit = <T>(value: T): Promise<T> => {
     const outcome = gitOutcome;
     if (outcome.kind === "hang") return new Promise<T>(() => {});
-    if (outcome.kind === "fail") return Promise.reject(new Error(outcome.message));
+    if (outcome.kind === "fail")
+      return Promise.reject(new GitActionFailure(outcome.message, outcome.remedy ?? null));
     return Promise.resolve(value);
   };
   const feature = fakeFeatureClient({
@@ -460,6 +471,25 @@ export function fakeClient({
     clusterRemove: async (id: string) => {
       cluster.members = cluster.members.filter((member) => member.id !== id);
       return clusterStatus();
+    },
+    // Each connected member on another version takes this one, or says why not.
+    clusterUpdate: async () => {
+      const version = cluster.version ?? "";
+      const behind = cluster.members.filter(
+        (member) => member.connected && member.version && member.version !== version,
+      );
+      const members = behind.map((member) => ({
+        id: member.id,
+        label: member.label,
+        from: member.version ?? null,
+        outcome: cluster.updateRefusals[member.label] ?? "updated",
+      }));
+      cluster.members = cluster.members.map((member) =>
+        members.some((update) => update.id === member.id && update.outcome === "updated")
+          ? { ...member, version }
+          : member,
+      );
+      return { version, members };
     },
     // A machine on its own: the environment (environment.ts) plays a cluster's moves.
     moveDestinations: async () => [],
@@ -576,6 +606,7 @@ export function fakeClient({
     listTerminalIds,
     listModels,
     getServerConfig,
+    localPathFor,
     listRefs,
     switchRef,
     getAttachmentUrl,
@@ -686,6 +717,10 @@ export interface FakeCluster {
   invite: ClusterInvite;
   /** The MC's reason for refusing a join; null joins. */
   joinRefusal: string | null;
+  /** The version this machine runs, null when the MC does not say. */
+  version: string | null;
+  /** Why a member cannot take this machine's version, by label. */
+  updateRefusals: Record<string, string>;
 }
 
 export type FakeGitCall =
@@ -700,7 +735,8 @@ export type FakeGitCall =
 
 export type FakeGitOutcome =
   | { readonly kind: "succeed"; readonly result?: GitRunStackedActionResult }
-  | { readonly kind: "fail"; readonly message: string }
+  /** `remedy` is what the MC offers to fix it (action_failed's `cta`). */
+  | { readonly kind: "fail"; readonly message: string; readonly remedy?: GitActionFailureCta }
   /** Never settles: the action stays running. */
   | { readonly kind: "hang" };
 

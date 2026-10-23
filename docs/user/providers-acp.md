@@ -8,6 +8,11 @@ delegation.
 Google Antigravity is available through its official `antigravity-acp` Registry entry. Add it like
 any other Registry agent; it does not need an Antigravity-specific HAL-C2 provider.
 
+Kimi runs as Kimi Code. The Registry still lists Moonshot's archived Kimi CLI, so HAL-C2 installs a
+pinned Kimi Code release in its place, checked against its SHA-256. Kimi Code keeps its sign-in in
+`~/.kimi-code` (or `KIMI_CODE_HOME`), not Kimi CLI's `~/.kimi`, so an existing Kimi instance asks
+you to sign in once more.
+
 HAL-C2 prefers the current ACP v2 preview protocol and uses its richer messages, usage, plans,
 configuration, compaction, and agent-terminal updates when the agent supports them. It also
 negotiates ACP v1 for Registry agents that have not migrated yet, so agents such as Pi continue to
@@ -26,7 +31,7 @@ code; review an agent's source and license before adding it.
 ## Where agents run
 
 Registry agents always run on the machine that hosts your HAL-C2 server. That stays true when you
-connect through HAL-C2 Connect or a relay.
+connect from another device.
 
 Agents install under `tools/<agent-id>/<version>/` in HAL-C2's
 [cache directory](./install.md#where-hal-c2-keeps-its-files). HAL-C2 verifies SHA-256 when the Registry entry
@@ -105,6 +110,10 @@ permission controls when that distinction matters.
 Registry agents can schedule work and use HAL-C2's MCP tools. Child-task presentation depends on what
 the agent exposes: ACP has no portable native subagent-lineage contract, so richer delegation views
 remain agent-specific.
+
+Kimi's own subagents show in **Agents** while they run, with their thinking, commands and answer,
+read from the session records Kimi Code keeps under `~/.kimi-code` (or `KIMI_CODE_HOME`). You can
+watch them but not message or stop them.
 
 ## Checkpoints
 

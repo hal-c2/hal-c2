@@ -8,8 +8,6 @@ defmodule Mix.Tasks.HalC2.Service do
       mix hal_c2.service status      # whether it is installed and up to date, and what to fix
       mix hal_c2.service restart     # start it again on the version installed now
       mix hal_c2.service uninstall   # stop it and remove it from startup
-
-  Signing out of HAL-C2 Connect leaves the service alone.
   """
 
   use Mix.Task

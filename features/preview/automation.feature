@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13064
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/preview_automation.ex (host registration, routing, timeouts, current tab, error messages)
 #   apps/server-ex/lib/hal_c2/mcp/preview.ex (preview_* MCP tools, timed tools, snapshot bounds, screenshots, recordings, tool icon)
@@ -46,6 +47,27 @@ Feature: Agents drive the preview browser
       And only one of them has its window focused
       When an agent takes its first browser action
       Then the action goes to the desktop that can do the most, preferring the focused one
+
+    @backlog @mc @desktop
+    Scenario: A new agent session goes to the desktop showing the tab it is asked about
+      Given the first desktop has its window focused
+      And the second desktop is showing the tab the agent is asked about
+      When an agent takes its first browser action on that tab
+      Then the action goes to the second desktop
+
+    @backlog @mc @desktop
+    Scenario: A new agent session goes to a desktop with a live copy of the tab before the focused one
+      Given the first desktop has its window focused
+      And the second desktop has a live copy of the tab the agent is asked about
+      When an agent takes its first browser action on that tab
+      Then the action goes to the second desktop
+
+    @backlog @mc @desktop
+    Scenario: A desktop that only has a snapshot of a browser is not offered for a new agent session
+      Given the first desktop has its window focused
+      And the second desktop has only a snapshot of its browser
+      When an agent takes its first browser action
+      Then the action goes to the first desktop
 
     @mc
     Scenario: An action nobody can host fails with guidance
