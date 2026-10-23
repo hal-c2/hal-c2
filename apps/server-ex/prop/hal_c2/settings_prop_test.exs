@@ -5,8 +5,10 @@ defmodule HalC2.SettingsPropTest do
   is owed. Commands write through the RPC a client uses (validate, then a versioned
   put), merge and drop keys with `update/1`, edit the file from outside as
   `mix hal_c2.theme` does, break it, and restart the server, which must keep the
-  document but starts counting versions again. A second property races writers on
-  one version.
+  document but starts counting versions again. Some keys are shared with the cluster
+  (`HalC2.Settings.Shared`): every change to one is stamped, and members' records
+  arrive in any order, from clocks behind or ahead of this one, and win only when
+  newer. A second property races writers on one version.
   """
 
   use ExUnit.Case, async: false
@@ -18,6 +20,24 @@ defmodule HalC2.SettingsPropTest do
   alias HalC2.Settings
 
   @moduletag timeout: :infinity
+
+  # A few shared keys, and two members whose ids sort either side of this MC's, so a
+  # tie in time goes either way.
+  @shared ~w(defaultRuntimeMode worktreeSubmodules responseStreamingMode)
+  @own "mc-m"
+  # Members' clocks are far behind (1..3) or far ahead (from here) of this one's.
+  @future 4_000_000_000_000
+
+  setup do
+    previous = :persistent_term.get({HalC2.Environment, :id}, nil)
+    :persistent_term.put({HalC2.Environment, :id}, @own)
+
+    on_exit(fn ->
+      if previous,
+        do: :persistent_term.put({HalC2.Environment, :id}, previous),
+        else: :persistent_term.erase({HalC2.Environment, :id})
+    end)
+  end
 
   property "settings are versioned, merged, notified in order and survive restart",
     numtests: HalC2.Prop.numtests(100),
@@ -60,10 +80,23 @@ defmodule HalC2.SettingsPropTest do
 
   # --- model ------------------------------------------------------------------
 
-  # file: what settings.json holds, a document or :garbage. pending: the documents a
-  # watcher has been sent and not yet drained, newest first.
+  # file: what settings.json holds, a document or :garbage, and exists whether there is
+  # one at all. pending: the documents a watcher has been sent and not yet drained,
+  # newest first. records: the shared keys' records, a local stamp taken from the
+  # clock as :local. held: the document could not be read at start, so members'
+  # records wait.
   def initial_state,
-    do: %{doc: %{}, version: 0, file: %{}, watching: false, pending: [], parallel: false}
+    do: %{
+      doc: %{},
+      version: 0,
+      file: %{},
+      exists: false,
+      watching: false,
+      pending: [],
+      parallel: false,
+      records: %{},
+      held: false
+    }
 
   def command(state) do
     frequency(
@@ -86,7 +119,9 @@ defmodule HalC2.SettingsPropTest do
             {2, {:call, __MODULE__, :watch, []}},
             {1, {:call, __MODULE__, :unwatch, []}},
             {4, {:call, __MODULE__, :drain, []}},
-            {2, {:call, __MODULE__, :restart, []}}
+            {2, {:call, __MODULE__, :restart, []}},
+            {4, {:call, __MODULE__, :gossip, [incoming()]}},
+            {2, {:call, __MODULE__, :records, []}}
           ]
         end
     )
@@ -98,7 +133,29 @@ defmodule HalC2.SettingsPropTest do
   defp stale_version(%{version: version}),
     do: oneof([-1, version + 1, version + 7] ++ if(version > 0, do: [version - 1], else: []))
 
-  defp doc, do: resize(4, entity())
+  defp doc do
+    let {doc, shared} <- {resize(4, entity()), resize(2, map(oneof(@shared), shared_value()))},
+        do: Map.merge(doc, shared)
+  end
+
+  defp shared_value, do: oneof(["x", "y", true])
+
+  # What a member sends: a record per shared key, some of them resets.
+  defp incoming do
+    let pairs <-
+          resize(
+            3,
+            list(
+              {oneof(@shared), oneof([range(1, 3), range(@future, @future + 3)]),
+               oneof(["mc-a", "mc-z"]), oneof([:unset, false, shared_value()])}
+            )
+          ) do
+      Map.new(pairs, fn
+        {key, at, by, :unset} -> {key, %{"at" => at, "by" => by}}
+        {key, at, by, value} -> {key, %{"at" => at, "by" => by, "value" => value}}
+      end)
+    end
+  end
 
   def precondition(_state, _call), do: true
 
@@ -111,8 +168,8 @@ defmodule HalC2.SettingsPropTest do
     do: accepted(state, Map.drop(state.doc, keys))
 
   def next_state(state, _result, {:call, _, :external_edit, [doc, _in_place?]}) do
-    if doc == state.doc do
-      %{state | file: doc}
+    if doc == state.doc and not state.held do
+      %{state | file: doc, exists: true}
     else
       state |> accepted(doc) |> Map.put(:file, doc)
     end
@@ -121,31 +178,87 @@ defmodule HalC2.SettingsPropTest do
   def next_state(state, _result, {:call, _, :external_garbage, [text]}) do
     case JSON.decode(text) do
       {:ok, %{}} -> state
-      _ -> %{state | file: :garbage}
+      _ -> %{state | file: :garbage, exists: true}
     end
+  end
+
+  def next_state(%{held: true} = state, _result, {:call, _, :gossip, _}), do: state
+
+  def next_state(state, _result, {:call, _, :gossip, [incoming]}) do
+    records =
+      Map.merge(state.records, incoming, fn _key, ours, theirs ->
+        if order(theirs) > order(ours), do: theirs, else: ours
+      end)
+
+    doc =
+      Enum.reduce(records, state.doc, fn
+        {key, %{"value" => value}}, doc -> Map.put(doc, key, value)
+        {key, _reset}, doc -> Map.delete(doc, key)
+      end)
+
+    state = %{state | records: records}
+    if doc == state.doc, do: state, else: accepted(state, doc)
   end
 
   def next_state(state, _result, {:call, _, :watch, []}), do: %{state | watching: true}
   def next_state(state, _result, {:call, _, :unwatch, []}), do: %{state | watching: false}
   def next_state(state, _result, {:call, _, :drain, []}), do: %{state | pending: []}
 
+  # Records outlive a restart, unless settings.json is gone: then the machine learns
+  # them from the members again.
   def next_state(state, _result, {:call, _, :restart, []}) do
     doc = if state.file == :garbage, do: %{}, else: state.file
-    %{state | doc: doc, version: 0, watching: false}
+
+    %{
+      state
+      | doc: doc,
+        version: 0,
+        watching: false,
+        held: state.file == :garbage,
+        records: if(state.exists, do: state.records, else: %{})
+    }
   end
 
   def next_state(state, _result, _call), do: state
 
-  # A change that was accepted: the document, the file, the version, and the watcher's mail.
+  # A change that was accepted: the document, the file, the version, the watcher's mail,
+  # and a stamp on every shared key whose value is not the one its record holds.
   defp accepted(state, doc) do
     %{
       state
       | doc: doc,
         file: doc,
+        exists: true,
+        held: false,
         version: state.version + 1,
-        pending: if(state.watching, do: [doc | state.pending], else: state.pending)
+        pending: if(state.watching, do: [doc | state.pending], else: state.pending),
+        records: stamp(state.records, doc)
     }
   end
+
+  defp stamp(records, doc) do
+    # After the latest time held when that is a member's clock running ahead.
+    at =
+      case for(%{"at" => at} when is_integer(at) and at >= @future <- Map.values(records), do: at) do
+        [] -> :local
+        ahead -> Enum.max(ahead) + 1
+      end
+
+    Enum.reduce(@shared, records, fn key, acc ->
+      held = Map.fetch(acc[key] || %{}, "value")
+
+      case Map.fetch(doc, key) do
+        ^held -> acc
+        {:ok, value} -> Map.put(acc, key, %{"at" => at, "by" => @own, "value" => value})
+        :error -> Map.put(acc, key, %{"at" => at, "by" => @own})
+      end
+    end)
+  end
+
+  # A clock behind this MC's, this MC's, a clock ahead; then the writer; then the rest.
+  defp order(%{"at" => :local} = record), do: {1, 0, record["by"], record}
+  defp order(%{"at" => at} = record) when at >= @future, do: {2, at, record["by"], record}
+  defp order(%{"at" => at} = record), do: {0, at, record["by"], record}
 
   def postcondition(state, {:call, _, :put_retry, _}, result),
     do: result == {:ok, state.version + 1}
@@ -175,6 +288,21 @@ defmodule HalC2.SettingsPropTest do
 
   def postcondition(state, {:call, _, :drain, _}, result),
     do: result == Enum.reverse(state.pending)
+
+  # A local stamp is this MC's clock: only its writer and value are known.
+  def postcondition(state, {:call, _, :records, _}, result) do
+    Map.keys(result) == Map.keys(state.records) and
+      Enum.all?(state.records, fn
+        {key, %{"at" => :local} = record} ->
+          %{"at" => at, "by" => by} = result[key]
+
+          is_integer(at) and at < @future and by == @own and
+            Map.fetch(result[key], "value") == Map.fetch(record, "value")
+
+        {key, record} ->
+          result[key] == record
+      end)
+  end
 
   def postcondition(_state, _call, result), do: result in [:ok, true]
 
@@ -282,6 +410,15 @@ defmodule HalC2.SettingsPropTest do
   end
 
   def restart, do: HalC2.Prop.restart_service(Settings)
+
+  # What `HalC2.Cluster` hands on from a member, waited for.
+  def gossip(records) do
+    Settings.merge_shared(records)
+    :sys.get_state(Settings)
+    :ok
+  end
+
+  def records, do: Settings.shared_records()
 
   defmodule Parallel do
     @moduledoc false
