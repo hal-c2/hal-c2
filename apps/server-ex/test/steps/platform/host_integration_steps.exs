@@ -120,7 +120,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   defp with_display(context) do
     World.put_app_env(:os_type, {:unix, :linux})
     World.put_os_env("DISPLAY", ":0")
-    install(context, "xdg-open")
+    context |> install("xdg-open") |> Map.put(:host, :linux)
   end
 
   defp headless(context) do
@@ -277,7 +277,7 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   step "a client opens a project folder in the file manager", context do
-    context = with_display(context)
+    context = if context[:host], do: context, else: with_display(context)
     folder = Mc.tmp_dir(context.mc, "project")
     context |> Map.put(:target, folder) |> open(%{"cwd" => folder, "editor" => "file-manager"})
   end
@@ -352,7 +352,51 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
   step "the MC runs on macOS", context do
     World.put_app_env(:os_type, {:unix, :darwin})
-    install(context, "open")
+    context |> install("open") |> Map.put(:host, :darwin)
+  end
+
+  step "the MC runs on Windows", context do
+    World.put_app_env(:os_type, {:win32, :nt})
+    context |> install("explorer") |> Map.put(:host, :windows)
+  end
+
+  # A name ending in "/" is made a folder. The client sends the path as written, the
+  # trailing slash included; the target is that path without it.
+  step ~r/^a client opens "(?<item>[^"]+)" in the file manager$/, %{args: [item]} = context do
+    cwd =
+      Path.join(Mc.tmp_dir(context.mc, "project"), item) <> if(item =~ ~r{/$}, do: "/", else: "")
+
+    target = String.trim_trailing(cwd, "/")
+
+    if String.ends_with?(cwd, "/"), do: File.mkdir_p!(target), else: File.write!(target, "x\n")
+
+    context
+    |> Map.put(:target, target)
+    |> open(%{"cwd" => cwd, "editor" => "file-manager"})
+  end
+
+  step "Finder opens that folder", context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["open", context.target]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step "Explorer shows the file selected in its folder", context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["explorer", "/select,", String.replace(context.target, "/", "\\")]
+    :gen_tcp.close(conn)
+    context
+  end
+
+  step "Explorer opens that folder", context do
+    assert {:ok, nil} = context.reply
+    {conn, argv} = launched(context)
+    assert argv == ["explorer", String.replace(context.target, "/", "\\")]
+    :gen_tcp.close(conn)
+    context
   end
 
   step "a client reveals a file in the file manager", context do

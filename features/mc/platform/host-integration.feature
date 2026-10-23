@@ -96,6 +96,56 @@ Feature: The MC working with its host machine
     When a client reveals a file in the file manager
     Then the host's file manager shows the folder that holds the file
 
+  # The file manager only ever shows folders. A workspace path is something an agent or a
+  # cloned repository controls, and handing a file to the host's opener runs whatever its
+  # type maps to: a shortcut, a script, an app.
+  @mc
+  Scenario Outline: On Linux opening a file in the file manager shows the folder that holds it
+    Given a Linux host with a display and xdg-open installed
+    When a client opens "<file>" in the file manager
+    Then the host's file manager shows the folder that holds the file
+
+    Examples:
+      | file           |
+      | README.md      |
+      | tool.desktop   |
+
+  @mc
+  Scenario Outline: On a Mac opening a file in the file manager reveals it instead of opening it
+    Given the MC runs on macOS
+    When a client opens "<item>" in the file manager
+    Then Finder shows the file selected in its folder
+
+    Examples:
+      | item           |
+      | README.md      |
+      | setup.command  |
+      | Tool.app/      |
+
+  @mc
+  Scenario: On a Mac opening a plain folder in the file manager opens it in Finder
+    Given the MC runs on macOS
+    When a client opens a project folder in the file manager
+    Then Finder opens that folder
+
+  @mc
+  Scenario Outline: On Windows opening a file in the file manager selects it in Explorer
+    Given the MC runs on Windows
+    When a client opens "<item>" in the file manager
+    Then Explorer shows the file selected in its folder
+
+    Examples:
+      | item              |
+      | README.md         |
+      | notes.lnk         |
+      | Tools.{0000}/     |
+
+  @mc
+  Scenario: On Windows opening a plain folder in the file manager opens it in Explorer
+    Given the MC runs on Windows
+    When a client opens a project folder in the file manager
+    Then Explorer opens that folder
+
   @mc
   Scenario: A program the MC starts for a client does not stay attached to the MC
     Given a Linux host with a display and xdg-open installed
@@ -160,13 +210,14 @@ Feature: The MC working with its host machine
     Then the server config arrives with the editors that were found
     And the file manager is not offered
 
-  @backlog @mc
+  @mc
   Scenario: On Windows the file manager selects the file in Explorer
-    Given the MC runs on Windows with PowerShell available
+    Given the MC runs on Windows
     When a client reveals a file in the file manager
     Then Explorer shows the file selected in its folder
 
-  @backlog @mc
+  # The MC selects a file with `explorer /select,`, which needs no PowerShell.
+  @dropped @mc
   Scenario: On Windows without PowerShell revealing a file is not offered
     Given the MC runs on Windows without PowerShell
     When a client reads the available editors
