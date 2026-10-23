@@ -129,13 +129,13 @@ Feature: The MC working with its host machine
 
   @mc
   Scenario: On Windows the registered command line may name its program with a variable and take the file as %L
-    Given the MC runs on Windows and Notepad is registered through the variable in '"%HAL_C2_TEST_EDITORS%/notepad" %L'
+    Given the MC runs on Windows and Notepad is registered through the variable in '"%HAL_C2_TEST_EDITORS%/notepad.exe" %L'
     When a client opens "src/app.ts" at line 12 column 4 in the default editor
     Then Windows opens "src/app.ts" in Notepad
 
   @mc
   Scenario: On Windows a REG_SZ command line keeps its variables unexpanded
-    Given the MC runs on Windows and Notepad is registered with the REG_SZ command line '"%HAL_C2_TEST_EDITORS%/notepad" %1'
+    Given the MC runs on Windows and Notepad is registered with the REG_SZ command line '"%HAL_C2_TEST_EDITORS%/notepad.exe" %1'
     When a client reads the MC's server config
     Then the default editor is not offered
 
@@ -150,6 +150,7 @@ Feature: The MC working with its host machine
       | C:\Program Files\Editor\editor.exe %1   |
       | C:Program Files\Editor\editor.exe %1    |
       | \Program Files\Editor\editor.exe %1     |
+      | /Program Files/Editor/editor.exe %1     |
 
   @mc
   Scenario: A Windows host's text association is looked up once for the server configs read within a minute

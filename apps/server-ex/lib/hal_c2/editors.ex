@@ -312,10 +312,11 @@ defmodule HalC2.Editors do
   # and on Windows `find_executable` would try PATHEXT extensions on it, so a
   # planted `C:\Program.exe` would be offered and run (#409). An extensionless
   # program word that names a Windows place (a drive, rooted or not: `C:\`, `C:/`,
-  # `C:Program`; a root: `\Program`; or a UNC share) therefore counts as no editor, on
-  # every host. A bare name such as `notepad` is looked up on PATH.
+  # `C:Program`; a root: `\Program` or `/Program`, both rooted on the current drive;
+  # or a UNC share) therefore counts as no editor, on every host. A bare name such as
+  # `notepad` is looked up on PATH.
   defp extensionless_windows_path?(program) do
-    String.match?(program, ~r/\A([A-Za-z]:|\\)/) and Path.extname(program) == ""
+    String.match?(program, ~r/\A([A-Za-z]:|[\\\/])/) and Path.extname(program) == ""
   end
 
   # The `{type, data}` of the value `reg query` prints for `args`, or nil. `reg` writes

@@ -29,10 +29,11 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   end
 
   # Installs `name` as a program that reports its arguments to this test over TCP and
-  # then stays running until the test hangs up.
-  defp install(context, name) do
+  # then stays running until the test hangs up. `file` is the name it is stored under
+  # when that differs from the name it reports (a Windows editor path needs an extension).
+  defp install(context, name, file \\ nil) do
     context = bin(context) |> listen()
-    path = Path.join(context.bin, name)
+    path = Path.join(context.bin, file || name)
 
     File.write!(path, """
     #!/usr/bin/env bash
@@ -246,13 +247,15 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   # command is the `notepad` that reports to this test.
   defp windows_host(context, answers, line \\ ~s("NOTEPAD" %1), type \\ "REG_EXPAND_SZ") do
     World.put_app_env(:os_type, {:win32, :nt})
-    context = install(context, "notepad")
+    # Stored as notepad.exe: the MC refuses an extensionless Windows path word, so the
+    # fake editor needs an extension to resolve, which Linux runs fine.
+    context = install(context, "notepad", "notepad.exe")
     # What a registered line can name with %...%, as %SystemRoot% is on a real host.
     World.put_os_env("HAL_C2_TEST_EDITORS", context.bin)
 
     command =
       "    (Default)    #{type}    " <>
-        String.replace(line, "NOTEPAD", Path.join(context.bin, "notepad"))
+        String.replace(line, "NOTEPAD", Path.join(context.bin, "notepad.exe"))
 
     progid =
       Enum.find_value(answers, fn {_key, value} ->
@@ -289,12 +292,19 @@ defmodule HalC2.Steps.Platform.HostIntegration do
   # The first word of an unquoted program path with spaces (`C:\Program` of
   # `C:\Program Files\...`) is a real executable here, named literally (legal on
   # Linux), so only the MC's refusal of such a word, not a failed lookup, leaves the
-  # default editor unoffered.
+  # default editor unoffered. A word rooted at `/` (`/Program`) cannot be created, so it
+  # is rebased into this scenario's bin directory, which keeps the leading `/`.
   step ~r/^the MC runs on Windows and Notepad is registered with the unquoted command line '(?<line>[^']+)'$/,
        %{args: [line]} = context do
-    context = windows_host(context, [{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line)
-    [word | _] = String.split(line)
-    install(context, word)
+    context = bin(context)
+    [word | rest] = String.split(line, " ", parts: 2)
+    file = word
+    word = if String.starts_with?(word, "/"), do: context.bin <> word, else: word
+    line = Enum.join([word | rest], " ")
+
+    context
+    |> windows_host([{"UserChoice", "    ProgId    REG_SZ    txtfile"}], line)
+    |> install(file)
   end
 
   step "the MC runs on Windows and opens text files in Notepad", context do
