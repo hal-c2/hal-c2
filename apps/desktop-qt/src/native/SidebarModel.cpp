@@ -805,7 +805,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   const QVariantList pinned = convert(sections.pinned, false, false, unlimited);
   const QVariantList active = convert(sections.active, false, false, unlimited);
   const QVariantList snoozed = convert(sections.snoozed, true, true, unlimited);
-  const QVariantList settled = convert(sections.settled, false, true, kSettledLimit);
+  const QVariantList settled = convert(sections.settled, false, true, input.settledLimit);
 
   QVariantList projects;
   for (const ProjectGroup& group : input.projects) {
@@ -846,6 +846,7 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
       {QStringLiteral("snoozed"), snoozed},
       {QStringLiteral("settled"), settled},
       {QStringLiteral("settledTotal"), sections.settled.size()},
+      {QStringLiteral("settledPage"), input.settledPage},
       {QStringLiteral("drafts"), drafts},
       {QStringLiteral("activeThreadKey"), nullable(input.activeThreadKey)},
       {QStringLiteral("activeDraftId"), input.activeDraftId},

@@ -465,7 +465,7 @@ export function ChatView({
       buildRows(
         state.shell,
         state.expanded,
-        state.loadedInFull,
+        state.settledShown,
         selectedThreadId,
         state.filter,
         state.projectScopeId,
@@ -474,7 +474,7 @@ export function ChatView({
     [
       state.shell,
       state.expanded,
-      state.loadedInFull,
+      state.settledShown,
       selectedThreadId,
       state.filter,
       state.projectScopeId,

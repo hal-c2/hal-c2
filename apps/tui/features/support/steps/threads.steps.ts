@@ -340,10 +340,9 @@ step("the first {int} settled threads are shown", async (ctx: World, count: numb
   expect(await snapshot(ctx)).not.toContain(`Settled ${String(count + 1).padStart(2, "0")}`);
 });
 
-step("the user can show more", async (ctx: World) => {
-  const total = env(ctx).threads.filter((thread) => thread.settledOverride === "settled").length;
-  await clickText(ctx, "Show ");
-  expect(threadRows(ctx).filter((row) => row.thread.section === "settled")).toHaveLength(total);
+step("the user shows more settled threads", async (ctx: World) => {
+  // A page of 25 at a time, which the row says.
+  await clickText(ctx, "Show 25 more");
 });
 
 step("the user selects a settled thread beyond the first page", async (ctx: ThreadsWorld) => {

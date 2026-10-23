@@ -133,6 +133,8 @@ void SidebarController::refresh() {
     }
   }
   input.selectedKeys = m_selected;
+  input.settledLimit = m_settledShown;
+  input.settledPage = m_settledPage;
   input.jumpLabels = m_jumpLabels;
   input.showJumpHints = m_showJumpHints;
   input.describeWake = [this, now](const QString& snoozedUntil) {
@@ -231,6 +233,11 @@ bool SidebarController::handle(const QString& action, const QVariant& payload) {
         m_selected.insert(m_view.orderedKeys.at(index));
       }
     }
+    refresh();
+    return true;
+  }
+  if (action == QLatin1String("sidebar.more")) {
+    m_settledShown += m_settledPage;
     refresh();
     return true;
   }

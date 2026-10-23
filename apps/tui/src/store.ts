@@ -4,6 +4,8 @@ import type { OrchestrationShellSnapshot, TuiClient, TuiThreadPage } from "./con
 import { gitActionNeedsCommitMessage } from "./gitActions.logic.ts";
 import {
   buildRows,
+  SIDEBAR_SETTLED_INITIAL_COUNT,
+  SIDEBAR_SETTLED_PAGE,
   SIDEBAR_SETTLED_SECTION_ID,
   SIDEBAR_SNOOZED_SECTION_ID,
   type Row,
@@ -30,8 +32,8 @@ export type StatusKind = "info" | "success" | "warning" | "error" | "busy";
 export interface StoreState {
   readonly shell: OrchestrationShellSnapshot | null;
   readonly expanded: ReadonlySet<string>;
-  /** Projects whose full thread list has been loaded ("show more" activated). */
-  readonly loadedInFull: ReadonlySet<string>;
+  /** How many settled threads the shelf lists; "show more" lists another page. */
+  readonly settledShown: number;
   readonly selection: Selection | null;
   readonly detail: OrchestrationThread | null;
   /** Pagination state for the selected thread's bounded server snapshot. */
@@ -127,7 +129,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
   let state: StoreState = {
     shell: null,
     expanded: new Set<string>([SIDEBAR_SETTLED_SECTION_ID]),
-    loadedInFull: new Set<string>(),
+    settledShown: SIDEBAR_SETTLED_INITIAL_COUNT,
     selection: null,
     detail: null,
     threadPage: null,
@@ -152,7 +154,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     buildRows(
       state.shell,
       state.expanded,
-      state.loadedInFull,
+      state.settledShown,
       selectedThreadId(),
       state.filter,
       state.projectScopeId,
@@ -307,8 +309,7 @@ export function createStore(client: TuiClient, options: StoreOptions = {}): Stor
     },
     loadMore: (id) => {
       if (id !== SIDEBAR_SETTLED_SECTION_ID) return;
-      const loadedInFull = new Set(state.loadedInFull).add(SIDEBAR_SETTLED_SECTION_ID);
-      set({ loadedInFull });
+      set({ settledShown: state.settledShown + SIDEBAR_SETTLED_PAGE });
     },
     toggleSection: (section) => {
       const id = section === "snoozed" ? SIDEBAR_SNOOZED_SECTION_ID : SIDEBAR_SETTLED_SECTION_ID;

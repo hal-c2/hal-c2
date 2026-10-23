@@ -487,5 +487,37 @@ Item {
             tryCompare(list, "count", 3);
             verify(!!findChild(sidebar, "threadRow:s58"));
         }
+
+        // Scenario: Very long settled shelves are shown a page at a time (features/threads/sidebar-list.feature)
+        function test_settledShelfShowsMore() {
+            const next = JSON.parse(JSON.stringify(Shell.state.sidebar));
+            next.settled = [0, 1, 2].map(n => Object.assign({}, next.active[0], { key: "s" + n, title: "Settled " + n }));
+            next.settledTotal = 5;
+            next.settledPage = 50;
+            Shell.state = { sidebar: next };
+            let sidebar = createTemporaryObject(sidebarComponent, root);
+            let list = findChild(sidebar, "list");
+            tryCompare(list, "count", 6);
+            tryVerify(() => !!findChild(sidebar, "settledMore"), 1000, "the shelf offers more");
+            const more = findChild(sidebar, "settledMore");
+            compare(more.Accessible.name, "Show 2 more");
+            mouseClick(more);
+            tryCompare(Shell, "dispatchCount", 1);
+            compare(Shell.dispatchedActions[0].action, "sidebar.more");
+
+            // The keyboard reaches it too.
+            list.forceActiveFocus();
+            list.cursorKey = "more:settled";
+            keyClick(Qt.Key_Return);
+            tryCompare(Shell, "dispatchCount", 2);
+            compare(Shell.dispatchedActions[1].action, "sidebar.more");
+
+            // Once every settled thread is listed, the row goes (the header, the
+            // active thread and the three settled ones are left).
+            const all = JSON.parse(JSON.stringify(next));
+            all.settledTotal = 3;
+            Shell.state = { sidebar: all };
+            tryCompare(list, "count", 5);
+        }
     }
 }

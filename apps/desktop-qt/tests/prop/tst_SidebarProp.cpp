@@ -41,6 +41,8 @@ const std::vector<std::string> kProjectIds{"p1", "p2"};
 const std::vector<std::string> kTitles{"Alpha", "Beta", "Gamma"};
 // When the projects were made: before any thread.
 constexpr int kProjectsAt = -60;
+// The settled shelf's page, one row so two settled threads already page.
+constexpr qsizetype kSettledPage = 1;
 
 // Minutes after kT0, as the rows carry them.
 QString iso(int minutes) {
@@ -308,6 +310,8 @@ struct Model {
   std::optional<std::string> scope;  // a project id
   std::set<std::string> selected;
   std::string anchor;
+  // How many settled rows the shelf lists (`sidebar.more` adds a page).
+  qsizetype settledShown = kSettledPage;
 };
 
 Model initialModel() {
@@ -526,7 +530,8 @@ std::string wakeLabel(int until, int now) {
   return std::to_string((remaining + 24 * 60 - 1) / (24 * 60)) + "d";
 }
 
-Projection expected(const Model& model) {
+// `open` is the thread the window shows: the shelf lists it past its page.
+Projection expected(const Model& model, const std::string& open = {}) {
   Projection view;
   const Sections sections = sectionsOf(model, true);
   const std::vector<std::string> listed = orderedKeys(model);
@@ -550,7 +555,11 @@ Projection expected(const Model& model) {
   view.pinned = rows(sections.pinned, false);
   view.active = rows(sections.active, false);
   view.snoozed = rows(sections.snoozed, true);
-  view.settled = rows(sections.settled, false, true);
+  std::vector<Living> paged;
+  for (const Living& thread : sections.settled) {
+    if (qsizetype(paged.size()) < model.settledShown || thread.key() == open) paged.push_back(thread);
+  }
+  view.settled = rows(paged, false, true);
   view.settledTotal = int(sections.settled.size());
   view.scope = model.scope ? groupKey(*model.scope) : "";
   for (const std::string& key : listed) {
@@ -664,6 +673,7 @@ struct Sut {
     native = std::make_unique<NativeShell>(bridge.get());
     native->client()->setRetryDelays({20});
     native->sidebar()->setLocale(QLocale(QLocale::English, QLocale::UnitedStates));
+    native->sidebar()->setSettledPage(kSettledPage);
     native->setStoreDirs(home.filePath(QStringLiteral("state")), home.filePath(QStringLiteral("data")), home.filePath(QStringLiteral("cache")));
     native->controller<SettingsController>()->setDevicePath(home.filePath(QStringLiteral("preferences.json")));
     native->sidebar()->setClock([this] { return kT0.addSecs(qint64(now) * 60); });
@@ -779,7 +789,8 @@ struct Sut {
     }
     if (!model.connected) return;
     const Projection actual = read(state());
-    const Projection want = expected(model);
+    const NavigationController::Route& route = navigation()->route();
+    const Projection want = expected(model, route.kind == QLatin1String("thread") ? route.threadKey.toStdString() : std::string());
     if (!(actual == want)) RC_FAIL("the sidebar shows" + rc::toString(actual) + "\nthe model" + rc::toString(want));
     for (const std::string& key : model.parking) RC_ASSERT(sidebar()->parking(q(key)));
     expectNavigation(model);
@@ -1402,6 +1413,21 @@ struct Scope : Command {
   void show(std::ostream& os) const override { os << "Scope(" << (project ? *project : "all") << ")"; }
 };
 
+// Listing the settled shelf's next page.
+struct ShowMore : Command {
+  explicit ShowMore(const Model&) {}
+
+  void checkPreconditions(const Model& model) const override { RC_PRE(model.connected); }
+  void apply(Model& model) const override { model.settledShown += kSettledPage; }
+  void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
+    sut.dispatch(QStringLiteral("sidebar.more"), {});
+    sut.expect(next);
+  }
+  void show(std::ostream& os) const override { os << "ShowMore"; }
+};
+
 // The MC holds its answers to commands, or gives them.
 struct Hold : Command {
   explicit Hold(const Model&) {}
@@ -1655,7 +1681,7 @@ private slots:
           0.5, rc::state::gen::commands(initial, rc::state::gen::execOneOfWithArgs<
                                                      CreateThread, CreateThread, CreateThread, ChangeThread, ChangeProject, MoveThread,
                                                      MoveThread, SetOnline, Membership, Tick, Resend, Disconnect, Reconnect, RowAction,
-                                                     RowAction, RowAction, MoveRow, DropRow, DropRow, Select, Scope, Hold>()));
+                                                     RowAction, RowAction, MoveRow, DropRow, DropRow, Select, Scope, ShowMore, Hold>()));
       rc::state::runAll(commands, initial, sut);
     }));
   }

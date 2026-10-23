@@ -367,7 +367,7 @@ export function createHost(options: HostOptions): Host {
     buildRows(
       next.shell,
       next.expanded,
-      next.loadedInFull,
+      next.settledShown,
       next.selection?.kind === "thread" ? next.selection.id : null,
       next.filter,
       next.projectScopeId,
@@ -547,7 +547,7 @@ export function createHost(options: HostOptions): Host {
       !prev ||
       prev.shell !== next.shell ||
       prev.expanded !== next.expanded ||
-      prev.loadedInFull !== next.loadedInFull ||
+      prev.settledShown !== next.settledShown ||
       prev.selection !== next.selection ||
       prev.filter !== next.filter ||
       prev.projectScopeId !== next.projectScopeId

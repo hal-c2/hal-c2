@@ -197,10 +197,13 @@ Rectangle {
         };
         section("snoozed", qsTr("Snoozed"), state.snoozed);
         section("settled", qsTr("Settled"), state.settled);
-        if (!folded.settled && state.settledTotal > state.settled.length) {
+        // The settled shelf lists a page at a time; this row lists the next.
+        const hidden = state.settledTotal - state.settled.length;
+        if (!folded.settled && hidden > 0) {
             out.push({
-                kind: "note",
-                label: qsTr("%1 more settled in the app").arg(state.settledTotal - state.settled.length)
+                kind: "more",
+                rowKey: "more:settled",
+                label: qsTr("Show %1 more").arg(Math.min(hidden, state.settledPage ?? hidden))
             });
         }
         return out;
@@ -491,7 +494,7 @@ Rectangle {
                 if (cursorIndex >= 0) {
                     return;
                 }
-                const current = sidebar.rows.find(r => r.rowKey !== undefined && sidebar.model !== null && (r.kind === "draft" ? r.item.draftId === sidebar.model.activeDraftId : r.kind !== "header" && r.item.key === sidebar.model.activeThreadKey));
+                const current = sidebar.rows.find(r => r.rowKey !== undefined && sidebar.model !== null && (r.kind === "draft" ? r.item.draftId === sidebar.model.activeDraftId : r.item !== undefined && r.item.key === sidebar.model.activeThreadKey));
                 const first = current ?? sidebar.rows.find(r => r.rowKey !== undefined);
                 cursorKey = first ? first.rowKey : "";
             }
@@ -504,6 +507,9 @@ Rectangle {
                 switch (row.kind) {
                 case "header":
                     sidebar.toggleSection(row.key);
+                    break;
+                case "more":
+                    Shell.dispatch("sidebar.more", {});
                     break;
                 case "draft":
                     Shell.dispatch("draft.open", {
@@ -594,7 +600,7 @@ Rectangle {
             function menuAtCursor() {
                 const row = sidebar.rows[cursorIndex];
                 const item = itemAtIndex(cursorIndex);
-                if (!row || !item || row.kind === "header") {
+                if (!row || !item || row.kind === "header" || row.kind === "more") {
                     return;
                 }
                 const p = item.mapToItem(null, item.width / 2, item.height / 2);
@@ -680,7 +686,7 @@ Rectangle {
                 width: ListView.view.width
                 // Pooled by `reuseItems`: hidden, but still a child of the list.
                 Accessible.ignored: !visible
-                implicitHeight: kind === "header" ? 36 : kind === "divider" ? 13 : kind === "note" ? 28 : kind === "slim" ? 36 : 82
+                implicitHeight: kind === "header" ? 36 : kind === "divider" ? 13 : kind === "more" ? 32 : kind === "slim" ? 36 : 82
 
                 // Collapsible section header with a hairline (settled) or tint (snoozed).
                 Item {
@@ -770,12 +776,43 @@ Rectangle {
                     color: Qt.alpha(sidebar.hairline, 0.6)
                 }
 
-                Text {
-                    anchors.centerIn: parent
-                    visible: entry.kind === "note"
-                    text: entry.kind === "note" ? entry.modelData.label : ""
-                    color: Qt.alpha(sidebar.muted, 0.6)
-                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                // Lists the next page of the settled shelf.
+                Item {
+                    objectName: entry.kind === "more" ? "settledMore" : ""
+                    anchors.fill: parent
+                    visible: entry.kind === "more"
+                    Accessible.role: Accessible.Button
+                    Accessible.name: moreLabel.text
+
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.topMargin: 2
+                        anchors.bottomMargin: 2
+                        radius: 8
+                        color: moreHover.hovered ? Qt.alpha(sidebar.muted, 0.08) : "transparent"
+                        border.width: entry.focused ? 1 : 0
+                        border.color: Theme.palette.color("focus", "#3b82f6")
+                    }
+
+                    HoverHandler {
+                        id: moreHover
+                        cursorShape: Qt.PointingHandCursor
+                    }
+
+                    TapHandler {
+                        onTapped: {
+                            list.cursorKey = entry.modelData.rowKey;
+                            Shell.dispatch("sidebar.more", {});
+                        }
+                    }
+
+                    Text {
+                        id: moreLabel
+                        anchors.centerIn: parent
+                        text: entry.kind === "more" ? entry.modelData.label : ""
+                        color: Qt.alpha(sidebar.muted, moreHover.hovered ? 0.8 : 0.6)
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
                 }
 
                 Loader {

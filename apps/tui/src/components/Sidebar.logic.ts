@@ -12,6 +12,8 @@ import type { OrchestrationShellSnapshot } from "../connection.ts";
 export const SIDEBAR_SNOOZED_SECTION_ID = "sidebar-v2:snoozed";
 export const SIDEBAR_SETTLED_SECTION_ID = "sidebar-v2:settled";
 export const SIDEBAR_SETTLED_INITIAL_COUNT = 10;
+/** How many more settled threads each "show more" lists. */
+export const SIDEBAR_SETTLED_PAGE = 25;
 const MINUTE_MS = 60 * 1_000;
 
 export type SidebarSection = "active" | "snoozed" | "settled";
@@ -120,14 +122,14 @@ function keepSelectedVisible(
  * Flat Sidebar V2 model. Projects filter the list; they no longer own nested
  * thread rows.
  *
- * The two sets retain the store's existing persistence shape:
  * - `expanded` contains the snoozed/settled section ids.
- * - `loadedInFull` contains the settled section id after "show more".
+ * - `settledShown` is how many settled threads are listed: the first page,
+ *   and SIDEBAR_SETTLED_PAGE more per "show more".
  */
 export function buildRows(
   shell: OrchestrationShellSnapshot | null,
   expanded: ReadonlySet<string>,
-  loadedInFull: ReadonlySet<string>,
+  settledShown: number,
   selectedThreadId: string | null,
   filter = "",
   projectScopeId: string | null = null,
@@ -212,9 +214,7 @@ export function buildRows(
       count: settled.length,
       expanded: sectionExpanded,
     });
-    const preview = loadedInFull.has(SIDEBAR_SETTLED_SECTION_ID)
-      ? settled
-      : settled.slice(0, SIDEBAR_SETTLED_INITIAL_COUNT);
+    const preview = settled.slice(0, settledShown);
     const shown = sectionExpanded
       ? keepSelectedVisible(preview, settled, selectedThreadId)
       : keepSelectedVisible([], settled, selectedThreadId);

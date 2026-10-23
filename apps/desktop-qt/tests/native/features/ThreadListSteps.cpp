@@ -9,6 +9,8 @@
 #include <QJsonObject>
 #include <QSet>
 
+#include <algorithm>
+
 #include "Harness.h"
 #include "NavigationController.h"
 #include "McClient.h"
@@ -241,12 +243,31 @@ const Steps steps([] {
     const qsizetype shown = sidebar(world).value(QStringLiteral("settled")).toList().size();
     expect(shown == c[0].toInt(), QStringLiteral("%1 settled threads are shown").arg(shown));
   });
-  step(QStringLiteral("the section says %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    // Sidebar.qml's note under the shelf.
+  // Sidebar.qml's "Show N more" row under the shelf: the next page, or what
+  // is left (tst_Sidebar.qml).
+  static const auto settledMore = [](World& world) {
     const QVariantMap state = sidebar(world);
-    const qsizetype more = state.value(QStringLiteral("settledTotal")).toInt() - state.value(QStringLiteral("settled")).toList().size();
-    const QString note = QStringLiteral("%1 more settled in the app").arg(more);
-    expect(more > 0 && note == c[0], QStringLiteral("the section says \"%1\"").arg(note));
+    const qsizetype hidden = state.value(QStringLiteral("settledTotal")).toInt() - state.value(QStringLiteral("settled")).toList().size();
+    return hidden > 0 ? QStringLiteral("Show %1 more").arg(std::min<qsizetype>(hidden, state.value(QStringLiteral("settledPage")).toInt())) : QString();
+  };
+  step(QStringLiteral("the section offers %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString more = settledMore(world);
+    expect(more == c[0], QStringLiteral("the section offers \"%1\"").arg(more));
+  });
+  step(QStringLiteral("the section offers no more"), [](World& world, const Captures&, const Table&) {
+    const QString more = settledMore(world);
+    expect(more.isEmpty(), QStringLiteral("the section offers \"%1\"").arg(more));
+  });
+  step(QStringLiteral("the user shows more settled threads"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("sidebar.more"), QVariantMap{});
+    world.sync();
+  });
+  step(QStringLiteral("%1 is among the settled threads").arg(q), [](World& world, const Captures& c, const Table&) {
+    const auto settled = [&] { return sidebar(world).value(QStringLiteral("settled")).toList(); };
+    world.waitFor([&] {
+      const QVariantList rows = settled();
+      return std::any_of(rows.begin(), rows.end(), [&](const QVariant& row) { return row.toMap().value(QStringLiteral("title")) == c[0]; });
+    }, [&] { return QStringLiteral("%1 among the %2 settled rows").arg(c[0]).arg(settled().size()); });
   });
   step(QStringLiteral("%1 is shown in the main view").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString key = threadKeyOf(world, c[0]);

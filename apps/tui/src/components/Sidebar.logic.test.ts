@@ -8,6 +8,7 @@ import {
   type Row,
   rowHeight,
   SIDEBAR_SETTLED_INITIAL_COUNT,
+  SIDEBAR_SETTLED_PAGE,
   SIDEBAR_SETTLED_SECTION_ID,
   SIDEBAR_SNOOZED_SECTION_ID,
   selectionEquals,
@@ -54,7 +55,7 @@ const build = (
   snapshot: OrchestrationShellSnapshot,
   input: {
     expanded?: ReadonlySet<string>;
-    loaded?: ReadonlySet<string>;
+    shown?: number;
     selected?: string | null;
     filter?: string;
     project?: string | null;
@@ -63,7 +64,7 @@ const build = (
   buildRows(
     snapshot,
     input.expanded ?? new Set([SIDEBAR_SETTLED_SECTION_ID]),
-    input.loaded ?? new Set(),
+    input.shown ?? SIDEBAR_SETTLED_INITIAL_COUNT,
     input.selected ?? null,
     input.filter ?? "",
     input.project ?? null,
@@ -183,6 +184,30 @@ describe("Sidebar V2 row model", () => {
     expect(threadRows).toHaveLength(SIDEBAR_SETTLED_INITIAL_COUNT + 1);
     expect(threadRows.some((row) => row.id === "settled-12")).toBe(true);
     expect(rows.at(-1)).toMatchObject({ kind: "more", hiddenCount: 2 });
+  });
+
+  it("Given a long settled shelf, then each show more lists one more page", () => {
+    const total = SIDEBAR_SETTLED_INITIAL_COUNT + SIDEBAR_SETTLED_PAGE + 5;
+    const settled = Array.from({ length: total }, (_, index) =>
+      thread(`settled-${index}`, "p1", {
+        settledOverride: "settled",
+        settledAt: new Date(Date.parse(NOW) - index * 1_000).toISOString(),
+      }),
+    );
+    const listed = (shown: number) =>
+      build(shell(settled), { shown }).filter((row) => row.kind === "thread").length;
+    const more = (shown: number) => build(shell(settled), { shown }).at(-1);
+
+    expect(listed(SIDEBAR_SETTLED_INITIAL_COUNT)).toBe(SIDEBAR_SETTLED_INITIAL_COUNT);
+    expect(more(SIDEBAR_SETTLED_INITIAL_COUNT)).toMatchObject({
+      kind: "more",
+      hiddenCount: SIDEBAR_SETTLED_PAGE + 5,
+    });
+    const second = SIDEBAR_SETTLED_INITIAL_COUNT + SIDEBAR_SETTLED_PAGE;
+    expect(listed(second)).toBe(second);
+    expect(more(second)).toMatchObject({ kind: "more", hiddenCount: 5 });
+    expect(listed(second + SIDEBAR_SETTLED_PAGE)).toBe(total);
+    expect(more(second + SIDEBAR_SETTLED_PAGE)?.kind).toBe("thread");
   });
 });
 

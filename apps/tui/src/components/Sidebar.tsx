@@ -4,7 +4,13 @@ import * as React from "react";
 import { padClip } from "../format.ts";
 import type { Store } from "../store.ts";
 import { ansi, relativeTime, resolveThreadStatus, usePalette } from "../theme.ts";
-import { type Row, rowHeight, type Selection, selectionEquals } from "./Sidebar.logic.ts";
+import {
+  type Row,
+  rowHeight,
+  type Selection,
+  selectionEquals,
+  SIDEBAR_SETTLED_PAGE,
+} from "./Sidebar.logic.ts";
 import { StatusDot } from "./ThreadStatusIndicators.tsx";
 
 export const THREAD_CONTEXT_LONG_PRESS_MS = 500;
@@ -166,7 +172,7 @@ const SidebarMoreRow = React.memo(function SidebarMoreRow({
   return (
     <box onMouseDown={() => store.loadMore(row.id)}>
       <text fg={selected ? palette.accent : palette.dim}>
-        {`  ${selected ? "▶" : "+"} Show ${Math.min(row.hiddenCount, 25)} more`}
+        {`  ${selected ? "▶" : "+"} Show ${Math.min(row.hiddenCount, SIDEBAR_SETTLED_PAGE)} more`}
       </text>
     </box>
   );

@@ -10,7 +10,8 @@
 #   apps/web/src/components/NoProjectsHero.tsx
 #   apps/web/src/components/NoActiveThreadState.tsx
 #   apps/tui/src/components/Sidebar.logic.ts
-#   packages/contracts/src/shell.ts (thread.open, draft.open, thread.new, sidebar.scope, sidebar.toggle, project.add, thread.menu)
+#   apps/desktop-qt/src/native/SidebarController.cpp (sidebar.more: the settled shelf a page at a time)
+#   packages/contracts/src/shell.ts (thread.open, draft.open, thread.new, sidebar.scope, sidebar.toggle, sidebar.more, project.add, thread.menu)
 #   packages/contracts/src/rpc.ts (subscribeShell)
 #   apps/web/src/components/LegacySidebar.tsx (the per-project thread tree)
 #   apps/web/src/components/ThreadStatusIndicators.tsx (row indicators)
@@ -77,17 +78,31 @@ Feature: The thread list
 
   @tui
   Scenario: Long settled shelves are shown a page at a time
-    Given there are 25 settled threads
+    Given there are 40 settled threads
     When the user looks at the settled section
     Then the first 10 settled threads are shown
-    And the user can show more
+    When the user shows more settled threads
+    Then the first 35 settled threads are shown
 
-  @desktop
-  Scenario: Very long settled shelves point to the rest
-    Given there are 70 settled threads
+  @desktop @mobile
+  Scenario: Very long settled shelves are shown a page at a time
+    Given there are 120 settled threads
     When the user looks at the settled section
     Then 50 settled threads are shown
-    And the section says "20 more settled in the app"
+    And the section offers "Show 50 more"
+    When the user shows more settled threads
+    Then 100 settled threads are shown
+    And the section offers "Show 20 more"
+    When the user shows more settled threads
+    Then 120 settled threads are shown
+    And the section offers no more
+
+  @desktop
+  Scenario: The open thread stays listed past the settled page
+    Given there are 70 settled threads
+    When the user opens "Settled 65"
+    Then "Settled 65" is among the settled threads
+    And 51 settled threads are shown
 
   @desktop
   Scenario Outline: Moving through the list with the keyboard

@@ -1,7 +1,9 @@
 // The home screen (features/mobile/home-and-thread-list.feature): the thread
-// list narrowed to a project and back, and the archive, reached from the
-// home screen's own bar as the user reaches them.
+// list narrowed to a project and back, the settled shelf a page at a time
+// (threads/sidebar-list.feature), and the archive, reached from the home
+// screen's own bar as the user reaches them.
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
@@ -55,8 +57,85 @@ QStringList heldThreads(World& world, const QString& project, bool inIt) {
   return titles;
 }
 
+// The settled shelf's "Show N more" row, scrolled to as the user would; null
+// when the shelf lists every settled thread.
+QQuickItem* settledMore(World& world) {
+  QQuickItem* list = threadList(world)->findChild<QQuickItem*>(QStringLiteral("list"));
+  expect(list != nullptr, QStringLiteral("the thread list has no rows"));
+  QMetaObject::invokeMethod(list, "positionViewAtEnd");
+  return world.find(QStringLiteral("settledMore"));
+}
+
+QString moreLabel(QQuickItem* more) {
+  for (QQuickItem* child : more->childItems()) {
+    if (child->property("text").isValid()) return child->property("text").toString();
+  }
+  return {};
+}
+
 const Steps steps([] {
   using S = QString;
+
+  // The environment holds the two projects and no threads yet; the phone
+  // pairs once a step has given it threads.
+  step(S("a connected environment with the projects %1 and %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.mc.projects.clear();
+    world.mc.threads.clear();
+    for (const QString& name : c) {
+      world.mc.projects.insert(name, {{S("id"), name}, {S("title"), name}, {S("workspaceRoot"), S("/work/") + name},
+                                      {S("scripts"), QJsonArray()}, {S("createdAt"), S("2026-09-01T09:00:00Z")},
+                                      {S("updatedAt"), S("2026-09-01T09:00:00Z")}});
+    }
+  });
+
+  step(S("there are (\\d+) settled threads"), [](World& world, const Captures& c, const Table&) {
+    const QDateTime newest = QDateTime::fromString(S("2026-09-23T09:00:00Z"), Qt::ISODate);
+    for (int index = 0; index < c[0].toInt(); ++index) {
+      const QString id = S("settled-%1").arg(index);
+      const QString at = newest.addSecs(-60 * index).toString(Qt::ISODate);
+      world.mc.threads.insert(id, {{S("id"), id}, {S("title"), S("Settled %1").arg(index)}, {S("projectId"), S("shop")},
+                                   {S("createdAt"), at}, {S("updatedAt"), at},
+                                   {S("settledOverride"), S("settled")}, {S("settledAt"), at}});
+      world.mc.sendRow(id, world.mc.threads.value(id));
+    }
+    pairWithEnvironment(world);
+  });
+
+  step(S("the user looks at the settled section"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    threadList(world);
+  });
+
+  // The rows past the screen are not drawn, so the count is the list's.
+  step(S("(\\d+) settled threads are shown"), [](World& world, const Captures& c, const Table&) {
+    const auto shown = [&] { return world.state(S("sidebar")).toMap().value(S("settled")).toList().size(); };
+    world.waitFor([&] { return shown() == c[0].toInt(); }, [&] { return S("%1 settled threads; the list has %2").arg(c[0]).arg(shown()); });
+  });
+
+  step(S("the section offers %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    QString offered;
+    world.waitFor(
+        [&] {
+          QQuickItem* more = settledMore(world);
+          offered = more ? moreLabel(more) : QString();
+          return offered == c[0];
+        },
+        [&] { return S("%1 under the shelf; it offers \"%2\"").arg(c[0], offered); });
+  });
+
+  step(S("the section offers no more"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    const QVariantMap state = world.state(S("sidebar")).toMap();
+    const qsizetype hidden = state.value(S("settledTotal")).toInt() - state.value(S("settled")).toList().size();
+    expect(hidden == 0, S("%1 settled threads are not listed").arg(hidden));
+  });
+
+  step(S("the user shows more settled threads"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* more = nullptr;
+    world.waitFor([&] { return (more = settledMore(world)) != nullptr; },
+                  [&] { return S("more to show under the shelf; the screen says: %1").arg(screenTexts(world)); });
+    world.tap(more);
+  });
 
   // A long press on one of the project's threads opens its menu, which
   // narrows the list to its project.
