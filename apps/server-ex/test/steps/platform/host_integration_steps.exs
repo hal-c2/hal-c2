@@ -390,8 +390,8 @@ defmodule HalC2.Steps.Platform.HostIntegration do
       World.client(context)
       |> Mc.sub(10, %{"type" => "config", "environment" => context.mc.environment})
 
-    {_frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 10))
-    World.put_client(context, client)
+    {frame, client} = Mc.await(client, &(&1["t"] == "config" and &1["id"] == 10))
+    context |> World.put_client(client) |> Map.put(:server_config, frame["config"])
   end
 
   step "the registry was not queried again", context do
