@@ -373,7 +373,9 @@ step(/^the user turns (on|off) "Show plugin threads in Settled"$/, (ctx: World, 
 // Another client writes the MC's setting, and the MC pushes its settings to this one.
 step(
   /^"Show plugin threads in Settled" is turned (on|off) on another device$/,
-  (ctx: World, turn) => {
+  async (ctx: World, turn) => {
+    // The client is running and connected before another device changes anything.
+    await ui(ctx);
     const fake = ctx.fake!;
     fake.server.settings = {
       ...fake.server.settings,
