@@ -14,6 +14,14 @@
 //! last. `navigate(tabId, url)` is `preview.navigate`, and opens the page in
 //! the browser.
 //!
+//! A page opens with `openAddress(url)`: a dev server's loopback address on
+//! a thread of another cluster MC opens through the port the connected MC
+//! forwards to it (`preview.forward`), its path, query and fragment kept.
+//! The thread's MC forwards only a port one of its tabs names, so an address
+//! no tab names (a link in a reply) opens a tab for it first. Only a
+//! connected MC on this machine forwards to this machine's loopback; with
+//! one elsewhere the address opens as it is.
+//!
 //! [`Previews`] is the core: it takes events, frames and replies and says
 //! what to ask of the MC as [`Effect`]s. [`ThreadPreviews`] is the object
 //! QML binds; it runs those effects on the shell's MC.
@@ -37,6 +45,15 @@ pub const ROLES: &[&str] = &["tabId", "url", "title", "status", "problem"];
 /// The pages this device opened last that a new tab offers.
 pub const MAX_RECENTS: usize = 10;
 
+/// The thread a page opens for, as it was when the user asked: another may
+/// show by the time the MC answers.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct For {
+    pub environment: String,
+    pub thread: String,
+    pub mc: String,
+}
+
 /// What a reply is for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Then {
@@ -49,6 +66,23 @@ pub enum Then {
     Navigate {
         generation: u64,
         url: String,
+        to: For,
+    },
+    /// The thread's tabs, to find one at the address's port.
+    ListFor {
+        url: String,
+        to: For,
+    },
+    /// A tab opened for the address, so its MC forwards the port.
+    OpenFor {
+        generation: u64,
+        url: String,
+        to: For,
+    },
+    /// The connected MC's forward to the address's port.
+    Forward {
+        url: String,
+        port: u16,
     },
     /// The row the tab was at, to bring it back.
     Close {
@@ -193,6 +227,45 @@ pub fn web_address(address: &str) -> Option<String> {
     (matches!(url.scheme(), "http" | "https") && url.host().is_some()).then(|| url.to_string())
 }
 
+/// A dev server's address on the machine it names: one only that machine
+/// reaches.
+fn loopback(url: &url::Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
+        && url
+            .host_str()
+            .is_some_and(crate::this_machine::loopback_host)
+}
+
+fn port_of(url: &url::Url) -> u16 {
+    url.port()
+        .unwrap_or(if url.scheme() == "https" { 443 } else { 80 })
+}
+
+/// Whether one of `tabs` is at a loopback address at `port`.
+fn names_port(tabs: &[Json], port: u16) -> bool {
+    tabs.iter().any(|tab| {
+        url::Url::parse(text(nav_of(tab), "url"))
+            .is_ok_and(|at| loopback(&at) && port_of(&at) == port)
+    })
+}
+
+/// `url` at the forward's `port`. The forward listens at 127.0.0.1 (and at
+/// ::1 only where this machine has IPv6), never at 127.0.0.1's aliases, so
+/// an address by number goes there; `localhost` stays.
+fn forwarded(url: &str, port: u16) -> String {
+    let Ok(mut url) = url::Url::parse(url) else {
+        return url.to_owned();
+    };
+    let by_number = matches!(url.host(), Some(url::Host::Ipv4(_) | url::Host::Ipv6(_)));
+    // Neither fails for an http(s) address with a host, which a forward is
+    // only asked for.
+    let _ = url.set_port(Some(port));
+    if by_number {
+        let _ = url.set_host(Some("127.0.0.1"));
+    }
+    url.to_string()
+}
+
 fn key_of(tab: &str) -> RowKey {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     tab.hash(&mut hasher);
@@ -225,6 +298,10 @@ pub struct Previews {
     configured: Vec<String>,
     /// As the owner last read them.
     recents: Vec<String>,
+    /// The environment the shell is connected to, and whether its MC runs
+    /// on this machine, as the owner last read them.
+    connected: String,
+    connected_here: bool,
     status: &'static str,
     message: String,
     changes: Vec<RowChange>,
@@ -250,6 +327,8 @@ impl Default for Previews {
             servers: Vec::new(),
             configured: Vec::new(),
             recents: Vec::new(),
+            connected: String::new(),
+            connected_here: true,
             status: "idle",
             message: String::new(),
             changes: Vec::new(),
@@ -351,6 +430,15 @@ impl Previews {
         self.notes.push(PreviewNote::Suggestions);
     }
 
+    /// The environment the shell is connected to, and whether its MC runs on
+    /// this machine (without a way to tell, it counts as here).
+    pub fn set_connection(&mut self, connected: &str, here: bool) {
+        if connected != self.connected {
+            connected.clone_into(&mut self.connected);
+        }
+        self.connected_here = here;
+    }
+
     /// The pages this device opened last, newest first, as kept.
     pub fn set_recents(&mut self, recents: Vec<String>) {
         self.recents = recents;
@@ -414,12 +502,26 @@ impl Previews {
     }
 
     fn call(&mut self, method: &'static str, payload: Json, then: Then) {
+        let environment = self.environment.clone();
+        self.call_at(environment, method, payload, then);
+    }
+
+    fn call_at(&mut self, environment: String, method: &'static str, payload: Json, then: Then) {
         self.effects.push(Effect::Call {
-            environment: self.environment.clone(),
+            environment,
             method,
             payload,
             then,
         });
+    }
+
+    /// The thread shown, as a page opens for it.
+    fn shown_for(&self) -> For {
+        For {
+            environment: self.environment.clone(),
+            thread: self.thread.clone(),
+            mc: self.mc.clone(),
+        }
     }
 
     fn notify(&mut self, title: &'static str, description: String) {
@@ -446,10 +548,15 @@ impl Previews {
         };
         let payload = json!({"threadId": self.thread, "tabId": tab, "url": url});
         let generation = self.generation;
+        let to = self.shown_for();
         self.call(
             "preview.navigate",
             payload,
-            Then::Navigate { generation, url },
+            Then::Navigate {
+                generation,
+                url,
+                to,
+            },
         );
     }
 
@@ -460,8 +567,83 @@ impl Previews {
         };
         let url = text(nav_of(&self.rows[row]), "url").to_owned();
         if !url.is_empty() {
-            self.effects.push(Effect::Open(url));
+            self.open_address(&url);
         }
+    }
+
+    /// Opens `address` in the browser, for the thread shown: through the
+    /// connected MC's forward when it is a dev server on the thread's
+    /// machine, another MC's.
+    pub fn open_address(&mut self, address: &str) {
+        let to = self.shown_for();
+        if !self.forwards(address, &to) {
+            self.effects.push(Effect::Open(address.to_owned()));
+            return;
+        }
+        // The rows are the thread's tabs only while they are followed;
+        // otherwise the MC says which there are.
+        if self.active && !self.listing && self.status == "ready" {
+            let named = self.port_named(address, &self.rows);
+            return self.open_through_tab(address, to, named);
+        }
+        let payload = json!({"threadId": to.thread});
+        let then = Then::ListFor {
+            url: address.to_owned(),
+            to,
+        };
+        self.call("preview.list", payload, then);
+    }
+
+    /// Whether one of `tabs` names `address`'s port.
+    fn port_named(&self, address: &str, tabs: &[Json]) -> bool {
+        url::Url::parse(address).is_ok_and(|url| names_port(tabs, port_of(&url)))
+    }
+
+    /// [`Self::open_for`] when a tab of the thread names the port (`named`),
+    /// or once one is opened for it.
+    fn open_through_tab(&mut self, url: &str, to: For, named: bool) {
+        if named {
+            return self.open_for(url, &to);
+        }
+        let payload = json!({"threadId": to.thread, "url": url});
+        let then = Then::OpenFor {
+            generation: self.generation,
+            url: url.to_owned(),
+            to: to.clone(),
+        };
+        self.call_at(to.environment, "preview.open", payload, then);
+    }
+
+    /// Whether `url` opens through a forward: a loopback address for a
+    /// thread on another MC of the cluster than the connected one, which
+    /// runs here. Any other opens as it is: one on the connected MC, or on
+    /// none the cluster knows, and any when the connected MC is on another
+    /// machine, where its forward would listen.
+    fn forwards(&self, url: &str, to: &For) -> bool {
+        url::Url::parse(url).is_ok_and(|url| loopback(&url))
+            && !to.thread.is_empty()
+            && !to.mc.is_empty()
+            && !self.connected.is_empty()
+            && to.environment != self.connected
+            && self.connected_here
+    }
+
+    fn open_for(&mut self, url: &str, to: &For) {
+        if !self.forwards(url, to) {
+            self.effects.push(Effect::Open(url.to_owned()));
+            return;
+        }
+        let Ok(parsed) = url::Url::parse(url) else {
+            return;
+        };
+        let port = port_of(&parsed);
+        let payload = json!({"environmentId": to.environment, "threadId": to.thread, "port": port});
+        let then = Then::Forward {
+            url: url.to_owned(),
+            port,
+        };
+        let connected = self.connected.clone();
+        self.call_at(connected, "preview.forward", payload, then);
     }
 
     pub fn close(&mut self, tab: &str) {
@@ -514,7 +696,11 @@ impl Previews {
                     Ok(_) => {}
                 }
             }
-            Then::Navigate { generation, url } => {
+            Then::Navigate {
+                generation,
+                url,
+                to,
+            } => {
                 let snapshot = match result {
                     Err(error) => return self.notify("Could not open the page", error),
                     Ok(snapshot) => snapshot,
@@ -529,8 +715,52 @@ impl Previews {
                 self.recents = recents.clone();
                 self.effects.push(Effect::Remember(recents));
                 self.notes.push(PreviewNote::Suggestions);
-                self.effects.push(Effect::Open(url));
+                // The thread it was asked for, though another may show by now.
+                self.open_for(&url, &to);
             }
+            Then::ListFor { url, to } => match result {
+                Err(error) => self.notify("Could not open the page", error),
+                Ok(list) => {
+                    let tabs = list
+                        .get("sessions")
+                        .and_then(Json::as_array)
+                        .map_or(&[][..], Vec::as_slice);
+                    let named = self.port_named(&url, tabs);
+                    self.open_through_tab(&url, to, named);
+                }
+            },
+            Then::OpenFor {
+                generation,
+                url,
+                to,
+            } => {
+                let snapshot = match result {
+                    Err(error) => return self.notify("Could not open the page", error),
+                    Ok(snapshot) => snapshot,
+                };
+                // A row only for the thread shown: the list this follows may
+                // have come after the user went to another.
+                if generation == self.generation
+                    && to.environment == self.environment
+                    && to.thread == self.thread
+                    && snapshot.is_object()
+                    && self.status == "ready"
+                {
+                    self.upsert(snapshot);
+                }
+                self.open_for(&url, &to);
+            }
+            Then::Forward { url, port } => match result {
+                Err(error) => self.notify("Could not open the page", error),
+                Ok(forward) => {
+                    let port = forward
+                        .get("port")
+                        .and_then(Json::as_u64)
+                        .and_then(|p| u16::try_from(p).ok())
+                        .unwrap_or(port);
+                    self.effects.push(Effect::Open(forwarded(&url, port)));
+                }
+            },
             Then::Close { row, tab } => {
                 // Another thread, opened since, forgot what it was closing,
                 // or the MC closed it anyway.
@@ -778,6 +1008,8 @@ pub type Open = Rc<dyn Fn(&Engine, &str)>;
 /// The pages this device opened last, newest first: read, and written.
 pub type ReadRecents = Rc<dyn Fn(&Engine) -> Vec<String>>;
 pub type WriteRecents = Rc<dyn Fn(&Engine, &[String])>;
+/// Whether the MC the shell is connected to runs on this machine.
+pub type Here = Rc<dyn Fn(&Engine) -> bool>;
 
 struct Inner {
     rows: Rc<ListRows<Previews>>,
@@ -785,6 +1017,8 @@ struct Inner {
     notify: Notify,
     open: Open,
     recents: RefCell<Option<(ReadRecents, WriteRecents)>>,
+    /// Without one every MC counts as here.
+    here: RefCell<Option<Here>>,
     /// localServers, then preview.
     subscriptions: RefCell<Option<(SubId, SubId)>>,
 }
@@ -850,6 +1084,7 @@ impl ThreadPreviews {
             notify: Rc::new(notify),
             open: Rc::new(open),
             recents: RefCell::new(None),
+            here: RefCell::new(None),
             subscriptions: RefCell::new(None),
         });
         let previews = ThreadPreviews {
@@ -883,6 +1118,18 @@ impl ThreadPreviews {
         }
     }
 
+    /// Only a connected MC on this machine forwards to this machine's
+    /// loopback: the right panel passes whether it runs here.
+    pub fn set_connected_here(
+        engine: &Engine,
+        obj: ObjectId,
+        here: impl Fn(&Engine) -> bool + 'static,
+    ) {
+        if let Some(inner) = inner_of(engine, obj) {
+            *inner.here.borrow_mut() = Some(Rc::new(here));
+        }
+    }
+
     /// Runs `f` on the previews of `obj`, then tells the views and the
     /// properties what it changed and asks the MC what it said to. None when
     /// `obj` is not live.
@@ -898,8 +1145,12 @@ impl ThreadPreviews {
             .as_ref()
             .map(|(read, _)| read.clone());
         let recents = recents.map(|read| read(engine)).unwrap_or_default();
+        let connected = inner.mc.environment();
+        let here = inner.here.borrow().clone();
+        let here = here.is_none_or(|here| here(engine));
         let (result, notes, effects) = inner.rows.update(engine, |p| {
             p.set_recents(recents);
+            p.set_connection(&connected, here);
             let result = f(p);
             (result, p.take_notes(), p.take_effects())
         });
@@ -1053,6 +1304,14 @@ impl ThreadPreviews {
     #[qml(invokable)]
     fn navigate(cx: &Cx, tab_id: Atom, url: Atom) {
         ThreadPreviews::update(cx.engine, cx.this, |p| p.navigate(&tab_id, &url));
+    }
+
+    /// Opens `url` in the browser, for the thread: through the connected
+    /// MC's forward when it is a dev server on the thread's machine, another
+    /// MC's.
+    #[qml(invokable)]
+    fn open_address(cx: &Cx, url: Atom) {
+        ThreadPreviews::update(cx.engine, cx.this, |p| p.open_address(&url));
     }
 }
 

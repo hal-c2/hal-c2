@@ -41,6 +41,7 @@ use crate::json::{self, Json};
 use crate::keybindings::command_label;
 use crate::sidebar_model;
 use crate::store;
+use crate::this_machine;
 use crate::thread_view::agents::AgentsModel;
 use crate::thread_view::diff::DiffModel;
 use crate::thread_view::previews::ThreadPreviews;
@@ -355,6 +356,7 @@ impl Controller for RightPanel {
             );
         }
         if let Some(previews) = previews {
+            ThreadPreviews::set_connected_here(engine, previews, this_machine::mc_here);
             // The pages this device opened from a browser tab, kept with its
             // preferences.
             ThreadPreviews::set_recents(
@@ -554,6 +556,8 @@ impl Controller for RightPanel {
             }
             "rightPanel.openThread" => self.open_thread(engine, &field("threadKey")),
             "panel.open" => self.open(engine, &field("tab"), payload),
+            // A web address in the conversation (ThreadView's openLink).
+            "thread.openAddress" => self.open_address(engine, &field("url")),
             _ => return false,
         }
         true
@@ -1171,6 +1175,18 @@ impl RightPanel {
         controller::with::<Navigation, _>(engine, |n, e| n.open(e, route));
     }
 
+    /// A dev server on the thread's machine opens through the connected
+    /// MC's forward to it (`Previews::open_address`); anything else as it
+    /// is.
+    pub fn open_address(&mut self, engine: &Engine, url: &str) {
+        match self.previews.filter(|_| self.on_thread) {
+            Some(previews) => {
+                ThreadPreviews::update(engine, previews, |p| p.open_address(url));
+            }
+            None => Bridge::of(engine).open_external(engine, url),
+        }
+    }
+
     /// A link in the conversation: opening and copying it. A path opens in
     /// the files.
     fn link_menu(&mut self, engine: &Engine, payload: &Json) {
@@ -1222,7 +1238,10 @@ impl RightPanel {
             m.open(e, x, y, items, move |e, id| {
                 let bridge = Bridge::of(e);
                 match (id, &file) {
-                    ("open", None) => bridge.open_external(e, &url),
+                    ("open", None) => {
+                        let url = url.clone();
+                        later(e, &me, move |p, e| p.open_address(e, &url));
+                    }
                     ("open", Some((path, line))) => {
                         let options = json!({"path": path, "line": line});
                         later(e, &me, move |p, e| p.open(e, "files", &options));

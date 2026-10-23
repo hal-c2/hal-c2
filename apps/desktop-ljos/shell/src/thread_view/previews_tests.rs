@@ -307,6 +307,160 @@ fn navigating_remembers_the_page_and_opens_it() {
     assert!(matches!(&p.take_effects()[..], [Effect::Notify { .. }]));
 }
 
+/// Shown, thread t2 on the cluster's other MC (env-b), listed with `tabs`.
+fn remote_shown(tabs: Vec<Json>) -> Previews {
+    let mut p = Previews::new();
+    p.set_connection(ENVIRONMENT, true);
+    p.set_thread("env-b", "t2", "mc-b");
+    p.set_active(true);
+    let list_call = held(&mut p, "preview.list");
+    p.answer(list_call, Ok(list(tabs, 1, "epoch-1")));
+    p
+}
+
+fn remote_tab(id: &str, url: &str) -> Json {
+    json!({"threadId": "t2", "tabId": id, "navStatus": {"_tag": "Success", "url": url}})
+}
+
+/// The one call the previews made: (environment, method, payload, then).
+fn only_call(p: &mut Previews) -> (String, &'static str, Json, Then) {
+    let effects = p.take_effects();
+    match &effects[..] {
+        [
+            Effect::Call {
+                environment,
+                method,
+                payload,
+                then,
+            },
+        ] => (environment.clone(), method, payload.clone(), then.clone()),
+        _ => panic!("one call, not {effects:?}"),
+    }
+}
+
+#[test]
+fn a_dev_server_on_another_mc_opens_through_the_connected_mcs_forward() {
+    let mut p = remote_shown(vec![remote_tab("tab-1", "http://localhost:5173/")]);
+    // A tab names the port: the connected MC forwards it at once, the
+    // address kept but for its port, and 127.0.0.1 for an address by number.
+    p.open_address("http://127.0.0.1:5173/app?q=1#top");
+    let (environment, method, payload, then) = only_call(&mut p);
+    assert_eq!(
+        (environment.as_str(), method),
+        (ENVIRONMENT, "preview.forward")
+    );
+    assert_eq!(
+        payload,
+        json!({"environmentId": "env-b", "threadId": "t2", "port": 5173})
+    );
+    p.answer(then, Ok(json!({"port": 15173})));
+    assert_eq!(
+        p.take_effects(),
+        [Effect::Open("http://127.0.0.1:15173/app?q=1#top".into())]
+    );
+    // The tab's own page, the same way.
+    p.open("tab-1");
+    let (_, method, _, then) = only_call(&mut p);
+    assert_eq!(method, "preview.forward");
+    p.answer(then, Ok(json!({"port": 15173})));
+    assert_eq!(
+        p.take_effects(),
+        [Effect::Open("http://localhost:15173/".into())]
+    );
+    // No tab names the port: the thread's MC opens one for it first.
+    p.open_address("http://[::1]:3000/");
+    let (environment, method, payload, then) = only_call(&mut p);
+    assert_eq!((environment.as_str(), method), ("env-b", "preview.open"));
+    assert_eq!(
+        payload,
+        json!({"threadId": "t2", "url": "http://[::1]:3000/"})
+    );
+    p.answer(then, Ok(remote_tab("tab-2", "http://[::1]:3000/")));
+    assert_eq!(tab_ids(&p), ["tab-1", "tab-2"]);
+    let (_, method, _, then) = only_call(&mut p);
+    assert_eq!(method, "preview.forward");
+    // A forward that answers no port of its own is at the same one.
+    p.answer(then, Ok(json!({})));
+    assert_eq!(
+        p.take_effects(),
+        [Effect::Open("http://127.0.0.1:3000/".into())]
+    );
+    // A refused forward says why.
+    p.open_address("http://localhost:5173/");
+    let (_, _, _, then) = only_call(&mut p);
+    p.answer(then, Err("no grant".into()));
+    assert_eq!(
+        p.take_effects(),
+        [Effect::Notify {
+            title: "Could not open the page",
+            description: "no grant".into()
+        }]
+    );
+}
+
+#[test]
+fn a_link_while_the_tabs_are_hidden_asks_the_mc_which_there_are() {
+    let mut p = Previews::new();
+    p.set_connection(ENVIRONMENT, true);
+    p.set_thread("env-b", "t2", "mc-b");
+    p.open_address("http://localhost:5173/");
+    let (environment, method, _, then) = only_call(&mut p);
+    assert_eq!((environment.as_str(), method), ("env-b", "preview.list"));
+    let tabs = vec![remote_tab("tab-1", "http://localhost:5173/")];
+    p.answer(then, Ok(list(tabs, 1, "epoch-1")));
+    let (_, method, _, _) = only_call(&mut p);
+    assert_eq!(method, "preview.forward");
+    // Hidden, the list adds no rows.
+    assert!(tab_ids(&p).is_empty());
+}
+
+#[test]
+fn other_addresses_open_as_they_are() {
+    let opened = |p: &mut Previews, url: &str| {
+        p.open_address(url);
+        assert_eq!(p.take_effects(), [Effect::Open(url.to_owned())], "{url}");
+    };
+    // Not a dev server's loopback address.
+    let mut p = remote_shown(vec![]);
+    opened(&mut p, "https://example.com/");
+    opened(&mut p, "http://192.168.1.20:3000/");
+    opened(&mut p, "localhost:3000");
+    // A connected MC on another machine: its forward would listen there.
+    p.set_connection(ENVIRONMENT, false);
+    opened(&mut p, "http://localhost:3000/");
+    // A thread on the connected MC.
+    let (mut p, list_call) = show();
+    p.set_connection(ENVIRONMENT, true);
+    p.answer(list_call, Ok(list(vec![], 1, "epoch-1")));
+    opened(&mut p, "http://localhost:3000/");
+    // A thread on no MC the cluster knows.
+    let mut p = Previews::new();
+    p.set_connection(ENVIRONMENT, true);
+    p.set_thread("env-b", "t2", "");
+    opened(&mut p, "http://localhost:3000/");
+}
+
+// A link opened for a thread on another MC gets a tab there first; when the
+// answers came after the user had gone to another thread, that tab showed
+// in the other thread's list.
+#[test]
+fn a_link_for_a_thread_left_behind_adds_no_tab_to_the_next_one() {
+    let mut p = Previews::new();
+    p.set_connection(ENVIRONMENT, true);
+    p.set_thread("env-b", "t2", "mc-b");
+    p.open_address("http://localhost:3000/");
+    let remote_list = held(&mut p, "preview.list");
+    p.set_thread(ENVIRONMENT, THREAD, MC);
+    p.set_active(true);
+    let list_call = held(&mut p, "preview.list");
+    p.answer(list_call, Ok(list(vec![], 1, "epoch-1")));
+    p.answer(remote_list, Ok(list(vec![], 1, "epoch-1")));
+    let open = held(&mut p, "preview.open");
+    let opened = json!({"threadId": "t2", "tabId": "tab-9", "navStatus": {"_tag": "Loading", "url": "http://localhost:3000/"}});
+    p.answer(open, Ok(opened));
+    assert!(tab_ids(&p).is_empty());
+}
+
 #[test]
 fn web_addresses_are_read_as_a_browser_would() {
     assert_eq!(
@@ -329,12 +483,64 @@ fn web_addresses_are_read_as_a_browser_would() {
 // asked for or any time before it answers: one answered late is older than
 // the events sent since, one read late newer than events the client already
 // has. The user switches threads, hides and shows the tab, reloads, closes
-// tabs and opens new ones; the MC can restart.
+// tabs and opens new ones; the MC can restart. t2 lives on another MC of the
+// cluster, so a link the user opens for it (open_address) goes through a tab
+// of its and the connected MC's forward (`preview.forward`, held too),
+// unless the connected MC is on another machine.
 //
 // After each step the rows are all of the thread shown, each once, and the
 // row signals keep a view in step; a row that stayed the same is not
 // redrawn, and nothing resets for no change. Once every answer is in, a
-// shown list that loaded is the MC's tabs of the thread.
+// shown list that loaded is the MC's tabs of the thread. Every page the
+// browser opens is a link the user opened, at its address or at the forward
+// of a port the thread's MC granted; once every answer is in, each link has
+// opened or said why not.
+
+const REMOTE: &str = "env-b";
+const REMOTE_MC: &str = "mc-b";
+const LINKS: &[&str] = &[
+    "http://localhost:3000/",
+    "http://127.0.0.1:5173/app?q=1#top",
+    "http://[::1]:3000/",
+    "https://example.com/",
+];
+
+/// t2 is on the cluster's other MC.
+fn environment_of(thread: &str) -> &'static str {
+    if thread == "t2" { REMOTE } else { ENVIRONMENT }
+}
+
+fn mc_of(thread: &str) -> &'static str {
+    if thread == "t2" { REMOTE_MC } else { MC }
+}
+
+fn sim_port_of(url: &url::Url) -> u16 {
+    url.port()
+        .unwrap_or(if url.scheme() == "https" { 443 } else { 80 })
+}
+
+fn sim_loopback(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(host)) => host == "localhost",
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+/// Where the connected MC forwards a port: elsewhere, as when the port is
+/// taken here.
+fn forward_port_of(port: u16) -> u16 {
+    port + 10000
+}
+
+/// A link the user opened for a thread, not yet in the browser; `away` once
+/// the connected MC was not on this machine meanwhile.
+struct Link {
+    thread: String,
+    url: String,
+    away: bool,
+}
 
 const THREADS: &[&str] = &["t1", "t2"];
 const TABS: &[&str] = &["tab-1", "tab-2", "tab-3", "tab-4"];
@@ -343,6 +549,7 @@ const MAX_TABS: usize = 6;
 
 /// A call the MC holds, and for a list what it read when asked.
 struct Held {
+    environment: String,
     method: &'static str,
     payload: Json,
     then: Then,
@@ -362,11 +569,23 @@ struct Sim {
     // What the user chose: the thread shown and whether the tab is.
     thread: String,
     active: bool,
+    /// Whether the connected MC is on this machine.
+    here: bool,
+    links: Vec<Link>,
+    /// The forwards granted: (thread, port).
+    granted: Vec<(String, u16)>,
+    /// Links that said why they did not open; calls sent to an MC other
+    /// than the thread's (or a forward to one other than the connected
+    /// one); pages opened for no link.
+    link_errors: usize,
+    misrouted: Vec<String>,
+    stray: Vec<String>,
 }
 
 impl Sim {
     fn new() -> Sim {
         let mut previews = Previews::new();
+        previews.set_connection(ENVIRONMENT, true);
         let mirror = Mirror::of(&mut previews);
         Sim {
             previews,
@@ -380,6 +599,12 @@ impl Sim {
             held: Vec::new(),
             thread: String::new(),
             active: false,
+            here: true,
+            links: Vec::new(),
+            granted: Vec::new(),
+            link_errors: 0,
+            misrouted: Vec::new(),
+            stray: Vec::new(),
         }
     }
 
@@ -398,7 +623,7 @@ impl Sim {
             for effect in effects {
                 match effect {
                     Effect::Follow(mc) => {
-                        assert_eq!(mc, MC);
+                        assert_eq!(mc, mc_of(&self.thread));
                         self.following = true;
                     }
                     Effect::Unfollow => self.following = false,
@@ -408,20 +633,26 @@ impl Sim {
                         then,
                         environment,
                     } => {
-                        assert_eq!(environment, ENVIRONMENT);
                         let list = if method == "preview.list" {
                             self.list(&payload)
                         } else {
                             Json::Null
                         };
                         self.held.push(Held {
+                            environment,
                             method,
                             payload,
                             then,
                             list,
                         });
                     }
-                    Effect::Notify { .. } | Effect::Open(_) | Effect::Remember(_) => {}
+                    Effect::Notify { title, .. } => {
+                        if title == "Could not open the page" {
+                            self.link_errors += 1;
+                        }
+                    }
+                    Effect::Open(url) => self.browsed(&url),
+                    Effect::Remember(_) => {}
                 }
             }
         }
@@ -471,6 +702,50 @@ impl Sim {
         tab
     }
 
+    /// Whether one of the thread's tabs on the MC is at a loopback address
+    /// at the port, which preview_forward.ex's grant asks.
+    fn tab_at(&self, thread: &str, port: u16) -> bool {
+        self.tabs.iter().any(|tab| {
+            tab["threadId"] == thread
+                && url::Url::parse(tab["navStatus"]["url"].as_str().unwrap_or(""))
+                    .is_ok_and(|at| sim_loopback(&at) && sim_port_of(&at) == port)
+        })
+    }
+
+    /// The browser opens `url`: the first waiting link it is, as it is or
+    /// through a forward granted for its thread at its port, at 127.0.0.1
+    /// for an address by number.
+    fn browsed(&mut self, url: &str) {
+        let fits = |link: &Link| {
+            let remote = environment_of(&link.thread) != ENVIRONMENT;
+            let parsed = url::Url::parse(&link.url).ok();
+            let loopback = parsed.as_ref().is_some_and(sim_loopback);
+            if url == link.url && (!loopback || !remote || link.away) {
+                return true;
+            }
+            let Some(mut forwarded) = parsed.filter(|_| remote && loopback) else {
+                return false;
+            };
+            let port = sim_port_of(&forwarded);
+            let by_number = !matches!(forwarded.host(), Some(url::Host::Domain(_)));
+            forwarded.set_port(Some(forward_port_of(port))).unwrap();
+            if by_number {
+                forwarded.set_host(Some("127.0.0.1")).unwrap();
+            }
+            forwarded.as_str() == url
+                && self
+                    .granted
+                    .iter()
+                    .any(|(thread, at)| *thread == link.thread && *at == port)
+        };
+        match self.links.iter().position(fits) {
+            Some(at) => {
+                self.links.remove(at);
+            }
+            None => self.stray.push(url.to_owned()),
+        }
+    }
+
     /// Answers the held call, or refuses it; a list `fresh` is read only
     /// now.
     fn answer(&mut self, at: usize, ok: bool, fresh: bool) {
@@ -478,7 +753,25 @@ impl Sim {
         if fresh && call.method == "preview.list" {
             call.list = self.list(&call.payload);
         }
-        let result = if !ok || (call.method == "preview.open" && self.tabs.len() >= MAX_TABS) {
+        let thread = call.payload["threadId"].as_str().unwrap_or("").to_owned();
+        let routed = if call.method == "preview.forward" {
+            call.environment == ENVIRONMENT
+                && call.payload["environmentId"] == environment_of(&thread)
+        } else {
+            call.environment == environment_of(&thread)
+        };
+        if !routed {
+            self.misrouted
+                .push(format!("{} {thread} at {}", call.method, call.environment));
+        }
+        let port = call.payload["port"]
+            .as_u64()
+            .and_then(|p| u16::try_from(p).ok())
+            .unwrap_or(0);
+        let result = if !ok
+            || (call.method == "preview.open" && self.tabs.len() >= MAX_TABS)
+            || (call.method == "preview.forward" && !self.tab_at(&thread, port))
+        {
             Err("no".to_owned())
         } else if call.method == "preview.list" {
             Ok(call.list)
@@ -488,9 +781,12 @@ impl Sim {
                 self.emit(&tab, "closed", json!({}));
             }
             Ok(Json::Null)
+        } else if call.method == "preview.forward" {
+            self.granted.push((thread, port));
+            Ok(json!({"port": forward_port_of(port)}))
         } else {
-            let thread = call.payload["threadId"].as_str().unwrap().to_owned();
-            Ok(self.new_tab(&thread, ""))
+            let url = call.payload["url"].as_str().unwrap_or("").to_owned();
+            Ok(self.new_tab(&thread, &url))
         };
         self.previews.answer(call.then, result);
         self.pump();
@@ -504,6 +800,12 @@ enum Action {
     Reload,
     UserClose(&'static str),
     UserNewTab,
+    /// The user opens a link for the thread shown, from a reply or the
+    /// address bar.
+    OpenLink(&'static str),
+    /// The connected MC is on this machine, or on another (as one reached
+    /// over the network).
+    SetHere(bool),
     /// The MC answers one held call (the `at`th, wrapping), or refuses it;
     /// a list read when asked, or only now.
     Answer(usize, bool, bool),
@@ -535,6 +837,8 @@ fn action() -> impl Strategy<Value = Action> {
         1 => Just(Action::Reload),
         1 => tab().prop_map(Action::UserClose),
         1 => Just(Action::UserNewTab),
+        2 => prop::sample::select(LINKS).prop_map(Action::OpenLink),
+        1 => any::<bool>().prop_map(Action::SetHere),
         2 => (0..4usize, prop::bool::weighted(0.8), any::<bool>())
             .prop_map(|(at, ok, fresh)| Action::Answer(at, ok, fresh)),
         1 => Just(Action::AnswerAll),
@@ -578,7 +882,8 @@ fn step(sim: &mut Sim, action: &Action) -> Result<(), TestCaseError> {
     match action {
         Action::SetThread(thread) => {
             (*thread).clone_into(&mut sim.thread);
-            sim.previews.set_thread(ENVIRONMENT, thread, MC);
+            sim.previews
+                .set_thread(environment_of(thread), thread, mc_of(thread));
         }
         Action::SetActive(active) => {
             sim.active = *active;
@@ -587,6 +892,25 @@ fn step(sim: &mut Sim, action: &Action) -> Result<(), TestCaseError> {
         Action::Reload => sim.previews.reload(),
         Action::UserClose(tab) => sim.previews.close(tab),
         Action::UserNewTab => sim.previews.new_tab(),
+        Action::OpenLink(url) => {
+            if !sim.thread.is_empty() {
+                sim.links.push(Link {
+                    thread: sim.thread.clone(),
+                    url: (*url).to_owned(),
+                    away: !sim.here,
+                });
+                sim.previews.open_address(url);
+            }
+        }
+        Action::SetHere(here) => {
+            sim.here = *here;
+            sim.previews.set_connection(ENVIRONMENT, *here);
+            if !here {
+                for link in &mut sim.links {
+                    link.away = true;
+                }
+            }
+        }
         Action::Answer(at, ok, fresh) => {
             if !sim.held.is_empty() {
                 let at = at % sim.held.len();
@@ -709,6 +1033,14 @@ fn step(sim: &mut Sim, action: &Action) -> Result<(), TestCaseError> {
     }
     prop_assert_eq!(sim.previews.empty_tab(), empty.as_str());
     prop_assert_eq!(sim.previews.count(), now.len());
+    prop_assert!(sim.misrouted.is_empty(), "misrouted {:?}", sim.misrouted);
+    prop_assert!(sim.stray.is_empty(), "opened for no link {:?}", sim.stray);
+    // Once nothing is held, every link opened or said why not.
+    if sim.held.is_empty() {
+        prop_assert_eq!(sim.links.len(), sim.link_errors);
+        sim.links.clear();
+        sim.link_errors = 0;
+    }
     if !sim.held.is_empty() || !sim.active || sim.thread.is_empty() {
         return Ok(());
     }
@@ -730,7 +1062,7 @@ proptest! {
     #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
 
     /// The previews list is the MC's tabs of the thread shown, redrawn only
-    /// where they changed.
+    /// where they changed, and a link opens where it should.
     #[test]
     fn the_previews_are_the_mcs_tabs_of_the_thread_shown(
         actions in prop::collection::vec(action(), 1..50)
