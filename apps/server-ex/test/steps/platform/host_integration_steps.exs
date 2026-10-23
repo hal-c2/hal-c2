@@ -652,6 +652,13 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     # gh in a directory with a space, as under a home or install path that has one.
     dir = Mc.tmp_dir(context.mc, "gh cli")
     World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
+    # The host has no SSH agent unless a step gives it one (the developer's has), and
+    # git none of the developer's own config.
+    World.put_os_env("SSH_AUTH_SOCK", nil)
+    user_config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+    File.write!(user_config, "")
+    World.put_os_env("GIT_CONFIG_GLOBAL", user_config)
+    World.put_os_env("GIT_CONFIG_NOSYSTEM", "1")
     gh = Path.join(dir, "gh")
 
     File.write!(gh, """
@@ -669,15 +676,88 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     Map.put(context, :gh_config, config)
   end
 
+  # A stand-in for ssh: what `ssh -T git@github.com` gets from GitHub, as the row names.
+  step ~r/^an SSH agent runs on the host and SSH to GitHub (?<outcome>is answered|is refused|cannot reach it|hangs)$/,
+       %{args: [outcome]} = context do
+    dir = Mc.tmp_dir(context.mc, "ssh")
+    World.put_os_env("PATH", dir <> ":" <> System.get_env("PATH"))
+    World.put_os_env("SSH_AUTH_SOCK", Path.join(dir, "agent.sock"))
+    pid_file = Path.join(dir, "ssh.pid")
+
+    # GitHub greets a key it knows and exits 1; ssh exits 255 when it fails.
+    script =
+      case outcome do
+        "is answered" ->
+          "echo \"Hi acme! You've successfully authenticated, but GitHub does not provide shell access.\" >&2\nexit 1"
+
+        "is refused" ->
+          "echo 'git@github.com: Permission denied (publickey).' >&2\nexit 255"
+
+        "cannot reach it" ->
+          "echo 'ssh: Could not resolve hostname github.com: Name or service not known' >&2\nexit 255"
+
+        "hangs" ->
+          "echo $$ > '#{pid_file}'\nexec sleep 600"
+      end
+
+    File.write!(Path.join(dir, "ssh"), "#!/bin/sh\n#{script}\n")
+    File.chmod!(Path.join(dir, "ssh"), 0o755)
+    Map.put(context, :ssh_pid_file, pid_file)
+  end
+
+  step ~r/^SSH is given (?<ms>\d+) ms to answer$/, %{args: [ms]} = context do
+    World.put_app_env(:github_ssh_timeout, String.to_integer(ms))
+    context
+  end
+
+  step "the user's own git config sends \"https://github.com/\" to SSH", context do
+    config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+
+    File.write!(config, """
+    [url "git@github.com:"]
+    \tinsteadOf = https://github.com/
+    \tpushInsteadOf = https://github.com/
+    """)
+
+    World.put_os_env("GIT_CONFIG_GLOBAL", config)
+    context
+  end
+
+  step ~r/^the user's own git config has an? (?<rule>insteadOf|pushInsteadOf) rule sending "(?<from>[^"]+)" to "(?<to>[^"]+)"$/,
+       %{args: [rule, from, to]} = context do
+    config = Path.join(Mc.tmp_dir(context.mc, "user-git"), "config")
+    File.write!(config, "[url \"#{to}\"]\n\t#{rule} = #{from}\n")
+    World.put_os_env("GIT_CONFIG_GLOBAL", config)
+    context
+  end
+
+  # Without waiting for SSH, as the upgrader at boot.
+  step "the MC begins setting up the git it starts", context do
+    set_up_git(context)
+  end
+
   step "the MC sets up the git it starts", context do
-    before = for {"GIT_CONFIG_" <> _ = name, value} <- System.get_env(), do: {name, value}
+    context = set_up_git(context)
 
-    ExUnit.Callbacks.on_exit(fn ->
-      for {"GIT_CONFIG_" <> _ = name, _} <- System.get_env(), do: System.delete_env(name)
-      System.put_env(before)
-    end)
+    if pid = context[:asking] do
+      ref = Process.monitor(pid)
+      # Asking ends once git has the answer, or at the time SSH is given.
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 30_000
+    end
 
-    :ok = HalC2.Git.use_gh_for_github()
+    context
+  end
+
+  step "the MC is still asking whether SSH answers for GitHub", context do
+    assert Process.alive?(context.asking)
+    context
+  end
+
+  step "the ssh the MC started has stopped", context do
+    os_pid = context.ssh_pid_file |> File.read!() |> String.trim()
+    # Exile's watcher stops the program after its owner dies, and says nothing when it
+    # has: this waits for that, never longer than its signals take with room to spare.
+    assert stopped_within?(os_pid, 250)
     context
   end
 
@@ -686,13 +766,15 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     Map.put(context, :agent_env, for({"GIT_CONFIG_" <> _ = n, v} <- System.get_env(), do: {n, v}))
   end
 
+  step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out)$/,
+       %{args: [change]} = context do
+    sign_in_or_out(context, change)
+    context
+  end
+
   step ~r/^the GitHub CLI (?<change>signs in to github.com|signs out) and the MC is hot-updated$/,
        %{args: [change]} = context do
-    hosts = Path.join(context.gh_config, "hosts.yml")
-
-    if change == "signs out",
-      do: File.rm!(hosts),
-      else: File.write!(hosts, "github.com:\n    user: acme\n")
+    sign_in_or_out(context, change)
 
     # As an MC that runs as one: a test MC leaves its host alone otherwise.
     World.put_app_env(:start_mc, true)
@@ -723,6 +805,24 @@ defmodule HalC2.Steps.Platform.HostIntegration do
     context
   end
 
+  step ~r/^git fetches "(?<url>[^"]+)" from "(?<expected>[^"]+)"$/,
+       %{args: [url, expected]} = context do
+    {fetched, 0} = System.cmd("git", ["ls-remote", "--get-url", url], cd: context.mc.home)
+    assert String.trim(fetched) == expected
+    context
+  end
+
+  step ~r/^git pushes to "(?<url>[^"]+)" over HTTPS$/, %{args: [url]} = context do
+    assert pushes_to(context, url) == url
+    context
+  end
+
+  step ~r/^git pushes "(?<url>[^"]+)" to "(?<expected>[^"]+)"$/,
+       %{args: [url, expected]} = context do
+    assert pushes_to(context, url) == expected
+    context
+  end
+
   step "the GitHub CLI answers git's request for a GitHub credential", context do
     {answer, 0} =
       System.cmd(
@@ -734,5 +834,63 @@ defmodule HalC2.Steps.Platform.HostIntegration do
 
     assert answer =~ "password=from-gh"
     context
+  end
+
+  defp sign_in_or_out(context, change) do
+    hosts = Path.join(context.gh_config, "hosts.yml")
+
+    if change == "signs out",
+      do: File.rm!(hosts),
+      else: File.write!(hosts, "github.com:\n    user: acme\n")
+  end
+
+  defp pushes_to(context, url) do
+    repo = Mc.tmp_dir(context.mc, "push")
+    {_, 0} = System.cmd("git", ["init", "-q"], cd: repo)
+    {_, 0} = System.cmd("git", ["remote", "add", "origin", url], cd: repo)
+    {pushed, 0} = System.cmd("git", ["remote", "get-url", "--push", "origin"], cd: repo)
+    String.trim(pushed)
+  end
+
+  # Gone, or a zombie no one has reaped yet: either way it runs no more.
+  # `ps` rather than /proc, so it holds on macOS too.
+  defp stopped?(os_pid) do
+    case System.cmd("ps", ["-o", "stat=", "-p", to_string(os_pid)], stderr_to_stdout: true) do
+      {stat, 0} -> String.trim(stat) |> String.starts_with?("Z")
+      {_, _} -> true
+    end
+  end
+
+  defp set_up_git(context) do
+    before = for {"GIT_CONFIG_" <> _ = name, value} <- System.get_env(), do: {name, value}
+
+    ExUnit.Callbacks.on_exit(fn ->
+      for {"GIT_CONFIG_" <> _ = name, _} <- System.get_env(), do: System.delete_env(name)
+      System.put_env(before)
+    end)
+
+    case HalC2.Git.use_gh_for_github() do
+      :ok ->
+        context
+
+      {:asking, pid} ->
+        # Stopped with the scenario, and its ssh with it, so none outlives the run.
+        ExUnit.Callbacks.on_exit(fn ->
+          ref = Process.monitor(pid)
+          Process.exit(pid, :kill)
+          receive do: ({:DOWN, ^ref, _, _, _} -> :ok)
+
+          with {:ok, os_pid} <- File.read(context[:ssh_pid_file] || ""),
+               do: stopped_within?(String.trim(os_pid), 250)
+        end)
+
+        Map.put(context, :asking, pid)
+    end
+  end
+
+  defp stopped_within?(_os_pid, 0), do: false
+
+  defp stopped_within?(os_pid, tries) do
+    stopped?(os_pid) || (Process.sleep(20) == :ok and stopped_within?(os_pid, tries - 1))
   end
 end

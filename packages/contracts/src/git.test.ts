@@ -8,6 +8,7 @@ import {
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
+  GitActionProgressEvent,
 } from "./git.ts";
 
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
@@ -165,5 +166,35 @@ describe("GitRunStackedActionResult", () => {
     if (parsed.toast.cta.kind === "run_action") {
       expect(parsed.toast.cta.action.kind).toBe("create_pr");
     }
+  });
+});
+
+describe("GitActionProgressEvent", () => {
+  const decode = Schema.decodeUnknownSync(GitActionProgressEvent);
+  const failed = {
+    actionId: "a1",
+    cwd: "/repo",
+    action: "push",
+    kind: "action_failed",
+    phase: "push",
+  };
+
+  it("carries what the user can do about a failure", () => {
+    const parsed = decode({
+      ...failed,
+      message: "git push failed: refused",
+      cta: { kind: "copy_command", label: "Copy command", command: "gh auth refresh -s workflow" },
+    });
+
+    expect(parsed.kind === "action_failed" && parsed.cta).toEqual({
+      kind: "copy_command",
+      label: "Copy command",
+      command: "gh auth refresh -s workflow",
+    });
+  });
+
+  it("accepts a failure with nothing to offer", () => {
+    const parsed = decode({ ...failed, message: "git push failed: refused" });
+    expect(parsed.kind === "action_failed" && parsed.cta).toBeUndefined();
   });
 });

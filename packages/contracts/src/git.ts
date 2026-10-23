@@ -452,11 +452,26 @@ const GitActionFinishedEvent = Schema.Struct({
   kind: Schema.Literal("action_finished"),
   result: GitRunStackedActionResult,
 });
+/** What the user can do about a failure with a known remedy: open where it is fixed, or copy the command that fixes it. */
+export const GitActionFailureCta = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("open_url"),
+    label: TrimmedNonEmptyStringSchema,
+    url: Schema.String,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("copy_command"),
+    label: TrimmedNonEmptyStringSchema,
+    command: TrimmedNonEmptyStringSchema,
+  }),
+]);
+export type GitActionFailureCta = typeof GitActionFailureCta.Type;
 const GitActionFailedEvent = Schema.Struct({
   ...GitActionProgressBase.fields,
   kind: Schema.Literal("action_failed"),
   phase: Schema.NullOr(GitActionProgressPhase),
   message: TrimmedNonEmptyStringSchema,
+  cta: Schema.optional(GitActionFailureCta),
 });
 
 export const GitActionProgressEvent = Schema.Union([

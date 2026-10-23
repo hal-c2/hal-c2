@@ -3,6 +3,7 @@ import {
   type ClusterMember,
   type ClusterStatus,
   DEFAULT_SERVER_SETTINGS,
+  type GitActionFailureCta,
   type GitRunStackedActionResult,
   type GitStackedAction,
   type OrchestrationThread,
@@ -19,6 +20,7 @@ import type {
   TuiConnectionPhase,
   TuiThreadPage,
 } from "../../src/connection.ts";
+import { GitActionFailure } from "../../src/gitActions.logic.ts";
 import { flattenModelOptions } from "../../src/models.ts";
 import { fakeFeatureClient, fakeGitProgress, type FakeServer } from "./fakeFeatureClient.ts";
 import { fakeSettingsMc, type FakeSettingsMc } from "./fakeSettingsMc.ts";
@@ -418,7 +420,8 @@ export function fakeClient({
   const settleGit = <T>(value: T): Promise<T> => {
     const outcome = gitOutcome;
     if (outcome.kind === "hang") return new Promise<T>(() => {});
-    if (outcome.kind === "fail") return Promise.reject(new Error(outcome.message));
+    if (outcome.kind === "fail")
+      return Promise.reject(new GitActionFailure(outcome.message, outcome.remedy ?? null));
     return Promise.resolve(value);
   };
   const feature = fakeFeatureClient({
@@ -732,7 +735,8 @@ export type FakeGitCall =
 
 export type FakeGitOutcome =
   | { readonly kind: "succeed"; readonly result?: GitRunStackedActionResult }
-  | { readonly kind: "fail"; readonly message: string }
+  /** `remedy` is what the MC offers to fix it (action_failed's `cta`). */
+  | { readonly kind: "fail"; readonly message: string; readonly remedy?: GitActionFailureCta }
   /** Never settles: the action stays running. */
   | { readonly kind: "hang" };
 

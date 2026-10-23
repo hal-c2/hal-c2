@@ -98,7 +98,7 @@ import type { RpcSession } from "@hal-c2/client-runtime/rpc";
 import { buildTemporaryWorktreeBranchName } from "@hal-c2/shared/git";
 
 import { makeFeatureClient, type TuiFeatureClient } from "./featureClient.ts";
-import { mergeVcsStatus } from "./gitActions.logic.ts";
+import { GitActionFailure, mergeVcsStatus } from "./gitActions.logic.ts";
 
 import { flattenModelOptions, type ModelOption } from "./models.ts";
 import { EnvironmentCacheStore } from "@hal-c2/client-runtime/platform";
@@ -1222,11 +1222,13 @@ export function makeTuiClient(runtime: TuiRuntime, origin = "", own = true): Tui
           ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
           ...(input.featureBranch !== undefined ? { featureBranch: input.featureBranch } : {}),
         }).pipe(
-          // The stream ends when the action completes; an action_failed event (or a
-          // failed stream) surfaces as a rejected promise.
+          // The stream ends when the action completes; an action_failed event (a
+          // GitActionFailure, with its remedy) or a failed stream surfaces as a
+          // rejected promise.
           Stream.runForEach((event) => {
             onProgress?.(event);
-            if (event.kind === "action_failed") return Effect.fail(new Error(event.message));
+            if (event.kind === "action_failed")
+              return Effect.fail(new GitActionFailure(event.message, event.cta ?? null));
             if (event.kind === "action_finished") finished = event.result;
             return Effect.void;
           }),
