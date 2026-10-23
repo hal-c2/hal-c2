@@ -10,6 +10,7 @@ defmodule HalC2.ClusterProofTest do
   @off "an MC booted without distribution never clusters; the model's MCs all do"
   @address "which address and port reach a member; the model connects members by id"
   @task "Discovery's bookkeeping of the connection attempt it runs; connect models the attempt"
+  @settings "carries shared settings, no part of the table; settings_shared.maude models it"
 
   use HalC2.Proof,
     model: "cluster.maude",
@@ -80,6 +81,9 @@ defmodule HalC2.ClusterProofTest do
       "HalC2.Cluster.detail/1" => @words,
       "HalC2.Cluster handle_call _" => @off,
       "HalC2.Cluster handle_cast _" => @off,
+      "HalC2.Cluster.share_settings/0" => @settings,
+      "HalC2.Cluster handle_cast :share_settings" => @settings,
+      "HalC2.Cluster handle_cast {:settings, _, _}" => @settings,
       "HalC2.Cluster handle_info {:nodedown, _}" =>
         "does nothing; the connection dropping is disconnect",
       "HalC2.Cluster.Discovery.start_link/1" => "starts the process connect stands for",
