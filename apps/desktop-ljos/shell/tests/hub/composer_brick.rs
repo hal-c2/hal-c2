@@ -66,7 +66,6 @@ fn input(hub: &Hub, root: ObjectId) -> ObjectId {
 
 /// A long prompt wraps at the card's width and the input grows a line.
 #[test]
-#[ignore = "TODO(ljos#88): a TextArea in a ScrollView keeps its unwrapped width"]
 fn a_long_prompt_wraps_inside_the_card_and_grows_it() {
     let hub = on_threads(&["t1"]);
     let (root, _window) = probe(&hub);
@@ -87,10 +86,6 @@ fn a_long_prompt_wraps_inside_the_card_and_grows_it() {
 /// Shift+Return is no send intent, so the editor takes it as a new line.
 /// Return's text is "\r", as a window gives it.
 #[test]
-#[cfg_attr(
-    target_os = "macos",
-    ignore = "TODO(ljos#89): Apple's key table has no Shift+Return line separator"
-)]
 fn shift_return_starts_a_new_line() {
     let hub = on_threads(&["t1"]);
     let (root, window) = probe(&hub);
