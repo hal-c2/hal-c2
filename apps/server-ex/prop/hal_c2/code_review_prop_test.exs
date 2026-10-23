@@ -165,6 +165,29 @@ defmodule HalC2.CodeReviewPropTest do
     assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
   end
 
+  # Also from hal-c2/hal-c2#446: a look that finds a followed pull request closed stops
+  # following it, so reopening it and pushing starts no review of its own.
+  test "a followed pull request found closed is not reviewed again when it reopens" do
+    Process.flag(:trap_exit, true)
+
+    cmds = [
+      {:set, {:var, 1}, {:call, __MODULE__, :toggle_open, ["acme/api#1"]}},
+      {:set, {:var, 2}, {:call, __MODULE__, :hold, [true]}},
+      {:set, {:var, 3}, {:call, __MODULE__, :retry, ["acme/api#1"]}},
+      {:set, {:var, 4}, {:call, __MODULE__, :refresh, []}},
+      {:set, {:var, 5}, {:call, __MODULE__, :disable, [:plain]}},
+      {:set, {:var, 6}, {:call, __MODULE__, :toggle_open, ["acme/api#1"]}},
+      {:set, {:var, 7}, {:call, __MODULE__, :push, ["acme/api#1"]}},
+      {:set, {:var, 8}, {:call, __MODULE__, :enable, []}}
+    ]
+
+    begin_case()
+    {history, state, result} = run_commands(__MODULE__, cmds)
+    end_case()
+
+    assert result == :ok, HalC2.Prop.report(cmds, history, state, result)
+  end
+
   # --- model ----------------------------------------------------------------------------
 
   # `reviews`: key → %{status, run (the run its thread is, nil before the first), seen
@@ -548,8 +571,10 @@ defmodule HalC2.CodeReviewPropTest do
         known = m.reviews[key]
 
         cond do
+          # A followed pull request found closed is followed no longer, so reopening
+          # it starts no review the watch would not.
           not pr.open ->
-            m
+            if known, do: put_review(m, key, %{known | followed: false}), else: m
 
           known && known.status in [:queued, :running] ->
             put_review(m, key, %{known | seen: pr.head})
