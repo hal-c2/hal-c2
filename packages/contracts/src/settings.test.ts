@@ -7,6 +7,7 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  McSettingsDocument,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -19,6 +20,23 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeMcSettingsDocument = Schema.decodeUnknownSync(McSettingsDocument);
+
+describe("McSettingsDocument", () => {
+  it("reads the settings an MC shares across its cluster", () => {
+    const reply = decodeMcSettingsDocument({
+      settings: { defaultRuntimeMode: "full-access" },
+      version: 3,
+      shared: ["defaultRuntimeMode", "keybindings"],
+    });
+    expect(reply.shared).toEqual(["defaultRuntimeMode", "keybindings"]);
+  });
+
+  it("reads an MC from before shared settings", () => {
+    const reply = decodeMcSettingsDocument({ settings: {}, version: 0 });
+    expect(reply).toEqual({ settings: {}, version: 0 });
+  });
+});
 
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
