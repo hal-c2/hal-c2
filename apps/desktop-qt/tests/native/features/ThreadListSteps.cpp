@@ -14,6 +14,7 @@
 #include "Harness.h"
 #include "NavigationController.h"
 #include "McClient.h"
+#include "SettingsRows.h"
 #include "SharedSteps.h"
 #include "Stream.h"
 #include "ThreadList.h"
@@ -176,6 +177,21 @@ const Steps steps([] {
                  {QStringLiteral("settledOverride"), QStringLiteral("settled")}, {QStringLiteral("settledAt"), at}});
     }
   });
+  // Threads a plugin settles as it finishes them, as the code-review plugin does.
+  step(QStringLiteral("(\\d+) settled threads a plugin started"), [](World& world, const Captures& c, const Table&) {
+    for (int index = 1; index <= c[0].toInt(); ++index) {
+      putThread(world, QStringLiteral("t-review-%1").arg(index),
+                {{QStringLiteral("projectId"), world.mc.projects.firstKey()}, {QStringLiteral("title"), QStringLiteral("Review %1").arg(index)},
+                 {QStringLiteral("settledOverride"), QStringLiteral("settled")}, {QStringLiteral("settledAt"), iso(world.now().addSecs(-30 * index))},
+                 {QStringLiteral("plugin"), QJsonObject{{QStringLiteral("id"), QStringLiteral("code-review")}, {QStringLiteral("kind"), QStringLiteral("review")},
+                                                        {QStringLiteral("listed"), true}}}});
+    }
+  });
+  // Settings → General's row, which writes the MC's settings document.
+  step(QStringLiteral("the user turns (on|off) \"Show plugin threads in Settled\""), [](World& world, const Captures& c, const Table&) {
+    turnRow(world, QStringLiteral("sidebarShowSettledPluginThreads"), c[0] == QLatin1String("on"));
+    world.sync();
+  });
   step(QStringLiteral("%1 settled after %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // Created the other way round, so only when they settled orders them.
     const QString project = world.mc.projects.firstKey();
@@ -242,6 +258,11 @@ const Steps steps([] {
   step(QStringLiteral("(\\d+) settled threads are shown"), [](World& world, const Captures& c, const Table&) {
     const qsizetype shown = sidebar(world).value(QStringLiteral("settled")).toList().size();
     expect(shown == c[0].toInt(), QStringLiteral("%1 settled threads are shown").arg(shown));
+  });
+  step(QStringLiteral("the settled section counts (\\d+) threads"), [](World& world, const Captures& c, const Table&) {
+    // What its header counts (tst_Sidebar.qml).
+    const int total = sidebar(world).value(QStringLiteral("settledTotal")).toInt();
+    expect(total == c[0].toInt(), QStringLiteral("the settled section counts %1 threads").arg(total));
   });
   // Sidebar.qml's "Show N more" row under the shelf: the next page, or what
   // is left (tst_Sidebar.qml).

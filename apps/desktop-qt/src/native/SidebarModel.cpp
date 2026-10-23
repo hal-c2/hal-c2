@@ -727,7 +727,12 @@ View build(const QList<Thread>& threads, const Input& input, const Nullable& sco
   const ProjectGroup* scoped = scopeProjectKey ? input.group(*scopeProjectKey) : nullptr;
   std::optional<QSet<QString>> scopedProjectKeys;
   if (scoped) scopedProjectKeys = QSet<QString>(scoped->memberKeys.begin(), scoped->memberKeys.end());
-  const Partition sections = partition(threads, scopedProjectKeys, capabilitiesFor, nowMs);
+  Partition sections = partition(threads, scopedProjectKeys, capabilitiesFor, nowMs);
+  // Hidden before the shelf pages and counts; search and the plugin's page still find them.
+  if (!input.showSettledPluginThreads) {
+    const QString open = input.activeThreadKey.value_or(QString());
+    sections.settled.removeIf([&open](const Thread& thread) { return !thread.pluginId.isEmpty() && thread.key() != open; });
+  }
 
   QHash<QString, QString> projectNames;
   for (const ProjectGroup& group : input.projects) projectNames.insert(group.key, group.summary.value(QStringLiteral("displayName")).toString());

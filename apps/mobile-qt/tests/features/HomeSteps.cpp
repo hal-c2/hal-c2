@@ -1,12 +1,15 @@
 // The home screen (features/mobile/home-and-thread-list.feature): the thread
-// list narrowed to a project and back, the settled shelf a page at a time
-// (threads/sidebar-list.feature), and the archive, reached from the home
-// screen's own bar as the user reaches them.
+// list narrowed to a project and back, the settled shelf a page at a time and
+// with or without the threads plugins settled (threads/sidebar-list.feature),
+// and the archive, reached from the home screen's own bar as the user reaches
+// them.
 
 #include <QDateTime>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
+
+#include <algorithm>
 
 #include "Harness.h"
 #include "NativeShell.h"
@@ -101,6 +104,59 @@ const Steps steps([] {
     pairWithEnvironment(world);
   });
 
+  // Threads a plugin settles as it finishes them, as the code-review plugin does.
+  step(S("(\\d+) settled threads a plugin started"), [](World& world, const Captures& c, const Table&) {
+    const QDateTime newest = QDateTime::fromString(S("2026-09-23T09:00:30Z"), Qt::ISODate);
+    for (int index = 1; index <= c[0].toInt(); ++index) {
+      const QString id = S("review-%1").arg(index);
+      const QString at = newest.addSecs(-60 * index).toString(Qt::ISODate);
+      world.mc.threads.insert(id, {{S("id"), id}, {S("title"), S("Review %1").arg(index)}, {S("projectId"), S("shop")},
+                                   {S("createdAt"), at}, {S("updatedAt"), at},
+                                   {S("settledOverride"), S("settled")}, {S("settledAt"), at},
+                                   {S("plugin"), QJsonObject{{S("id"), S("code-review")}, {S("kind"), S("review")}, {S("listed"), true}}}});
+      world.mc.sendRow(id, world.mc.threads.value(id));
+    }
+    pairWithEnvironment(world);
+  });
+
+  // Home's bar, Settings → General, the row's switch, and back home.
+  step(S("the user turns (on|off) \"Show plugin threads in Settled\""), [](World& world, const Captures& c, const Table&) {
+    const bool on = c[0] == QLatin1String("on");
+    world.item(S("homeScreen"));
+    world.tap(S("settings"));
+    world.item(S("settingsSections"));
+    QQuickItem* general = nullptr;
+    world.waitFor(
+        [&] {
+          general = world.findWhere([](QQuickItem* candidate) {
+            return candidate->objectName().startsWith(QLatin1String("settingsRow")) &&
+                   candidate->property("modelData").toMap().value(QStringLiteral("to")).toString() == QLatin1String("/settings/general");
+          });
+          return general != nullptr;
+        },
+        [&] { return S("General among the settings; the screen says: %1").arg(screenTexts(world)); });
+    world.tap(general);
+    QQuickItem* row = nullptr;
+    world.waitFor([&] { return (row = world.find(S("settingsRow:sidebarShowSettledPluginThreads"))) != nullptr; },
+                  [&] { return S("the row among the general settings; the screen says: %1").arg(screenTexts(world)); });
+    // Scrolled to, as the user would: the page is taller than the phone.
+    QQuickItem* page = row->parentItem();
+    while (page && !page->inherits("QQuickFlickable")) page = page->parentItem();
+    expect(page != nullptr, S("the general settings do not scroll"));
+    QQuickItem* content = page->property("contentItem").value<QQuickItem*>();
+    page->setProperty("contentY", std::max(0.0, row->mapToItem(content, QPointF(0, 0)).y() - page->height() / 2));
+    QQuickItem* control = nullptr;
+    for (QQuickItem* child : row->findChildren<QQuickItem*>()) {
+      if (child->objectName() == QLatin1String("control")) control = child;
+    }
+    expect(control != nullptr, S("the row has no switch"));
+    if (control->property("checked").toBool() != on) world.tap(control);
+    world.waitFor([&] { return control->property("checked").toBool() == on; }, S("the switch to turn %1").arg(c[0]));
+    for (int presses = 0; presses < 3 && world.find(S("settingsScreen")) != nullptr; ++presses) world.back();
+    world.waitFor([&] { return world.find(S("settingsScreen")) == nullptr; }, [&] { return S("home again; the screen says: %1").arg(screenTexts(world)); });
+    world.item(S("homeScreen"));
+  });
+
   step(S("the user looks at the settled section"), [](World& world, const Captures&, const Table&) {
     world.sync();
     threadList(world);
@@ -110,6 +166,11 @@ const Steps steps([] {
   step(S("(\\d+) settled threads are shown"), [](World& world, const Captures& c, const Table&) {
     const auto shown = [&] { return world.state(S("sidebar")).toMap().value(S("settled")).toList().size(); };
     world.waitFor([&] { return shown() == c[0].toInt(); }, [&] { return S("%1 settled threads; the list has %2").arg(c[0]).arg(shown()); });
+  });
+
+  step(S("the settled section counts (\\d+) threads"), [](World& world, const Captures& c, const Table&) {
+    const auto total = [&] { return world.state(S("sidebar")).toMap().value(S("settledTotal")).toInt(); };
+    world.waitFor([&] { return total() == c[0].toInt(); }, [&] { return S("the settled section counts %1 threads").arg(total()); });
   });
 
   step(S("the section offers %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {

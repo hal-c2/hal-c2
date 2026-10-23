@@ -73,6 +73,8 @@ export interface EnvThread {
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
   hasActionableProposedPlan: boolean;
+  /** The plugin that started it, such as a code review. */
+  plugin?: { id: string; kind: string; listed: boolean } | null;
 }
 
 export interface Environment {
@@ -267,7 +269,9 @@ function installClient(ctx: World): void {
     getServerConfig: async () =>
       ({
         settings: {
+          // What `updateSettings` wrote (fakeFeatureClient's server), as the MC reads it back.
           ...DEFAULT_SERVER_SETTINGS,
+          ...ctx.fake?.server.settings,
           defaultThreadEnvMode: environment.defaultThreadEnvMode ?? undefined,
         },
         environment: { capabilities: { threadSettlement: environment.settlement } },

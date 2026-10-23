@@ -11,6 +11,10 @@
 #   apps/web/src/components/NoActiveThreadState.tsx
 #   apps/tui/src/components/Sidebar.logic.ts
 #   apps/desktop-qt/src/native/SidebarController.cpp (sidebar.more: the settled shelf a page at a time)
+#   packages/contracts/src/settings.ts (sidebarShowSettledPluginThreads)
+#   packages/contracts/src/plugin.ts (ThreadPluginMark: the threads a plugin started)
+#   plugins/code-review/mc/code_review.ex (settles each review thread it finishes)
+#   apps/tui/src/host/features/server.ts (settings.settledPluginThreads: the TUI's toggle)
 #   packages/contracts/src/shell.ts (thread.open, draft.open, thread.new, sidebar.scope, sidebar.toggle, sidebar.more, project.add, thread.menu)
 #   packages/contracts/src/rpc.ts (subscribeShell)
 #   apps/web/src/components/LegacySidebar.tsx (the per-project thread tree)
@@ -103,6 +107,44 @@ Feature: The thread list
     When the user opens "Settled 65"
     Then "Settled 65" is among the settled threads
     And 51 settled threads are shown
+
+  # A plugin settles its own threads as it finishes them, such as each code review,
+  # and those would bury the user's own. They stay out of the shelf, before it pages
+  # and counts, unless the user asks; search and the plugin's page still find them.
+  @desktop @mobile @tui
+  Scenario: Settled threads a plugin started stay out of the settled section
+    Given there are 3 settled threads
+    And 2 settled threads a plugin started
+    When the user looks at the settled section
+    Then 3 settled threads are shown
+    And the settled section counts 3 threads
+
+  @desktop @mobile @tui
+  Scenario: The user can list settled plugin threads in the settled section
+    Given there are 3 settled threads
+    And 2 settled threads a plugin started
+    When the user turns on "Show plugin threads in Settled"
+    Then 5 settled threads are shown
+    When the user turns off "Show plugin threads in Settled"
+    Then 3 settled threads are shown
+
+  @desktop @mobile @backlog-mobile
+  Scenario: Search still finds a settled plugin thread
+    Given 2 settled threads a plugin started
+    When the user searches the palette for "Review 1"
+    Then the command palette lists "Review 1"
+
+  @tui
+  Scenario: Filtering the thread list finds a settled plugin thread
+    Given 2 settled threads a plugin started
+    When the user filters the thread list by "Review 1"
+    Then "Review 1" is among the settled threads
+
+  @desktop
+  Scenario: An open settled plugin thread stays listed
+    Given 2 settled threads a plugin started
+    When the user opens "Review 1"
+    Then "Review 1" is among the settled threads
 
   @desktop
   Scenario Outline: Moving through the list with the keyboard

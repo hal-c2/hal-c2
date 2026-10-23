@@ -470,6 +470,7 @@ export function ChatView({
         state.filter,
         state.projectScopeId,
         new Date(sidebarNowMs).toISOString(),
+        state.showSettledPluginThreads,
       ),
     [
       state.shell,
@@ -479,6 +480,7 @@ export function ChatView({
       state.filter,
       state.projectScopeId,
       sidebarNowMs,
+      state.showSettledPluginThreads,
     ],
   );
   const detail = state.detail;

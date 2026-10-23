@@ -135,6 +135,7 @@ void SidebarController::refresh() {
   input.selectedKeys = m_selected;
   input.settledLimit = m_settledShown;
   input.settledPage = m_settledPage;
+  input.showSettledPluginThreads = m_showSettledPluginThreads;
   input.jumpLabels = m_jumpLabels;
   input.showJumpHints = m_showJumpHints;
   input.describeWake = [this, now](const QString& snoozedUntil) {
@@ -664,8 +665,11 @@ void SidebarController::readSettings() {
   m_grouping = {};
   m_timestampFormat = QStringLiteral("locale");
   m_threadSortOrder = QStringLiteral("updated_at");
+  m_showSettledPluginThreads = false;
   const auto* settings = NativeShell::of(this)->controller<SettingsController>();
   if (!settings) return;
+  // The shell's own MC decides for the whole sidebar, as its Settings row shows.
+  m_showSettledPluginThreads = settings->settings().value(QLatin1String("sidebarShowSettledPluginThreads")).toBool(false);
   const QJsonObject device = settings->deviceSettings();
   const auto text = [&device](const char* key, QString& into) {
     const QJsonValue value = device.value(QLatin1String(key));

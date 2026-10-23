@@ -31,6 +31,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("mobile/offline-and-lifecycle.feature"),
     QStringLiteral("mobile/tablet-and-hardware-keyboard.feature"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
+    QStringLiteral("threads/sidebar-list.feature:*plugin*"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

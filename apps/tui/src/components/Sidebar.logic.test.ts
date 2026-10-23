@@ -59,6 +59,7 @@ const build = (
     selected?: string | null;
     filter?: string;
     project?: string | null;
+    showPlugins?: boolean;
   } = {},
 ) =>
   buildRows(
@@ -69,6 +70,7 @@ const build = (
     input.filter ?? "",
     input.project ?? null,
     NOW,
+    input.showPlugins ?? false,
   );
 
 describe("Sidebar V2 row model", () => {
@@ -208,6 +210,35 @@ describe("Sidebar V2 row model", () => {
     expect(more(second)).toMatchObject({ kind: "more", hiddenCount: 5 });
     expect(listed(second + SIDEBAR_SETTLED_PAGE)).toBe(total);
     expect(more(second + SIDEBAR_SETTLED_PAGE)?.kind).toBe("thread");
+  });
+
+  it("Given settled plugin threads, then the shelf leaves them out unless asked, but search and the selection reach them", () => {
+    const settled = (id: string, plugin = false) =>
+      thread(id, "p1", {
+        settledOverride: "settled",
+        settledAt: "2026-07-28T11:00:00.000Z",
+        ...(plugin ? { plugin: { id: "code-review", kind: "review", listed: true } } : {}),
+      });
+    const snapshot = shell([
+      settled("mine"),
+      settled("review", true),
+      thread("open-review", "p1", { plugin: { id: "code-review", kind: "review", listed: true } }),
+    ]);
+    const shelf = (input: Parameters<typeof build>[1]) => {
+      const rows = build(snapshot, input);
+      const header = rows.find((row) => row.kind === "section" && row.section === "settled");
+      const ids = rows.flatMap((row) =>
+        row.kind === "thread" && row.section === "settled" ? [row.id] : [],
+      );
+      return { count: header?.kind === "section" ? header.count : 0, ids };
+    };
+
+    expect(shelf({})).toEqual({ count: 1, ids: ["mine"] });
+    expect(shelf({ showPlugins: true })).toEqual({ count: 2, ids: ["mine", "review"] });
+    expect(shelf({ filter: "review" })).toEqual({ count: 1, ids: ["review"] });
+    expect(shelf({ selected: "review" }).ids).toContain("review");
+    // Only settled ones: an active plugin thread stays where it is.
+    expect(build(snapshot, {}).some((row) => row.id === "open-review")).toBe(true);
   });
 });
 

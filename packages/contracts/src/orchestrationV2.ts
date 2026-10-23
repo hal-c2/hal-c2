@@ -1592,6 +1592,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
    * to forward to it, and the thread itself is listed by the machine it is on.
    */
   movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadMoveTarget)),
+  /** The plugin that started the thread, as `OrchestrationV2AppThread.plugin`. */
+  plugin: Schema.optional(Schema.NullOr(ThreadPluginMark)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
