@@ -80,8 +80,8 @@ defmodule HalC2.BackgroundPolicy do
   def report_host_power(snapshot), do: GenServer.cast(__MODULE__, {:power, snapshot})
 
   @doc "Sends `pid` the policy whenever it changes; returns the current one."
-  def subscribe(pid), do: GenServer.call(__MODULE__, {:subscribe, pid})
-  def unsubscribe(pid), do: GenServer.cast(__MODULE__, {:unsubscribe, pid})
+  def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
+  def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
   @doc "`server.getBackgroundPolicy`: `BackgroundPolicySnapshot`."
   def snapshot do
@@ -127,8 +127,8 @@ defmodule HalC2.BackgroundPolicy do
   def handle_call(:snapshot, _from, state),
     do: {:reply, compute(state.leases, state.power, settings(), now_ms()), state}
 
-  def handle_call({:subscribe, pid}, _from, state) do
-    watchers = Map.put_new_lazy(state.watchers, pid, fn -> Process.monitor(pid) end)
+  def handle_call({:subscribe, pid, ref}, _from, state) do
+    watchers = HalC2.Watchers.add(state.watchers, pid, ref)
     {:reply, {:ok, current(state)}, %{state | watchers: watchers}}
   end
 
@@ -192,9 +192,8 @@ defmodule HalC2.BackgroundPolicy do
     {:noreply, notify(state, %{state | leases: leases, monitors: monitors})}
   end
 
-  def handle_cast({:unsubscribe, pid}, state) do
-    {ref, watchers} = Map.pop(state.watchers, pid)
-    if ref, do: Process.demonitor(ref, [:flush])
+  def handle_cast({:unsubscribe, pid, ref}, state) do
+    watchers = HalC2.Watchers.remove(state.watchers, pid, ref)
     {:noreply, %{state | watchers: watchers}}
   end
 
@@ -260,11 +259,7 @@ defmodule HalC2.BackgroundPolicy do
           |> Map.update!("hostPower", fn p -> Map.delete(p, "updatedAt") end))
 
       if drop.(snapshot) != drop.(current(before)),
-        do:
-          for(
-            {pid, _} <- next.watchers,
-            do: send(pid, {:hal_c2_background_policy, node(), snapshot})
-          )
+        do: HalC2.Watchers.notify(next.watchers, {:hal_c2_background_policy, node(), snapshot})
     end
 
     next

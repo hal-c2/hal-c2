@@ -627,10 +627,10 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 7
+    assert state.v == 8
     assert state.scopes == :all
     refute Map.has_key?(state, :item_types)
-    assert state.by_terminal[{:settings, node()}] == [1]
+    assert state.by_terminal[{:settings, node()}] == %{1 => nil}
     # A terminal followed before has no snapshot sequence recorded, so it is
     # held per subscription with a nil floor and is told everything, as it was.
     assert state.by_terminal[{"th-old", "term-1"}] == %{3 => nil}
@@ -678,13 +678,13 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert migrated.v == 7
+    assert migrated.v == 8
     assert migrated.subs == state.subs
-    # Only the terminal entry changes shape; the config entry is preserved,
-    # and both subscriptions `subs` held are in it.
+    # The terminal entry holds both subscriptions `subs` held; the config entry
+    # holds its one by id too, with no watch ref of its own (v8).
     assert migrated.by_terminal == %{
              {"th-6", "term-1"} => %{2 => nil, 3 => nil},
-             {:settings, node()} => [1]
+             {:settings, node()} => %{1 => nil}
            }
 
     # With a nil floor each migrated subscription is told everything that
@@ -703,11 +703,60 @@ defmodule HalC2.UpgradeTest do
     assert Enum.sort(ids) == [2, 3]
   end
 
+  test "config subscriptions an upgrade carried over keep their one watch until the last goes" do
+    # Stands in for HalC2.Settings: says which unwatches reach it.
+    test = self()
+
+    settings =
+      spawn_link(fn ->
+        Process.register(self(), HalC2.Settings)
+        send(test, :registered)
+
+        Stream.repeatedly(fn ->
+          receive do: ({:"$gen_cast", {:unwatch, _pid, ref}} -> send(test, {:unwatched, ref}))
+        end)
+        |> Stream.run()
+      end)
+
+    assert_receive :registered
+    on_exit(fn -> Process.exit(settings, :kill) end)
+
+    # Two pages showing settings on a socket from before refs, which shared one watch.
+    old = %{
+      v: 6,
+      session: nil,
+      scopes: :all,
+      subs: %{1 => {:config, node()}, 2 => {:config, node()}},
+      by_stream: %{},
+      by_terminal: %{{:settings, node()} => [1, 2]},
+      monitors: %{},
+      shell: %{},
+      buffers: %{},
+      flush_scheduled: false
+    }
+
+    unsub = fn id, state ->
+      {:ok, state} =
+        HalC2.Web.Socket.handle_in({~s({"t":"unsub","id":#{id}}), [opcode: :text]}, state)
+
+      state
+    end
+
+    state = unsub.(1, old)
+    assert state.by_terminal[{:settings, node()}] == %{2 => nil}
+    # Only how long the unwatch a bug would send is looked for.
+    refute_receive {:unwatched, _}, 200
+
+    state = unsub.(2, state)
+    refute Map.has_key?(state.by_terminal, {:settings, node()})
+    assert_receive {:unwatched, nil}
+  end
+
   test "a message without a tag is only for a stream followed before an upgrade" do
     tag = {node(), make_ref()}
 
     state = %{
-      v: 6,
+      v: 7,
       session: nil,
       scopes: :all,
       subs: %{2 => {:stream, node(), "th"}},
@@ -720,8 +769,8 @@ defmodule HalC2.UpgradeTest do
     }
 
     # One still on its way from the subscription the upgrade carried over. The
-    # v6 state is first migrated to v7, so the returned state is that migration.
-    migrated = %{state | v: 7}
+    # v7 state is first migrated to v8, so the returned state is that migration.
+    migrated = %{state | v: 8}
     assert {:ok, ^migrated} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
 
     assert {:push, [{:text, frame}], _} =

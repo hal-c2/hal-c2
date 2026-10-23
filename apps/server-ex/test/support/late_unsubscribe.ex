@@ -1,11 +1,16 @@
 defmodule HalC2.Test.LateUnsubscribe do
   @moduledoc """
   Stands in for a server under its registered name and forwards it everything, except
-  that once `arm/1`ed it holds back `{:unsubscribe, ...}` casts until the next
-  `{:subscribe, ...}` call has gone ahead of them: unsubscribes sent by `:erpc.cast`,
-  which runs in a process of its own and so may land late. Armed with `hold: true`, it
-  holds that subscribe too until `release/1`, so the server can change meanwhile.
+  that once `arm/1`ed it holds back `{:unsubscribe, ...}` (or `{:unwatch, ...}`) casts
+  until the next `{:subscribe, ...}` (or `{:watch, ...}`) call has gone ahead of them:
+  unsubscribes sent by `:erpc.cast`, which runs in a process of its own and so may land
+  late. Armed with `hold: true`, it holds that subscribe too until `release/1`, so the
+  server can change meanwhile. Armed with `hold: :alone`, it holds only that subscribe,
+  and unsubscribes go straight through, as when the subscribe is slow to be sent.
   """
+
+  @subscribe [:subscribe, :watch]
+  @unsubscribe [:unsubscribe, :unwatch]
 
   @doc "Takes `name` over from the process registered under it; answers the gate."
   def install(name) do
@@ -30,7 +35,7 @@ defmodule HalC2.Test.LateUnsubscribe do
   Holds back unsubscribes until the next subscribe; the caller is sent
   `:unsubscribe_held` for each, none left over from an earlier arming. With `hold: true`
   the subscribe waits for `release/1`, and the caller is sent `:subscribe_held` when it
-  arrives.
+  arrives; with `hold: :alone` so does the subscribe, but nothing else is held.
   """
   def arm(gate, opts \\ []) do
     flush_held()
@@ -54,22 +59,26 @@ defmodule HalC2.Test.LateUnsubscribe do
     end
   end
 
-  # `hold`: whether the next subscribe waits for `:release`; `call`: the one waiting.
+  # `hold`: whether the next subscribe waits for `:release` (`:alone` holding nothing
+  # else, `:alone_held` once it does); `call`: the one waiting.
   defp loop(server, armer, hold, call, held) do
     receive do
       {:arm, pid, hold} ->
         send(pid, {:armed, self()})
         loop(server, pid, hold, nil, held)
 
-      {:"$gen_cast", request} = cast when armer != nil and elem(request, 0) == :unsubscribe ->
+      {:"$gen_cast", request} = cast
+      when armer != nil and hold not in [:alone, :alone_held] and
+             elem(request, 0) in @unsubscribe ->
         send(armer, :unsubscribe_held)
         loop(server, armer, hold, call, [cast | held])
 
-      {:"$gen_call", _from, request} = call when hold and elem(request, 0) == :subscribe ->
+      {:"$gen_call", _from, request} = call
+      when hold in [true, :alone] and elem(request, 0) in @subscribe ->
         send(armer, :subscribe_held)
-        loop(server, armer, false, call, held)
+        loop(server, armer, if(hold == :alone, do: :alone_held, else: false), call, held)
 
-      {:"$gen_call", _from, request} = call when elem(request, 0) == :subscribe ->
+      {:"$gen_call", _from, request} = call when elem(request, 0) in @subscribe ->
         pass(server, call, held)
 
       :release when call != nil ->
