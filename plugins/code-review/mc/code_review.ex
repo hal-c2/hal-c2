@@ -565,6 +565,8 @@ defmodule HalC2Plugins.CodeReview do
             "elsewhere" => other
           })
 
+        # The machine it stood down for may have said it let go before this landed.
+        send(self(), :peer_claims)
         {:noreply, state |> put(review) |> pump() |> changed()}
 
       _ ->
@@ -666,20 +668,23 @@ defmodule HalC2Plugins.CodeReview do
 
     if heads != %{} do
       spawn_link(fn ->
-        entries = for {key, head} <- heads, do: %{"key" => key, "headSha" => head}
-        send(server, {:elsewhere_seen, heads, elsewhere(%{entries: entries, elsewhere: %{}}).elsewhere})
+        answers = Host.peers(@id, :claims, [Map.keys(heads)])
+        restarting = for %{"result" => :restarting, "node" => node} <- answers, do: node
+        send(server, {:elsewhere_seen, heads, seen(heads, rows(answers)), restarting})
       end)
     end
 
     {:noreply, state}
   end
 
-  def handle_info({:elsewhere_seen, heads, seen}, state) do
+  # A machine restarting its plugin still has what it had until it says otherwise.
+  def handle_info({:elsewhere_seen, heads, seen, restarting}, state) do
     reviews =
       for {key, head} <- heads,
           %{"headSha" => ^head} = review <- [state.reviews[key]],
           left?(review),
           review["elsewhere"] != seen[key],
+          seen[key] != nil or get_in(review, ["elsewhere", "node"]) not in restarting,
           into: %{},
           do: {key, Map.put(review, "elsewhere", seen[key])}
 
@@ -847,14 +852,15 @@ defmodule HalC2Plugins.CodeReview do
 
   defp elsewhere(found) do
     heads = Map.new(found.entries, &{&1["key"], &1["headSha"]})
+    %{found | elsewhere: seen(heads, heads |> Map.keys() |> peer_claims())}
+  end
 
-    elsewhere =
-      for row <- heads |> Map.keys() |> peer_claims() |> Enum.sort_by(& &1["claimed"]),
-          row["sha"] == heads[row["key"]],
-          into: %{},
-          do: {row["key"], Map.take(row, ~w(machine node status))}
-
-    %{found | elsewhere: elsewhere}
+  # Where the other machines have each pull request at `heads`, a claim over a queue.
+  defp seen(heads, rows) do
+    for row <- Enum.sort_by(rows, & &1["claimed"]),
+        row["sha"] == heads[row["key"]],
+        into: %{},
+        do: {row["key"], Map.take(row, ~w(machine node status))}
   end
 
   defp pr(entry) do
@@ -1122,9 +1128,17 @@ defmodule HalC2Plugins.CodeReview do
         review["previous"]
       end
 
+    # A review queued for a new head still holds the commit it reviewed, and what
+    # became of it, so no other machine reviews or posts that commit again.
+    held =
+      if claimed?(review) and is_binary(review["reviewedSha"]) and review["reviewedSha"] != review["headSha"],
+        do: %{"sha" => review["reviewedSha"], "status" => review["status"]},
+        else: review["held"]
+
     review =
       Map.merge(review, %{
         "status" => "queued",
+        "held" => held,
         "trigger" => trigger,
         "following" => trigger in @asks or followed?(review),
         "previous" => previous,
@@ -1763,7 +1777,7 @@ defmodule HalC2Plugins.CodeReview do
 
   @doc false
   # This machine's queued and claimed reviews of `keys`, for the other machines of
-  # the cluster: `%{key => %{"sha", "status", "claimed"}}`, or `:restarting` while
+  # the cluster: `%{key => %{"sha", "status", "claimed", "held"}}`, or `:restarting` while
   # the plugin runs without its server, which takes its claims with it.
   def claims(keys) do
     for key <- keys, [{^key, row}] <- [:ets.lookup(__MODULE__, key)], into: %{}, do: {key, row}
@@ -1787,12 +1801,8 @@ defmodule HalC2Plugins.CodeReview do
 
   # Whether the claims changed.
   defp put_claims(state) do
-    rows =
-      for {key, review} <- state.reviews,
-          row = claim_row(review),
-          # Paused at the agent's usage limit, what waits in the queue is left to others.
-          not (paused?(state) and row["status"] == "queued"),
-          do: {key, row}
+    paused? = paused?(state)
+    rows = for {key, review} <- state.reviews, row = claim_row(review, paused?), do: {key, row}
 
     before = :ets.tab2list(__MODULE__)
     :ets.insert(__MODULE__, rows)
@@ -1805,30 +1815,43 @@ defmodule HalC2Plugins.CodeReview do
 
   # A started review claims the commit it checked out, whatever became of it; one
   # queued or not yet started holds the head it would review, which another
-  # machine's look leaves to it but another machine's run does not.
-  defp claim_row(review) do
+  # machine's look leaves to it but another machine's run does not. Paused at the
+  # agent's usage limit, what waits in the queue is left to others. A commit
+  # reviewed before the review was queued again stays claimed, as `held`.
+  defp claim_row(review, paused?) do
+    held = review["held"] && Map.put(review["held"], "claimed", true)
+
+    row =
+      cond do
+        claimed?(review) and is_binary(review["reviewedSha"]) ->
+          %{"sha" => review["reviewedSha"], "status" => review["status"], "claimed" => true}
+
+        review["status"] == "running" or (review["status"] == "queued" and not paused?) ->
+          %{"sha" => review["headSha"], "status" => review["status"], "claimed" => false}
+
+        true ->
+          nil
+      end
+
     cond do
-      claimed?(review) and is_binary(review["reviewedSha"]) ->
-        %{"sha" => review["reviewedSha"], "status" => review["status"], "claimed" => true}
-
-      review["status"] in ~w(queued running) ->
-        %{"sha" => review["headSha"], "status" => review["status"], "claimed" => false}
-
-      true ->
-        nil
+      row && held && held["sha"] != row["sha"] -> Map.put(row, "held", held)
+      row -> row
+      true -> held
     end
   end
 
   # Reviews saved before claims were kept claim what they reviewed.
   defp claimed?(review), do: Map.get(review, "claimed", review["reviewedSha"] != nil)
 
-  # The other machines' rows for `keys`, each with its key and machine.
+  # The other machines' rows for `keys`, each with its key and machine; a commit held
+  # behind a review queued again is a claimed row of its own.
   defp peer_claims(keys), do: rows(Host.peers(@id, :claims, [keys]))
 
   defp rows(answers) do
     for %{"result" => rows, "machine" => machine, "node" => node} <- answers,
         is_map(rows),
         {key, row} <- rows,
+        row <- [Map.delete(row, "held") | List.wrap(row["held"])],
         do: Map.merge(row, %{"key" => key, "machine" => machine, "node" => node})
   end
 

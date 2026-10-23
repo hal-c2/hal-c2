@@ -8,23 +8,27 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   stay open), reviewing every new head of `acme/api#1` and `acme/api#2` on its own,
   one review at a time, and publishing when asked. The other machine, "laptop", is a
   bare `:peer` node with only a stand-in `HalC2.Plugins.Host`, whose `peer/3` answers
-  the rows (queued, running, claimed, published) the test gives it, so the plugin sees
-  a peer whose claims the test controls. The commands set and clear those rows, cut
-  the laptop off and connect it again, push, look, ask for reviews, hold checkouts at
-  the fetch, report, stop a run at the agent's usage limit, publish and crash the
-  plugin. A change of the laptop's rows while it is connected reaches the plugin as a
-  real peer's would, by `Host.peer/3` calling `claims_changed/0` here. After every step:
+  the rows (queued, running, claimed, published, each maybe holding a claim of the
+  other commit) the test gives it, or that its plugin is restarting, so the plugin sees
+  a peer whose claims the test controls. The commands set and clear those rows,
+  restart the laptop's plugin, cut the laptop off and connect it again, push, look,
+  ask for reviews, hold checkouts at the fetch, report, stop a run at the agent's usage
+  limit, publish and crash the plugin. A change of the laptop's rows while it is
+  connected, and its plugin coming back, reach the plugin as a real peer's would, by
+  `Host.peer/3` calling `claims_changed/0` here. After every step:
 
-  - a run launches its thread only when the connected laptop does not claim the commit
-    it checked out at the moment it claims it; one it does is back to ready, left to
-    the laptop, and its checkout is gone;
-  - what this machine shares (`claims/1`) is the model's row for each review;
+  - a run launches its thread only when the connected laptop neither claims the commit
+    it checked out at the moment it claims it nor is restarting its plugin; one that
+    does not is back to ready, left to the laptop, and its checkout is gone;
+  - what this machine shares (`claims/1`) is the model's row for each review, a commit
+    it reviewed held when the review is queued again for another head;
   - the `reviews` snapshot, `elsewhere` included, and the topic clients follow, match
     the model;
   - a publish is refused, and nothing posted, exactly when the connected laptop has
     published the reviewed commit;
   - when the laptop leaves, or tells it no longer has a review this machine left to
-    it, that review is looked at again at once; one it still has shows where it is now;
+    it, that review is looked at again at once; one it still has, or may have while
+    its plugin restarts, shows where it is now;
   - paused at the usage limit, this machine shares no queued review, and the user's
     ask that ends the pause still leaves a commit the laptop claimed to the laptop.
   """
@@ -150,11 +154,14 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # `prs`: key → its head (1 or 2). `reviews`: key → %{status, run (the run its thread
   # is, nil before the first), seen (the head the last look saw), reviewed, claimed,
   # elsewhere (the laptop's status where a look or a run left it to the laptop),
-  # publish_error, seq (order queued)}. `runs`: key → whether each run so far launched
-  # its thread. `posts`: every post that reached GitHub, `{key, reviewed}`. `laptop`:
-  # whether it is connected; `rows`: key → `{head, status, claimed}` it shares.
-  # `held`: runs held at the fetch. `paused`: stopped at the agent's usage limit, until
-  # the user asks for a review.
+  # publish_error, seq (order queued), held (`{reviewed, status}` of the commit it
+  # still claims since it was queued again for another head)}. `runs`: key → whether
+  # each run so far launched its thread. `posts`: every post that reached GitHub,
+  # `{key, reviewed}`. `laptop`: whether it is connected; `restarting`: whether its
+  # plugin is restarting, so it cannot say what it has; `rows`: key → `{head, status,
+  # claimed, held}` it shares, `held` the status of a claim of the other head or nil.
+  # `held` (of the model): runs held at the fetch. `paused`: stopped at the agent's
+  # usage limit, until the user asks for a review.
   #
   # The plugin reviews every new head of both pull requests on its own, one at a time,
   # and keeps reviews for the user to publish. Its first look finds both at head 1.
@@ -165,6 +172,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       runs: %{},
       posts: [],
       laptop: true,
+      restarting: false,
       rows: %{},
       hold: false,
       held: [],
@@ -176,7 +184,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
   def command(m) do
     key = oneof(@keys)
-    row = {oneof([1, 2]), elements(@rows)}
+    row = {oneof([1, 2]), elements(@rows), oneof([nil, nil, "published", "failed"])}
 
     launched = for {key, runs} <- m.runs, {true, k} <- Enum.with_index(runs, 1), do: {key, k}
 
@@ -202,20 +210,33 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       for(
         {key, %{status: s}} <- m.reviews,
         s in [:queued, :running],
-        do: {:call, __MODULE__, :peer_set, [key, {m.prs[key], {"running", true}}]}
+        do:
+          {:call, __MODULE__, :peer_set,
+           [
+             key,
+             oneof([
+               {m.prs[key], {"running", true}, nil},
+               {3 - m.prs[key], {"queued", false}, "running"}
+             ])
+           ]}
       ) ++
         for(
           {key, %{status: s, reviewed: r}} <- m.reviews,
           s not in [:queued, :running] and r != m.prs[key],
-          do: {:call, __MODULE__, :peer_set, [key, {m.prs[key], elements(@rows)}]}
+          do: {:call, __MODULE__, :peer_set, [key, {m.prs[key], elements(@rows), nil}]}
         ) ++
         for {key, %{reviewed: r}} when r != nil <- m.reviews,
-            do: {:call, __MODULE__, :peer_set, [key, {r, {"published", true}}]}
+            do:
+              {:call, __MODULE__, :peer_set,
+               [
+                 key,
+                 oneof([{r, {"published", true}, nil}, {3 - r, {"running", true}, "published"}])
+               ]}
 
     # The laptop letting go of, or moving on from, a review this machine left to it.
     released =
       for {key, %{elsewhere: e, seen: seen}} when e != nil <- m.reviews,
-          row <- [nil, {3 - seen, {"running", true}}],
+          row <- [nil, {3 - seen, {"running", true}, nil}],
           do: {:call, __MODULE__, :peer_set, [key, row]}
 
     peer =
@@ -236,6 +257,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         {3, {:call, __MODULE__, :push, [key]}},
         {if(waiting == [], do: 2, else: 6), {:call, __MODULE__, :publish, [published]}},
         {2, {:call, __MODULE__, :hold, [boolean()]}},
+        {if(m.restarting, do: 4, else: 1), {:call, __MODULE__, :restarting, [not m.restarting]}},
         if(m.laptop,
           do: {if(left?, do: 6, else: 1), {:call, __MODULE__, :disconnect, []}},
           else: {4, {:call, __MODULE__, :reconnect, []}}
@@ -308,11 +330,17 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     rows =
       case row do
         nil -> Map.delete(m.rows, key)
-        {head, {status, claimed}} -> Map.put(m.rows, key, {head, status, claimed})
+        {head, {status, claimed}, held} -> Map.put(m.rows, key, {head, status, claimed, held})
       end
 
     m = %{m | rows: rows}
-    {if(m.laptop, do: peer_claims(m), else: m), :ok}
+    {if(tells?(m), do: peer_claims(m), else: m), :ok}
+  end
+
+  # A plugin restarting answers that it cannot say; once back, it tells this machine.
+  defp step(m, {:call, _, :restarting, [on]}) do
+    m = %{m | restarting: on}
+    {if(tells?(m), do: peer_claims(m), else: m), :ok}
   end
 
   # What a look had left to the laptop is looked at again once it is gone.
@@ -357,13 +385,11 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   defp step(m, {:call, _, :publish, [key]}) do
     case m.reviews[key] do
       %{status: :waiting, reviewed: reviewed} = r ->
-        case visible(m)[key] do
-          {^reviewed, "published", _} ->
-            {put_review(m, key, %{r | publish_error: true}), :refused}
-
-          _ ->
-            m = put_review(m, key, %{r | status: :published, publish_error: false})
-            {%{m | posts: m.posts ++ [{key, reviewed}]}, :ok}
+        if {reviewed, "published"} in Enum.map(laptop_rows(m, key), &Tuple.delete_at(&1, 2)) do
+          {put_review(m, key, %{r | publish_error: true}), :refused}
+        else
+          m = put_review(m, key, %{r | status: :published, publish_error: false})
+          {%{m | posts: m.posts ++ [{key, reviewed}]}, :ok}
         end
 
       _ ->
@@ -384,15 +410,21 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
   defp put_review(m, key, review), do: %{m | reviews: Map.put(m.reviews, key, review)}
 
-  # The laptop told this machine its rows changed: each review this machine has not
-  # taken up at the head it saw shows where the laptop has it now, and one the laptop
-  # let go of is looked at again at once.
+  # Whether the laptop tells this machine its claims changed: it does when connected
+  # and its plugin runs.
+  defp tells?(m), do: m.laptop and not m.restarting
+
+  # This machine read the laptop's claims again, told by the laptop or after a run
+  # stepped back: each review this machine has not taken up at the head it saw shows
+  # where the laptop has it now, and one the laptop let go of is looked at again at
+  # once. A laptop restarting its plugin still has what it had.
   defp peer_claims(m) do
     changed =
       for {key, r} <- m.reviews,
           r.status not in [:queued, :running] and r.reviewed != r.seen,
           other <- [laptop_status(m, key, r.seen)],
           other != r.elsewhere,
+          other != nil or not (m.laptop and m.restarting),
           into: %{},
           do: {key, %{r | elsewhere: other}}
 
@@ -400,16 +432,28 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     if Enum.any?(changed, fn {_, r} -> r.elsewhere == nil end), do: look(m), else: m
   end
 
+  # The laptop's status of `key` at `head`, a claim over a queued one.
   defp laptop_status(m, key, head) do
-    case visible(m)[key] do
-      {^head, status, _} -> status
-      _ -> nil
+    rows = for {^head, _, _} = row <- laptop_rows(m, key), do: row
+
+    case Enum.sort_by(rows, &elem(&1, 2)) do
+      [] -> nil
+      rows -> rows |> List.last() |> elem(1)
     end
   end
 
-  # The laptop's rows, as this machine sees them.
-  defp visible(%{laptop: true, rows: rows}), do: rows
-  defp visible(_m), do: %{}
+  # The laptop's rows of `key` as this machine reads them, `{head, status, claimed}`,
+  # a commit it holds behind a review queued again among them. One cut off, or
+  # restarting its plugin, has none.
+  defp laptop_rows(%{laptop: true, restarting: false, rows: rows}, key) do
+    case rows[key] do
+      nil -> []
+      {head, status, claimed, nil} -> [{head, status, claimed}]
+      {head, status, claimed, held} -> [{head, status, claimed}, {3 - head, held, true}]
+    end
+  end
+
+  defp laptop_rows(_m, _key), do: []
 
   defp fresh(head) do
     %{
@@ -420,14 +464,25 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       claimed: false,
       elsewhere: nil,
       publish_error: false,
-      seq: nil
+      seq: nil,
+      held: nil
     }
   end
 
+  # Queued for a head other than the one it reviewed, a review still holds that commit,
+  # and what became of it.
   defp queue(m, key) do
+    r = m.reviews[key]
+
+    held =
+      if r.claimed and r.reviewed != nil and r.reviewed != r.seen,
+        do: {r.reviewed, Atom.to_string(r.status)},
+        else: r.held
+
     review = %{
-      m.reviews[key]
+      r
       | status: :queued,
+        held: held,
         seq: m.seq + 1,
         claimed: false,
         elsewhere: nil,
@@ -500,19 +555,27 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   end
 
   # Run `k` of `key` checks out the head there is now and claims it, unless the
-  # connected laptop claimed that commit: then it steps back, and the next queued starts.
+  # connected laptop claimed that commit, or is restarting its plugin and cannot say:
+  # then it steps back, the next queued starts, and it reads the laptop's claims again.
   defp resolve(m, key, k) do
     case m.reviews[key] do
       %{status: :running, run: ^k} = r ->
         head = m.prs[key]
 
-        case visible(m)[key] do
-          {^head, status, true} ->
+        other =
+          Enum.find_value(laptop_rows(m, key), fn
+            {^head, status, true} -> status
+            _ -> nil
+          end) || if(m.laptop and m.restarting, do: "queued")
+
+        case other do
+          status when status != nil ->
             m
             |> put_review(key, %{r | status: :ready, claimed: false, elsewhere: status})
             |> pump()
+            |> peer_claims()
 
-          _ ->
+          nil ->
             m = put_review(m, key, %{r | reviewed: head, claimed: true})
             %{m | runs: Map.update!(m.runs, key, &List.replace_at(&1, k - 1, true))}
         end
@@ -522,21 +585,32 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     end
   end
 
-  # What this machine shares of a review: the commit it started on, or the head it
-  # has queued or is about to start.
-  defp claim_row(%{claimed: true, reviewed: reviewed} = r) when reviewed != nil,
-    do: {reviewed, Atom.to_string(r.status), true}
-
-  defp claim_row(%{status: s} = r) when s in [:queued, :running],
-    do: {r.seen, Atom.to_string(s), false}
-
-  defp claim_row(_r), do: nil
-
-  # Paused, what waits in the queue is left to the other machines.
+  # What this machine shares of a review, `{head, status, claimed, held}`: the commit
+  # it started on, or the head it is about to start or has queued (unless paused, when
+  # what waits is left to others), with any commit it holds from before it was queued
+  # again; with neither, the commit it holds.
   defp shared(m, r) do
-    case claim_row(r) do
-      {_, "queued", _} when m.paused -> nil
-      row -> row
+    status = Atom.to_string(r.status)
+
+    row =
+      cond do
+        r.claimed and r.reviewed != nil -> {r.reviewed, status, true}
+        r.status == :running or (r.status == :queued and not m.paused) -> {r.seen, status, false}
+        true -> nil
+      end
+
+    case {row, r.held} do
+      {nil, nil} ->
+        nil
+
+      {nil, {sha, held}} ->
+        {sha, held, true, nil}
+
+      {{sha, status, claimed}, {other, held}} when other != sha ->
+        {sha, status, claimed, {other, held, true}}
+
+      {{sha, status, claimed}, _} ->
+        {sha, status, claimed, nil}
     end
   end
 
@@ -587,16 +661,35 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         nil ->
           Map.delete(rows, key)
 
-        {head, {status, claimed}} ->
-          Map.put(rows, key, %{"sha" => sha(key, head), "status" => status, "claimed" => claimed})
+        {head, {status, claimed}, held} ->
+          row = %{"sha" => sha(key, head), "status" => status, "claimed" => claimed}
+
+          held =
+            held && %{"sha" => sha(key, 3 - head), "status" => held, "claimed" => true}
+
+          Map.put(rows, key, if(held, do: Map.put(row, "held", held), else: row))
       end
 
-    %{pid: peer, node: node} = laptop()
-    :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_rows, rows])
+    :ok = :peer.call(laptop().pid, :persistent_term, :put, [:cr_peer_rows, rows])
+    tell()
+    observe(:ok)
+  end
 
-    # Told as a real peer's `Host.peers/4` tells it; one cut off tells no one. The
-    # plugin has the message by the time the call returns.
-    if node in Node.list() do
+  # The laptop's plugin restarting, so it answers that it cannot say what it has, and
+  # back, when it tells this machine.
+  def restarting(on) do
+    :ok = :peer.call(laptop().pid, :persistent_term, :put, [:cr_peer_restarting, on])
+    if not on, do: tell()
+    observe(:ok)
+  end
+
+  # Told as a real peer's `Host.peers/4` tells it; one cut off, or whose plugin is
+  # restarting, tells no one. The plugin has the message by the time the call returns.
+  defp tell do
+    %{pid: peer, node: node} = laptop()
+
+    if node in Node.list() and
+         not :peer.call(peer, :persistent_term, :get, [:cr_peer_restarting, false]) do
       case :peer.call(peer, :erpc, :call, [
              node(),
              HalC2.Plugins.Host,
@@ -607,8 +700,6 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         other -> problem("claims_changed answered #{inspect(other)}")
       end
     end
-
-    observe(:ok)
   end
 
   # Cut off: once the plugin heard, by what it publishes when it had left a review to
@@ -749,7 +840,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     claims =
       for {key, row} <- apply(@server, :claims, [@keys]),
           into: %{},
-          do: {key, {head(row["sha"]), row["status"], row["claimed"]}}
+          do: {key, {head(row["sha"]), row["status"], row["claimed"], held(row["held"])}}
 
     %{
       reply: reply,
@@ -795,6 +886,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         i + 1
     end
   end
+
+  defp held(nil), do: nil
+  defp held(row), do: {head(row["sha"]), row["status"], row["claimed"]}
 
   defp head(nil), do: nil
   defp head(sha), do: Map.get(fx().heads, sha, {:unknown, sha})
@@ -1031,8 +1125,11 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     -module('Elixir.HalC2.Plugins.Host').
     -export([peer/3]).
     peer(<<"code-review">>, claims, [Keys]) ->
-        Rows = persistent_term:get(cr_peer_rows, \#{}),
-        {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => maps:with(Keys, Rows)}};
+        Result = case persistent_term:get(cr_peer_restarting, false) of
+            true -> restarting;
+            false -> maps:with(Keys, persistent_term:get(cr_peer_rows, \#{}))
+        end,
+        {ok, \#{<<"machine">> => <<"laptop">>, <<"result">> => Result}};
     peer(_, _, _) ->
         none.
     """
@@ -1091,6 +1188,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     # The laptop starts connected, with nothing of the pull requests in hand.
     %{pid: peer, node: node} = laptop()
     :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_rows, %{}])
+    :ok = :peer.call(peer, :persistent_term, :put, [:cr_peer_restarting, false])
     :net_kernel.monitor_nodes(true)
     if node not in Node.list(), do: true = Node.connect(node)
     :global.sync()

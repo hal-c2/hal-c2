@@ -487,6 +487,33 @@ defmodule HalC2.CodeReviewTest do
     _ = context
   end
 
+  # From the Maude model of claims between machines: a review queued again for a new
+  # push gave up its claim on the commit it had reviewed and posted, so a machine
+  # whose checkout of that commit was under way started and posted it again.
+  test "a review queued for a new push still holds the commit it reviewed", context do
+    save_settings(%{"reviewNewPushes" => true})
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    settle()
+    %{"status" => reported, "reviewedSha" => reviewed} = review()
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+
+    assert %{"status" => "running", "reviewedSha" => head} = review()
+    assert head != reviewed
+
+    assert %{@key => %{"sha" => ^head, "held" => %{"sha" => ^reviewed, "status" => ^reported}}} =
+             apply(@server, :claims, [[@key]])
+  end
+
   # --- helpers ----------------------------------------------------------------------------
 
   defp thread(thread_id) do
