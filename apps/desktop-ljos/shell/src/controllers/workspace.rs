@@ -17,9 +17,12 @@
 //! the thread the composer launches.
 //!
 //! What other controllers read ([`place`], [`git`], [`checkout`],
-//! [`launch`], [`environment_config`]) is kept on the engine beside the
-//! controller, so they read it while the workspace is running (a terminal
-//! started by `workspace.runScript` asks where it starts).
+//! [`launch`], [`environment_config`], [`local_config`]) is kept on the
+//! engine beside the controller, so they read it while the workspace is
+//! running (a terminal started by `workspace.runScript` asks where it
+//! starts). Every editor and file manager the shell starts, the workspace's
+//! or another controller's, goes through [`open_here`], which starts it only
+//! on this machine.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -42,6 +45,7 @@ use crate::mc::{Mc, McError, SubId};
 use crate::project::scripts;
 use crate::sidebar_model;
 use crate::store;
+use crate::this_machine;
 
 /// packages/contracts EDITORS, in the order the picker offers them.
 const EDITORS: &[(&str, &str)] = &[
@@ -272,14 +276,169 @@ pub fn refresh_git(engine: &Engine) {
     controller::with::<Workspace, _>(engine, |c, engine| c.refresh_git(engine));
 }
 
-/// Opens `path` on the route's environment in `editor_id` (the preferred one
-/// when empty), or shows it in the file manager (`reveal`). False when the
-/// environment has no such editor, or the workspace is busy.
+/// The ServerConfig of this machine, whose editors and file manager open
+/// the route's files: [`environment_config`] when the route runs here, else
+/// the shell's own (`Settings::config`).
+pub fn local_config(engine: &Engine) -> Map<String, Json> {
+    let here = place(engine).is_some_and(|p| this_machine::hosts(engine, &p.environment_id));
+    if here {
+        environment_config(engine)
+    } else {
+        Settings::of(engine).config()
+    }
+}
+
+/// Opens `path` of the route's environment in `editor_id` of this machine
+/// (the preferred one when empty), or shows it in the file manager
+/// (`reveal`), through [`open_here`]. False when this machine has no such
+/// editor, or the workspace is busy.
 pub fn open_in_editor(engine: &Engine, editor_id: &str, path: &str, reveal: bool) -> bool {
     controller::with::<Workspace, _>(engine, |c, engine| {
         c.open_in_editor(engine, editor_id, path, reveal)
     })
     .unwrap_or(false)
+}
+
+/// What the user is told when a file cannot be opened on this machine.
+pub const FILES_ELSEWHERE: &str = "The files are on another machine and can't be opened here yet.";
+
+/// Where a file of an environment is on this machine: `path`, and the MC on
+/// this machine that starts apps there (`launcher`), or why there is none
+/// (`problem`, what the user is told).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LocalPath {
+    pub path: String,
+    pub launcher: String,
+    pub problem: String,
+}
+
+/// `path` on `environment_id` as a path on this machine, handed to `done`
+/// once no controller is running. Every editor and file manager the shell
+/// starts goes through it. A machine's own files are where they are; another
+/// cluster member's are in the folder the shell's MC mounts for it
+/// (`files.localPath`), when that MC runs here. An MC on another machine
+/// (paired directly, or behind an SSH forward) mounts nothing here.
+pub fn local_path_for(
+    engine: &Engine,
+    environment_id: &str,
+    path: &str,
+    done: impl FnOnce(&Engine, LocalPath) + 'static,
+) {
+    let elsewhere = LocalPath {
+        problem: FILES_ELSEWHERE.into(),
+        ..LocalPath::default()
+    };
+    if this_machine::hosts(engine, environment_id) {
+        let local = LocalPath {
+            path: path.to_owned(),
+            launcher: environment_id.to_owned(),
+            problem: String::new(),
+        };
+        return Bridge::of(engine).defer(engine, move |engine| done(engine, local));
+    }
+    let Some(mc) =
+        controller::mc(engine).filter(|mc| this_machine::hosts(engine, &mc.environment()))
+    else {
+        return Bridge::of(engine).defer(engine, move |engine| done(engine, elsewhere));
+    };
+    let shell_mc = mc.environment();
+    let launcher = shell_mc.clone();
+    mc.call(
+        &shell_mc,
+        "files.localPath",
+        json!({ "environmentId": environment_id, "path": path }),
+        Box::new(move |engine, result| {
+            let answer = result.map(object);
+            let local = answer.as_ref().map(|a| text(a, "path")).unwrap_or_default();
+            let message = answer
+                .as_ref()
+                .map(|a| text(a, "message"))
+                .unwrap_or_default();
+            // An MC from before files.localPath has no folders to offer.
+            if answer.is_err() || local.is_empty() {
+                let problem = if answer.is_err() || message.is_empty() {
+                    elsewhere.problem
+                } else {
+                    message
+                };
+                done(
+                    engine,
+                    LocalPath {
+                        problem,
+                        ..LocalPath::default()
+                    },
+                );
+            } else {
+                done(
+                    engine,
+                    LocalPath {
+                        path: local,
+                        launcher,
+                        problem: String::new(),
+                    },
+                );
+            }
+        }),
+    );
+}
+
+/// Hears an [`open_here`]'s error, `None` when the app started.
+pub type OpenDone = Box<dyn FnOnce(&Engine, Option<String>)>;
+
+/// Starts `editor` (`file-manager` with `reveal`) on this machine at `path`
+/// of `environment_id`, through an MC that runs here; never on another
+/// machine. When [`local_path_for`] has nothing it tells the user why.
+/// `failure` titles the toast of an MC that could not start it, and `done`
+/// hears its error (empty for none given) instead when set.
+pub fn open_here(
+    engine: &Engine,
+    environment_id: &str,
+    path: &str,
+    editor: &str,
+    reveal: bool,
+    failure: &str,
+    done: Option<OpenDone>,
+) {
+    let editor = editor.to_owned();
+    let failure = failure.to_owned();
+    local_path_for(engine, environment_id, path, move |engine, local| {
+        if local.path.is_empty() {
+            match done {
+                Some(done) => done(engine, Some(local.problem)),
+                None => {
+                    controller::with::<Toasts, _>(engine, |t, engine| {
+                        t.error(engine, &local.problem, "")
+                    });
+                }
+            }
+            return;
+        }
+        let Some(mc) = controller::mc(engine) else {
+            return;
+        };
+        let mut payload = json!({ "cwd": local.path, "editor": editor });
+        if reveal {
+            payload["reveal"] = true.into();
+        }
+        mc.call(
+            &local.launcher,
+            "shell.openInEditor",
+            payload,
+            Box::new(move |engine, result| {
+                let error = result.err().map(|e| e.message);
+                match done {
+                    Some(done) => done(engine, error),
+                    None => {
+                        if let Some(error) = error {
+                            controller::with::<Toasts, _>(engine, |t, engine| {
+                                t.error(engine, &failure, &error)
+                            });
+                        }
+                    }
+                }
+            }),
+        );
+    });
 }
 
 /// The bootstrap of a thread's first turn, from the checkout the header
@@ -558,7 +717,7 @@ impl Controller for Workspace {
             engine,
             open_favorite,
             &crate::keybindings::command_label(open_favorite),
-            move |engine| me.run(engine, |c, engine| c.open_here(engine, "")),
+            move |engine| me.run(engine, |c, engine| c.open_folder(engine, "")),
         );
         commands.set_listed(engine, open_favorite, false);
         let previous = "composer.previousWorktree";
@@ -600,7 +759,7 @@ impl Controller for Workspace {
             "workspace.openPullRequest" => self.open_pull_request(engine),
             "workspace.previousWorktree" => self.use_previous_worktree(engine),
             "workspace.rename" => self.rename(engine, &here, &arg("title")),
-            "workspace.openInEditor" => self.open_here(engine, &arg("editorId")),
+            "workspace.openInEditor" => self.open_folder(engine, &arg("editorId")),
             "workspace.openFile" => self.open_file_in_editor(engine, &arg("path")),
             "workspace.runScript" => self.run_script(engine, &here, &arg("scriptId")),
             "workspace.branch.search" => {
@@ -1120,8 +1279,9 @@ impl Workspace {
         }
     }
 
+    /// This machine's: a thread elsewhere opens in an editor here.
     fn editors(&self, engine: &Engine) -> Vec<Json> {
-        let config = environment_config(engine);
+        let config = local_config(engine);
         let available = config
             .get("availableEditors")
             .and_then(Json::as_array)
@@ -1492,7 +1652,7 @@ impl Workspace {
     }
 
     /// The route's folder in `editor_id` (the preferred one when empty).
-    fn open_here(&mut self, engine: &Engine, editor_id: &str) {
+    fn open_folder(&mut self, engine: &Engine, editor_id: &str) {
         if let Some(here) = place(engine) {
             self.open_in_editor(engine, editor_id, here.cwd(), false);
         }
@@ -1529,19 +1689,14 @@ impl Workspace {
         if !reveal {
             Settings::of(engine).write_device(engine, LAST_EDITOR, editor.clone().into());
         }
-        let mut payload = json!({ "cwd": path, "editor": editor });
-        if reveal {
-            payload["reveal"] = true.into();
-        }
-        self.mc.call(
+        open_here(
+            engine,
             &here.environment_id,
-            "shell.openInEditor",
-            payload,
-            Box::new(|engine, result| {
-                if let Err(error) = result {
-                    toast_error(engine, "Failed to open in editor.", &error);
-                }
-            }),
+            path,
+            &editor,
+            reveal,
+            "Failed to open in editor.",
+            None,
         );
         self.publish(engine);
         true

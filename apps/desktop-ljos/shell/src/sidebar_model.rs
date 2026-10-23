@@ -1111,6 +1111,9 @@ pub struct Input<'a> {
     /// The environment of the MC the shell runs against; its folders are the
     /// ones the folder explorer lists.
     pub local_environment_id: Nullable,
+    /// Whether that MC runs on this machine (`this_machine::hosts`), so a
+    /// folder picked here is one of its folders.
+    pub local_folders: bool,
     /// Environments that are listed but unreachable; their rows stay, marked
     /// offline, with the actions that need the environment off.
     pub offline_environments: HashSet<String>,
@@ -1351,6 +1354,7 @@ pub fn build(
     view.state = json!({
         "localEnvironmentId": nullable(&input.local_environment_id),
         "localProjects": local_projects,
+        "localFolders": input.local_folders,
         "projects": projects,
         "scopeProjectKey": nullable(scope_project_key),
         "pinned": pinned,

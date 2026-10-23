@@ -61,13 +61,14 @@ fn hub() -> (Hub, Keymap) {
 }
 
 /// One that keeps this device's preferences (the editor last used) in a
-/// directory of its own.
+/// directory of its own, over an MC on this machine (editors start only
+/// here).
 fn hub_in(test: &str) -> (Hub, Keymap) {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join("hub-keybindings")
         .join(test);
     let _ = std::fs::remove_dir_all(&dir);
-    linux(Hub::with(Launch {
+    linux(Hub::here(Launch {
         config_dir: Some(dir),
         ..Launch::default()
     }))

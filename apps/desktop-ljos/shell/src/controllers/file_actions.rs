@@ -135,7 +135,7 @@ impl Controller for FileActions {
                 let reveal = action == "files.reveal";
                 let mut target = absolute(&root(engine), path);
                 // An MC that cannot select a file shows the folder it is in.
-                let selects = workspace::environment_config(engine)
+                let selects = workspace::local_config(engine)
                     .get("shellRevealInFileManager")
                     .and_then(Json::as_bool)
                     .unwrap_or(false);
