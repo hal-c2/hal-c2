@@ -35,7 +35,7 @@ fn files_on(root: &str, active: bool) -> Files {
     let (engine, mc) = (hub.engine.clone(), hub.mc.clone());
     let files = WorkspaceFiles::create(&engine, None, mc.clone()).expect("the files");
     let tree = WorkspaceFiles::tree(&engine, files).expect("its tree");
-    WorkspaceFiles::set_target(&engine, files, "env-a", root);
+    WorkspaceFiles::set_target(&engine, files, "env-a", root, "");
     WorkspaceFiles::set_active(&engine, files, active);
     Files {
         hub,
@@ -193,7 +193,7 @@ fn a_search_of_the_workspace_left_is_dropped() {
     f.set("query", Value::from("x"));
     f.pass(SEARCH_DELAY_MS);
     assert_eq!(f.log(), ["searchEntries x"]);
-    WorkspaceFiles::set_target(&f.engine, f.files, "env-a", "/w2");
+    WorkspaceFiles::set_target(&f.engine, f.files, "env-a", "/w2", "");
     f.answer(0, listing(&[file("x-of-w1")]));
     assert!(!f.flag("searching"));
     assert_eq!(f.text("query"), "");
@@ -282,7 +282,7 @@ fn the_top_folder_can_be_listed_again_after_it_failed() {
 #[test]
 fn a_new_workspace_forgets_the_tree_and_its_answers() {
     let f = files_on("/w1", true);
-    WorkspaceFiles::set_target(&f.engine, f.files, "env-a", "/w2");
+    WorkspaceFiles::set_target(&f.engine, f.files, "env-a", "/w2", "");
     assert_eq!(f.log(), ["listEntries ", "listEntries "]);
     assert_eq!(f.asked("projects.listEntries")[1]["cwd"], "/w2");
     f.answer(0, listing(&[file("old")]));
@@ -593,6 +593,36 @@ fn ticking_a_markdown_task_writes_the_file() {
     );
     assert_eq!(f.lines(), ["- [x] a", "- [x] b"]);
     assert_eq!(f.text("renderedText"), "- [☑](task:0) a\n- [☑](task:1) b\n");
+}
+
+// --- Media (features/files/file-viewer-and-editing.feature) ---
+
+// An image is not read: the MC signs a URL the viewer loads, and a URL the
+// viewer could not load says so until the file is read again.
+#[test]
+fn an_image_previews_through_a_signed_url() {
+    let f = files_on("/w", true);
+    f.answer(0, listing(&[]));
+    f.invoke("openFile", &[Value::from("img/logo.png"), Value::from(0)]);
+    assert_eq!(f.text("mediaKind"), "image");
+    assert!(f.asked("projects.readFile").is_empty());
+    assert_eq!(
+        f.asked("assets.createUrl"),
+        [json!({"resource": {
+            "_tag": "draft-workspace-file", "cwd": "/w", "path": "img/logo.png",
+        }})]
+    );
+    // The fake MC has no origin, so the URL stays as the MC said it.
+    f.reply(
+        "assets.createUrl",
+        Ok(json!({"relativeUrl": "/api/assets/one/logo.png", "expiresAt": 9e15})),
+    );
+    assert_eq!(f.text("fileStatus"), "ready");
+    assert_eq!(f.text("mediaUrl"), "/api/assets/one/logo.png");
+    f.invoke("mediaFailed", &[Value::from("/api/assets/one/logo.png")]);
+    assert_eq!(f.text("fileStatus"), "error");
+    assert_eq!(f.text("fileProblem"), "The image could not be loaded.");
+    assert_eq!(f.text("mediaUrl"), "");
 }
 
 // --- Following the agent ---

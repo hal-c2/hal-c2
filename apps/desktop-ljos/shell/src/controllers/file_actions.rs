@@ -3,7 +3,13 @@
 //! it in the Files tab (`files.open {path}`), show it in the file manager
 //! (`files.reveal {path}`), open it in an editor (`files.openInEditor {path,
 //! editorId}`), copy its mention (`files.copyMention {path}`) or add it to
-//! the chat (`files.addToChat {path}`). Paths are relative to the checkout.
+//! the chat (`files.addToChat {path}`). Paths are relative to the checkout,
+//! or full paths of files the agent left outside it. Editors and file
+//! managers start on this machine (`workspace::open_in_editor`).
+//!
+//! It also offers "Copy file contents" (`files.copyContents`, a command
+//! listed while the Files tab shows a text file), which copies the open
+//! file's text as the viewer has it.
 //!
 //! It also keeps the Files tab's source kinds (the kinds the user reads as
 //! source rather than rendered) in this device's settings (`fileSourceKinds`),
@@ -13,6 +19,7 @@ use ljos::prelude::{Engine, ObjectId};
 use serde_json::json;
 
 use crate::bridge::Bridge;
+use crate::commands::Commands;
 use crate::composer_model::path_link;
 use crate::controller::{self, Controller, Init};
 use crate::controllers::composer;
@@ -25,6 +32,8 @@ use crate::thread_view::workspace_files::WorkspaceFiles;
 
 /// The device setting holding the source kinds.
 const SOURCE_KINDS: &str = "fileSourceKinds";
+/// The command and action copying the open file's text.
+pub const COPY_CONTENTS: &str = "files.copyContents";
 
 pub struct FileActions {
     bridge: Bridge,
@@ -60,6 +69,10 @@ pub fn absolute(root: &str, path: &str) -> String {
     if root.is_empty() || path.is_empty() {
         return String::new();
     }
+    // One the agent left outside the workspace is opened by its full path.
+    if path.starts_with('/') || path.contains(":\\") {
+        return path.to_owned();
+    }
     if root.ends_with('/') {
         format!("{root}{path}")
     } else {
@@ -83,6 +96,62 @@ pub fn mention(path: &str) -> String {
 fn error(engine: &Engine, title: &str, description: &str) {
     controller::with::<Toasts, _>(engine, |t, e| {
         t.error(e, title, description);
+    });
+}
+
+/// The viewer shows a file as text, which can be copied.
+fn copyable(engine: &Engine, files: Option<ObjectId>) -> bool {
+    files
+        .and_then(|files| {
+            WorkspaceFiles::read(engine, files, |f| {
+                f.file_status() == "ready" && f.media_kind().is_empty()
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Copies the open file's text, saying what came along.
+fn copy_contents(engine: &Engine) {
+    let files = files(engine);
+    if !copyable(engine, files) {
+        error(
+            engine,
+            "No file to copy",
+            "Open a text file in the Files panel first.",
+        );
+        return;
+    }
+    let Some((text, path, truncated)) = files.and_then(|files| {
+        WorkspaceFiles::read(engine, files, |f| {
+            (
+                f.text().to_owned(),
+                f.open_path().to_owned(),
+                !f.truncated_notice().is_empty(),
+            )
+        })
+    }) else {
+        return;
+    };
+    if !Bridge::of(engine).copy_to_clipboard(engine, &text) {
+        error(engine, "Failed to copy file contents", "");
+        return;
+    }
+    // A file larger than the MC reads whole has only its start in the
+    // viewer.
+    let description = if truncated {
+        format!("Only the first 1 MB of {path}.")
+    } else {
+        path
+    };
+    controller::with::<Toasts, _>(engine, |t, e| {
+        t.show(
+            e,
+            "success",
+            "File contents copied",
+            &description,
+            None,
+            DEFAULT_TIMEOUT_MS,
+        );
     });
 }
 
@@ -119,6 +188,25 @@ impl Controller for FileActions {
         WorkspaceFiles::on_save_failed(engine, files, |engine, path, problem| {
             error(engine, &format!("Could not save {path}"), problem);
         });
+        let commands = Commands::of(engine);
+        commands.add(engine, COPY_CONTENTS, "Copy file contents", copy_contents);
+        commands.set_terms(COPY_CONTENTS, &["clipboard", "text", "file"]);
+        let follow = move |engine: &Engine| {
+            let copyable = copyable(engine, Some(files));
+            let commands = Commands::of(engine);
+            commands.set_enabled(engine, COPY_CONTENTS, copyable);
+            commands.set_listed(engine, COPY_CONTENTS, copyable);
+        };
+        if let Err(e) = engine.connect_by_name(files, "fileStatusChanged", move |engine, _| {
+            follow(engine);
+        }) {
+            engine.log(
+                ljos::prelude::LogLevel::Warning,
+                "FileActions",
+                e.to_string(),
+            );
+        }
+        follow(engine);
     }
 
     fn handle(&mut self, engine: &Engine, action: &str, payload: &Json) -> bool {
@@ -179,6 +267,7 @@ impl Controller for FileActions {
                     error(engine, "Failed to copy mention", "");
                 }
             }
+            COPY_CONTENTS => copy_contents(engine),
             "files.addToChat" => {
                 if !composer::insert_at_end(engine, &path_link(path)) {
                     error(
@@ -204,6 +293,9 @@ mod tests {
         assert_eq!(absolute("/repo/", "a.rs"), "/repo/a.rs");
         assert_eq!(absolute("", "a.rs"), "");
         assert_eq!(absolute("/repo", ""), "");
+        // One outside the checkout is opened by its full path.
+        assert_eq!(absolute("/repo", "/tmp/x.txt"), "/tmp/x.txt");
+        assert_eq!(absolute("C:\\repo", "D:\\x.txt"), "D:\\x.txt");
         assert_eq!(folder_of("/repo/src/a.rs"), "/repo/src");
         assert_eq!(folder_of(""), "");
     }

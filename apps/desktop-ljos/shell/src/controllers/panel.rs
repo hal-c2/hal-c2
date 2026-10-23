@@ -740,7 +740,7 @@ impl RightPanel {
                 AgentsModel::set_thread(engine, agents, environment, timeline);
             }
             if let Some(files) = self.files {
-                WorkspaceFiles::set_target(engine, files, environment, &root);
+                WorkspaceFiles::set_target(engine, files, environment, &root, &thread_id);
                 WorkspaceFiles::set_timeline(engine, files, timeline);
             }
             self.files_root = root;
