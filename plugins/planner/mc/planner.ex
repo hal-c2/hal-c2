@@ -675,6 +675,7 @@ defmodule HalC2Plugins.Planner do
        checked_at: nil,
        looked: nil,
        details: nil,
+       full_at: nil,
        projects: [],
        slack: nil,
        slack_at: nil,
@@ -690,7 +691,7 @@ defmodule HalC2Plugins.Planner do
   @impl GenServer
   def handle_call(:plan, _from, state), do: {:reply, plan(state), state}
   def handle_call(:runs, _from, state), do: {:reply, runs(state), state}
-  def handle_call(:looking, _from, state), do: {:reply, {state.items, state.details}, state}
+  def handle_call(:looking, _from, state), do: {:reply, {state.items, reusable(state)}, state}
 
   def handle_call({:item, id}, _from, state) do
     case state.items[id] do
@@ -1169,7 +1170,8 @@ defmodule HalC2Plugins.Planner do
   @impl GenServer
   def handle_info(:poll, %{polling: nil} = state) do
     server = self()
-    %{settings: settings, items: items, details: details} = state
+    %{settings: settings, items: items} = state
+    details = reusable(state)
     # Linked, so turning the planner off calls off a look still waiting on GitHub.
     looking = fn -> send(server, {:polled, look(settings, items, details)}) end
     {_pid, ref} = Process.spawn(looking, [:link, :monitor])
@@ -1225,6 +1227,21 @@ defmodule HalC2Plugins.Planner do
       else: found
   end
 
+  # What the next look may reuse of the one applied last, nothing once a day has passed
+  # since a full look; one its read failed for is read alone again at the next look.
+  # GitHub does not count every change to an issue as an update to it (a milestone
+  # renamed, a pull request now closing it), so a closed task's last
+  # copy would otherwise stand until the MC restarts or the issue changes. The day
+  # is a wall-clock day (`full_at` and now are wall times, as a look's `started`
+  # and `since` already are), so a clock stepped backwards holds the copies that
+  # much longer; that bound is accepted, not corrected for.
+  defp reusable(%{details: details, full_at: full_at}) do
+    if full_at != nil and DateTime.diff(DateTime.utc_now(), full_at) < full_read_seconds(),
+      do: details
+  end
+
+  defp full_read_seconds, do: Application.get_env(:hal_c2, :planner_full_read_seconds, 86_400)
+
   defp connected? do
     case slack("status", %{}) do
       {:ok, %{"connected" => true}} -> {:ok, nil}
@@ -1260,6 +1277,7 @@ defmodule HalC2Plugins.Planner do
         checked_at: now(),
         looked: found.at,
         details: {found.started, found.details},
+        full_at: if(found.full, do: found.started, else: state.full_at),
         projects: found.projects || state.projects
     }
 
