@@ -3046,14 +3046,25 @@ defmodule HalC2.OrchestrationTest do
   end
 
   # The fake Codex's receipt that a "hold ..." steer reached it and waits on the
-  # gate file "steer". The fake is another OS process, so its file is the receipt.
+  # gate file "steer". The fake is another OS process whose only channel into the
+  # test is the filesystem, so its file is the receipt: this waits on it up to a
+  # deadline.
   defp await_held_steer(gates) do
-    held = Path.join(gates, "steer.held")
+    await_file(Path.join(gates, "steer.held"), System.monotonic_time(:millisecond) + 5_000)
+  end
 
-    {_, 0} =
-      System.cmd("timeout", ["5", "sh", "-c", "until [ -e '#{held}' ]; do sleep 0.01; done"])
+  defp await_file(path, deadline) do
+    cond do
+      File.exists?(path) ->
+        :ok
 
-    :ok
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("#{path} was not written in time")
+
+      true ->
+        Process.sleep(10)
+        await_file(path, deadline)
+    end
   end
 
   # A stand-in in the Codex registry that refuses a steer with a reason that is
