@@ -519,5 +519,53 @@ Item {
             Shell.state = { sidebar: all };
             tryCompare(list, "count", 5);
         }
+
+        // Regression: Enter on the last page's "Show more" took the row away
+        // with the cursor on it, dropping the focus ring and Up/Down.
+        function test_cursorSurvivesLastShowMore() {
+            const settled = n => [...Array(n).keys()].map(i => Object.assign({}, Shell.state.sidebar.active[0], { key: "s" + i, title: "Settled " + i }));
+            const next = JSON.parse(JSON.stringify(Shell.state.sidebar));
+            next.settled = settled(3);
+            next.settledTotal = 5;
+            next.settledPage = 50;
+            Shell.state = { sidebar: next };
+            let sidebar = createTemporaryObject(sidebarComponent, root);
+            let list = findChild(sidebar, "list");
+            tryCompare(list, "count", 6);
+            tryVerify(() => list.itemAtIndex(5) !== null);
+            root.Window.window.requestActivate();
+            tryVerify(() => root.Window.active);
+            list.forceActiveFocus();
+            tryCompare(list, "activeFocus", true);
+            list.cursorKey = "more:settled";
+            keyClick(Qt.Key_Return);
+            tryCompare(Shell, "dispatchCount", 1);
+            compare(Shell.dispatchedActions[0].action, "sidebar.more");
+
+            // The last page lands where the row was: the cursor is on its first thread.
+            const all = JSON.parse(JSON.stringify(next));
+            all.settled = settled(5);
+            Shell.state = { sidebar: all };
+            tryCompare(list, "count", 7);
+            compare(list.cursorKey, "s3");
+            tryVerify(() => !!findChild(sidebar, "threadRow:s3") && findChild(sidebar, "threadRow:s3").focused);
+            keyClick(Qt.Key_Down);
+            compare(list.cursorKey, "s4");
+            keyClick(Qt.Key_Up);
+            keyClick(Qt.Key_Up);
+            compare(list.cursorKey, "s2");
+
+            // A last row that goes hands the cursor to the one before it.
+            keyClick(Qt.Key_End);
+            compare(list.cursorKey, "s4");
+            const fewer = JSON.parse(JSON.stringify(all));
+            fewer.settled = settled(4);
+            fewer.settledTotal = 4;
+            Shell.state = { sidebar: fewer };
+            tryCompare(list, "count", 6);
+            compare(list.cursorKey, "s3");
+            keyClick(Qt.Key_Up);
+            compare(list.cursorKey, "s2");
+        }
     }
 }
