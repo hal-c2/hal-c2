@@ -51,6 +51,7 @@ export function createSourceControl(deps: {
       width: deps.width(),
       log: current().gitLog,
       progress: current().gitProgress,
+      remedy: current().gitRemedy,
     });
   const publishGit = () => {
     const next = gitState();
@@ -113,6 +114,15 @@ export function createSourceControl(deps: {
     );
   };
 
+  /** A failure's remedy to the clipboard, or shown whole where the terminal has none. */
+  const copyRemedy = (text: string, what: "Link" | "Command") => {
+    const copied = deps.copyToClipboard?.(text) ?? false;
+    store.setStatus(
+      copied ? `${what} copied: ${text}` : `${what === "Link" ? "Open" : "Run"}: ${text}`,
+      copied ? "success" : "info",
+    );
+  };
+
   const activate = (index: number) => {
     const action = gitState().actions[index];
     if (!action) return;
@@ -121,7 +131,12 @@ export function createSourceControl(deps: {
       return;
     }
     if (action.kind === "url" && action.url) {
-      copyPrUrl(action.url);
+      if (action.id === "remedy") copyRemedy(action.url, "Link");
+      else copyPrUrl(action.url);
+      return;
+    }
+    if (action.kind === "copy" && action.command) {
+      copyRemedy(action.command, "Command");
       return;
     }
     if (action.kind === "pull") {
@@ -215,7 +230,8 @@ export function createSourceControl(deps: {
       prev.vcsStatus !== next.vcsStatus ||
       prev.gitBusy !== next.gitBusy ||
       prev.gitProgress !== next.gitProgress ||
-      prev.gitLog !== next.gitLog
+      prev.gitLog !== next.gitLog ||
+      prev.gitRemedy !== next.gitRemedy
     ) {
       publishGit();
     }

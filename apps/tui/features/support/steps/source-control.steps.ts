@@ -74,6 +74,48 @@ step("the push will be rejected by the remote", (ctx: World) => {
   });
 });
 
+// A refusal the MC knows the remedy of: the panel lists it first.
+step(
+  /^the push will be refused, offering "([^"]+)" to (open|copy) "([^"]+)"$/,
+  (ctx: World, label: string, verb: string, target: string) => {
+    setCheckout(ctx, vcsStatus({ aheadCount: 1 }));
+    ctx.fake!.setGitOutcome({
+      kind: "fail",
+      message: "git push failed: refused",
+      remedy:
+        verb === "open"
+          ? { kind: "open_url", label, url: target }
+          : { kind: "copy_command", label, command: target },
+    });
+  },
+);
+
+step("the user chooses {string} on the failure", async (ctx: World, label: string) => {
+  expect(gitState(ctx).actions[0]).toMatchObject({ id: "remedy", label });
+  await runFromPanel(ctx, label);
+});
+
+// The terminal opens a link with a Ctrl-click on it (OSC 8); Enter copies it.
+step("the browser opens {string}", async (ctx: World, url: string) => {
+  const screen = await settle(ctx);
+  expect(gitState(ctx).actions[0]).toMatchObject({ id: "remedy", kind: "url", url });
+  expect(ctx.clipboard ?? []).toEqual([url]);
+  expect(statusText(ctx)).toBe(`Link copied: ${url}`);
+  expect(screen).toContain("Link copied");
+});
+
+step("{string} is on the clipboard", async (ctx: World, text: string) => {
+  await settle(ctx);
+  expect(ctx.clipboard ?? []).toEqual([text]);
+  expect(statusText(ctx)).toBe(`Command copied: ${text}`);
+});
+
+step("the failure is still shown", async (ctx: World) => {
+  const screen = await settle(ctx);
+  expect(gitState(ctx).failed).toBe(true);
+  expect(screen).toContain("git push failed: refused");
+});
+
 // --- committing ---
 
 step("the user commits with the message {string}", async (ctx: World, message: string) => {

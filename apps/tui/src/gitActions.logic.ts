@@ -1,10 +1,20 @@
 import type {
+  GitActionFailureCta,
   GitStackedAction,
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
   VcsStatusResult,
 } from "@hal-c2/contracts";
 import { resolveChangeRequestPresentation } from "@hal-c2/shared/sourceControl";
+
+/** A git action's failure, with what the MC offers to fix it, when it knows. */
+export class GitActionFailure extends Error {
+  readonly remedy: GitActionFailureCta | null;
+  constructor(message: string, remedy: GitActionFailureCta | null) {
+    super(message);
+    this.remedy = remedy;
+  }
+}
 
 /** What the checkout's host calls a pull request, short: "PR" on GitHub, "MR" on GitLab. */
 const changeRequestName = (status: VcsStatusResult | null): string =>

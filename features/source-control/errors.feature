@@ -7,7 +7,8 @@
 #   apps/server-ex/lib/hal_c2/vcs.ex (VcsProcessExitError)
 #   apps/server-ex/lib/hal_c2/source_control.ex (SourceControlRepositoryError)
 #   apps/web/src/components/GitActionsControl.logic.ts (error toasts)
-#   apps/tui/src/store.ts (Git failed)
+#   apps/tui/src/store.ts (Git failed), apps/tui/src/host/gitState.ts (the failure's remedy row)
+#   apps/desktop-qt/src/native/GitController.cpp (the failure toast and its action)
 #   apps/tui/src/features.backlog.test.ts (git-operation-progress)
 #   apps/server/src/vcs/GitVcsDriverCore.ts (fetchFailureDetail, non-interactive fetch), VcsProcess.ts
 #   apps/server/src/git/GitWorkflowService.ts (git-only workflows)
@@ -181,6 +182,23 @@ Feature: When source control goes wrong
     Given the push will be rejected by the remote
     When the user pushes
     Then the failure stays visible until the user dismisses it
+
+  # The MC's remedy for a refusal it knows (GitActionFailureCta, from the scenarios
+  # above), offered on the failure itself. The phone has no git actions yet.
+  @desktop @tui @mobile @backlog-mobile
+  Scenario: A failure a settings page fixes links to the page
+    Given the push will be refused, offering "Grant Workflows permission" to open "https://github.com/acme/shop/settings/installations"
+    When the user pushes
+    And the user chooses "Grant Workflows permission" on the failure
+    Then the browser opens "https://github.com/acme/shop/settings/installations"
+
+  @desktop @tui @mobile @backlog-mobile
+  Scenario: A failure a command fixes copies the command
+    Given the push will be refused, offering "Copy command" to copy "gh auth refresh -s workflow"
+    When the user pushes
+    And the user chooses "Copy command" on the failure
+    Then "gh auth refresh -s workflow" is on the clipboard
+    And the failure is still shown
 
   @mc
   Scenario: A repository that cannot be looked up is reported per host

@@ -479,6 +479,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/commit-and-generated-messages.feature:Cancelling the commit*"),
     QStringLiteral("source-control/commit-and-generated-messages.feature:Committing on the default branch carries*"),
     QStringLiteral("source-control/errors.feature:A failed git action stays*"),
+    QStringLiteral("source-control/errors.feature:A failure a *"),
     QStringLiteral("source-control/status-and-changes.feature"),
     QStringLiteral("source-control/repository-discovery-clone-publish.feature"),
     QStringLiteral("source-control/commit-and-generated-messages.feature:Opening a changed file from the commit review"),
