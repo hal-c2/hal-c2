@@ -30,8 +30,10 @@ use chrono::{DateTime, Utc};
 use regex::Regex;
 
 use super::cache::{self, Cursor, ThreadCache};
+use super::file_render::extension_of;
 use super::summary::{self, Obj, as_object, flag, object, text};
 use super::time::{self, Clock};
+use crate::controllers::composer::text::data_size;
 use crate::json::Json;
 
 /// Calls shown per collapsed work group.
@@ -130,12 +132,16 @@ pub enum Role {
     MessageId,
     /// A user message's images: [{id, name, url}].
     Attachments,
+    /// A user message's other attachments, listed by name: [{id, name,
+    /// detail}]. `detail` is a file's kind and size ("PDF · 2.0 MiB"), empty
+    /// for a kind this client does not know.
+    SentFiles,
     /// Whether an error row is a wait rather than a failure.
     Warning,
 }
 
 impl Role {
-    pub const ALL: [Role; 26] = [
+    pub const ALL: [Role; 27] = [
         Role::Id,
         Role::Kind,
         Role::Author,
@@ -161,6 +167,7 @@ impl Role {
         Role::PullRequestUrl,
         Role::MessageId,
         Role::Attachments,
+        Role::SentFiles,
         Role::Warning,
     ];
 
@@ -191,6 +198,7 @@ impl Role {
             Role::PullRequestUrl => "pullRequestUrl",
             Role::MessageId => "messageId",
             Role::Attachments => "attachments",
+            Role::SentFiles => "sentFiles",
             Role::Warning => "warning",
         }
     }
@@ -2535,6 +2543,34 @@ impl Timeline {
                     }
                 }
                 Json::Array(images)
+            }
+            Role::SentFiles => {
+                let mut files = Vec::new();
+                if kind == "user_message" {
+                    for attachment in array(item, "attachments") {
+                        let attachment = as_object(attachment);
+                        let kind = text(attachment, "type");
+                        if kind == "image" {
+                            continue;
+                        }
+                        let name = text(attachment, "name");
+                        let detail = if kind == "file" {
+                            let size = data_size(int(attachment, "sizeBytes"));
+                            match extension_of(name).to_uppercase() {
+                                suffix if suffix.is_empty() => size,
+                                suffix => format!("{suffix} · {size}"),
+                            }
+                        } else {
+                            String::new()
+                        };
+                        files.push(serde_json::json!({
+                            "id": text(attachment, "id"),
+                            "name": name,
+                            "detail": detail,
+                        }));
+                    }
+                }
+                Json::Array(files)
             }
             Role::Files => {
                 let checkpoint = self.entity("turn-item", &row.checkpoint);
