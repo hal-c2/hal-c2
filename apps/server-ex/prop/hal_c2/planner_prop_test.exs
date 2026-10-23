@@ -40,7 +40,8 @@ defmodule HalC2.PlannerPropTest do
   around the dependency between two, and a client nests a task while a look at GitHub is
   on its way, holding GitHub's list as it was before the nest. Work on a task starts on
   a project the MC does not have, or on one whose worktree setup is not running so the
-  launch exits, and its thread never launches. A client links a task to a pull request
+  launch exits, or holds the launch until something kills it, and its thread never
+  launches. A client links a task to a pull request
   of that repository, or unlinks it, someone on GitHub names a pull request as closing an
   issue there, or stops, and GitHub merges a pull request; a merge alone closes no issue.
   A task is also linked to a pull request of a repository no project has, by a link whose
@@ -72,8 +73,10 @@ defmodule HalC2.PlannerPropTest do
     reached it last, and a chain of pushes that ends without a refusal leaves GitHub
     with the task's latest name;
   - a linked task's sync error is what the last push of its chain answered, and a push
-    on the way when the task was removed, unlinked, relinked or the plugin restarted
-    says nothing, though GitHub still takes it;
+    on the way when the task was removed, unlinked or relinked says nothing, though
+    GitHub still takes it; one on the way when the plugin restarted, or the settings
+    were saved with another board, still says how it went, and a change made since
+    still waits for it;
   - a push sends what the task has that GitHub has not, as far as the plugin knows, and
     only that: a change to a task whose rename GitHub refused sends the name again, as
     GitHub then answers, along with its due date and relations when GitHub does not have
@@ -112,7 +115,8 @@ defmodule HalC2.PlannerPropTest do
     task had one: a push answered after the task was unlinked or relinked leaves it
     alone, though GitHub still puts the issue it named on the board, and unlinking or
     relinking clears it, as does saving the settings with another board, so the next
-    push adds it to that one; a look that reads the whole board
+    push adds it to that one, and a push answered after that leaves it alone, though
+    GitHub still puts the issue on the board before; a look that reads the whole board
     without the task's issue clears it too, so the next push of a date adds the issue
     back, and one that reads only part of the board leaves it as it was;
   - an unlink naming an issue the task no longer has leaves it linked, and one naming no
@@ -590,6 +594,7 @@ defmodule HalC2.PlannerPropTest do
        {4, {:call, __MODULE__, :run, [oneof(["propose", "auto"]), nil]}},
        {2, {:call, __MODULE__, :run, ["check", item]}},
        {2, {:call, __MODULE__, :work, [item, oneof(["nowhere", "api"])]}},
+       {1, {:call, __MODULE__, :kill_launcher, [item]}},
        {1, {:call, __MODULE__, :restart, []}},
        {if(closed_linked(m) == MapSet.new(), do: look, else: look + 12),
         {:call, __MODULE__, :look, []}},
@@ -749,6 +754,12 @@ defmodule HalC2.PlannerPropTest do
              :unlink_pr
            ],
       do: Map.has_key?(m.items, slot)
+
+  # The work starts at once, so its launcher is there to kill.
+  def precondition(m, {:call, _, :kill_launcher, [slot]}),
+    do:
+      Map.has_key?(m.items, slot) and
+        Enum.count(m.runs, fn {_, run} -> run.status == :running end) < @concurrency
 
   # GitHub refuses a sub-issue under its own sub-issue.
   def precondition(m, {:call, _, :adopt, [number, parent]}),
@@ -1028,6 +1039,7 @@ defmodule HalC2.PlannerPropTest do
 
   defp step(m, {:call, _, :run, [action, slot]}), do: {ask(m, action, slot), :ok}
   defp step(m, {:call, _, :work, [slot, _project]}), do: {ask(m, "work", slot), :ok}
+  defp step(m, {:call, _, :kill_launcher, [slot]}), do: {ask(m, "work", slot), :ok}
 
   # GitHub is taken to have the task's name and due date, and none of its relations: the
   # task pushes those to tasks with an issue, and the tasks tied to it push theirs to its
@@ -1118,13 +1130,15 @@ defmodule HalC2.PlannerPropTest do
   # GitHub takes the push held, as far as it does, whoever it speaks for, on the board the
   # settings named when it was made. When its task still waits on it, the task hears how
   # it went and, when it changed meanwhile, its caller pushes what GitHub lacks of it now,
-  # which GitHub answers at once.
+  # which GitHub answers at once. A task whose settings name another board since does not
+  # take the board item the push added.
   defp step(m, {:call, _, :answer, [push]}) do
     {%{slot: slot, gen: gen, ops: ops, b: b, board: on}, held} = Map.pop(m.held, push)
     # A push GitHub took stamps its issue as changed there, as the harness's
     # state read after a push records it.
     m = if item = m.items[slot], do: touch(m, [item.issue]), else: m
     {m, took} = land(%{m | held: held}, ops, b, push, on)
+    took = if on == m.board, do: took, else: %{took | board: nil}
 
     case m.flights[slot] do
       %{gen: ^gen, push: ^push, changed: changed?} ->
@@ -1272,9 +1286,9 @@ defmodule HalC2.PlannerPropTest do
     end
   end
 
-  # Starts again from what it saved: what ran is failed, and what waits starts. It does
-  # not know the pushes on the way, so their answers no longer say whether a task synced,
-  # though GitHub still takes them, and it looks at GitHub.
+  # Starts again from what it saved: what ran is failed, and what waits starts. The pushes
+  # on the way stay, as their callers do, so their answers still say whether a task
+  # synced and a change made meanwhile still waits for them. It looks at GitHub.
   defp step(m, {:call, _, :restart, []}) do
     runs =
       Map.new(m.runs, fn {k, run} ->
@@ -1945,6 +1959,57 @@ defmodule HalC2.PlannerPropTest do
     input = %{"action" => "work", "itemIds" => [item_id(slot)], "projectId" => project}
     {reply, value} = call("run", input)
     if reply == :ok, do: Process.put(:pl_runs, Process.get(:pl_runs) ++ [value["run"]["id"]])
+    observe(reply)
+  end
+
+  # Works on "api" with a worktree setup that holds the launch, then kills the launcher
+  # from outside, as an OOM killer or an operator would; its run must not hold its turn.
+  def kill_launcher(slot) do
+    test = self()
+
+    holder =
+      spawn(fn ->
+        receive do
+          {:"$gen_call", {caller, _}, {:start, _, _, _, _, _}} ->
+            send(test, {:setup_held, caller})
+        end
+
+        receive do: (:done -> :ok)
+      end)
+
+    Process.register(holder, HalC2.WorktreeSetup)
+
+    # The fake is a throwaway, so it goes whatever failed between: the name freed for
+    # the next case and the holder killed, not waited on for its mailbox.
+    reply =
+      try do
+        input = %{"action" => "work", "itemIds" => [item_id(slot)], "projectId" => "api"}
+        {reply, value} = call("run", input)
+
+        if reply == :ok do
+          Process.put(:pl_runs, Process.get(:pl_runs) ++ [value["run"]["id"]])
+
+          receive do
+            {:setup_held, launcher} ->
+              ref = Process.monitor(launcher)
+              Process.exit(launcher, :kill)
+
+              receive do
+                {:DOWN, ^ref, :process, _, _} -> :ok
+              after
+                15_000 -> problem("the killed launcher never went down")
+              end
+          after
+            4_000 -> problem("the worktree setup was never asked to hold the launch")
+          end
+        end
+
+        reply
+      after
+        Process.unregister(HalC2.WorktreeSetup)
+        Process.exit(holder, :kill)
+      end
+
     observe(reply)
   end
 
