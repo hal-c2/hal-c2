@@ -658,7 +658,7 @@ impl SourceControlSettings {
             format!("Available. {hint}")
         } else if provider && auth_status == "unauthenticated" {
             format!(
-                "{label} is not authenticated on this server. Sign in or configure credentials using the {} tool on the server host to enable change request features.",
+                "{label} is not authenticated on this server. Sign in or configure credentials using the `{}` tool on the server host to enable change request features.",
                 at(item, "executable")
             )
         } else if provider {
