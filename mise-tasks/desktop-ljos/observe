@@ -2,5 +2,10 @@
 #MISE description="Open Ljós's observer (processes, mailboxes, objects, traces) on the shell desktop-ljos:inspect runs"
 #MISE dir="{{config_root}}/apps/desktop-ljos"
 set -euo pipefail
-root="$(cd ../.. && pwd)"
-exec "$(dirname "$0")/cli" observe "${LJOS_MCP_DIR:-$root/.hal-c2/desktop-ljos}" "$@"
+# Where desktop-ljos:inspect's shell puts its token file (Ljós's target/ljos).
+dir="${LJOS_MCP_DIR:-.}"
+if [[ -d $dir ]] && ! compgen -G "$dir/target/ljos/mcp-*.json" >/dev/null; then
+  echo "no shell serves an inspector here: start \`mise run desktop-ljos:inspect\` first." >&2
+  exit 1
+fi
+exec "$(dirname "$0")/cli" observe "$dir" "$@"

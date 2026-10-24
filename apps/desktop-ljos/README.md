@@ -54,13 +54,14 @@ crate rather than libghostty-vt: no Zig or C build, and what it lacks is listed 
 ## Inspect
 
 Built with the `mcp` feature, the window serves Ljós's MCP inspector (the scene, clicks, timings and how the
-window is painted) when `LJOS_MCP` names its capabilities; the token file goes below `LJOS_MCP_DIR`:
+window is painted) when `LJOS_MCP` names its capabilities; the token file goes to `target/ljos` below the
+working directory (or `LJOS_MCP_DIR`):
 
 ```sh
-LJOS_MCP=inspect,input LJOS_MCP_DIR=.hal-c2 cargo run -p hal_c2_shell --features mcp
+LJOS_MCP=inspect,input cargo run -p hal_c2_shell --features mcp
 ```
 
-`mise run desktop-ljos:inspect` opens the shell that way (its token in `.hal-c2/desktop-ljos`), `mise run
+`mise run desktop-ljos:inspect` opens the shell that way (its token in `apps/desktop-ljos/target/ljos`), `mise run
 desktop-ljos:observe` opens Ljós's observer on it (processes, mailboxes, objects, traces, a picture of the object
 picked), and `mise run desktop-ljos:attach` serves its inspector on stdio for an MCP client. The last two run
 Ljós's own `ljos` command, built at the pinned rev by `mise run desktop-ljos:cli`.

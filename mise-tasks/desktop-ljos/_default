@@ -23,10 +23,8 @@ fi
 # The window reloads the checkout's bricks and the config dir's shell.qml as they
 # are saved (shell/src/runtime.rs), so a dev run needs no rebuild for QML.
 features=()
-# LJOS_MCP (desktop-ljos:inspect) serves Ljós's inspector; its token file goes
-# where desktop-ljos:observe and desktop-ljos:attach look.
-if [[ -n ${LJOS_MCP:-} ]]; then
-  features=(--features mcp)
-  export LJOS_MCP_DIR="${LJOS_MCP_DIR:-$(cd ../.. && pwd)/.hal-c2/desktop-ljos}"
-fi
+# LJOS_MCP (desktop-ljos:inspect) serves Ljós's inspector; its token file goes to
+# target/ljos below this directory (or LJOS_MCP_DIR), where desktop-ljos:observe
+# and desktop-ljos:attach look.
+[[ -z ${LJOS_MCP:-} ]] || features=(--features mcp)
 exec mise exec -- cargo run --release -q -p hal_c2_shell "${features[@]+"${features[@]}"}" -- "${args[@]}"
