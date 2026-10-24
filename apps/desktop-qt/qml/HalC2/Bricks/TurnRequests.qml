@@ -689,7 +689,11 @@ Item {
 
                                 required property var modelData
 
+                                // The worker whose result this waits to deliver; its thread opens.
+                                readonly property string worker: modelData.workerThreadId ?? ""
+
                                 objectName: "queueWaiting-" + modelData.runId
+                                Accessible.role: notice.worker.length > 0 ? Accessible.Link : Accessible.StaticText
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: 28
                                 Layout.leftMargin: 24
@@ -702,6 +706,19 @@ Item {
                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                                 elide: Text.ElideRight
                                 maximumLineCount: 1
+                                font.underline: notice.worker.length > 0 && waitingHover.hovered
+
+                                HoverHandler {
+                                    id: waitingHover
+                                    enabled: notice.worker.length > 0
+                                    cursorShape: Qt.PointingHandCursor
+                                }
+                                TapHandler {
+                                    enabled: notice.worker.length > 0
+                                    onTapped: Shell.dispatch("rightPanel.openThread", {
+                                        threadKey: Threads.activeThread.slice(0, Threads.activeThread.indexOf(":") + 1) + notice.worker
+                                    })
+                                }
                             }
                         }
                     }
