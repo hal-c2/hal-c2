@@ -48,6 +48,23 @@ describe("ServerSettings response streaming", () => {
   });
 });
 
+describe("ServerSettings native subagents", () => {
+  it("keeps the provider's own subagents by default", () => {
+    expect(decodeServerSettings({}).nativeSubagents).toBe("provider");
+  });
+
+  it.each(["provider", "hal-c2"])("round-trips %s", (nativeSubagents) => {
+    const input = { nativeSubagents };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+  });
+
+  it("rejects other values in snapshots and writes", () => {
+    expect(() => decodeServerSettings({ nativeSubagents: "off" })).toThrow();
+    expect(() => decodeServerSettingsPatch({ nativeSubagents: "off" })).toThrow();
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
