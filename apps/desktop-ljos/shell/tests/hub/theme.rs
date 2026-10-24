@@ -3,8 +3,10 @@
 //! features/navigation/appearance.feature, environment-themes.feature,
 //! theme-editor.feature, features/desktop/native-settings.feature).
 
+use std::cell::Cell;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::mpsc;
 
 use hal_c2_shell::Launch;
@@ -14,7 +16,7 @@ use hal_c2_shell::controllers::theme::{
     Mode, Themes, ThemesObject, canonical_color, derive_palette,
 };
 use hal_c2_shell::json::{Json, from_value};
-use ljos::prelude::{ColorScheme, Engine, Value};
+use ljos::prelude::{ColorScheme, Engine, QmlValue, Value};
 use serde_json::{Map, json};
 use tempfile::TempDir;
 
@@ -116,6 +118,58 @@ fn lock(hub: &Hub, dir: &Path) -> Locked {
 }
 
 // -- What is drawn -------------------------------------------------------------
+
+/// A role no theme carries is drawn in its fallback, in light themes too (a
+/// "popover" dialog stayed near-black): every role the bricks ask the palette
+/// for by name comes with every theme, or is one a theme may add.
+#[test]
+fn bricks_paint_with_roles_every_theme_has() {
+    // Drawn in the brick's own fallback unless a theme names them.
+    let optional = [
+        "projectForeground",
+        "branchForeground",
+        "sidebarActiveIndicator",
+        "scrim",
+    ];
+    let (hub, _dir) = hub();
+    let app = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../desktop-qt");
+    let mut roles: Vec<(String, String)> = Vec::new();
+    for dir in ["qml", "../mobile-qt/qml"] {
+        let mut folders = vec![app.join(dir)];
+        while let Some(folder) = folders.pop() {
+            for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    folders.push(path);
+                } else if path.extension().is_some_and(|e| e == "qml") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    for part in text.split("palette.color(\"").skip(1) {
+                        let role: String = part
+                            .chars()
+                            .take_while(char::is_ascii_alphanumeric)
+                            .collect();
+                        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+                        roles.push((file, role));
+                    }
+                }
+            }
+        }
+    }
+    assert!(roles.len() > 100, "{}", roles.len());
+    let mut unknown: Vec<String> = Vec::new();
+    for dark in [false, true] {
+        system_dark(&hub, dark);
+        let colors = hub.published("theme")["colors"].clone();
+        for (file, role) in &roles {
+            let missing = colors.get(role).is_none() && !optional.contains(&role.as_str());
+            let where_ = format!("{file}:{role}");
+            if missing && !unknown.contains(&where_) {
+                unknown.push(where_);
+            }
+        }
+    }
+    assert!(unknown.is_empty(), "{}", unknown.join(", "));
+}
 
 #[test]
 fn nothing_chosen_is_the_standard_look() {
@@ -263,6 +317,18 @@ fn built_ins_win_their_ids() {
         Some(canvas(&hub)),
         canonical_color("oklch(0.972369 0.005497 157.15)")
     );
+}
+
+/// A published theme may not take the standard look's id either: it would
+/// offer a second "hal-c2" row beside the standard look.
+#[test]
+fn a_published_theme_cannot_take_the_standard_looks_id() {
+    let (hub, _dir) = hub();
+    let before = offered(&hub);
+    publish(&hub, vec![theme("hal-c2", "dark", "#020202")]);
+    assert_eq!(offered(&hub), before);
+    assert_eq!(resolved(&hub), "hal-c2");
+    publish(&hub, Vec::new());
 }
 
 #[test]
@@ -523,6 +589,97 @@ fn a_duplicate_is_an_editable_copy() {
     assert_eq!(themes(&hub, |t, e| t.duplicate(e, "no-such-theme")), "");
 }
 
+/// The standard look has no row of its own to copy from, so it has its own
+/// duplicate: the copy is the standard look as drawn now, whatever is saved.
+#[test]
+fn the_standard_look_can_be_duplicated() {
+    let (hub, _dir) = hub();
+    let standard = themes(&hub, |t, e| t.draft(e, "hal-c2"))["colors"].clone();
+    let id = themes(&hub, |t, e| t.duplicate_standard(e));
+    assert_eq!(id, "hal-c2-copy");
+    let copy = offered_by_label(&hub, "HAL-C2 copy").unwrap();
+    assert_eq!(copy["source"], "custom");
+    assert_eq!(themes(&hub, |t, e| t.draft(e, &id))["colors"], standard);
+    // Saved themes are pinned to one appearance, so the copy is in use.
+    assert_eq!(resolved(&hub), id);
+}
+
+/// In the appearance showing now.
+#[test]
+fn the_standard_looks_copy_is_in_the_appearance_showing() {
+    let (hub, _dir) = hub();
+    system_dark(&hub, true);
+    let dark = themes(&hub, |t, e| t.draft(e, "hal-c2"));
+    let id = themes(&hub, |t, e| t.duplicate_standard(e));
+    assert_eq!(
+        themes(&hub, |t, e| t.draft(e, &id))["colors"],
+        dark["colors"]
+    );
+    assert_eq!(themes(&hub, |t, e| t.draft(e, &id))["appearance"], "dark");
+}
+
+/// A saved theme made before the standard look's id was kept from new ones
+/// does not stand in for the standard look.
+#[test]
+fn a_saved_theme_with_the_standard_looks_id_does_not_stand_in_for_it() {
+    let (hub, _dir) = hub();
+    let imposter = json!({"id": "hal-c2", "label": "Imposter", "appearance": "dark",
+                          "colors": {"canvas": "#112233", "accent": "#445566"}});
+    save(&hub, json!({"customThemes": [imposter]}));
+    let id = themes(&hub, |t, e| t.duplicate_standard(e));
+    assert_eq!(id, "hal-c2-copy");
+    let drawn = themes(&hub, |t, e| t.draft(e, &id));
+    assert_ne!(drawn["colors"]["canvas"], "#112233");
+    assert!(offered_by_label(&hub, "Imposter").is_some());
+    // A new theme named for it takes another id.
+    let mut draft = themes(&hub, |t, e| t.draft(e, ""));
+    draft.insert("id".into(), json!(""));
+    draft.insert("label".into(), json!("HAL-C2"));
+    assert_eq!(themes(&hub, |t, e| t.save_custom(e, &draft)), "hal-c2-2");
+}
+
+/// draft("") starts from the theme actually drawn: a single-appearance
+/// theme chosen as a half (no whole theme set) is that draft, not the
+/// standard look.
+#[test]
+fn a_draft_with_no_id_starts_from_the_drawn_half() {
+    let (hub, _dir) = hub();
+    save(
+        &hub,
+        json!({"customThemes": [theme("midnight", "dark", "#050505")]}),
+    );
+    themes(&hub, |t, e| assert!(t.choose(e, "midnight")));
+    assert_eq!(themes(&hub, |t, _| t.theme_id()), "");
+    system_dark(&hub, true);
+    assert_eq!(resolved(&hub), "midnight");
+    let drawn = themes(&hub, |t, e| t.draft(e, ""));
+    assert_eq!(drawn["label"], "midnight");
+    assert_eq!(drawn["colors"]["canvas"], "#050505");
+    // In the other appearance nothing is chosen, so the standard look is
+    // drawn and drafted.
+    system_dark(&hub, false);
+    assert_eq!(themes(&hub, |t, e| t.draft(e, ""))["label"], "HAL-C2");
+}
+
+/// A choice that no longer resolves draws the standard look, so that is
+/// what is drafted -- not a legacy saved theme that holds the standard id.
+#[test]
+fn a_draft_with_a_stale_choice_starts_from_the_standard_look() {
+    let (hub, _dir) = hub();
+    let legacy = theme("hal-c2", "dark", "#050505");
+    save(
+        &hub,
+        json!({"customThemes": [legacy.clone()], "theme": "gone"}),
+    );
+    assert_eq!(resolved(&hub), "hal-c2");
+    let drawn = themes(&hub, |t, e| t.draft(e, ""));
+    assert_eq!(drawn["id"], "");
+    assert_eq!(drawn["label"], "HAL-C2");
+    // Chosen on purpose, the legacy theme is drafted.
+    save(&hub, json!({"customThemes": [legacy], "theme": "hal-c2"}));
+    assert_eq!(themes(&hub, |t, e| t.draft(e, ""))["id"], "hal-c2");
+}
+
 #[test]
 fn removing_a_theme_asks_first_and_forgets_its_choices() {
     let (hub, dir) = hub();
@@ -593,6 +750,50 @@ fn the_editor_keeps_a_draft_while_open() {
     themes(&hub, |t, e| t.edit(e, changed.clone()));
     assert!(themes(&hub, |t, _| t.editor_open()));
     assert_eq!(themes(&hub, |t, _| t.editing()), changed);
+}
+
+/// A press outside the editor closes it but keeps what was changed, for the
+/// toggle to reopen; Escape, Cancel and Save (set_editor_open) let it go.
+#[test]
+fn a_press_outside_the_editor_keeps_what_was_changed() {
+    let (hub, _dir) = hub();
+    // With nothing changed there is nothing to keep.
+    themes(&hub, |t, e| t.set_editor_open(e, true));
+    themes(&hub, |t, e| t.hide_editor(e));
+    assert!(!themes(&hub, |t, _| t.editor_open()));
+    assert!(themes(&hub, |t, _| t.editing()).is_empty());
+
+    themes(&hub, |t, e| t.set_editor_open(e, true));
+    let mut renamed = themes(&hub, |t, _| t.editing());
+    renamed.insert("label".into(), json!("Half done"));
+    themes(&hub, |t, e| t.set_editing(e, renamed.clone()));
+    themes(&hub, |t, e| t.hide_editor(e));
+    assert!(!themes(&hub, |t, _| t.editor_open()));
+    assert_eq!(themes(&hub, |t, _| t.editing()), renamed);
+    // Not open, so it changes nothing more.
+    themes(&hub, |t, e| t.hide_editor(e));
+    assert_eq!(themes(&hub, |t, _| t.editing()), renamed);
+    // The toggle reopens it on the changes, and closing it any other way
+    // lets them go.
+    themes(&hub, |t, e| t.set_editor_open(e, true));
+    assert_eq!(themes(&hub, |t, _| t.editing()), renamed);
+    themes(&hub, |t, e| t.set_editor_open(e, false));
+    assert!(themes(&hub, |t, _| t.editing()).is_empty());
+    themes(&hub, |t, e| t.set_editor_open(e, true));
+    assert_eq!(themes(&hub, |t, _| t.editing())["label"], "HAL-C2");
+
+    // Another theme's Edit replaces a draft hide_editor kept.
+    themes(&hub, |t, e| t.set_editing(e, renamed.clone()));
+    themes(&hub, |t, e| t.hide_editor(e));
+    let mut other = renamed.clone();
+    other.insert("label".into(), json!("Other"));
+    themes(&hub, |t, e| t.edit(e, other.clone()));
+    assert_eq!(themes(&hub, |t, _| t.editing()), other);
+    // Changed back to what it opened on, there is nothing to keep.
+    themes(&hub, |t, e| t.set_editing(e, renamed.clone()));
+    themes(&hub, |t, e| t.set_editing(e, other.clone()));
+    themes(&hub, |t, e| t.hide_editor(e));
+    assert!(themes(&hub, |t, _| t.editing()).is_empty());
 }
 
 #[test]
@@ -671,6 +872,28 @@ fn an_imported_theme_is_added_and_drawn() {
             .count(),
         2
     );
+}
+
+/// The standard look has no row of its own to give way, so an imported file
+/// may not take its id, named or made from the name "HAL-C2".
+#[test]
+fn an_imported_theme_cannot_take_the_standard_looks_id() {
+    let (hub, _dir) = hub();
+    let before = offered(&hub);
+    for id in [Some("hal-c2"), None] {
+        let mut file = json!({"version": 1, "name": "HAL-C2", "appearance": "dark",
+                              "colors": {"canvas": "#101010"}});
+        if let Some(id) = id {
+            file["id"] = json!(id);
+        }
+        assert!(!themes(&hub, |t, e| t.import_text(e, &file.to_string())));
+        assert_eq!(
+            themes(&hub, |t, _| t.import_error()),
+            "The theme id \"hal-c2\" is reserved."
+        );
+        themes(&hub, |t, e| t.clear_import(e));
+    }
+    assert_eq!(offered(&hub), before);
 }
 
 #[test]
@@ -852,6 +1075,55 @@ fn the_themes_singleton_shows_and_changes_the_choice() {
     call(&hub, "restoreDefaults", &[]);
     assert_eq!(shown(&hub, "mode"), "system");
     assert_eq!(shown(&hub, "themeId"), "");
+}
+
+/// What QML does with the editor: Escape and Cancel write `editorOpen`, a
+/// press outside calls `hideEditor`, and a copy of the standard look is
+/// `duplicateStandard`.
+#[test]
+fn the_themes_singleton_hides_the_editor_and_duplicates_the_standard_look() {
+    let (hub, _dir) = hub();
+    let obj = hub.engine.singleton::<ThemesObject>().unwrap();
+    // Whether the editor said it was closed by the time inspecting stopped:
+    // the focus-restore on a pick must tell a close from a pick.
+    let open_when_inspecting_stopped = Rc::new(Cell::new(None));
+    let seen = open_when_inspecting_stopped.clone();
+    hub.engine
+        .connect_by_name(obj, "inspectingChanged", move |engine, _| {
+            if !engine.read_by_name(obj, "inspecting").to_boolean() {
+                seen.set(Some(engine.read_by_name(obj, "editorOpen").to_boolean()));
+            }
+        })
+        .unwrap();
+
+    hub.engine
+        .write_by_name(obj, "editorOpen", Value::Bool(true))
+        .unwrap();
+    call(
+        &hub,
+        "setEditing",
+        &[json!({"label": "Half done"}).to_value()],
+    );
+    hub.engine
+        .write_by_name(obj, "inspecting", Value::Bool(true))
+        .unwrap();
+    call(&hub, "hideEditor", &[]);
+    assert_eq!(shown(&hub, "editorOpen"), false);
+    assert_eq!(shown(&hub, "inspecting"), false);
+    assert_eq!(open_when_inspecting_stopped.get(), Some(false));
+    assert_eq!(shown(&hub, "editing")["label"], "Half done");
+    // Escape: through the property, and the draft goes.
+    hub.engine
+        .write_by_name(obj, "editorOpen", Value::Bool(true))
+        .unwrap();
+    assert_eq!(shown(&hub, "editing")["label"], "Half done");
+    hub.engine
+        .write_by_name(obj, "editorOpen", Value::Bool(false))
+        .unwrap();
+    assert_eq!(shown(&hub, "editing"), json!({}));
+
+    assert_eq!(call(&hub, "duplicateStandard", &[]), "hal-c2-copy");
+    assert_eq!(shown(&hub, "resolvedId"), "hal-c2-copy");
 }
 
 // -- The shell theme file ------------------------------------------------------

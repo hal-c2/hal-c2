@@ -3,7 +3,8 @@
 //! and withdrawing its own, whole themes and halves chosen, the defaults
 //! restored, and the editor opened, drafted in, inspected and closed. What
 //! is drawn is always what the device's choice resolves to over the themes
-//! there are, and the editor keeps a draft exactly while it is open.
+//! there are, and the editor keeps a draft while it is open, and after a
+//! press outside only when it was changed.
 
 use hal_c2_shell::Launch;
 use hal_c2_shell::controllers::settings::Settings;
@@ -17,8 +18,9 @@ use tempfile::TempDir;
 use crate::Hub;
 
 const COLORS: [&str; 4] = ["#102030", "#203040", "#304050", "#405060"];
-/// "Grove" is a built-in's name: saved, it is `grove-2`.
-const LABELS: [&str; 3] = ["Dusk", "Dawn", "Grove"];
+/// "Grove" is a built-in's name: saved, it is `grove-2`. "HAL-C2" makes the
+/// standard look's id, which a saved theme does not take: it is `hal-c2-2`.
+const LABELS: [&str; 4] = ["Dusk", "Dawn", "Grove", "HAL-C2"];
 /// `ember` is a built-in's id, which the MC's theme does not get.
 const PUBLISHED: [(&str, bool); 3] = [("dusk", false), ("aurora", true), ("ember", true)];
 /// Built-ins, saved and published ones, and one that is nowhere.
@@ -40,9 +42,13 @@ enum Op {
     /// A saved one (picked from those there are) in another colour.
     SaveOver(usize, usize),
     Remove(usize),
+    /// A copy of the standard look as drawn now.
+    DuplicateStandard,
     /// The MC's themes: which of [`PUBLISHED`], in which colour.
     Publish(Vec<bool>, usize),
     Open(bool),
+    /// The editor closed by a press outside it.
+    Hide,
     Edit(usize),
     SetEditing(usize),
     Inspect(bool),
@@ -63,9 +69,11 @@ fn op() -> impl Strategy<Value = Op> {
             .prop_map(|(label, dark, c)| Op::Save(label, dark, c)),
         2 => (any::<usize>(), color.clone()).prop_map(|(i, c)| Op::SaveOver(i, c)),
         2 => any::<usize>().prop_map(Op::Remove),
+        1 => Just(Op::DuplicateStandard),
         2 => (proptest::collection::vec(any::<bool>(), PUBLISHED.len()), color.clone())
             .prop_map(|(which, c)| Op::Publish(which, c)),
         2 => any::<bool>().prop_map(Op::Open),
+        1 => Just(Op::Hide),
         1 => color.clone().prop_map(Op::Edit),
         1 => color.prop_map(Op::SetEditing),
         1 => any::<bool>().prop_map(Op::Inspect),
@@ -123,6 +131,8 @@ struct Model {
     published: Vec<Theme>,
     editor_open: bool,
     editing: Option<Editing>,
+    /// What the editor opened on, to tell whether anything changed since.
+    opened: Option<Editing>,
     inspecting: bool,
     picked: bool,
 }
@@ -290,7 +300,7 @@ impl World {
                 let base = label.to_lowercase();
                 let mut id = base.clone();
                 let mut n = 2;
-                while m.find(builtins, &id).is_some() {
+                while m.find(builtins, &id).is_some() || id == "hal-c2" {
                     id = format!("{base}-{n}");
                     n += 1;
                 }
@@ -330,6 +340,24 @@ impl World {
                     m.halves.retain(|_, v| v.as_str() != Some(&id));
                 }
             }
+            Op::DuplicateStandard => {
+                let (_, dark, _) = m.resolved(builtins);
+                let saved = themes(hub, |t, e| t.duplicate_standard(e));
+                let mut id = "hal-c2-copy".to_owned();
+                let mut n = 2;
+                while m.find(builtins, &id).is_some() {
+                    id = format!("hal-c2-copy-{n}");
+                    n += 1;
+                }
+                assert_eq!(saved, id);
+                m.saved.push(Theme {
+                    id: id.clone(),
+                    label: "HAL-C2 copy".to_owned(),
+                    dark,
+                    canvas: if dark { "#0a0a0a" } else { "#fcfcfc" },
+                });
+                m.set_choice(Some(id));
+            }
             Op::Publish(which, color) => {
                 m.published = PUBLISHED
                     .iter()
@@ -349,18 +377,32 @@ impl World {
                 themes(hub, |t, e| t.set_editor_open(e, open));
                 if open && !m.editor_open && m.editing.is_none() {
                     m.editing = Some(Editing::Draft);
+                    m.opened = Some(Editing::Draft);
                 }
                 if !open && m.editor_open {
                     m.editing = None;
+                    m.opened = None;
                     m.inspecting = false;
                     m.picked = false;
                 }
                 m.editor_open = open;
             }
+            Op::Hide => {
+                themes(hub, |t, e| t.hide_editor(e));
+                if m.editor_open {
+                    if m.editing == m.opened {
+                        m.editing = None;
+                    }
+                    m.editor_open = false;
+                    m.inspecting = false;
+                    m.picked = false;
+                }
+            }
             Op::Edit(color) => {
                 let draft = edited(color);
                 themes(hub, |t, e| t.edit(e, draft));
                 m.editing = Some(Editing::Canvas(COLORS[color]));
+                m.opened = m.editing.clone();
                 m.editor_open = true;
             }
             Op::SetEditing(color) => {
@@ -451,7 +493,8 @@ impl World {
                 assert_eq!(editing["colors"]["canvas"], *canvas)
             }
         }
-        assert_eq!(m.editing.is_some(), m.editor_open);
+        // Open, there is a draft; closed by a press outside, one is kept.
+        assert!(m.editing.is_some() || !m.editor_open);
         assert_eq!(themes(hub, |t, _| t.inspecting()), m.inspecting);
         assert_eq!(!themes(hub, |t, _| t.picked()).is_empty(), m.picked);
     }

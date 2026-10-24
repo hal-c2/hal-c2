@@ -44,6 +44,8 @@ pub use import::{MAX_THEME_FILE_BYTES, id_from_name, oversized};
 
 /// What the standard look is published as.
 pub const STANDARD_ID: &str = "hal-c2";
+/// What the standard look is called wherever it is listed or drafted.
+const STANDARD_LABEL: &str = "HAL-C2";
 
 const LIGHT: &str = "light";
 const DARK: &str = "dark";
@@ -218,6 +220,12 @@ fn from_file(theme: &Map<String, Json>, source: &'static str) -> Option<Definiti
     let data = built_ins();
     let id = string_of(theme.get("id").unwrap_or(&Json::Null));
     if id.is_empty() || data.reserved.iter().any(|r| r == id) {
+        return None;
+    }
+    // A published theme may not take the standard look's id: it would offer a
+    // second "hal-c2" row beside it. A saved theme that already holds the id
+    // stays visible, as an old install's themes must.
+    if source == "environment" && id == STANDARD_ID {
         return None;
     }
     let appearance = appearance_of(theme.get("appearance"));
@@ -453,6 +461,12 @@ impl ThemesObject {
         on_view(cx, |engine, view| view.duplicate(engine, &id))
     }
 
+    /// The same for the standard look, which is no theme offered.
+    #[qml(invokable)]
+    fn duplicate_standard(cx: &Cx) -> String {
+        on_view(cx, |engine, view| view.duplicate_standard(engine))
+    }
+
     #[qml(invokable)]
     fn remove_custom(cx: &Cx, id: Atom) -> bool {
         on_view(cx, |engine, view| {
@@ -482,6 +496,12 @@ impl ThemesObject {
         on_view(cx, |engine, view| {
             view.set_editing(engine, object_of(Some(&draft)))
         });
+    }
+
+    /// The close a press outside the editor is: unsaved changes stay.
+    #[qml(invokable)]
+    fn hide_editor(cx: &Cx) {
+        on_view(cx, |engine, view| view.hide_editor(engine));
     }
 
     #[qml(invokable)]
@@ -548,6 +568,8 @@ struct View {
     cycle_toast: RefCell<String>,
     editor_open: Cell<bool>,
     editing: RefCell<Map<String, Json>>,
+    /// The draft the editor opened on, to tell whether anything changed since.
+    opened: RefCell<Map<String, Json>>,
     inspecting: Cell<bool>,
     picked: RefCell<Map<String, Json>>,
     import_error: RefCell<String>,
@@ -914,10 +936,26 @@ impl View {
     /// over the standard look's, in the appearance drawn now when it has
     /// one. `id` is kept only for this device's themes, which save over
     /// themselves.
+    ///
+    /// With no `id` the draft starts from what is drawn. The standard look is
+    /// drawn when `resolve` landed on the standard id without a legacy saved
+    /// theme of that id being chosen (as a whole or as the drawn half); this
+    /// covers nothing chosen, a half for the other appearance, and a choice
+    /// that no longer resolves. Its draft is then the standard look itself,
+    /// not that legacy theme (an explicit id still finds it).
     fn draft(&self, _engine: &Engine, id: &str) -> Map<String, Json> {
         let shown = *self.appearance.borrow();
         let resolved = self.resolved_id.borrow().clone();
-        let definition = self.find(if id.is_empty() { &resolved } else { id });
+        let selected = string_of(self.halves().get(shown).unwrap_or(&Json::Null)).to_owned();
+        let standard_drawn = id.is_empty()
+            && resolved == STANDARD_ID
+            && selected != STANDARD_ID
+            && self.theme_id() != STANDARD_ID;
+        let definition = if standard_drawn {
+            None
+        } else {
+            self.find(if id.is_empty() { &resolved } else { id })
+        };
         let appearance = match &definition {
             Some(d) if d.has(shown) => shown,
             Some(d) => d.appearance,
@@ -935,7 +973,11 @@ impl View {
         );
         draft.insert(
             "label".into(),
-            json!(definition.as_ref().map_or("HAL-C2", |d| d.label.as_str())),
+            json!(
+                definition
+                    .as_ref()
+                    .map_or(STANDARD_LABEL, |d| d.label.as_str())
+            ),
         );
         draft.insert("appearance".into(), json!(appearance));
         draft.insert("colors".into(), Json::Object(colors));
@@ -967,7 +1009,10 @@ impl View {
             let base = id_from_name(&label);
             id = base.clone();
             let mut n = 2;
-            while built_ins().reserved.contains(&id) || self.find(&id).is_some() {
+            while built_ins().reserved.contains(&id)
+                || id == STANDARD_ID
+                || self.find(&id).is_some()
+            {
                 id = format!("{base}-{n}");
                 n += 1;
             }
@@ -994,13 +1039,27 @@ impl View {
     }
 
     fn duplicate(&self, engine: &Engine, id: &str) -> String {
-        let Some(definition) = self.find(id) else {
+        if self.find(id).is_none() {
             return String::new();
-        };
-        let mut copy = self.draft(engine, id);
-        copy.insert("id".into(), json!(""));
-        copy.insert("label".into(), json!(format!("{} copy", definition.label)));
-        self.save_custom(engine, &copy)
+        }
+        self.save_custom(engine, &as_copy(self.draft(engine, id)))
+    }
+
+    /// A copy of the standard look as drawn now, in the appearance showing: a
+    /// saved theme has no light and dark halves, so it does not follow the
+    /// system's. Apart from [`View::duplicate`] so that a saved theme whose id
+    /// is the standard look's (made before it was kept from them) is not
+    /// copied for it.
+    fn duplicate_standard(&self, engine: &Engine) -> String {
+        let appearance = *self.appearance.borrow();
+        let mut draft = Map::new();
+        draft.insert("label".into(), json!(STANDARD_LABEL));
+        draft.insert("appearance".into(), json!(appearance));
+        draft.insert(
+            "colors".into(),
+            Json::Object(object_of(built_ins().standard.get(appearance))),
+        );
+        self.save_custom(engine, &as_copy(draft))
     }
 
     fn own(&self, id: &str) -> Option<Definition> {
@@ -1104,21 +1163,45 @@ impl View {
         if open == self.editor_open.get() {
             return;
         }
-        // Opened by its toggle: on the theme drawn now. Closed: the draft goes.
+        // Opened by its toggle: on the theme drawn now, or on the changes a
+        // press outside left behind. Closed: the draft goes.
         if open && self.editing.borrow().is_empty() {
             let draft = self.draft(engine, "");
+            *self.opened.borrow_mut() = draft.clone();
             *self.editing.borrow_mut() = draft;
         }
         if !open {
             self.editing.borrow_mut().clear();
-            if self.inspecting.get() || !self.picked.borrow().is_empty() {
-                self.inspecting.set(false);
-                self.picked.borrow_mut().clear();
-                self.show_inspect(engine);
-            }
+            // The explicit close drops the opened draft too; hide_editor keeps it.
+            self.opened.borrow_mut().clear();
         }
+        self.set_editor_shown(engine, open);
+    }
+
+    /// The editor closed by a press outside it: unsaved changes stay, so the
+    /// toggle opens it on them again. With none there is nothing to keep, and
+    /// the draft goes.
+    fn hide_editor(&self, engine: &Engine) {
+        if !self.editor_open.get() {
+            return;
+        }
+        if same_map(&self.editing.borrow(), &self.opened.borrow()) {
+            self.editing.borrow_mut().clear();
+        }
+        self.set_editor_shown(engine, false);
+    }
+
+    fn set_editor_shown(&self, engine: &Engine, open: bool) {
+        // A closing editor says it is closed before inspecting stops, so the
+        // focus-restore on `inspecting` can tell a pick in an open editor from
+        // a close while inspecting and leave a closing editor's focus alone.
         self.editor_open.set(open);
         self.show_editing(engine);
+        if !open && (self.inspecting.get() || !self.picked.borrow().is_empty()) {
+            self.inspecting.set(false);
+            self.picked.borrow_mut().clear();
+            self.show_inspect(engine);
+        }
     }
 
     fn set_inspecting(&self, engine: &Engine, inspecting: bool) {
@@ -1170,6 +1253,7 @@ impl View {
 
     /// Opens the editor on `draft`.
     fn edit(&self, engine: &Engine, draft: Map<String, Json>) {
+        *self.opened.borrow_mut() = draft.clone();
         *self.editing.borrow_mut() = draft;
         self.show_editing(engine);
         self.set_editor_open(engine, true);
@@ -1496,6 +1580,14 @@ fn save_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// What a palette choice does with the view, while the window is open.
 type OnView = Box<dyn Fn(&Engine, &View)>;
 
+/// A draft as a new theme of its own: no id yet, and "<label> copy".
+fn as_copy(mut draft: Map<String, Json>) -> Map<String, Json> {
+    let label = string_of(draft.get("label").unwrap_or(&Json::Null)).to_owned();
+    draft.insert("id".into(), json!(""));
+    draft.insert("label".into(), json!(format!("{label} copy")));
+    draft
+}
+
 /// `device[key] = map`, or no `key` when the map is empty.
 fn set_or_remove(device: &mut Map<String, Json>, key: &str, map: Map<String, Json>) {
     if map.is_empty() {
@@ -1542,6 +1634,7 @@ impl Controller for Themes {
             cycle_toast: RefCell::new(String::new()),
             editor_open: Cell::new(false),
             editing: RefCell::new(Map::new()),
+            opened: RefCell::new(Map::new()),
             inspecting: Cell::new(false),
             picked: RefCell::new(Map::new()),
             import_error: RefCell::new(String::new()),
@@ -1658,7 +1751,7 @@ impl Controller for Themes {
             };
             let mut standard = Choice::new(
                 "theme:standard",
-                "HAL-C2",
+                STANDARD_LABEL,
                 run(Box::new(|engine, view| {
                     view.choose(engine, "");
                 })),
@@ -1829,6 +1922,11 @@ impl Themes {
         self.view.duplicate(engine, id)
     }
 
+    /// A copy of the standard look as drawn now; its id.
+    pub fn duplicate_standard(&mut self, engine: &Engine) -> String {
+        self.view.duplicate_standard(engine)
+    }
+
     pub fn remove_custom(&mut self, engine: &Engine, id: &str) -> bool {
         self.view.remove_custom_many(engine, &[id.to_owned()])
     }
@@ -1859,6 +1957,12 @@ impl Themes {
 
     pub fn set_editing(&mut self, engine: &Engine, draft: Map<String, Json>) {
         self.view.set_editing(engine, draft);
+    }
+
+    /// The close a press outside the editor is: unsaved changes stay for the
+    /// toggle to reopen.
+    pub fn hide_editor(&mut self, engine: &Engine) {
+        self.view.hide_editor(engine);
     }
 
     pub fn inspecting(&self) -> bool {
