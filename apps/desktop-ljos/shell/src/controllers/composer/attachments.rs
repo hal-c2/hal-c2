@@ -16,6 +16,7 @@ use super::{Composer, back, later, string, thread_of, toast, toast_error, uuid};
 use crate::composer_model as model;
 use crate::controllers::keybindings::Keymap;
 use crate::json::Json;
+use crate::this_machine;
 use crate::thread_view::summary::{Obj, as_object, text as field};
 
 /// The side of an image's thumbnail.
@@ -410,8 +411,8 @@ impl Composer {
     /// A folder is named by its path, which only means something where the
     /// MC shares this machine's disk.
     pub(super) fn attach_folders(&mut self, engine: &Engine, target: &str, folders: &[Json]) {
-        if !self.bridge.local_folders(engine)
-            || self.environment_of(engine, target) != self.mc.environment()
+        if !self.bridge.local_folder_import_enabled(engine)
+            || !this_machine::hosts(engine, &self.environment_of(engine, target))
         {
             toast_error(
                 engine,

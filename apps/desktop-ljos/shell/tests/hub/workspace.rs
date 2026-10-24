@@ -428,3 +428,104 @@ fn a_refused_switch_goes_back_to_the_branch_before() {
     assert_eq!(hub.published("workspace")["branch"], "main");
     assert!(toasts(&hub).contains(&("Failed to switch ref.".into(), "dirty tree".into())));
 }
+
+/// Two members: `a` serving env-1 (the shell's own MC) and `b` serving env-2
+/// with project p2 at /w/q and its thread t2.
+fn two_members(hub: &Hub) {
+    hub.mc.frame(
+        &hub.engine,
+        "shell",
+        "",
+        json!({"t": "shell", "mcs": [
+            {"mc": "a", "online": true, "epoch": "e", "rev": 1,
+             "environment": {"environmentId": "env-1", "label": "env-1"}},
+            {"mc": "b", "online": true, "epoch": "e", "rev": 1,
+             "environment": {"environmentId": "env-2", "label": "env-2"}},
+        ], "rows": [
+            ["b", "p2", "project", {"id": "p2", "title": "Q", "workspaceRoot": "/w/q",
+                "createdAt": AT, "updatedAt": AT}],
+            ["b", "t2", "thread", {"id": "t2", "projectId": "p2", "title": "Thread t2",
+                "createdAt": AT, "updatedAt": AT}],
+        ]}),
+    );
+}
+
+/// Another member's files open in an editor of this machine through the
+/// folder the shell's MC on this machine mounts for them (files.localPath);
+/// one it cannot mount says why (features/files/files-on-another-machine.feature).
+#[test]
+fn another_members_files_open_here_through_the_folder_the_mc_mounts() {
+    let hub = clustered(Launch::default());
+    hub.mc.set_ready(&hub.engine, true);
+    two_members(&hub);
+    hub.dispatch("thread.open", json!({"key": "env-2:t2"}));
+    editors(&hub, &["zed"]);
+
+    hub.dispatch("workspace.openInEditor", json!({"editorId": "zed"}));
+    assert_eq!(
+        last(&hub, "env-1", "files.localPath"),
+        json!({"environmentId": "env-2", "path": "/w/q"})
+    );
+    hub.mc.answer_on(
+        &hub.engine,
+        "env-1",
+        "files.localPath",
+        Ok(json!({"path": "/m/env-2/w/q"})),
+    );
+    assert_eq!(
+        last(&hub, "env-1", "shell.openInEditor"),
+        json!({"cwd": "/m/env-2/w/q", "editor": "zed"})
+    );
+    assert!(hub.mc.pending_on("env-2", "shell.openInEditor").is_none());
+
+    // The MC says why it mounts nothing.
+    hub.dispatch("workspace.openInEditor", json!({"editorId": "zed"}));
+    hub.mc.answer_on(
+        &hub.engine,
+        "env-1",
+        "files.localPath",
+        Ok(json!({"path": "", "message": "sshfs is not installed."})),
+    );
+    assert!(toasts(&hub).contains(&(
+        "sshfs is not installed.".into(),
+        "An error occurred.".into()
+    )));
+
+    // An MC from before files.localPath.
+    hub.dispatch("workspace.openInEditor", json!({"editorId": "zed"}));
+    hub.mc.answer_on(
+        &hub.engine,
+        "env-1",
+        "files.localPath",
+        Err(failure("unknown method")),
+    );
+    assert!(toasts(&hub).contains(&(
+        workspace::FILES_ELSEWHERE.into(),
+        "An error occurred.".into()
+    )));
+}
+
+/// An MC on another machine (reached over the network, or behind an SSH
+/// forward) starts nothing here and mounts nothing: the user is told.
+#[test]
+fn files_of_an_mc_on_another_machine_do_not_open_here() {
+    let hub = Hub::with(Launch {
+        mc_origin: Some("http://192.168.1.20:1".into()),
+        ..Launch::default()
+    });
+    hub.mc.set_ready(&hub.engine, true);
+    seed(&hub, "main", None);
+    hub.dispatch("thread.open", json!({"key": "env-1:t1"}));
+    editors(&hub, &["zed"]);
+    hub.dispatch("workspace.openInEditor", json!({"editorId": "zed"}));
+    let methods = hub.mc.methods();
+    assert!(
+        !methods
+            .iter()
+            .any(|m| m == "shell.openInEditor" || m == "files.localPath")
+    );
+    assert!(toasts(&hub).contains(&(
+        workspace::FILES_ELSEWHERE.into(),
+        "An error occurred.".into()
+    )));
+}

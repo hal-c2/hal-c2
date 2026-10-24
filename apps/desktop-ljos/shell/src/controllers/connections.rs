@@ -34,7 +34,7 @@ use std::rc::Rc;
 
 use ljos::prelude::Engine;
 use serde_json::{Map, json};
-use url::{Host, Url};
+use url::Url;
 
 use crate::bridge::Bridge;
 use crate::controller::{Controller, Init, Me};
@@ -43,6 +43,7 @@ use crate::controllers::settings_scope::SettingsScope;
 use crate::json::Json;
 use crate::mc::{Mc, SubId};
 use crate::qr;
+use crate::this_machine;
 
 const KEY: &str = "connections";
 
@@ -69,14 +70,8 @@ fn pairing_url(address: &str, code: &str) -> String {
     format!("{address}/pair#token={code}")
 }
 
-/// All of 127.0.0.0/8 and ::1 are this machine, not only 127.0.0.1.
 fn loopback(address: &Url) -> bool {
-    match address.host() {
-        Some(Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
-        Some(Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    }
+    address.host_str().is_some_and(this_machine::loopback_host)
 }
 
 /// `origin` without its path, query and fragment.

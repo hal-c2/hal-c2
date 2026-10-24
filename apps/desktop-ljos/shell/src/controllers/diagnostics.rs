@@ -35,6 +35,7 @@ use crate::controller::{self, Controller, Init, Me};
 use crate::controllers::menus::Menus;
 use crate::controllers::settings::{Map, Settings};
 use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
+use crate::controllers::workspace;
 use crate::json::Json;
 use crate::mc::{Mc, McError};
 use crate::settings_page;
@@ -560,7 +561,8 @@ impl Diagnostics {
             .to_owned()
     }
 
-    /// The editor last used when the MC has it, else the first it has.
+    /// The logs folder on this machine (`workspace::open_here`), in the
+    /// editor last used when the MC has it, else the first it has.
     fn open_logs(&mut self, engine: &Engine) {
         let path = self.logs_path(engine);
         if path.is_empty() {
@@ -598,21 +600,24 @@ impl Diagnostics {
         self.logs_error.clear();
         self.publish(engine);
         let me = self.me.clone();
-        self.mc.call(
+        workspace::open_here(
+            engine,
             &self.mc.environment(),
-            "shell.openInEditor",
-            json!({"cwd": path, "editor": editor}),
-            Box::new(move |engine: &Engine, result: Result<Json, McError>| {
-                let Err(e) = result else { return };
+            &path,
+            &editor,
+            false,
+            "",
+            Some(Box::new(move |engine, error| {
+                let Some(error) = error else { return };
                 me.run(engine, |c, engine| {
-                    c.logs_error = if e.message.is_empty() {
+                    c.logs_error = if error.is_empty() {
                         "Unable to open logs folder.".into()
                     } else {
-                        e.message
+                        error
                     };
                     c.publish(engine);
                 });
-            }),
+            })),
         );
     }
 

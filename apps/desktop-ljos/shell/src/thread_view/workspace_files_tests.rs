@@ -10,7 +10,7 @@ use super::*;
 
 fn files_in(root: &str) -> Files {
     let mut files = Files::new();
-    files.set_target("env-a", root);
+    files.set_target("env-a", root, "");
     files.take_effects();
     files.take_signals();
     files
@@ -39,7 +39,7 @@ fn call(files: &mut Files) -> (&'static str, Json, Then) {
     asked.remove(0)
 }
 
-fn contents(text: &str) -> Result<Json, String> {
+fn contents(text: &str) -> Result<Json, McError> {
     Ok(json!({"contents": text}))
 }
 
@@ -104,7 +104,7 @@ fn a_search_that_fails_says_so_and_shows_no_matches() {
     files.set_query("x");
     files.search();
     let (_, _, then) = call(&mut files);
-    files.answer(then, Err(String::new()));
+    files.answer(then, Err(McError::new("")));
     assert_eq!(files.facts().search_problem, "Unable to search files.");
     assert!(
         files
@@ -135,7 +135,7 @@ fn a_search_of_the_workspace_left_is_dropped() {
     files.set_query("x");
     files.search();
     let (_, _, then) = call(&mut files);
-    assert!(files.set_target("env-a", "/w2"));
+    assert!(files.set_target("env-a", "/w2", ""));
     files.take_effects();
     files.answer(
         then,
@@ -149,8 +149,8 @@ fn a_search_of_the_workspace_left_is_dropped() {
 #[test]
 fn the_workspace_already_shown_is_not_a_new_one() {
     let mut files = files_in("/w");
-    assert!(!files.set_target("env-a", "/w"));
-    assert!(files.set_target("env-b", "/w"));
+    assert!(!files.set_target("env-a", "/w", ""));
+    assert!(files.set_target("env-b", "/w", ""));
 }
 
 #[test]
@@ -232,7 +232,7 @@ fn a_file_that_cannot_be_read_says_so_and_can_be_read_again() {
     let mut files = files_in("/w");
     assert!(files.open_file("a.txt", 0));
     let (_, _, then) = call(&mut files);
-    files.answer(then, Err(String::new()));
+    files.answer(then, Err(McError::new("")));
     let facts = files.facts();
     assert_eq!(facts.file_status, "error");
     assert_eq!(facts.file_problem, "Unable to read this file.");
@@ -294,16 +294,327 @@ fn an_empty_file_is_marked_empty() {
     assert!(files.facts().file_empty);
 }
 
+// A file outside the workspace is written back by its full path.
 #[test]
-fn a_file_outside_the_project_opens_read_only() {
+fn a_file_outside_the_project_is_edited_by_its_full_path() {
     let mut files = files_in("/w");
-    opened(&mut files, "/etc/hosts", "127.0.0.1\n");
+    editing(&mut files, "/etc/hosts", "127.0.0.1\n");
+    assert!(files.facts().editable && files.facts().editing);
+    files.edit("127.0.0.1 me\n");
+    files.save_due();
+    let (method, payload, _) = call(&mut files);
+    assert_eq!(method, "projects.writeFile");
+    assert_eq!(payload["relativePath"], "/etc/hosts");
+}
+
+const REFUSAL: &str = "Saving a file outside the project needs terminal access, which this device was not paired with.";
+
+/// What the MC says to a full-path write from a session without terminal
+/// access.
+fn terminal_required() -> Result<Json, McError> {
+    Err(McError {
+        message: "terminal:operate is required".into(),
+        detail: json!({
+            "_tag": "EnvironmentScopeRequiredError",
+            "requiredScope": "terminal:operate",
+        }),
+    })
+}
+
+// tst_WorkspaceFilesRegression: a write by full path refused for want of
+// terminal access left the edit pending, and opening a project file next
+// wrote that edit into it.
+#[test]
+fn an_edit_refused_outside_the_workspace_is_not_written_to_the_next_file() {
+    let mut files = Files::new();
+    files.set_target("env-b", "/w", "");
+    editing(&mut files, "/tmp/y.txt", "y\n");
+    files.edit("y edited\n");
+    files.save_due();
+    let (_, _, then) = call(&mut files);
+    files.take_signals();
+    files.answer(then, terminal_required());
     let facts = files.facts();
-    assert!(!facts.editable);
-    assert_eq!(
-        facts.read_only_reason,
-        "Files outside the project open read-only."
+    assert_eq!(facts.save_problem, REFUSAL);
+    assert!(!facts.editable && !facts.editing && facts.unsaved);
+    assert_eq!(facts.read_only_reason, REFUSAL);
+    let signals = files.take_signals();
+    assert!(signals.contains(&Sig::SaveFailed {
+        path: "/tmp/y.txt".into(),
+        problem: REFUSAL.into()
+    }));
+    // The view shows the edit that was not saved, to copy.
+    assert!(
+        files
+            .take_effects()
+            .contains(&Effect::Lines("y edited\n".into()))
     );
+    assert!(files.open_file("a.txt", 0));
+    let asked = calls(&mut files);
+    assert_eq!(
+        asked.iter().map(|c| c.0).collect::<Vec<_>>(),
+        ["projects.readFile"]
+    );
+}
+
+// Once refused, the environment's other outside files open read-only, its
+// project files and other environments' outside files do not.
+#[test]
+fn a_refusal_makes_that_environments_outside_files_read_only() {
+    let mut files = Files::new();
+    files.set_target("env-b", "/w", "");
+    editing(&mut files, "/tmp/y.txt", "");
+    files.edit("y");
+    files.save_due();
+    let (_, _, then) = call(&mut files);
+    files.answer(then, terminal_required());
+    opened(&mut files, "/tmp/x.txt", "x");
+    assert_eq!(files.facts().read_only_reason, REFUSAL);
+    opened(&mut files, "a.txt", "a");
+    assert!(files.facts().editable);
+    files.set_target("env-a", "/w", "");
+    opened(&mut files, "/tmp/x.txt", "x");
+    assert!(files.facts().editable);
+}
+
+// Any other refusal keeps the file editable, the edit to be written with the
+// next one.
+#[test]
+fn another_refusal_of_an_outside_write_keeps_it_editable() {
+    let mut files = files_in("/w");
+    editing(&mut files, "/tmp/y.txt", "");
+    files.edit("y");
+    files.save_due();
+    let (_, _, then) = call(&mut files);
+    files.answer(then, Err(McError::new("not a text file")));
+    let facts = files.facts();
+    assert!(facts.editable && facts.editing && facts.unsaved);
+    assert_eq!(facts.save_problem, "not a text file");
+}
+
+// --- Media ---
+
+const NOW: i64 = 1_790_000_000_000;
+
+/// A Files on "/w" for thread t1, its clock at NOW.
+fn media_files() -> Files {
+    let mut files = Files::new();
+    files.set_context("http://127.0.0.1:3773", NOW);
+    files.set_target("env-a", "/w", "t1");
+    files.take_effects();
+    files.take_signals();
+    files
+}
+
+/// The signing asked for: (environment, resource, then).
+fn signing(files: &mut Files) -> (String, Json, Then) {
+    let asked: Vec<_> = files
+        .take_effects()
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::Call {
+                environment,
+                method: "assets.createUrl",
+                payload,
+                then,
+            } => Some((environment, payload["resource"].clone(), then)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked.len(), 1, "one signing");
+    asked.into_iter().next().expect("a signing")
+}
+
+/// A signing's answer: `relative`, good for `seconds`.
+fn signed(relative: &str, seconds: i64) -> Result<Json, McError> {
+    Ok(json!({"relativeUrl": relative, "expiresAt": NOW + seconds * 1000}))
+}
+
+#[test]
+fn media_kinds_follow_the_extension() {
+    for (path, kind) in [
+        ("assets/logo.png", "image"),
+        ("a/B.JPG", "image"),
+        ("icon.svg", "image"),
+        ("media/intro.mp4", "video"),
+        ("clip.webm", "video"),
+        ("media/theme.mp3", "audio"),
+        ("a.wav", "audio"),
+        ("a.ogg", "audio"),
+        ("a.m4a", "audio"),
+        ("a.flac", "audio"),
+        ("docs/manual.pdf", "pdf"),
+        ("public/index.html", ""),
+        ("src/app.ts", ""),
+        ("Makefile", ""),
+        ("logo.png/README", ""),
+    ] {
+        assert_eq!(media_kind_of(path), kind, "{path}");
+    }
+}
+
+// An image is signed for, never read; a load that fails is retried with a
+// new URL; and a URL that has run out is signed again when the file is
+// opened again or the tab shows.
+#[test]
+fn an_image_is_signed_loaded_and_signed_again() {
+    let mut files = media_files();
+    assert!(files.open_file("assets/logo.png", 0));
+    assert_eq!(files.file_status(), "loading");
+    let (environment, resource, then) = signing(&mut files);
+    assert_eq!(environment, "env-a");
+    assert_eq!(
+        resource,
+        json!({"_tag": "workspace-file", "threadId": "t1", "path": "assets/logo.png"})
+    );
+    files.answer(then, signed("/api/assets/one/logo.png", 3600));
+    let facts = files.facts();
+    assert_eq!(facts.file_status, "ready");
+    assert_eq!(facts.media_kind, "image");
+    assert_eq!(
+        facts.media_url,
+        "http://127.0.0.1:3773/api/assets/one/logo.png"
+    );
+    assert!(!facts.editable && !facts.file_empty);
+
+    // A failure of a URL no longer shown changes nothing.
+    files.media_failed("http://elsewhere/logo.png");
+    assert_eq!(files.file_status(), "ready");
+    let url = files.media_url().to_owned();
+    files.media_failed(&url);
+    let facts = files.facts();
+    assert_eq!(facts.file_status, "error");
+    assert_eq!(facts.file_problem, "The image could not be loaded.");
+    assert!(facts.media_url.is_empty());
+    files.reload_file();
+    let (_, _, then) = signing(&mut files);
+    // Good for less than the minute kept in hand: run out at once.
+    files.answer(then, signed("/api/assets/two/logo.png", 30));
+    assert_eq!(files.file_status(), "ready");
+    assert!(files.media_url().ends_with("/api/assets/two/logo.png"));
+
+    assert!(files.open_file("assets/logo.png", 0));
+    let (_, _, then) = signing(&mut files);
+    files.answer(then, signed("/api/assets/three/logo.png", 30));
+    files.set_active(true);
+    let (_, _, then) = signing(&mut files);
+    files.answer(then, signed("/api/assets/four/logo.png", 3600));
+    // A URL that still works is kept.
+    files.set_active(false);
+    files.set_active(true);
+    assert!(files.open_file("assets/logo.png", 0));
+    assert!(calls(&mut files).is_empty());
+    assert!(files.media_url().ends_with("/api/assets/four/logo.png"));
+    // ...until the clock passes the minute before it runs out.
+    files.set_context("http://127.0.0.1:3773", NOW + 3_540_000);
+    assert!(files.open_file("assets/logo.png", 0));
+    assert_eq!(signing(&mut files).2, Then::Sign(files.file_request));
+
+    // Closing the file lets the URL go.
+    files.close_file();
+    assert!(files.media_url().is_empty());
+}
+
+// The browser is handed a URL that works: the one shown while it lasts, else
+// a new one once signed.
+#[test]
+fn the_browser_gets_a_url_that_works() {
+    let opened_urls = |files: &mut Files| -> Vec<String> {
+        files
+            .take_signals()
+            .into_iter()
+            .filter_map(|s| match s {
+                Sig::MediaOpened(url) => Some(url),
+                _ => None,
+            })
+            .collect()
+    };
+    let mut files = media_files();
+    assert!(files.open_file("media/intro.mp4", 0));
+    let (_, _, then) = signing(&mut files);
+    files.answer(then, signed("/api/assets/one/intro.mp4", 3600));
+    files.take_signals();
+    files.open_media();
+    assert_eq!(opened_urls(&mut files), [files.media_url().to_owned()]);
+
+    files.reload_file();
+    let (_, _, then) = signing(&mut files);
+    files.answer(then, signed("/api/assets/two/intro.mp4", 30));
+    files.take_signals();
+    files.open_media();
+    let (_, _, then) = signing(&mut files);
+    assert!(opened_urls(&mut files).is_empty());
+    files.answer(then, signed("/api/assets/three/intro.mp4", 3600));
+    assert_eq!(
+        opened_urls(&mut files),
+        ["http://127.0.0.1:3773/api/assets/three/intro.mp4"]
+    );
+
+    // A file opened before the new URL arrives is not handed over.
+    files.reload_file();
+    let (_, _, then) = signing(&mut files);
+    files.answer(then, signed("/api/assets/four/intro.mp4", 30));
+    files.open_media();
+    signing(&mut files);
+    assert!(files.open_file("media/other.mp4", 0));
+    let (_, _, then) = signing(&mut files);
+    files.take_signals();
+    files.answer(then, signed("/api/assets/six/other.mp4", 3600));
+    assert!(opened_urls(&mut files).is_empty());
+}
+
+// Of two opens signed out of order, the later one's URL is shown.
+#[test]
+fn the_latest_open_wins() {
+    let mut files = media_files();
+    assert!(files.open_file("a.png", 0));
+    let (_, _, first) = signing(&mut files);
+    assert!(files.open_file("b.png", 0));
+    let (_, _, second) = signing(&mut files);
+    files.answer(second, signed("/api/assets/b/b.png", 3600));
+    files.answer(first, signed("/api/assets/a/a.png", 3600));
+    assert_eq!(files.open_path(), "b.png");
+    assert!(files.media_url().ends_with("/api/assets/b/b.png"));
+}
+
+// A file outside the workspace is signed as a media file; with no thread, the
+// workspace's folder names it; a file the MC will not sign says why.
+#[test]
+fn the_resource_follows_the_path_and_the_thread() {
+    let mut files = media_files();
+    assert!(files.open_file("/home/me/shot.png", 0));
+    let (_, resource, then) = signing(&mut files);
+    assert_eq!(
+        resource,
+        json!({"_tag": "media-file", "threadId": "t1", "path": "/home/me/shot.png"})
+    );
+    files.answer(then, Err(McError::new("Media file was not found.")));
+    assert_eq!(files.file_status(), "error");
+    assert_eq!(files.facts().file_problem, "Media file was not found.");
+
+    files.set_target("env-a", "/draft", "");
+    assert!(files.open_file("media/theme.mp3", 0));
+    let (_, resource, _) = signing(&mut files);
+    assert_eq!(
+        resource,
+        json!({"_tag": "draft-workspace-file", "cwd": "/draft", "path": "media/theme.mp3"})
+    );
+}
+
+// A full path is the thread's machine's: on Windows it has a drive or a
+// share, and with forward slashes it was signed as a workspace file.
+#[test]
+fn a_windows_path_is_a_media_file() {
+    let mut files = media_files();
+    files.set_target("env-a", "C:/w", "t1");
+    for path in [
+        "C:/Users/me/shot.png",
+        "D:\\shots\\b.png",
+        "\\\\server\\share\\c.png",
+    ] {
+        assert!(files.open_file(path, 0));
+        assert_eq!(signing(&mut files).1["_tag"], "media-file", "{path}");
+    }
 }
 
 // --- Rendering ---
@@ -371,7 +682,9 @@ fn only_a_file_that_can_be_edited_is_edited() {
     let mut files = files_in("/w");
     files.set_editing(true);
     assert!(!files.facts().editing);
-    opened(&mut files, "/etc/hosts", "x");
+    assert!(files.open_file("big.log", 0));
+    let (_, _, then) = call(&mut files);
+    files.answer(then, Ok(json!({"contents": "x", "truncated": true})));
     files.set_editing(true);
     assert!(!files.facts().editing);
 }
@@ -426,7 +739,7 @@ fn a_write_the_mc_refuses_keeps_the_edit_and_says_so() {
     files.save_due();
     let (_, _, then) = call(&mut files);
     files.take_signals();
-    files.answer(then, Err(String::new()));
+    files.answer(then, Err(McError::new("")));
     let facts = files.facts();
     assert!(facts.unsaved);
     assert_eq!(facts.save_problem, "Unable to save this file.");
@@ -457,7 +770,7 @@ fn closing_the_file_writes_the_edit_first() {
     assert_eq!(payload["relativePath"], "a.txt");
     assert!(matches!(&then, Then::Write { closing: true, .. }));
     files.take_signals();
-    files.answer(then, Err("disk full".into()));
+    files.answer(then, Err(McError::new("disk full")));
     assert_eq!(
         files.take_signals(),
         [Sig::SaveFailed {
@@ -474,7 +787,7 @@ fn leaving_the_workspace_writes_the_edit_there() {
     let mut files = files_in("/w1");
     editing(&mut files, "a.txt", "");
     files.edit("a");
-    assert!(files.set_target("env-a", "/w2"));
+    assert!(files.set_target("env-a", "/w2", ""));
     let (_, payload, _) = call(&mut files);
     assert_eq!(payload["cwd"], "/w1");
 }
