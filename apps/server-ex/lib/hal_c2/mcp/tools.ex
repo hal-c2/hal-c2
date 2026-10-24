@@ -137,8 +137,9 @@ defmodule HalC2.Mcp.Tools do
      }}
   end
 
-  def run("hal_c2_thread_read", args, %{row: me}) do
-    with {:ok, row} <- project_thread(me, args["threadId"]) do
+  def run("hal_c2_thread_read", args, %{row: me} = caller) do
+    with {:ok, row} <- project_thread(me, args["threadId"]),
+         :here <- on_owner(row, "hal_c2_thread_read", args, caller) do
       state = stream(row["id"])
       view = args["view"] || "messages"
       after_position = args["afterPosition"] || -1
@@ -186,59 +187,14 @@ defmodule HalC2.Mcp.Tools do
   def run("hal_c2_thread_send", args, %{row: me} = caller) do
     with {:ok, row} <- project_thread(me, args["threadId"]),
          :ok <- live(caller),
-         :ok <- no_escalation(me, row),
-         :ok <-
-           if(row["archivedAt"],
-             do: {:error, "thread_not_sendable", "The thread is archived."},
-             else: :ok
-           ) do
-      message_id = "message:mcp:" <> HalC2.Environment.uuid4()
-
-      active = row["activeRunId"]
-
-      # `auto` steers a running turn and starts one otherwise.
-      mode =
-        case {args["mode"] || "auto", active} do
-          {"queue", _} -> %{"type" => "queue_after_active"}
-          {"restart", _} -> %{"type" => "restart_active", "targetRunId" => active}
-          {"auto", nil} -> %{"type" => "start_immediately"}
-          _ -> %{"type" => "steer_active", "targetRunId" => active}
-        end
-
-      if mode["type"] in ["steer_active", "restart_active"] and row["activeRunId"] == nil do
-        {:error, "thread_not_sendable", "The thread has no running turn to #{args["mode"]}."}
-      else
-        command = %{
-          "type" => "message.dispatch",
-          "commandId" => "command:mcp:" <> (args["clientRequestId"] || message_id),
-          "threadId" => row["id"],
-          "messageId" => message_id,
-          "senderThreadId" => me["id"],
-          "text" => args["message"],
-          "attachments" => [],
-          "dispatchMode" => mode,
-          "createdBy" => "agent",
-          "creationSource" => "mcp"
-        }
-
-        with {:ok, _} <- orchestration(Orchestration.dispatch(command)) do
-          run = message_run(row["id"], message_id)
-
-          {:ok,
-           %{
-             "threadId" => row["id"],
-             "messageId" => message_id,
-             "runId" => run && run["id"],
-             "status" => (run && run["status"]) || "queued",
-             "delivery" => mode["type"]
-           }}
-        end
-      end
+         :ok <- no_escalation(me, row) do
+      deliver(row["id"], me["id"], args)
     end
   end
 
-  def run("hal_c2_thread_wait", args, %{row: me}) do
-    with {:ok, row} <- project_thread(me, args["threadId"]) do
+  def run("hal_c2_thread_wait", args, %{row: me} = caller) do
+    with {:ok, row} <- project_thread(me, args["threadId"]),
+         :here <- on_owner(row, "hal_c2_thread_wait", args, caller) do
       timeout = wait_timeout(args["timeoutMs"])
       {run, timed_out} = wait(row["id"], args["runId"], timeout)
 
@@ -254,23 +210,8 @@ defmodule HalC2.Mcp.Tools do
 
   def run("hal_c2_thread_interrupt", args, %{row: me} = caller) do
     with {:ok, row} <- project_thread(me, args["threadId"]),
-         :ok <- live(caller),
-         {:ok, _} <-
-           orchestration(
-             Orchestration.dispatch(%{
-               "type" => "run.interrupt",
-               "commandId" =>
-                 "command:mcp:" <> (args["clientRequestId"] || HalC2.Environment.uuid4()),
-               "threadId" => row["id"],
-               "runId" => args["runId"] || row["activeRunId"]
-             })
-           ) do
-      {:ok,
-       %{
-         "threadId" => row["id"],
-         "runId" => args["runId"] || row["activeRunId"],
-         "interrupted" => true
-       }}
+         :ok <- live(caller) do
+      interrupt(row["id"], args)
     end
   end
 
@@ -644,6 +585,123 @@ defmodule HalC2.Mcp.Tools do
 
   @doc "A thread's stream state."
   def stream(thread_id), do: HalC2.Streams.state(thread_id)
+
+  @doc """
+  Sends an agent's message to a thread of this MC, or of the MC it moved to: `auto`
+  steers a running turn and starts one otherwise.
+  """
+  def deliver(id, sender, args) do
+    case HalC2.Shell.row(node(), id) do
+      {"thread", %{"movedTo" => %{"mc" => mc}}} when is_binary(mc) ->
+        on_mc(mc, __MODULE__, :deliver, [id, sender, args])
+
+      {"thread", %{"archivedAt" => archived}} when archived != nil ->
+        {:error, "thread_not_sendable", "The thread is archived."}
+
+      {"thread", row} ->
+        dispatch_message(row, sender, args)
+
+      nil ->
+        {:error, "thread_not_found", "The thread was not found."}
+    end
+  end
+
+  defp dispatch_message(row, sender, args) do
+    message_id = "message:mcp:" <> HalC2.Environment.uuid4()
+    active = row["activeRunId"]
+
+    mode =
+      case {args["mode"] || "auto", active} do
+        {"queue", _} -> %{"type" => "queue_after_active"}
+        {"restart", _} -> %{"type" => "restart_active", "targetRunId" => active}
+        {"auto", nil} -> %{"type" => "start_immediately"}
+        _ -> %{"type" => "steer_active", "targetRunId" => active}
+      end
+
+    if mode["type"] in ["steer_active", "restart_active"] and active == nil do
+      {:error, "thread_not_sendable", "The thread has no running turn to #{args["mode"]}."}
+    else
+      command = %{
+        "type" => "message.dispatch",
+        "commandId" => "command:mcp:" <> (args["clientRequestId"] || message_id),
+        "threadId" => row["id"],
+        "messageId" => message_id,
+        "senderThreadId" => sender,
+        "text" => args["message"],
+        "attachments" => [],
+        "dispatchMode" => mode,
+        "createdBy" => "agent",
+        "creationSource" => "mcp"
+      }
+
+      with {:ok, _} <- orchestration(Orchestration.dispatch(command)) do
+        run = message_run(row["id"], message_id)
+
+        {:ok,
+         %{
+           "threadId" => row["id"],
+           "messageId" => message_id,
+           "runId" => run && run["id"],
+           "status" => (run && run["status"]) || "queued",
+           "delivery" => mode["type"]
+         }}
+      end
+    end
+  end
+
+  @doc "Interrupts a run of a thread of this MC, or of the MC it moved to."
+  def interrupt(id, args) do
+    case HalC2.Shell.row(node(), id) do
+      {"thread", %{"movedTo" => %{"mc" => mc}}} when is_binary(mc) ->
+        on_mc(mc, __MODULE__, :interrupt, [id, args])
+
+      {"thread", _row} ->
+        # From the stream: the sidebar row trails a run's start.
+        run =
+          args["runId"] ||
+            stream(id)
+            |> StreamState.list("run")
+            |> Enum.find_value(
+              &(&1["status"] in ~w(preparing starting running waiting) && &1["id"])
+            )
+
+        with {:ok, _} <-
+               orchestration(
+                 Orchestration.dispatch(%{
+                   "type" => "run.interrupt",
+                   "commandId" =>
+                     "command:mcp:" <> (args["clientRequestId"] || HalC2.Environment.uuid4()),
+                   "threadId" => id,
+                   "runId" => run
+                 })
+               ),
+             do: {:ok, %{"threadId" => id, "runId" => run, "interrupted" => true}}
+
+      nil ->
+        {:error, "thread_not_found", "The thread was not found."}
+    end
+  end
+
+  # A thread that moved to another MC of the cluster lives there: what is asked of it
+  # runs on that MC, in the project it moved into. `:here` for a thread that did not move.
+  defp on_owner(%{"movedTo" => %{"mc" => mc, "projectId" => project}}, name, args, caller)
+       when is_binary(mc) and is_binary(project) do
+    on_mc(mc, __MODULE__, :run, [
+      name,
+      args,
+      %{caller | row: %{caller.row | "projectId" => project}}
+    ])
+  end
+
+  defp on_owner(_row, _name, _args, _caller), do: :here
+
+  defp on_mc(mc, module, fun, args) do
+    :erpc.call(String.to_existing_atom(mc), module, fun, args, :timer.minutes(10))
+  catch
+    :error, {:erpc, reason} ->
+      {:error, "thread_unreachable",
+       "The MC the thread moved to is unreachable (#{inspect(reason)})."}
+  end
 
   @doc "The run a message of the thread belongs to, or nil."
   def message_run(thread_id, message_id) do

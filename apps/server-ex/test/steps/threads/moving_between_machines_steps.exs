@@ -1684,6 +1684,75 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  step "the agent of {string} sends {string} to {string}",
+       %{args: [caller, text, title]} = context do
+    id = World.thread_id(context, title)
+
+    assert {:ok, %{"threadId" => ^id, "runId" => run}} =
+             World.mcp_tool(context, caller, "hal_c2_thread_send", %{
+               "threadId" => id,
+               "message" => text
+             })
+
+    Map.put(context, :remote_run, run)
+  end
+
+  step "the turn runs on {string}", %{args: [machine]} = context do
+    id = World.thread_id(context, "Alpha")
+    runs = Machines.on(context, machine, Machines, :entities, [id, "run"])
+    assert Enum.any?(runs, &(&1["id"] == context.remote_run))
+    refute Enum.any?(World.runs(context, "Alpha"), &(&1["id"] == context.remote_run))
+    context
+  end
+
+  step "the agent of {string} waits for the turn and reads {string} in {string}",
+       %{args: [caller, reply, title]} = context do
+    id = World.thread_id(context, title)
+    run = context.remote_run
+
+    assert {:ok, %{"runId" => ^run, "status" => "completed", "timedOut" => false}} =
+             World.mcp_tool(context, caller, "hal_c2_thread_wait", %{
+               "threadId" => id,
+               "runId" => run,
+               "timeoutMs" => 15_000
+             })
+
+    assert {:ok, %{"items" => items}} =
+             World.mcp_tool(context, caller, "hal_c2_thread_read", %{"threadId" => id})
+
+    assert List.last(items)["text"] == reply
+    context
+  end
+
+  step "the turn is running on {string}", %{args: [machine]} = context do
+    id = World.thread_id(context, "Alpha")
+    :ok = Machines.on(context, machine, HalC2.Streams, :subscribe, [id, self(), nil])
+    await_remote_status(context, machine, id, context.remote_run, ~w(running waiting))
+    context
+  end
+
+  step "the turn on {string} is interrupted", %{args: [machine]} = context do
+    id = World.thread_id(context, "Alpha")
+    run = context.remote_run
+    assert {:ok, %{"runId" => ^run, "interrupted" => true}} = context.mcp_result
+
+    assert {:ok, %{"runId" => ^run, "status" => "interrupted"}} =
+             World.mcp_tool(context, "caller", "hal_c2_thread_wait", %{
+               "threadId" => id,
+               "runId" => run,
+               "timeoutMs" => 15_000
+             })
+
+    assert [%{"status" => "interrupted"}] =
+             for(
+               r <- Machines.on(context, machine, Machines, :entities, [id, "run"]),
+               r["id"] == run,
+               do: r
+             )
+
+    context
+  end
+
   step "the agent of {string} moves its own thread to {string}",
        %{args: [caller, to]} = context do
     Mc.ensure(HalC2.ThreadMove)
@@ -1751,6 +1820,20 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
       "interactionMode" => interaction
     })
     |> World.working_thread(title)
+  end
+
+  # Waits, on the commits of the stream it subscribed to, until the run `run` of `id` on
+  # `machine` has one of `statuses`.
+  defp await_remote_status(context, machine, id, run, statuses) do
+    runs = Machines.on(context, machine, Machines, :entities, [id, "run"])
+
+    unless Enum.any?(runs, &(&1["id"] == run and &1["status"] in statuses)) do
+      receive do
+        {:hal_c2_stream, ^id, _} -> await_remote_status(context, machine, id, run, statuses)
+      after
+        15_000 -> flunk("the run #{run} on #{machine} never reached #{inspect(statuses)}")
+      end
+    end
   end
 
   # The thread lives on `machine` now: the cluster finds it there, and this machine keeps

@@ -550,6 +550,23 @@ Feature: Moving a thread and its agent to another machine
       And the agent receives where "Alpha" now lives and whether its session was carried
 
     @mc
+    Scenario: An agent starts and follows a turn on a thread it moved
+      Given the thread "caller" runs in full-access mode
+      And the agent of "caller" moves "Alpha" to "desktop"
+      When the agent of "caller" sends "say done" to "Alpha"
+      Then the turn runs on "desktop"
+      And the agent of "caller" waits for the turn and reads "done" in "Alpha"
+
+    @mc
+    Scenario: An agent interrupts a turn on a thread it moved
+      Given the thread "caller" runs in full-access mode
+      And the agent of "caller" moves "Alpha" to "desktop"
+      And the agent of "caller" sends "wait for me" to "Alpha"
+      And the turn is running on "desktop"
+      When the agent of "caller" interrupts "Alpha"
+      Then the turn on "desktop" is interrupted
+
+    @mc
     Scenario: An agent moving its own thread moves once its turn ends
       Given the agent is working in "Alpha"
       When the agent of "Alpha" moves its own thread to "desktop"
