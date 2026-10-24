@@ -154,7 +154,7 @@ pub fn register(steps: &mut Steps) {
         &format!("{Q} is linked to pull request (\\d+)"),
         |world, c, _| {
             let number: i64 = c[1].parse().unwrap_or(0);
-            world.wait_for_with(move |w| listed(w) == [number], |w| describe(w))?;
+            world.wait_for_with(move |w| listed(w) == [number], describe)?;
             let sent = world.mc.commands.iter().any(|command| {
                 command["type"] == "thread.pull-request.link"
                     && command["threadId"] == ID
@@ -182,7 +182,7 @@ pub fn register(steps: &mut Steps) {
             world.mc.threads.insert(ID.into(), row.clone());
             world.mc.send_row(ID, &row);
             show_tab(world)?;
-            world.wait_for_with(move |w| listed(w) == [number], |w| describe(w))
+            world.wait_for_with(move |w| listed(w) == [number], describe)
         },
     );
     steps.step(
@@ -207,7 +207,7 @@ pub fn register(steps: &mut Steps) {
     );
     steps.step(
         &format!("{Q} shows the pull request for {Q} again"),
-        |world, _, _| world.wait_for_with(|w| listed(w) == [40], |w| describe(w)),
+        |world, _, _| world.wait_for_with(|w| listed(w) == [40], describe),
     );
 
     // An environment too old for branch pull requests.

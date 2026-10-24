@@ -681,3 +681,27 @@ impl Drop for World {
         this_machine::set_id_for_testing(None);
     }
 }
+
+impl World {
+    /// What the window painted for `item` itself at its last frame, op by op.
+    pub fn painted_ops(&self, item: ljos::ObjectId) -> Vec<ljos::item::DrawOp> {
+        self.shell
+            .as_ref()
+            .and_then(|shell| shell.window.painted(item))
+            .map_or_else(Vec::new, |list| list.ops().to_vec())
+    }
+
+    /// The user's pointer does what `event` makes of the window's time.
+    /// Whether an item took it.
+    pub fn pointer(
+        &mut self,
+        event: impl FnOnce(ljos::prelude::Time) -> ljos::item::PointerEvent,
+    ) -> Outcome<bool> {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        let taken = shell.window.pointer(&event(shell.window.now()));
+        self.pump()?;
+        Ok(taken)
+    }
+}

@@ -8,6 +8,7 @@ pub mod agents;
 pub mod centre;
 pub mod connection;
 pub mod connection_health;
+pub mod device;
 pub mod licenses;
 pub mod link;
 pub mod mc;
@@ -26,6 +27,7 @@ pub fn register(steps: &mut Steps) {
     centre::register(steps);
     connection::register(steps);
     connection_health::register(steps);
+    device::register(steps);
     licenses::register(steps);
     link::register(steps);
     mc::register(steps);

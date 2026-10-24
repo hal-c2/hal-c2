@@ -233,10 +233,7 @@ pub fn key_of(world: &World, number: i64) -> Outcome<String> {
 }
 
 pub fn wait_for_row(world: &mut World, number: i64, listed: bool) -> Outcome {
-    world.wait_for_with(
-        move |w| row_of(w, number).is_some() == listed,
-        |w| describe(w),
-    )
+    world.wait_for_with(move |w| row_of(w, number).is_some() == listed, describe)
 }
 
 fn row_role(world: &World, number: i64, role: &str) -> String {
@@ -294,7 +291,7 @@ fn set_online(world: &mut World, online: bool) -> Outcome {
     world.sync()?;
     world.wait_for_with(
         move |w| read_tab(w, PullRequests::online).is_ok_and(|o| o == online),
-        |w| describe(w),
+        describe,
     )
 }
 
@@ -603,7 +600,7 @@ fn open_review(world: &mut World, number: i64) -> Outcome {
         |w| {
             read_review(w, |r| r.status() == "ready" && r.code_status() == "ready").unwrap_or(false)
         },
-        |w| describe_review(w),
+        describe_review,
     )
 }
 
@@ -889,7 +886,7 @@ pub fn register(steps: &mut Steps) {
     steps.step(&format!("{Q} lists both pull requests"), |world, _, _| {
         world.wait_for_with(
             |w| read_tab(w, PullRequests::count).is_ok_and(|n| n == 2),
-            |w| describe(w),
+            describe,
         )?;
         expect!(
             key_of(world, 42)? == "github.com/acme/shop#42"
@@ -904,17 +901,11 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             sync_links(&mut world.mc, THREAD);
             world.sync()?;
-            world.wait_for_with(
-                |w| row_role(w, 42, "reviewLabel") == "Approved",
-                |w| describe(w),
-            )
+            world.wait_for_with(|w| row_role(w, 42, "reviewLabel") == "Approved", describe)
         },
     );
     steps.step(&format!("{Q} shows the new review state"), |world, _, _| {
-        world.wait_for_with(
-            |w| row_role(w, 42, "reviewLabel") == "Approved",
-            |w| describe(w),
-        )?;
+        world.wait_for_with(|w| row_role(w, 42, "reviewLabel") == "Approved", describe)?;
         expect!(
             !read_tab(world, PullRequests::refreshing)?,
             "the tab is still refreshing"
@@ -1626,7 +1617,7 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             world.wait_for_with(
                 |w| read_review(w, |r| r.conversation().len() == 1).unwrap_or(false),
-                |w| describe_review(w),
+                describe_review,
             )?;
             let detail = read_review(world, |r| r.detail().clone())?;
             let checks = detail["checks"].as_array().cloned().unwrap_or_default();
@@ -1678,7 +1669,7 @@ pub fn register(steps: &mut Steps) {
                     w.mc.peek::<FakeReview>()
                         .is_some_and(|f| f.viewed.contains("src/cart.ts"))
                 },
-                |w| describe_review(w),
+                describe_review,
             )
         },
     );
@@ -1696,7 +1687,7 @@ pub fn register(steps: &mut Steps) {
                     w.mc.peek::<FakeReview>()
                         .is_some_and(|f| !f.viewed.contains(&path))
                 },
-                |w| describe_review(w),
+                describe_review,
             )
         },
     );
@@ -1710,7 +1701,7 @@ pub fn register(steps: &mut Steps) {
                         && expanded(w, &path)
                         && viewed_count(w) == 0
                 },
-                |w| describe_review(w),
+                describe_review,
             )?;
             let sent = world.mc.part::<FakeReview>().sent.clone();
             expect!(
@@ -1732,7 +1723,7 @@ pub fn register(steps: &mut Steps) {
                     })
                     .unwrap_or(false)
                 },
-                |w| describe_review(w),
+                describe_review,
             )?;
             let settled = read_review(world, |r| !r.busy() && r.problem().is_empty())?;
             expect!(settled, "{}", describe_review(world));
@@ -1756,7 +1747,7 @@ pub fn register(steps: &mut Steps) {
             let resolved = c[0] == "resolved";
             world.wait_for_with(
                 move |w| review_thread(w).is_ok_and(|t| (t["resolved"] == true) == resolved),
-                |w| describe_review(w),
+                describe_review,
             )
         },
     );
@@ -1765,7 +1756,7 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             world.wait_for_with(
                 |w| read_review(w, |r| !r.online()).unwrap_or(false),
-                |w| describe_review(w),
+                describe_review,
             )?;
             let title = read_review(world, |r| text(&r.detail()["title"]))?;
             let files = code(world, |d| d.file_count())?;
@@ -1796,7 +1787,7 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             world.wait_for_with(
                 |w| read_review(w, Review::online).unwrap_or(false),
-                |w| describe_review(w),
+                describe_review,
             )?;
             let sent = update_review(world, |r| r.comment("Back again"))?;
             expect!(sent, "{}", describe_review(world));
@@ -1810,7 +1801,7 @@ pub fn register(steps: &mut Steps) {
                     })
                     .unwrap_or(false)
                 },
-                |w| describe_review(w),
+                describe_review,
             )
         },
     );
