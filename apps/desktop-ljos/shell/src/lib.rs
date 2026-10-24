@@ -12,6 +12,7 @@ pub mod controllers;
 pub mod device;
 pub mod device_screen;
 pub mod environment_settings;
+pub mod file_dialogs;
 pub mod folders;
 pub mod highlighter;
 pub mod json;
@@ -187,6 +188,7 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     kept.allow_local_folder_import
         .set(launch.allow_local_folder_import);
     platform_window::install(engine);
+    file_dialogs::install(engine);
     theme::install(engine, launch.config_dir.clone());
     runtime::install(engine, launch.config_dir.as_deref(), &launch.last_error);
     if let Some(manifest) = &launch.licenses_manifest {

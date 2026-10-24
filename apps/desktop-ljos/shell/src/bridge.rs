@@ -203,9 +203,9 @@ impl ShellBridge {
     /// What the composer's own paste attaches: a copied picture as
     /// "image.png". Empty when the paste is text.
     ///
-    /// desktop-qt first takes copied files (the clipboard's URLs); Ljós's
-    /// clipboard holds no URL list, so a file copied in a file manager
-    /// pastes as its path's text here.
+    /// TODO(ljos#97): desktop-qt first takes copied files (the clipboard's
+    /// URLs); Ljós's clipboard holds no URL list, so a file copied in a file
+    /// manager pastes as its path's text here.
     #[qml(invokable)]
     fn clipboard_files(cx: &Cx) -> Vec<Value> {
         let Some(image) = Platform::of(cx.engine).clipboard().image() else {
