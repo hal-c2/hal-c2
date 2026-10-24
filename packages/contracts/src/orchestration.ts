@@ -266,11 +266,6 @@ export const ThreadPullRequestLinkSource = Schema.Literals([
 ]);
 export type ThreadPullRequestLinkSource = typeof ThreadPullRequestLinkSource.Type;
 
-/**
- * Host state persisted on a link by the sync reactor; null until first sync. The overview
- * fields are optional: a host whose cheap read lacks them leaves them out, and snapshots
- * written before they existed still decode.
- */
 const ThreadPullRequestActivity = Schema.Struct({
   at: IsoDateTime,
   author: Schema.String,
@@ -278,6 +273,11 @@ const ThreadPullRequestActivity = Schema.Struct({
   state: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+/**
+ * Host state persisted on a link by the sync reactor; null until first sync. The overview
+ * fields are optional: a host whose cheap read lacks them leaves them out, and snapshots
+ * written before they existed still decode.
+ */
 export const ThreadPullRequestSnapshot = Schema.Struct({
   state: PullRequestState,
   title: TrimmedNonEmptyString,

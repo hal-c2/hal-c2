@@ -12,7 +12,10 @@ defmodule HalC2.PullRequestWakesPropTest do
     and never what it already heard, a link's first snapshot, or a restart;
   - a check that finds news on an idle thread that is present wakes it, unless every
     link is done and the thread settles on its own instead;
-  - what a settled or archived thread missed is told once it is back.
+  - what a settled or archived thread missed is told once it is back;
+  - a review or comment by the signed-in account, the agent's own, is news only when
+    no run of the thread was going as it was posted, and never hides one by someone
+    else.
   """
 
   use ExUnit.Case, async: false
@@ -26,12 +29,13 @@ defmodule HalC2.PullRequestWakesPropTest do
 
   @thread "t"
   @numbers [1, 2]
-  # Host times are fixed and ahead of the run, so a review sent again is not newer and
-  # a merge or a close comes after everything the thread did.
+  # Host times are fixed: activity numbered `act` is posted `act` seconds after @base,
+  # and a run started or finished at `clock` does so half a second after its newest
+  # activity, so whether one was posted during a run is never a tie.
   @base ~U[2030-01-01 00:00:00Z]
 
   property "a thread is woken once for each change of a pull request it owns",
-    numtests: HalC2.Prop.numtests(100),
+    numtests: HalC2.Prop.numtests(300),
     max_size: 40 do
     forall cmds <- commands(__MODULE__) do
       trap_exit do
@@ -59,11 +63,21 @@ defmodule HalC2.PullRequestWakesPropTest do
 
   # links: `[{number, %{snapshot, told}}]` in the order they were linked, `snapshot`
   # what the host said last (nil before the first sync) and `told` what the thread
-  # heard of it (nil before its baseline). A snapshot is %{state, checks, merge, act},
-  # `act` numbering the newest trusted review or comment (0 for none); `clock` is the
-  # newest so far.
+  # heard of it (nil before its baseline). A snapshot is %{state, checks, merge, act,
+  # own}, `act` numbering the newest trusted review or comment by someone else and
+  # `own` the newest by the signed-in account (0 for none); `clock` is the newest so
+  # far, and `during` the own ones posted while a run was going. `runs` counts the
+  # runs started, the last one going while `busy`.
   def initial_state,
-    do: %{links: [], settled: false, archived: false, busy: false, clock: 0}
+    do: %{
+      links: [],
+      settled: false,
+      archived: false,
+      busy: false,
+      runs: 0,
+      clock: 0,
+      during: MapSet.new()
+    }
 
   def command(state) do
     frequency(
@@ -73,7 +87,7 @@ defmodule HalC2.PullRequestWakesPropTest do
         {1, {:call, __MODULE__, :restart, []}},
         {1, {:call, __MODULE__, if(state.settled, do: :unsettle, else: :settle), []}},
         {1, {:call, __MODULE__, if(state.archived, do: :unarchive, else: :archive), []}},
-        {1, {:call, __MODULE__, if(state.busy, do: :finish, else: :work), []}}
+        {3, run_call(state)}
       ] ++
         case linked(state) do
           [] ->
@@ -85,18 +99,27 @@ defmodule HalC2.PullRequestWakesPropTest do
     )
   end
 
-  # A sync carries the newest review or comment the host has, a new one or the last.
+  defp run_call(%{busy: true} = state),
+    do: {:call, __MODULE__, :finish, [state.runs, state.clock]}
+
+  defp run_call(state), do: {:call, __MODULE__, :work, [state.runs + 1, state.clock]}
+
+  # A sync carries the newest review or comment the host has by someone else and by
+  # the signed-in account: at most one of them new, the rest as last time.
   defp sync_call(state, linked) do
-    let [n, s, checks, merge, new_act?] <- [
+    let [n, s, checks, merge, posted] <- [
           oneof(linked),
           frequency([{6, "open"}, {1, "merged"}, {1, "closed"}]),
           oneof([nil, "pending", "failing", "passing"]),
           oneof(["mergeable", "conflicting", "unknown"]),
-          boolean()
+          oneof([nil, :act, :own])
         ] do
-      last = snapshot_of(state, n)
-      act = if new_act?, do: state.clock + 1, else: (last && last.act) || 0
-      {:call, __MODULE__, :sync, [n, %{state: s, checks: checks, merge: merge, act: act}]}
+      last = snapshot_of(state, n) || %{act: 0, own: 0}
+      act = if posted == :act, do: state.clock + 1, else: last.act
+      own = if posted == :own, do: state.clock + 1, else: last.own
+
+      {:call, __MODULE__, :sync,
+       [n, %{state: s, checks: checks, merge: merge, act: act, own: own}]}
     end
   end
 
@@ -111,12 +134,14 @@ defmodule HalC2.PullRequestWakesPropTest do
 
   def precondition(state, {:call, _, :unlink, [n]}), do: n in linked(state)
 
-  # A sync is of a link that is there, and its activity is never older than the last.
+  # A sync is of a link that is there, and its activity is never older than the last,
+  # with at most one of them new.
   def precondition(state, {:call, _, :sync, [n, snapshot]}) do
-    last = snapshot_of(state, n)
+    last = snapshot_of(state, n) || %{act: 0, own: 0}
+    new = state.clock + 1
 
-    n in linked(state) and
-      (snapshot.act == state.clock + 1 or snapshot.act == ((last && last.act) || 0))
+    n in linked(state) and snapshot.act in [new, last.act] and snapshot.own in [new, last.own] and
+      not (snapshot.act == new and snapshot.own == new)
   end
 
   # The MC refuses to settle a thread with work running, and to settle or unsettle an
@@ -127,8 +152,13 @@ defmodule HalC2.PullRequestWakesPropTest do
   def precondition(state, {:call, _, :unsettle, []}), do: state.settled and not state.archived
   def precondition(state, {:call, _, :archive, []}), do: not state.archived
   def precondition(state, {:call, _, :unarchive, []}), do: state.archived
-  def precondition(state, {:call, _, :work, []}), do: not state.busy
-  def precondition(state, {:call, _, :finish, []}), do: state.busy
+
+  def precondition(state, {:call, _, :work, [k, clock]}),
+    do: not state.busy and k == state.runs + 1 and clock == state.clock
+
+  def precondition(state, {:call, _, :finish, [k, clock]}),
+    do: state.busy and k == state.runs and clock == state.clock
+
   def precondition(_state, _call), do: true
 
   def next_state(state, _result, {:call, _, :link, [n]}) do
@@ -147,15 +177,26 @@ defmodule HalC2.PullRequestWakesPropTest do
         other -> other
       end)
 
-    %{state | links: links, clock: max(state.clock, snapshot.act)}
+    own_new? = snapshot.own > state.clock
+
+    %{
+      state
+      | links: links,
+        clock: Enum.max([state.clock, snapshot.act, snapshot.own]),
+        during:
+          if(own_new? and state.busy,
+            do: MapSet.put(state.during, snapshot.own),
+            else: state.during
+          )
+    }
   end
 
   def next_state(state, _result, {:call, _, :settle, []}), do: %{state | settled: true}
   def next_state(state, _result, {:call, _, :unsettle, []}), do: %{state | settled: false}
   def next_state(state, _result, {:call, _, :archive, []}), do: %{state | archived: true}
   def next_state(state, _result, {:call, _, :unarchive, []}), do: %{state | archived: false}
-  def next_state(state, _result, {:call, _, :work, []}), do: %{state | busy: true}
-  def next_state(state, _result, {:call, _, :finish, []}), do: %{state | busy: false}
+  def next_state(state, _result, {:call, _, :work, [k, _]}), do: %{state | busy: true, runs: k}
+  def next_state(state, _result, {:call, _, :finish, _}), do: %{state | busy: false}
   def next_state(state, _result, {:call, _, :restart, []}), do: state
 
   # Woken, or yielding to settlement, the thread has heard the news either way.
@@ -172,7 +213,7 @@ defmodule HalC2.PullRequestWakesPropTest do
   defp hear(state, link) when state.settled or state.archived, do: link
 
   defp hear(state, %{told: told, snapshot: snapshot} = link) do
-    case news(told, snapshot) do
+    case news(state, told, snapshot) do
       [] -> %{link | told: advance(told, snapshot, [])}
       _ when state.busy -> link
       news -> %{link | told: advance(told, snapshot, news)}
@@ -194,12 +235,13 @@ defmodule HalC2.PullRequestWakesPropTest do
       checks: checks,
       merge: if(snapshot.merge == "unknown", do: told[:merge], else: snapshot.merge),
       failed: failed,
-      act: max(told.act, snapshot.act)
+      act: Enum.max([told.act, snapshot.act, snapshot.own])
     }
   end
 
-  # What is worth telling, in the order the message tells it.
-  defp news(told, snapshot) do
+  # What is worth telling, in the order the message tells it. Activity is told as it is
+  # numbered past what was heard; the agent's own only when no run was going.
+  defp news(state, told, snapshot) do
     open? = snapshot.state == "open"
 
     Enum.filter(
@@ -210,7 +252,8 @@ defmodule HalC2.PullRequestWakesPropTest do
         open? and snapshot.checks == "passing" and told.failed and :checks_passing,
         open? and snapshot.merge == "conflicting" and told.merge != "conflicting" and
           :conflicting,
-        snapshot.act > told.act and :activity
+        snapshot.act > told.act and :activity,
+        snapshot.own > told.act and snapshot.own not in state.during and :activity
       ],
       & &1
     )
@@ -220,7 +263,7 @@ defmodule HalC2.PullRequestWakesPropTest do
   defp pending(state) do
     for {n, %{told: told, snapshot: snapshot}} <- state.links,
         told != nil and snapshot != nil,
-        news = news(told, snapshot),
+        news = news(state, told, snapshot),
         news != [],
         do: {n, news}
   end
@@ -307,11 +350,16 @@ defmodule HalC2.PullRequestWakesPropTest do
     end)
   end
 
-  # What `HalC2.PullRequests.Sync` writes of what the host said.
+  # What `HalC2.PullRequests.Sync` writes of what the host said; the signed-in account
+  # is monalisa.
   def sync(n, snapshot) do
     activity =
       if snapshot.act > 0,
         do: %{"at" => at(snapshot.act), "author" => "owner-1", "kind" => "comment"}
+
+    own =
+      if snapshot.own > 0,
+        do: %{"at" => at(snapshot.own), "author" => "monalisa", "kind" => "comment"}
 
     observe(fn ->
       dispatch(%{
@@ -328,7 +376,8 @@ defmodule HalC2.PullRequestWakesPropTest do
           "closedAt" => if(snapshot.state in ["merged", "closed"], do: at(0)),
           "checksState" => snapshot.checks,
           "mergeability" => snapshot.merge,
-          "activity" => activity
+          "activity" => activity,
+          "ownActivity" => own
         },
         "stack" => nil
       })
@@ -340,13 +389,25 @@ defmodule HalC2.PullRequestWakesPropTest do
   def archive, do: observe(fn -> dispatch(%{"type" => "thread.archive"}) end)
   def unarchive, do: observe(fn -> dispatch(%{"type" => "thread.unarchive"}) end)
 
-  def work do
+  def work(k, clock) do
     observe(fn ->
-      commit([{"run", "own-run", %{"id" => "own-run", "ordinal" => 0, "status" => "running"}}])
+      commit([
+        {"run", "run-#{k}",
+         %{
+           "id" => "run-#{k}",
+           "ordinal" => k,
+           "status" => "running",
+           "startedAt" => at(clock, 500)
+         }}
+      ])
     end)
   end
 
-  def finish, do: observe(fn -> commit([{"run", "own-run", %{"status" => "completed"}}]) end)
+  def finish(k, clock) do
+    observe(fn ->
+      commit([{"run", "run-#{k}", %{"status" => "completed", "completedAt" => at(clock, 500)}}])
+    end)
+  end
 
   def restart, do: observe(fn -> HalC2.Prop.restart_service(HalC2.Streams) end)
 
@@ -392,5 +453,6 @@ defmodule HalC2.PullRequestWakesPropTest do
 
   defp stream, do: HalC2.Streams.Server.state(HalC2.Streams.ensure(@thread))
 
-  defp at(second), do: @base |> DateTime.add(second, :second) |> DateTime.to_iso8601()
+  defp at(second, ms \\ 0),
+    do: @base |> DateTime.add(second * 1000 + ms, :millisecond) |> DateTime.to_iso8601()
 end
