@@ -35,10 +35,6 @@
       "types": "./src/semver.ts",
       "import": "./src/semver.ts"
     },
-    "./schemaYaml": {
-      "types": "./src/schemaYaml.ts",
-      "import": "./src/schemaYaml.ts"
-    },
     "./serverSettings": {
       "types": "./src/serverSettings.ts",
       "import": "./src/serverSettings.ts"
@@ -71,10 +67,6 @@
       "types": "./src/dpop.ts",
       "import": "./src/dpop.ts"
     },
-    "./relayUrl": {
-      "types": "./src/relayUrl.ts",
-      "import": "./src/relayUrl.ts"
-    },
     "./relayJwt": {
       "types": "./src/relayJwt.ts",
       "import": "./src/relayJwt.ts"
@@ -95,10 +87,6 @@
       "types": "./src/threadPullRequests.ts",
       "import": "./src/threadPullRequests.ts"
     },
-    "./assistantCitations": {
-      "types": "./src/assistantCitations.ts",
-      "import": "./src/assistantCitations.ts"
-    },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"
@@ -106,10 +94,6 @@
     "./terminalLinks": {
       "types": "./src/terminalLinks.ts",
       "import": "./src/terminalLinks.ts"
-    },
-    "./relayTracing": {
-      "types": "./src/relayTracing.ts",
-      "import": "./src/relayTracing.ts"
     },
     "./preview": {
       "types": "./src/preview.ts",
