@@ -36,6 +36,7 @@ pub mod member;
 pub mod navigation;
 pub mod orchestration_view;
 pub mod other_machine;
+pub mod panel;
 pub mod plan;
 pub mod plugin;
 pub mod project;
@@ -96,6 +97,7 @@ pub fn register(steps: &mut Steps) {
     navigation::register(steps);
     orchestration_view::register(steps);
     other_machine::register(steps);
+    panel::register(steps);
     plan::register(steps);
     plugin::register(steps);
     project::register(steps);
