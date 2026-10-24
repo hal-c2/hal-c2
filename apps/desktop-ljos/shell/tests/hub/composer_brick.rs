@@ -1,9 +1,16 @@
 //! The real Composer brick over the composer controller: wrapping, new
-//! lines and dropped files, headless.
+//! lines, dropped files and the attach dialog, headless.
+
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use hal_c2_shell::qml::Roots;
 use ljos::keys::{KeyEvent, Modifiers, key};
-use ljos::prelude::{ObjectId, Value};
+use ljos::prelude::{
+    DialogAnswer, DialogKind, DialogReply, DialogRequest, DialogService, ObjectId, Platform, Value,
+};
+use serde_json::json;
 
 use crate::composer::on_threads;
 use crate::{Hub, Window};
@@ -13,6 +20,7 @@ import QtQuick
 import HalC2.Bricks
 
 Item {
+    id: probe
     width: 640
     height: 480
     property alias composer: composer
@@ -23,6 +31,23 @@ Item {
     readonly property string text: input.text
     // A point on the card beside the input, in the probe.
     readonly property point beside: input.mapToItem(this, -8, -8)
+
+    // Presses the attach button, as a click does; false when it is not
+    // there or not enabled.
+    function clickAttach() {
+        const button = find(composer);
+        if (!button || !button.enabled) return false;
+        button.clicked();
+        return true;
+    }
+    function find(item) {
+        if (item.iconName === "paperclip") return item;
+        for (let i = 0; i < item.children.length; ++i) {
+            const found = find(item.children[i]);
+            if (found) return found;
+        }
+        return null;
+    }
 
     Composer {
         id: composer
@@ -135,4 +160,175 @@ fn a_file_dropped_on_the_card_joins_the_draft() {
         "{attachments}"
     );
     assert_eq!(attachments[0]["name"], "notes.txt");
+}
+
+/// The system's dialogs as a test sees them: each one asked for, with the
+/// way to answer it.
+#[derive(Clone, Default)]
+struct SystemDialogs(Rc<RefCell<Vec<(DialogRequest, DialogAnswer)>>>);
+
+impl DialogService for SystemDialogs {
+    fn can_show(&self, _request: &DialogRequest) -> bool {
+        true
+    }
+
+    fn show(&self, request: DialogRequest, answer: DialogAnswer) {
+        self.0.borrow_mut().push((request, answer));
+    }
+
+    fn close(&self, _ticket: u64) {}
+}
+
+/// A short QuickTime movie's first box, under `name` in `dir`: all the
+/// composer reads of a screen recording is its name and its bytes.
+fn movie(dir: &Path, name: &str) -> PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, b"\0\0\0\x14ftypqt  \0\0\0\0qt  ").expect("the movie");
+    path
+}
+
+/// What the platform and the composer owe: the dialog's answer, the file
+/// read on the compute pool, and what each deferred.
+fn deliver(hub: &crate::Hub) {
+    Platform::of(&hub.engine).finish(&hub.engine);
+    hub.advance(0);
+}
+
+/// The file `name` of `size` bytes goes to the MC as a video, and its chip
+/// shows a file uploaded.
+fn uploads_as_a_video(hub: &crate::Hub, name: &str, size: u64) {
+    let asked = hub
+        .mc
+        .pending("attachments.createUploadUrl")
+        .expect("the composer asks where to upload");
+    let payload = hub.mc.calls.borrow()[asked].2.clone();
+    assert_eq!(
+        payload,
+        json!({"type": "file", "name": name, "mimeType": "video/quicktime", "sizeBytes": size})
+    );
+    hub.mc.reply(
+        &hub.engine,
+        asked,
+        Ok(json!({"relativeUrl": "/api/attachments/upload/token", "attachmentId": "pending-1"})),
+    );
+    hub.advance(0);
+    let upload = hub
+        .mc
+        .pending("http.upload")
+        .expect("the bytes go to the MC");
+    assert_eq!(
+        hub.mc.calls.borrow()[upload].2,
+        json!({"relativeUrl": "/api/attachments/upload/token", "mimeType": "video/quicktime", "sizeBytes": size})
+    );
+    hub.mc
+        .reply(&hub.engine, upload, Ok(serde_json::Value::Null));
+    hub.advance(0);
+    let attachments = hub.published("composer")["attachments"].clone();
+    assert_eq!(
+        attachments.as_array().map(Vec::len),
+        Some(1),
+        "{attachments}"
+    );
+    assert_eq!(attachments[0]["name"], name);
+    assert_eq!(attachments[0]["kind"], "file");
+    assert_eq!(attachments[0]["status"], "", "{attachments}");
+}
+
+/// The attach button's dialog lets the user pick any file, not only the
+/// images of its second filter, and a screen recording picked there is
+/// uploaded as a video, as desktop-qt does.
+#[test]
+fn a_recording_picked_in_the_attach_dialog_is_uploaded() {
+    let hub = on_threads(&["t1"]);
+    let system = SystemDialogs::default();
+    Platform::of(&hub.engine).set_dialogs(Rc::new(system.clone()));
+    hal_c2_shell::file_dialogs::install(&hub.engine);
+    let (root, _window) = probe(&hub);
+    let dir = tempfile::tempdir().expect("a directory for the movie");
+    let recording = movie(
+        dir.path(),
+        "Screen Recording 2026-10-24 at 10.37.12\u{202f}AM.mov",
+    );
+
+    assert_eq!(
+        crate::common::call(&hub.engine, root, "clickAttach", &[]),
+        Value::Bool(true)
+    );
+    hub.advance(0);
+    let (request, answer) = system
+        .0
+        .borrow_mut()
+        .pop()
+        .expect("the system's dialog is shown");
+    assert_eq!(request.kind, Some(DialogKind::OpenFiles));
+    assert!(
+        request.filters.is_empty(),
+        "every file can be chosen: {:?}",
+        request.filters
+    );
+    answer.send(DialogReply::Files(vec![recording.clone()]));
+    deliver(&hub);
+    deliver(&hub);
+
+    let name = recording
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    uploads_as_a_video(&hub, &name, 20);
+}
+
+/// A dialog whose filters all name extensions keeps them.
+#[test]
+fn a_dialog_of_some_files_keeps_its_filters() {
+    let hub = on_threads(&["t1"]);
+    let system = SystemDialogs::default();
+    Platform::of(&hub.engine).set_dialogs(Rc::new(system.clone()));
+    hal_c2_shell::file_dialogs::install(&hub.engine);
+    let source = crate::common::compile(
+        &[(
+            "Picker",
+            r#"
+import QtQuick
+import QtQuick.Dialogs
+
+Item {
+    function pick() { dialog.open() }
+    FileDialog { id: dialog; nameFilters: ["Theme files (*.json)"] }
+}
+"#,
+        )],
+        &[],
+    );
+    let (picker, _window) = hub.show(source, "Picker");
+    crate::common::call(&hub.engine, picker, "pick", &[]);
+    hub.advance(0);
+    let (request, _answer) = system
+        .0
+        .borrow_mut()
+        .pop()
+        .expect("the system's dialog is shown");
+    assert_eq!(request.filters.len(), 1);
+    assert_eq!(request.filters[0].patterns, vec!["*.json".to_owned()]);
+}
+
+/// A screen recording dropped on the card is uploaded as a video.
+#[test]
+fn a_recording_dropped_on_the_card_is_uploaded() {
+    let hub = on_threads(&["t1"]);
+    let (root, _window) = probe(&hub);
+    let dir = tempfile::tempdir().expect("a directory for the movie");
+    let recording = movie(dir.path(), "rec.mov");
+    let at = match hub.engine.read_by_name(root, "beside") {
+        Value::Point(p) => (p.x, p.y),
+        other => panic!("a point: {other:?}"),
+    };
+    assert!(ljos::prelude::external_drag(
+        &hub.engine,
+        &ljos::prelude::ExternalDrag::Dropped {
+            files: vec![recording],
+            at: Some(at),
+        },
+    ));
+    deliver(&hub);
+    uploads_as_a_video(&hub, "rec.mov", 20);
 }
