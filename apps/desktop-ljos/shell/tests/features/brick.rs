@@ -325,7 +325,7 @@ impl Brick {
     /// Where the window point (x, y) of the brick is once the brick has
     /// moved so the point lies inside the window. desktop-qt's window takes
     /// the brick's size, so a point far down a tall page is in it; a test
-    /// window keeps its size (ljos-ui: TestWindow cannot change size), so
+    /// window keeps its size (ljos#120), so
     /// the brick moves under it instead, as a page scrolls.
     pub fn reach(&self, world: &mut World, x: f64, y: f64) -> Outcome<(f64, f64)> {
         let (width, height) = crate::world::WINDOW;
