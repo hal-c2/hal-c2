@@ -10,6 +10,8 @@ pub mod mc;
 pub mod stream;
 pub mod thread_menu;
 pub mod thread_snooze;
+pub mod timeline;
+pub mod viewing;
 
 /// Every domain's steps.
 pub fn register(steps: &mut Steps) {
@@ -19,4 +21,6 @@ pub fn register(steps: &mut Steps) {
     stream::register(steps);
     thread_menu::register(steps);
     thread_snooze::register(steps);
+    timeline::register(steps);
+    viewing::register(steps);
 }

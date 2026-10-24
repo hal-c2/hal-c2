@@ -37,6 +37,8 @@ threads/archive-delete.feature: Archiving waits for the agent on the desktop and
 threads/archive-delete.feature: Deleting from the desktop and phone asks when the user wants confirmation
 threads/archive-delete.feature: Deleting the open thread opens the latest thread left in its project
 threads/archive-delete.feature: Deleting the open thread opens the next thread in the project
+threads/menu-actions.feature: Moving is offered once another machine of the cluster can take the thread
+threads/menu-actions.feature: The header's title opens the open thread's menu without the project filter
 threads/menu-and-selection.feature: Actions the environment does not support are left out
 threads/menu-and-selection.feature: Copying a thread reference [has no pull request, the thread id]
 threads/menu-and-selection.feature: Copying a thread reference [is linked to a pull request, the pull request address]
