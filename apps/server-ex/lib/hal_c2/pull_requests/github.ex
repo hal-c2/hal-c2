@@ -724,7 +724,13 @@ defmodule HalC2.PullRequests.GitHub do
     end)
   end
 
-  @summary_selection "number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author { __typename login avatarUrl ... on User { name } } latestReviews(first: 20) { nodes { state author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }"
+  # `comments` and `reviews` are the marker `HalC2.PullRequests.Wakes` reads news from:
+  # the last few of each, enough to find the newest from a trusted author (`activity/2`).
+  @summary_selection "number title url state isDraft mergeable reviewDecision additions deletions changedFiles updatedAt mergedAt closedAt headRefName baseRefName author { __typename login avatarUrl ... on User { name } } latestReviews(first: 20) { nodes { state author { login } } } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } comments(last: 10) { nodes { createdAt authorAssociation author { __typename login } } } reviews(last: 10, states: [APPROVED, CHANGES_REQUESTED, COMMENTED]) { nodes { state submittedAt authorAssociation author { __typename login } } }"
+
+  # Review bots whose reviews and comments count as a member's (logins without `[bot]`).
+  @trusted_bots ~w(copilot-pull-request-reviewer copilot chatgpt-codex-connector)
+  @trusted_associations ~w(OWNER MEMBER COLLABORATOR)
 
   defp summaries_chunk(ctx, chunk) do
     selections =
@@ -737,7 +743,12 @@ defmodule HalC2.PullRequests.GitHub do
 
     with true <- selections != [],
          {:ok, data} <-
-           graphql(ctx, "query PullRequestSummaries {\n#{Enum.join(selections, "\n")}\n}") do
+           graphql(
+             ctx,
+             "query PullRequestSummaries {\nviewer { login }\n#{Enum.join(selections, "\n")}\n}"
+           ) do
+      viewer = get_in(data, ["viewer", "login"])
+
       {:ok,
        for {{repository, number}, index} <- Enum.with_index(chunk),
            %{"title" => title, "url" => url, "updatedAt" => updated} = pr <-
@@ -769,11 +780,64 @@ defmodule HalC2.PullRequests.GitHub do
             "reviewDecision" => review_decision(pr["reviewDecision"], pr["latestReviews"]),
             "checksState" => rollup(head_rollup),
             "mergeability" => mergeability(pr["mergeable"])
-          }}
+          }
+          |> Map.merge(activity(pr, viewer))}
        end}
     else
       false -> {:ok, %{}}
       error -> error
+    end
+  end
+
+  # The newest published review or comment by the repository's owner, a member or a
+  # collaborator, or a trusted review bot (`activity`), and the newest by the signed-in
+  # account (`ownActivity`), which may be the agent's own, each as
+  # `%{"at", "author", "kind", "state"}` or nil. One without an author is skipped.
+  defp activity(pr, viewer) do
+    viewer = String.downcase(viewer || "")
+
+    comments =
+      for node <- get_in(pr, ["comments", "nodes"]) || [],
+          is_map(node),
+          do: {node, node["createdAt"], "comment", nil}
+
+    reviews =
+      for node <- get_in(pr, ["reviews", "nodes"]) || [],
+          is_map(node) and up(node["state"]) not in [nil, "PENDING"],
+          do: {node, node["submittedAt"], "review", String.downcase(up(node["state"]))}
+
+    {own, others} =
+      (comments ++ reviews)
+      |> Enum.filter(fn {node, at, _, _} -> is_binary(at) and author_login(node) != nil end)
+      |> Enum.split_with(fn {node, _, _, _} -> String.downcase(author_login(node)) == viewer end)
+
+    %{
+      "activity" => others |> Enum.filter(fn {node, _, _, _} -> trusted?(node) end) |> newest(),
+      "ownActivity" => newest(own)
+    }
+  end
+
+  defp newest(activities) do
+    activities
+    |> Enum.max_by(fn {_, at, _, _} -> HalC2.Projection.JS.epoch_ms(at) || 0 end, fn -> nil end)
+    |> case do
+      nil ->
+        nil
+
+      {node, at, kind, state} ->
+        %{"at" => at, "author" => author_login(node), "kind" => kind, "state" => state}
+    end
+  end
+
+  defp trusted?(node) do
+    up(node["authorAssociation"]) in @trusted_associations or
+      String.downcase(author_login(node)) in @trusted_bots
+  end
+
+  defp author_login(node) do
+    case get_in(node, ["author", "login"]) do
+      login when is_binary(login) -> String.replace_suffix(login, "[bot]", "")
+      _ -> nil
     end
   end
 

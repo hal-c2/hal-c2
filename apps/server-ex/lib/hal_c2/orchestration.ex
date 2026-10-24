@@ -2371,7 +2371,8 @@ defmodule HalC2.Orchestration do
 
   # A layer of a native stack, or a pull request the thread created, stays as a
   # tombstone, so the sync or discovery (`HalC2.PullRequests.Opened`) does not link it
-  # again.
+  # again. It forgets what the thread heard of it, so a link back starts from a new
+  # baseline.
   defp thread_fields("thread.pull-request.unlink", command, thread, at) do
     links = PullRequests.of(thread)
     key = PullRequests.normalize(command)
@@ -2391,7 +2392,11 @@ defmodule HalC2.Orchestration do
 
       tombstone? ->
         links
-        |> Enum.map(&if(&1 == existing, do: %{&1 | "source" => "stack-dismissed"}, else: &1))
+        |> Enum.map(fn link ->
+          if link == existing,
+            do: link |> Map.put("source", "stack-dismissed") |> Map.delete("heard"),
+            else: link
+        end)
         |> then(&Map.put(pull_request_fields(thread, &1), "updatedAt", at))
 
       true ->
