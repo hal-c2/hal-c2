@@ -14,7 +14,7 @@ Both QML trees are compiled when the app starts, against `HalC2.Shell`'s native 
 whose base URL is the bricks' root (so a brick's `Qt.resolvedUrl` finds its icons). A file that does not compile
 fails only where it is made, as in Qt. It takes about a second in a debug build.
 
-Not ahead of time. At the pinned Ljós it could be (hal-c2/ljos-ui#6): a test would write `ljostypes.json` from
+Not ahead of time, though Ljós allows it: a test would write `ljostypes.json` from
 the shell's types with `ljos::types::check_file`, and a build script would compile both trees against it with
 `ljos::build::compile_dirs_with_types`, running none of the shell's code. It would catch nothing `--check` does
 not, as the compiler checks a native type's members either way. Every QML edit would mean a rebuild where a
