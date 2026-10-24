@@ -124,8 +124,9 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(&format!("the user tries to move {Q}"), |world, c, _| {
-        // TODO(port): FilesFolders' tryMoveManagedFolder (a managed folder
-        // is moved from its own menu) has no port yet.
+        if super::files_folder::try_move_managed_folder(world, &c[0])? {
+            return Ok(());
+        }
         scene(world).commands_before = world.mc.commands.len();
         pick_from_menu(world, &c[0], "move-up")?;
         world.sync()?;
