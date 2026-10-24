@@ -138,9 +138,9 @@ fn view(world: &mut World) -> Outcome<Brick> {
 ///
 /// The click does not reach `rewind.request` yet: the Timeline's IconButton
 /// calls `button.clicked()` from `TapHandler.onTapped`, and Ljós hands the
-/// handler its `button` parameter in place of the `id: button` (see
-/// issue-handler-param-shadows-id.md in the port's notes). The scenarios that
-/// edit from a message fail here until Ljós resolves the id.
+/// handler its `button` parameter in place of the `id: button`
+/// (TODO(ljos#104)). The scenarios that edit from a message fail here until
+/// Ljós resolves the id.
 fn edit_from_second(world: &mut World) -> Outcome {
     prepare(world)?;
     let brick = view(world)?;

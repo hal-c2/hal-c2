@@ -711,7 +711,10 @@ fn show_planner(world: &mut World, name: &str) -> Outcome<ObjectId> {
         |w| format!("the Planner page to load; {}", describe(w)),
     )?;
     if !hidden(world, brick, "pluginPageProblem") {
-        fail!("{}", text_of(world, "pluginPageProblem")?);
+        // TODO(ljos#105): the page's QML is fetched from the MC while the
+        // shell runs, and a program built with the facade compiles nothing
+        // then, so `Qt.createComponent` of it finds "No such file".
+        fail!("{} (ljos#105)", text_of(world, "pluginPageProblem")?);
     }
     let page = shown_named(world, "plannerPage")?;
     if !name.is_empty() && view_name(world, brick, page) != name {
@@ -2675,10 +2678,10 @@ fn register_slack(steps: &mut Steps) {
     });
     steps.step("a screen reader names the settings:", |world, _, _| {
         shown_named(world, "plannerSettings")?;
-        // Ljós gap: a test cannot read an item's `Accessible.name` or list an
-        // item's children (ljos::item exports neither), so the names a screen
+        // TODO(ljos#108): a test cannot read the accessibility tree (an
+        // item's `Accessible.name`, its children), so the names a screen
         // reader gives the settings' inputs cannot be collected.
-        fail!("a test cannot read the Accessible.name of the settings' inputs on desktop-ljos")
+        fail!("a test cannot read the Accessible.name of the settings' inputs (ljos#108)")
     });
     steps.step(
         &format!("{Q} is saved with no field for its start date"),
