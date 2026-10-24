@@ -2,7 +2,7 @@
 //! `nameFilters` takes every file ("All files (*)"), any file can be
 //! chosen.
 //!
-//! TODO(ljos#NN): Ljós hands the system's dialog only the filters it can
+//! TODO(ljos#96): Ljós hands the system's dialog only the filters it can
 //! name by extension and leaves out one that takes every file, so the rest
 //! restrict the choice. The composer's attach dialog asks for
 //! `["All files (*)", "Images (*.png ...)"]` and offered images alone: on
