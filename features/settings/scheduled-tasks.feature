@@ -76,6 +76,13 @@ Feature: Scheduled tasks
       When the MC stops
       Then after restart the task's last run failed with "The server stopped during this run."
 
+    @mc
+    Scenario: A run that never finishes is timed out after an hour
+      Given a task is running and its prompt is never sent
+      When the run's hour passes without it finishing
+      Then the task's last run failed with "The run timed out."
+      And the task has a next run again
+
   Rule: The user manages tasks
 
     @mc
@@ -97,6 +104,13 @@ Feature: Scheduled tasks
       When the user deletes the task
       Then the run is stopped and the waiting user is told "Schedule task not found."
       And a task made later with the same id starts with no run history
+
+    @mc
+    Scenario: Deleting a task stops the turn its run already started
+      Given a task whose run's turn is already running in its thread
+      When the user deletes the task
+      Then the turn its run started is interrupted
+      And the run is stopped and the waiting user is told "Schedule task not found."
 
     @mc
     Scenario: Pausing a task stops its runs and resuming schedules it again

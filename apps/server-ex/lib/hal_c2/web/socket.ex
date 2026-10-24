@@ -59,6 +59,16 @@ defmodule HalC2.Web.Socket do
   @doc "How long a client RPC may run before it fails as timed out (`:rpc_timeout`)."
   def rpc_timeout, do: Application.get_env(:hal_c2, :rpc_timeout, :timer.minutes(10))
 
+  # A manual scheduled run answers only when its run does — a wedged one at
+  # its hour cap, with the timed-out task. That method gets the run cap plus
+  # slack for the scheduler's own answer (its `run_now/1` call waits the cap
+  # plus five seconds), so the client is told the outcome instead of a
+  # generic RPC timeout ten minutes in.
+  def rpc_timeout("scheduledTasks.runNow"),
+    do: max(rpc_timeout(), HalC2.ScheduledTasks.run_timeout_ms() + 10_000)
+
+  def rpc_timeout(_method), do: rpc_timeout()
+
   @impl true
   def init(opts) do
     # A socket opened with a ticket belongs to that client's session.
@@ -376,7 +386,7 @@ defmodule HalC2.Web.Socket do
 
   defp run_rpc(state, id, environment, method, payload) do
     socket = self()
-    timeout = rpc_timeout()
+    timeout = rpc_timeout(method)
 
     Task.start(fn ->
       reply =

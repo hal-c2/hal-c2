@@ -775,6 +775,61 @@ defmodule HalC2.Web.SocketTest do
     end
   end
 
+  # A wedged manual run answers at its run cap with the timed-out task, so
+  # its RPC gets that budget: even with a tiny general RPC timeout, the
+  # client sees the failed task, not "scheduledTasks.runNow timed out".
+  test "a wedged scheduledTasks.runNow answers its client with the timed-out task",
+       %{port: port} do
+    start_supervised!(HalC2.ScheduledTasks)
+    Application.put_env(:hal_c2, :rpc_timeout, 10)
+    Application.put_env(:hal_c2, :scheduled_tasks_run_timeout_ms, 200)
+
+    Application.put_env(:hal_c2, :scheduled_tasks_fire, fn _, _ ->
+      receive do
+        :never -> {:ok, %{}}
+      end
+    end)
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :rpc_timeout)
+      Application.delete_env(:hal_c2, :scheduled_tasks_run_timeout_ms)
+      Application.delete_env(:hal_c2, :scheduled_tasks_fire)
+    end)
+
+    {:ok, %{"task" => %{"id" => id}}} =
+      HalC2.ScheduledTasks.upsert(%{
+        "title" => "Wedged",
+        "prompt" => "go",
+        "enabled" => false,
+        "schedule" => %{"type" => "interval", "everyMs" => 60_000},
+        "projectId" => "p1"
+      })
+
+    [{_mc, %{"environmentId" => environment}}] = HalC2.Shell.environments()
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{
+        "t" => "rpc",
+        "id" => 9,
+        "environment" => environment,
+        "method" => "scheduledTasks.runNow",
+        "payload" => %{"id" => id}
+      })
+
+    {reply, _, _client} = WsClient.recv_until(client, &(&1["t"] == "rpc.result"))
+
+    assert %{
+             "id" => 9,
+             "result" => %{
+               "task" => %{
+                 "lastRunStatus" => "failed",
+                 "lastRunError" => "The run timed out."
+               }
+             }
+           } = reply
+  end
+
   test "a request that raises is logged and still answered", %{port: port} do
     [{_mc, %{"environmentId" => environment}}] = HalC2.Shell.environments()
     client = connect(port)
