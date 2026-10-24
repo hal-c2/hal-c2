@@ -838,6 +838,11 @@ export const OrchestrationV2Notification = Schema.Struct({
       kind: Schema.Literals(["background_task", "background_command", "monitor"]),
       nativeRef: Schema.optional(OrchestrationV2ProviderRef),
     }),
+    Schema.Struct({
+      kind: Schema.Literal("pull_request"),
+      // Link keys (`host/repository#number`) of the pull requests that changed.
+      pullRequests: Schema.Array(TrimmedNonEmptyString),
+    }),
   ]),
   // Item status describes this timeline record; outcome describes the reported work.
   outcome: Schema.Literals(["completed", "failed", "cancelled", "updated", "unknown"]),
