@@ -170,8 +170,21 @@ fn scan(world: &mut World) -> Outcome {
 }
 
 fn open(world: &mut World) -> Outcome {
-    // TODO(port): desktop-qt gives the MC's config two providers (FakeConfig)
-    // and waits for the settings scope to be editable.
+    let provider = |id: &str, name: &str, model: &str| {
+        json!({"instanceId": id, "driver": id, "displayName": name, "enabled": true,
+               "installed": true, "status": "ready",
+               "auth": {"status": "authenticated"},
+               "models": [{"slug": model, "name": model}]})
+    };
+    crate::steps::settings::fake_config(&mut world.mc)
+        .config
+        .insert(
+            "providers".into(),
+            json!([
+                provider("codex", "Codex", "codex-model"),
+                provider("claude", "Claude", "claude-model")
+            ]),
+        );
     world.connect()?;
     world.sync()?;
     world.with::<Navigation, _>(|n, engine| {
@@ -180,7 +193,9 @@ fn open(world: &mut World) -> Outcome {
     world.wait_for_with(
         |w| {
             let section = section(w);
-            section["open"].as_bool() == Some(true) && at(&section, "discovery.status") == "ready"
+            section["open"].as_bool() == Some(true)
+                && at(&section, "discovery.status") == "ready"
+                && w.state("settingsScope")["editable"].as_bool() == Some(true)
         },
         |w| {
             format!(
