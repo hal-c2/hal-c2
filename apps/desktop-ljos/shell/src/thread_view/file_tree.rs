@@ -253,7 +253,14 @@ impl FileTree {
         let entry = self.folders.entry(folder.to_owned()).or_default();
         entry.state = State::Loaded;
         entry.problem.clear();
-        entry.children = entries;
+        // A listing that names a path twice shows it once, as a search does; if
+        // the two disagree (a file and a directory, say) the first one listed
+        // is kept.
+        let mut listed = HashSet::new();
+        entry.children = entries
+            .into_iter()
+            .filter(|child| listed.insert(child.path.clone()))
+            .collect();
         sort_entries(&mut entry.children);
         self.settle(folder);
         if self.expand_all {

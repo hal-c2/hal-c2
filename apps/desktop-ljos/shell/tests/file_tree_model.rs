@@ -192,6 +192,25 @@ fn a_failed_folder_is_retried_and_expand_all_follows_listings() {
 }
 
 #[test]
+fn a_listing_that_names_a_path_twice_shows_it_once_the_first_kept() {
+    let f = fixture();
+    FileTreeModel::update(&f.engine, f.tree, |t| t.reload());
+    f.list("", &[("a", true), ("b", false), ("a", true)]);
+    assert_eq!(f.labels(), "directory:a|file:b");
+    // Two entries for one path that disagree keep the first one listed.
+    f.list("", &[("a", true), ("a", false)]);
+    assert_eq!(f.labels(), "directory:a");
+    // The mirror order: a file listed first stays a file.
+    FileTreeModel::update(&f.engine, f.tree, |t| {
+        t.set_listing(
+            "",
+            vec![Entry::new("a", false, true), Entry::new("a", true, false)],
+        );
+    });
+    assert_eq!(f.labels(), "file:a");
+}
+
+#[test]
 fn a_search_swaps_its_tree_in_and_out() {
     let f = fixture();
     FileTreeModel::update(&f.engine, f.tree, |t| t.reload());

@@ -548,7 +548,7 @@ impl Sut {
         self.seen = calls.len();
     }
 
-    fn answer(&mut self, like: &Request, rank: usize, ok: bool) {
+    fn answer(&mut self, like: &Request, rank: usize, ok: bool, twice: bool) {
         let at = self
             .held
             .iter()
@@ -563,7 +563,15 @@ impl Sut {
         } else if request.kind == Kind::Read {
             Ok(json!({"contents": request.contents}))
         } else {
-            Ok(json!({"entries": entries_json(&request.entries), "truncated": false}))
+            let mut entries = request.entries.clone();
+            // A listing that names an entry twice shows it once, the first kept.
+            if twice
+                && request.kind == Kind::List
+                && let Some((path, folder)) = entries.first().cloned()
+            {
+                entries.push((path, !folder));
+            }
+            Ok(json!({"entries": entries_json(&entries), "truncated": false}))
         };
         assert!(self.mc.reply(&self.engine, index, result));
     }
@@ -596,7 +604,8 @@ enum Op {
     /// Index into the folders; skipped unless the tree shows it.
     Toggle(usize),
     /// Index into the pending requests, ok or refused.
-    Answer(usize, bool),
+    /// The last is whether a folder's listing names an entry twice.
+    Answer(usize, bool, bool),
     Change,
     /// Index into the failed folders.
     Retry(usize),
@@ -606,20 +615,25 @@ enum Op {
     Close,
 }
 
+fn answer() -> impl Strategy<Value = Op> {
+    (
+        0..16usize,
+        prop_oneof![4 => Just(true), 1 => Just(false)],
+        prop_oneof![1 => Just(true), 4 => Just(false)],
+    )
+        .prop_map(|(i, ok, twice)| Op::Answer(i, ok, twice))
+}
+
 fn op() -> impl Strategy<Value = Op> {
     prop_oneof![
         (0..ROOTS.len()).prop_map(Op::Target),
         any::<bool>().prop_map(Op::Active),
         (0..FOLDERS.len()).prop_map(Op::Toggle),
         (0..FOLDERS.len()).prop_map(Op::Toggle),
-        (0..16usize, prop_oneof![4 => Just(true), 1 => Just(false)])
-            .prop_map(|(i, ok)| Op::Answer(i, ok)),
-        (0..16usize, prop_oneof![4 => Just(true), 1 => Just(false)])
-            .prop_map(|(i, ok)| Op::Answer(i, ok)),
-        (0..16usize, prop_oneof![4 => Just(true), 1 => Just(false)])
-            .prop_map(|(i, ok)| Op::Answer(i, ok)),
-        (0..16usize, prop_oneof![4 => Just(true), 1 => Just(false)])
-            .prop_map(|(i, ok)| Op::Answer(i, ok)),
+        answer(),
+        answer(),
+        answer(),
+        answer(),
         Just(Op::Change),
         (0..4usize).prop_map(Op::Retry),
         (0..QUERIES.len()).prop_map(Op::Query),
@@ -719,7 +733,7 @@ fn run(ops: Vec<Op>) -> Result<(), TestCaseError> {
                 }
                 shown
             }
-            Op::Answer(i, ok) => {
+            Op::Answer(i, ok, twice) => {
                 if model.pending.is_empty() {
                     false
                 } else {
@@ -730,7 +744,7 @@ fn run(ops: Vec<Op>) -> Result<(), TestCaseError> {
                         .filter(|r| r.same(&request))
                         .count();
                     model.answer(&request, rank, ok);
-                    sut.answer(&request, rank, ok);
+                    sut.answer(&request, rank, ok, twice);
                     true
                 }
             }
