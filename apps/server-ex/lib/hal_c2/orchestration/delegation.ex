@@ -419,6 +419,7 @@ defmodule HalC2.Orchestration.Delegation do
         },
         "initialMessage" => %{
           "messageId" => "message:delegate:" <> HalC2.Environment.uuid4(),
+          "senderThreadId" => thread["id"],
           "text" => spec["task"],
           "attachments" => []
         }
@@ -646,9 +647,12 @@ defmodule HalC2.Orchestration.Delegation do
     label = String.trim(task["title"] || "")
     label = if label == "", do: "Delegated task", else: label
 
+    answer = result || "(no answer)"
+    child = task["childThreadId"]
+
     text = """
-    <delegated_task_result taskId="#{task["id"]}" title="#{task["title"]}" status="#{status}" childThreadId="#{task["childThreadId"]}">
-    #{result || "(no answer)"}
+    <delegated_task_result taskId="#{attr(task["id"])}" title="#{attr(task["title"])}" status="#{attr(status)}" childThreadId="#{attr(child)}">
+    #{close_tag_safe(answer)}
     </delegated_task_result>
     """
 
@@ -665,7 +669,10 @@ defmodule HalC2.Orchestration.Delegation do
       "notification" => %{
         "source" => %{"kind" => "delegated_task", "taskIds" => [task["id"]]},
         "outcome" => outcome,
-        "summary" => "#{label} #{ended}"
+        "summary" => "#{label} #{ended}",
+        "workerThreadId" => child,
+        "workerTitle" => label,
+        "detail" => cap_result(answer)
       },
       "delegatedCompletion" => %{
         "parentRunId" => task["runId"],
@@ -673,6 +680,40 @@ defmodule HalC2.Orchestration.Delegation do
         "acceptedAt" => nil
       }
     }
+  end
+
+  # The agent reads the whole answer; a closing tag quoted inside it (a previous result,
+  # say) must not end the envelope early.
+  defp close_tag_safe(text),
+    do: Regex.replace(~r{</(?=delegated_task_result)}i, text, "&lt;/")
+
+  # How much of a worker's answer the timeline notification carries, so clients don't
+  # render megabytes; the rest stays readable in the worker's own thread.
+  @result_cap 8_192
+
+  defp cap_result(text) when byte_size(text) > @result_cap do
+    kept = text |> binary_part(0, @result_cap) |> trim_invalid()
+    kept <> "\n\n[result truncated at #{@result_cap} bytes; the rest is in the worker's thread]"
+  end
+
+  defp cap_result(text), do: text
+
+  # A byte cut can split a UTF-8 character; drop the broken tail.
+  defp trim_invalid(text) do
+    if String.valid?(text),
+      do: text,
+      else: trim_invalid(binary_part(text, 0, byte_size(text) - 1))
+  end
+
+  defp attr(value) do
+    value
+    |> to_string()
+    |> String.replace("&", "&amp;")
+    |> String.replace("\"", "&quot;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+    |> String.replace("\n", "&#10;")
+    |> String.replace("\r", "&#13;")
   end
 
   defp status(thread_id, task_id) do

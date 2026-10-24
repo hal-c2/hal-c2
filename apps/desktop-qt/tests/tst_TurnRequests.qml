@@ -274,6 +274,25 @@ Item {
             verify(requests.pending);
         }
 
+        // A result that names its worker opens the worker's thread; one that does not
+        // is not a link.
+        function test_waitingResultOpensItsWorkersThread() {
+            const requests = createTemporaryObject(requestsComponent, root);
+            Shell.publishTurn({
+                waiting: [
+                    { runId: "run-3", summary: "Tax tests finished", outcome: "completed", workerThreadId: "worker" },
+                    { runId: "run-4", summary: "Old task finished", outcome: "completed", workerThreadId: "" }
+                ]
+            });
+            waitForRendering(root);
+            const linked = findChild(requests, "queueWaiting-run-3");
+            compare(linked.Accessible.role, Accessible.Link);
+            mouseClick(linked);
+            compare(lastAction().action, "rightPanel.openThread");
+            compare(lastAction().payload.threadKey.slice(-6), "worker");
+            verify(findChild(requests, "queueWaiting-run-4").Accessible.role !== Accessible.Link);
+        }
+
         function test_tabbingToAQueuedRowOutOfViewScrollsItIn() {
             const requests = createTemporaryObject(requestsComponent, root);
             const queue = [];

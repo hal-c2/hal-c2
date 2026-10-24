@@ -203,6 +203,50 @@ describe("orchestration V2 TUI presentation", () => {
     expect(result.threads[1]?.archivedAt).toBe("2026-08-11T10:00:00.000Z");
   });
 
+  it("links a delegated result's notification to its worker and previews the result", () => {
+    const base = projection();
+    const notice = (fields: Record<string, unknown>) => {
+      const item = {
+        ...base.turnItems[0],
+        id: TurnItemId.make("turn-item:user:message:result"),
+        type: "notification",
+        source: { kind: "delegated_task", taskIds: ["task:1"] },
+        outcome: "completed",
+        summary: "Tax tests finished",
+        ...fields,
+      };
+      return presentTuiThread({
+        ...base,
+        turnItems: [item],
+        visibleTurnItems: [{ ...base.visibleTurnItems[0]!, item, sourceItemId: item.id }],
+      } as never).activities[0];
+    };
+
+    expect(
+      notice({
+        workerThreadId: "thread:child",
+        workerTitle: "Tax tests",
+        detail: "12 tests added",
+      }),
+    ).toMatchObject({
+      summary: "Tax tests finished",
+      payload: {
+        title: "Tax tests finished",
+        detail: "12 tests added",
+        childThreadId: "thread:child",
+        status: "completed",
+      },
+    });
+    expect(notice({ workerThreadId: "thread:child", outcome: "failed" })).toMatchObject({
+      payload: { status: "failed", childThreadId: "thread:child" },
+    });
+    expect(notice({ workerThreadId: "thread:child", outcome: "cancelled" })).toMatchObject({
+      payload: { status: "stopped", childThreadId: "thread:child" },
+    });
+    // One recorded before the MC named the worker has no link.
+    expect(notice({})?.payload).not.toHaveProperty("childThreadId");
+  });
+
   it("maps visible V2 turn items into timeline activities", () => {
     const result = presentTuiThread(projection());
 

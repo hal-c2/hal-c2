@@ -853,7 +853,8 @@ Queued queued(const QList<QJsonObject>& runs, const QHash<QString, QJsonObject>&
       const std::optional<timeline::Notice> notice = timeline::noticeOf(message);
       queued.waiting.append(QVariantMap{{QStringLiteral("runId"), runId},
                                         {QStringLiteral("summary"), notice && !notice->summary.isEmpty() ? notice->summary : QStringLiteral("Notification")},
-                                        {QStringLiteral("outcome"), notice ? notice->outcome : QString()}});
+                                        {QStringLiteral("outcome"), notice ? notice->outcome : QString()},
+                                        {QStringLiteral("workerThreadId"), notice ? notice->workerThreadId : QString()}});
       continue;
     }
     queued.queue.append(QVariantMap{{QStringLiteral("runId"), runId}, {QStringLiteral("text"), message.value(QLatin1String("text")).toString()}});

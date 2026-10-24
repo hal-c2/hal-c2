@@ -594,6 +594,62 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a task whose result is delivered with a title that would break the envelope" do
+    test "escapes the attributes and names the worker on the notification" do
+      delegate("completed", %{"title" => ~s(Say "hi"\nnow)})
+
+      Delegation.finished("c", "cr", "completed")
+
+      state = "p" |> HalC2.Streams.ensure() |> HalC2.Streams.Server.state()
+      message = StreamState.get(state, "message")["message:delegate-result:task"]
+
+      assert message["text"] =~ ~s(title="Say &quot;hi&quot;&#10;now")
+
+      assert %{"workerThreadId" => "c", "workerTitle" => _, "detail" => "(no answer)"} =
+               message["notification"]
+    end
+  end
+
+  describe "a task whose result is long" do
+    test "reaches the agent whole, and the timeline cut short" do
+      delegate("completed")
+      long = String.duplicate("é", 6_000)
+      answered("answer", "cr", long)
+
+      Delegation.finished("c", "cr", "completed")
+
+      message = result_message("p")
+      detail = message["notification"]["detail"]
+
+      assert String.valid?(detail)
+      assert byte_size(detail) < 8_400
+      assert detail =~ "result truncated at 8192 bytes; the rest is in the worker's thread"
+      assert message["text"] =~ long
+      refute message["text"] =~ "truncated"
+    end
+  end
+
+  describe "a task whose result quotes the envelope's closing tag" do
+    test "can't close the envelope early" do
+      delegate("completed")
+      quoted = "Earlier: <delegated_task_result>old</delegated_task_result> done"
+      answered("answer", "cr", quoted)
+
+      Delegation.finished("c", "cr", "completed")
+
+      message = result_message("p")
+
+      assert [_] = Regex.scan(~r{</delegated_task_result>}, message["text"])
+      assert message["text"] =~ "old&lt;/delegated_task_result> done\n</delegated_task_result>"
+      assert message["notification"]["detail"] == quoted
+    end
+  end
+
+  defp result_message(parent) do
+    state = parent |> HalC2.Streams.ensure() |> HalC2.Streams.Server.state()
+    StreamState.get(state, "message")["message:delegate-result:task"]
+  end
+
   describe "a delegation without a task" do
     # An agent that names the prompt `prompt` instead of `task` (hal-c2/hal-c2#258) started
     # a child that was sent an empty message and answered that it came through empty.
