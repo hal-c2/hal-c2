@@ -311,16 +311,21 @@ fn drag(world: &mut World, files: Vec<PathBuf>) -> Outcome {
         900.0,
         700.0,
     )?;
-    let taken = external_drag(
+    // Ljós answers an Entered drag with false whichever way the area votes;
+    // the area holding the drag (`containsDrag`) is what says it was taken.
+    external_drag(
         world.engine(),
         &ExternalDrag::Entered {
             files,
             at: Some((450.0, 350.0)),
         },
     );
+    world.pump()?;
+    let shown = brick::shown(world)?;
+    let area = shown.item(world, "folderDrop")?;
+    let taken = shown.flag(world, area, "containsDrag");
     folders(world).drag_accepted = taken;
-    // The overlay is read while the drag is over the window.
-    world.pump()
+    Ok(())
 }
 
 fn try_operation(world: &mut World, operation: &str, folder: &str) -> Outcome {
@@ -885,8 +890,9 @@ pub fn register(steps: &mut Steps) {
             )?;
             expect!(
                 accepted && !folder.is_empty() && told,
-                "the drag was {} for \"{folder}\"",
-                if accepted { "taken" } else { "refused" }
+                "the drag was {} for \"{folder}\" and the window {} the notice",
+                if accepted { "taken" } else { "refused" },
+                if told { "shows" } else { "lacks" }
             );
             Ok(())
         },

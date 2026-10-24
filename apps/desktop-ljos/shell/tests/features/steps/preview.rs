@@ -299,7 +299,13 @@ fn wait_for_urls(world: &mut World, wanted: &[&str]) -> Outcome {
     world.wait_for_with(
         {
             let wanted = wanted.clone();
-            move |w| read(w, |p| p.status()).is_ok_and(|s| s == "ready") && urls(w) == wanted
+            // An address the shell normalises gains the root's slash.
+            let bare = |u: &String| u.strip_suffix('/').unwrap_or(u).to_owned();
+            move |w| {
+                read(w, |p| p.status()).is_ok_and(|s| s == "ready")
+                    && urls(w).iter().map(bare).collect::<Vec<_>>()
+                        == wanted.iter().map(bare).collect::<Vec<_>>()
+            }
         },
         describe,
     )
@@ -394,13 +400,22 @@ fn opened_through_forward(world: &mut World, url: &str) -> Outcome {
         }
     };
     expect!(
-        world.opened_urls().iter().map(|u| rooted(u)).collect::<Vec<_>>() == [rooted(url)],
+        world
+            .opened_urls()
+            .iter()
+            .map(|u| rooted(u))
+            .collect::<Vec<_>>()
+            == [rooted(url)],
         "the browser opened {:?}",
         world.opened_urls()
     );
     let environment = world.mc.environment_id.clone();
     let forwards = fake(&mut world.mc).forwards.clone();
-    expect!(forwards.len() == 1, "{} forwards were asked for", forwards.len());
+    expect!(
+        forwards.len() == 1,
+        "{} forwards were asked for",
+        forwards.len()
+    );
     let forward = &forwards[0];
     expect!(
         forward.environment == environment
@@ -454,9 +469,10 @@ pub fn register(steps: &mut Steps) {
     steps.step("the user shows the thread's previews", |world, _, _| {
         show_previews(world)
     });
-    steps.step("the user is showing the thread's previews", |world, _, _| {
-        show_previews(world)
-    });
+    steps.step(
+        "the user is showing the thread's previews",
+        |world, _, _| show_previews(world),
+    );
     steps.step(&format!("{Q} and {Q} are listed"), |world, c, _| {
         wait_for_urls(world, &[&c[0], &c[1]])
     });
@@ -500,26 +516,23 @@ pub fn register(steps: &mut Steps) {
             world.sync()
         },
     );
-    steps.step(
-        &format!("the page at {Q} fails to load"),
-        |world, c, _| {
-            let id = tab_id_of(world, &c[0])?;
-            let tab = fake(&mut world.mc)
-                .tabs
-                .iter()
-                .find(|t| t["tabId"] == id)
-                .cloned()
-                .unwrap_or(Json::Null);
-            emit_event(
-                &mut world.mc,
-                &tab,
-                "failed",
-                json!({"url": c[0], "title": "", "code": "ERR_CONNECTION_REFUSED",
+    steps.step(&format!("the page at {Q} fails to load"), |world, c, _| {
+        let id = tab_id_of(world, &c[0])?;
+        let tab = fake(&mut world.mc)
+            .tabs
+            .iter()
+            .find(|t| t["tabId"] == id)
+            .cloned()
+            .unwrap_or(Json::Null);
+        emit_event(
+            &mut world.mc,
+            &tab,
+            "failed",
+            json!({"url": c[0], "title": "", "code": "ERR_CONNECTION_REFUSED",
                        "description": "Connection refused"}),
-            );
-            world.sync()
-        },
-    );
+        );
+        world.sync()
+    });
     steps.step(
         &format!("the previews say {Q} failed to load"),
         |world, c, _| {
@@ -669,14 +682,25 @@ pub fn register(steps: &mut Steps) {
             // Choosing it opens an empty tab on the MC, shown with the
             // thread's others.
             let item = shown.item(world, "panelAddBrowser")?;
-            expect!(shown.flag(world, item, "enabled"), "the browser tab entry is off");
-            shown.click(world, "panelAddBrowser")?;
+            expect!(
+                shown.flag(world, item, "enabled"),
+                "the browser tab entry is off"
+            );
+            // The entry is triggered directly, as the other menus' are.
+            if let Err(error) = world.engine().emit_by_name(item, "triggered", &[]) {
+                fail!("triggered: {error}");
+            }
+            world.pump()?;
             world.wait_for_with(
                 |w| {
-                    w.mc.peek::<FakePreviews>().is_some_and(|f| f.opens.len() == 1)
+                    w.mc.peek::<FakePreviews>()
+                        .is_some_and(|f| f.opens.len() == 1)
                         && read(w, |p| p.count()).is_ok_and(|n| n == 1)
                 },
-                describe,
+                |w| {
+                    let opens = w.mc.peek::<FakePreviews>().map_or(0, |f| f.opens.len());
+                    format!("{opens} opens reached the MC; {}", describe(w))
+                },
             )?;
             let first = fake(&mut world.mc).opens[0].clone();
             let panel = world.state("panel");
@@ -728,9 +752,7 @@ pub fn register(steps: &mut Steps) {
         show_previews(world)?;
         world.dispatch("rightPanel.add", json!({"kind": "browser"}))?;
         world.wait_for_with(
-            |w| {
-                read(w, |p| p.count() == 1 && role(p, 0, "status") == "idle").unwrap_or(false)
-            },
+            |w| read(w, |p| p.count() == 1 && role(p, 0, "status") == "idle").unwrap_or(false),
             describe,
         )?;
         world.sync()
@@ -783,12 +805,16 @@ pub fn register(steps: &mut Steps) {
             world.wait_for_with(
                 |w| {
                     w.mc.peek::<FakePreviews>().is_some_and(|f| f.navigations.len() == 1)
-                        && w.opened_urls() == ["http://localhost:5173"]
+                        && w.opened_urls().iter().map(|u| u.trim_end_matches('/')).eq(["http://localhost:5173"])
                 },
                 describe,
             )?;
             let navigated = fake(&mut world.mc).navigations[0]["url"].clone();
-            expect!(navigated == "http://localhost:5173", "{}", describe(world));
+            expect!(
+                navigated.as_str().is_some_and(|u| u.trim_end_matches('/') == "http://localhost:5173"),
+                "{}",
+                describe(world)
+            );
             wait_for_urls(world, &["http://localhost:5173"])?;
             // And it is the newest recent page from now on.
             world.wait_for("the page to be remembered", |w| {
@@ -796,7 +822,9 @@ pub fn register(steps: &mut Steps) {
                     && Settings::of(w.engine())
                         .device_value("previewRecentPages")
                         .and_then(|pages| pages.get(0).cloned())
-                        .is_some_and(|first| first == "http://localhost:5173")
+                        .is_some_and(|first| {
+                            first.as_str().is_some_and(|u| u.trim_end_matches('/') == "http://localhost:5173")
+                        })
             })
         },
     );
@@ -824,13 +852,15 @@ pub fn register(steps: &mut Steps) {
             expect!(count == 2, "{}", suggestions(world));
             // Asked of the MC that serves the thread, by name.
             let watchers = world.mc.subscribers("localServers");
-            let named = watchers.len() == 1
-                && world.mc.shape_of(watchers[0])["mc"] == json!(world.mc.name);
+            let named =
+                watchers.len() == 1 && world.mc.shape_of(watchers[0])["mc"] == json!(world.mc.name);
             expect!(named, "{} watch the MC's servers", watchers.len());
             // And the MC's list is followed as it changes.
             fake(&mut world.mc).servers.pop();
             let servers = fake(&mut world.mc).servers.clone();
-            world.mc.send(&json!({"t": "localServers", "id": watchers[0],
+            world
+                .mc
+                .send(&json!({"t": "localServers", "id": watchers[0],
                 "list": {"servers": servers, "scannedAt": "2026-09-23T10:00:05Z"}}));
             world.wait_for_with(
                 |w| suggested(w, "server") == ["http://localhost:4321"],
@@ -873,18 +903,15 @@ pub fn register(steps: &mut Steps) {
             world.sync()
         },
     );
-    steps.step(
-        &format!("the system browser opens {Q}"),
-        |world, c, _| {
-            world.wait_for("the browser to open", |w| !w.opened_urls().is_empty())?;
-            expect!(
-                world.opened_urls() == [c[0].clone()],
-                "the browser opened {:?}",
-                world.opened_urls()
-            );
-            Ok(())
-        },
-    );
+    steps.step(&format!("the system browser opens {Q}"), |world, c, _| {
+        world.wait_for("the browser to open", |w| !w.opened_urls().is_empty())?;
+        expect!(
+            world.opened_urls() == [c[0].clone()],
+            "the browser opened {:?}",
+            world.opened_urls()
+        );
+        Ok(())
+    });
     steps.step("nothing is forwarded", |world, _, _| {
         let forwards = fake(&mut world.mc).forwards.len();
         expect!(forwards == 0, "{forwards} forwards were asked for");
@@ -928,9 +955,10 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         &format!("another client closes the thread's tab at {Q}"),
         |world, c, _| {
-            let at = fake(&mut world.mc).tabs.iter().position(|tab| {
-                tab["threadId"] == PEER_THREAD && tab["navStatus"]["url"] == c[0]
-            });
+            let at = fake(&mut world.mc)
+                .tabs
+                .iter()
+                .position(|tab| tab["threadId"] == PEER_THREAD && tab["navStatus"]["url"] == c[0]);
             let Some(at) = at else {
                 fail!("no tab at {}", c[0]);
             };
@@ -986,7 +1014,8 @@ pub fn register(steps: &mut Steps) {
         &format!("the thread gets a browser tab at {Q}"),
         |world, c, _| {
             world.wait_for("a browser tab to open", |w| {
-                w.mc.peek::<FakePreviews>().is_some_and(|f| !f.opens.is_empty())
+                w.mc.peek::<FakePreviews>()
+                    .is_some_and(|f| !f.opens.is_empty())
             })?;
             let opens = fake(&mut world.mc).opens.clone();
             expect!(
@@ -1041,7 +1070,8 @@ pub fn register(steps: &mut Steps) {
             expect!(urls(world).is_empty(), "{}", describe(world));
             // The page finished loading before the close reached the MC.
             let mut tab = fake(&mut world.mc).tabs[0].clone();
-            tab["navStatus"] = json!({"_tag": "Success", "url": "http://localhost:5173", "title": "Vite"});
+            tab["navStatus"] =
+                json!({"_tag": "Success", "url": "http://localhost:5173", "title": "Vite"});
             emit_event(&mut world.mc, &tab, "navigated", json!({"snapshot": tab}));
             world.sync()?;
             expect!(urls(world).is_empty(), "{}", describe(world));

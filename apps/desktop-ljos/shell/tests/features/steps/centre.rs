@@ -53,7 +53,7 @@ fn row_reading(world: &World, wanted: &str) -> Outcome<String> {
     let rows = read(world, Timeline::row_count)?;
     for row in 0..rows {
         if text(&role(world, row, "text")) == wanted {
-            return Ok(text(&role(world, row, "id")));
+            return Ok(text(&role(world, row, "rowId")));
         }
     }
     Ok(String::new())

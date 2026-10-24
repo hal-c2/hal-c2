@@ -806,6 +806,8 @@ pub fn register(steps: &mut Steps) {
         &format!("the user opens {Q} from the list of changed files"),
         |world, c, _| {
             // Its folder is closed until opened; the file is there once placed under it.
+            // The toggle is an IconButton, whose click does not reach its
+            // handler until Ljós resolves the `button` id (ljos#104).
             click_in_thread(world, "changedFoldersToggle", |_, _| true)?;
             let path = c[0].clone();
             click_in_thread(world, "changedFile", move |w, item| {
@@ -819,6 +821,8 @@ pub fn register(steps: &mut Steps) {
         &format!("the reply lists the folder {Q} with its files hidden"),
         |world, c, _| {
             let wanted = vec![c[0].clone()];
+            // The conditions below only read the thread the window draws.
+            thread_brick(world)?;
             world.wait_for_with(
                 |w| changed_rows_in(w, "changedFolder") == wanted,
                 |w| {
@@ -842,6 +846,7 @@ pub fn register(steps: &mut Steps) {
         &format!("{Q} and {Q} are listed under their folder"),
         |world, c, _| {
             let wanted = vec![c[0].clone(), c[1].clone()];
+            thread_brick(world)?;
             world.wait_for_with(
                 |w| changed_rows_in(w, "changedFile") == wanted,
                 |w| {

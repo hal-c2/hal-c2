@@ -655,7 +655,7 @@ pub fn register(steps: &mut Steps) {
     );
     steps.step(
         &format!("the user sets the monogram {Q} on {Q}"),
-        |world, c, _| pick(world, &c[1], &format!("the monogram \"{}\" in rose", &c[0])),
+        |world, c, _| pick(world, &c[1], &format!("the monogram \"{}\" in rose", c[0])),
     );
     steps.step(
         &format!("{Q} keeps a folder symbol with the letters {Q}"),
@@ -680,8 +680,8 @@ pub fn register(steps: &mut Steps) {
         &format!("the user searches the project for an icon image named {Q}"),
         |world, c, _| {
             let files = &mut fake_files(&mut world.mc).files;
-            files.insert(format!("assets/{}.png", &c[0]), "PNG".into());
-            files.insert(format!("src/{}.ts", &c[0]), "export {};\n".into());
+            files.insert(format!("assets/{}.png", c[0]), "PNG".into());
+            files.insert(format!("src/{}.ts", c[0]), "export {};\n".into());
             open_picker(world, "shop")?;
             brick::shown(world)?.click(world, "projectIconMode-image")?;
             type_into(world, "projectIconSearch", &c[0])?;
