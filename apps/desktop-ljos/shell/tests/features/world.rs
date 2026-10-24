@@ -45,6 +45,9 @@ pub const OTHER_MACHINE: &str = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a
 /// The longest a step waits for anything, as desktop-qt's qWaitFor.
 const WAIT: Duration = Duration::from_secs(5);
 
+/// The longest a wait sleeps before it lets the shell's clock catch up.
+const FRAME: Duration = Duration::from_millis(16);
+
 /// Raised by whatever has something for the scenario's thread: the fake
 /// MC's socket, the shell's connection, its cache and its other threads.
 #[derive(Default)]
@@ -571,7 +574,9 @@ impl World {
                 continue;
             }
             // Until something arrives, or the shell's next timer is due.
-            let mut timeout = WAIT - waited;
+            // An animation is no timer, so a frame at a time: the shell's
+            // clock moves only when this loop moves it.
+            let mut timeout = (WAIT - waited).min(FRAME);
             if let Some(shell) = &self.shell
                 && let Some(due) = shell.engine.next_timer_deadline()
             {
