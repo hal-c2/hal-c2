@@ -1,0 +1,330 @@
+sload model-checker
+
+--- Shared settings (HalC2.Settings.Shared, carried by HalC2.Cluster) between two or
+--- three MCs: one shared key, its record saved beside the document, one FIFO channel
+--- per ordered pair that loses what reaches a process that is down, connections that
+--- drop and come back, crashes, documents edited or broken while their MC is down, and
+--- clocks that disagree. Keys merge one by one, so one key stands for them all.
+--- proof/hal_c2/settings_shared_proof_test.exs maps it to the code and checks it.
+
+mod SETTINGS-SHARED is
+  protecting NAT .
+
+  sorts Id Rec Queue Doc Pool Item Conf Sys .
+  subsort Rec < Queue .
+  subsort Rec < Pool .
+  subsort Item < Conf .
+
+  ops a b c : -> Id [ctor] .
+
+  --- A record: at, by and the value, 0 for an unset (no "value"). Erlang sorts a map
+  --- with fewer keys first, so an unset sorts below a value at the same time and by
+  --- the same writer; the values 1 and 2 sort as the strings "x" and "y" do. `none` is
+  --- no record.
+  op none : -> Rec [ctor] .
+  op r : Nat Id Nat -> Rec [ctor] .
+
+  --- settings.json: the value it holds, as the MC last wrote or read it; one edited
+  --- while the MC was down, at a time on that machine's clock (its mtime); or one that
+  --- cannot be read.
+  op d : Nat -> Doc [ctor] .
+  op edited : Nat Nat -> Doc [ctor] .
+  op garbled : -> Doc [ctor] .
+
+  --- An MC: whether it runs, whether it holds (`held`), its document and its record.
+  op mc : Id Bool Bool Doc Rec -> Item [ctor] .
+  --- A distribution connection, the lower id first. It outlives the processes.
+  op link : Id Id -> Item [ctor] .
+  --- The `{:settings, from, records}` casts from one MC to another, oldest first.
+  op ch : Id Id Queue -> Item [ctor] .
+  op nothing : -> Queue [ctor] .
+  op _;_ : Queue Queue -> Queue [ctor assoc id: nothing] .
+  --- A `{:nodeup, mc}` waiting in an MC's mailbox.
+  op up : Id Id -> Item [ctor] .
+  --- A `:share_settings` waiting in an MC's mailbox.
+  op share : Id -> Item [ctor] .
+  --- Whose `:gossip` timer fires next.
+  op turn : Id -> Item [ctor] .
+  --- The clock, each MC's skew from it, the values a write can set, and what is left
+  --- to happen.
+  op time : Nat -> Item [ctor] .
+  op skew : Id Nat -> Item [ctor] .
+  op value : Nat -> Item [ctor] .
+  ops puts faults edits breaks later : Nat -> Item [ctor] .
+
+  --- Ghosts, which the code has no part of: per MC, the newest record it has held; the
+  --- newest record made anywhere; a write stamped no later than one its MC had held.
+  op heard : Id Rec -> Item [ctor] .
+  op newest : Rec -> Item [ctor] .
+  op late : Id -> Item [ctor] .
+
+  --- Three records drawn for the laws of merge/2, and what they are drawn from.
+  op law : Rec Rec Rec Nat -> Item [ctor] .
+  op pool : Pool -> Item [ctor] .
+  op _&_ : Pool Pool -> Pool [ctor assoc comm] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars N M X Y : Id .
+  vars A A' W W' T K F P E G : Nat .
+  vars R R' R0 R1 R2 R3 Z : Rec .
+  vars Q : Queue .
+  vars B H : Bool .
+  vars D D' : Doc .
+  var C : Conf .
+  var Pl : Pool .
+
+  op _<<_ : Id Id -> Bool .
+  eq a << b = true .
+  eq a << c = true .
+  eq b << c = true .
+  eq X << Y = false [owise] .
+
+  op val : Rec -> Nat .
+  eq val(none) = 0 .
+  eq val(r(A, X, W)) = W .
+  op tm : Rec -> Nat .
+  eq tm(none) = 0 .
+  eq tm(r(A, X, W)) = A .
+
+  --- `{at, by, record}` in Erlang's term order.
+  op _<r_ : Rec Rec -> Bool .
+  eq none <r r(A, X, W) = true .
+  eq r(A, X, W) <r r(A', Y, W') =
+       A < A' or (A == A' and (X << Y or (X == Y and W < W'))) .
+  eq R <r R' = false [owise] .
+
+  --- merge/2, for one key.
+  op merge : Rec Rec -> Rec .
+  eq merge(R, R') = if R <r R' then R' else R fi .
+
+  --- stamp/2, at `now` on the MC's own clock; newest/1 is the record's time.
+  op stamp : Nat Rec -> Nat .
+  eq stamp(T, R) = max(T, tm(R) + 1) .
+
+  --- local/5, for one key: a record of the value written, unless it is the one held.
+  op local : Rec Nat Nat Id -> Rec .
+  eq local(R, W, A, N) = if W == val(R) then R else r(A, N, W) fi .
+
+  op linked : Id Id Conf -> Bool .
+  eq linked(X, Y, link(X, Y) C) = true .
+  eq linked(X, Y, link(Y, X) C) = true .
+  eq linked(X, Y, C) = false [owise] .
+
+  --- A connection drops, and the casts in flight on it are lost.
+  op sever : Id Id Conf -> Conf .
+  eq sever(X, Y, C) = drain(X, Y, drain(Y, X, unlink(X, Y, C))) .
+  op unlink : Id Id Conf -> Conf .
+  eq unlink(X, Y, link(X, Y) C) = C .
+  eq unlink(X, Y, link(Y, X) C) = C .
+  eq unlink(X, Y, C) = C [owise] .
+  op drain : Id Id Conf -> Conf .
+  eq drain(X, Y, ch(X, Y, R ; Q) C) = ch(X, Y, nothing) C .
+  eq drain(X, Y, C) = C [owise] .
+
+  --- tell_settings/2 to every connected member: nothing when there is no record.
+  op tell : Id Rec Conf -> Conf .
+  eq tell(N, R, C) = send(N, a, R, send(N, b, R, send(N, c, R, C))) .
+
+  --- Distribution.send/2 over a connection: a cast, lost if the receiver's process is
+  --- down. Without a connection it is lost too; connect brings the records again.
+  op send : Id Id Rec Conf -> Conf .
+  ceq send(N, M, R, ch(N, M, Q) mc(M, true, H, D, R') C)
+    = ch(N, M, Q ; R) mc(M, true, H, D, R') C
+    if R =/= none /\ linked(N, M, C) .
+  eq send(N, M, R, C) = C [owise] .
+
+  --- An MC loses its mailbox: what was cast to it, its nodeups and its share.
+  op lose : Id Conf -> Conf .
+  eq lose(N, up(N, M) C) = lose(N, C) .
+  eq lose(N, share(N) C) = lose(N, C) .
+  eq lose(N, ch(M, N, R ; Q) C) = lose(N, ch(M, N, nothing) C) .
+  eq lose(N, C) = C [owise] .
+
+  --- Nothing in flight: no cast, nodeup or share waits anywhere.
+  op quiet : Conf -> Bool .
+  eq quiet(ch(X, Y, R ; Q) C) = false .
+  eq quiet(up(X, Y) C) = false .
+  eq quiet(share(X) C) = false .
+  eq quiet(C) = true [owise] .
+
+  --- A record N made, after the newest it had held, or not.
+  op made : Id Rec Rec Conf -> Conf .
+  eq made(N, R, R, C) = C .
+  ceq made(N, R, R', heard(N, R0) newest(Z) C)
+    = heard(N, merge(R0, R')) newest(merge(Z, R')) lateIf(tm(R') <= tm(R0), N) C
+    if R =/= R' .
+  op lateIf : Bool Id -> Conf .
+  eq lateIf(true, N) = late(N) .
+  eq lateIf(false, N) = empty .
+
+  --- code -----------------------------------------------------------------------------
+
+  --- put, update, a keybindings change or the file check adopting an edit: the document
+  --- written first, then its record stamped now, then the members told. Writing what
+  --- the record holds stamps nothing, but a document that could not be read is one
+  --- the MC holds again.
+  crl [put] :
+    { mc(N, true, H, D, R) value(W) time(T) skew(N, K) puts(s P) C }
+    => { made(N, R, R', mc(N, true, false, d(W), R') value(W) time(T) skew(N, K) puts(P)
+           shareIf(R =/= R', N) C) }
+    if W =/= val(R) or H /\ R' := local(R, W, stamp(T + K, R), N) .
+  op shareIf : Bool Id -> Conf .
+  eq shareIf(true, N) = share(N) .
+  eq shareIf(false, N) = empty .
+
+  --- Cluster handle_cast {:settings, from, records}, then Settings handle_cast
+  --- {:merge_shared, records}, oldest first, while the processes run: a newer record
+  --- is saved like a put, document first, and passed on; an MC that holds a document
+  --- it cannot read takes nothing.
+  rl [merge] :
+    { ch(M, N, R' ; Q) mc(N, true, H, D, R) heard(N, R0) C }
+    => { ch(M, N, Q) heard(N, if H then R0 else merge(R0, R') fi)
+         take(H, N, D, R, merge(R, R'), C) } .
+  op take : Bool Id Doc Rec Rec Conf -> Conf .
+  eq take(true, N, D, R, R', C) = mc(N, true, true, D, R) C .
+  eq take(false, N, D, R, R, C) = mc(N, true, false, D, R) C .
+  eq take(false, N, D, R, R', C) = mc(N, true, false, d(val(R')), R') share(N) C [owise] .
+
+  --- Cluster handle_cast :share_settings: the records as they are now, to every
+  --- connected member.
+  rl [share] : { share(N) mc(N, true, H, D, R) C } => { tell(N, R, mc(N, true, H, D, R) C) } .
+
+  --- Cluster handle_info {:nodeup, mc}: the records to the member.
+  rl [nodeup] :
+    { up(N, M) mc(N, true, H, D, R) C } => { send(N, M, R, mc(N, true, H, D, R) C) } .
+
+  --- Cluster handle_info :gossip: the records to every connected member. The timers
+  --- fire in turn, and only with nothing in flight: records cast sooner are ones the
+  --- receiver could merge later, and merge is a join, so earlier or extra copies add
+  --- nothing. A timer of a process that is down does not fire.
+  crl [gossip] :
+    { turn(N) mc(N, true, H, D, R) C } => { turn(next(N)) tell(N, R, mc(N, true, H, D, R) C) }
+    if quiet(C) .
+  crl [gossip] : { turn(N) C } => { turn(next(N)) C } if quiet(C) /\ not running(N, C) .
+  op next : Id -> Id .
+  eq next(a) = b .
+  eq next(b) = c .
+  eq next(c) = a .
+  op running : Id Conf -> Bool .
+  eq running(N, mc(N, true, H, D, R) C) = true .
+  eq running(N, C) = false [owise] .
+
+  --- Members connect whenever both run and are not connected. Both sides get a nodeup.
+  crl [connect] :
+    { mc(N, true, H, D, R) mc(M, true, B, D', R') C }
+    => { link(N, M) up(N, M) up(M, N) mc(N, true, H, D, R) mc(M, true, B, D', R') C }
+    if N << M /\ not linked(N, M, C) .
+
+  --- init/1 and start_shared/1: a document that cannot be read is held, with the
+  --- records as saved; one edited while the MC was down is stamped at its mtime, after
+  --- everything the records hold. Connections outlived the process, so no nodeup comes
+  --- for them, and start_shared tells nobody: the next gossip does.
+  rl [restart] :
+    { mc(N, false, H, garbled, R) C } => { mc(N, true, true, garbled, R) C } .
+  rl [restart] :
+    { mc(N, false, H, d(W), R) C } => { mc(N, true, false, d(W), R) C } .
+  crl [restart] :
+    { mc(N, false, H, edited(W, A), R) C }
+    => { made(N, R, R', mc(N, true, false, d(W), R') C) }
+    if R' := local(R, W, stamp(A, R), N) .
+
+  --- environment ----------------------------------------------------------------------
+
+  rl [crash] :
+    { mc(N, true, H, D, R) faults(s F) C } => { mc(N, false, false, D, R) faults(F) lose(N, C) } .
+
+  rl [disconnect] : { link(N, M) faults(s F) C } => { sever(N, M, C) faults(F) } .
+
+  --- settings.json changes while its MC is down: edited by hand or by an MC from before
+  --- shared settings, a put that crashed between the document and its record, or a
+  --- write cut short.
+  rl [edit] :
+    { mc(N, false, H, D, R) value(W) time(T) skew(N, K) edits(s E) C }
+    => { mc(N, false, H, edited(W, T + K), R) value(W) time(T) skew(N, K) edits(E) C } .
+  rl [edit] :
+    { mc(N, false, H, D, R) breaks(s G) C } => { mc(N, false, H, garbled, R) breaks(G) C } .
+
+  rl [clock] : time(T) later(s F) => time(s T) later(F) .
+
+  rl [pick] : law(R1, R2, R3, s K) pool(R & Pl) => law(R2, R3, R, K) pool(R & Pl) .
+
+  --- states -------------------------------------------------------------------------
+
+  --- a and b running (and c in three), connected, nothing set or recorded yet; b's
+  --- clock (and c's) runs ahead of a's. Then puts, faults, edits, documents broken and
+  --- clock steps to come.
+  ops two three : Nat Nat Nat Nat Nat -> Sys .
+  op values : -> Conf .
+  eq values = value(0) value(1) value(2) .
+  eq two(P, F, E, G, T) =
+       { mc(a, true, false, d(0), none) mc(b, true, false, d(0), none)
+         heard(a, none) heard(b, none) newest(none)
+         link(a, b) ch(a, b, nothing) ch(b, a, nothing) skew(a, 0) skew(b, 1)
+         values turn(a) time(1) puts(P) faults(F) edits(E) breaks(G) later(T) } .
+  eq three(P, F, E, G, T) =
+       { mc(a, true, false, d(0), none) mc(b, true, false, d(0), none)
+         mc(c, true, false, d(0), none)
+         heard(a, none) heard(b, none) heard(c, none) newest(none)
+         link(a, b) link(a, c) link(b, c)
+         ch(a, b, nothing) ch(b, a, nothing) ch(a, c, nothing) ch(c, a, nothing)
+         ch(b, c, nothing) ch(c, b, nothing) skew(a, 0) skew(b, 1) skew(c, 2)
+         values turn(a) time(1) puts(P) faults(F) edits(E) breaks(G) later(T) } .
+
+  --- Three records to draw for the laws, from no record and every record at 1 or 2, by
+  --- a or b, of an unset or either value.
+  op laws : -> Sys .
+  eq laws = { law(none, none, none, 3) pool(none & recs(1) & recs(2)) } .
+  op recs : Nat -> Pool .
+  eq recs(A) = r(A, a, 0) & r(A, a, 1) & r(A, a, 2) & r(A, b, 0) & r(A, b, 1) & r(A, b, 2) .
+
+  --- bad states ------------------------------------------------------------------------
+
+  --- An MC holds a record older than one it held before: a change taken back.
+  op regressed : Sys -> Bool .
+  ceq regressed({ mc(N, B, H, D, R) heard(N, R0) C }) = true if R <r R0 .
+  eq regressed({ C }) = false [owise] .
+
+  --- A running MC that holds its document says other than its record: a change that
+  --- would never be told, or one told but not kept.
+  op torn : Sys -> Bool .
+  ceq torn({ mc(N, true, false, D, R) C }) = true if D =/= d(val(R)) .
+  eq torn({ C }) = false [owise] .
+
+  --- A write stamped no later than one its MC had held, which members would drop.
+  op unordered : Sys -> Bool .
+  eq unordered({ late(N) C }) = true .
+  eq unordered({ C }) = false [owise] .
+
+  --- Any of the three above, so one search refutes them all.
+  op unsafe : Sys -> Bool .
+  eq unsafe(Y:Sys) = regressed(Y:Sys) or torn(Y:Sys) or unordered(Y:Sys) .
+
+  --- Merging the drawn records depends on their order, grouping or repetition.
+  op broken : Sys -> Bool .
+  ceq broken({ law(R1, R2, R3, 0) C }) = true
+    if merge(R1, R2) =/= merge(R2, R1)
+       or merge(merge(R1, R2), R3) =/= merge(R1, merge(R2, R3))
+       or merge(R1, R1) =/= R1 .
+  eq broken({ C }) = false [owise] .
+endm
+
+mod SETTINGS-SHARED-PROPS is
+  including SETTINGS-SHARED .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  vars N : Id .
+  vars R Z : Rec .
+  vars B H : Bool .
+  var D : Doc .
+  var C : Conf .
+
+  --- Every MC runs and holds the newest record made anywhere, and its document says so.
+  op agreed : -> Prop [ctor] .
+  ceq { mc(N, B, H, D, R) newest(Z) C } |= agreed = false
+    if not B or R =/= Z or D =/= d(val(Z)) .
+  eq { C } |= agreed = true [owise] .
+endm

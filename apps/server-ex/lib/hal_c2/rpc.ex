@@ -25,7 +25,9 @@ defmodule HalC2.Rpc do
   # with the version it read (see `HalC2.Settings`).
   def handle("hal-c2.readSettings", _input) do
     {settings, version} = HalC2.Settings.get()
-    {:ok, %{"settings" => settings, "version" => version}}
+
+    {:ok,
+     %{"settings" => settings, "version" => version, "shared" => HalC2.Settings.Shared.units()}}
   end
 
   def handle("hal-c2.writeSettings", %{"settings" => %{} = settings, "version" => version}) do

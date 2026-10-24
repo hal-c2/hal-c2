@@ -976,6 +976,168 @@ defmodule HalC2.Steps.Connections.Cluster do
     context
   end
 
+  # --- settings that follow the person ---------------------------------------------
+
+  step "the user sets the default runtime mode to {string} on the {word}",
+       %{args: [mode, which]} = context do
+    write_settings(context.machines[member(which)], &Map.put(&1, "defaultRuntimeMode", mode))
+    context
+  end
+
+  step "every member's default runtime mode is {string}", %{args: [mode]} = context do
+    for {_, m} <- context.machines, do: assert(await_setting(m, "defaultRuntimeMode", mode))
+    context
+  end
+
+  step "the second's default runtime mode is {string}", %{args: [mode]} = context do
+    assert await_setting(context.machines.b, "defaultRuntimeMode", mode)
+    context
+  end
+
+  step "the third's default runtime mode is {string}", %{args: [mode]} = context do
+    assert await_setting(context.machines.c, "defaultRuntimeMode", mode)
+    context
+  end
+
+  step "the user resets the default runtime mode on the second", context do
+    write_settings(context.machines.b, &Map.delete(&1, "defaultRuntimeMode"))
+    context
+  end
+
+  step "no member has a default runtime mode", context do
+    for {_, m} <- context.machines, do: assert(await_setting(m, "defaultRuntimeMode", nil))
+    context
+  end
+
+  step "the user binds {string} to the command palette on the second", %{args: [key]} = context do
+    rule = %{"key" => key, "command" => "commandPalette.toggle"}
+    assert {:ok, _} = client_call(context.machines.b, :standard, "hal-c2.upsertKeybinding", rule)
+    context
+  end
+
+  step "the first has the same keybindings as the second", context do
+    %{a: a, b: b} = context.machines
+    rules = :peer.call(b.peer, HalC2.Keybindings, :rules, [])
+    assert Enum.any?(rules, &(&1["command"] == "commandPalette.toggle"))
+    assert await_keybindings(a, rules)
+    context
+  end
+
+  step "the second is offline", context do
+    stop(context, :b)
+  end
+
+  step "the second starts again", context do
+    boot(context, :b)
+  end
+
+  # The file's time is all a document edited while its MC was down has to order it by.
+  step "the second's settings file is edited to {string} an hour {word} that",
+       %{args: [mode, side]} = context do
+    %{"defaultRuntimeMode" => %{"at" => at}} =
+      :peer.call(context.machines.a.peer, HalC2.Settings, :shared_records, [])
+
+    dirs = HalC2.Paths.mc_dirs(context.machines.b.home, %{}, System.user_home!())
+    path = Path.join(dirs.config, "settings.json")
+
+    settings =
+      case File.read(path) do
+        {:ok, text} -> JSON.decode!(text)
+        {:error, :enoent} -> %{}
+      end
+
+    File.mkdir_p!(dirs.config)
+    File.write!(path, JSON.encode!(Map.put(settings, "defaultRuntimeMode", mode)))
+    hour = if side == "after", do: 3600, else: -3600
+    File.touch!(path, div(at, 1000) + hour)
+    context
+  end
+
+  step "the user sets the environment icon, a provider's binary path and the default runtime mode to {string} on the first",
+       %{args: [mode]} = context do
+    write_settings(context.machines.a, fn settings ->
+      settings
+      |> Map.put("environmentIcon", "laptop")
+      |> Map.put("providers", %{"codex" => %{"binaryPath" => "/opt/first/codex"}})
+      |> Map.put("defaultRuntimeMode", mode)
+    end)
+
+    context
+  end
+
+  step "the second has neither the first's environment icon nor its provider settings",
+       context do
+    # Arrived with the runtime mode, in the same records, if they were shared at all.
+    {settings, _} = :peer.call(context.machines.b.peer, HalC2.Settings, :get, [])
+    refute settings["environmentIcon"] == "laptop"
+    refute get_in(settings, ["providers", "codex", "binaryPath"]) == "/opt/first/codex"
+    context
+  end
+
+  step "the user saves a provider API key and a usage limit source's management key on the first, with the default runtime mode {string}",
+       %{args: [mode]} = context do
+    write_settings(context.machines.a, fn settings ->
+      settings
+      |> Map.put("providerInstances", %{
+        "codex_work" => %{
+          "driver" => "codex",
+          "environment" => [
+            %{"name" => "OPENAI_API_KEY", "value" => "sk-first-secret", "sensitive" => true}
+          ]
+        }
+      })
+      # Disabled, so nothing reads the hub it names.
+      |> Map.put("usageLimitSources", %{
+        "hub" => %{
+          "kind" => "cliproxy",
+          "enabled" => false,
+          "url" => "http://127.0.0.1:9",
+          "managementKey" => "mk-first-secret"
+        }
+      })
+      |> Map.put("defaultRuntimeMode", mode)
+    end)
+
+    context
+  end
+
+  step "neither key is in what the first shares or anywhere in the second's files", context do
+    %{a: a, b: b} = context.machines
+    shared = :peer.call(a.peer, HalC2.Settings, :shared_records, [])
+    assert %{"defaultRuntimeMode" => _} = shared
+
+    for secret <- ["sk-first-secret", "mk-first-secret"] do
+      refute inspect(shared) =~ secret
+
+      for file <- Path.wildcard(Path.join(b.home, "**"), match_dot: true),
+          File.regular?(file),
+          do: refute(File.read!(file) =~ secret, "#{file} holds a secret of the first's")
+    end
+
+    context
+  end
+
+  step "a client reads the first's settings", context do
+    {:ok, result} = client_call(context.machines.a, :standard, "hal-c2.readSettings", %{})
+    Map.put(context, :read_settings, result)
+  end
+
+  step "it is told which settings are shared with the other members, keybindings among them",
+       context do
+    assert %{"shared" => shared} = context.read_settings
+    assert "keybindings" in shared
+    assert "defaultRuntimeMode" in shared
+    refute "environmentIcon" in shared
+    context
+  end
+
+  step "none of them is one whose secrets the MC keeps apart", context do
+    for key <- ~w(providers providerInstances usageLimitSources),
+        do: refute(key in context.read_settings["shared"])
+
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
 
   defp mode(path), do: Bitwise.band(File.stat!(path).mode, 0o777)
@@ -1499,5 +1661,65 @@ defmodule HalC2.Steps.Connections.Cluster do
     tool.(Path.join([sdk, "emulator", "emulator"]), "fake_emulator.sh")
     tool.(Path.join([sdk, "cmdline-tools", "latest", "bin", "avdmanager"]), "fake_emulator.sh")
     sdk
+  end
+
+  defp member(which), do: Map.fetch!(%{"first" => :a, "second" => :b, "third" => :c}, which)
+
+  # Reads the machine's settings and writes `change.(settings)` at the version read, as
+  # a client does.
+  defp write_settings(machine, change) do
+    {:ok, %{"settings" => settings, "version" => version}} =
+      client_call(machine, :standard, "hal-c2.readSettings", %{})
+
+    payload = %{"settings" => change.(settings), "version" => version}
+    assert {:ok, _} = client_call(machine, :standard, "hal-c2.writeSettings", payload)
+  end
+
+  # Waits until `machine`'s settings hold `value` under `key` (nil: not at all),
+  # rechecking as each change reaches its watchers.
+  defp await_setting(machine, key, value) do
+    code = """
+    :ok = HalC2.Settings.watch(self())
+
+    wait = fn wait ->
+      HalC2.Settings.settings()[key] == value or
+        receive do
+          {:hal_c2_settings, _, _} -> wait.(wait)
+        after
+          15_000 -> false
+        end
+    end
+
+    result = wait.(wait)
+    HalC2.Settings.unwatch(self())
+    result
+    """
+
+    binding = [key: key, value: value]
+    {result, _} = :peer.call(machine.peer, Code, :eval_string, [code, binding], 20_000)
+    result
+  end
+
+  # Waits until `machine`'s keybindings are `rules`.
+  defp await_keybindings(machine, rules) do
+    code = """
+    :ok = HalC2.Settings.watch(self())
+
+    wait = fn wait ->
+      HalC2.Keybindings.rules() == rules or
+        receive do
+          {:hal_c2_keybindings, _, _} -> wait.(wait)
+        after
+          15_000 -> false
+        end
+    end
+
+    result = wait.(wait)
+    HalC2.Settings.unwatch(self())
+    result
+    """
+
+    {result, _} = :peer.call(machine.peer, Code, :eval_string, [code, [rules: rules]], 20_000)
+    result
   end
 end
