@@ -486,8 +486,7 @@ pub fn register(steps: &mut Steps) {
             return Ok(());
         }
         world.sync()?;
-        // TODO(port): UsageLimitsCommandSteps' expectCommandNotOffered, the
-        // composer's slash-command menu.
+        super::usage_limits_command::expect_command_not_offered(world, &c[0])?;
         let available = themes(world, |t, _| t.available())?;
         for theme in available {
             expect!(text(&theme["id"]) != c[0], "{} is offered", c[0]);
@@ -675,8 +674,9 @@ pub fn register(steps: &mut Steps) {
         ensure_theme(world, &c[0], &["dark"])
     });
     steps.step(&format!("the user chooses {Q}"), |world, c, _| {
-        // TODO(port): ComposerPickerSteps' modelPickerChooses, a model in
-        // the composer's open picker.
+        if super::composer_picker::model_picker_chooses(world, &c[0])? {
+            return Ok(());
+        }
         // The welcome wizard's Select all / Select none.
         if super::onboarding::onboarding_chooses(world, &c[0])? {
             return Ok(());
