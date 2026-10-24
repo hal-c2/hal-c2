@@ -18,6 +18,7 @@ pub mod device;
 pub mod draft;
 pub mod fake_files;
 pub mod file_search;
+pub mod files_actions;
 pub mod files_explorer;
 pub mod files_folder;
 pub mod files_identity;
@@ -83,6 +84,7 @@ pub fn register(steps: &mut Steps) {
     draft::register(steps);
     fake_files::register(steps);
     file_search::register(steps);
+    files_actions::register(steps);
     files_explorer::register(steps);
     files_folder::register(steps);
     files_identity::register(steps);

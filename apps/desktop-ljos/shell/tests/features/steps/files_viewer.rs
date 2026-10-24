@@ -16,9 +16,9 @@ use serde_json::{Value as Json, json};
 
 use super::fake_files::{FakeFiles, fake_files};
 use super::files_workspace::{
-    choose, describe_tree, editor_calls, editor_id, ensure_viewer_file, files, file_status,
-    flag_prop, open_file, open_path, set_config, show_calls, show_panel, text_prop,
-    wait_for_tree, workspace_root,
+    choose, describe_tree, editor_calls, editor_id, ensure_viewer_file, file_status, files,
+    flag_prop, open_file, open_path, set_config, show_calls, show_panel, text_prop, wait_for_tree,
+    workspace_root,
 };
 use crate::brick::{self, Brick};
 use crate::harness::{Outcome, Q, Steps, at, show, text};
@@ -66,8 +66,16 @@ fn describe_viewer(world: &World) -> String {
         open_path(world),
         file_status(world),
         if kind.is_empty() { "text" } else { &kind },
-        if flag_prop(world, "rendered") { ", rendered" } else { "" },
-        if flag_prop(world, "editing") { ", editing" } else { "" },
+        if flag_prop(world, "rendered") {
+            ", rendered"
+        } else {
+            ""
+        },
+        if flag_prop(world, "editing") {
+            ", editing"
+        } else {
+            ""
+        },
     )
 }
 
@@ -162,7 +170,8 @@ fn type_change(world: &mut World) -> Outcome {
 /// The link of the task named `task` in what the rendered view draws.
 fn task_link(world: &World, task: &str) -> Outcome<String> {
     let drawn = text_prop(world, "renderedText");
-    let link = Regex::new(r"\[[☐☑]\]\((task:\d+)\) ([^\n]*)").map_err(|e| crate::harness::Failure(e.to_string()))?;
+    let link = Regex::new(r"\[[☐☑]\]\((task:\d+)\) ([^\n]*)")
+        .map_err(|e| crate::harness::Failure(e.to_string()))?;
     for found in link.captures_iter(&drawn).flatten() {
         if found.get(2).is_some_and(|m| m.as_str().trim() == task)
             && let Some(url) = found.get(1)
@@ -422,16 +431,17 @@ pub fn register(steps: &mut Steps) {
                 .platform
                 .insert("machineId".into(), json!(THIS_MACHINE));
             world.mc.announce_environment();
-            set_config(
-                world,
-                json!({"availableEditors": [editor_id(&c[0])?]}),
-            )
+            set_config(world, json!({"availableEditors": [editor_id(&c[0])?]}))
         },
     );
     steps.step(&format!("the user opens {Q} in {Q}"), |world, c, _| {
         let calls = editor_calls(world)?.len();
         viewer(world).editor_calls_before = calls;
-        choose(world, &c[0], &format!("fileEntryEditor-{}", editor_id(&c[1])?))
+        choose(
+            world,
+            &c[0],
+            &format!("fileEntryEditor-{}", editor_id(&c[1])?),
+        )
     });
     steps.step(&format!("{Q} opens {Q} on this computer"), |world, c, _| {
         let before = viewer(world).editor_calls_before;
@@ -555,23 +565,28 @@ pub fn register(steps: &mut Steps) {
                 .cloned()
                 .unwrap_or_default();
             expect!(
-                flag_prop(world, "unsaved") && writes(world).is_empty() && !contents.contains(&typed),
+                flag_prop(world, "unsaved")
+                    && writes(world).is_empty()
+                    && !contents.contains(&typed),
                 "the change is already written"
             );
             Ok(())
         },
     );
-    steps.step("the user opens a file larger than one megabyte", |world, _, _| {
-        let path = "logs/big.log";
-        let fake = fake_files(&mut world.mc);
-        fake.files.insert(path.into(), "line\n".repeat(200));
-        fake.truncated.insert(path.into(), 3 * 1024 * 1024);
-        show_panel(world)?;
-        open_file(world, path)?;
-        viewer(world).described = path.to_owned();
-        expect!(file_status(world) == "ready", "{}", describe_viewer(world));
-        Ok(())
-    });
+    steps.step(
+        "the user opens a file larger than one megabyte",
+        |world, _, _| {
+            let path = "logs/big.log";
+            let fake = fake_files(&mut world.mc);
+            fake.files.insert(path.into(), "line\n".repeat(200));
+            fake.truncated.insert(path.into(), 3 * 1024 * 1024);
+            show_panel(world)?;
+            open_file(world, path)?;
+            viewer(world).described = path.to_owned();
+            expect!(file_status(world) == "ready", "{}", describe_viewer(world));
+            Ok(())
+        },
+    );
     steps.step("the file cannot be edited", |world, _, _| {
         let path = viewer(world).described.clone();
         let (files_before, outside_before) = {
@@ -627,10 +642,13 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("this device was paired without terminal access", |world, _, _| {
-        viewer(world).no_terminal = true;
-        Ok(())
-    });
+    steps.step(
+        "this device was paired without terminal access",
+        |world, _, _| {
+            viewer(world).no_terminal = true;
+            Ok(())
+        },
+    );
     steps.step(
         "the user is told saving outside the project needs terminal access",
         |world, _, _| {
@@ -654,26 +672,29 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step(&format!("the user opens {Q} and edits it"), |world, c, _| {
-        show_panel(world)?;
-        open_file(world, &c[0])?;
-        let brick = brick::shown(world)?;
-        let edit = brick.item(world, "fileEdit")?;
-        expect!(
-            file_status(world) == "ready"
-                && flag_prop(world, "editable")
-                && brick.flag(world, edit, "enabled"),
-            "{}",
-            describe_viewer(world)
-        );
-        brick.click(world, "fileEdit")?;
-        world.wait_for_with(
-            |w| flag_prop(w, "editing") && shown_in(w, "fileEditor"),
-            describe_viewer,
-        )?;
-        viewer(world).edited = c[0].clone();
-        type_change(world)
-    });
+    steps.step(
+        &format!("the user opens {Q} and edits it"),
+        |world, c, _| {
+            show_panel(world)?;
+            open_file(world, &c[0])?;
+            let brick = brick::shown(world)?;
+            let edit = brick.item(world, "fileEdit")?;
+            expect!(
+                file_status(world) == "ready"
+                    && flag_prop(world, "editable")
+                    && brick.flag(world, edit, "enabled"),
+                "{}",
+                describe_viewer(world)
+            );
+            brick.click(world, "fileEdit")?;
+            world.wait_for_with(
+                |w| flag_prop(w, "editing") && shown_in(w, "fileEditor"),
+                describe_viewer,
+            )?;
+            viewer(world).edited = c[0].clone();
+            type_change(world)
+        },
+    );
     steps.step(
         &format!("the change is written to {Q} on the thread's machine"),
         |world, c, _| {
@@ -752,28 +773,34 @@ pub fn register(steps: &mut Steps) {
             world.pump()
         },
     );
-    steps.step(&format!("the whole of {Q} is on the clipboard"), |world, c, _| {
-        let wanted = fake_files(&mut world.mc)
-            .files
-            .get(&c[0])
-            .cloned()
-            .unwrap_or_default();
-        world.sync()?;
-        let held = world.clipboard();
-        expect!(
-            !wanted.is_empty() && held == wanted,
-            "the clipboard holds \"{held}\""
-        );
-        Ok(())
-    });
-    steps.step("the user is told the file's text was copied", |world, _, _| {
-        expect!(
-            told_copied(world, &open_path(world)),
-            "{}",
-            describe_toasts(world)
-        );
-        Ok(())
-    });
+    steps.step(
+        &format!("the whole of {Q} is on the clipboard"),
+        |world, c, _| {
+            let wanted = fake_files(&mut world.mc)
+                .files
+                .get(&c[0])
+                .cloned()
+                .unwrap_or_default();
+            world.sync()?;
+            let held = world.clipboard();
+            expect!(
+                !wanted.is_empty() && held == wanted,
+                "the clipboard holds \"{held}\""
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user is told the file's text was copied",
+        |world, _, _| {
+            expect!(
+                told_copied(world, &open_path(world)),
+                "{}",
+                describe_toasts(world)
+            );
+            Ok(())
+        },
+    );
     // The MC sends a file's first 1 MB, marked truncated (panel.rs's "is 3 MB").
     steps.step(
         &format!("the first megabyte of {Q} is on the clipboard"),
@@ -802,16 +829,16 @@ pub fn register(steps: &mut Steps) {
         },
     );
 
-    steps.step(
-        &format!("{Q} has the unticked task {Q}"),
-        |world, c, _| {
-            fake_files(&mut world.mc).files.insert(
-                c[0].clone(),
-                format!("# To do\n\n- [x] Draft the plan\n- [ ] {}\n- [ ] Tell everyone\n", c[1]),
-            );
-            Ok(())
-        },
-    );
+    steps.step(&format!("{Q} has the unticked task {Q}"), |world, c, _| {
+        fake_files(&mut world.mc).files.insert(
+            c[0].clone(),
+            format!(
+                "# To do\n\n- [x] Draft the plan\n- [ ] {}\n- [ ] Tell everyone\n",
+                c[1]
+            ),
+        );
+        Ok(())
+    });
     steps.step(
         &format!("the user ticks {Q} in the rendered view"),
         |world, c, _| {
@@ -912,25 +939,29 @@ pub fn register(steps: &mut Steps) {
             |w| format!("the save to be answered; {}", describe_viewer(w)),
         )
     });
-    steps.step("the user is told the file could not be saved", |world, _, _| {
-        let path = viewer(world).edited.clone();
-        let told_here = brick::shown(world)?.shows(world, &format!("Not saved: Could not write {path}."))?;
-        expect!(
-            text_prop(world, "saveProblem") == format!("Could not write {path}.") && told_here,
-            "{}",
-            describe_viewer(world)
-        );
-        let told = at(&world.state("toasts"), "items")
-            .as_array()
-            .is_some_and(|items| {
-                items.iter().any(|toast| {
-                    at(toast, "type") == "error"
-                        && text(at(toast, "title")) == format!("Could not save {path}")
-                })
-            });
-        expect!(told, "{}", describe_toasts(world));
-        Ok(())
-    });
+    steps.step(
+        "the user is told the file could not be saved",
+        |world, _, _| {
+            let path = viewer(world).edited.clone();
+            let told_here = brick::shown(world)?
+                .shows(world, &format!("Not saved: Could not write {path}."))?;
+            expect!(
+                text_prop(world, "saveProblem") == format!("Could not write {path}.") && told_here,
+                "{}",
+                describe_viewer(world)
+            );
+            let told = at(&world.state("toasts"), "items")
+                .as_array()
+                .is_some_and(|items| {
+                    items.iter().any(|toast| {
+                        at(toast, "type") == "error"
+                            && text(at(toast, "title")) == format!("Could not save {path}")
+                    })
+                });
+            expect!(told, "{}", describe_toasts(world));
+            Ok(())
+        },
+    );
     steps.step("the edit is still in the editor", |world, _, _| {
         let typed = viewer(world).typed.clone();
         let edited = viewer(world).edited.clone();

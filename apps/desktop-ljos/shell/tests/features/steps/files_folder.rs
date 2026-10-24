@@ -106,8 +106,8 @@ fn listing(root: &Path) -> Vec<String> {
 
 /// The explorer brick and its root item.
 fn explorer(world: &mut World) -> Outcome<(Brick, ObjectId)> {
-    let shown = brick::shown(world)
-        .map_err(|_| Failure("the folder explorer is not open".to_owned()))?;
+    let shown =
+        brick::shown(world).map_err(|_| Failure("the folder explorer is not open".to_owned()))?;
     let item = shown.item(world, "folderExplorer")?;
     Ok((shown, item))
 }
@@ -414,8 +414,9 @@ pub fn register(steps: &mut Steps) {
         "the user is told folder management needs a connected local environment",
         |world, _, _| {
             expect!(
-                text(world, "folderExplorerUnavailable")?
-                    .starts_with("Folder management is available only for a connected local environment"),
+                text(world, "folderExplorerUnavailable")?.starts_with(
+                    "Folder management is available only for a connected local environment"
+                ),
                 "{}",
                 describe(world)
             );
@@ -478,8 +479,9 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the user is told to choose an existing local folder other than home or a filesystem root",
         |world, _, _| {
-            let said = text(world, "folderExplorerStatus")?
-                .starts_with("Choose an existing local folder other than your home or a filesystem root.");
+            let said = text(world, "folderExplorerStatus")?.starts_with(
+                "Choose an existing local folder other than your home or a filesystem root.",
+            );
             expect!(
                 said && prop_text(world, "rootPath")?.is_empty(),
                 "{}",
@@ -493,20 +495,23 @@ pub fn register(steps: &mut Steps) {
         let file = resolve(world, &c[0]);
         select(world, &spelt(&file))
     });
-    steps.step("the user is told files are shown read-only", |world, _, _| {
-        expect!(
-            text(world, "folderExplorerHint")?.starts_with("Files are shown read-only."),
-            "{}",
-            describe(world)
-        );
-        for operation in ["create", "rename"] {
+    steps.step(
+        "the user is told files are shown read-only",
+        |world, _, _| {
             expect!(
-                !offered(world, operation)?,
-                "{operation} is offered for a file"
+                text(world, "folderExplorerHint")?.starts_with("Files are shown read-only."),
+                "{}",
+                describe(world)
             );
-        }
-        Ok(())
-    });
+            for operation in ["create", "rename"] {
+                expect!(
+                    !offered(world, operation)?,
+                    "{operation} is offered for a file"
+                );
+            }
+            Ok(())
+        },
+    );
 
     // Creating, renaming and moving.
     steps.step(
@@ -520,15 +525,12 @@ pub fn register(steps: &mut Steps) {
     steps.step(&format!("{path} holds {Q}"), |world, c, _| {
         make_file(&local(world, &c[0]).join(&c[1]))
     });
-    steps.step(
-        &format!("the user moves {Q} into {path}"),
-        |world, c, _| {
-            let target = local(world, &c[1]);
-            let _ = std::fs::create_dir_all(&target);
-            let source = resolve(world, &c[0]);
-            run(world, "move", &source, &spelt(&target))
-        },
-    );
+    steps.step(&format!("the user moves {Q} into {path}"), |world, c, _| {
+        let target = local(world, &c[1]);
+        let _ = std::fs::create_dir_all(&target);
+        let source = resolve(world, &c[0]);
+        run(world, "move", &source, &spelt(&target))
+    });
     steps.step(&format!("{path} exists"), |world, c, _| {
         let wanted = local(world, &c[0]);
         if world
@@ -577,17 +579,17 @@ pub fn register(steps: &mut Steps) {
     );
 
     // Names that would overwrite or escape.
-    steps.step(&format!("the user creates a folder using {Q}"), |world, c, _| {
-        let root = folders(world).root.clone();
-        run(world, "create", &root, &c[0])
-    });
     steps.step(
-        &format!("the user renames {Q} using {Q}"),
+        &format!("the user creates a folder using {Q}"),
         |world, c, _| {
-            let folder = resolve(world, &c[0]);
-            run(world, "rename", &folder, &c[1])
+            let root = folders(world).root.clone();
+            run(world, "create", &root, &c[0])
         },
     );
+    steps.step(&format!("the user renames {Q} using {Q}"), |world, c, _| {
+        let folder = resolve(world, &c[0]);
+        run(world, "rename", &folder, &c[1])
+    });
     // The folder moved into already holds one of that name.
     steps.step(
         &format!("the user moves {Q} into a folder using {Q}"),
@@ -631,9 +633,9 @@ pub fn register(steps: &mut Steps) {
             if world
                 .wait_for("the location to be called protected", |w| {
                     shown.flag(w, hint, "visible")
-                        && shown
-                            .text_of(w, hint, "text")
-                            .contains("Its location is protected because threads may still use that path.")
+                        && shown.text_of(w, hint, "text").contains(
+                            "Its location is protected because threads may still use that path.",
+                        )
                 })
                 .is_err()
             {
@@ -647,10 +649,7 @@ pub fn register(steps: &mut Steps) {
                 "{tried} can be chosen"
             );
             let root = folders(world).root.clone();
-            expect!(
-                listing(&root) == folders(world).before,
-                "the disk changed"
-            );
+            expect!(listing(&root) == folders(world).before, "the disk changed");
             Ok(())
         },
     );
@@ -685,7 +684,10 @@ pub fn register(steps: &mut Steps) {
             let (shown, _) = explorer(world)?;
             let button = part(world, "folderOperationConfirm")?;
             let enabled = |world: &World| shown.flag(world, button, "enabled");
-            expect!(!enabled(world), "the Trash can be confirmed with nothing typed");
+            expect!(
+                !enabled(world),
+                "the Trash can be confirmed with nothing typed"
+            );
             type_entry(world, &format!("{}x", c[0]))?;
             expect!(
                 !enabled(world),
@@ -756,10 +758,7 @@ pub fn register(steps: &mut Steps) {
             shown.click(world, "folderOperationCancel")?;
             expect_finished(world)?;
             let root = folders(world).root.clone();
-            expect!(
-                listing(&root) == folders(world).before,
-                "the disk changed"
-            );
+            expect!(listing(&root) == folders(world).before, "the disk changed");
             Ok(())
         },
     );
@@ -901,7 +900,9 @@ pub fn register(steps: &mut Steps) {
             expect!(
                 shown.shows(
                     world,
-                    &format!("Open folder as a project\n{folder}\nNo files will be moved or deleted.")
+                    &format!(
+                        "Open folder as a project\n{folder}\nNo files will be moved or deleted."
+                    )
                 )?,
                 "the window does not say files are kept"
             );
@@ -923,4 +924,3 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
 }
-

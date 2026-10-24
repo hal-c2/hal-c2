@@ -169,7 +169,10 @@ fn open_picker(world: &mut World, project: &str) -> Outcome {
     // until it does.
     if is_empty(&picker(world)) {
         let key = world.state("projectSettings")["checkouts"][0]["key"].clone();
-        world.dispatch("projectIcon.open", json!({"projectKey": key, "name": project}))?;
+        world.dispatch(
+            "projectIcon.open",
+            json!({"projectKey": key, "name": project}),
+        )?;
     }
     world.wait_for("the icon picker to open", |w| !is_empty(&picker(w)))?;
     let brick = brick::shown(world)?;
@@ -182,7 +185,7 @@ fn open_picker(world: &mut World, project: &str) -> Outcome {
     })
 }
 
-fn type_into(world: &mut World, field: &str, typed: &str) -> Outcome {
+pub fn type_into(world: &mut World, field: &str, typed: &str) -> Outcome {
     let brick = brick::shown(world)?;
     brick.click(world, field)?;
     let item = brick.item(world, field)?;
@@ -341,7 +344,12 @@ fn expect_shown(world: &mut World, project: &str, what: &str) -> Outcome {
                 let path = path.clone();
                 move |icon| text(&icon["kind"]) == "image" && text(&icon["path"]) == path
             })?;
-            let row = world.mc.projects.get(project).cloned().unwrap_or(Json::Null);
+            let row = world
+                .mc
+                .projects
+                .get(project)
+                .cloned()
+                .unwrap_or(Json::Null);
             expect!(
                 text(&row["faviconPath"]) == path && is_empty(&saved_icon(world, project)),
                 "the MC keeps {}",
@@ -476,7 +484,8 @@ pub fn check_icon_image_offered(world: &mut World, path: &str, offered: bool) ->
 fn serve_session(mc: &mut FakeMc, mut stream: std::net::TcpStream, head: &str) {
     let mut request = vec![0u8; head.len()];
     let _ = stream.read(&mut request);
-    let body = json!({"authenticated": true, "scopes": mc.part::<FakeIdentity>().scopes}).to_string();
+    let body =
+        json!({"authenticated": true, "scopes": mc.part::<FakeIdentity>().scopes}).to_string();
     let _ = write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
@@ -692,12 +701,7 @@ pub fn register(steps: &mut Steps) {
                     let picker = picker(w);
                     text(&picker["query"]) == query && picker["searching"] != json!(true)
                 },
-                |w| {
-                    format!(
-                        "the search to finish; the picker is {}",
-                        show(&picker(w))
-                    )
-                },
+                |w| format!("the search to finish; the picker is {}", show(&picker(w))),
             )
         },
     );
@@ -806,11 +810,14 @@ pub fn register(steps: &mut Steps) {
         &format!("{Q} runs a server too old to keep one"),
         |world, _, _| describe_environment(world, "laptop", false),
     );
-    steps.step("the user's session cannot change settings", |world, _, _| {
-        describe_environment(world, "laptop", true)?;
-        world.mc.part::<FakeIdentity>().scopes = vec!["orchestration:read".into()];
-        Ok(())
-    });
+    steps.step(
+        "the user's session cannot change settings",
+        |world, _, _| {
+            describe_environment(world, "laptop", true)?;
+            world.mc.part::<FakeIdentity>().scopes = vec!["orchestration:read".into()];
+            Ok(())
+        },
+    );
     steps.step(
         &format!("the user tries to change the icon of {Q}"),
         |world, c, _| {
@@ -823,7 +830,10 @@ pub fn register(steps: &mut Steps) {
             world.wait_for("the user to be told", |w| {
                 !is_empty(&at(&w.state("toasts"), "items").clone())
             })?;
-            expect!(settings_writes(world) == writes, "the settings were written");
+            expect!(
+                settings_writes(world) == writes,
+                "the settings were written"
+            );
             Ok(())
         },
     );
@@ -837,7 +847,8 @@ pub fn register(steps: &mut Steps) {
         publish_themes(&mut world.mc, &c[0], vec![theme.clone()]);
         let wanted = theme.clone();
         world.wait_for("the shell to hear of the theme", move |w| {
-            hal_c2_shell::controllers::settings::Settings::of(w.engine()).themes() == [wanted.clone()]
+            hal_c2_shell::controllers::settings::Settings::of(w.engine()).themes()
+                == [wanted.clone()]
         })?;
         let id = c[1].to_owned();
         let offered = world.with::<Themes, _>(|themes, _| themes.available())?;
