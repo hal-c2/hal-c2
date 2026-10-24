@@ -381,6 +381,29 @@ fn set_editors(world: &mut World, editors: Value) -> Outcome {
     world.sync()
 }
 
+/// The user's editor for a changed file another surface opens, unless the
+/// scenario says there is none (ReviewDiffSteps.cpp's haveEditor).
+pub fn have_editor(world: &mut World, path: &str) -> Outcome {
+    *world.part::<super::files_workspace::OpenedInEditor>() =
+        super::files_workspace::OpenedInEditor {
+            path: path.to_owned(),
+            editor: "zed".into(),
+        };
+    if world.part::<NoEditor>().0 {
+        return Ok(());
+    }
+    set_editors(world, json!(["zed"]))?;
+    world.wait_for("the environment's editors to be known", |w| {
+        workspace(w)["editors"]
+            .as_array()
+            .is_some_and(|editors| !editors.is_empty())
+    })
+}
+
+/// "no editor is available on this environment": [`have_editor`] adds none.
+#[derive(Default)]
+struct NoEditor(bool);
+
 fn expect_editor_call(world: &mut World, editor: &str, cwd: &str) -> Outcome {
     let calls = world.mc.part::<FakeGit>().editor_calls.clone();
     let last = calls.last();
@@ -1103,7 +1126,87 @@ pub fn register(steps: &mut Steps) {
         },
     );
 
+    // A draft the picked branch ties to its machine (settings/load-balancing.feature).
+    steps.step(
+        &format!("the user chose a branch for the new thread on {Q}"),
+        |world, c, _| {
+            let project = super::load_balancing::cluster_with_room_elsewhere(world, &c[0]);
+            let branch = "feature/tax";
+            git_repo(world, &project, &["main", branch], "main", "main");
+            world.connect()?;
+            world.sync()?;
+            open_draft(world, &project)?;
+            dispatch(world, "workspace.branch.search", json!({"query": ""}))?;
+            dispatch(world, "workspace.branch.select", json!({"name": branch}))?;
+            let draft = world.draft_id.clone();
+            world.wait_for_with(
+                |w| {
+                    shell_workspace::checkout(w.engine(), &draft)
+                        .branch
+                        .as_deref()
+                        == Some(branch)
+                },
+                |w| {
+                    format!(
+                        "the draft on {branch}; the header shows {}",
+                        show(&workspace(w))
+                    )
+                },
+            )?;
+            world.mc.part::<super::load_balancing::FakePlacement>().tied = true;
+            Ok(())
+        },
+    );
+
     // Editors. The ones a `config` shape lists wait on SettingsSteps' fake.
+    steps.step(
+        &format!("the environment has the editors {Q} and {Q}"),
+        |world, c, _| set_editors(world, json!([editor_id(&c[0]), editor_id(&c[1])])),
+    );
+    steps.step(
+        &format!("{Q} has the editors {Q} and {Q}"),
+        |world, c, _| {
+            let editors = json!([editor_id(&c[1]), editor_id(&c[2])]);
+            super::settings::fake_config(&mut world.mc)
+                .elsewhere
+                .entry(c[0].clone())
+                .or_default()
+                .insert("availableEditors".into(), editors);
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the header lists the editors {Q} and {Q}"),
+        |world, c, _| {
+            let labels = |w: &World| -> Vec<String> {
+                workspace(w)["editors"]
+                    .as_array()
+                    .map(|editors| editors.iter().map(|e| text(&e["label"])).collect())
+                    .unwrap_or_default()
+            };
+            world.wait_for_with(
+                |w| labels(w) == [c[0].as_str(), c[1].as_str()],
+                |w| {
+                    format!(
+                        "the header to list {} and {}; it shows {}",
+                        c[0],
+                        c[1],
+                        show(&workspace(w))
+                    )
+                },
+            )
+        },
+    );
+    steps.step("the environment has no editors", |world, _, _| {
+        set_editors(world, json!([]))
+    });
+    steps.step(
+        "no editor is available on this environment",
+        |world, _, _| {
+            world.part::<NoEditor>().0 = true;
+            set_editors(world, json!([]))
+        },
+    );
     steps.step(
         &format!("the user opens the thread in {Q}"),
         |world, c, _| {
