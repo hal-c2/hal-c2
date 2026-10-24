@@ -46,6 +46,7 @@ pub mod settings;
 pub mod settings_connections;
 pub mod settings_pages;
 pub mod settings_rows;
+pub mod sidebar;
 pub mod source_control_settings;
 pub mod stash;
 pub mod storage_layout;
@@ -106,6 +107,7 @@ pub fn register(steps: &mut Steps) {
     settings_connections::register(steps);
     settings_pages::register(steps);
     settings_rows::register(steps);
+    sidebar::register(steps);
     source_control_settings::register(steps);
     stash::register(steps);
     storage_layout::register(steps);
