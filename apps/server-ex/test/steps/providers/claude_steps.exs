@@ -1346,6 +1346,22 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "Claude is started with no tools disallowed", context do
+    %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
+    refute "--disallowedTools" in argv
+    context
+  end
+
+  step "Claude is started with its {string} and {string} tools disallowed",
+       %{args: [first, second]} = context do
+    %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
+
+    assert ["--disallowedTools", "#{first},#{second}"] ==
+             Enum.slice(argv, Enum.find_index(argv, &(&1 == "--disallowedTools")), 2)
+
+    context
+  end
+
   step "a Claude turn starts", context do
     context = World.launch_on(context, @thread, "claudeAgent", "hello")
     World.await_runs(context, @thread, ["completed"])

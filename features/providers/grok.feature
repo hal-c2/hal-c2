@@ -612,3 +612,10 @@ Feature: Grok
       | under the sessions folder of the Grok home the instance sets  | is shown as the plan         |
       | under the sessions folder with different letter case, Windows | is shown as the plan         |
       | at a path that climbs out of the sessions folder with ".."    | is shown as an ordinary edit |
+
+  # features/settings/subagents.feature: the setting is not wired for Grok yet.
+  @backlog @mc
+  Scenario: Grok's own subagent tool is turned off when agents use HAL-C2 workers
+    Given the subagents setting is HAL-C2 workers
+    When a Grok session is started
+    Then its task tool is passed as disallowed

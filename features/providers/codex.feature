@@ -116,6 +116,17 @@ Feature: Codex
     When a Codex turn starts
     Then Codex can call the HAL-C2 tools for this thread
 
+  Scenario: Codex keeps its own subagents unless the subagents setting says otherwise
+    Given the project allows the HAL-C2 tools
+    When a Codex turn starts
+    Then Codex is started with its subagent features left on
+
+  Scenario: Codex's subagents are off when agents use HAL-C2 workers
+    Given the project allows the HAL-C2 tools
+    And the subagents setting is HAL-C2 workers
+    When a Codex turn starts
+    Then Codex is started with its subagent features turned off
+
   Scenario: Codex starts with the launch arguments configured for it
     Given the Codex instance has launch arguments configured
     When a Codex session starts

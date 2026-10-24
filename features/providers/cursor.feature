@@ -443,3 +443,10 @@ Feature: Cursor
     Given the project has a Cursor skill whose header says the user cannot start it
     When the user opens the skill list in a Cursor thread
     Then the skill is listed as one the user cannot start
+
+  # features/settings/subagents.feature: the setting is not wired for Cursor yet.
+  @backlog @mc
+  Scenario: Cursor's own subagents are left as they are when agents use HAL-C2 workers
+    Given the subagents setting is HAL-C2 workers
+    When a Cursor session is started
+    Then Cursor starts as usual, because it has no switch for its subagents

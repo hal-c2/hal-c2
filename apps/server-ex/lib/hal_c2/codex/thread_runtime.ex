@@ -880,20 +880,34 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp thread_params(state, turn) do
     params = %{"cwd" => turn.cwd, "model" => turn.model}
 
-    case mcp(state, turn) do
-      nil ->
-        params
+    case config(state, turn) do
+      config when config == %{} -> params
+      config -> Map.put(params, "config", config)
+    end
+  end
 
-      mcp ->
-        Map.put(params, "config", %{
-          "mcp_servers" => %{
-            "hal-c2" => %{
-              "url" => mcp.url,
-              "http_headers" => %{"Authorization" => mcp.authorization}
+  # Codex's own config for the thread: HAL-C2's MCP server when allowed, and its
+  # subagent tools off when the user keeps agents to HAL-C2's workers (`nativeSubagents`).
+  defp config(state, turn) do
+    mcp =
+      case mcp(state, turn) do
+        nil ->
+          %{}
+
+        mcp ->
+          %{
+            "mcp_servers" => %{
+              "hal-c2" => %{
+                "url" => mcp.url,
+                "http_headers" => %{"Authorization" => mcp.authorization}
+              }
             }
           }
-        })
-    end
+      end
+
+    if HalC2.Settings.hal_c2_subagents?(),
+      do: Map.put(mcp, "features", %{"multi_agent" => false, "multi_agent_v2" => false}),
+      else: mcp
   end
 
   defp mcp(state, turn), do: HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids))

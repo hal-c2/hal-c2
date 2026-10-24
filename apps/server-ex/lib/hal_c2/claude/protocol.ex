@@ -48,7 +48,11 @@ defmodule HalC2.Claude.Protocol do
       if(opts[:resume] && opts[:fork_session], do: ["--fork-session"], else: []) ++
       if(opts[:persist_session] == false, do: ["--no-session-persistence"], else: []) ++
       if(opts[:partial_messages] == true, do: ["--include-partial-messages"], else: []) ++
-      mcp_args(opts[:mcp])
+      mcp_args(opts[:mcp]) ++
+      if(opts[:disallowed_tools] in [nil, []],
+        do: [],
+        else: ["--disallowedTools", Enum.join(opts[:disallowed_tools], ",")]
+      )
   end
 
   # HAL-C2's own MCP server, its tools allowed without a prompt, and what it is for.

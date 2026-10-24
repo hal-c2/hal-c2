@@ -20,6 +20,8 @@ defmodule HalC2.Mcp do
 
   use GenServer
 
+  @workers_only "\n\nThe user keeps agents to HAL-C2's workers: do not use this provider's built-in subagents. Delegate child work with `delegate_task`, so the user can see it.\n"
+
   @table __MODULE__.Credentials
   @protocol "2025-06-18"
   @liveness_ms 24 * 60 * 60 * 1_000
@@ -67,8 +69,17 @@ defmodule HalC2.Mcp do
     if Process.whereis(__MODULE__) && allowed, do: server(thread_id, instance)
   end
 
-  @doc "What agents are told about the tools, for their system or developer prompt."
+  @doc """
+  What agents are told about the tools, for their system or developer prompt. When the
+  user keeps agents to HAL-C2's workers (`nativeSubagents`), it ends by saying so.
+  """
   def instructions do
+    if Process.whereis(HalC2.Settings) && HalC2.Settings.hal_c2_subagents?(),
+      do: base_instructions() <> @workers_only,
+      else: base_instructions()
+  end
+
+  defp base_instructions do
     case :persistent_term.get({__MODULE__, :instructions}, nil) do
       nil ->
         text = File.read!(Application.app_dir(:hal_c2, "priv/mcp_instructions.md"))

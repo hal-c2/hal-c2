@@ -682,3 +682,10 @@ Feature: Antigravity
     Given an MCP server offers a tool called "start_subagent"
     When Antigravity calls that tool
     Then it is shown as a tool call, not as a subagent batch
+
+  # features/settings/subagents.feature: the setting is not wired for Antigravity yet.
+  @backlog @mc
+  Scenario: Antigravity's own subagents are left as they are when agents use HAL-C2 workers
+    Given the subagents setting is HAL-C2 workers
+    When an Antigravity session is started
+    Then Antigravity starts as usual, because it has no switch for its subagents
