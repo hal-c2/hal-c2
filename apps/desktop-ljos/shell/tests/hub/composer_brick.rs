@@ -31,6 +31,8 @@ Item {
     readonly property string text: input.text
     // A point on the card beside the input, in the probe.
     readonly property point beside: input.mapToItem(this, -8, -8)
+    // The middle of the input, in the probe.
+    readonly property point middle: input.mapToItem(this, input.width / 2, input.height / 2)
 
     // Presses the attach button, as a click does; false when it is not
     // there or not enabled.
@@ -331,4 +333,38 @@ fn a_recording_dropped_on_the_card_is_uploaded() {
     ));
     deliver(&hub);
     uploads_as_a_video(&hub, "rec.mov", 20);
+}
+
+/// A file named as Finder names them (spaces, a `#`, a non-ASCII letter)
+/// dropped on the middle of the input: its percent-encoded `file:` URL comes
+/// back to the file on disk.
+#[test]
+fn a_dropped_file_with_spaces_and_escapes_in_its_path_joins_the_draft() {
+    let hub = on_threads(&["t1"]);
+    let (root, _window) = probe(&hub);
+    let dir = tempfile::tempdir().expect("a directory for the file");
+    let folder = dir.path().join("Mál og menning");
+    std::fs::create_dir(&folder).expect("the folder");
+    let file = folder.join("Notes #2 100% done.txt");
+    std::fs::write(&file, "some notes").expect("the file");
+    let at = match hub.engine.read_by_name(root, "middle") {
+        Value::Point(p) => (p.x, p.y),
+        other => panic!("a point: {other:?}"),
+    };
+    let taken = ljos::prelude::external_drag(
+        &hub.engine,
+        &ljos::prelude::ExternalDrag::Dropped {
+            files: vec![file],
+            at: Some(at),
+        },
+    );
+    hub.advance(0);
+    assert!(taken);
+    let attachments = hub.published("composer")["attachments"].clone();
+    // readAttachmentFiles passes on only the files it found on disk.
+    assert_eq!(
+        attachments[0]["name"], "Notes #2 100% done.txt",
+        "{attachments}"
+    );
+    assert_eq!(attachments[0]["kind"], "file");
 }
