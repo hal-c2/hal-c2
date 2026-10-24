@@ -671,3 +671,10 @@ Feature: OpenCode
     When the interval passes, or the user changes an OpenCode setting
     Then no OpenCode status check is run and no OpenCode server is started for one
     But OpenCode's status is checked when the user refreshes provider status
+
+  # features/settings/subagents.feature: the setting is not wired for OpenCode yet.
+  @backlog @mc
+  Scenario: OpenCode's own subagent tool is turned off when agents use HAL-C2 workers
+    Given the subagents setting is HAL-C2 workers
+    When an OpenCode session is started
+    Then its task permission is denied, through the config OpenCode is started with

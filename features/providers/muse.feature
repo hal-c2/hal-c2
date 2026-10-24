@@ -280,3 +280,10 @@ Feature: Muse Code
     Given Muse Code is installed and enabled
     When the user opens the model choices for generated text
     Then no Muse Code model is offered
+
+  # features/settings/subagents.feature: the setting is not wired for Muse yet.
+  @backlog @mc
+  Scenario: Muse Code's own subagents are turned off when agents use HAL-C2 workers
+    Given the subagents setting is HAL-C2 workers
+    When a Muse Code session is started
+    Then it has no built-in subagent tool, if Muse Code can turn it off

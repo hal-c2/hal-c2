@@ -116,6 +116,27 @@ Feature: Codex
     When a Codex turn starts
     Then Codex can call the HAL-C2 tools for this thread
 
+  Scenario: Codex keeps its own subagents unless the subagents setting says otherwise
+    Given the project allows the HAL-C2 tools
+    When a Codex turn starts
+    Then Codex is started with its subagent features left on
+
+  Scenario: Codex's subagents are off when agents use HAL-C2 workers
+    Given the project allows the HAL-C2 tools
+    And the subagents setting is HAL-C2 workers
+    When a Codex turn starts
+    Then Codex is started with its subagent features turned off
+    And Codex is told to delegate with "delegate_task"
+
+  # Codex takes its features only when its thread starts; the turns' instructions follow them.
+  Scenario: A Codex thread keeps the subagents choice it started with
+    Given the project allows the HAL-C2 tools
+    And the subagents setting is HAL-C2 workers
+    When a Codex turn starts
+    And the subagents setting is the provider's own
+    And the user sends another message to the Codex thread
+    Then every Codex turn of the thread is told to delegate with "delegate_task"
+
   Scenario: Codex starts with the launch arguments configured for it
     Given the Codex instance has launch arguments configured
     When a Codex session starts

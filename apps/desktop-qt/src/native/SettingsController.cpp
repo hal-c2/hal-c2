@@ -65,6 +65,7 @@ const QList<Row>& rows() {
       {"composerVimKeys", true, false},
       {"sendShortcut", true, QStringLiteral("enter")},
       {"followUpBehavior", true, QStringLiteral("steer")},
+      {"nativeSubagents", false, QStringLiteral("provider")},
       {"enableProviderUpdateChecks", false, true},
       {"continueThreadsAfterServerUpdate", false, false},
       {"newWorktreesStartFromOrigin", false, true},

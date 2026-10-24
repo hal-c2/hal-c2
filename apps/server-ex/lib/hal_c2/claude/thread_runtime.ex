@@ -67,6 +67,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   @sidechain ~w(assistant user stream_event)
   @task_status %{"completed" => "completed", "failed" => "failed", "stopped" => "cancelled"}
 
+  # The subagent tool, taken from the CLI for a session kept to HAL-C2's workers
+  # (`HalC2.Mcp.workers_only?/1`). Part of the launch, so a change restarts the CLI when
+  # the next turn starts.
+  defp disallowed_tools(mcp), do: if(HalC2.Mcp.workers_only?(mcp), do: @agent_tools, else: [])
+
   def driver, do: "claudeAgent"
 
   @spec start_turn(String.t(), map) :: :ok
@@ -266,6 +271,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       |> Provider.launch(Map.get(turn, :options, %{}), Entities.instance(ids))
       |> auto_compact(Entities.instance(ids))
       |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
+      |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp)))
       |> Map.put(:instance, Entities.instance(ids))
 
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)
@@ -579,6 +585,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp upgrade_launch(%{} = launch, %{last_ids: %{} = ids, thread_id: thread_id}) do
     launch
     |> Map.put_new_lazy(:mcp, fn -> HalC2.Mcp.for_agent(thread_id, Entities.instance(ids)) end)
+    |> Map.put_new(:disallowed_tools, [])
     |> Map.put_new(:instance, :unknown)
   end
 
@@ -879,6 +886,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       fork_session: Map.get(turn, :fork) != nil,
       partial_messages: true,
       mcp: turn.launch.mcp,
+      disallowed_tools: Map.get(turn.launch, :disallowed_tools, []),
       # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude.
       env: session_env(turn),
       log: state.thread_id

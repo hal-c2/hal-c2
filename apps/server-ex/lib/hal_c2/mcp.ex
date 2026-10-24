@@ -20,6 +20,8 @@ defmodule HalC2.Mcp do
 
   use GenServer
 
+  @workers_only "\n\nThe user keeps agents to HAL-C2's workers: do not use this provider's built-in subagents. Delegate child work with `delegate_task`, so the user can see it.\n"
+
   @table __MODULE__.Credentials
   @protocol "2025-06-18"
   @liveness_ms 24 * 60 * 60 * 1_000
@@ -99,8 +101,25 @@ defmodule HalC2.Mcp do
       else: Application.get_env(:hal_c2, :acp_max_wait_ms, 55_000)
   end
 
-  @doc "What agents are told about the tools, for their system or developer prompt."
-  def instructions do
+  @doc """
+  Whether an agent session given `mcp` (`for_agent/2`) is kept to HAL-C2's workers: the
+  user chose so (`nativeSubagents`) and the agent has the tools to delegate with. An
+  adapter reads it once per session, for both the provider tool it takes away and
+  `instructions/1`, so the two cannot disagree.
+  """
+  def workers_only?(nil), do: false
+
+  def workers_only?(_mcp),
+    do: Process.whereis(HalC2.Settings) != nil and HalC2.Settings.hal_c2_subagents?()
+
+  @doc """
+  What agents are told about the tools, for their system or developer prompt. For a
+  session kept to HAL-C2's workers (`workers_only?/1`) it ends by saying so.
+  """
+  def instructions(workers_only \\ false)
+  def instructions(true), do: instructions(false) <> @workers_only
+
+  def instructions(false) do
     case :persistent_term.get({__MODULE__, :instructions}, nil) do
       nil ->
         text = File.read!(Application.app_dir(:hal_c2, "priv/mcp_instructions.md"))
