@@ -298,6 +298,44 @@ fn closing_the_last_window_quits_and_keeps_it_to_reopen() {
 }
 
 #[test]
+fn closing_the_main_root_quits_but_on_macos_where_reopening_shows_it() {
+    let (hub, _) = opening(Launch::default());
+    let engine = &hub.engine;
+    let source = crate::common::compile(
+        &[(
+            "Probe",
+            "import QtQuick\nWindow { width: 300; height: 200 }",
+        )],
+        &[],
+    );
+    let root = ljos::create_root(engine, source, "Probe").expect("the root");
+    controller::attach_root(engine, MAIN, root);
+
+    // What the user's close button does: `closing`, then hidden.
+    engine
+        .emit_by_name(root, "closing", &[ljos::prelude::Value::Null])
+        .unwrap();
+    engine
+        .write_by_name(root, "visible", ljos::prelude::Value::Bool(false))
+        .unwrap();
+    hub.advance(0);
+    assert_eq!(engine.quit_requested(), !cfg!(target_os = "macos"));
+    assert_eq!(controller::windows(engine), vec![MAIN]);
+
+    // A click on the Dock icon while a window is shown changes nothing; with
+    // none shown the main one shows again.
+    let app = engine.singleton::<ljos::prelude::Application>().unwrap();
+    let reopen = |shown: bool| {
+        engine
+            .emit_by_name(app, "reopened", &[ljos::prelude::Value::Bool(shown)])
+            .unwrap();
+        engine.read_by_name(root, "visible").to_boolean()
+    };
+    assert!(!reopen(true));
+    assert!(reopen(false));
+}
+
+#[test]
 fn the_open_windows_are_saved_and_restored_with_their_own_files() {
     let dir = state_dir("restore");
     {

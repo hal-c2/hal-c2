@@ -6,9 +6,10 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use chrono::{
-    DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime,
-    SecondsFormat, TimeZone, Timelike, Utc,
+    DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Offset,
+    SecondsFormat, TimeZone, Utc,
 };
+use ljos::locale::{DateTime as LocalFields, FormatType, Locale};
 use serde_json::{Map, Value, json};
 
 const MINUTE_MS: i64 = 60 * 1000;
@@ -849,13 +850,14 @@ fn thread_sort_timestamp(thread: &Thread, sort_order: &str) -> f64 {
     first_timestamp(Some(&thread.updated_at), &thread.created_at)
 }
 
-/// QString::localeAwareCompare, without a locale: case folded first.
-// TODO(ljos#75): Settings::locale — collation by the user's locale; Ljós
-// has no collator yet, so titles compare case-insensitively, then exactly.
+/// QString::localeAwareCompare: by the system locale's collation
+/// (`LC_COLLATE`), so `a ä b B z` in English. The `C` locale orders by
+/// UTF-16 code units, as Qt's does.
 pub(crate) fn locale_compare(left: &str, right: &str) -> Ordering {
-    left.to_lowercase()
-        .cmp(&right.to_lowercase())
-        .then_with(|| left.cmp(right))
+    thread_local! {
+        static COLLATOR: ljos::locale::Collator = ljos::locale::Locale::system().collator();
+    }
+    COLLATOR.with(|collator| collator.compare(left, right))
 }
 
 /// The client settings grouping and ordering read: sidebarProjectGroupingMode
@@ -1627,27 +1629,25 @@ pub fn plain_spaces(text: &str) -> String {
     text.replace(['\u{202F}', '\u{00A0}'], " ")
 }
 
-/// The time of day in the timestampFormat setting, with plain spaces.
-pub fn time_of_day<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> String {
-    plain_spaces(&locale_time(local, timestamp_format))
+/// "12-hour", "24-hour" or "locale" (the locale's short time), the
+/// timestampFormat setting, in `locale`'s words, with plain spaces.
+pub fn time_of_day<Tz: TimeZone>(
+    local: &DateTime<Tz>,
+    timestamp_format: &str,
+    locale: &Locale,
+) -> String {
+    let at = fields(local);
+    let time = match timestamp_format {
+        "12-hour" => locale.format_pattern(&at, "h:mm AP"),
+        "24-hour" => locale.format_pattern(&at, "HH:mm"),
+        _ => locale.format_time(&at, FormatType::Short),
+    };
+    plain_spaces(&time)
 }
 
-/// "12-hour", "24-hour" or "locale", the timestampFormat setting.
-// TODO(ljos#76): Settings::locale — "locale" is QLocale's short time
-// format; without the system locale from Rust it reads as 24-hour "H:mm".
-fn locale_time<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> String {
-    let (hour, minute) = (local.hour(), local.minute());
-    match timestamp_format {
-        "12-hour" => {
-            let h = match hour % 12 {
-                0 => 12,
-                h => h,
-            };
-            format!("{h}:{minute:02} {}", if hour < 12 { "AM" } else { "PM" })
-        }
-        "24-hour" => format!("{hour:02}:{minute:02}"),
-        _ => format!("{hour}:{minute:02}"),
-    }
+/// A zoned time as Ljós's locales read one.
+fn fields<Tz: TimeZone>(at: &DateTime<Tz>) -> LocalFields {
+    LocalFields::from_unix_ms(at.timestamp_millis(), at.offset().fix().local_minus_utc())
 }
 
 /// `date` at `hour`:00 in `zone`; an hour a daylight saving change skips
@@ -1659,21 +1659,13 @@ fn local_at<Tz: TimeZone>(zone: &Tz, date: NaiveDate, hour: u32) -> Option<DateT
     })
 }
 
-const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
-fn short_weekday(date: NaiveDate) -> &'static str {
-    WEEKDAYS[date.weekday().num_days_from_sunday() as usize]
-}
-
 pub fn snooze_presets<Tz: TimeZone>(
     now: &DateTime<Tz>,
     timestamp_format: &str,
+    locale: &Locale,
 ) -> Vec<SnoozePreset> {
     let zone = now.timezone();
-    let time = |at: &DateTime<Tz>| time_of_day(at, timestamp_format);
+    let time = |at: &DateTime<Tz>| time_of_day(at, timestamp_format, locale);
     let preset = |id: &str, label: &str, when: String, at: &DateTime<Tz>| SnoozePreset {
         id: id.into(),
         label: label.into(),
@@ -1717,7 +1709,7 @@ pub fn snooze_presets<Tz: TimeZone>(
     {
         let when = format!(
             "{} {}",
-            short_weekday(next_week.date_naive()),
+            locale.format_pattern(&fields(&next_week), "ddd"),
             time(&next_week)
         );
         presets.push(preset("next-week", "Next week", when, &next_week));
@@ -1730,6 +1722,7 @@ pub fn wake_description<Tz: TimeZone>(
     snoozed_until: &str,
     now: &DateTime<Tz>,
     timestamp_format: &str,
+    locale: &Locale,
 ) -> String {
     let Some(wake_ms) = parse_iso(Some(snoozed_until)) else {
         return String::new();
@@ -1738,18 +1731,18 @@ pub fn wake_description<Tz: TimeZone>(
     let Some(wake) = zone.timestamp_millis_opt(wake_ms).single() else {
         return String::new();
     };
-    let time = time_of_day(&wake, timestamp_format);
+    let time = time_of_day(&wake, timestamp_format, locale);
     let Some(start_of_today) = local_at(&zone, now.date_naive(), 0) else {
         return time;
     };
     let since = (wake.clone() - start_of_today).num_milliseconds();
     let day_delta = since.div_euclid(DAY_MS);
-    let date = wake.date_naive();
+    let date = |pattern: &str| locale.format_pattern(&fields(&wake), pattern);
     match day_delta {
         0 => time,
         1 => format!("tomorrow {time}"),
-        d if d < 7 => format!("{} {time}", short_weekday(date)),
-        _ => format!("{} {}, {time}", MONTHS[date.month0() as usize], date.day()),
+        d if d < 7 => format!("{} {time}", date("ddd")),
+        _ => format!("{}, {time}", date("MMM d")),
     }
 }
 

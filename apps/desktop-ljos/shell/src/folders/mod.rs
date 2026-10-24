@@ -12,11 +12,8 @@
 //! it. Its rows then come and go one by one, so the rows a view shows and
 //! has open keep their place.
 //!
-//! A write of `rootPath` to the path it already has clears `error`, as
-//! `setBrowseRootPath` does before it compares. Nothing hears an equal
-//! write but the property's setter, which cannot reach the Engine: it asks
-//! the watcher's queue for the clearing, which [`deliver`] does
-//! (TODO(ljos#85): a setter that can write `error` itself clears it at once).
+//! A write of `rootPath`, of the path it already has too, clears `error`
+//! as `setBrowseRootPath` does before it compares: its setter does.
 
 mod plain;
 mod watch;
@@ -114,19 +111,16 @@ impl Default for LocalFolderModel {
 }
 
 impl LocalFolderModel {
-    /// The setter of `rootPath`: stores what is written, and sees a write
-    /// of the root it already has, which is forgotten as `error`'s last
-    /// failure (`setBrowseRootPath` clears the error before it compares).
-    /// The model's own give-back of the root (`show_root`) is not a write.
-    /// TODO(ljos#85): clear `error` here once a setter can reach the Engine.
-    fn keep_root(&self, path: Atom) -> Option<Atom> {
-        let state = &self.state;
-        if !state.giving_back.get()
-            && *state.root.borrow() == *path
-            && let Ok(watch) = state.watch.try_borrow()
-            && let Some(watch) = watch.as_ref()
-        {
-            watch.forget_error();
+    /// The setter of `rootPath`: stores what is written, and forgets
+    /// `error`'s last failure, the root it already has included
+    /// (`setBrowseRootPath` clears the error before it compares). The
+    /// model's own give-back of the root (`show_root`) is not a write.
+    fn keep_root(cx: &Cx, path: Atom) -> Option<Atom> {
+        let giving_back = cx
+            .with::<LocalFolderModel, _>(|m| m.state.giving_back.get())
+            .unwrap_or(true);
+        if !giving_back {
+            let _ = cx.set(LocalFolderModel::ERROR, Atom::from(""));
         }
         Some(path)
     }

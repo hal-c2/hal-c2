@@ -152,6 +152,7 @@ impl World {
         tl.set_clock(Clock {
             now: Rc::new(move || clock_now.get()),
             zone: Zone::utc(),
+            locale: ljos::locale::Locale::named("en_US"),
         });
         World {
             tl,

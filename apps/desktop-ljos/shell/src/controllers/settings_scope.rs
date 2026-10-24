@@ -384,7 +384,11 @@ impl SettingsScope {
                 ids.push((e.id, label));
             }
         }
-        ids.sort_by(|(a, la), (b, lb)| (*b == local).cmp(&(*a == local)).then_with(|| la.cmp(lb)));
+        ids.sort_by(|(a, la), (b, lb)| {
+            (*b == local)
+                .cmp(&(*a == local))
+                .then_with(|| crate::sidebar_model::locale_compare(la, lb))
+        });
         ids.into_iter().map(|(id, _)| id).collect()
     }
 

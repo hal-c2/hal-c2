@@ -462,12 +462,19 @@ fn a_time_of_day_has_plain_spaces() {
     assert_eq!(plain_spaces("6\u{202F}PM\u{00A0}x"), "6 PM x");
     assert_eq!(plain_spaces("6:05 PM"), "6:05 PM");
     let evening = Utc.with_ymd_and_hms(2026, 9, 23, 18, 5, 0).unwrap();
-    for format in ["locale", "12-hour", "24-hour"] {
-        let time = time_of_day(&evening, format);
-        assert!(!time.contains(['\u{202F}', '\u{00A0}']), "{format}: {time}");
+    for name in ["en_US", "es_ES", "de_DE"] {
+        let locale = Locale::named(name);
+        for format in ["locale", "12-hour", "24-hour"] {
+            let time = time_of_day(&evening, format, &locale);
+            assert!(
+                !time.contains(['\u{202F}', '\u{00A0}']),
+                "{name} {format}: {time}"
+            );
+        }
     }
-    assert_eq!(time_of_day(&evening, "12-hour"), "6:05 PM");
-    assert_eq!(time_of_day(&evening, "24-hour"), "18:05");
+    let en = Locale::named("en_US");
+    assert_eq!(time_of_day(&evening, "12-hour", &en), "6:05 PM");
+    assert_eq!(time_of_day(&evening, "24-hour", &en), "18:05");
 }
 
 #[test]
@@ -619,6 +626,25 @@ fn projects_sort_by_their_latest_thread() {
     assert_eq!(order("manual"), ["e:/one", "e:/two"]);
     assert_eq!(most_recent_project(&projects, &threads).unwrap().id, "p1");
     assert_eq!(most_recent_project(&projects, &[]).unwrap().id, "p2");
+}
+
+#[test]
+fn projects_of_one_age_go_by_the_system_locales_alphabet() {
+    // The C locale has no alphabet: Qt's order there is by code unit.
+    if ljos::locale::Locale::system().name() == "C" {
+        return;
+    }
+    let projects: Vec<Project> = ["z", "b", "B", "\u{e4}", "a"]
+        .iter()
+        .map(|title| project("e", title, &format!("/{title}"), json!({})))
+        .collect();
+    let titles: Vec<String> = group_projects(&projects, &GroupingSettings::default(), "", &[])
+        .into_iter()
+        .map(|g| g.summary["displayName"].as_str().unwrap().to_owned())
+        .collect();
+    // Letters, then accents, then case: not code units (`B a b z ä`), nor
+    // case folded (`a B b z ä`).
+    assert_eq!(titles, ["a", "\u{e4}", "b", "B", "z"]);
 }
 
 #[test]
@@ -829,7 +855,7 @@ fn presets_step_by_calendar_days() {
     let zone = FixedOffset::east_opt(0).unwrap();
     // A Wednesday morning.
     let now = zone.with_ymd_and_hms(2026, 9, 23, 9, 0, 0).unwrap();
-    let presets = snooze_presets(&now, "24-hour");
+    let presets = snooze_presets(&now, "24-hour", &Locale::named("en_US"));
     let ids: Vec<&str> = presets.iter().map(|p| p.id.as_str()).collect();
     assert_eq!(
         ids,
@@ -843,7 +869,7 @@ fn presets_step_by_calendar_days() {
 
     // Late in the day there is no evening; on a Sunday tomorrow is next week.
     let sunday_night = zone.with_ymd_and_hms(2026, 9, 27, 17, 30, 0).unwrap();
-    let ids: Vec<String> = snooze_presets(&sunday_night, "12-hour")
+    let ids: Vec<String> = snooze_presets(&sunday_night, "12-hour", &Locale::named("en_US"))
         .into_iter()
         .map(|p| p.id)
         .collect();
@@ -854,12 +880,23 @@ fn presets_step_by_calendar_days() {
 fn wake_descriptions_name_the_day() {
     let zone = FixedOffset::east_opt(0).unwrap();
     let now = zone.with_ymd_and_hms(2026, 9, 23, 9, 0, 0).unwrap();
-    let describe = |at: &str| wake_description(at, &now, "12-hour");
+    let en = Locale::named("en_US");
+    let describe = |at: &str| wake_description(at, &now, "12-hour", &en);
     assert_eq!(describe("2026-09-23T17:30:00Z"), "5:30 PM");
     assert_eq!(describe("2026-09-24T09:00:00Z"), "tomorrow 9:00 AM");
     assert_eq!(describe("2026-09-28T00:00:00Z"), "Mon 12:00 AM");
     assert_eq!(describe("2026-10-05T09:00:00Z"), "Oct 5, 9:00 AM");
     assert_eq!(describe("nope"), "");
+    // "locale" is the locale's short time; days and months are its words.
+    let de = Locale::named("de_DE");
+    let describe = |at: &str| wake_description(at, &now, "locale", &de);
+    assert_eq!(describe("2026-09-23T17:30:00Z"), "17:30");
+    assert_eq!(describe("2026-09-28T00:00:00Z"), "Mo. 00:00");
+    assert_eq!(describe("2026-10-05T09:00:00Z"), "Okt. 5, 09:00");
+    assert_eq!(
+        wake_description("2026-09-23T17:30:00Z", &now, "locale", &en),
+        "5:30 PM"
+    );
 }
 
 #[test]
