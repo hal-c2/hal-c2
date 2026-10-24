@@ -6,8 +6,8 @@ defmodule HalC2.Orchestration.NativeSubagent do
   The parent thread gets a `provider_native` subagent entity with its node (under the
   run's root node) and turn item. Its work goes to a child thread, a subagent of the
   parent forked from that node: the task prompt as a user message, then the
-  subagent's answer as an assistant message. The provider runs the child, so the
-  child thread has no run of its own.
+  subagent's answer as an assistant message, with the work it reports in between
+  (`item/5`). The provider runs the child, so the child thread has no run of its own.
   """
 
   alias HalC2.{Orchestration, StreamState}
@@ -130,9 +130,9 @@ defmodule HalC2.Orchestration.NativeSubagent do
       text: ""
     }
 
-    HalC2.Streams.transact(child_id, :thread, fn _state ->
+    HalC2.Streams.transact(child_id, :thread, fn state ->
       changes =
-        Enum.map(conversation(sub, :user, prompt, at), fn {kind, id, entity} ->
+        Enum.map(conversation(state, sub, :user, prompt, at), fn {kind, id, entity} ->
           Orchestration.create(kind, id, entity)
         end)
 
@@ -191,8 +191,8 @@ defmodule HalC2.Orchestration.NativeSubagent do
        |> Enum.filter(&is_tuple/1), :ok}
     end)
 
-    HalC2.Streams.transact(child, :thread, fn _state ->
-      {Enum.map(conversation(sub, :user, message || "", at), fn {kind, id, entity} ->
+    HalC2.Streams.transact(child, :thread, fn state ->
+      {Enum.map(conversation(state, sub, :user, message || "", at), fn {kind, id, entity} ->
          Orchestration.create(kind, id, entity)
        end), :ok}
     end)
@@ -209,14 +209,14 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
     HalC2.Streams.transact(sub.child, :thread, fn state ->
       changes =
-        Enum.map(conversation(sub, :assistant, sub.text, at), fn {kind, id, entity} ->
+        Enum.map(conversation(state, sub, :assistant, sub.text, at), fn {kind, id, entity} ->
           if StreamState.get(state, kind)[id],
             do:
               Orchestration.upsert(
                 state,
                 kind,
                 id,
-                &Map.merge(&1, Map.drop(entity, ["createdAt", "startedAt"]))
+                &Map.merge(&1, Map.drop(entity, ["createdAt", "startedAt", "ordinal"]))
               ),
             else: Orchestration.create(kind, id, entity)
         end)
@@ -246,14 +246,14 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
     HalC2.Streams.transact(sub.child, :thread, fn state ->
       changes =
-        Enum.map(conversation(sub, :user, text, at), fn {kind, id, entity} ->
+        Enum.map(conversation(state, sub, :user, text, at), fn {kind, id, entity} ->
           if StreamState.get(state, kind)[id],
             do:
               Orchestration.upsert(
                 state,
                 kind,
                 id,
-                &Map.merge(&1, Map.drop(entity, ["createdAt", "startedAt"]))
+                &Map.merge(&1, Map.drop(entity, ["createdAt", "startedAt", "ordinal"]))
               ),
             else: Orchestration.create(kind, id, entity)
         end)
@@ -265,7 +265,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
   end
 
   @doc "Shows what the running subagent is doing now, on its entity and its turn item."
-  def progress(sub, text) do
+  def progress(sub, text, opts \\ []) do
     at = Entities.now()
     put = &Map.merge(&1, %{"progress" => text, "updatedAt" => at})
 
@@ -277,7 +277,85 @@ defmodule HalC2.Orchestration.NativeSubagent do
        |> Enum.filter(&is_tuple/1), :ok}
     end)
 
-    sub
+    # `thinking: true` also shows it in the child thread, as one thinking item that
+    # holds the latest progress and ends with the subagent.
+    if opts[:thinking],
+      do:
+        item(sub, "#{sub.native}:progress", "reasoning", "running", %{
+          "title" => "Subagent progress",
+          "text" => text,
+          "streaming" => true
+        }),
+      else: sub
+  end
+
+  @doc """
+  Writes the subagent's own work into its child thread, for a provider that reports
+  it (Claude's messages under the subagent's tool call): a turn item of `type` for its
+  `native` id, created the first time and updated with `status` and `fields` after
+  that. An `"assistant_message"` (its `text` in `fields`) is something the subagent
+  said; the latest is its answer unless the provider reports another.
+  """
+  def item(sub, native, type, status, fields) do
+    at = Entities.now()
+    ids = child_ids(sub)
+    item_id = "turn-item:#{sub.driver}:#{native}"
+    message_id = if type == "assistant_message", do: "message:#{sub.driver}:#{native}"
+
+    fields =
+      if message_id,
+        do: Map.merge(%{"messageId" => message_id, "streaming" => false}, fields),
+        else: fields
+
+    put =
+      Map.merge(fields, %{"status" => status, "updatedAt" => at})
+      |> then(&if(status in @terminal, do: Map.put(&1, "completedAt", at), else: &1))
+
+    HalC2.Streams.transact(sub.child, :thread, fn state ->
+      changes =
+        if StreamState.get(state, "turn-item")[item_id] do
+          [
+            Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)),
+            message_id &&
+              Orchestration.upsert(
+                state,
+                "message",
+                message_id,
+                &Map.merge(&1, %{"text" => fields["text"], "updatedAt" => at})
+              )
+          ]
+        else
+          [
+            message_id &&
+              Orchestration.create(
+                "message",
+                message_id,
+                Entities.message(ids, message_id, "assistant", fields["text"] || "", false, at, %{
+                  "createdBy" => "agent",
+                  "creationSource" => "provider"
+                })
+              ),
+            Orchestration.create(
+              "turn-item",
+              item_id,
+              Entities.turn_item(
+                ids,
+                item_id,
+                type,
+                Orchestration.next_ordinal(state),
+                status,
+                at,
+                fields
+              )
+              |> Map.put("nativeItemRef", Entities.provider_ref(native, sub.driver))
+            )
+          ]
+        end
+
+      {Enum.filter(changes, &is_tuple/1), :ok}
+    end)
+
+    if message_id, do: Map.put(sub, :said, fields["text"]), else: sub
   end
 
   @doc """
@@ -286,10 +364,28 @@ defmodule HalC2.Orchestration.NativeSubagent do
   """
   def finish(sub, status, result) do
     status = if status in @terminal, do: status, else: "completed"
-    result = if result in [nil, ""], do: nilify(sub.text), else: result
-    sub = if sub.text == "" and result, do: append(sub, result), else: sub
+    said = Map.get(sub, :said)
+    result = if result in [nil, ""], do: nilify(said || sub.text), else: result
+
+    sub =
+      cond do
+        # What the subagent said (`item/5`) is in its thread; a result it did not say
+        # follows as its answer.
+        said != nil and result not in [nil, said] ->
+          item(sub, "#{sub.native}:message:result", "assistant_message", "completed", %{
+            "text" => result
+          })
+
+        said == nil and sub.text == "" and result != nil ->
+          append(sub, result)
+
+        true ->
+          sub
+      end
+
     at = Entities.now()
     done = &Map.merge(&1, %{"status" => status, "completedAt" => at})
+    settle_child(sub, status, at)
 
     HalC2.Streams.transact(sub.thread, :thread, fn state ->
       {[
@@ -317,12 +413,33 @@ defmodule HalC2.Orchestration.NativeSubagent do
     sub
   end
 
-  # The child's message and its turn item (`makeSubagentConversationArtifacts`).
-  defp conversation(sub, role, text, at) do
+  # Work still open in the child thread (a tool call, the progress) ends with it.
+  defp settle_child(sub, status, at) do
+    HalC2.Streams.transact(sub.child, :thread, fn state ->
+      {for item <- StreamState.list(state, "turn-item"),
+           item["status"] == "running" do
+         Orchestration.upsert(state, "turn-item", item["id"], fn item ->
+           item
+           |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at})
+           |> then(
+             &if(Map.has_key?(&1, "streaming"), do: Map.put(&1, "streaming", false), else: &1)
+           )
+         end)
+       end
+       |> Enum.filter(&is_tuple/1), :ok}
+    end)
+  end
+
+  defp child_ids(sub),
+    do: %{thread: sub.child, run: nil, root_node: sub.root, provider_thread: nil}
+
+  # The child's message and its turn item (`makeSubagentConversationArtifacts`), after
+  # whatever the child thread already shows.
+  defp conversation(state, sub, role, text, at) do
     native = "#{sub.native}:#{if role == :user, do: "prompt", else: "message:result"}"
     message_id = "message:#{sub.driver}:#{native}"
     item_id = "turn-item:#{sub.driver}:#{native}"
-    ids = %{thread: sub.child, run: nil, root_node: sub.root, provider_thread: nil}
+    ids = child_ids(sub)
     sender = if role == :user, do: %{"senderThreadId" => sub.sender}, else: %{}
 
     message =
@@ -348,7 +465,10 @@ defmodule HalC2.Orchestration.NativeSubagent do
         ids,
         item_id,
         "#{role}_message",
-        Map.get(sub, :ordinal, 100) + if(role == :user, do: 0, else: 1),
+        max(
+          Orchestration.next_ordinal(state),
+          Map.get(sub, :ordinal, 100) + if(role == :user, do: 0, else: 1)
+        ),
         "completed",
         at,
         Map.merge(fields, %{"messageId" => message_id, "text" => text})

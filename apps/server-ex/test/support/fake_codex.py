@@ -227,6 +227,8 @@ for line in sys.stdin:
         # The script plays from the user's message, not from the context the MC hands
         # off ahead of it (`<conversation_history>`, `<imported_history>`, ...).
         text = re.sub(r"\A(?:<(\w+)>\n.*?\n</\1>\n\n)+", "", prompt, flags=re.S)
+        # A delegated subagent's task follows the MC's worker preamble.
+        text = re.sub(r"\AYou are a HAL-C2 worker delegated by .*?\nTask:\n", "", text, flags=re.S)
         rollout_append({"type": "turn_context", "payload": {"cwd": params.get("cwd"), "model": params.get("model")}})
         rollout_append({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": prompt}]}})
         if "exit before starting" in text:

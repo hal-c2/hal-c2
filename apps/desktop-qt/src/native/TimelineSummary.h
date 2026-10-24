@@ -53,10 +53,15 @@ QString commandDisplayText(const QString& command);
 // `notification` item (`summary`, `outcome`). Threads written before it did hold
 // the message as the user's instead, a delegated task's result as the envelope
 // the agent reads, and are read here as what they stand for. `item` is a turn
-// item, or a queued run's message (which has no `type`).
+// item, or a queued run's message (which has no `type`). A delegated task's names
+// its worker (`workerThreadId`, `workerTitle`) and carries the worker's result
+// (`detail`, capped by the MC); an older record has none of the three.
 struct Notice {
   QString summary;
   QString outcome;
+  QString workerThreadId;
+  QString workerTitle;
+  QString detail;
 };
 std::optional<Notice> noticeOf(const QJsonObject& item);
 

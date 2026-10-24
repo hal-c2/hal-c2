@@ -899,6 +899,7 @@ defmodule HalC2.Codex.ThreadRuntime do
             "mcp_servers" => %{
               "hal-c2" => %{
                 "url" => mcp.url,
+                "tool_timeout_sec" => div(HalC2.Mcp.tool_timeout_ms(), 1000),
                 "http_headers" => %{"Authorization" => mcp.authorization}
               }
             }

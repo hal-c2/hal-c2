@@ -237,9 +237,9 @@ defmodule HalC2.Mcp.Tools do
     end
   end
 
-  def run("hal_c2_thread_wait", args, %{row: me}) do
+  def run("hal_c2_thread_wait", args, %{row: me} = caller) do
     with {:ok, row} <- project_thread(me, args["threadId"]) do
-      timeout = wait_timeout(args["timeoutMs"])
+      timeout = min(wait_timeout(args["timeoutMs"]), HalC2.Mcp.max_wait_ms(caller.instance))
       {run, timed_out} = wait(row["id"], args["runId"], timeout)
 
       {:ok,

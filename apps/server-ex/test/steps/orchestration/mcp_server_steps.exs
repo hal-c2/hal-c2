@@ -56,6 +56,30 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     Map.put(context, :credential, auth)
   end
 
+  step "the agent's {string} server allows a tool call to run longer than an hour",
+       %{args: [name]} = context do
+    server = get_in(latest_session(context), ["params", "config", "mcp_servers", name])
+    assert server["tool_timeout_sec"] * 1_000 > 3_600_000
+    context
+  end
+
+  step "a Claude agent's tool timeout is longer than an hour", context do
+    turn = %{ids: %{}, launch: %{mcp: %{url: "http://x/mcp", authorization: "Bearer t"}}}
+    env = HalC2.Claude.ThreadRuntime.session_env(turn)
+    assert String.to_integer(List.keyfind(env, "MCP_TOOL_TIMEOUT", 0) |> elem(1)) > 3_600_000
+    context
+  end
+
+  step "a wait by an agent on {string} may last an hour", %{args: [instance]} = context do
+    assert HalC2.Mcp.max_wait_ms(instance) == 3_600_000
+    context
+  end
+
+  step "a wait by an agent on an ACP provider may not reach a minute", context do
+    assert HalC2.Mcp.max_wait_ms("opencode") < 60_000
+    context
+  end
+
   step "asking again for {string} on {string} gives the same credential",
        %{args: [thread, instance]} = context do
     assert HalC2.Mcp.server(World.thread_id(context, thread), instance).authorization ==
@@ -543,6 +567,149 @@ defmodule HalC2.Steps.Orchestration.McpServer do
         "threadId" => World.thread_id(context, thread),
         "providerSessionId" => session["id"]
       })
+  end
+
+  # --- orchestrator capabilities ---------------------------------------------------
+
+  # Option trees the size of OpenCode's, whose 567 models made the answer 258 KB.
+  step "provider {string} offers {int} models, each with its own option descriptors",
+       %{args: [instance, count]} = context do
+    own =
+      HalC2.Environment.providers()
+      |> Enum.find(&(&1["instanceId"] == instance))
+      |> Map.fetch!("models")
+      |> length()
+
+    models =
+      for n <- 0..(count - own - 1) do
+        %{
+          "slug" => "bulk-model-#{n}",
+          "name" => "Bulk Model #{n}",
+          "capabilities" => %{
+            "optionDescriptors" => [
+              %{
+                "id" => "variant",
+                "label" => "Variant #{n}",
+                "type" => "select",
+                "options" =>
+                  for level <- ~w(minimal low medium high xhigh max) do
+                    %{"id" => level, "label" => "Reasoning #{level} for model #{n}"}
+                  end
+              }
+            ]
+          }
+        }
+      end
+
+    World.put_settings(context, %{"providers" => %{instance => %{"customModels" => models}}})
+  end
+
+  step(
+    "the agent of {string} asks for the orchestrator capabilities",
+    %{args: [caller]} = context,
+    do: capabilities(context, caller, %{})
+  )
+
+  step ~r/^the agent of "(?<caller>[^"]+)" asks for the orchestrator capabilities with (?<arguments>.+)$/,
+       %{args: [caller, arguments]} = context do
+    args =
+      for part <- String.split(arguments, " and "), into: %{} do
+        case Regex.run(~r/^(\w+)(?: "(.*)")?$/, part) do
+          [_, "includeOptions"] -> {"includeOptions", true}
+          [_, key, value] -> {key, value}
+        end
+      end
+
+    capabilities(context, caller, args)
+  end
+
+  step "each provider lists at most 25 models, each with an id and a label", context do
+    assert {:ok, %{"providers" => providers}} = context.mcp_result
+
+    for provider <- providers do
+      assert length(provider["models"]) <= 25
+      assert Enum.all?(provider["models"], &(is_binary(&1["id"]) and is_binary(&1["label"])))
+    end
+
+    context
+  end
+
+  step "{string} reports {int} models in all and that its list is cut short",
+       %{args: [instance, count]} = context do
+    provider = provider(context, instance)
+    assert provider["modelCount"] == count
+    assert provider["modelsTruncated"] == true
+    assert length(provider["models"]) < count
+    context
+  end
+
+  step "no listed model carries option descriptors", context do
+    assert {:ok, %{"providers" => providers}} = context.mcp_result
+    refute Enum.any?(providers, &Enum.any?(&1["models"], fn model -> model["options"] end))
+    context
+  end
+
+  step "the answer is under {int} characters, where with every option descriptor it is over {int}",
+       %{args: [compact, full]} = context do
+    assert {:ok, answer} = context.mcp_result
+    assert String.length(JSON.encode!(answer)) < compact
+
+    {:ok, everything} =
+      World.mcp_tool(context, "caller", "orchestrator_capabilities", %{
+        "providerInstanceId" => "codex",
+        "includeOptions" => true
+      })
+
+    assert String.length(JSON.encode!(everything)) > full
+    context
+  end
+
+  step "{string} is the only provider and lists all {int} models",
+       %{args: [instance, count]} = context do
+    assert {:ok, %{"providers" => [provider]}} = context.mcp_result
+    assert provider["providerInstanceId"] == instance
+    assert length(provider["models"]) == count
+    refute provider["modelsTruncated"]
+    context
+  end
+
+  step "only {string} is listed, with its option descriptors", %{args: [model]} = context do
+    assert {:ok, %{"providers" => [provider]}} = context.mcp_result
+    assert [%{"id" => ^model, "options" => [_ | _]}] = provider["models"]
+    context
+  end
+
+  step "the listed models are those whose id or label contains the text", context do
+    provider = provider(context, "codex")
+    assert provider["modelCount"] == 11
+    assert length(provider["models"]) == 11
+
+    for model <- provider["models"],
+        do: assert(String.contains?(String.downcase(model["label"]), "model 12"))
+
+    context
+  end
+
+  step "every listed model carries its option descriptors", context do
+    provider = provider(context, "codex")
+
+    bulk = Enum.filter(provider["models"], &String.starts_with?(&1["id"], "bulk-model-"))
+    assert length(bulk) > 25
+    assert Enum.all?(bulk, &(&1["options"] != nil))
+    context
+  end
+
+  defp capabilities(context, caller, args),
+    do:
+      Map.put(
+        context,
+        :mcp_result,
+        World.mcp_tool(context, caller, "orchestrator_capabilities", args)
+      )
+
+  defp provider(context, instance) do
+    assert {:ok, %{"providers" => providers}} = context.mcp_result
+    Enum.find(providers, &(&1["providerInstanceId"] == instance))
   end
 
   # A fresh provider session for the thread: its turn ends, its session stops and a

@@ -1548,6 +1548,162 @@ defmodule HalC2.Steps.Providers.Claude do
     |> get_in(["providers", "claudeAgent"])
   end
 
+  # --- a subagent's own messages ----------------------------------------------------------
+
+  # The fake's "subagent works on: TASK" turn runs a subagent in the turn. Under its tool
+  # call the subagent streams and says "Running the tests", runs `mix test`, writes a task
+  # list, and answers "The tests pass".
+  step "Claude's task list is shown in the thread", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "todo")
+
+    World.await_runs(context, @thread, ["completed"])
+
+    assert [%{"steps" => [_, _]}] =
+             plans = StreamState.list(World.stream(context, @thread), "plan")
+
+    Map.put(context, :plans, plans)
+  end
+
+  step "a subagent writes a task list of its own", context do
+    context = World.post_message(context, @thread, "subagent works on: Check the tests")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "the thread's task list is unchanged", context do
+    assert StreamState.list(World.stream(context, @thread), "plan") == context.plans
+    context
+  end
+
+  step "Claude starts a subagent with the task {string}", %{args: [task]} = context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "subagent works on: #{task}")
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the subagent's thread starts with {string} as its first message",
+       %{args: [task]} = context do
+    assert [{"user_message", ^task} | _] = child_messages(context)
+    context
+  end
+
+  step "the tools the subagent uses appear in the subagent's thread", context do
+    items = context |> subagent_child() |> StreamState.list("turn-item")
+
+    assert %{"type" => "command_execution", "status" => "completed"} =
+             item = Enum.find(items, &(&1["input"] == "mix test"))
+
+    assert item["output"] == "12 tests, 0 failures"
+    assert Enum.any?(items, &(&1["type"] == "dynamic_tool" and &1["toolName"] == "TodoWrite"))
+
+    assert [
+             {"user_message", "Check the tests"},
+             {"assistant_message", "Running the tests"},
+             {"assistant_message", "The tests pass"}
+           ] = child_messages(context)
+
+    context
+  end
+
+  step "the subagent's own messages do not appear in the parent thread", context do
+    state = World.stream(context, @thread)
+    items = StreamState.list(state, "turn-item")
+
+    assert ["The subagent says the tests pass"] =
+             for(%{"type" => "assistant_message"} = item <- items, do: item["text"])
+
+    assert [] = Enum.filter(items, &(&1["type"] in ["command_execution", "reasoning"]))
+    assert [] = StreamState.list(state, "plan")
+
+    assert [%{"status" => "completed", "result" => "The tests pass"}] =
+             StreamState.list(state, "subagent")
+
+    context
+  end
+
+  # The fake's "in the background" turn leaves its subagent (tool use agent-1, task
+  # task-agent-1) running after the turn.
+  step "Claude has a subagent running", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Claude reports the subagent's progress", context do
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_progress",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "agent-1",
+      "summary" => "Reading lib"
+    })
+
+    context
+  end
+
+  step "the subagent's thread shows the progress as the subagent's thinking", context do
+    World.await_value(context, @thread, fn state ->
+      match?([%{"progress" => "Reading lib"}], StreamState.list(state, "subagent"))
+    end)
+
+    assert [%{"type" => "reasoning", "text" => "Reading lib", "status" => "running"}] =
+             context
+             |> subagent_child()
+             |> StreamState.list("turn-item")
+             |> Enum.filter(&(&1["type"] == "reasoning"))
+
+    context
+  end
+
+  step "the subagent's result is shown as its answer when it finishes", context do
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "agent-1",
+      "status" => "completed",
+      "summary" => "lib has three modules"
+    })
+
+    World.await_value(context, @thread, fn state ->
+      match?([%{"status" => "completed"}], StreamState.list(state, "subagent"))
+    end)
+
+    assert {"assistant_message", "lib has three modules"} = List.last(child_messages(context))
+
+    assert [%{"type" => "reasoning", "status" => "completed"}] =
+             context
+             |> subagent_child()
+             |> StreamState.list("turn-item")
+             |> Enum.filter(&(&1["type"] == "reasoning"))
+
+    context
+  end
+
+  # The thread of the one subagent in the thread.
+  defp subagent_child(context) do
+    [subagent] = StreamState.list(World.stream(context, @thread), "subagent")
+    HalC2.Streams.Server.state(HalC2.Streams.ensure(subagent["childThreadId"]))
+  end
+
+  defp child_messages(context) do
+    context
+    |> subagent_child()
+    |> StreamState.list("turn-item")
+    |> Enum.filter(&(&1["type"] in ["user_message", "assistant_message"]))
+    |> Enum.sort_by(& &1["ordinal"])
+    |> Enum.map(&{&1["type"], &1["text"]})
+  end
+
   defp claude_says(context, message) do
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
     send(pid, {:claude, :sys.get_state(pid).session, {:message, message}})
