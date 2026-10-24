@@ -31,6 +31,15 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     |> ok!()
   end
 
+  step ~r/^pull request "(?<pr>[^"]+)" was linked to "(?<thread>[^"]+)" as one the thread created(?<unlinked> and then unlinked)?$/,
+       %{args: [pr, thread | unlinked]} = context do
+    context = context |> link(thread, pr, "created") |> ok!()
+
+    if List.first(unlinked) in [nil, ""],
+      do: context,
+      else: context |> command(thread, "thread.pull-request.unlink", key(pr)) |> ok!()
+  end
+
   step ~r/^pull request "(?<pr>[^"]+)" is (?:the thread's legacy linked pull request|linked to "(?<thread>[^"]+)" through metadata)$/,
        %{args: args} = context do
     [pr | rest] = args
@@ -278,6 +287,16 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
            ] ==
              "stack-dismissed"
 
+    context
+  end
+
+  # What the turn writer and discovery do when they find a pull request the thread made.
+  step "the MC finding {string} for {string} again does not link it",
+       %{args: [pr, thread]} = context do
+    seq = World.state(context, thread).seq
+    :ok = HalC2.PullRequests.Opened.link(World.thread_id(context, thread), [url(pr)])
+    assert World.state(context, thread).seq == seq
+    refute pr in visible(context, thread)
     context
   end
 

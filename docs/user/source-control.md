@@ -170,8 +170,9 @@ does not show its diff, so marks are made and read on desktop.
 
 A thread can hold several pull requests, including reviews from another repository on the same host.
 Use **Link pull request** in the command palette or **Linked pull requests** panel, or right-click a
-pull request link in the conversation. Creating a pull request from Git actions links it automatically.
-Agents can link their pull requests with the `link_pull_request` tool.
+pull request link in the conversation. Creating a pull request from Git actions links it automatically,
+and so does an agent opening one with `gh pr create`. Agents can also link pull requests with the
+`link_pull_request` tool.
 
 Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
 on the Pull Requests page, **Link to thread** lets you search for an active thread. The review header
@@ -182,8 +183,8 @@ links. On mobile, the Git overview lists linked reviews and their stacks; tap a 
 Linking and unlinking are available in the desktop client.
 
 The **Linked pull requests** panel lists every review and groups stacks. Unlink a review from its
-row menu. An unlinked stack layer stays out of later syncs. Open linked reviews refresh on the server;
-closed reviews refresh periodically so reopening one on the host is detected. Merged reviews refresh
+row menu. An unlinked stack layer, or a pull request the thread opened, is not linked again
+automatically. Open linked reviews refresh on the server; closed reviews refresh periodically so reopening one on the host is detected. Merged reviews refresh
 when requested. With **Auto-settle merged threads** enabled, a thread can settle after every linked
 review is terminal. An open or unsynced link keeps it active.
 

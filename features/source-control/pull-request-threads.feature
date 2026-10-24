@@ -5,6 +5,8 @@
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink, thread.pull-request-link.sync, thread.pull-request-synced)
 #   apps/server-ex/lib/hal_c2/pull_requests/checkout.ex
 #   apps/server-ex/lib/hal_c2/pull_requests/discovery.ex
+#   apps/server-ex/lib/hal_c2/pull_requests/opened.ex (pull requests a thread's command created)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (finish_item)
 #   apps/server-ex/lib/hal_c2/pull_requests/sync.ex
 #   apps/server-ex/lib/hal_c2/mcp/tools/pull_requests.ex (link_pull_request, unlink_pull_request, list_thread_pull_requests)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread.pull-request.link)
@@ -367,6 +369,17 @@ Feature: Threads that work on or link pull requests
   Scenario: Creating a pull request from a thread links it
     When the user creates a pull request from "Tax work"
     Then "Tax work" lists the new pull request
+
+  # Every runtime finishes its command items through the turn writer, which reads them.
+  @mc
+  Scenario: The pull request the agent's command opened is linked
+    When the agent in "Tax work" runs "gh pr create --fill" and it prints pull request 43
+    Then "Tax work" lists pull request 43
+
+  @mc
+  Scenario: A command that only reads a pull request links nothing
+    When the agent in "Tax work" runs "gh pr view 43" and it prints pull request 43
+    Then "Tax work" still has no linked pull request
 
   @mc
   Scenario: The branch's pull request is discovered on its own

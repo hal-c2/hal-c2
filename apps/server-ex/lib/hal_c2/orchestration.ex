@@ -2367,25 +2367,27 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # A layer of a native stack stays as a tombstone, so the sync does not link it again.
+  # A layer of a native stack, or a pull request the thread created, stays as a
+  # tombstone, so the sync or discovery (`HalC2.PullRequests.Opened`) does not link it
+  # again.
   defp thread_fields("thread.pull-request.unlink", command, thread, at) do
     links = PullRequests.of(thread)
     key = PullRequests.normalize(command)
     existing = Enum.find(links, &(PullRequests.normalize(&1) == key))
 
-    stacked? =
+    tombstone? =
       existing != nil and
-        (existing["source"] == "stack" or existing["stack"] != nil or
+        (existing["source"] in ["stack", "created"] or existing["stack"] != nil or
            Enum.any?(links, fn link ->
              Map.delete(PullRequests.normalize(link), "number") == Map.delete(key, "number") and
                Enum.any?((link["stack"] || %{})["layers"] || [], &(&1["number"] == key["number"]))
            end))
 
     cond do
-      existing == nil ->
+      existing == nil or existing["source"] == "stack-dismissed" ->
         %{}
 
-      stacked? ->
+      tombstone? ->
         links
         |> Enum.map(&if(&1 == existing, do: %{&1 | "source" => "stack-dismissed"}, else: &1))
         |> then(&Map.put(pull_request_fields(thread, &1), "updatedAt", at))

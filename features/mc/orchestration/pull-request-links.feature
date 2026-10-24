@@ -5,6 +5,7 @@
 #     thread.metadata.update linkedPullRequest)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (pull request link fields)
 #   apps/server-ex/lib/hal_c2/pull_requests.ex
+#   apps/server-ex/lib/hal_c2/pull_requests/opened.ex (links the MC finds a thread created)
 #   apps/server/src/orchestration-v2/ (pull request projector)
 #   apps/server/src/orchestration-v2/ThreadPullRequestService.ts (branch discovery triggers, settled
 #     threads, other repositories, missing worktrees, stale results)
@@ -75,6 +76,19 @@ Feature: Pull requests linked to a thread
       | who       |
       | the user  |
       | an agent  |
+
+  @mc
+  Scenario: Unlinking a pull request the thread created leaves a tombstone so the MC does not add it back
+    Given pull request "acme/app#21" was linked to "t1" as one the thread created
+    When a client unlinks pull request "acme/app#21" from "t1"
+    Then thread "t1" does not show "acme/app#21"
+    And the MC finding "acme/app#21" for "t1" again does not link it
+
+  @mc
+  Scenario: A user can bring back an unlinked pull request the thread created
+    Given pull request "acme/app#21" was linked to "t1" as one the thread created and then unlinked
+    When the user links pull request "acme/app#21" to "t1"
+    Then thread "t1" shows "acme/app#21" again
 
   @mc
   Scenario: The legacy single link follows the visible links

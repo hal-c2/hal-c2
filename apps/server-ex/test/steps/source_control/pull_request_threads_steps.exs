@@ -316,6 +316,27 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     context
   end
 
+  # The fake Codex reports `command` as a finished command item that printed the pull
+  # request's address on a line of its own, as `gh pr create` does.
+  step "the agent in {string} runs {string} and it prints pull request {int}",
+       %{args: [title, command, number]} = context do
+    url = "https://github.com/acme/shop/pull/#{number}"
+    output = "\nCreating pull request for feature/tax into main in acme/shop\n\n#{url}\n"
+    run = JSON.encode!(%{"command" => command, "output" => output})
+
+    context
+    |> thread(title)
+    |> World.run_turn(title, "run command #{run}")
+    |> Map.merge(%{expected_source: "created", command: command})
+  end
+
+  step "{string} still has no linked pull request", %{args: [title]} = context do
+    items = HalC2.StreamState.list(World.state(context, title), "turn-item")
+    assert Enum.any?(items, &(&1["input"] == context.command and &1["output"] =~ "/pull/"))
+    assert (World.thread(context, title)["pullRequests"] || []) == []
+    context
+  end
+
   # --- discovery -----------------------------------------------------------------------
 
   step "{string} is on the branch {string} with no linked pull request",
