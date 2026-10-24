@@ -1335,9 +1335,10 @@ pub fn register(steps: &mut Steps) {
 
     // The default branch.
     steps.step(&format!("the user runs {Q}"), |world, c, _| {
-        // TODO(port): PlannerSteps' runPluginAction, an action of the planner
-        // plugin when the MC runs it, is tried first in desktop-qt; another
-        // worker ports it.
+        // An action of the planner plugin when the MC runs it comes first.
+        if super::planner::run_plugin_action(world, &c[0])? {
+            return Ok(());
+        }
         world.sync()?;
         // From an open command palette: its entry of that title.
         let row = world.with::<hal_c2_shell::controllers::palette::Palette, _>(|p, _| {
