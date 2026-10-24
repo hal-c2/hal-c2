@@ -334,10 +334,10 @@ defmodule HalC2.Mcp.Tools.Threads do
   # Compact by default: an agent cannot read the full option tree of hundreds of models.
   def run("orchestrator_capabilities", args, %{row: me}) do
     parent = thread(me["id"]) || me
-    only = args["providerInstanceId"]
+    only = if is_binary(args["providerInstanceId"]), do: args["providerInstanceId"]
     providers = HalC2.Environment.providers()
 
-    if is_binary(only) and not Enum.any?(providers, &(&1["instanceId"] == only)) do
+    if only && not Enum.any?(providers, &(&1["instanceId"] == only)) do
       {:error, "invalid_request", "Unknown providerInstanceId #{only}."}
     else
       narrowed? = is_binary(args["model"]) or is_binary(args["query"])
@@ -346,7 +346,7 @@ defmodule HalC2.Mcp.Tools.Threads do
       listed =
         for provider <- providers,
             only in [nil, provider["instanceId"]],
-            entry = capabilities_provider(provider, args, options?, is_binary(only)),
+            entry = capabilities_provider(provider, args, options?, only != nil),
             not (narrowed? and entry["modelCount"] == 0),
             do: entry
 
@@ -520,10 +520,11 @@ defmodule HalC2.Mcp.Tools.Threads do
     constraints = constraints(provider)
     models = provider["models"] || []
     query = if is_binary(args["query"]), do: String.downcase(args["query"])
+    wanted = if is_binary(args["model"]), do: args["model"]
 
     matching =
       Enum.filter(models, fn model ->
-        (args["model"] == nil or model["slug"] == args["model"]) and
+        (wanted == nil or model["slug"] == wanted) and
           (query == nil or
              String.contains?(String.downcase(model["slug"] || ""), query) or
              String.contains?(String.downcase(model["name"] || ""), query))
@@ -531,7 +532,7 @@ defmodule HalC2.Mcp.Tools.Threads do
 
     listed =
       cond do
-        all? or args["model"] ->
+        all? or wanted ->
           matching
 
         true ->

@@ -427,9 +427,13 @@ defmodule HalC2.Orchestration.Delegation do
 
   # What a delegated child is told before its task: who it works for and that its last
   # message is the report, so it finishes its own background work and workers first.
-  defp preamble(thread) do
+  @doc false
+  def preamble(thread) do
+    title = thread["title"] |> to_string() |> String.replace(~r/\s+/, " ") |> String.trim()
+    parent = if title == "", do: thread["id"], else: inspect(title)
+
     """
-    You are a HAL-C2 worker delegated by the thread "#{thread["title"]}". Your final message is your report to it: lead with the outcome, then evidence (files, commands, test results), then anything left undone. Finish your own work, including waiting on your background work and your own workers, before you end your last turn.
+    You are a HAL-C2 worker delegated by the thread #{parent}. Your final message is your report to it: lead with the outcome, then evidence (files, commands, test results), then anything left undone. Finish your own work, including waiting on your background work and your own workers, before you end your last turn.
 
     Task:
     """

@@ -120,6 +120,7 @@ Feature: The HAL-C2 MCP server agents receive
       | query "MODEL 12"                             | the listed models are those whose id or label contains the text  |
       | providerInstanceId "codex" and includeOptions | every listed model carries its option descriptors                |
       | providerInstanceId "nowhere"                 | it fails with code "invalid_request"                             |
+      | model 7                                      | each provider lists at most 25 models, each with an id and a label |
 
   @mc
   Scenario: A tool the MC does not implement is refused by name
