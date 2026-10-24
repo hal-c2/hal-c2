@@ -26,11 +26,8 @@
 //!
 //! The app coming to the foreground (`Application.active`) wakes the client:
 //! a waiting retry runs now, and a connection that looks healthy is checked.
-//!
-//! TODO(ljos#74): ConnectionHealth::network_changed when the system's
-//! reachability changes (`QNetworkInformation`): Ljós's facade has no
-//! reachability source, so only [`ConnectionHealth::set_network`] says a
-//! device is offline.
+//! A change in the system's reachability (`ljos::system`, Qt's
+//! QNetworkInformation) says again whether the client is online.
 
 use std::net::IpAddr;
 use std::rc::Rc;
@@ -64,18 +61,72 @@ pub type Exchange = Arc<dyn Fn(&Link, &Client) -> Pairing + Send + Sync>;
 /// disconnected when any one network is lost).
 #[derive(Clone)]
 pub struct Network {
-    pub disconnected: Rc<dyn Fn() -> bool>,
-    pub interface_up: Rc<dyn Fn() -> bool>,
+    pub disconnected: Rc<dyn Fn(&Engine) -> bool>,
+    pub interface_up: Rc<dyn Fn(&Engine) -> bool>,
 }
 
 impl Default for Network {
-    /// A device with no word on its network is online.
+    /// The system's reachability (Unknown, which is not disconnected, when
+    /// it cannot tell) and this machine's interfaces.
     fn default() -> Network {
         Network {
-            disconnected: Rc::new(|| false),
-            interface_up: Rc::new(|| false),
+            disconnected: Rc::new(|engine| {
+                ljos::system::network_status(engine).reachability
+                    == ljos::system::Reachability::Disconnected
+            }),
+            interface_up: Rc::new(|_| interface_up()),
         }
     }
+}
+
+/// Whether an interface besides loopback is up and running with an address
+/// that is neither loopback nor link-local, as desktop-qt's hasNetwork asks
+/// QNetworkInterface.
+#[cfg(unix)]
+fn interface_up() -> bool {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+    let mut list: *mut libc::ifaddrs = std::ptr::null_mut();
+    // SAFETY: getifaddrs fills `list` with a list freed below.
+    if unsafe { libc::getifaddrs(&mut list) } != 0 {
+        return false;
+    }
+    let mut up = false;
+    let mut next = list;
+    while !next.is_null() && !up {
+        // SAFETY: each entry of the list lives until freeifaddrs.
+        let entry = unsafe { &*next };
+        next = entry.ifa_next;
+        let flags = entry.ifa_flags as libc::c_int;
+        if flags & libc::IFF_UP == 0
+            || flags & libc::IFF_RUNNING == 0
+            || flags & libc::IFF_LOOPBACK != 0
+            || entry.ifa_addr.is_null()
+        {
+            continue;
+        }
+        // SAFETY: the family says which sockaddr `ifa_addr` points at.
+        up = match i32::from(unsafe { (*entry.ifa_addr).sa_family }) {
+            libc::AF_INET => {
+                let addr = unsafe { &*entry.ifa_addr.cast::<libc::sockaddr_in>() };
+                let ip = Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr));
+                !ip.is_loopback() && !ip.is_link_local()
+            }
+            libc::AF_INET6 => {
+                let addr = unsafe { &*entry.ifa_addr.cast::<libc::sockaddr_in6>() };
+                let ip = Ipv6Addr::from(addr.sin6_addr.s6_addr);
+                !ip.is_loopback() && !ip.is_unicast_link_local()
+            }
+            _ => false,
+        };
+    }
+    // SAFETY: `list` came from getifaddrs.
+    unsafe { libc::freeifaddrs(list) };
+    up
+}
+
+#[cfg(not(unix))]
+fn interface_up() -> bool {
+    false
 }
 
 struct Version {
@@ -206,6 +257,10 @@ impl Controller for ConnectionHealth {
                 }
             });
         }
+        let me = init.me.clone();
+        let _ = ljos::system::on_network_change(engine, move |engine, _| {
+            me.run(engine, |c, engine| c.network_changed(engine));
+        });
         // The MC the client is opened at may be on this machine where the
         // last one was not, or the other way round.
         let mut health = ConnectionHealth {
@@ -323,7 +378,7 @@ impl ConnectionHealth {
     /// whether the client is online, and wakes it when it is. A remote MC is
     /// not retried while this device has no network, and is tried at once
     /// when it returns. The MC on this machine needs none.
-    pub fn network_changed(&mut self, _engine: &Engine) {
+    pub fn network_changed(&mut self, engine: &Engine) {
         let local = self
             .mc
             .origin()
@@ -334,7 +389,8 @@ impl ConnectionHealth {
                 Some(Host::Ipv6(ip)) => IpAddr::V6(ip).is_loopback(),
                 None => false,
             });
-        let online = local || !(self.network.disconnected)() || (self.network.interface_up)();
+        let online =
+            local || !(self.network.disconnected)(engine) || (self.network.interface_up)(engine);
         self.mc.set_online(online);
         if online {
             self.mc.wake();
