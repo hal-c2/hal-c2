@@ -23,14 +23,54 @@ struct Notice {
 // Enough to tell the fields apart: no name, version or license holds another
 // field's query.
 const NOTICES: &[Notice] = &[
-    Notice { name: "react", version: "19.1.0", license: "MIT", bundles: &["web"] },
-    Notice { name: "effect", version: "4.0.0-beta.1", license: "MIT", bundles: &["web", "server"] },
-    Notice { name: "@effect/platform-node", version: "4.0.0-beta.1", license: "MIT", bundles: &["server"] },
-    Notice { name: "yaml", version: "2.8.1", license: "ISC", bundles: &["web"] },
-    Notice { name: "Qt", version: "", license: "LGPL-3.0-only", bundles: &["desktop-qt"] },
-    Notice { name: "MesloLGS NF", version: "", license: "Apache-2.0", bundles: &["android", "assets", "mobile"] },
-    Notice { name: "agent-device", version: "0.21.7", license: "MIT", bundles: &["device-tools"] },
-    Notice { name: "expo-device-hub", version: "0.10.1", license: "MIT AND Apache-2.0 AND BSD-3-Clause", bundles: &["device-tools"] },
+    Notice {
+        name: "react",
+        version: "19.1.0",
+        license: "MIT",
+        bundles: &["web"],
+    },
+    Notice {
+        name: "effect",
+        version: "4.0.0-beta.1",
+        license: "MIT",
+        bundles: &["web", "server"],
+    },
+    Notice {
+        name: "@effect/platform-node",
+        version: "4.0.0-beta.1",
+        license: "MIT",
+        bundles: &["server"],
+    },
+    Notice {
+        name: "yaml",
+        version: "2.8.1",
+        license: "ISC",
+        bundles: &["web"],
+    },
+    Notice {
+        name: "Qt",
+        version: "",
+        license: "LGPL-3.0-only",
+        bundles: &["desktop-qt"],
+    },
+    Notice {
+        name: "MesloLGS NF",
+        version: "",
+        license: "Apache-2.0",
+        bundles: &["android", "assets", "mobile"],
+    },
+    Notice {
+        name: "agent-device",
+        version: "0.21.7",
+        license: "MIT",
+        bundles: &["device-tools"],
+    },
+    Notice {
+        name: "expo-device-hub",
+        version: "0.10.1",
+        license: "MIT AND Apache-2.0 AND BSD-3-Clause",
+        bundles: &["device-tools"],
+    },
 ];
 
 fn notice_text(notice: &Notice) -> String {
@@ -296,9 +336,7 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(
-        &format!(
-            "only entries whose (package name|license|app component) matches {Q} are listed"
-        ),
+        &format!("only entries whose (package name|license|app component) matches {Q} are listed"),
         |world, c, _| {
             let query = c[1].to_lowercase();
             let want = c[1].clone();
@@ -326,19 +364,19 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("the page shows how many of the notices match", |world, _, _| {
-        let count = text_of(world, "licenseCount")?;
-        let wanted = format!("{} of {}", listed(world).len(), NOTICES.len());
-        expect!(count == wanted, "the count reads {count}");
-        Ok(())
-    });
+    steps.step(
+        "the page shows how many of the notices match",
+        |world, _, _| {
+            let count = text_of(world, "licenseCount")?;
+            let wanted = format!("{} of {}", listed(world).len(), NOTICES.len());
+            expect!(count == wanted, "the count reads {count}");
+            Ok(())
+        },
+    );
     steps.step(
         "the user is told no licenses match that search",
         |world, _, _| {
-            world.wait_for_with(
-                |w| listed(w).is_empty(),
-                |w| show(&licenses_state(w)),
-            )?;
+            world.wait_for_with(|w| listed(w).is_empty(), |w| show(&licenses_state(w)))?;
             let brick = page(world)?;
             let none = brick.item(world, "noLicenseMatch")?;
             expect!(
@@ -371,7 +409,10 @@ pub fn register(steps: &mut Steps) {
             )?;
             let brick = page(world)?;
             let error = brick.item(world, "licensesError")?;
-            expect!(brick.flag(world, error, "visible"), "the failure is not drawn");
+            expect!(
+                brick.flag(world, error, "visible"),
+                "the failure is not drawn"
+            );
             Ok(())
         },
     );

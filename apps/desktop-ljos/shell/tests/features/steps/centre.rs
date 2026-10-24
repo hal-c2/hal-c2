@@ -14,8 +14,8 @@ use ljos::prelude::{ObjectId, Value as Qml};
 use serde_json::{Value, json};
 
 use super::stream::{
-    FakeStreams, add_item, describe, followers, look_at_thread, read, role, settle_run,
-    start_run, timeline_object,
+    FakeStreams, add_item, describe, followers, look_at_thread, read, role, settle_run, start_run,
+    timeline_object,
 };
 use crate::harness::{Failure, Outcome, Q, Steps, show, text};
 use crate::world::World;
@@ -38,18 +38,12 @@ fn diff_object(world: &mut World) -> Outcome<ObjectId> {
         .ok_or_else(|| Failure("the panel has no diff".into()))
 }
 
-fn with_diff<R>(
-    world: &mut World,
-    f: impl FnOnce(&DiffTab) -> R,
-) -> Outcome<R> {
+fn with_diff<R>(world: &mut World, f: impl FnOnce(&DiffTab) -> R) -> Outcome<R> {
     let obj = diff_object(world)?;
     ThreadDiff::read(world.engine(), obj, f).ok_or_else(|| Failure("the diff is busy".into()))
 }
 
-fn update_diff<R>(
-    world: &mut World,
-    f: impl FnOnce(&mut DiffTab) -> R,
-) -> Outcome<R> {
+fn update_diff<R>(world: &mut World, f: impl FnOnce(&mut DiffTab) -> R) -> Outcome<R> {
     let obj = diff_object(world)?;
     ThreadDiff::update(world.engine(), obj, f).ok_or_else(|| Failure("the diff is busy".into()))
 }
@@ -176,23 +170,18 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step(
-        &format!("the user confirms with {Q}"),
-        |world, c, _| {
-            let answers = ["Keep files", "Revert files too"];
-            expect!(
-                answers.contains(&c[0].as_str()),
-                "the dialog offers {}",
-                answers.join(", ")
-            );
-            let restore = c[0] == answers[1];
-            update_diff(world, |d| d.confirm_revert(restore))?;
-            world.wait_for("the revert to finish", |w| {
-                diff_idle(w)
-            })?;
-            world.sync()
-        },
-    );
+    steps.step(&format!("the user confirms with {Q}"), |world, c, _| {
+        let answers = ["Keep files", "Revert files too"];
+        expect!(
+            answers.contains(&c[0].as_str()),
+            "the dialog offers {}",
+            answers.join(", ")
+        );
+        let restore = c[0] == answers[1];
+        update_diff(world, |d| d.confirm_revert(restore))?;
+        world.wait_for("the revert to finish", |w| diff_idle(w))?;
+        world.sync()
+    });
     steps.step(
         "the MC is asked to leave the files as they are",
         |world, _, _| {
