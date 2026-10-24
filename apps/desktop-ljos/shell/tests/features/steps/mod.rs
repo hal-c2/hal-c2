@@ -50,6 +50,7 @@ pub mod settings_connections;
 pub mod settings_limited_threads;
 pub mod settings_nav;
 pub mod settings_pages;
+pub mod settings_project_actions;
 pub mod settings_projects;
 pub mod settings_rows;
 pub mod settings_scope;
@@ -121,6 +122,7 @@ pub fn register(steps: &mut Steps) {
     settings_limited_threads::register(steps);
     settings_nav::register(steps);
     settings_pages::register(steps);
+    settings_project_actions::register(steps);
     settings_projects::register(steps);
     settings_rows::register(steps);
     settings_scope::register(steps);
