@@ -1,0 +1,60 @@
+# The desktop-qt scenarios that pass on desktop-ljos, one id per line.
+# `cargo test -p hal_c2_shell --test features` fails when one of them stops
+# passing; `-- --raise` adds the ones that newly pass. Never remove a line to
+# make a run pass: fix the regression.
+connections/cluster.feature: A member that joins later appears in the client without pairing again
+connections/connection-health.feature: A client opened without a network waits for it
+connections/connection-health.feature: A cluster connection resumes each stream from where it stopped
+connections/connection-health.feature: A connection is ready only after the environment describes itself
+connections/connection-health.feature: A device that lost every network waits and says it is offline
+connections/connection-health.feature: A device that lost one of its two networks keeps trying
+connections/connection-health.feature: A dropped connection retries with growing delays
+connections/connection-health.feature: A failed shell subscription is not shown as reconnecting
+connections/connection-health.feature: A network that comes back is tried at once
+connections/connection-health.feature: A protocol mismatch blocks the connection with advice [a newer protocol than the client, update HAL-C2 on this device]
+connections/connection-health.feature: A protocol mismatch blocks the connection with advice [an older protocol than the client, update HAL-C2 on that environment]
+connections/connection-health.feature: A refused credential waits for the user
+connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.3.2, 1.4.0, does not warn]
+connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0, 1.3.2, warns of a version mismatch]
+connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0, 1.4.0-nightly.20260901, does not warn]
+connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0-nightly.20260902, 1.4.0-nightly.20260901, warns of a version mismatch]
+connections/connection-health.feature: A thread left for under five minutes resumes without a snapshot
+connections/connection-health.feature: An environment on this machine is reached without a network
+connections/connection-health.feature: An offline device waits instead of retrying
+connections/connection-health.feature: Cached data stays readable offline without looking live
+connections/connection-health.feature: Foregrounding probes a healthy connection instead of replacing it
+connections/connection-health.feature: Foregrounding wakes a waiting retry
+connections/connection-health.feature: One connection serves every MC of a cluster
+connections/connection-health.feature: Subscriptions follow a replaced connection
+connections/connection-health.feature: The environment's status names why it is reconnecting
+connections/connection-health.feature: The user copies a connection's trace id for a bug report
+desktop/native-connection.feature: A scripted run starts once the MC's first snapshot is in
+desktop/native-connection.feature: The shell connects with the MC's own access token
+desktop/native-connection.feature: The shell reconnects and subscribes again after the connection drops
+desktop/shell-host.feature: A screenshot taken without a display shows the app's window
+threads/archive-delete.feature: Archiving asks first when the user wants confirmation
+threads/archive-delete.feature: Archiving waits for the agent on the desktop and phone
+threads/archive-delete.feature: Deleting from the desktop and phone asks when the user wants confirmation
+threads/archive-delete.feature: Deleting the open thread opens the latest thread left in its project
+threads/archive-delete.feature: Deleting the open thread opens the next thread in the project
+threads/menu-and-selection.feature: Actions the environment does not support are left out
+threads/menu-and-selection.feature: Copying a thread reference [has no pull request, the thread id]
+threads/menu-and-selection.feature: Copying a thread reference [is linked to a pull request, the pull request address]
+threads/menu-and-selection.feature: Filtering the list from a thread's project
+threads/menu-and-selection.feature: Opening a thread's menu
+threads/menu-and-selection.feature: Opening a thread's project settings
+threads/menu-and-selection.feature: The thread menu offers its actions in a fixed order
+threads/pinning-and-order.feature: Activity does not reorder threads
+threads/pinning-and-order.feature: New threads appear above arranged active threads
+threads/pinning-and-order.feature: Pinning a thread
+threads/pinning-and-order.feature: Pinning and snoozing keep an active thread's position for later
+threads/pinning-and-order.feature: The undo offer counts the threads it will restore and names the shortcut [settled, Settled 2 threads]
+threads/pinning-and-order.feature: The undo offer counts the threads it will restore and names the shortcut [unpinned, Unpinned 2 threads]
+threads/pinning-and-order.feature: The undo offer expires
+threads/pinning-and-order.feature: Undo reopens an archived thread the user was viewing
+threads/pinning-and-order.feature: Undoing a thread change [archived]
+threads/pinning-and-order.feature: Undoing a thread change [settled]
+threads/pinning-and-order.feature: Undoing a thread change [snoozed]
+threads/pinning-and-order.feature: Undoing a thread change [unpinned]
+threads/pinning-and-order.feature: Unpinning a thread
+threads/pinning-and-order.feature: Unpinning asks first when the user wants confirmation
