@@ -63,6 +63,7 @@ mod terminals;
 mod theme;
 mod theme_prop;
 mod threads;
+mod timeline_brick;
 mod toasts;
 mod usage;
 mod windows;
