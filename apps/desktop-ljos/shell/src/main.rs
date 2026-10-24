@@ -206,7 +206,10 @@ fn main() -> ExitCode {
     }
     // A brick with an error fails only what makes an object of it, as in Qt.
     let app = match options.roots.dirs().and_then(|dirs| {
+        // The shell says when closing a window ends the app
+        // (controller::attach_root).
         App::new("HAL-C2")
+            .quit_on_last_window_closed(false)
             .register(hal_c2_shell::register)
             .qml_dirs(dirs, ROOT)
     }) {
@@ -682,9 +685,11 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::when_active(&engine, move |engine| scripted_run::play(engine, steps));
             // The saved theme's interface font, for all the root makes.
             hal_c2_shell::theme::set_application_font(&engine);
-            engine
+            let root = engine
                 .create_from_url(ROOT, None, Vec::new())
-                .map_err(|e| e.to_string().into())
+                .map_err(|e| e.to_string())?;
+            controller::attach_root(&engine, controller::MAIN, root);
+            Ok(root)
         })
         .map_err(|e| e.to_string())
 }
