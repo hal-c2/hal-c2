@@ -29,6 +29,7 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Recovery.settle/1" => "recover-settle",
       "HalC2.Orchestration.Recovery.continue/0" => ~w(continue skip-continue reconcile-after),
       "HalC2.Orchestration.Delegation hook(:reporting)" => "report-fail",
+      "HalC2.Orchestration.Delegation hook(:settling)" => "report-fail",
       "HalC2.Orchestration.Delegation hook(:expiring)" => "time-out",
       "HalC2.Orchestration.Delegation hook(:cancelling)" => "cancel"
     },
@@ -38,6 +39,8 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation.wait_budget/1" =>
         "how long a wait lasts; the model's wait may give up at any time",
       "HalC2.Orchestration.Delegation.wake_policy/1" => @policy,
+      "HalC2.Orchestration.Delegation.preamble/1" =>
+        "the text the child's first message opens with; the model has the launch",
       "HalC2.Orchestration.Delegation.resolve_delivery/1" => @policy,
       "HalC2.Orchestration.Delegation.accept_delivery/1" =>
         "the provider reads the message that woke the parent; the model ends at the message",
