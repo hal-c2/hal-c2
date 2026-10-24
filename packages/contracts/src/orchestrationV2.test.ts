@@ -1027,6 +1027,37 @@ it("round-trips typed notifications and keeps work outcome separate from item st
   ).toThrow();
 });
 
+it("keeps a delegated result's worker thread, title and result on its notification", () => {
+  const item = decodeOrchestrationV2TurnItem({
+    id: "notification",
+    threadId: "parent",
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "completed",
+    title: null,
+    startedAt: null,
+    completedAt: null,
+    type: "notification",
+    source: { kind: "delegated_task", taskIds: ["task-1"] },
+    outcome: "completed",
+    summary: "Tax tests finished",
+    workerThreadId: "worker",
+    workerTitle: "Tax tests",
+    detail: "12 tests added",
+    updatedAt: DateTime.makeUnsafe("2026-09-09T00:00:00Z"),
+  });
+  expect(item).toMatchObject({
+    workerThreadId: "worker",
+    workerTitle: "Tax tests",
+    detail: "12 tests added",
+  });
+});
+
 describe("limit recovery choice updates", () => {
   const decode = Schema.decodeUnknownSync(OrchestrationV2LimitRecoveryUpdate);
   const identity = { runId: "run:limited", resetAt: "2026-09-20T21:00:00.000Z" };

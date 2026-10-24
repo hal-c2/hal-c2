@@ -1,14 +1,15 @@
 sload model-checker
 
 --- A delegated task (HalC2.Orchestration.Delegation): one parent, one child thread with
---- up to two runs, the child's end reported to the parent, the parent woken, and the
+--- a few runs and a command a run may leave running in the background, the child's end
+--- reported to the parent, the checks for a quiet child, the parent woken, and the
 --- caller cancelling or waiting, through MC crashes at any step and the boot that follows.
 --- proof/hal_c2/delegation_proof_test.exs maps it to the code and checks it.
 
 mod DELEGATION is
   protecting NAT .
 
-  sorts Busy Status Delivery Wake Wait Phase Item Conf Sys .
+  sorts Busy Status Delivery Wake Wait Phase Prov Item Conf Sys .
   subsort Item < Conf .
 
   ops busy idle : -> Busy [ctor] .
@@ -17,6 +18,9 @@ mod DELEGATION is
   ops settled-only always : -> Wake [ctor] .
   ops nowait waiting got timedout dead : -> Wait [ctor] .
   ops up down b1 b2 b3 b4 : -> Phase [ctor] .
+  --- The child's provider: one that wakes itself when background work ends (Codex,
+  --- Claude), or one that does not (Grok).
+  ops wakes-itself grok : -> Prov [ctor] .
 
   --- The parent: whether its own run is active.
   op parent : Busy -> Item [ctor] .
@@ -42,12 +46,22 @@ mod DELEGATION is
   --- A child run the boot interrupted that may continue.
   op cut : -> Item [ctor] .
   op faults : Nat -> Item [ctor] .
+  op prov : Prov -> Item [ctor] .
+  --- A command the child left running in the background, as its store has it, and how
+  --- many more a run may start.
+  op bg : -> Item [ctor] .
+  op bgs : Nat -> Item [ctor] .
+  --- The provider's run about a command that ended, yet to be queued (a process).
+  op wake-due : -> Item [ctor] .
+  --- A check for a quiet child, started off the provider's process (a process).
+  op chk : -> Item [ctor] .
 
   op empty : -> Conf [ctor] .
   op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
   op {_} : Conf -> Sys [ctor] .
 
   vars N K S F A : Nat .
+  var P : Prov .
   vars B B' : Busy .
   vars T T' : Status .
   vars D D' : Delivery .
@@ -98,17 +112,51 @@ mod DELEGATION is
   --- The end of a run of the child; its report is a task of its own.
   crl [child-end] :
     child(true, N, K) mc(up) => child(true, N, s K) mc(up) rep(s K, attempts) if K < N .
-  rl [child-start] : child(true, 1, 1) mc(up) => child(true, 2, 1) mc(up) .
+  --- (What the child does for the user once the task ended is no part of the task.)
+  rl [child-start] :
+    child(true, 1, 1) mc(up) task(running, D, W) => child(true, 2, 1) mc(up) task(running, D, W) .
 
-  --- A report that gets through finds the task unsettled and settles it, with the
-  --- message that wakes the parent in the same transaction, or finds it settled and does
-  --- nothing.
-  rl [finished] :
-    rep(N, K) mc(up) task(running, D, W) parent(B) settles(S) wakes(A)
-    => mc(up) task(ended, deliver(D, W, B), W) parent(B) settles(s S)
-       wakes(if deliver(D, W, B) == delivered then s A else A fi) .
-  crl [finished-late] :
-    rep(N, K) mc(up) task(T, D, W) => mc(up) task(T, D, W) if T =/= running .
+  --- A report that gets through checks whether the child is quiet (settle_if_quiet/1).
+  rl [finished] : { rep(N, K) mc(up) C } => { mc(up) quiet-settle(C) } .
+
+  --- settle_if_quiet/1 finds the task unsettled and the child quiet, and settles it, with
+  --- the message that wakes the parent in the same transaction; else it does nothing.
+  --- Quiet: no run working, no command running. A provider's wake about to be queued is
+  --- not seen (hal-c2/hal-c2#508's window, outside this model's claim; see the test).
+  op quiet-settle : Conf -> Conf .
+  ceq quiet-settle(task(running, D, W) child(true, K, K) parent(B) settles(S) wakes(A) C)
+    = task(ended, deliver(D, W, B), W) child(true, K, K) parent(B) settles(s S)
+      wakes(if deliver(D, W, B) == delivered then s A else A fi) C
+    if K > 0 /\ not owes(C) .
+  eq quiet-settle(C) = C [owise] .
+
+  op owes : Conf -> Bool .
+  eq owes(bg C) = true .
+  eq owes(C) = false [owise] .
+
+  --- background work ------------------------------------------------------------------
+
+  --- A working run leaves a command running.
+  crl [bg-start] :
+    child(true, N, K) bgs(s F) mc(up) task(running, D, W)
+    => child(true, N, K) bg bgs(F) mc(up) task(running, D, W) if K < N .
+  --- The command ends. A provider that wakes itself is woken between turns with a run
+  --- about it; for one that does not, the child is checked (end_task/3 in the ACP
+  --- runtime).
+  rl [bg-end] :
+    bg prov(wakes-itself) child(true, N, K) mc(up)
+    => prov(wakes-itself) child(true, N, K) mc(up) (if K == N then wake-due else empty fi) .
+  rl [bg-end] :
+    bg prov(grok) child(true, N, K) mc(up)
+    => prov(grok) child(true, N, K) mc(up) (if K == N then chk else empty fi) .
+  rl [wake-run] : wake-due child(true, N, K) mc(up) => child(true, s N, K) mc(up) .
+  rl [check] : { chk mc(up) C } => { mc(up) quiet-settle(C) } .
+  --- The periodic check, for a child no provider process drives: not one about to wake.
+  crl [sweep] : { mc(up) C } => { mc(up) quiet-settle(C) } if not waking(C) .
+
+  op waking : Conf -> Bool .
+  eq waking(wake-due C) = true .
+  eq waking(C) = false [owise] .
 
   --- report/5 gives up after its attempts.
   rl [report-fail] : rep(N, s K) faults(s F) => rep(N, K) faults(F) .
@@ -118,9 +166,9 @@ mod DELEGATION is
 
   --- The task is cancelled before run.interrupt; the interrupted run then reports.
   rl [cancel] :
-    cancel-call mc(up) child(true, N, K) task(running, D, W) settles(S)
-    => mc(up) child(true, N, N) task(cancelled, disposed, W) settles(s S)
-       (if K < N then rep(N, attempts) else empty fi) .
+    { cancel-call mc(up) child(true, N, K) task(running, D, W) settles(S) C }
+    => { mc(up) child(true, N, N) task(cancelled, disposed, W) settles(s S)
+         (if K < N then rep(N, attempts) else empty fi) unbg(C) } .
   crl [cancel-refused] :
     cancel-call mc(up) child(true, N, K) task(T, D, W) => mc(up) child(true, N, K) task(T, D, W)
     if T =/= running .
@@ -134,7 +182,7 @@ mod DELEGATION is
   --- Settles a task whose child stopped without reporting.
   op reconcile : Conf -> Conf .
   ceq reconcile(task(running, D, W) child(true, K, K) settles(S) C)
-    = task(ended, disposed, W) child(true, K, K) settles(s S) C if K > 0 .
+    = task(ended, disposed, W) child(true, K, K) settles(s S) C if K > 0 /\ not owes(C) .
   eq reconcile(task(running, D, W) child(false, 0, 0) settles(S) C)
     = task(failed, disposed, W) child(false, 0, 0) settles(s S) C .
   eq reconcile(C) = C [owise] .
@@ -142,12 +190,17 @@ mod DELEGATION is
   --- The pass after continue/0: a child never launched may be about to be.
   op resettle : Conf -> Conf .
   ceq resettle(task(running, D, W) child(true, K, K) settles(S) C)
-    = task(ended, disposed, W) child(true, K, K) settles(s S) C if K > 0 .
+    = task(ended, disposed, W) child(true, K, K) settles(s S) C if K > 0 /\ not owes(C) .
   eq resettle(C) = C [owise] .
 
+  --- Boot ends the child's working run and the commands it left running; the run, or a
+  --- turn telling the child which commands stopped, may continue it.
   op interrupt : Conf -> Conf .
-  ceq interrupt(child(E, N, K) C) = child(E, N, N) cut C if K < N .
+  ceq interrupt(child(E, N, K) C) = child(E, N, N) cut unbg(C) if K < N or owes(C) .
   eq interrupt(C) = C [owise] .
+  op unbg : Conf -> Conf .
+  eq unbg(bg C) = C .
+  eq unbg(C) = C [owise] .
   op idle-parent : Conf -> Conf .
   eq idle-parent(parent(B) C) = parent(idle) C .
   eq idle-parent(C) = C [owise] .
@@ -156,7 +209,7 @@ mod DELEGATION is
   eq uncut(C) = C [owise] .
 
   --- Recovery.continue/0: a run the restart cut off continues as a new run, or does not.
-  crl [continue] : mc(b3) cut child(true, N, N) => mc(b4) child(true, s N, N) if N < 2 .
+  crl [continue] : mc(b3) cut child(true, N, N) => mc(b4) child(true, s N, N) if N < 3 .
   rl [skip-continue] : { mc(b3) C } => { mc(b4) uncut(C) } .
   rl [reconcile-after] : { mc(b4) C } => { mc(up) resettle(C) } .
 
@@ -172,19 +225,22 @@ mod DELEGATION is
   eq kill(starting C) = kill(C) .
   eq kill(call(W) C) = kill(C) .
   eq kill(cancel-call C) = kill(C) .
+  eq kill(wake-due C) = kill(C) .
+  eq kill(chk C) = kill(C) .
   eq kill(wait(waiting) C) = wait(dead) kill(C) .
   eq kill(C) = C [owise] .
 
   --- states ---------------------------------------------------------------------------
 
   --- The delegate call to come, waiting for the task or not, and F faults to come.
-  ops waiting-start async-start : Nat -> Sys .
-  eq waiting-start(F) = { mc(up) parent(busy) task(unrecorded, pending, always) settles(0)
-                          wakes(0) child(false, 0, 0) wait(nowait) call(settled-only)
-                          cancel-call faults(F) } .
-  eq async-start(F) = { mc(up) parent(busy) task(unrecorded, pending, always) settles(0)
-                        wakes(0) child(false, 0, 0) wait(nowait) call(always)
-                        cancel-call faults(F) } .
+  --- With the child on provider P, and one command it may leave in the background.
+  ops waiting-start async-start : Nat Prov -> Sys .
+  eq waiting-start(F, P) = { mc(up) parent(busy) task(unrecorded, pending, always) settles(0)
+                             wakes(0) child(false, 0, 0) wait(nowait) call(settled-only)
+                             cancel-call faults(F) prov(P) bgs(1) } .
+  eq async-start(F, P) = { mc(up) parent(busy) task(unrecorded, pending, always) settles(0)
+                           wakes(0) child(false, 0, 0) wait(nowait) call(always)
+                           cancel-call faults(F) prov(P) bgs(1) } .
 
   --- No task is left running.
   op resting : Sys -> Bool .
@@ -193,7 +249,8 @@ mod DELEGATION is
 
   --- Settled twice, woken twice, woken though cancelled, or acknowledged to a caller
   --- that gave up waiting and never read it.
-  ops settled-twice woken-twice cancelled-woken unread lost-wake : Sys -> Bool .
+  ops settled-twice woken-twice cancelled-woken unread lost-wake owing-settled bg-settled :
+    Sys -> Bool .
   ceq settled-twice({ settles(S) C }) = true if S > 1 .
   eq settled-twice({ C }) = false [owise] .
   ceq woken-twice({ wakes(K) C }) = true if K > 1 .
@@ -206,6 +263,15 @@ mod DELEGATION is
   --- A result marked delivered that no message carries.
   eq lost-wake({ task(T, delivered, W) wakes(0) C }) = true .
   eq lost-wake({ C }) = false [owise] .
+
+  --- Ended (not cancelled) while the child works or a command of it runs.
+  ceq owing-settled({ task(ended, D, W) child(true, N, K) C }) = true if K < N .
+  eq owing-settled({ task(ended, D, W) bg C }) = true .
+  eq owing-settled({ C }) = false [owise] .
+
+  --- Ended (not cancelled) while a command of the child runs.
+  eq bg-settled({ task(ended, D, W) bg C }) = true .
+  eq bg-settled({ C }) = false [owise] .
 endm
 
 mod DELEGATION-PROPS is
@@ -214,7 +280,8 @@ mod DELEGATION-PROPS is
   subsort Sys < State .
 
   --- The task is recorded and running, and its child is not going to work for it: it
-  --- stopped after a run, or was never launched.
+  --- stopped after a run with no command running and no wake to come, or was never
+  --- launched.
   --- The task settled.
   ops stopped over : -> Prop [ctor] .
   var D : Delivery .
@@ -225,7 +292,12 @@ mod DELEGATION-PROPS is
   op launching : Conf -> Bool .
   eq launching(starting C) = true .
   eq launching(C) = false [owise] .
-  ceq { task(running, D, W) child(true, K, K) C } |= stopped = true if K > 0 .
+  op to-check : Conf -> Bool .
+  eq to-check(wake-due C) = true .
+  eq to-check(chk C) = true .
+  eq to-check(C) = false [owise] .
+  ceq { task(running, D, W) child(true, K, K) C } |= stopped = true
+    if K > 0 /\ not owes(C) /\ not to-check(C) .
   ceq { task(running, D, W) child(false, 0, 0) C } |= stopped = true if not launching(C) .
   eq { C } |= stopped = false [owise] .
   ceq { task(T, D, W) C } |= over = true if T =/= running /\ T =/= unrecorded .
