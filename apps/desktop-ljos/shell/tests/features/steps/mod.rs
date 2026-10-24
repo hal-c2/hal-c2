@@ -7,6 +7,8 @@ use crate::harness::Steps;
 pub mod add_project;
 pub mod agents;
 pub mod centre;
+pub mod checkpoint_edit;
+pub mod clone;
 pub mod cluster;
 pub mod composer_brick;
 pub mod connection;
@@ -19,6 +21,7 @@ pub mod file_search;
 pub mod files_explorer;
 pub mod files_media;
 pub mod files_workspace;
+pub mod git;
 pub mod header;
 pub mod keybinding;
 pub mod keymap;
@@ -43,6 +46,7 @@ pub mod settings;
 pub mod settings_connections;
 pub mod settings_pages;
 pub mod settings_rows;
+pub mod source_control_settings;
 pub mod stash;
 pub mod storage_layout;
 pub mod stream;
@@ -57,12 +61,15 @@ pub mod timeline;
 pub mod toast;
 pub mod turn;
 pub mod viewing;
+pub mod workspace;
 
 /// Every domain's steps.
 pub fn register(steps: &mut Steps) {
     add_project::register(steps);
     agents::register(steps);
     centre::register(steps);
+    checkpoint_edit::register(steps);
+    clone::register(steps);
     cluster::register(steps);
     composer_brick::register(steps);
     connection::register(steps);
@@ -74,6 +81,7 @@ pub fn register(steps: &mut Steps) {
     file_search::register(steps);
     files_explorer::register(steps);
     files_media::register(steps);
+    git::register(steps);
     header::register(steps);
     keybinding::register(steps);
     keymap::register(steps);
@@ -98,6 +106,7 @@ pub fn register(steps: &mut Steps) {
     settings_connections::register(steps);
     settings_pages::register(steps);
     settings_rows::register(steps);
+    source_control_settings::register(steps);
     stash::register(steps);
     storage_layout::register(steps);
     stream::register(steps);
@@ -112,4 +121,5 @@ pub fn register(steps: &mut Steps) {
     toast::register(steps);
     turn::register(steps);
     viewing::register(steps);
+    workspace::register(steps);
 }
