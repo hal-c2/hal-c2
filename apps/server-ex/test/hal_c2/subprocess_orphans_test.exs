@@ -371,6 +371,8 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert Orphans.ps_outcome({"garbage", 0}) == :unknown
   end
 
+  # Without a `ps` no port opens, so there is nothing to hand an exit.
+  @tag skip: !System.find_executable("ps") && "needs a ps"
   test "reading a process with ps hands a caller that traps exits no exit" do
     # A provider session stops on any `:EXIT`, so on macOS every turn ended at
     # once ("Claude exited") when tracking its program read `ps`.
