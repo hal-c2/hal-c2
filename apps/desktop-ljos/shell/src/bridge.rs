@@ -518,7 +518,12 @@ impl Bridge {
     /// object of its own for each other.
     ///
     /// TODO(ljos#81): QML still finds the engine's, so another window's
-    /// bricks cannot see their own.
+    /// bricks cannot see their own. Ljós's window-scoped singletons are
+    /// made by Ljós when a root's QML first reads them, and a window's
+    /// bridge is built, and its controllers publish on it, before its root
+    /// is made, and with no root at all headless; a host cannot hand a
+    /// window an object it made, as desktop-qt's
+    /// qmlRegisterSingletonInstance does for each window's engine.
     pub fn singleton<T: QmlSingleton + Default>(
         self,
         engine: &Engine,
