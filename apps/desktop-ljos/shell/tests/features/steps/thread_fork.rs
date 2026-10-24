@@ -9,9 +9,7 @@ use std::rc::Rc;
 use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use serde_json::{Value, json};
 
-use super::stream::{
-    FakeStreams, add_item, look, read, settle_run, start_run,
-};
+use super::stream::{FakeStreams, add_item, look, read, settle_run, start_run};
 use super::thread_menu::{id_in, key_of, project_thread_commands, provide_thread, update_row};
 use crate::fake_mc::FakeMc;
 use crate::harness::{Outcome, Q, Steps, show, text};
@@ -187,7 +185,9 @@ pub fn register(steps: &mut Steps) {
             // The shell waits for the fork on its own clock, once the MC has
             // answered the command.
             world.wait_for("the MC to be asked to fork", |w| {
-                w.mc.commands.iter().any(|c| text(&c["type"]) == "thread.fork")
+                w.mc.commands
+                    .iter()
+                    .any(|c| text(&c["type"]) == "thread.fork")
             })?;
             world.sync()?;
             world.advance(hal_c2_shell::controllers::thread_lineage::ARRIVAL_TIMEOUT_MS)?;
@@ -310,32 +310,36 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step(&format!("the user merges {Q} back into {Q}"), |world, c, _| {
-        view(world, &c[0])?;
-        expect!(
-            lineage(world)["canMerge"] == json!(true)
-                && text(&lineage(world)["mergeHint"])
-                    == format!("Merge this conversation back into {}", c[1]),
-            "the lineage is {}",
-            show(&lineage(world))
-        );
-        world.dispatch("lineage.mergeBack", json!({}))?;
-        world.sync()?;
-        let source = id_in(&key_of(world, &c[0])?).to_owned();
-        let merged = world.mc.commands.iter().any(|command| {
-            text(&command["type"]) == "thread.merge_back"
-                && text(&command["sourceThreadId"]) == source
-                && text(&command["targetThreadId"]) == PARENT
-                && text(&command["sourcePoint"]["runId"]) == "run-fork"
-        });
-        expect!(merged, "the MC has {}", world.describe_commands());
-        Ok(())
-    });
+    steps.step(
+        &format!("the user merges {Q} back into {Q}"),
+        |world, c, _| {
+            view(world, &c[0])?;
+            expect!(
+                lineage(world)["canMerge"] == json!(true)
+                    && text(&lineage(world)["mergeHint"])
+                        == format!("Merge this conversation back into {}", c[1]),
+                "the lineage is {}",
+                show(&lineage(world))
+            );
+            world.dispatch("lineage.mergeBack", json!({}))?;
+            world.sync()?;
+            let source = id_in(&key_of(world, &c[0])?).to_owned();
+            let merged = world.mc.commands.iter().any(|command| {
+                text(&command["type"]) == "thread.merge_back"
+                    && text(&command["sourceThreadId"]) == source
+                    && text(&command["targetThreadId"]) == PARENT
+                    && text(&command["sourcePoint"]["runId"]) == "run-fork"
+            });
+            expect!(merged, "the MC has {}", world.describe_commands());
+            Ok(())
+        },
+    );
 
     // Where a fork came from.
-    steps.step("the user reads the start of the conversation", |world, _, _| {
-        world.sync()
-    });
+    steps.step(
+        "the user reads the start of the conversation",
+        |world, _, _| world.sync(),
+    );
     steps.step(
         &format!("it says the thread was forked from {Q}"),
         |world, c, _| {

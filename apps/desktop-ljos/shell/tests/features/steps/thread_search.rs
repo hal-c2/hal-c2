@@ -6,9 +6,9 @@
 use hal_c2_shell::controllers::palette::Palette;
 
 use super::thread_menu::thread;
+use crate::expect;
 use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::world::World;
-use crate::expect;
 
 #[derive(Default)]
 struct ThreadSearch {
@@ -17,7 +17,9 @@ struct ThreadSearch {
 }
 
 fn open(world: &World) -> bool {
-    world.with::<Palette, _>(|p, _| p.is_open()).unwrap_or(false)
+    world
+        .with::<Palette, _>(|p, _| p.is_open())
+        .unwrap_or(false)
 }
 
 fn query(world: &World) -> String {
@@ -78,9 +80,10 @@ pub fn register(steps: &mut Steps) {
             world.sync()
         },
     );
-    steps.step(&format!("the user searches threads for {Q}"), |world, c, _| {
-        search(world, &c[0])
-    });
+    steps.step(
+        &format!("the user searches threads for {Q}"),
+        |world, c, _| search(world, &c[0]),
+    );
     steps.step(&format!("{Q} and {Q} are both found"), |world, c, _| {
         let titles = found(world);
         expect!(
@@ -119,7 +122,12 @@ pub fn register(steps: &mut Steps) {
         let project = world.mc.projects.keys().next().cloned().unwrap_or_default();
         for name in ["one", "two", "three"] {
             let id = format!("thread-quokka-{name}");
-            let row = thread(&id, &format!("Quokka {name}"), &project, "2026-09-23T09:30:00Z");
+            let row = thread(
+                &id,
+                &format!("Quokka {name}"),
+                &project,
+                "2026-09-23T09:30:00Z",
+            );
             world.mc.threads.insert(id.clone(), row.clone());
             world.mc.send_row(&id, &row);
         }
@@ -150,27 +158,30 @@ pub fn register(steps: &mut Steps) {
         expect!(ran, "nothing ran");
         Ok(())
     });
-    steps.step("that thread opens and the search is cleared", |world, _, _| {
-        let chosen = world.part::<ThreadSearch>().chosen.clone();
-        let wanted = chosen.clone();
-        world.wait_for_with(
-            move |w| super::thread_menu::route_thread(w) == wanted,
-            |w| {
-                format!(
-                    "the thread to open; the route is {}",
-                    show(&w.state("route"))
-                )
-            },
-        )?;
-        expect!(!chosen.is_empty(), "no result was chosen");
-        let was_cleared = cleared(world)?;
-        expect!(
-            was_cleared,
-            "the search is still there: \"{}\"",
-            query(world)
-        );
-        Ok(())
-    });
+    steps.step(
+        "that thread opens and the search is cleared",
+        |world, _, _| {
+            let chosen = world.part::<ThreadSearch>().chosen.clone();
+            let wanted = chosen.clone();
+            world.wait_for_with(
+                move |w| super::thread_menu::route_thread(w) == wanted,
+                |w| {
+                    format!(
+                        "the thread to open; the route is {}",
+                        show(&w.state("route"))
+                    )
+                },
+            )?;
+            expect!(!chosen.is_empty(), "no result was chosen");
+            let was_cleared = cleared(world)?;
+            expect!(
+                was_cleared,
+                "the search is still there: \"{}\"",
+                query(world)
+            );
+            Ok(())
+        },
+    );
 
     // Leaving.
     steps.step("the user is searching threads", |world, _, _| {

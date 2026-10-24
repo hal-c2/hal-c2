@@ -85,18 +85,21 @@ pub fn register(steps: &mut Steps) {
     );
 
     // Threads from the first version.
-    steps.step("threads were migrated from the first version", |world, _, _| {
-        for title in ["Legacy work", "Older legacy work"] {
-            let id = format!("t-{}", title.to_lowercase().replace(' ', "-"));
-            world.mc.threads.insert(
-                id.clone(),
-                json!({"id": id, "title": title, "projectId": "legacy",
+    steps.step(
+        "threads were migrated from the first version",
+        |world, _, _| {
+            for title in ["Legacy work", "Older legacy work"] {
+                let id = format!("t-{}", title.to_lowercase().replace(' ', "-"));
+                world.mc.threads.insert(
+                    id.clone(),
+                    json!({"id": id, "title": title, "projectId": "legacy",
                        "historyOrigin": "v1_import",
                        "createdAt": "2026-09-01T09:00:00Z", "updatedAt": "2026-09-01T09:00:00Z"}),
-            );
-        }
-        world.connect()
-    });
+                );
+            }
+            world.connect()
+        },
+    );
     steps.step(
         "the user is told the threads were brought over",
         |world, _, _| {
@@ -219,7 +222,11 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             world.wait_for("the jump hints", first_labelled)?;
             let listed = rows(world);
-            expect!(listed.len() >= 10, "only {} threads are listed", listed.len());
+            expect!(
+                listed.len() >= 10,
+                "only {} threads are listed",
+                listed.len()
+            );
             for (index, row) in listed.iter().enumerate() {
                 let label = &row["jumpLabel"];
                 if index < 9 {
