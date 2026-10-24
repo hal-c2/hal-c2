@@ -133,7 +133,7 @@ fn page(world: &mut World, width: f64, height: f64) -> Outcome<Brick> {
             world,
             &format!(
                 "import QtQuick\nimport HalC2.Bricks\nimport HalC2.Shell\n\
-                 import \"qrc:/hal-c2/settings/settingsPages.js\" as Pages\n\
+                 import \"HalC2/Bricks/js/settingsPages.js\" as Pages\n\
                  ConnectionsSettings {{\n\
                    width: {width}; height: {height}\n\
                    function results(query) {{ return Pages.searchRows(query, Shell.state, []); }}\n\

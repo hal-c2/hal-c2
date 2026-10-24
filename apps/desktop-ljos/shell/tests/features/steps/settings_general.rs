@@ -358,20 +358,6 @@ fn thread_target(world: &World) -> String {
         .unwrap_or_default()
 }
 
-fn click_item(world: &mut World, page: crate::brick::Brick, item: ObjectId, signal: &str) -> Outcome {
-    let (x, y) = page.at(world, item, 0.5, 0.5)?;
-    if y < 800.0 {
-        return world.click_at(x, y);
-    }
-    // Below the test window, past where a pointer reaches: the button is
-    // clicked as a click on it does.
-    world
-        .engine()
-        .emit_by_name(item, signal, &[])
-        .map_err(|e| Failure(format!("{signal}: {e:?}")))?;
-    world.pump()
-}
-
 pub fn register(steps: &mut Steps) {
     // Project grouping.
     steps.step(
@@ -852,7 +838,8 @@ pub fn register(steps: &mut Steps) {
     steps.step("the user unfolds it", |world, _, _| {
         let page = general_page(world)?;
         let fold = page_item(world, "settingsSection:Legacy features", "fold")?;
-        click_item(world, page, fold, "clicked")
+        let (x, y) = page.at(world, fold, 0.5, 0.5)?;
+        world.click_at(x, y)
     });
     steps.step(
         "the legacy plan mode, context window indicator and per-project sidebar can be turned on",
