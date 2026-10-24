@@ -3,7 +3,7 @@ defmodule HalC2.DelegationPropTest do
   A state machine over one delegated task: how its child thread's runs start, queue,
   end (with an answer or without a word) and are rolled back, the background commands
   a run leaves running and their end, how each end is reported to the caller (at once,
-  late, never, or again), the checks for a quiet child (Grok's background work ending,
+  late, never, or again, and retried when a thread it reads fails), the checks for a quiet child (Grok's background work ending,
   the periodic check), and the MC restarting (`Delegation.reconcile/2` at boot), also
   when the restart interrupts the child's working run and nothing continues it
   (`Recovery`).
@@ -36,6 +36,7 @@ defmodule HalC2.DelegationPropTest do
   alias HalC2.StreamState
 
   @moduletag timeout: :infinity
+  @moduletag capture_log: true
 
   @parent "parent"
   @child "child"
@@ -58,6 +59,7 @@ defmodule HalC2.DelegationPropTest do
 
         setup()
         {history, state, result} = run_commands(__MODULE__, cmds)
+        Application.delete_env(:hal_c2, :delegation_hook)
         HalC2.Prop.stop_services()
 
         (result == :ok)
@@ -131,11 +133,16 @@ defmodule HalC2.DelegationPropTest do
         ) ++
         if(held == [],
           do: [],
-          else: [{3, let([id, s] <- oneof(held), do: {:call, __MODULE__, :report, [id, s]})}]
+          else: [
+            {3, let([id, s] <- oneof(held), do: {:call, __MODULE__, :report, [id, s, busy()]})}
+          ]
         ) ++
         if(reported == [],
           do: [],
-          else: [{1, let([id, s] <- oneof(reported), do: {:call, __MODULE__, :report, [id, s]})}]
+          else: [
+            {1,
+             let([id, s] <- oneof(reported), do: {:call, __MODULE__, :report, [id, s, busy()]})}
+          ]
         ) ++
         if(ended == [], do: [], else: [{2, {:call, __MODULE__, :roll_back, [oneof(ended)]}}])
     )
@@ -152,6 +159,9 @@ defmodule HalC2.DelegationPropTest do
       %{"task" => 7}
     ])
   end
+
+  # The thread whose check fails once in a report, before or after the task settles.
+  defp busy, do: frequency([{3, nil}, {1, @child}, {1, @parent}])
 
   defp next(state), do: "run-#{length(state.runs) + 1}"
 
@@ -208,7 +218,7 @@ defmodule HalC2.DelegationPropTest do
     if how == :late, do: %{state | held: [id | state.held]}, else: state
   end
 
-  def next_state(state, _result, {:call, _, :report, [id, _]}),
+  def next_state(state, _result, {:call, _, :report, [id, _, _]}),
     do: %{state | held: List.delete(state.held, id)}
 
   def next_state(state, _result, {:call, _, :roll_back, [id]}),
@@ -362,6 +372,8 @@ defmodule HalC2.DelegationPropTest do
 
   # The caller, with a turn running, and the task it delegated to a child thread.
   defp setup do
+    Application.put_env(:hal_c2, :delegation_hook, {__MODULE__, :hook, []})
+
     {:ok, _} =
       HalC2.Orchestration.dispatch(%{
         "type" => "thread.create",
@@ -482,7 +494,26 @@ defmodule HalC2.DelegationPropTest do
   end
 
   # The end of run `id`, reported as it ended (`status`), whatever happened to it since.
-  def report(id, status), do: observe(fn -> Delegation.finished(@child, id, status) end)
+  # With `busy`, the check of that thread exits the first time, too busy to answer:
+  # the child's before its task can settle, the caller's (checked once the task ended)
+  # after (`Delegation.report/5` retries).
+  def report(id, status, busy) do
+    observe(fn ->
+      Process.put(:busy, busy)
+      assert Delegation.report(@child, id, status, 1, 0) == :ok
+      Process.delete(:busy)
+    end)
+  end
+
+  # `Delegation`'s test hook: the check of the thread `report/3` names exits, once.
+  def hook(:settling, id) do
+    if Process.get(:busy) == id do
+      Process.delete(:busy)
+      exit(:busy)
+    end
+  end
+
+  def hook(_stage, _id), do: :ok
 
   # Run `run` starts a command that keeps running in the background.
   def background(id, run) do
