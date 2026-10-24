@@ -50,6 +50,7 @@ pub mod source_control_settings;
 pub mod stash;
 pub mod storage_layout;
 pub mod stream;
+pub mod terminal;
 pub mod thread_fork;
 pub mod thread_menu;
 pub mod thread_pull_request_link;
@@ -110,6 +111,7 @@ pub fn register(steps: &mut Steps) {
     stash::register(steps);
     storage_layout::register(steps);
     stream::register(steps);
+    terminal::register(steps);
     thread_fork::register(steps);
     thread_menu::register(steps);
     thread_pull_request_link::register(steps);
