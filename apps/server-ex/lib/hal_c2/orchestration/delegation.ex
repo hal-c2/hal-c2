@@ -57,7 +57,12 @@ defmodule HalC2.Orchestration.Delegation do
       case start(thread, run, spec) do
         {:ok, task_id} ->
           if input["mode"] == "wait",
-            do: wait(thread["id"], task_id, wait_budget(input["timeoutMs"])),
+            do:
+              wait(
+                thread["id"],
+                task_id,
+                min(wait_budget(input["timeoutMs"]), HalC2.Mcp.max_wait_ms(instance))
+              ),
             else: {:ok, status(thread["id"], task_id)}
 
         {:error, message} ->

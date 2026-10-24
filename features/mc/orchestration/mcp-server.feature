@@ -32,6 +32,21 @@ Feature: The HAL-C2 MCP server agents receive
     Then the agent is given the "hal-c2" server with a bearer credential for "caller" on "codex"
     And asking again for "caller" on "codex" gives the same credential
 
+  @mc
+  Scenario: A Codex agent's server allows a tool call longer than the longest wait
+    When a run of "caller" starts on "codex"
+    Then the agent's "hal-c2" server allows a tool call to run longer than an hour
+
+  @mc
+  Scenario: A Claude agent's tool timeout allows a tool call longer than the longest wait
+    Then a Claude agent's tool timeout is longer than an hour
+
+  @mc
+  Scenario: A wait is cut short of the limit of a provider that cannot raise it
+    Then a wait by an agent on "codex" may last an hour
+    And a wait by an agent on "claudeAgent" may last an hour
+    And a wait by an agent on an ACP provider may not reach a minute
+
   @mc @plugin-claude
   Scenario: A renewed credential replaces the old one in a running Claude thread
     Given the agent of a running Claude thread uses the "hal-c2" server

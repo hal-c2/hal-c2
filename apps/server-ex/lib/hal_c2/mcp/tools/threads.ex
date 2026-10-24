@@ -330,7 +330,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("orchestrator_capabilities", _args, %{row: me}) do
+  def run("orchestrator_capabilities", _args, %{row: me} = caller) do
     parent = thread(me["id"]) || me
 
     {:ok,
@@ -340,6 +340,7 @@ defmodule HalC2.Mcp.Tools.Threads do
        "inheritedModel" => get_in(parent, ["modelSelection", "model"]),
        "runtimeMode" => parent["runtimeMode"],
        "interactionMode" => parent["interactionMode"],
+       "maxWaitMs" => HalC2.Mcp.max_wait_ms(caller.instance),
        "providers" =>
          for provider <- HalC2.Environment.providers() do
            constraints = constraints(provider)

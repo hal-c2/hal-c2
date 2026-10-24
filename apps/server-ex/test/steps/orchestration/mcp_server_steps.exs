@@ -56,6 +56,30 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     Map.put(context, :credential, auth)
   end
 
+  step "the agent's {string} server allows a tool call to run longer than an hour",
+       %{args: [name]} = context do
+    server = get_in(latest_session(context), ["params", "config", "mcp_servers", name])
+    assert server["tool_timeout_sec"] * 1_000 > 3_600_000
+    context
+  end
+
+  step "a Claude agent's tool timeout is longer than an hour", context do
+    turn = %{ids: %{}, launch: %{mcp: %{url: "http://x/mcp", authorization: "Bearer t"}}}
+    env = HalC2.Claude.ThreadRuntime.session_env(turn)
+    assert String.to_integer(List.keyfind(env, "MCP_TOOL_TIMEOUT", 0) |> elem(1)) > 3_600_000
+    context
+  end
+
+  step "a wait by an agent on {string} may last an hour", %{args: [instance]} = context do
+    assert HalC2.Mcp.max_wait_ms(instance) == 3_600_000
+    context
+  end
+
+  step "a wait by an agent on an ACP provider may not reach a minute", context do
+    assert HalC2.Mcp.max_wait_ms("opencode") < 60_000
+    context
+  end
+
   step "asking again for {string} on {string} gives the same credential",
        %{args: [thread, instance]} = context do
     assert HalC2.Mcp.server(World.thread_id(context, thread), instance).authorization ==
