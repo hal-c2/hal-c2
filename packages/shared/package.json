@@ -122,11 +122,7 @@
   },
   "dependencies": {
     "@hal-c2/contracts": "workspace:*",
-    "@noble/curves": "catalog:",
-    "@noble/hashes": "catalog:",
-    "effect": "catalog:",
-    "jose": "catalog:",
-    "yaml": "catalog:"
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

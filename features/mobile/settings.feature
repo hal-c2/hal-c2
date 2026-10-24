@@ -26,27 +26,28 @@
 # No phone client exists on HAL-C2, so everything here is @backlog.
 
 Feature: Settings that belong to the phone
-  Some settings only make sense on a phone: how the app looks on this device, the HAL-C2 account
-  it is signed in with, and editing scheduled tasks with a touch keyboard.
+  Some settings only make sense on a phone: how the app looks on this device and editing
+  scheduled tasks with a touch keyboard.
 
   Background:
     Given the phone is paired with "My MacBook"
 
+  # The HAL-C2 account was the HAL-C2 Connect (Clerk) sign-in, removed with Connect.
   Rule: HAL-C2 account
 
-    @backlog @mobile
+    @dropped @mobile
     Scenario: Settings says whether the phone is signed in to HAL-C2
       Given the user is signed in to HAL-C2 as "sam@example.com"
       When the user opens settings
       Then the HAL-C2 account shows "sam@example.com"
 
-    @backlog @mobile
+    @dropped @mobile
     Scenario: The user signs in to HAL-C2 from settings
       Given the user is signed out of HAL-C2
       When the user signs in to HAL-C2 from settings
       Then the HAL-C2 account shows the user's email
 
-    @backlog @mobile
+    @dropped @mobile
     Scenario Outline: The user signs in to HAL-C2 with <provider> from settings
       Given the user is signed out of HAL-C2
       When the user signs in to HAL-C2 with <provider> from settings
@@ -57,32 +58,32 @@ Feature: Settings that belong to the phone
         | Apple    |
         | Google   |
 
-    @backlog @mobile
+    @dropped @mobile
     Scenario: Sign in with Apple is not offered on a build that cannot use it
       Given the app was built without Apple sign-in
       And the user is signed out of HAL-C2
       When the user opens the HAL-C2 account
       Then the HAL-C2 account offers no Apple sign-in
 
-    @backlog @mobile
+    @dropped @mobile
     Scenario: Signing out returns the user to settings
       Given the user is looking at their HAL-C2 profile
       When the user signs out
       Then the user is back in settings
       And the HAL-C2 account offers to sign in
 
-    @backlog @mobile
+    @dropped @mobile
     Scenario: The old waitlist link opens HAL-C2 sign in
       When the user follows a link to the HAL-C2 waitlist
       Then the user is asked to sign in to HAL-C2
 
-    @backlog @mobile
+    @dropped @mobile
     Scenario: A build without HAL-C2 Connect offers no HAL-C2 account
       Given the app was built without HAL-C2 Connect
       When the user follows a link to the HAL-C2 account
       Then the user sees settings without a HAL-C2 account
 
-    @backlog @mobile
+    @dropped @mobile
     Scenario: The user refreshes environments from HAL-C2 Connect
       Given the user is signed in to HAL-C2 Connect
       When the user refreshes cloud environments

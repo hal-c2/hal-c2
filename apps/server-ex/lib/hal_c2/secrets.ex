@@ -1,8 +1,7 @@
-defmodule HalC2.Connect.Secrets do
+defmodule HalC2.Secrets do
   @moduledoc """
-  The MC's HAL-C2 Connect secrets: one file per name at `<home>/secrets/<name>.bin`
-  (owner-only), the layout earlier installs wrote, so a home linked by either
-  stays linked.
+  The MC's named secrets, such as Slack's tokens: one owner-only file per name at
+  `<data>/secrets/<name>.bin`, the layout earlier installs wrote.
   """
 
   @doc "The secret's bytes, or nil."
@@ -43,6 +42,12 @@ defmodule HalC2.Connect.Secrets do
 
   def delete(name) do
     File.rm(path(name))
+    :ok
+  end
+
+  @doc "Deletes every secret whose name starts with `prefix`."
+  def delete_prefixed(prefix) do
+    for file <- Path.wildcard(Path.join(dir(), prefix <> "*.bin")), do: File.rm(file)
     :ok
   end
 

@@ -18,8 +18,8 @@
 
 Feature: Connections settings
   The Connections page shows this machine's server, the devices allowed to reach it, and the
-  other environments this device connects to. Pairing itself, HAL-C2 Connect and load balancing are
-  specified in their own domains; this file covers the page and the effect of each control.
+  other environments this device connects to. Pairing itself and load balancing are specified
+  in their own domains; this file covers the page and the effect of each control.
 
   Background:
     Given the user has opened the Connections settings
@@ -213,14 +213,16 @@ Feature: Connections settings
         | WSL only                      | in the chosen WSL distribution  |
         | on Windows                    | on Windows only                 |
 
-    @backlog @desktop
+    # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+    @dropped @desktop
     Scenario: Linking this machine to HAL-C2 Connect needs a signed-in account
       Given the user is not signed in to HAL-C2 Connect
       When the user looks at the HAL-C2 Connect link
       Then the link cannot be turned on
       And the user is told to sign in to HAL-C2 Connect
 
-    @backlog @desktop
+    # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+    @dropped @desktop
     Scenario: Linking and unlinking this machine to HAL-C2 Connect
       Given the user is signed in to HAL-C2 Connect
       When the user links this machine
@@ -228,7 +230,8 @@ Feature: Connections settings
       When the user unlinks this machine
       Then the user is told this machine is unlinked
 
-    @backlog @desktop
+    # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+    @dropped @desktop
     Scenario: Publishing agent activity can be turned on and off
       Given this machine is linked to HAL-C2 Connect
       When the user turns on publishing agent activity
@@ -276,7 +279,7 @@ Feature: Connections settings
       Examples:
         | state | title                      | effect                                                                                                                                                                            | button              |
         | off   | Enable network access?     | Let your other devices connect to HAL-C2 over the network. Pair devices to give them access. HAL-C2 will restart.                                                                  | Restart and enable  |
-        | on    | Disable network access?    | Devices connected over your local network will disconnect. Existing tunnels, such as HAL-C2 Connect or Tailscale HTTPS, keep working. HAL-C2 will restart.                         | Restart and disable |
+        | on    | Disable network access?    | Devices connected over your local network will disconnect. Existing tunnels, such as Tailscale HTTPS, keep working. HAL-C2 will restart.                         | Restart and disable |
 
     @backlog @desktop
     Scenario: Network access cannot be changed while the server restarts
@@ -446,7 +449,8 @@ Feature: Connections settings
       Then the version line reads "1.4.0 · https://192.168.1.4:3773"
       And while its version is still unknown it reads "Loading…"
 
-    @backlog @desktop
+    # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+    @dropped @desktop
     Scenario Outline: HAL-C2 Connect controls say why they cannot be used
       Given <state>
       When the user looks at the HAL-C2 Connect switches
@@ -458,7 +462,8 @@ Feature: Connections settings
         | the user is not signed in to HAL-C2 Connect                        | Sign in to HAL-C2 Connect to manage this environment.                  |
         | the user's session may not manage connectivity                     | Your session does not have permission to manage HAL-C2 Connect access. |
 
-    @backlog @desktop
+    # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+    @dropped @desktop
     Scenario Outline: Each HAL-C2 Connect change says what it did
       Given the user is signed in to HAL-C2 Connect
       And <state>
@@ -474,7 +479,8 @@ Feature: Connections settings
         | agent activity is not published      | turns on publishing agent activity    | Agent activity enabled              | This environment publishes agent activity to your mobile clients.   |
         | agent activity is published          | turns off publishing agent activity   | Agent activity disabled             | This environment will stop publishing agent activity.               |
 
-    @backlog @desktop
+    # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+    @dropped @desktop
     Scenario: Publishing agent activity does not need the link
       Given the user is signed in to HAL-C2 Connect
       And this machine is not linked
@@ -506,8 +512,6 @@ Feature: Connections settings
         | Write reviews    | Create comments while reviewing changes.              |
         | View access      | Inspect pairing links and authorized clients.         |
         | Manage access    | Issue and revoke credentials for other clients.       |
-        | View relay       | Inspect managed relay connectivity.                   |
-        | Manage relay     | Change managed tunnel connectivity.                   |
 
     @backlog @desktop
     Scenario: A pairing link that can manage access carries a warning
@@ -943,7 +947,6 @@ Feature: Connections settings
 
       Examples:
         | route                    | label              |
-        | through HAL-C2 Connect       | HAL-C2 Connect         |
         | over SSH as ada@devbox   | SSH ada@devbox     |
         | through WSL              | WSL                |
 
@@ -998,7 +1001,7 @@ Feature: Connections settings
       Given no other environment is saved
       When the user opens the environments
       Then the user is told there are no saved remote environments
-      And told how to add one, or to connect one from HAL-C2 Connect when signed in there
+      And told how to add one
 
     @backlog @desktop
     Scenario: An environment this device has not reached yet says so
@@ -1015,8 +1018,6 @@ Feature: Connections settings
         | route                    | state                                         | line                                  |
         | over SSH as ada@devbox   | connected                                     | SSH ada@devbox · Connected            |
         | through WSL              | switched off                                  | WSL · Off                             |
-        | through HAL-C2 Connect   | connected and behind this client at 1.3.0     | HAL-C2 Connect · Connected · 1.3.0    |
-        | through HAL-C2 Connect   | restarting to finish an update                | HAL-C2 Connect · Restarting           |
 
     @backlog @desktop
     Scenario: Hovering an environment's status gives the long form
@@ -1094,7 +1095,8 @@ Feature: Connections settings
       And it is managed from the WSL row under this machine
       But it is still one of the app's environments and can take threads
 
-    @backlog @desktop
+    # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+    @dropped @desktop
     Scenario: An environment found through HAL-C2 Connect is listed with its detected machine icon
       Given "Build box" was found through HAL-C2 Connect and this device has never reached it
       When the user looks at the environments

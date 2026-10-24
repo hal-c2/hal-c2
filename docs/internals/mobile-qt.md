@@ -69,7 +69,7 @@ stay in the backlog until that changes.
 
 The first product reaches an MC over Tailscale: `mise run mc:pair --tailscale` publishes the MC
 through Tailscale Serve and prints an `https://` link. That is why the Android package carries
-OpenSSL (Qt for Android has no TLS of its own), and why the relay can wait.
+OpenSSL (Qt for Android has no TLS of its own).
 
 ### Three ways to a pairing link, and who is trusted
 

@@ -10,8 +10,8 @@ defmodule HalC2.Environment do
   @protocol 3
 
   @doc """
-  The descriptor served at `/.well-known/hal-c2/environment` and sent to the
-  HAL-C2 Connect relay, without the machine's id: neither is signed in.
+  The descriptor served at `/.well-known/hal-c2/environment`, without the machine's
+  id: the endpoint is not signed in.
   """
   @spec public_descriptor() :: map
   def public_descriptor,
