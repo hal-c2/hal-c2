@@ -317,7 +317,7 @@ const MACOS_SYSTEM_FAMILIES: [&str; 5] = [
 /// in Helvetica, where Qt has the system's: San Francisco at 13 pt, 13 px
 /// under macOS's 72 dpi. So on macOS it is the system's family at 13 px
 /// (`system-ui` when none of its names is installed), a pixel size since
-/// Ljós counts a point as 4/3 px everywhere. TODO(ljos#?): the platform's
+/// Ljós counts a point as 4/3 px everywhere. TODO(ljos#95): the platform's
 /// font is Ljós's to start from, as it is Qt's.
 pub fn system_font(desktop: &Font, on_macos: bool, installed: &[String]) -> Font {
     if !on_macos {
