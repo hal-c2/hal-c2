@@ -143,8 +143,8 @@ pub fn register(steps: &mut Steps) {
         world.sync()?;
         let menu = world.state("menu");
         let (x, y) = (
-            at(&menu, "x").as_i64().unwrap_or(-1),
-            at(&menu, "y").as_i64().unwrap_or(-1),
+            at(&menu, "x").as_f64().unwrap_or(-1.0) as i64,
+            at(&menu, "y").as_f64().unwrap_or(-1.0) as i64,
         );
         expect!(
             x.to_string() == c[0] && y.to_string() == c[1],
