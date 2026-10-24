@@ -240,6 +240,21 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context |> delegate(caller, input) |> Map.put(:asked, input["timeoutMs"])
   end
 
+  # A caller on another provider than the background's Codex parent; the wait is
+  # synchronous, so a wait the caller's cap does not cut short holds the scenario.
+  step "the agent in {string} on {string} delegates a task to {string} and waits 2 hours",
+       %{args: [caller, instance, target]} = context do
+    input = %{
+      "task" => "wait for it",
+      "mode" => "wait",
+      "timeoutMs" => 2 * 60 * 60 * 1_000,
+      "target" => %{"providerInstanceId" => target}
+    }
+
+    result = World.mcp_tool(context, caller, "delegate_task", input, instance)
+    Map.put(context, :wait_result, result)
+  end
+
   step "the agent in {string} delegated a task without waiting", %{args: [caller]} = context do
     delegate(context, caller, %{"mode" => "async"})
   end
