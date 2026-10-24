@@ -19,7 +19,8 @@ defmodule HalC2.OrchestrationPropTest do
   settings); a message for the instance the running turn is not on never joins it, and
   the thread is on the instance of the run that started last.
 
-  Turns run on the fake Codex app-server in `test/support/fake_codex.py`. Every
+  Turns run on the fake Codex app-server in `test/support/fake_codex.py`, through the
+  bundled Codex plugin as on an MC. Every
   message says "wait", so its turn runs until it is interrupted or steered, and the
   model knows exactly which turn runs; only a "usage limit" message, whose turn fails
   as it starts, and the continuation, which completes, do not. After each command the test waits on the
@@ -64,6 +65,8 @@ defmodule HalC2.OrchestrationPropTest do
         Process.put(:refused_steers, [])
         Process.put(:steer_log, {0, []})
 
+        Application.put_env(:hal_c2, :bundled_plugins, [HalC2.Plugins.Bundled.Codex])
+
         Application.put_env(:hal_c2, :codex_command, [
           "env",
           "FAKE_CODEX_LOG=#{log}",
@@ -90,8 +93,13 @@ defmodule HalC2.OrchestrationPropTest do
             id: :pi_registry
           ),
           {DynamicSupervisor, name: HalC2.Codex.Supervisor, strategy: :one_for_one},
-          HalC2.Settings
+          HalC2.Settings,
+          HalC2.Plugins
         ])
+
+        # A call behind the plugin host's first scan: Codex runs as the bundled plugin
+        # it is on an MC, so its runtime is the plugin's module.
+        _ = :sys.get_state(HalC2.Plugins)
 
         # Each instance's fake Codex names its threads and turns after the instance and
         # cannot resume another's thread, as a Codex in another home cannot.
@@ -116,6 +124,7 @@ defmodule HalC2.OrchestrationPropTest do
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
         Application.delete_env(:hal_c2, :codex_command)
+        Application.delete_env(:hal_c2, :bundled_plugins)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -1129,6 +1138,9 @@ defmodule HalC2.OrchestrationPropTest do
   # settles what was running.
   def restart do
     HalC2.Prop.restart_service(HalC2.Codex.Supervisor)
+    # The bundled Codex plugin's sessions live under the plugin host.
+    HalC2.Prop.restart_service(HalC2.Plugins)
+    _ = :sys.get_state(HalC2.Plugins)
     HalC2.Prop.restart_service(HalC2.Orchestration.TurnWatch)
     HalC2.Prop.restart_service(HalC2.Streams)
     # The streams wrote their sidebar rows as they stopped.
