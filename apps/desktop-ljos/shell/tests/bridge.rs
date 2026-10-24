@@ -10,7 +10,7 @@ use std::rc::Rc;
 use common::{call, number, shell, text};
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::mc::Disconnected;
-use ljos::prelude::{Platform, RecordedUrls, Value};
+use ljos::prelude::{ClipboardMode, Platform, RecordedUrls, Value};
 use serde_json::json;
 
 const MAIN: &str = r#"
@@ -41,6 +41,7 @@ Item {
     function openExternal(url) { Shell.openExternal(url) }
     function windowCommand(command) { Shell.windowCommand(command) }
     function pasteAttaches(text, length) { return Shell.pasteAttaches(text, length) }
+    function clipboardFiles() { return JSON.stringify(Shell.clipboardFiles().map(f => f.name)) }
 }
 "#;
 
@@ -239,4 +240,25 @@ fn a_long_paste_becomes_a_file() {
     assert!(attaches("x".repeat(32 * 1024), 0));
     assert!(attaches("x".repeat(10), 119_995));
     assert!(!attaches("x".repeat(10), 119_990));
+}
+
+#[test]
+fn files_copied_in_a_file_manager_paste_as_attachments() {
+    let (engine, root) = shell(MAIN, Rc::new(Disconnected::default()));
+    let dir = tempfile::tempdir().expect("a directory");
+    let notes = dir.path().join("my notes.txt");
+    std::fs::write(&notes, "hello").expect("a file");
+    let pasted = || {
+        engine
+            .to_js_string(&call(&engine, root, "clipboardFiles", &[]))
+            .to_string()
+    };
+    let clipboard = Platform::of(&engine).clipboard();
+    clipboard.set_files(std::slice::from_ref(&notes)).unwrap();
+    assert_eq!(pasted(), r#"["my notes.txt"]"#);
+    // Text copied since is pasted as text.
+    clipboard
+        .set_text(ClipboardMode::Clipboard, "hello")
+        .unwrap();
+    assert_eq!(pasted(), "[]");
 }
