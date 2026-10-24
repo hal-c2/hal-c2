@@ -346,7 +346,6 @@ fn machines_of(brick: &Brick, world: &World) -> Vec<String> {
         other => world
             .engine()
             .to_js_string(&other)
-            .to_string()
             .split(',')
             .filter(|label| !label.is_empty())
             .map(str::to_owned)
