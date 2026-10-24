@@ -11,7 +11,6 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::harness::Steps;
-use crate::world::World;
 use crate::{expect, fail};
 
 #[derive(Default)]
