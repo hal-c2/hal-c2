@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 
 use crate::brick::{Brick, Shown};
 use crate::harness::{Failure, Outcome, Q, Steps, at, show, text};
+use crate::steps::settings_composer::drawn_bold;
 use crate::steps::stream::{self, PROJECT, THREAD};
 use crate::steps::turn::open_turn_thread;
 use crate::world::World;
@@ -503,23 +504,30 @@ pub fn register(steps: &mut Steps) {
             composer_brick(world)?;
             type_in_composer(world, &format!("**{}**", c[0]))?;
             settle_composer(world)?;
+            let (brick, input) = editor(world)?;
+            let word = c[0].clone();
+            world.wait_for_with(
+                |w| drawn_bold(w, brick, input, &word),
+                |_| format!("\"{word}\" to be drawn bold"),
+            )?;
             world.part::<Pressed>().text = c[0].clone();
-            // TODO(port): QQuickTextDocument::textDocument, the editor's
-            // QTextLayout formats: Ljós gives no way to read which
-            // characters a TextArea draws bold.
-            fail!("TODO(port): the editor's character formats cannot be read under Ljós")
+            Ok(())
         },
     );
     steps.step("the user turns rich text editing off", |world, _, _| {
         set_setting(world, "composerRichTextEnabled", json!(false))?;
         let word = world.part::<Pressed>().text.clone();
+        let (brick, input) = editor(world)?;
+        world.wait_for_with(
+            |w| !drawn_bold(w, brick, input, &word),
+            |_| format!("\"{word}\" to be drawn plain"),
+        )?;
         let editor = editor_text(world)?;
         expect!(
             editor == format!("**{word}**"),
             "the editor reads \"{editor}\""
         );
-        // TODO(port): QQuickTextDocument::textDocument, as above.
-        fail!("TODO(port): the editor's character formats cannot be read under Ljós")
+        Ok(())
     });
 
     // Text put into the composer by something else (voice input, a plugin).
