@@ -38,7 +38,9 @@ Item {
     function brickFindIn(item, name) {
         if (!item) return null
         if (item.objectName === name) return item
-        var kids = item.children || []
+        // data, not children: a closed Popup is no visual child, as
+        // findChild finds it in Qt.
+        var kids = item.data || item.children || []
         for (var i = 0; i < kids.length; i++) {
             var found = brickFindIn(kids[i], name)
             if (found) return found
