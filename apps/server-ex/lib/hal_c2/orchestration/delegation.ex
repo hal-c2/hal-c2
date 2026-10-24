@@ -226,6 +226,7 @@ defmodule HalC2.Orchestration.Delegation do
   after the work's item ended, and the child is not quiet until that run has ended.
   """
   def settle_if_quiet(thread_id) do
+    hook(:settling, thread_id)
     child = stream(thread_id)
 
     with %{"lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => parent_id}} <-
@@ -235,9 +236,20 @@ defmodule HalC2.Orchestration.Delegation do
              StreamState.list(stream(parent_id), "subagent"),
              &(&1["childThreadId"] == thread_id)
            ),
-         true <- task["status"] not in @terminal,
-         # A child that has not started its first run yet has not begun the task.
-         [_ | _] = runs <- StreamState.list(child, "run"),
+         true <- task["status"] in @terminal or settle_quiet(child, parent_id, task) do
+      # The task may have been the last thing its caller, itself a subagent, waited on.
+      # Checked whenever the task has ended, not only by the call that ended it, so a
+      # report retried after this check failed (`report/5`) checks again.
+      settle_if_quiet(parent_id)
+    end
+
+    :ok
+  end
+
+  # Settles `task` if its child is quiet; true once the task has ended.
+  defp settle_quiet(child, parent_id, task) do
+    # A child that has not started its first run yet has not begun the task.
+    with [_ | _] = runs <- StreamState.list(child, "run"),
          true <- quiet?(child),
          {status, _run, ended_at} <- last_end(runs) do
       result = answer(child)
@@ -253,17 +265,16 @@ defmodule HalC2.Orchestration.Delegation do
              settle(parent_id, task, status, result, &delivery/2, :once, ended_at, true),
            do: Orchestration.dispatched(parent_id, wake(parent_id, task, status, result), sent)
 
-      # The task may have been the last thing its caller, itself a subagent, waited on.
-      settle_if_quiet(parent_id)
+      true
+    else
+      _ -> false
     end
-
-    :ok
   end
 
   @doc """
-  `finished/3` from the end of a child's run, tried again while a thread it reads is
-  too busy to answer, or it fails: a report given up on leaves the task to the periodic
-  check (`settle_if_quiet/1`) or the next boot (`reconcile/2`). Retries `attempts` times, waiting twice as long each time from `backoff` ms.
+  `finished/3` from the end of a child's run (or of background work no provider wakes
+  itself for), tried again while a thread it reads is too busy to answer, or it fails:
+  a report given up on leaves the task to the periodic check (`settle_if_quiet/1`) or the next boot (`reconcile/2`). Retries `attempts` times, waiting twice as long each time from `backoff` ms.
   """
   def report(thread_id, run_id, status, attempts \\ 6, backoff \\ 2_000) do
     hook(:reporting, thread_id)

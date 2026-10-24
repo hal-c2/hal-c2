@@ -395,6 +395,121 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  # `p`, itself working on `ptask` for `g`, with nothing left but the task in `c`: once
+  # that ends, so does `ptask`. Neither result wakes its caller.
+  defp delegate_nested do
+    disposed = %{"state" => "disposed", "observedByRunId" => nil}
+    delegate("completed", %{"completionDelivery" => disposed})
+
+    {:ok, _} =
+      HalC2.Streams.commit("g", :thread, [
+        thread("g"),
+        run("gr", 1, "running"),
+        {"subagent", "ptask",
+         %{
+           "s" => %{
+             "id" => "ptask",
+             "origin" => "app_owned",
+             "childThreadId" => "p",
+             "completionDelivery" => disposed,
+             "status" => "running",
+             "runId" => "gr",
+             "startedAt" => @at
+           }
+         }},
+        {"node", "ptask",
+         %{"s" => %{"id" => "ptask", "kind" => "subagent", "status" => "running"}}}
+      ])
+
+    {:ok, _} =
+      HalC2.Streams.commit("p", :thread, [
+        thread("p", %{
+          "runtimeMode" => "full-access",
+          "interactionMode" => "default",
+          "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "g"}
+        }),
+        run("pr", 1, "completed", %{"completedAt" => @at})
+      ])
+
+    :ok
+  end
+
+  defp task(parent_id, task_id) do
+    parent_id
+    |> HalC2.Streams.ensure()
+    |> HalC2.Streams.Server.state()
+    |> StreamState.get("subagent")
+    |> Map.get(task_id)
+  end
+
+  describe "a report whose check of the caller's own task fails" do
+    test "checks the caller again when retried, though its own task has ended" do
+      delegate_nested()
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      hook_with(fn
+        :settling, "p" ->
+          if Agent.get_and_update(counter, &{&1, &1 + 1}) == 0, do: exit(:busy)
+
+        _, _ ->
+          :ok
+      end)
+
+      assert Delegation.report("c", "cr", "completed", 2, 0) == :ok
+      assert task()["status"] == "completed"
+      assert task("g", "ptask")["status"] == "completed"
+    end
+  end
+
+  describe "the periodic check meeting a thread that fails" do
+    test "settles the other quiet tasks and still answers" do
+      Application.put_env(:hal_c2, :idle_session_check_ms, nil)
+      on_exit(fn -> Application.delete_env(:hal_c2, :idle_session_check_ms) end)
+
+      delegate("completed")
+
+      {:ok, _} =
+        HalC2.Streams.commit("p", :thread, [
+          {"subagent", "task2",
+           %{
+             "s" => %{
+               "id" => "task2",
+               "origin" => "app_owned",
+               "childThreadId" => "c2",
+               "completionDelivery" => %{"state" => "disposed", "observedByRunId" => nil},
+               "status" => "running",
+               "runId" => "pr",
+               "startedAt" => @at
+             }
+           }},
+          {"node", "task2",
+           %{"s" => %{"id" => "task2", "kind" => "subagent", "status" => "running"}}}
+        ])
+
+      {:ok, _} =
+        HalC2.Streams.commit("c2", :thread, [
+          thread("c2", %{
+            "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"}
+          }),
+          run("c2r", 1, "completed", %{"completedAt" => @at})
+        ])
+
+      for id <- ~w(p c c2), do: id |> HalC2.Streams.ensure() |> HalC2.Streams.Server.flush_shell()
+
+      hook_with(fn
+        :settling, "c" -> exit(:busy)
+        _, _ -> :ok
+      end)
+
+      pid = start_supervised!(HalC2.Orchestration.IdleSessions)
+
+      assert HalC2.Orchestration.IdleSessions.check() == []
+      assert Process.whereis(HalC2.Orchestration.IdleSessions) == pid
+      assert task()["status"] == "running"
+      assert task("p", "task2")["status"] == "completed"
+    end
+  end
+
   describe "a task whose result is delivered" do
     test "is never recorded as delivered before its result message, so a crash cannot part them" do
       delegate("completed")
