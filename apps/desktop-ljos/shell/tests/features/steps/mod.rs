@@ -10,6 +10,7 @@ pub mod connection_health;
 pub mod connections;
 pub mod mc;
 pub mod member;
+pub mod plugin;
 pub mod settings_connections;
 pub mod stream;
 pub mod thread_menu;
@@ -25,6 +26,7 @@ pub fn register(steps: &mut Steps) {
     connection_health::register(steps);
     mc::register(steps);
     member::register(steps);
+    plugin::register(steps);
     settings_connections::register(steps);
     stream::register(steps);
     thread_menu::register(steps);
