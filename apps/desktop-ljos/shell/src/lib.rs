@@ -137,6 +137,12 @@ struct Kept {
 pub fn open(engine: &Engine, session: &session::Session) -> Result<(), String> {
     let mc = controller::mc(engine).ok_or("the shell is not started")?;
     mc.open(&session.origin, &session.token)?;
+    // NativeShell::opened: the MC on this machine needs no network, one on
+    // another does. ConnectionHealth's own pairing, which is running
+    // already, says so itself.
+    controller::with::<controllers::connection_health::ConnectionHealth, _>(engine, |c, engine| {
+        c.network_changed(engine)
+    });
     let bridge = bridge::Bridge::of(engine);
     bridge.set_mc_origin(engine, &session.origin);
     let kept = engine.extension::<Kept>();
