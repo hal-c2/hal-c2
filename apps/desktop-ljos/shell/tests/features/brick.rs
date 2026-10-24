@@ -258,8 +258,41 @@ impl Brick {
             probe,
             takes_keys: false,
         };
-        expect!(brick.root(world).is_some(), "the brick did not load: {qml}");
+        let Some(root) = brick.root(world) else {
+            fail!("the brick did not load: {qml}");
+        };
+        // desktop-qt's Brick sizes its root to the brick, as a Loader or an
+        // anchored host sizes a page in the app.
+        brick.write(world, root, "width", Value::from(width))?;
+        brick.write(world, root, "height", Value::from(height))?;
         Ok(brick)
+    }
+
+    /// Where the window point (x, y) of the brick is once the brick has
+    /// moved so the point lies inside the window. desktop-qt's window takes
+    /// the brick's size, so a point far down a tall page is in it; a test
+    /// window keeps its size (ljos-ui: TestWindow cannot change size), so
+    /// the brick moves under it instead, as a page scrolls.
+    pub fn reach(&self, world: &mut World, x: f64, y: f64) -> Outcome<(f64, f64)> {
+        let (width, height) = crate::world::WINDOW;
+        let shift = |at: f64, size: f64| {
+            if (0.0..size).contains(&at) {
+                0.0
+            } else {
+                size / 2.0 - at
+            }
+        };
+        let (dx, dy) = (shift(x, width), shift(y, height));
+        if dx == 0.0 && dy == 0.0 {
+            return Ok((x, y));
+        }
+        for (name, by) in [("x", dx), ("y", dy)] {
+            if by != 0.0 {
+                let now = world.engine().read_by_name(self.probe, name).to_number();
+                self.write(world, self.probe, name, Value::from(now + by))?;
+            }
+        }
+        Ok((x + dx, y + dy))
     }
 
     /// Shows `qml` and keeps it as the world's brick.
