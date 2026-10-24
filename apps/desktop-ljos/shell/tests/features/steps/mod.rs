@@ -58,6 +58,7 @@ pub mod thread_order;
 pub mod thread_menu;
 pub mod thread_pull_request_link;
 pub mod thread_row;
+pub mod thread_selection;
 pub mod thread_settle_settings;
 pub mod thread_search;
 pub mod thread_snooze;
@@ -124,6 +125,7 @@ pub fn register(steps: &mut Steps) {
     thread_menu::register(steps);
     thread_pull_request_link::register(steps);
     thread_row::register(steps);
+    thread_selection::register(steps);
     thread_search::register(steps);
     thread_snooze::register(steps);
     thread_worktree_setup::register(steps);
