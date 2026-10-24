@@ -563,7 +563,7 @@ impl SnapShot {
             return;
         }
         let modifier = text(payload, "modifier");
-        let held = format!("{modifier}:{}", text(payload, "code"));
+        let held = format!("{modifier}:{}", int(payload, "code"));
         if !flag(payload, "down") {
             self.held.remove(&held);
             return;
