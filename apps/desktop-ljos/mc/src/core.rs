@@ -22,7 +22,8 @@ use url::Url;
 
 use crate::{CallError, Frame, McEvent, PROTOCOL, Phase, Status, new_trace_id};
 
-pub(crate) const DEFAULT_RETRY_DELAYS: [Duration; 5] = [
+/// The delays between retries a client starts with: they grow to a cap.
+pub const DEFAULT_RETRY_DELAYS: [Duration; 5] = [
     Duration::from_millis(500),
     Duration::from_millis(1000),
     Duration::from_millis(2000),

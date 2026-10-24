@@ -5,7 +5,7 @@
 //! [`super`] for why not libghostty-vt). This wrapper adds what the item
 //! needs and the crate does not give: replies to the queries a program asks
 //! (and silence while history is replayed), the title and working
-//! directory, the bell, and rows addressed from the oldest line of history,
+//! directory, the bell, the kitty keyboard flags a program sets, and rows addressed from the oldest line of history,
 //! which is how a selection stays put while the viewport scrolls.
 
 use vt100::{Callbacks, Parser, Screen};
@@ -20,6 +20,53 @@ struct Hook {
     title: Option<String>,
     cwd: Option<String>,
     bells: u32,
+    /// The kitty keyboard protocol's stack of flags, for the main screen
+    /// and the alternate one.
+    kitty: [Vec<u8>; 2],
+}
+
+/// How many entries a kitty flags stack keeps; a push past it drops the
+/// oldest, as the protocol allows.
+const KITTY_STACK: usize = 16;
+
+impl Hook {
+    /// `CSI > f u` pushes, `CSI < n u` pops, `CSI = f ; m u` sets (1),
+    /// adds (2) or removes (3) bits of the current flags, and `CSI ? u`
+    /// asks for them.
+    fn kitty_keyboard(&mut self, screen: &Screen, mark: u8, params: &[&[u16]]) {
+        let param = |i: usize| params.get(i).and_then(|p| p.first()).copied();
+        let stack = &mut self.kitty[usize::from(screen.alternate_screen())];
+        let current = stack.last().copied().unwrap_or(0);
+        match mark {
+            b'>' => {
+                if stack.len() == KITTY_STACK {
+                    stack.remove(0);
+                }
+                stack.push(param(0).unwrap_or(0) as u8 & 0x1f);
+            }
+            b'<' => {
+                let n = usize::from(param(0).unwrap_or(1).max(1));
+                stack.truncate(stack.len().saturating_sub(n));
+            }
+            b'=' => {
+                let flags = param(0).unwrap_or(0) as u8 & 0x1f;
+                let next = match param(1).unwrap_or(1) {
+                    2 => current | flags,
+                    3 => current & !flags,
+                    _ => flags,
+                };
+                match stack.last_mut() {
+                    Some(top) => *top = next,
+                    None => stack.push(next),
+                }
+            }
+            b'?' if self.answer => {
+                self.replies
+                    .extend_from_slice(format!("\x1b[?{current}u").as_bytes());
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Callbacks for Hook {
@@ -52,6 +99,12 @@ impl Callbacks for Hook {
         params: &[&[u16]],
         c: char,
     ) {
+        if c == 'u'
+            && let Some(mark @ (b'>' | b'<' | b'=' | b'?')) = i1
+        {
+            self.kitty_keyboard(screen, mark, params);
+            return;
+        }
         if !self.answer {
             return;
         }
@@ -205,6 +258,15 @@ impl Vt {
 
     pub fn alternate_screen(&self) -> bool {
         self.screen().alternate_screen()
+    }
+
+    /// The kitty keyboard protocol's flags the program on this screen set.
+    pub fn kitty_keyboard(&self) -> u8 {
+        let screen = usize::from(self.screen().alternate_screen());
+        self.parser.callbacks().kitty[screen]
+            .last()
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Whether the program asked for mouse reports.
@@ -367,6 +429,27 @@ mod tests {
 
     fn lines(n: usize) -> String {
         (0..n).map(|i| format!("line {i}\r\n")).collect()
+    }
+
+    #[test]
+    fn a_program_sets_and_asks_for_the_kitty_keyboard_flags() {
+        let mut vt = Vt::new(3, 20, 100);
+        assert_eq!(vt.kitty_keyboard(), 0);
+        vt.feed(b"\x1b[>1u", true);
+        assert_eq!(vt.kitty_keyboard(), 1);
+        let fed = vt.feed(b"\x1b[=8;2u\x1b[?u", true);
+        assert_eq!(
+            (vt.kitty_keyboard(), fed.replies),
+            (9, b"\x1b[?9u".to_vec())
+        );
+        // The alternate screen keeps its own stack.
+        vt.feed(b"\x1b[?1049h", true);
+        assert_eq!(vt.kitty_keyboard(), 0);
+        vt.feed(b"\x1b[?1049l\x1b[<u", true);
+        assert_eq!(vt.kitty_keyboard(), 0);
+        // A replayed transcript sets them but is not answered.
+        let fed = vt.feed(b"\x1b[>3u\x1b[?u", false);
+        assert_eq!((vt.kitty_keyboard(), fed.replies), (3, Vec::new()));
     }
 
     #[test]

@@ -435,3 +435,21 @@ fn the_composer_reads_the_open_threads_timeline() {
     assert_eq!(approvals[0]["requestId"], "request-1");
     assert_eq!(approvals[0]["detail"], "Run rm -rf dist?");
 }
+
+#[test]
+fn a_thread_the_mc_has_no_provider_for_is_not_switched_by_the_first_send() {
+    let hub = clustered(hal_c2_shell::Launch::default());
+    hub.mc.set_ready(&hub.engine, true);
+    let mut row = thread_row("t1");
+    row[3]
+        .as_object_mut()
+        .map(|fields| fields.remove("modelSelection"));
+    shell(&hub, vec![project(json!({})), row]);
+    open(&hub, "t1");
+    providers(&hub);
+    send(&hub, "hello");
+    let sent = commands(&hub);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0]["type"], "message.dispatch");
+    assert_eq!(sent[0]["modelSelection"]["instanceId"], "codex");
+}

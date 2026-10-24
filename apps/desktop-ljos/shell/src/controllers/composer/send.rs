@@ -313,7 +313,9 @@ impl Composer {
         // the MC.
         let model_selection = self.selection(engine, target);
         let instance_id = field(&model_selection, "instanceId");
-        if !instance_id.is_empty() && instance_id != field(&thread.model_selection, "instanceId") {
+        // A thread the MC has no provider for yet is not taken over from one.
+        let current = field(&thread.model_selection, "instanceId");
+        if !instance_id.is_empty() && !current.is_empty() && instance_id != current {
             commands.push(object(json!({
                 "type": "provider.switch",
                 "threadId": thread.id,

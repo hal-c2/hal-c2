@@ -522,10 +522,21 @@ impl Core {
         }
     }
 
-    /// For running timers too, from their next start.
+    /// For running timers too: each starts over with its new interval, as
+    /// setting a running timer's interval does.
     pub fn set_timeouts(&mut self, first_frame_ms: i32, retry_ms: i32) {
         self.first_frame_ms = first_frame_ms;
         self.retry_ms = retry_ms;
+        for timer in [
+            Timer::FirstFrame,
+            Timer::ReadStall,
+            Timer::VideoRetry,
+            Timer::InputRetry,
+        ] {
+            if self.timers.contains_key(&timer) {
+                self.start_timer(timer);
+            }
+        }
     }
 
     /// Starts over after an error.

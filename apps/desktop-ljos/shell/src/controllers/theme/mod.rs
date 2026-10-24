@@ -1939,6 +1939,11 @@ impl Themes {
         self.view.request_remove_many(engine, ids);
     }
 
+    /// The colour roles a theme sets.
+    pub fn roles(&self) -> Vec<String> {
+        built_ins().roles.iter().map(|r| r.to_string()).collect()
+    }
+
     pub fn editor_open(&self) -> bool {
         self.view.editor_open.get()
     }
