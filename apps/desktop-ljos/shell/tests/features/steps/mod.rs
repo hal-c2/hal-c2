@@ -13,6 +13,7 @@ pub mod link;
 pub mod mc;
 pub mod stream;
 pub mod thread_menu;
+pub mod thread_pull_request_link;
 pub mod thread_snooze;
 pub mod timeline;
 pub mod viewing;
@@ -28,6 +29,7 @@ pub fn register(steps: &mut Steps) {
     mc::register(steps);
     stream::register(steps);
     thread_menu::register(steps);
+    thread_pull_request_link::register(steps);
     thread_snooze::register(steps);
     timeline::register(steps);
     viewing::register(steps);
