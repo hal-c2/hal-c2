@@ -357,6 +357,186 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # --- workspaces -----------------------------------------------------------------
+
+  step "the agent in {string} delegates a task with workspace {string}",
+       %{args: [caller, json]} = context do
+    context
+    |> World.worktree_setup()
+    |> delegate(caller, %{"mode" => "async", "workspace" => workspace_input(context, json)})
+  end
+
+  step "the agent in {string} delegated a task with workspace {string}",
+       %{args: [caller, json]} = context do
+    context
+    |> World.worktree_setup()
+    |> delegate(caller, %{"mode" => "async", "workspace" => workspace_input(context, json)})
+  end
+
+  step "the task asks for the workspace {string}", %{args: [json]} = context do
+    context = World.worktree_setup(context)
+    input = Map.put(context[:delegate_input] || %{}, "workspace", workspace_input(context, json))
+    Map.put(context, :delegate_input, input)
+  end
+
+  step "the task's caller {string} is approval-required", %{args: [thread]} = context do
+    World.patch_thread(context, thread, %{"runtimeMode" => "approval-required"})
+    context
+  end
+
+  step "{string} has a commit that is not on any other branch", %{args: [thread]} = context do
+    path = World.thread(context, thread)["worktreePath"]
+    File.write!(Path.join(path, "local.txt"), "local\n")
+    World.git!(path, ["add", "local.txt"])
+    World.git!(path, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "local"])
+    Map.put(context, :local_commit, World.git!(path, ["rev-parse", "HEAD"]))
+  end
+
+  step "the project has another worktree {string} on branch {string}",
+       %{args: [path, branch]} = context do
+    dir = Mc.tmp_dir(context.mc, "other")
+    World.git!(World.project(context).root, ["worktree", "add", "-q", "-b", branch, dir])
+    Map.update(context, :worktrees, %{path => dir}, &Map.put(&1, path, dir))
+  end
+
+  step "the subagent thread works in a new worktree other than {string}",
+       %{args: [path]} = context do
+    child = World.await_row(World.thread_id(context, "subagent"), & &1["worktreePath"])
+    assert child["worktreePath"] != context.worktrees[path]
+    assert File.dir?(child["worktreePath"])
+    context
+  end
+
+  step "that worktree has the caller's commit", context do
+    path = World.thread(context, "subagent")["worktreePath"]
+    assert World.git!(path, ["rev-parse", "HEAD"]) == context.local_commit
+    context
+  end
+
+  step "the task's status reports that worktreePath and branch", context do
+    child = World.thread(context, "subagent")
+    assert {:ok, status} = status(context)
+    assert status["worktreePath"] == child["worktreePath"]
+    assert status["branch"] == child["branch"]
+    assert status["workspace"] == "worktree"
+    refute status["worktreePath"] == World.thread(context, "parent")["worktreePath"]
+    context
+  end
+
+  step "the subagent's first turn starts in it, after it was prepared", context do
+    World.await_runs(context, "subagent", ["running"])
+    child = World.thread(context, "subagent")
+    assert child["worktreePath"]
+    [turn] = StreamState.list(World.state(context, "subagent"), "provider-turn")
+    assert turn
+    context
+  end
+
+  step "the subagent thread works in a new worktree on branch {string}",
+       %{args: [branch]} = context do
+    child = World.await_row(World.thread_id(context, "subagent"), & &1["worktreePath"])
+    assert child["branch"] == branch
+    assert File.dir?(child["worktreePath"])
+    context
+  end
+
+  step "the subagent thread works in worktree {string} on branch {string}",
+       %{args: [path, branch]} = context do
+    child = World.thread(context, "subagent")
+    assert child["worktreePath"] == context.worktrees[path]
+    assert child["branch"] == branch
+    context
+  end
+
+  step "the project has no worktree besides {string}", %{args: [path]} = context do
+    listed =
+      context
+      |> World.project()
+      |> Map.fetch!(:root)
+      |> World.git!(["worktree", "list", "--porcelain"])
+      |> String.split("\n")
+      |> Enum.filter(&String.starts_with?(&1, "worktree "))
+      |> Enum.map(&String.replace_prefix(&1, "worktree ", ""))
+
+    assert Enum.sort(listed) == Enum.sort([World.project(context).root, context.worktrees[path]])
+    context
+  end
+
+  # The project's post-checkout hook fails, so `git worktree add` fails.
+  step "adding the next worktree fails", context do
+    context = World.worktree_setup(context)
+    hook = Path.join([World.project(context).root, ".git", "hooks", "post-checkout"])
+    File.mkdir_p!(Path.dirname(hook))
+    File.write!(hook, "#!/bin/sh\nexit 1\n")
+    File.chmod!(hook, 0o755)
+    context
+  end
+
+  # The hook waits for the gate file, which opens when the scenario ends.
+  step "the next worktree is held while it is prepared", context do
+    context = World.worktree_setup(context)
+    dir = Mc.tmp_dir(context.mc, "gate")
+    gate = Path.join(dir, "open")
+    hook = Path.join([World.project(context).root, ".git", "hooks", "post-checkout"])
+    File.mkdir_p!(Path.dirname(hook))
+
+    File.write!(hook, """
+    #!/bin/sh
+    i=0
+    while [ ! -f '#{gate}' ] && [ -d '#{dir}' ] && [ $i -lt 1500 ]; do sleep 0.02; i=$((i+1)); done
+    """)
+
+    File.chmod!(hook, 0o755)
+    ExUnit.Callbacks.on_exit(fn -> File.write(gate, "") end)
+    context
+  end
+
+  # Cancelled once the checkout is under way, held at the hook.
+  step "the worktree setup is cancelled", context do
+    child = World.thread_id(context, "subagent")
+
+    checking_out? = fn snapshot ->
+      snapshot &&
+        Enum.any?(snapshot["stages"], &(&1["id"] == "checkout" and &1["status"] == "running"))
+    end
+
+    snapshot = HalC2.WorktreeSetup.subscribe(child, self())
+
+    unless checking_out?.(snapshot) do
+      receive_setup = fn receive_setup ->
+        receive do
+          {:hal_c2_worktree_setup, ^child, snapshot} ->
+            if checking_out?.(snapshot), do: :ok, else: receive_setup.(receive_setup)
+        after
+          10_000 -> flunk("the worktree setup never got to the checkout")
+        end
+      end
+
+      receive_setup.(receive_setup)
+    end
+
+    {reply, context} = World.call(context, "worktreeSetup.cancel", %{"threadId" => child})
+    assert {:ok, %{"cancelled" => true}} = reply
+    context
+  end
+
+  step "the task ends {string} with the result {string}",
+       %{args: [status, text]} = context do
+    await_task(context, &(&1["status"] == status))
+    task = task(context)
+
+    assert task["result"] =~ text
+    assert task["completionDelivery"]["state"] == "delivered"
+    context
+  end
+
+  step "the subagent never ran", context do
+    state = World.state(context, "subagent")
+    assert StreamState.list(state, "provider-turn") == []
+    refute Enum.any?(StreamState.list(state, "run"), &(&1["status"] in ~w(running completed)))
+    context
+  end
+
   step "the subagent runs on {string} with the caller's model", %{args: [instance]} = context do
     selection = World.thread(context, "subagent")["modelSelection"]
     assert selection["instanceId"] == instance
@@ -791,6 +971,20 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
     |> put_in([:threads, "subagent"], task["childThreadId"])
     |> Map.merge(%{task_id: task["id"], task_parent: caller})
+  end
+
+  # A scenario's worktree names stand for the directories it made.
+  defp workspace_input(context, json) do
+    json =
+      json
+      |> String.replace("'", ~s("))
+      |> then(
+        &Enum.reduce(context[:worktrees] || %{}, &1, fn {name, dir}, json ->
+          String.replace(json, ~s("#{name}"), JSON.encode!(dir))
+        end)
+      )
+
+    JSON.decode!(json)
   end
 
   defp task(context),

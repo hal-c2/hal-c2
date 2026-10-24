@@ -42,9 +42,11 @@ defmodule HalC2.Orchestration.Delegation do
          {:ok, selection} <- target(thread, input["target"]),
          {:ok, runtime} <- mode(thread["runtimeMode"], input["runtimeMode"], :runtime),
          {:ok, interaction} <-
-           mode(thread["interactionMode"], input["interactionMode"], :interaction) do
+           mode(thread["interactionMode"], input["interactionMode"], :interaction),
+         {:ok, workspace} <- resolve_workspace(thread, input["workspace"]) do
       spec = %{
         "task" => input["task"],
+        "workspace" => workspace,
         "title" => input["title"],
         "modelSelection" => selection,
         "runtimeMode" => runtime,
@@ -81,10 +83,12 @@ defmodule HalC2.Orchestration.Delegation do
          :ok <- if(run && run["status"] in @active, do: :ok, else: not_active()),
          {:ok, runtime} <- mode(thread["runtimeMode"], command["runtimeMode"], :runtime),
          {:ok, interaction} <-
-           mode(thread["interactionMode"], command["interactionMode"], :interaction) do
+           mode(thread["interactionMode"], command["interactionMode"], :interaction),
+         {:ok, workspace} <- resolve_workspace(thread, command["workspace"]) do
       with {:ok, _task_id} <-
              start(thread, run, %{
                "task" => command["task"],
+               "workspace" => workspace,
                "title" => command["title"],
                "modelSelection" => command["modelSelection"] || thread["modelSelection"],
                "runtimeMode" => runtime,
@@ -223,7 +227,7 @@ defmodule HalC2.Orchestration.Delegation do
          # A report that comes late (retried) finds the run as it is now: one the
          # user rolled back meanwhile ends the task as its other runs say.
          {status, run, ended_at} <- reported(child, run_id, status) do
-      result = run && answer(child, run["id"])
+      result = run && (answer(child, run["id"]) || preparation_failure(child, run))
 
       # A completion reported twice (a provider replaying its turn's end after a
       # reconnect, or two reports racing) settles and wakes once: only the report
@@ -344,7 +348,19 @@ defmodule HalC2.Orchestration.Delegation do
     title =
       spec["title"] || spec["task"] |> String.split("\n") |> hd() |> String.slice(0, 80)
 
-    record(thread, run, task_id, child_id, selection, title, spec["task"], spec["completionWake"])
+    workspace = spec["workspace"] || {"inherited", workspace(thread)}
+
+    record(
+      thread,
+      run,
+      task_id,
+      child_id,
+      selection,
+      title,
+      spec["task"],
+      spec["completionWake"],
+      elem(workspace, 0)
+    )
 
     launched =
       Orchestration.launch_thread(%{
@@ -357,7 +373,7 @@ defmodule HalC2.Orchestration.Delegation do
         "interactionMode" => spec["interactionMode"],
         "createdBy" => spec["createdBy"],
         "creationSource" => spec["creationSource"],
-        "workspaceStrategy" => workspace(thread),
+        "workspaceStrategy" => elem(workspace, 1),
         "lineage" => %{
           "parentThreadId" => thread["id"],
           "relationshipToParent" => "subagent",
@@ -419,7 +435,7 @@ defmodule HalC2.Orchestration.Delegation do
   defp not_app_owned(parent_id, task_id),
     do: {:error, "Delegated task #{task_id} is not an app-owned task of thread #{parent_id}."}
 
-  defp record(thread, run, task_id, child_id, selection, title, prompt, wake) do
+  defp record(thread, run, task_id, child_id, selection, title, prompt, wake, workspace) do
     at = Entities.now()
     instance = selection["instanceId"]
     driver = Orchestration.driver_for(instance)
@@ -441,6 +457,7 @@ defmodule HalC2.Orchestration.Delegation do
       "title" => title,
       "model" => selection["model"],
       "completionWake" => wake,
+      "workspace" => workspace,
       "completionDelivery" => %{"state" => "pending", "observedByRunId" => nil},
       "status" => "running",
       "result" => nil,
@@ -625,6 +642,8 @@ defmodule HalC2.Orchestration.Delegation do
       child = stream(task["childThreadId"])
       runs = StreamState.list(child, "run") |> Enum.sort_by(&(&1["ordinal"] || 0))
       terminal = task["status"] in @terminal
+      # Live, not recorded with the task: the branch is renamed after the worktree exists.
+      thread = StreamState.get(child, "thread")[task["childThreadId"]] || %{}
 
       %{
         "taskId" => task["id"],
@@ -639,7 +658,10 @@ defmodule HalC2.Orchestration.Delegation do
         "hasPendingChildRuns" =>
           Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued")),
         "startedAt" => task["startedAt"],
-        "completedAt" => task["completedAt"]
+        "completedAt" => task["completedAt"],
+        "workspace" => task["workspace"],
+        "worktreePath" => thread["worktreePath"],
+        "branch" => thread["branch"]
       }
     end
   end
@@ -712,6 +734,18 @@ defmodule HalC2.Orchestration.Delegation do
     |> Map.get("text")
   end
 
+  # Why a child that never started ended: its worktree could not be prepared, or the
+  # preparation was cancelled. Nil for any other run.
+  defp preparation_failure(child, %{"id" => run_id, "status" => status}) do
+    case StreamState.get(child, "turn-item")["turn-item:workspace-preparation-failure:#{run_id}"] do
+      %{"failure" => %{"message" => message}} -> "Workspace preparation failed: #{message}"
+      _ when status == "cancelled" -> "Workspace preparation was cancelled."
+      _ -> nil
+    end
+  end
+
+  defp preparation_failure(_child, _run), do: nil
+
   defp idle?(state), do: not Enum.any?(StreamState.list(state, "run"), &(&1["status"] in @active))
 
   defp target(thread, nil), do: {:ok, thread["modelSelection"]}
@@ -761,6 +795,130 @@ defmodule HalC2.Orchestration.Delegation do
         {:error, "interaction_mode_escalation_denied",
          "Child interaction mode #{requested} is broader than parent mode plan."},
       else: {:ok, requested}
+  end
+
+  # What `workspace` asks for, as `{kind, launch strategy}`. Omitted, the child works
+  # where the caller does. Anything else makes or points at a checkout, so it needs
+  # the caller `hal_c2_thread_launch` needs, and is refused here, before anything is
+  # created: a task never falls back to the caller's checkout.
+  defp resolve_workspace(thread, nil), do: {:ok, {"inherited", workspace(thread)}}
+  defp resolve_workspace(thread, %{"type" => "inherit"}), do: resolve_workspace(thread, nil)
+
+  defp resolve_workspace(thread, %{"type" => type} = asked) do
+    root = project_root(thread)
+
+    cond do
+      type == "existing_worktree" and is_binary(asked["worktreePath"]) and
+          asked["worktreePath"] == thread["worktreePath"] ->
+        resolve_workspace(thread, nil)
+
+      thread["runtimeMode"] != "full-access" or thread["interactionMode"] != "default" ->
+        {:error, "workspace_escalation_denied",
+         "A task's own workspace needs a full-access/default calling thread."}
+
+      is_nil(root) ->
+        invalid("The project is not on this MC.")
+
+      type == "root" ->
+        {:ok, {"root", %{"type" => "root"}}}
+
+      type == "worktree" ->
+        new_worktree(thread, root, asked)
+
+      type == "existing_worktree" ->
+        existing_worktree(root, asked)
+
+      true ->
+        invalid("Unknown workspace type #{inspect(type)}.")
+    end
+  end
+
+  defp resolve_workspace(_thread, _asked), do: invalid("workspace needs a type.")
+
+  defp invalid(message), do: {:error, "workspace_invalid", message}
+
+  defp project_root(thread) do
+    case HalC2.Shell.row(node(), thread["projectId"]) do
+      {"project", %{"workspaceRoot" => root}} when is_binary(root) -> root
+      _ -> nil
+    end
+  end
+
+  # A new worktree from `baseRef` (default: where the caller is, so its local commits
+  # are in it) on `branch`, which must not exist yet.
+  defp new_worktree(thread, root, asked) do
+    from_origin = asked["startFromOrigin"] == true
+    base = asked["baseRef"] || caller_ref(thread, root)
+    branch = asked["branch"]
+
+    cond do
+      not is_binary(base) or not ref?(root, base, from_origin) ->
+        invalid("The base ref #{inspect(base)} does not exist.")
+
+      is_binary(branch) and not valid_branch?(root, branch) ->
+        invalid("#{inspect(branch)} is not a usable branch name.")
+
+      is_binary(branch) and
+          (ref?(root, "refs/heads/" <> branch, false) or
+             HalC2.Git.branch_path_taken?(root, branch) or
+             File.exists?(HalC2.Vcs.worktree_path(root, branch))) ->
+        invalid("The branch #{branch} already exists.")
+
+      true ->
+        {:ok,
+         {"worktree",
+          %{
+            "type" => "worktree",
+            "baseRef" => base,
+            "branch" => branch,
+            "startFromOrigin" => from_origin
+          }}}
+    end
+  end
+
+  defp existing_worktree(root, %{"worktreePath" => path} = asked) do
+    cond do
+      not is_binary(path) or Path.type(path) != :absolute ->
+        invalid("worktreePath must be an absolute path.")
+
+      not File.dir?(path) or common_dir(path) == nil or common_dir(path) != common_dir(root) ->
+        invalid("#{path} is not a checkout of this project.")
+
+      true ->
+        branch = asked["branch"] || HalC2.Git.current_branch(path)
+
+        {:ok,
+         {"existing_worktree",
+          %{"type" => "existing_worktree", "worktreePath" => path, "branch" => branch}}}
+    end
+  end
+
+  # The caller's branch, or its commit when detached.
+  defp caller_ref(thread, root) do
+    cwd = thread["worktreePath"] || root
+
+    thread["branch"] || HalC2.Git.current_branch(cwd) ||
+      with {:ok, sha} <- HalC2.Git.ok(cwd, ~w(rev-parse HEAD)), do: String.trim(sha)
+  end
+
+  defp ref?(root, ref, from_origin) do
+    Enum.any?(if(from_origin, do: [ref, "origin/" <> ref], else: [ref]), fn candidate ->
+      match?(
+        {:ok, _},
+        HalC2.Git.ok(root, ["rev-parse", "--verify", "--quiet", candidate <> "^{commit}"])
+      )
+    end)
+  end
+
+  defp valid_branch?(root, branch),
+    do: match?({:ok, _}, HalC2.Git.ok(root, ["check-ref-format", "--branch", branch]))
+
+  # Two checkouts of one repository share a common git dir.
+  defp common_dir(cwd) do
+    case HalC2.Git.ok(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) do
+      {:ok, dir} -> String.trim(dir)
+      _ -> nil
+    end
   end
 
   # The child works where the parent does.
