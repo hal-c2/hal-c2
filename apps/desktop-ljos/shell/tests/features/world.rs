@@ -677,3 +677,13 @@ impl Drop for World {
         this_machine::set_id_for_testing(None);
     }
 }
+
+impl World {
+    /// A domain's state when a step made it, for closures that hold
+    /// `&World`.
+    pub fn peek_part<T: 'static>(&self) -> Option<&T> {
+        self.parts
+            .get(&std::any::TypeId::of::<T>())
+            .and_then(|part| part.downcast_ref::<T>())
+    }
+}
