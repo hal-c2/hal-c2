@@ -806,8 +806,6 @@ pub fn register(steps: &mut Steps) {
         &format!("the user opens {Q} from the list of changed files"),
         |world, c, _| {
             // Its folder is closed until opened; the file is there once placed under it.
-            // The toggle is an IconButton, whose click does not reach its
-            // handler until Ljós resolves the `button` id (ljos#104).
             click_in_thread(world, "changedFoldersToggle", |_, _| true)?;
             let path = c[0].clone();
             click_in_thread(world, "changedFile", move |w, item| {
