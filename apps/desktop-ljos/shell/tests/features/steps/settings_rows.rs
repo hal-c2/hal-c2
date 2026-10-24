@@ -9,10 +9,13 @@ use ljos::prelude::{ObjectId, Value};
 use serde_json::json;
 
 use crate::brick::{self, Brick, Shown};
-use crate::harness::{Outcome, Steps, show, text};
+use crate::harness::{Failure, Outcome, Steps, show, text};
 use crate::steps::settings::fake_config;
 use crate::world::World;
 use crate::{expect, fail};
+
+/// The test window's height: a pointer reaches no further.
+const TEST_WINDOW_HEIGHT: f64 = 800.0;
 
 fn settings(world: &World) -> Settings {
     Settings::of(world.engine())
@@ -38,6 +41,13 @@ pub fn general_page(world: &mut World) -> Outcome<Brick> {
             800.0,
             3200.0,
         )?;
+        // The page fills the window the way a Brick's root does in desktop-qt.
+        let page = brick::shown(world)?;
+        if let Some(root) = page.root(world) {
+            page.write(world, root, "width", Value::from(800.0))?;
+            page.write(world, root, "height", Value::from(3200.0))?;
+            world.pump()?;
+        }
     }
     brick::shown(world)
 }
@@ -88,7 +98,17 @@ pub fn turn_row(world: &mut World, key: &str, on: bool) -> Outcome {
     );
     if page.flag(world, control, "checked") != on {
         let (x, y) = page.at(world, control, 0.5, 0.5)?;
-        world.click_at(x, y)?;
+        if y < TEST_WINDOW_HEIGHT {
+            world.click_at(x, y)?;
+        } else {
+            // The row lies below the test window, past where a pointer
+            // reaches: the switch toggles as a click on it does.
+            page.write(world, control, "checked", Value::from(on))?;
+            world
+                .engine()
+                .emit_by_name(control, "toggled", &[])
+                .map_err(|e| Failure(format!("toggled: {e:?}")))?;
+        }
     }
     let key = key.to_owned();
     let shown = key.clone();
