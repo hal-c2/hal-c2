@@ -4,10 +4,12 @@
 
 use crate::harness::Steps;
 
+pub mod clone;
 pub mod connection;
 pub mod connection_health;
 pub mod git;
 pub mod mc;
+pub mod source_control_settings;
 pub mod stream;
 pub mod thread_menu;
 pub mod thread_snooze;
@@ -17,10 +19,12 @@ pub mod workspace;
 
 /// Every domain's steps.
 pub fn register(steps: &mut Steps) {
+    clone::register(steps);
     connection::register(steps);
     connection_health::register(steps);
     git::register(steps);
     mc::register(steps);
+    source_control_settings::register(steps);
     stream::register(steps);
     thread_menu::register(steps);
     thread_snooze::register(steps);
