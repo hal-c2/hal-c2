@@ -508,7 +508,7 @@ fn earlier_turns_leave_the_rows_in_view_in_place() {
 /// the rows only toward the top: no step moves them back toward the end as
 /// the rows coming into view take their heights.
 #[test]
-#[ignore = "Ljós ff9c5ff: an attached ScrollBar writes a stale position back into its \
+#[ignore = "TODO(ljos#109): an attached ScrollBar writes a stale position back into its \
             ListView when a layout pass in the bar's own update changes originY or \
             contentHeight"]
 fn a_long_swipe_moves_the_rows_only_toward_the_top() {
