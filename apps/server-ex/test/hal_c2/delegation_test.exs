@@ -357,6 +357,25 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  # Found by the delegation property: the periodic check met a child between its
+  # creation and its first run, and settled the task cancelled.
+  describe "a task whose child has not started its first run" do
+    test "is not settled by a check for a quiet child" do
+      delegate("running", %{"childThreadId" => "c0"})
+
+      {:ok, _} =
+        HalC2.Streams.commit("c0", :thread, [
+          thread("c0", %{
+            "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"}
+          })
+        ])
+
+      assert :ok = Delegation.settle_if_quiet("c0")
+      assert task()["status"] == "running"
+      refute woken?()
+    end
+  end
+
   describe "a report that raises" do
     test "is retried and settles the task" do
       delegate("completed")

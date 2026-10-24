@@ -236,8 +236,10 @@ defmodule HalC2.Orchestration.Delegation do
              &(&1["childThreadId"] == thread_id)
            ),
          true <- task["status"] not in @terminal,
+         # A child that has not started its first run yet has not begun the task.
+         [_ | _] = runs <- StreamState.list(child, "run"),
          true <- quiet?(child),
-         {status, _run, ended_at} <- last_end(StreamState.list(child, "run")) do
+         {status, _run, ended_at} <- last_end(runs) do
       result = answer(child)
 
       # A child found quiet twice (two runs' ends, a provider replaying its turn's end
