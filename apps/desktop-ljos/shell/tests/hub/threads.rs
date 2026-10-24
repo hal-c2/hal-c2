@@ -7,6 +7,7 @@ use hal_c2_shell::Launch;
 use hal_c2_shell::controllers::threads::{self, ThreadStore, ThreadsObject};
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{McError, SubId};
+use hal_c2_shell::thread_view::time::Clock;
 use hal_c2_shell::thread_view::timeline::Timeline;
 use hal_c2_shell::thread_view::timeline_model::TimelineModel;
 use serde_json::json;
@@ -173,6 +174,30 @@ fn opening_a_thread_follows_its_stream_into_its_timeline() {
     let resume = hub.mc.resume(stream(&hub, "t1").unwrap()).unwrap();
     assert_eq!(resume["offset"], 3);
     assert_eq!(resume["handle"], "log-1");
+}
+
+// ThreadStore::setLocale: the open timelines and the store's own times are
+// written in the application's locale, and follow it when it changes.
+#[test]
+fn times_follow_the_applications_locale() {
+    let hub = hub(&["t1"]);
+    open(&hub, "t1");
+    let now = "2026-09-23T10:00:00Z"
+        .parse::<chrono::DateTime<chrono::Utc>>()
+        .unwrap();
+    hub.with_controller::<ThreadStore, _>(|s, engine| s.set_clock(engine, Clock::fixed(now)));
+    let told = std::rc::Rc::new(std::cell::Cell::new(0));
+    let t = told.clone();
+    threads::on_times_changed(&hub.engine, move |_| t.set(t.get() + 1));
+    let at = Some(now + chrono::Duration::hours(7));
+    assert_eq!(threads::upcoming(&hub.engine, at), "5:00 PM");
+    assert_eq!(read(&hub, "t1", |t| t.stamp(at)), "5:00 PM");
+
+    ljos::locale::set_locale(&hub.engine, "de_DE");
+    hub.advance(0);
+    assert_eq!(threads::upcoming(&hub.engine, at), "17:00");
+    assert_eq!(read(&hub, "t1", |t| t.stamp(at)), "17:00");
+    assert_eq!(told.get(), 1);
 }
 
 #[test]

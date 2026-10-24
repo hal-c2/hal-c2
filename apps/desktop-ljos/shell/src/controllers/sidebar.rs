@@ -44,6 +44,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use chrono::{DateTime, FixedOffset, Local, TimeZone, Utc};
+use ljos::locale::Locale;
 use ljos::prelude::Engine;
 use ljos::prelude::{Time, TimerId};
 use serde_json::json;
@@ -198,8 +199,9 @@ fn timestamp_format(engine: &Engine) -> String {
 /// The snooze choices now.
 pub fn snooze_presets(engine: &Engine) -> Vec<SnoozePreset> {
     let format = timestamp_format(engine);
+    let locale = Locale::of(engine);
     zoned!(engine, now_ms(engine), |now| model::snooze_presets(
-        &now, &format
+        &now, &format, &locale
     ))
 }
 
@@ -210,10 +212,12 @@ pub fn snooze_label(preset: &SnoozePreset) -> String {
 /// "tomorrow 9:00": when a snooze until `snoozed_until` ends.
 fn wake_description(engine: &Engine, snoozed_until: &str) -> String {
     let format = timestamp_format(engine);
+    let locale = Locale::of(engine);
     zoned!(engine, now_ms(engine), |now| model::wake_description(
         snoozed_until,
         &now,
-        &format
+        &format,
+        &locale
     ))
 }
 
@@ -560,11 +564,14 @@ impl Sidebar {
         let selected = shared.selected.borrow().clone();
         let format = timestamp_format(engine);
         let zone = shared.zone.get();
+        let locale = Locale::of(engine);
         let describe_wake = move |until: &str| -> String {
             let at = Utc.timestamp_millis_opt(now).single().unwrap_or_default();
             match zone {
-                Some(zone) => model::wake_description(until, &at.with_timezone(&zone), &format),
-                None => model::wake_description(until, &at.with_timezone(&Local), &format),
+                Some(zone) => {
+                    model::wake_description(until, &at.with_timezone(&zone), &format, &locale)
+                }
+                None => model::wake_description(until, &at.with_timezone(&Local), &format, &locale),
             }
         };
         let local_folders = !own.is_empty() && this_machine::hosts(engine, &own);

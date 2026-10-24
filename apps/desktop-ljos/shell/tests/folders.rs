@@ -87,6 +87,8 @@ Item {
     function rename(p, name) { return folders.renameFolder(p, name) }
     function move(p, to) { return folders.moveFolder(p, to) }
     function trash(p, confirm) { return folders.trashFolder(p, confirm) }
+    // FolderExplorer writes the model's own root.
+    function writeModelRoot(p) { folders.rootPath = p }
 }
 "#;
 
@@ -413,13 +415,9 @@ fn writing_the_root_it_already_has_forgets_the_last_failure() {
     f.string("create", &[&f.root_path(), "a"]);
     assert_eq!(f.string("create", &[&f.root_path(), "a"]), "");
     assert_ne!(f.error(), "");
-    // setBrowseRootPath clears the error before it sees the root is the same.
-    // The setter hears the write; the Engine thread forgets on its next
-    // delivery.
-    set_wake(&f.engine, || {});
-    f.set("rootPath", Value::string(f.root_path()));
-    f.settle();
-    deliver(&f.engine);
+    // setBrowseRootPath clears the error before it sees the root is the same,
+    // as FolderExplorer's write of the model's root does.
+    f.call("writeModelRoot", &[&f.root_path()]);
     assert_eq!(f.error(), "");
     assert!(f.rooted());
 }

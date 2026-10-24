@@ -946,11 +946,9 @@ struct Ranked {
     tie_breaker: String,
 }
 
-/// QString::localeAwareCompare, near enough for names: case folds first.
+/// QString::localeAwareCompare.
 fn locale_compare(a: &str, b: &str) -> Ordering {
-    a.to_lowercase()
-        .cmp(&b.to_lowercase())
-        .then_with(|| a.cmp(b))
+    crate::sidebar_model::locale_compare(a, b)
 }
 
 /// insertRankedSearchResult with no limit: by score, then tie-breaker,

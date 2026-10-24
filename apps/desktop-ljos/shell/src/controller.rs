@@ -28,15 +28,16 @@
 //! wide: the hooks of the shared controllers (settings, ...) wake every
 //! window's closures, each as its own window. QML still finds the first
 //! window's singletons (see [`Bridge::singleton`]), so the app shows one
-//! window; the others are built and run headless until Ljós has
-//! window-scoped singletons ([`set_window_opener`]).
+//! window; the others are built and run headless until Ljós can make a
+//! window's singleton the bridge built for it (TODO(ljos#81),
+//! [`set_window_opener`]).
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 
-use ljos::prelude::{Engine, ObjectId, QtObject};
+use ljos::prelude::{Application, Engine, ObjectId, QtObject, Value};
 
 use crate::bridge::Bridge;
 use crate::commands::Commands;
@@ -560,9 +561,8 @@ fn close_now(engine: &Engine, id: &str) {
         };
         if windows.len() == 1 {
             drop(windows);
-            // TODO(ljos#82): on macOS the app stays in the dock with its
-            // last window closed; Ljós ends the event loop once no window is
-            // shown.
+            // On macOS the app stays in the Dock, and opening it again
+            // shows the window ([`attach_root`]).
             if !cfg!(target_os = "macos") {
                 engine.request_quit();
             }
@@ -597,6 +597,35 @@ fn close_now(engine: &Engine, id: &str) {
             let _ = std::fs::remove_dir_all(window_dir(dir, id));
         }
     }
+}
+
+/// Makes `root` what window `id` shows: closing it closes the window
+/// ([`close_window`]), and the main one's shows again when its user opens
+/// the app with no window shown, as a click on its Dock icon does on macOS
+/// (desktop-qt's ShellRuntime::closed and ShellWindows::reopen). The app
+/// keeps running with its last window closed
+/// (`App::quit_on_last_window_closed(false)`): [`close_window`] says when it
+/// ends.
+pub fn attach_root(engine: &Engine, id: &str, root: ObjectId) {
+    let closing = id.to_owned();
+    let _ = engine.connect_by_name(root, "closing", move |engine, _| {
+        close_window(engine, &closing)
+    });
+    if id != MAIN {
+        return;
+    }
+    let Ok(app) = engine.singleton::<Application>() else {
+        return;
+    };
+    let _ = engine.signal_index(app, "reopened").and_then(|reopened| {
+        engine.connect_to(app, reopened, root, move |engine, args| {
+            if matches!(args.first(), Some(Value::Bool(false))) {
+                for show in ["show", "raise", "requestActivate"] {
+                    let _ = engine.invoke_by_name(root, show, &[]);
+                }
+            }
+        })
+    });
 }
 
 /// Opens every saved window that is not open, once an opener can show
