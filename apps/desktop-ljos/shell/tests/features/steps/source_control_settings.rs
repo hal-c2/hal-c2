@@ -11,9 +11,9 @@ use hal_c2_shell::controllers::settings_scope::SettingsScope;
 use serde_json::{Value, json};
 
 use crate::fake_mc::FakeMc;
+use crate::harness::{Outcome, Q, Steps, at, show};
 use crate::steps::settings::{document_of, fake_config, publish_providers, save_elsewhere};
 use crate::steps::settings_scoped_rows::held_all;
-use crate::harness::{Outcome, Q, Steps, at, show};
 use crate::world::World;
 use crate::{expect, fail};
 
@@ -557,7 +557,13 @@ pub fn register(steps: &mut Steps) {
 
     steps.step(
         "the user sets the automatic Git fetch interval to (\\d+) seconds",
-        |world, c, _| send(world, "fetchInterval", json!({"seconds": c[0].parse::<i64>().unwrap_or(0)})),
+        |world, c, _| {
+            send(
+                world,
+                "fetchInterval",
+                json!({"seconds": c[0].parse::<i64>().unwrap_or(0)}),
+            )
+        },
     );
     steps.step(
         "Git fetches every (\\d+) seconds while a thread is on screen",
@@ -605,15 +611,20 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("Git never fetches in the background", |world, _, _| {
-        wait_saved(world, "fetching to be turned off", |s| fetch_override(s) == 0)
+        wait_saved(world, "fetching to be turned off", |s| {
+            fetch_override(s) == 0
+        })
     });
 
     // source-control-writing.feature
-    steps.step(&format!("the user picks the writing style {Q}"), |world, c, _| {
-        let mode = mode_of(&c[0]);
-        fake(world).mode = mode.clone();
-        send(world, "writingMode", json!({"mode": mode}))
-    });
+    steps.step(
+        &format!("the user picks the writing style {Q}"),
+        |world, c, _| {
+            let mode = mode_of(&c[0]);
+            fake(world).mode = mode.clone();
+            send(world, "writingMode", json!({"mode": mode}))
+        },
+    );
     steps.step(&format!("the panel explains {Q}"), |world, c, _| {
         let said = c[0].clone();
         world.wait_for_with(
@@ -664,40 +675,43 @@ pub fn register(steps: &mut Steps) {
             })
         },
     );
-    steps.step("the settings scope covers two environments", |world, _, _| {
-        // A server whose style differs, so the instructions are one for both.
-        document_of(&mut world.mc, "server").settings.insert(
-            "sourceControlWritingStyle".into(),
-            json!({"mode": "conventional_commits"}),
-        );
-        world.mc.join_named("server");
-        world.wait_for_with(
-            |w| {
-                w.state("settingsScope")["environments"]
-                    .as_array()
-                    .is_some_and(|e| e.len() == 2)
-            },
-            |w| {
-                format!(
-                    "two environments; the scope is {}",
-                    show(&w.state("settingsScope"))
-                )
-            },
-        )?;
-        world.dispatch("settingsScope.environment", json!({"id": ""}))?;
-        world.wait_for_with(
-            |w| {
-                SettingsScope::of(w.engine()).targets().len() == 2
-                    && part_of(w, "writingStyle")["mixed"] == true
-            },
-            |w| {
-                format!(
-                    "both environments' styles, mixed; the section is {}",
-                    show(&section(w))
-                )
-            },
-        )
-    });
+    steps.step(
+        "the settings scope covers two environments",
+        |world, _, _| {
+            // A server whose style differs, so the instructions are one for both.
+            document_of(&mut world.mc, "server").settings.insert(
+                "sourceControlWritingStyle".into(),
+                json!({"mode": "conventional_commits"}),
+            );
+            world.mc.join_named("server");
+            world.wait_for_with(
+                |w| {
+                    w.state("settingsScope")["environments"]
+                        .as_array()
+                        .is_some_and(|e| e.len() == 2)
+                },
+                |w| {
+                    format!(
+                        "two environments; the scope is {}",
+                        show(&w.state("settingsScope"))
+                    )
+                },
+            )?;
+            world.dispatch("settingsScope.environment", json!({"id": ""}))?;
+            world.wait_for_with(
+                |w| {
+                    SettingsScope::of(w.engine()).targets().len() == 2
+                        && part_of(w, "writingStyle")["mixed"] == true
+                },
+                |w| {
+                    format!(
+                        "both environments' styles, mixed; the section is {}",
+                        show(&section(w))
+                    )
+                },
+            )
+        },
+    );
     steps.step("the user writes custom instructions", |world, _, _| {
         send(world, "instructions", json!({"text": INSTRUCTIONS}))
     });
@@ -707,11 +721,10 @@ pub fn register(steps: &mut Steps) {
         };
         world.wait_for_with(
             |w| {
-                let server = w
-                    .mc
-                    .peek::<crate::steps::settings::FakeConfig>()
-                    .and_then(|f| f.documents.get("server"))
-                    .map_or(Value::Null, |d| Value::Object(d.settings.clone()));
+                let server =
+                    w.mc.peek::<crate::steps::settings::FakeConfig>()
+                        .and_then(|f| f.documents.get("server"))
+                        .map_or(Value::Null, |d| Value::Object(d.settings.clone()));
                 custom(&saved(w)) && custom(&server)
             },
             |w| format!("both to use the instructions; here {}", show(&saved(w))),
@@ -828,25 +841,28 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
-    steps.step("the user looks at the writer model choices", |world, _, _| {
-        world.wait_for_with(
-            |w| {
-                part_of(w, "writerModel")["models"]
-                    .as_array()
-                    .is_some_and(|models| {
-                        models
-                            .iter()
-                            .any(|m| !m["reason"].as_str().unwrap_or_default().is_empty())
-                    })
-            },
-            |w| {
-                format!(
-                    "a model to be unusable; the choices are {}",
-                    show(&part_of(w, "writerModel"))
-                )
-            },
-        )
-    });
+    steps.step(
+        "the user looks at the writer model choices",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    part_of(w, "writerModel")["models"]
+                        .as_array()
+                        .is_some_and(|models| {
+                            models
+                                .iter()
+                                .any(|m| !m["reason"].as_str().unwrap_or_default().is_empty())
+                        })
+                },
+                |w| {
+                    format!(
+                        "a model to be unusable; the choices are {}",
+                        show(&part_of(w, "writerModel"))
+                    )
+                },
+            )
+        },
+    );
     steps.step(
         "that model cannot be picked and the reason is shown",
         |world, _, _| {

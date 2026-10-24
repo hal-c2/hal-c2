@@ -74,7 +74,9 @@ fn extend(mc: &mut FakeMc) {
         Ok(())
     });
     mc.on_rpc("server.signalProcess", |mc, rpc| {
-        mc.part::<FakeDiagnostics>().signals.push(rpc.payload.clone());
+        mc.part::<FakeDiagnostics>()
+            .signals
+            .push(rpc.payload.clone());
         mc.reply(
             rpc,
             json!({"pid": rpc.payload["pid"], "signal": rpc.payload["signal"], "signaled": true}),
@@ -136,9 +138,7 @@ fn set_editors(world: &mut World, editors: Value) -> Outcome {
 fn listed(world: &mut World, brick: Brick, pid: i64) -> Outcome<bool> {
     world.pump()?;
     let name = format!("process:{pid}");
-    Ok(brick
-        .find_visible(world, &name)?
-        .is_some())
+    Ok(brick.find_visible(world, &name)?.is_some())
 }
 
 fn fold_of(world: &mut World, brick: Brick, id: &str) -> Outcome<ObjectId> {
@@ -187,7 +187,11 @@ pub fn register(steps: &mut Steps) {
                     .iter()
                     .map(|row| text(at(row, "name")))
                     .collect();
-                shown.push(format!("{}: {}", text(at(&group, "label")), names.join(", ")));
+                shown.push(format!(
+                    "{}: {}",
+                    text(at(&group, "label")),
+                    names.join(", ")
+                ));
             }
             // A shell's child goes with its terminal.
             expect!(
@@ -209,12 +213,19 @@ pub fn register(steps: &mut Steps) {
         "each group can be collapsed and expanded again",
         |world, _, _| {
             let brick = crate::brick::shown(world)?;
-            let first = [("server", 4300), ("provider", AGENT_PID), ("terminal", 4210)];
+            let first = [
+                ("server", 4300),
+                ("provider", AGENT_PID),
+                ("terminal", 4210),
+            ];
             for (id, pid) in first {
                 expect!(listed(world, brick, pid)?, "{pid} is not listed");
                 let fold = fold_of(world, brick, id)?;
                 click_item(world, brick, fold)?;
-                expect!(!listed(world, brick, pid)?, "the {id} group did not collapse");
+                expect!(
+                    !listed(world, brick, pid)?,
+                    "the {id} group did not collapse"
+                );
                 // The others stay open.
                 for (other, other_pid) in first {
                     if other != id {
@@ -303,22 +314,19 @@ pub fn register(steps: &mut Steps) {
         world.dispatch("diagnostics.openLogs", json!({}))?;
         world.sync()
     });
-    steps.step(
-        "it opens in the user's preferred editor",
-        |world, _, _| {
-            world.wait_for("the logs folder to open", |w| {
-                w.mc.peek::<FakeDiagnostics>()
-                    .is_some_and(|f| !f.editor_calls.is_empty())
-            })?;
-            let call = fake(world).editor_calls.last().cloned().unwrap_or_default();
-            expect!(
-                call == json!({"cwd": LOGS, "editor": "cursor"}),
-                "the MC was asked for {}",
-                show(&call)
-            );
-            Ok(())
-        },
-    );
+    steps.step("it opens in the user's preferred editor", |world, _, _| {
+        world.wait_for("the logs folder to open", |w| {
+            w.mc.peek::<FakeDiagnostics>()
+                .is_some_and(|f| !f.editor_calls.is_empty())
+        })?;
+        let call = fake(world).editor_calls.last().cloned().unwrap_or_default();
+        expect!(
+            call == json!({"cwd": LOGS, "editor": "cursor"}),
+            "the MC was asked for {}",
+            show(&call)
+        );
+        Ok(())
+    });
     steps.step(
         &format!("if no editor is available the user is told {Q}"),
         |world, c, _| {

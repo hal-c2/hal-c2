@@ -9,12 +9,14 @@ use ljos::testing::highlights;
 use serde_json::{Value, json};
 
 use crate::brick::Brick;
+use crate::expect;
 use crate::harness::{Failure, Outcome, Steps, at, show, text};
-use crate::steps::composer_brick::{composer_brick, composer_item, editor, settle_composer, type_in_composer};
+use crate::steps::composer_brick::{
+    composer_brick, composer_item, editor, settle_composer, type_in_composer,
+};
 use crate::steps::settings::publish_providers;
 use crate::steps::turn::open_turn_thread;
 use crate::world::World;
-use crate::expect;
 
 fn composer(world: &World) -> Value {
     world.state("composer")
@@ -145,9 +147,7 @@ pub fn register(steps: &mut Steps) {
             let slash = listed_after(world, "/")?;
             let dollar = listed_after(world, "$")?;
             expect!(
-                slash.len() == 1
-                    && slash[0].to_lowercase().contains("review")
-                    && dollar.len() == 1,
+                slash.len() == 1 && slash[0].to_lowercase().contains("review") && dollar.len() == 1,
                 "/ lists {}, $ lists {}",
                 slash.join(", "),
                 dollar.join(", ")
@@ -155,18 +155,21 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("skills are only listed after a dollar sign", |world, _, _| {
-        open_thread_with_skill(world)?;
-        let slash = listed_after(world, "/")?;
-        let dollar = listed_after(world, "$")?;
-        expect!(
-            slash.is_empty() && dollar.len() == 1,
-            "/ lists {}, $ lists {}",
-            slash.join(", "),
-            dollar.join(", ")
-        );
-        Ok(())
-    });
+    steps.step(
+        "skills are only listed after a dollar sign",
+        |world, _, _| {
+            open_thread_with_skill(world)?;
+            let slash = listed_after(world, "/")?;
+            let dollar = listed_after(world, "$")?;
+            expect!(
+                slash.is_empty() && dollar.len() == 1,
+                "/ lists {}, $ lists {}",
+                slash.join(", "),
+                dollar.join(", ")
+            );
+            Ok(())
+        },
+    );
 
     steps.step("Markdown is shown formatted while typing", |world, _, _| {
         open_turn_thread(world)?;
@@ -216,16 +219,19 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("the composer keeps its size while scrolling", |world, _, _| {
-        let heights = scroll_conversation(world)?;
-        let item = composer_item(world)?;
-        let (brick, _) = editor(world)?;
-        expect!(
-            !brick.flag(world, item, "resting") && heights.scrolled == heights.before,
-            "the composer is {} tall, {} before scrolling",
-            heights.scrolled,
-            heights.before
-        );
-        Ok(())
-    });
+    steps.step(
+        "the composer keeps its size while scrolling",
+        |world, _, _| {
+            let heights = scroll_conversation(world)?;
+            let item = composer_item(world)?;
+            let (brick, _) = editor(world)?;
+            expect!(
+                !brick.flag(world, item, "resting") && heights.scrolled == heights.before,
+                "the composer is {} tall, {} before scrolling",
+                heights.scrolled,
+                heights.before
+            );
+            Ok(())
+        },
+    );
 }

@@ -9,7 +9,9 @@ use ljos::item::{KeyEvent, key};
 use ljos::prelude::Value;
 use serde_json::json;
 
-use super::add_project::{describe, id_at, invoke, invoke_ok, is_open, kind_at, role_text, set_query};
+use super::add_project::{
+    describe, id_at, invoke, invoke_ok, is_open, kind_at, role_text, set_query,
+};
 use super::settings_search::{describe_rows, is_result, rows, settings_shell, type_text};
 use crate::brick::Brick;
 use crate::harness::{Outcome, Q, Steps, at, show};
@@ -61,7 +63,10 @@ fn result_titled(world: &mut World, title: &str) -> Outcome<usize> {
         .position(|row| is_result(row) && row["title"] == title)
     {
         Some(index) => Ok(index),
-        None => fail!("no result is titled \"{title}\"; {}", describe_search(world)),
+        None => fail!(
+            "no result is titled \"{title}\"; {}",
+            describe_search(world)
+        ),
     }
 }
 
@@ -90,9 +95,10 @@ fn palette_row(world: &World, matches: impl Fn(&str, &str, &str) -> bool) -> Opt
 }
 
 pub fn register(steps: &mut Steps) {
-    steps.step(&format!("the user searche[sd] settings for {Q}"), |world, c, _| {
-        search(world, &c[0])
-    });
+    steps.step(
+        &format!("the user searche[sd] settings for {Q}"),
+        |world, c, _| search(world, &c[0]),
+    );
     steps.step("each result names its section", |world, _, _| {
         let list = rows(world)?;
         expect!(!list.is_empty(), "{}", describe_search(world));
@@ -177,17 +183,14 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step(&format!("the app sets the settings search to {Q}"), |world, c, _| {
-        world.dispatch("settings.search", json!({"query": c[0]}))
-    });
+    steps.step(
+        &format!("the app sets the settings search to {Q}"),
+        |world, c, _| world.dispatch("settings.search", json!({"query": c[0]})),
+    );
     steps.step(&format!("the settings search shows {Q}"), |world, c, _| {
         let wanted = c[0].clone();
         world.pump()?;
-        expect!(
-            search_text(world)? == wanted,
-            "{}",
-            describe_search(world)
-        );
+        expect!(search_text(world)? == wanted, "{}", describe_search(world));
         // And searches for it.
         let list = rows(world)?;
         expect!(

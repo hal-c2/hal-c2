@@ -45,7 +45,8 @@ pub fn settings_shell(world: &mut World, width: f64, height: f64) -> Outcome<Bri
         // As DefaultShell lays them out.
         Brick::show(
             world,
-            &format!("import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\n\
+            &format!(
+                "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\n\
              import \"HalC2/Bricks/js/settingsPages.js\" as Pages\n\
              Item {{\n\
                id: shell\n\
@@ -57,7 +58,8 @@ pub fn settings_shell(world: &mut World, width: f64, height: f64) -> Outcome<Bri
                  objectName: \"host\"; x: 260; width: parent.width - 260; height: parent.height\n\
                  section: shell.settingsSection\n\
                }}\n\
-             }}\n"),
+             }}\n"
+            ),
             width,
             height,
         )?;
@@ -79,7 +81,9 @@ fn shell(world: &mut World) -> Outcome<Brick> {
 
 pub fn rows(world: &mut World) -> Outcome<Vec<Json>> {
     let brick = shell(world)?;
-    let root = brick.root(world).ok_or_else(|| Failure("no shell".into()))?;
+    let root = brick
+        .root(world)
+        .ok_or_else(|| Failure("no shell".into()))?;
     Ok(
         match shell_json::from_value(world.engine(), &brick.read(world, root, "rows")) {
             Json::Array(list) => list,
@@ -115,7 +119,11 @@ fn describe_choices(world: &World) -> String {
     format!(
         "the theme is \"{}\" and the time format {}; the device error is \"{}\"",
         theme_id(world),
-        show(&settings(world).setting(world.engine(), TIME_FORMAT).unwrap_or(Json::Null)),
+        show(
+            &settings(world)
+                .setting(world.engine(), TIME_FORMAT)
+                .unwrap_or(Json::Null)
+        ),
         settings(world).device_error()
     )
 }
@@ -144,8 +152,10 @@ fn ask_to_restore(world: &mut World) -> Outcome {
     let brick = shell(world)?;
     brick.click(world, "restoreDefaults")?;
     world.wait_for("the question about restoring defaults", |world| {
-        let (Ok(list), Ok(confirm)) = (brick.item(world, "restoreList"), brick.item(world, "confirm"))
-        else {
+        let (Ok(list), Ok(confirm)) = (
+            brick.item(world, "restoreList"),
+            brick.item(world, "confirm"),
+        ) else {
             return false;
         };
         brick.flag(world, list, "visible") && brick.flag(world, confirm, "visible")
@@ -156,7 +166,9 @@ fn answer_restore(world: &mut World, accepted: bool) -> Outcome {
     let brick = shell(world)?;
     brick.click(world, if accepted { "confirm" } else { "cancel" })?;
     world.wait_for("the question to close", |world| {
-        !brick.shows(world, "Restore default settings?").unwrap_or(true)
+        !brick
+            .shows(world, "Restore default settings?")
+            .unwrap_or(true)
     })
 }
 
@@ -176,8 +188,15 @@ fn in_view(world: &World, target: &str) -> bool {
         return false;
     };
     let top = at_item.1 - at_host.1;
-    let number = |item, name| brick.text_of(world, item, name).parse::<f64>().unwrap_or(f64::NAN);
-    brick.flag(world, item, "visible") && top >= 0.0 && top + number(item, "height") <= number(host, "height")
+    let number = |item, name| {
+        brick
+            .text_of(world, item, name)
+            .parse::<f64>()
+            .unwrap_or(f64::NAN)
+    };
+    brick.flag(world, item, "visible")
+        && top >= 0.0
+        && top + number(item, "height") <= number(host, "height")
 }
 
 /// Waits for the page to bring `target` into view.
@@ -201,7 +220,12 @@ pub fn type_text(world: &mut World, typed: &str) -> Outcome {
 fn open_result(world: &mut World, title: &str) -> Outcome {
     let brick = shell(world)?;
     let field = brick.item(world, "search")?;
-    brick.write(world, field, "text", Value::from(title.to_lowercase().as_str()))?;
+    brick.write(
+        world,
+        field,
+        "text",
+        Value::from(title.to_lowercase().as_str()),
+    )?;
     let list = rows(world)?;
     for (index, row) in list.iter().enumerate() {
         if !is_result(row) || row["title"] != title {
@@ -222,19 +246,22 @@ fn route_target(world: &World) -> String {
 
 pub fn register(steps: &mut Steps) {
     // Sections.
-    steps.step(&format!("the user chooses the {Q} section"), |world, c, _| {
-        // Tall enough to show every section.
-        let brick = settings_shell(world, 900.0, 800.0)?;
-        let list = rows(world)?;
-        for (index, row) in list.iter().enumerate() {
-            if row["label"] != c[0].as_str() {
-                continue;
+    steps.step(
+        &format!("the user chooses the {Q} section"),
+        |world, c, _| {
+            // Tall enough to show every section.
+            let brick = settings_shell(world, 900.0, 800.0)?;
+            let list = rows(world)?;
+            for (index, row) in list.iter().enumerate() {
+                if row["label"] != c[0].as_str() {
+                    continue;
+                }
+                brick.click(world, &format!("settingsRow{index}"))?;
+                return world.sync();
             }
-            brick.click(world, &format!("settingsRow{index}"))?;
-            return world.sync();
-        }
-        fail!("no section is named \"{}\"; {}", c[0], describe_rows(world))
-    });
+            fail!("no section is named \"{}\"; {}", c[0], describe_rows(world))
+        },
+    );
     steps.step("the Providers settings are shown", |world, _, _| {
         let brick = shell(world)?;
         world.wait_for_with(
@@ -244,51 +271,61 @@ pub fn register(steps: &mut Steps) {
                         .find(world, "host")
                         .ok()
                         .flatten()
-                        .is_some_and(|host| brick.text_of(world, host, "brick") == "ProvidersSettings")
+                        .is_some_and(|host| {
+                            brick.text_of(world, host, "brick") == "ProvidersSettings"
+                        })
             },
             |world| {
                 let host = brick.find(world, "host").ok().flatten();
                 format!(
                     "the route is {}; the host shows section \"{}\", brick \"{}\"",
                     show(&world.state("route")),
-                    host.map(|h| brick.text_of(world, h, "section")).unwrap_or_default(),
-                    host.map(|h| brick.text_of(world, h, "brick")).unwrap_or_default()
+                    host.map(|h| brick.text_of(world, h, "section"))
+                        .unwrap_or_default(),
+                    host.map(|h| brick.text_of(world, h, "brick"))
+                        .unwrap_or_default()
                 )
             },
         )
     });
-    steps.step(&format!("{Q} is marked as the current section"), |world, c, _| {
-        let brick = shell(world)?;
-        let list = rows(world)?;
-        let mut current = Vec::new();
-        for (index, row) in list.iter().enumerate() {
-            let item = brick.item(world, &format!("settingsRow{index}"))?;
-            if brick.flag(world, item, "current") {
-                current.push(row["label"].as_str().unwrap_or_default().to_owned());
+    steps.step(
+        &format!("{Q} is marked as the current section"),
+        |world, c, _| {
+            let brick = shell(world)?;
+            let list = rows(world)?;
+            let mut current = Vec::new();
+            for (index, row) in list.iter().enumerate() {
+                let item = brick.item(world, &format!("settingsRow{index}"))?;
+                if brick.flag(world, item, "current") {
+                    current.push(row["label"].as_str().unwrap_or_default().to_owned());
+                }
             }
-        }
-        expect!(
-            current == [c[0].clone()],
-            "the current section is {}",
-            current.join(", ")
-        );
-        Ok(())
-    });
-    steps.step("the \"General\" section has keyboard focus", |world, _, _| {
-        let brick = shell(world)?;
-        expect!(
-            rows(world)?.first().map(|row| &row["label"]) == Some(&json!("General")),
-            "{}",
-            describe_rows(world)
-        );
-        let row = brick.item(world, "settingsRow0")?;
-        let _ = world.engine().invoke_by_name(row, "forceActiveFocus", &[]);
-        expect!(
-            brick.flag(world, row, "activeFocus"),
-            "General did not take the keyboard"
-        );
-        Ok(())
-    });
+            expect!(
+                current == [c[0].clone()],
+                "the current section is {}",
+                current.join(", ")
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the \"General\" section has keyboard focus",
+        |world, _, _| {
+            let brick = shell(world)?;
+            expect!(
+                rows(world)?.first().map(|row| &row["label"]) == Some(&json!("General")),
+                "{}",
+                describe_rows(world)
+            );
+            let row = brick.item(world, "settingsRow0")?;
+            let _ = world.engine().invoke_by_name(row, "forceActiveFocus", &[]);
+            expect!(
+                brick.flag(world, row, "activeFocus"),
+                "General did not take the keyboard"
+            );
+            Ok(())
+        },
+    );
     steps.step("the user moves down and confirms", |world, _, _| {
         let brick = shell(world)?;
         brick.press(world, "down")?;
@@ -307,7 +344,9 @@ pub fn register(steps: &mut Steps) {
             .unwrap_or_default();
         let route = world.state("route");
         expect!(
-            !next.is_empty() && next != "/settings/general" && at(&route, "section") == next.as_str(),
+            !next.is_empty()
+                && next != "/settings/general"
+                && at(&route, "section") == next.as_str(),
             "the route is {}, the next section {next}",
             show(&route)
         );
@@ -315,27 +354,33 @@ pub fn register(steps: &mut Steps) {
     });
 
     // Searching.
-    steps.step(&format!("the user has searched settings for {Q}"), |world, c, _| {
-        let brick = shell(world)?;
-        brick.click(world, "search")?;
-        type_text(world, &c[0])?;
-        world.wait_for_with(
-            |world| {
-                brick
-                    .find(world, "nav")
-                    .ok()
-                    .flatten()
-                    .map(|nav| {
-                        let list = shell_json::from_value(world.engine(), &brick.read(world, nav, "rows"));
-                        list.as_array()
-                            .and_then(|rows| rows.first())
-                            .is_some_and(is_result)
-                    })
-                    .unwrap_or(false)
-            },
-            |_| "the search results".to_owned(),
-        )
-    });
+    steps.step(
+        &format!("the user has searched settings for {Q}"),
+        |world, c, _| {
+            let brick = shell(world)?;
+            brick.click(world, "search")?;
+            type_text(world, &c[0])?;
+            world.wait_for_with(
+                |world| {
+                    brick
+                        .find(world, "nav")
+                        .ok()
+                        .flatten()
+                        .map(|nav| {
+                            let list = shell_json::from_value(
+                                world.engine(),
+                                &brick.read(world, nav, "rows"),
+                            );
+                            list.as_array()
+                                .and_then(|rows| rows.first())
+                                .is_some_and(is_result)
+                        })
+                        .unwrap_or(false)
+                },
+                |_| "the search results".to_owned(),
+            )
+        },
+    );
     steps.step("the user opens the first result", |world, _, _| {
         let first = rows(world)?.first().cloned().unwrap_or(Json::Null);
         *world.part::<Opened>() = Opened {
@@ -434,7 +479,8 @@ pub fn register(steps: &mut Steps) {
                     .ok()
                     .flatten()
                     .map(|nav| {
-                        let list = shell_json::from_value(world.engine(), &brick.read(world, nav, "rows"));
+                        let list =
+                            shell_json::from_value(world.engine(), &brick.read(world, nav, "rows"));
                         list.as_array()
                             .and_then(|rows| rows.first())
                             .is_some_and(|row| is_result(row) && row["title"] == title.as_str())
@@ -463,9 +509,18 @@ pub fn register(steps: &mut Steps) {
             world.part::<Opened>().target = target.clone();
             wait_in_view(world, &target)?;
             let scroll = brick.item(world, "scroll")?;
-            let content_y = brick.text_of(world, scroll, "contentY").parse::<f64>().unwrap_or(0.0);
-            let content_height = brick.text_of(world, scroll, "contentHeight").parse::<f64>().unwrap_or(0.0);
-            let height = brick.text_of(world, scroll, "height").parse::<f64>().unwrap_or(0.0);
+            let content_y = brick
+                .text_of(world, scroll, "contentY")
+                .parse::<f64>()
+                .unwrap_or(0.0);
+            let content_height = brick
+                .text_of(world, scroll, "contentHeight")
+                .parse::<f64>()
+                .unwrap_or(0.0);
+            let height = brick
+                .text_of(world, scroll, "height")
+                .parse::<f64>()
+                .unwrap_or(0.0);
             let end = content_height - height;
             expect!(end > 0.0, "the page does not scroll");
             // Whichever end the setting is not at.
@@ -498,10 +553,13 @@ pub fn register(steps: &mut Steps) {
         );
         wait_in_view(world, &target)
     });
-    steps.step("the page brings the setting into view again", |world, _, _| {
-        let target = world.part::<Opened>().target.clone();
-        wait_in_view(world, &target)
-    });
+    steps.step(
+        "the page brings the setting into view again",
+        |world, _, _| {
+            let target = world.part::<Opened>().target.clone();
+            wait_in_view(world, &target)
+        },
+    );
 
     // Restoring defaults.
     steps.step(
@@ -530,7 +588,8 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             change_theme_and_time_format(world)?;
             ask_to_restore(world)?;
-            world.answer_question = Some(Rc::new(|world, accepted| answer_restore(world, accepted)));
+            world.answer_question =
+                Some(Rc::new(|world, accepted| answer_restore(world, accepted)));
             Ok(())
         },
     );
@@ -571,14 +630,20 @@ pub fn register(steps: &mut Steps) {
         expect!(changed(world), "{}", describe_choices(world));
         Ok(())
     });
-    steps.step("the user confirms restoring default settings", |world, _, _| {
-        ask_to_restore(world)?;
-        answer_restore(world, true)
-    });
-    steps.step("the theme settings keep their previous values", |world, _, _| {
-        expect!(changed(world), "{}", describe_choices(world));
-        Ok(())
-    });
+    steps.step(
+        "the user confirms restoring default settings",
+        |world, _, _| {
+            ask_to_restore(world)?;
+            answer_restore(world, true)
+        },
+    );
+    steps.step(
+        "the theme settings keep their previous values",
+        |world, _, _| {
+            expect!(changed(world), "{}", describe_choices(world));
+            Ok(())
+        },
+    );
     steps.step(
         "the user is told the theme settings could not be restored",
         |world, _, _| {
