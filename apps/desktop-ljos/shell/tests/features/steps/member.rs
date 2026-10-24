@@ -6,9 +6,9 @@
 
 use serde_json::{Value, json};
 
+use crate::expect;
 use crate::harness::{Q, Steps, at, show, text};
 use crate::world::World;
-use crate::expect;
 
 /// The thread on another machine the scenario is about.
 #[derive(Default)]
@@ -48,7 +48,12 @@ fn sidebar_rows(world: &World) -> Vec<Value> {
     let sidebar = world.state("sidebar");
     ["pinned", "active", "snoozed", "settled"]
         .iter()
-        .flat_map(|section| at(&sidebar, section).as_array().cloned().unwrap_or_default())
+        .flat_map(|section| {
+            at(&sidebar, section)
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
         .collect()
 }
 
@@ -118,12 +123,7 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             world.wait_for_with(
                 |w| workspace(w)["offline"] == json!(false),
-                |w| {
-                    format!(
-                        "the header to say online; it shows {}",
-                        show(&workspace(w))
-                    )
-                },
+                |w| format!("the header to say online; it shows {}", show(&workspace(w))),
             )
         },
     );

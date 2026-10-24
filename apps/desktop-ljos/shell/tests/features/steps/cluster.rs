@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use fancy_regex::Regex;
 use serde_json::{Value, json};
 
+use crate::expect;
 use crate::fake_mc::{FakeMc, Rpc};
 use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::world::World;
-use crate::expect;
 
 /// This machine's cluster as apps/server-ex lib/hal_c2/rpc.ex answers
 /// `cluster.*`: the other members, whether the MC listens only on loopback,
@@ -206,21 +206,27 @@ pub fn register(steps: &mut Steps) {
         fake(world).loopback_only = true;
         Ok(())
     });
-    steps.step(&format!("the MC refuses joins saying {Q}"), |world, c, _| {
-        fake(world).join_refusal = c[0].clone();
-        Ok(())
-    });
-    steps.step("the user opens Cluster in the desktop's settings", |world, _, _| {
-        world.dispatch("cluster.open", Value::Null)?;
-        world.sync()?;
-        let route = world.state("route");
-        expect!(
-            at(&route, "section") == "/settings/cluster",
-            "the route is {}",
-            show(&route)
-        );
-        Ok(())
-    });
+    steps.step(
+        &format!("the MC refuses joins saying {Q}"),
+        |world, c, _| {
+            fake(world).join_refusal = c[0].clone();
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user opens Cluster in the desktop's settings",
+        |world, _, _| {
+            world.dispatch("cluster.open", Value::Null)?;
+            world.sync()?;
+            let route = world.state("route");
+            expect!(
+                at(&route, "section") == "/settings/cluster",
+                "the route is {}",
+                show(&route)
+            );
+            Ok(())
+        },
+    );
     steps.step(
         &format!("the MC can no longer read its cluster, saying {Q}"),
         |world, c, _| {
@@ -344,7 +350,8 @@ pub fn register(steps: &mut Steps) {
         for found in member.captures_iter(&c[0]).flatten() {
             let connected = found.get(2).map_or("", |m| m.as_str()) == "connected";
             let there = listed.iter().any(|row| {
-                text(&row["label"]) == found.get(1).map_or("", |m| m.as_str()) && (row["connected"] == json!(true)) == connected
+                text(&row["label"]) == found.get(1).map_or("", |m| m.as_str())
+                    && (row["connected"] == json!(true)) == connected
             });
             expect!(there, "{}", page_is(world));
         }
@@ -355,11 +362,7 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             world.sync()?;
             let page = cluster(world);
-            for row in at(&page, "status.members")
-                .as_array()
-                .into_iter()
-                .flatten()
-            {
+            for row in at(&page, "status.members").as_array().into_iter().flatten() {
                 expect!(text(&row["label"]) != c[0], "{}", page_is(world));
             }
             Ok(())
@@ -434,27 +437,31 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
-    steps.step("the user can remove it like any environment", |world, _, _| {
-        world.dispatch("cluster.remove", json!({"id": "env-laptop"}))?;
-        world.wait_for_with(
-            |w| {
-                let page = cluster(w);
-                at(&page, "status.members")
-                    .as_array()
-                    .is_none_or(Vec::is_empty)
-                    && page["busy"] != json!(true)
-            },
-            |w| format!("the machine to go; {}", page_is(w)),
-        )?;
-        let payload = cluster_call(world, "cluster.remove")?;
-        expect!(
-            payload.is_some_and(|p| p["id"] == "env-laptop")
-                && text(at(&cluster(world), "notice.text")) == "Removed laptop from the cluster.",
-            "{}",
-            page_is(world)
-        );
-        Ok(())
-    });
+    steps.step(
+        "the user can remove it like any environment",
+        |world, _, _| {
+            world.dispatch("cluster.remove", json!({"id": "env-laptop"}))?;
+            world.wait_for_with(
+                |w| {
+                    let page = cluster(w);
+                    at(&page, "status.members")
+                        .as_array()
+                        .is_none_or(Vec::is_empty)
+                        && page["busy"] != json!(true)
+                },
+                |w| format!("the machine to go; {}", page_is(w)),
+            )?;
+            let payload = cluster_call(world, "cluster.remove")?;
+            expect!(
+                payload.is_some_and(|p| p["id"] == "env-laptop")
+                    && text(at(&cluster(world), "notice.text"))
+                        == "Removed laptop from the cluster.",
+                "{}",
+                page_is(world)
+            );
+            Ok(())
+        },
+    );
     steps.step("the cluster page closes", |world, _, _| {
         world.sync()?;
         let route = world.state("route");
@@ -466,4 +473,3 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
 }
-

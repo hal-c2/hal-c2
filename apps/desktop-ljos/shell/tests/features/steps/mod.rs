@@ -7,6 +7,7 @@ use crate::harness::Steps;
 pub mod cluster;
 pub mod connection;
 pub mod connection_health;
+pub mod connections;
 pub mod mc;
 pub mod member;
 pub mod settings_connections;
@@ -20,6 +21,7 @@ pub mod viewing;
 pub fn register(steps: &mut Steps) {
     cluster::register(steps);
     connection::register(steps);
+    connections::register(steps);
     connection_health::register(steps);
     mc::register(steps);
     member::register(steps);
