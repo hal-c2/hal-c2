@@ -204,7 +204,12 @@ defmodule HalC2.DelegationPropTest do
           message["text"] =~ "<delegated_task_result",
           do: message
 
-    length(results) <= 1
+    # The one result names its worker and carries the same answer the caller reads.
+    length(results) <= 1 and
+      Enum.all?(results, fn %{"notification" => notification, "text" => text} ->
+        notification["workerThreadId"] == @child and
+          is_binary(notification["detail"]) and text =~ notification["detail"]
+      end)
   end
 
   # A report of an ended run settles an unsettled task as that run ended.

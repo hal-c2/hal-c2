@@ -365,6 +365,7 @@ defmodule HalC2.Orchestration.Delegation do
         },
         "initialMessage" => %{
           "messageId" => "message:delegate:" <> HalC2.Environment.uuid4(),
+          "senderThreadId" => thread["id"],
           "text" => spec["task"],
           "attachments" => []
         }
@@ -591,9 +592,12 @@ defmodule HalC2.Orchestration.Delegation do
     label = String.trim(task["title"] || "")
     label = if label == "", do: "Delegated task", else: label
 
+    answer = result || "(no answer)"
+    child = task["childThreadId"]
+
     text = """
-    <delegated_task_result taskId="#{task["id"]}" title="#{task["title"]}" status="#{status}" childThreadId="#{task["childThreadId"]}">
-    #{result || "(no answer)"}
+    <delegated_task_result taskId="#{attr(task["id"])}" title="#{attr(task["title"])}" status="#{attr(status)}" childThreadId="#{attr(child)}">
+    #{cap_result(answer, child)}
     </delegated_task_result>
     """
 
@@ -610,7 +614,10 @@ defmodule HalC2.Orchestration.Delegation do
       "notification" => %{
         "source" => %{"kind" => "delegated_task", "taskIds" => [task["id"]]},
         "outcome" => outcome,
-        "summary" => "#{label} #{ended}"
+        "summary" => "#{label} #{ended}",
+        "workerThreadId" => child,
+        "workerTitle" => label,
+        "detail" => cap_result(answer, child)
       },
       "delegatedCompletion" => %{
         "parentRunId" => task["runId"],
@@ -618,6 +625,37 @@ defmodule HalC2.Orchestration.Delegation do
         "acceptedAt" => nil
       }
     }
+  end
+
+  # How much of a worker's answer the provider prompt and the timeline notification
+  # carry; the rest stays readable in the worker's own thread.
+  @result_cap 8_192
+
+  defp cap_result(text, child) when byte_size(text) > @result_cap do
+    kept = text |> binary_part(0, @result_cap) |> trim_invalid()
+
+    kept <>
+      "\n\n[result truncated at #{@result_cap} bytes; read the rest with hal_c2_thread_read on thread #{child}]"
+  end
+
+  defp cap_result(text, _child), do: text
+
+  # A byte cut can split a UTF-8 character; drop the broken tail.
+  defp trim_invalid(text) do
+    if String.valid?(text),
+      do: text,
+      else: trim_invalid(binary_part(text, 0, byte_size(text) - 1))
+  end
+
+  defp attr(value) do
+    value
+    |> to_string()
+    |> String.replace("&", "&amp;")
+    |> String.replace("\"", "&quot;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+    |> String.replace("\n", "&#10;")
+    |> String.replace("\r", "&#13;")
   end
 
   defp status(thread_id, task_id) do

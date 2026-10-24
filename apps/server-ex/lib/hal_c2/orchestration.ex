@@ -2217,7 +2217,7 @@ defmodule HalC2.Orchestration do
       ordinal,
       "completed",
       at,
-      Map.take(notification, ~w(source outcome summary detail))
+      Map.take(notification, ~w(source outcome summary detail workerThreadId workerTitle))
     )
   end
 

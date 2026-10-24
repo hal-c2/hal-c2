@@ -330,6 +330,57 @@ defmodule HalC2.Orchestration.DelegationTest do
     end
   end
 
+  describe "a task whose result is delivered with a title that would break the envelope" do
+    test "escapes the attributes and names the worker on the notification" do
+      delegate("completed", %{"title" => ~s(Say "hi"\nnow)})
+
+      Delegation.finished("c", "cr", "completed")
+
+      state = "p" |> HalC2.Streams.ensure() |> HalC2.Streams.Server.state()
+      message = StreamState.get(state, "message")["message:delegate-result:task"]
+
+      assert message["text"] =~ ~s(title="Say &quot;hi&quot;&#10;now")
+
+      assert %{"workerThreadId" => "c", "workerTitle" => _, "detail" => "(no answer)"} =
+               message["notification"]
+    end
+  end
+
+  describe "a task whose result is long" do
+    test "is cut short for the agent and the timeline, pointing at the worker's thread" do
+      delegate("completed")
+      long = String.duplicate("é", 6_000)
+
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          {"message", "answer",
+           %{
+             "s" => %{
+               "id" => "answer",
+               "runId" => "cr",
+               "role" => "assistant",
+               "text" => long,
+               "createdAt" => @at
+             }
+           }}
+        ])
+
+      Delegation.finished("c", "cr", "completed")
+
+      state = "p" |> HalC2.Streams.ensure() |> HalC2.Streams.Server.state()
+      message = StreamState.get(state, "message")["message:delegate-result:task"]
+      detail = message["notification"]["detail"]
+
+      assert String.valid?(detail)
+      assert byte_size(detail) < 8_400
+
+      assert detail =~
+               "result truncated at 8192 bytes; read the rest with hal_c2_thread_read on thread c"
+
+      assert message["text"] =~ detail
+    end
+  end
+
   describe "a delegation without a task" do
     # An agent that names the prompt `prompt` instead of `task` (hal-c2/hal-c2#258) started
     # a child that was sent an empty message and answered that it came through empty.

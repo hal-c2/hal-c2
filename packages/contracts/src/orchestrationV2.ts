@@ -842,6 +842,10 @@ export const OrchestrationV2Notification = Schema.Struct({
   // Item status describes this timeline record; outcome describes the reported work.
   outcome: Schema.Literals(["completed", "failed", "cancelled", "updated", "unknown"]),
   summary: TrimmedNonEmptyString,
+  // The worker that produced a delegated task's result: its thread (to open) and title,
+  // with `detail` its result text, capped by the MC (the full text is in that thread).
+  workerThreadId: Schema.optional(ThreadId),
+  workerTitle: Schema.optional(Schema.String),
   detail: Schema.optional(Schema.String),
 });
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;

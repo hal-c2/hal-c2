@@ -305,6 +305,36 @@ Feature: Plans and subagents
     Then the timeline says "Tax tests finished"
     And the result is not shown as a message of the user's
 
+  @shared @backlog-mobile
+  Scenario: A finished task's notification names its worker and carries its result
+    Given a task the agent delegated as "Tax tests" finished with "12 tests added"
+    When the user reads the parent thread
+    Then the worker's notification reads "Tax tests finished"
+    And the worker's result "12 tests added" is hidden until the user opens it
+    And the notification links to the worker's thread
+
+  @mc
+  Scenario: A finished task's notification carries the worker's thread, title and result
+    Given the agent delegated a task and chose to carry on
+    When the subagent finishes with "12 tests added"
+    Then the parent's notification names the worker's thread and carries "12 tests added"
+
+  @mc
+  Scenario: A delegated task's first message in the worker's thread says it is from the parent
+    Given the agent delegated a task and chose to carry on
+    When the subagent finishes with "12 tests added"
+    Then the worker's first message says it is from the parent
+    And the user can open the parent
+
+  # Proven by tst_TurnRequests.qml test_waitingResultOpensItsWorkersThread until the native runner can queue a run.
+  @desktop @backlog-desktop @backlog-mobile @backlog-tui
+  Scenario: A result waiting to wake the parent names its worker and opens its thread
+    Given the agent delegated a task and chose to carry on
+    And the subagent finishes with "12 tests added"
+    When the user looks at the result waiting to wake the parent
+    Then it names the worker
+    And the user can open the worker's thread from it
+
   @shared @backlog-mobile @backlog-tui
   Scenario: A result a thread stored as a user message still shows as a notification
     Given a thread stored the failed result of the delegated task "Tax tests" as a user message
