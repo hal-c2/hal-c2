@@ -458,13 +458,13 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             fake(world).project = true;
             world.mc.projects.insert("shop".into(), project("shop"));
-            for index in 0..3 {
+            for (index, title) in c.iter().take(3).enumerate() {
                 let id = format!("t{}", index + 1);
                 let created = format!("2026-09-23T09:0{}:00Z", 5 - index);
                 world
                     .mc
                     .threads
-                    .insert(id.clone(), thread(&id, &c[index], "shop", &created));
+                    .insert(id.clone(), thread(&id, title, "shop", &created));
             }
             world.connect()?;
             world.sync()

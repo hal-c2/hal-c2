@@ -1506,8 +1506,7 @@ pub fn register(steps: &mut Steps) {
             .subscriptions
             .iter()
             .skip(from)
-            .filter(|sub| sub.pointer("/shape/type").and_then(Value::as_str) == Some("shell"))
-            .next_back()
+            .rfind(|sub| sub.pointer("/shape/type").and_then(Value::as_str) == Some("shell"))
             .cloned()
             .unwrap_or(Value::Null);
         // It says what it holds of each member, and none of them sends its

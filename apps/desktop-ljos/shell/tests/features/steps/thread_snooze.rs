@@ -518,8 +518,7 @@ pub fn register(steps: &mut Steps) {
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|item| text(&item["title"]).starts_with("Snoozed until"))
-            .last()
+            .rfind(|item| text(&item["title"]).starts_with("Snoozed until"))
             .cloned()
             .unwrap_or(Value::Null);
         let actions = toast["actions"].as_array().cloned().unwrap_or_default();
