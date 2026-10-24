@@ -8,6 +8,7 @@ use hal_c2_shell::commands::Commands;
 use hal_c2_shell::controllers::projects::{self, ADD};
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::McError;
+use hal_c2_shell::this_machine;
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -143,6 +144,51 @@ fn a_folder_is_not_opened_where_the_mc_is_elsewhere() {
     hub.dispatch("project.folder.open", json!({"path": path}));
     assert!(hub.mc.pending(MUTATE).is_none());
     assert!(titles(&hub).is_empty());
+}
+
+/// Unpins this machine's id when the test ends, also on a failure.
+struct Pinned;
+
+impl Drop for Pinned {
+    fn drop(&mut self) {
+        this_machine::set_id_for_testing(None);
+    }
+}
+
+/// env-1 described as running on `machine`.
+fn on_machine(hub: &Hub, machine: &str) {
+    hub.mc.frame(
+        &hub.engine,
+        "shell",
+        "",
+        json!({"t": "shell", "mcs": [{"mc": "a", "online": true, "epoch": "e", "rev": 1,
+            "environment": {"environmentId": "env-1", "label": "Laptop",
+                "platform": {"machineId": machine}}}],
+            "rows": []}),
+    );
+}
+
+// Whether the MC runs here is this_machine's answer, not its origin's: an SSH
+// port forward is loopback too (tst_ShellRuntime, tst_ThisMachine).
+#[test]
+fn local_folders_are_the_mcs_only_when_it_runs_on_this_machine() {
+    const HERE: &str = "5e1f00000000000000000000000000000000000000000000000000000000c0de";
+    let _pinned = Pinned;
+    this_machine::set_id_for_testing(Some(HERE.into()));
+    let (hub, _dir) = hub();
+    let (_keep, path) = folder();
+    // Unsaid, the MC on loopback is here.
+    assert_eq!(hub.published("sidebar")["localFolders"], true);
+
+    on_machine(&hub, &"a1".repeat(32));
+    assert_eq!(hub.published("sidebar")["localFolders"], false);
+    hub.dispatch("project.folder.open", json!({"path": path}));
+    assert!(hub.mc.pending(MUTATE).is_none());
+
+    on_machine(&hub, HERE);
+    assert_eq!(hub.published("sidebar")["localFolders"], true);
+    hub.dispatch("project.folder.open", json!({"path": path}));
+    assert!(hub.mc.pending(MUTATE).is_some());
 }
 
 #[test]
