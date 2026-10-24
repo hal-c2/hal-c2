@@ -120,15 +120,7 @@ impl ThemeStore {
     /// theme's, then `fallback`.
     #[qml(invokable)]
     fn color(cx: &Cx, role: Atom, fallback: Value) -> Value {
-        let state = ThemeState::of(cx.engine);
-        let found = {
-            let file = state.file.borrow();
-            let base = state.base.borrow();
-            [&file.resolved, &base.colors]
-                .into_iter()
-                .filter_map(|colors| colors.get(&*role).and_then(Json::as_str))
-                .find_map(parse_css_color)
-        };
+        let found = drawn_color(cx.engine, &role);
         match (found, fallback) {
             (Some(color), _) => Value::Color(color),
             // A brick's fallback is often a string; the property it lands in
@@ -142,6 +134,34 @@ impl ThemeStore {
     fn reload(cx: &Cx) {
         reload(cx.engine);
     }
+}
+
+/// A role's colour as the bricks draw it: theme.json's, then the base
+/// theme's. `None` where neither has one.
+pub fn drawn_color(engine: &Engine, role: &str) -> Option<Color> {
+    let state = ThemeState::of(engine);
+    let file = state.file.borrow();
+    let base = state.base.borrow();
+    [&file.resolved, &base.colors]
+        .into_iter()
+        .filter_map(|colors| colors.get(role).and_then(Json::as_str))
+        .find_map(parse_css_color)
+}
+
+/// Whether theme.json is loaded (`Theme.loaded`).
+pub fn file_loaded(engine: &Engine) -> bool {
+    ThemeState::of(engine).file.borrow().loaded
+}
+
+/// Why theme.json could not be read, empty when it can (`Theme.lastError`).
+pub fn file_error(engine: &Engine) -> String {
+    ThemeState::of(engine).file.borrow().last_error.clone()
+}
+
+/// The appearance drawn, "light" or "dark" (`Theme.appearance`).
+pub fn drawn_appearance(engine: &Engine) -> String {
+    let state = ThemeState::of(engine);
+    Derived::of(&state.file.borrow(), &state.base.borrow()).appearance
 }
 
 /// theme.json as last read.
