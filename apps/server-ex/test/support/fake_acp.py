@@ -17,7 +17,7 @@
 # GET /session/:id/message[?limit=n] and POST /session/:id/fork ({messageID}: the
 # messages before it, with new ids) are served; each request is traced as
 # {"http": {method, path, body}}.
-import base64, json, os, sys, tempfile, threading, time
+import base64, json, os, re, sys, tempfile, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # With FAKE_AUTH_FILE set, sessions need a sign-in, which creates that file: the
@@ -308,6 +308,9 @@ for line in sys.stdin:
         if os.environ.get("FAKE_ACP_INPUT_LOG"):
             with open(os.environ["FAKE_ACP_INPUT_LOG"], "a") as input_log:
                 input_log.write(json.dumps(text) + "\n")
+        # A delegated subagent's task follows the MC's worker preamble, whose words
+        # ("waiting", ...) must not pick the script.
+        text = re.sub(r"\AYou are a HAL-C2 worker delegated by .*?\nTask:\n", "", text, flags=re.S)
         if "never answered" in text:
             continue
         if waiting and waiting[1] == sid and waiting[2]:

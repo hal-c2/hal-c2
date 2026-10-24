@@ -69,6 +69,13 @@ Feature: Delegating tasks to subagents
     # startFromOrigin defaults to false; true fetches and starts from origin's copy of baseRef
 
   @mc
+  Scenario: A caller that needs approval can ask for the root checkout it already works in
+    Given the task's caller "parent" works in the project root
+    And the task's caller "parent" is approval-required
+    When the agent in "parent" delegates a task with workspace "{'type':'root'}"
+    Then the subagent thread works in the project root
+
+  @mc
   Scenario: A task can use another worktree of the project
     Given the project has another worktree "/work/other" on branch "other"
     When the agent in "parent" delegates a task with workspace "{'type':'existing_worktree','worktreePath':'/work/other'}"
@@ -437,9 +444,8 @@ Feature: Delegating tasks to subagents
     When the agent cancels the task
     Then the tool fails with code "task_not_cancellable"
 
-  # Dropped: the wake carries the worker's result in a <delegated_task_result> envelope (capped,
-  # with the worker's thread named for the rest), proved by "The parent hears the subagent's
-  # result" in timeline/plans-and-subagents.feature. A pointer to task_status would cost the
+  # Dropped: the wake carries the worker's whole result in a <delegated_task_result> envelope,
+  # proved by "The parent hears the subagent's result" in timeline/plans-and-subagents.feature. A pointer to task_status would cost the
   # agent a round trip and lose the result when the task is disposed.
   @dropped @mc
   Scenario Outline: The message that wakes the caller names the finished tasks and how to read them

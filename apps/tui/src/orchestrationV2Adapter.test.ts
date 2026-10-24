@@ -240,6 +240,9 @@ describe("orchestration V2 TUI presentation", () => {
     expect(notice({ workerThreadId: "thread:child", outcome: "failed" })).toMatchObject({
       payload: { status: "failed", childThreadId: "thread:child" },
     });
+    expect(notice({ workerThreadId: "thread:child", outcome: "cancelled" })).toMatchObject({
+      payload: { status: "stopped", childThreadId: "thread:child" },
+    });
     // One recorded before the MC named the worker has no link.
     expect(notice({})?.payload).not.toHaveProperty("childThreadId");
   });

@@ -483,6 +483,16 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     Map.put(context, :delegate_input, input)
   end
 
+  step "the task's caller {string} works in the project root", %{args: [thread]} = context do
+    World.patch_thread(context, thread, %{"worktreePath" => nil})
+    context
+  end
+
+  step "the subagent thread works in the project root", context do
+    assert World.thread(context, "subagent")["worktreePath"] == nil
+    context
+  end
+
   step "the task's caller {string} is approval-required", %{args: [thread]} = context do
     World.patch_thread(context, thread, %{"runtimeMode" => "approval-required"})
     context

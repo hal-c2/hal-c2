@@ -16,6 +16,8 @@ defmodule HalC2.Orchestration.IdleSessions do
 
   use GenServer
 
+  require Logger
+
   @registries [
     HalC2.Codex.Registry,
     HalC2.Claude.Registry,
@@ -90,7 +92,16 @@ defmodule HalC2.Orchestration.IdleSessions do
         mc == node() and row["activeRunId"] == nil and row["deletedAt"] == nil,
         MapSet.member?(waiting, lineage["parentThreadId"]),
         not live?(thread_id),
-        do: HalC2.Orchestration.Delegation.settle_if_quiet(thread_id)
+        do: settle_quiet_task(thread_id)
+  end
+
+  # A thread too busy to answer, or failing, is left to the next check: it neither
+  # stops the others' tasks settling nor the sessions' release.
+  defp settle_quiet_task(thread_id) do
+    HalC2.Orchestration.Delegation.settle_if_quiet(thread_id)
+  catch
+    _kind, reason ->
+      Logger.warning("quiet check of delegated task for #{thread_id} failed: #{inspect(reason)}")
   end
 
   defp waiting?(row), do: row["activeRunId"] != nil or (row["pendingBackgroundTasks"] || []) != []

@@ -84,7 +84,8 @@ defmodule HalC2.Mcp do
   The longest a waiting tool (`hal_c2_thread_wait`, `delegate_task` in wait mode) may
   block for a caller on provider `instance`. Claude and Codex are given `tool_timeout_ms/0`;
   the other providers take their MCP servers over ACP, which has no field for a tool
-  timeout, so they keep their client's 60 s default and a wait is clamped under it.
+  timeout, so they keep their client's 60 s default and a wait is clamped under it
+  (`:acp_max_wait_ms`, which tests shorten).
   """
   def max_wait_ms(instance) do
     driver =
@@ -93,7 +94,9 @@ defmodule HalC2.Mcp do
         &(&1["instanceId"] == instance && &1["driver"])
       )
 
-    if driver in ["claudeAgent", "codex"], do: 3_600_000, else: 55_000
+    if driver in ["claudeAgent", "codex"],
+      do: 3_600_000,
+      else: Application.get_env(:hal_c2, :acp_max_wait_ms, 55_000)
   end
 
   @doc "What agents are told about the tools, for their system or developer prompt."

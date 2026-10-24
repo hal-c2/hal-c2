@@ -894,9 +894,8 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  # The `claude` the turn's instance runs: its binary path in settings, else the one on PATH.
-  # Claude's MCP client gives up on a tool after 60 s unless told otherwise, which cuts
-  # HAL-C2's waiting tools short.
+  # The environment of the turn's `claude`. Its MCP client gives up on a tool after 60 s
+  # unless told otherwise, which cuts HAL-C2's waiting tools short.
   @doc false
   def session_env(turn) do
     Enum.to_list(HalC2.Settings.instance_env(Entities.instance(turn.ids))) ++
@@ -906,6 +905,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       )
   end
 
+  # The `claude` the turn's instance runs: its binary path in settings, else the one on PATH.
   defp command(turn),
     do:
       HalC2.Settings.instance_command(
