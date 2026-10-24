@@ -563,9 +563,12 @@ pub fn register(steps: &mut Steps) {
 
     // Titles.
     steps.step(&format!("the user renames {Q} to {Q}"), |world, c, _| {
-        // TODO(port): a managed folder (FilesFolders' renameManagedFolder) and
-        // a provider instance (ProviderSettings' renameProviderInstance) take
-        // the same words in desktop-qt; other workers own those helpers.
+        // A managed folder takes the same words; a provider instance
+        // (ProviderSettings' renameProviderInstance) does too, and its owner
+        // adds the call.
+        if super::files_folder::rename_managed_folder(world, &c[0], &c[1])? {
+            return Ok(());
+        }
         let state = workspace(world);
         expect!(
             state["threadTitle"] == c[0],
