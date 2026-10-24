@@ -222,6 +222,62 @@ defmodule HalC2.StoreTest do
     assert {:ok, 2} = Store.append([{:thread, "t2", [change("t2")]}])
   end
 
+  # Under load a turn's writes queued behind one another, each its own transaction,
+  # until callers waited out the write timeout and their turns failed.
+  test "appends queued at a busy store commit in one transaction, each answered alone",
+       %{path: path} do
+    store = Process.whereis(Store)
+    :ok = :sys.suspend(store)
+
+    first = queue_append(store, [{:thread, "t1", [change("t1"), change("t1")]}])
+    failing = queue_append(store, [{:thread, "t2", [{"thread", "t2", {:not_json}}]}])
+    empty = queue_append(store, [])
+    last = queue_append(store, [{:thread, "t3", [change("t3")]}])
+
+    :erlang.trace(store, true, [:call])
+    :erlang.trace_pattern({Sqlite3, :execute, 2}, [{[:_, "BEGIN IMMEDIATE"], [], []}], [])
+    on_exit(fn -> :erlang.trace_pattern({Sqlite3, :execute, 2}, false, []) end)
+    :ok = :sys.resume(store)
+
+    assert_receive {^first, {:ok, 2}}
+    assert_receive {^failing, {:error, _}}
+    assert_receive {^empty, {:ok, 2}}
+    assert_receive {^last, {:ok, 3}}
+
+    ref = :erlang.trace_delivered(store)
+    assert_receive {:trace_delivered, ^store, ^ref}
+    assert_received {:trace, ^store, :call, {Sqlite3, :execute, [_, "BEGIN IMMEDIATE"]}}
+    refute_received {:trace, ^store, :call, _}
+
+    assert [%{id: "t1", seq: 2}, %{id: "t3", seq: 3}] = Store.list_streams(path)
+  end
+
+  test "a stream a failed append in a group would have created is made by the next one",
+       %{path: path} do
+    store = Process.whereis(Store)
+    :ok = :sys.suspend(store)
+
+    failing =
+      queue_append(store, [{:thread, "t1", [change("t1"), {"thread", "t1", {:not_json}}]}])
+
+    after_it = queue_append(store, [{:thread, "t2", [change("t2")]}])
+    :ok = :sys.resume(store)
+
+    assert_receive {^failing, {:error, _}}
+    assert_receive {^after_it, {:ok, 1}}
+
+    assert {:ok, 2} = Store.append([{:project, "t1", [change("t1")]}])
+    assert [%{id: "t2", kind: "thread"}, %{id: "t1", kind: "project"}] = Store.list_streams(path)
+  end
+
+  # A call as `GenServer.call/3` sends it, answered as `{ref, reply}`, so several can
+  # wait in a suspended store's mailbox at once.
+  defp queue_append(store, batches) do
+    ref = make_ref()
+    send(store, {:"$gen_call", {self(), ref}, {:append, batches, System.os_time(:millisecond)}})
+    ref
+  end
+
   test "a batch of messages is indexed whole or not at all", %{path: path} do
     {:ok, _} = Store.append([{:thread, "t1", [change("t1")]}])
     messages = [{"m1", "user", "one", "a"}, {"m2", "user", "two", "b"}]

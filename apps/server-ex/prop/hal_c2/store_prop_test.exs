@@ -4,7 +4,8 @@ defmodule HalC2.StorePropTest do
   snapshots, sidebar rows, indexed messages and meta values last put (and not deleted),
   the store's id,
   and the next `seq`. Commands append batches (some of which fail and must leave no
-  trace), read streams back in every way the MC reads them, put the derived rows,
+  trace), queue several appends at once so the store commits them as a group (where
+  each failing one must leave no trace and fail no other), read streams back in every way the MC reads them, put the derived rows,
   search the indexed messages, and restart the store, which must lose nothing it
   acknowledged. `HalC2.StoreParallelPropTest` runs the same model with concurrent
   appenders and readers, and `HalC2.StoreRestartPropTest` with concurrent writers and
@@ -97,7 +98,14 @@ defmodule HalC2.StorePropTest do
             {1, {:call, __MODULE__, :store_path, []}},
             {3, {:call, __MODULE__, :index_messages, [stream_id(), messages(), state.clock]}}
           ]
-        ) ++ if(mode == :sequential, do: [{1, {:call, __MODULE__, :restart, []}}], else: [])
+        ) ++
+        if(mode == :sequential,
+          do: [
+            {1, {:call, __MODULE__, :restart, []}},
+            {2, {:call, __MODULE__, :append_queued, [queued(state)]}}
+          ],
+          else: []
+        )
     )
   end
 
@@ -117,6 +125,11 @@ defmodule HalC2.StorePropTest do
       )
     )
   end
+
+  # Appends that wait at the store together, some of which fail: `{batches, at, nil}`,
+  # or `{batches, at, stream_id}` for one with a batch that cannot be encoded.
+  defp queued(state),
+    do: resize(5, list({batches(state), at(), oneof([nil, nil, stream_id()])}))
 
   defp change do
     oneof([
@@ -170,6 +183,13 @@ defmodule HalC2.StorePropTest do
     end)
   end
 
+  # Each append that does not fail lands, in the order they were queued.
+  def next_state(state, _result, {:call, _, :append_queued, [calls]}) do
+    for {batches, at, nil} <- calls, reduce: state do
+      state -> next_state(state, nil, {:call, __MODULE__, :append, [batches, at]})
+    end
+  end
+
   # Derived rows are only kept for streams that have events or were appended to.
   def next_state(state, _result, {:call, _, :put_snapshot, [id, seq, value]}),
     do: if(known?(state, id), do: put_in(state.snapshots[id], {seq, value}), else: state)
@@ -204,9 +224,26 @@ defmodule HalC2.StorePropTest do
   def next_state(state, _result, _call), do: state
 
   def postcondition(state, {:call, _, :append, [batches, _]}, result) do
-    written = batches |> Enum.map(fn {_, _, changes} -> length(changes) end) |> Enum.sum()
     # The last seq written, or the end of the log when nothing was.
-    result == {:ok, state.seq + written}
+    result == {:ok, state.seq + written(batches)}
+  end
+
+  def postcondition(state, {:call, _, :append_queued, [calls]}, results) do
+    {expected, _} =
+      Enum.map_reduce(calls, state, fn
+        {_, _, failing}, state when failing != nil ->
+          {:error, state}
+
+        {batches, at, nil}, state ->
+          call = {:call, __MODULE__, :append, [batches, at]}
+          {{:ok, state.seq + written(batches)}, next_state(state, nil, call)}
+      end)
+
+    length(results) == length(expected) and
+      Enum.all?(Enum.zip(expected, results), fn
+        {:error, result} -> match?({:error, _}, result)
+        {ok, result} -> ok == result
+      end)
   end
 
   def postcondition(_state, {:call, _, :append_failing, _}, result),
@@ -305,6 +342,9 @@ defmodule HalC2.StorePropTest do
 
   defp known?(state, id), do: Map.has_key?(state.streams, id)
 
+  defp written(batches),
+    do: batches |> Enum.map(fn {_, _, changes} -> length(changes) end) |> Enum.sum()
+
   defp with_time({kind, entity, patch}, at), do: {kind, entity, patch, at}
   defp with_time(change, _at), do: change
 
@@ -325,6 +365,39 @@ defmodule HalC2.StorePropTest do
   def append_failing(batches, where, stream_id) do
     bad = {:thread, stream_id, [{"thread", "e1", {:not_json}}]}
     Store.append(if(where == :first, do: [bad | batches], else: batches ++ [bad]))
+  end
+
+  # The calls wait in a suspended store's mailbox, as they do behind a slow write, so
+  # the store takes them as one group commit. Answered in the order they were queued.
+  def append_queued(calls) do
+    store = Process.whereis(Store)
+    :ok = :sys.suspend(store)
+
+    refs =
+      for {batches, at, failing} <- calls do
+        batches =
+          if failing,
+            do: batches ++ [{:thread, failing, [{"thread", "e1", {:not_json}}]}],
+            else: batches
+
+        ref = make_ref()
+        send(store, {:"$gen_call", {self(), ref}, {:append, batches, at}})
+        ref
+      end
+
+    :ok = :sys.resume(store)
+    monitor = Process.monitor(store)
+
+    replies =
+      for ref <- refs do
+        receive do
+          {^ref, reply} -> reply
+          {:DOWN, ^monitor, _, _, reason} -> exit({:store_down, reason})
+        end
+      end
+
+    Process.demonitor(monitor, [:flush])
+    replies
   end
 
   # Reads open the file the case started the store on (`Store.home_path/0`), which

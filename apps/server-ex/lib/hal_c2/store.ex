@@ -36,6 +36,8 @@ defmodule HalC2.Store do
   @restart_wait 5_000
   @restart_poll 5
   @checkpoint_every :timer.seconds(10)
+  # The most appends one transaction takes (see `handle_call/3`).
+  @group_max 100
 
   @schema [
     "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -441,7 +443,8 @@ defmodule HalC2.Store do
     # A stop (a supervisor restarting the store) then ends it between calls. The
     # supervisor's exit signal queues as a message: the call in hand and any calls
     # already queued ahead of it are answered first, and the ones queued behind it
-    # exit `:shutdown` having written nothing, which `write/3` makes again.
+    # exit `:shutdown` having written nothing, which `write/3` makes again. (An append
+    # behind it that a group commit takes is written and answered with the group.)
     Process.flag(:trap_exit, true)
     # First, so a reader that finds this store by name finds its path too.
     :persistent_term.put(path_key(self()), path)
@@ -587,43 +590,16 @@ defmodule HalC2.Store do
     result
   end
 
+  # Group commit: the appends already queued behind this one are written in the same
+  # transaction, oldest first, and each caller is answered once it commits. Under load
+  # the queue is long and each transaction takes more of it, where one transaction per
+  # call fell further behind until callers timed out. A caller's appends never share a
+  # group with each other, since a caller waits for each before it makes the next.
   @impl true
-  def handle_call({:append, batches, at}, _from, state) do
-    :ok = Sqlite3.execute(state.db, "BEGIN IMMEDIATE")
-
-    try do
-      {last, state} =
-        Enum.reduce(batches, {nil, state}, fn {stream_kind, stream_id, changes}, {last, state} ->
-          {key, state} = stream_key(state, stream_kind, stream_id)
-
-          last =
-            Enum.reduce(changes, last, fn change, _ ->
-              {kind, entity, patch, change_at} = with_time(change, at)
-
-              [[seq]] =
-                run(state.db, state.stmts.insert_event, [
-                  key,
-                  kind,
-                  entity,
-                  encode_patch(patch),
-                  change_at
-                ])
-
-              seq
-            end)
-
-          {last, state}
-        end)
-
-      last = last || log_end(state.db)
-      :ok = Sqlite3.execute(state.db, "COMMIT")
-      {:reply, {:ok, last}, state}
-    rescue
-      error ->
-        Sqlite3.execute(state.db, "ROLLBACK")
-        # Keys created inside the failed transaction were rolled back too.
-        {:reply, {:error, error}, %{state | keys: %{}}}
-    end
+  def handle_call({:append, batches, at}, from, state) do
+    {replies, state} = append_group(state, [{from, batches, at} | queued_appends(@group_max - 1)])
+    Enum.each(replies, fn {from, reply} -> GenServer.reply(from, reply) end)
+    {:noreply, state}
   end
 
   def handle_call({:put_snapshot, stream_id, seq, snapshot}, _from, state) do
@@ -743,6 +719,82 @@ defmodule HalC2.Store do
   def code_change(_old, state, _extra) do
     Process.flag(:trap_exit, true)
     {:ok, state}
+  end
+
+  # The appends waiting in the mailbox, up to `n`, in the order they arrived. Other
+  # messages stay where they are.
+  defp queued_appends(0), do: []
+
+  defp queued_appends(n) do
+    receive do
+      {:"$gen_call", from, {:append, batches, at}} ->
+        [{from, batches, at} | queued_appends(n - 1)]
+    after
+      0 -> []
+    end
+  end
+
+  # One transaction for the group. A call that fails rolls back to its own savepoint
+  # and is answered with its error; the others still commit. A failed COMMIT fails
+  # them all.
+  defp append_group(state, group) do
+    :ok = Sqlite3.execute(state.db, "BEGIN IMMEDIATE")
+
+    try do
+      {replies, state} =
+        Enum.map_reduce(group, state, fn {from, batches, at}, state ->
+          {reply, state} = append_one(state, batches, at)
+          {{from, reply}, state}
+        end)
+
+      :ok = Sqlite3.execute(state.db, "COMMIT")
+      {replies, state}
+    rescue
+      error ->
+        Sqlite3.execute(state.db, "ROLLBACK")
+        # Keys created inside the failed transaction were rolled back too.
+        {Enum.map(group, fn {from, _, _} -> {from, {:error, error}} end), %{state | keys: %{}}}
+    end
+  end
+
+  # One caller's batches: the last `seq` written, or the end of the log when it wrote
+  # none. A failure keeps the keys from before the call, since its streams rolled back.
+  defp append_one(state, batches, at) do
+    :ok = Sqlite3.execute(state.db, "SAVEPOINT append")
+
+    try do
+      {last, state} =
+        Enum.reduce(batches, {nil, state}, fn {stream_kind, stream_id, changes}, {last, state} ->
+          {key, state} = stream_key(state, stream_kind, stream_id)
+
+          last =
+            Enum.reduce(changes, last, fn change, _ ->
+              {kind, entity, patch, change_at} = with_time(change, at)
+
+              [[seq]] =
+                run(state.db, state.stmts.insert_event, [
+                  key,
+                  kind,
+                  entity,
+                  encode_patch(patch),
+                  change_at
+                ])
+
+              seq
+            end)
+
+          {last, state}
+        end)
+
+      last = last || log_end(state.db)
+      :ok = Sqlite3.execute(state.db, "RELEASE append")
+      {{:ok, last}, state}
+    rescue
+      error ->
+        :ok = Sqlite3.execute(state.db, "ROLLBACK TO append")
+        :ok = Sqlite3.execute(state.db, "RELEASE append")
+        {{:error, error}, state}
+    end
   end
 
   defp stream_key(state, kind, id) do
