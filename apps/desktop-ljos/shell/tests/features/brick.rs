@@ -43,6 +43,21 @@ Item {
             var found = brickFindIn(kids[i], name)
             if (found) return found
         }
+        // What an item holds that is not an item: a popup is declared
+        // among its data, beside its children.
+        var held = item.data || []
+        for (var j = 0; j < held.length; j++) {
+            if (kids.indexOf(held[j]) >= 0) continue
+            var inside = brickFindIn(held[j], name)
+            if (inside) return inside
+        }
+        // A control or popup keeps what is declared in it in contentData.
+        var content = item.contentData || []
+        for (var k = 0; k < content.length; k++) {
+            if (kids.indexOf(content[k]) >= 0 || held.indexOf(content[k]) >= 0) continue
+            var within = brickFindIn(content[k], name)
+            if (within) return within
+        }
         return null
     }
     function brickFind(name) {
@@ -129,6 +144,27 @@ Item {
     }
     function brickAt(item, fx, fy) {
         return item.mapToItem(null, item.width * fx, item.height * fy)
+    }
+    // The point, in window coordinates, a little inside where the first of
+    // the texts named `name` under `item` that `pattern` matches has the
+    // match; else the texts seen, as a string.
+    function brickTextPoint(item, name, pattern) {
+        var pending = [item]
+        var seen = []
+        var expression = new RegExp(pattern)
+        while (pending.length > 0) {
+            var next = pending.shift()
+            var kids = next.children || []
+            for (var i = 0; i < kids.length; i++) pending.push(kids[i])
+            if (next.objectName !== name) continue
+            var drawn = next.getText(0, next.length)
+            seen.push(drawn)
+            var found = expression.exec(drawn)
+            if (!found) continue
+            var place = next.positionToRectangle(found.index)
+            return next.mapToItem(null, place.x + 4, place.y + place.height / 2)
+        }
+        return seen.join(" | ")
     }
 %BODY%
 }
@@ -521,5 +557,40 @@ impl Brick {
                 _ => None,
             },
         )
+    }
+}
+
+impl Brick {
+    /// Where, in window coordinates, the match of `pattern` (a JS regular
+    /// expression) is drawn by a text named `name` under `item`; the texts
+    /// there are, instead, the failure.
+    pub fn text_point(
+        &self,
+        world: &World,
+        item: ObjectId,
+        name: &str,
+        pattern: &str,
+    ) -> Outcome<(f64, f64)> {
+        match self.call(
+            world,
+            "brickTextPoint",
+            &[Value::Object(item), Value::from(name), Value::from(pattern)],
+        )? {
+            Value::Point(p) => Ok((p.x, p.y)),
+            Value::String(seen) => fail!("no text named {name} draws {pattern}: {}", seen.as_str()),
+            other => fail!("no point for {pattern}: {other:?}"),
+        }
+    }
+}
+
+impl Brick {
+    /// The size of the window the brick is shown in.
+    pub fn size(&self, world: &World) -> (f64, f64) {
+        let read = |name: &str| match world.engine().read_by_name(self.probe, name) {
+            Value::Int(n) => f64::from(n),
+            Value::Real(r) => r,
+            _ => 0.0,
+        };
+        (read("width"), read("height"))
     }
 }

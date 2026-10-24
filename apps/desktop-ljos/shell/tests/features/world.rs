@@ -197,6 +197,8 @@ impl World {
         hal_c2_shell::local_transcriber::set_wake(&engine, wake(&self.signal));
         hal_c2_shell::theme::set_wake(&engine, wake(&self.signal));
         Platform::of(&engine).set_waker(wake(&self.signal));
+        // A real host fetches an Image's http source; the fake MC serves it.
+        Platform::of(&engine).set_fetcher(Arc::new(LocalFetcher));
         let connection = Rc::new(Connection::spawn(wake(&self.signal)));
         connection
             .client()
@@ -751,5 +753,43 @@ impl World {
         let taken = shell.window.pointer(&event(shell.window.now()));
         self.pump()?;
         Ok(taken)
+    }
+}
+
+/// The network of a headless host: plain `http:` GETs, answered by the fake
+/// MC on this machine (ljos's own `HttpFetcher` is not exported by its facade).
+struct LocalFetcher;
+
+impl ljos::prelude::Fetcher for LocalFetcher {
+    fn fetch(&self, url: &str) -> Result<Vec<u8>, ljos::prelude::FetchError> {
+        use ljos::prelude::FetchError::{Failed, NoNetwork};
+        use std::io::{Read, Write};
+        let rest = url
+            .strip_prefix("http://")
+            .ok_or_else(|| NoNetwork(url.to_owned()))?;
+        let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let failed = |e: std::io::Error| Failed(format!("{url}: {e}"));
+        let mut stream = std::net::TcpStream::connect(host).map_err(failed)?;
+        write!(
+            stream,
+            "GET /{path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+        )
+        .map_err(failed)?;
+        let mut reply = Vec::new();
+        stream.read_to_end(&mut reply).map_err(failed)?;
+        let split = reply
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .ok_or_else(|| Failed(format!("{url}: no reply")))?;
+        let head = String::from_utf8_lossy(&reply[..split]).into_owned();
+        let status: u16 = head
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if !(200..300).contains(&status) {
+            return Err(Failed(format!("{url}: {status}")));
+        }
+        Ok(reply[split + 4..].to_vec())
     }
 }
