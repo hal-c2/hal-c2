@@ -17,12 +17,11 @@
 //! engine's clock, the sources' fingerprint says whether a reload is due.
 //!
 //! This is a reload of the whole shell and not Ljós's own hot reload
-//! (ARCHITECTURE.md §12.1, `Setup::watch`), which keeps the state of the
-//! QML across a save. TODO(ljos#98, ljos#99): Ljós's watcher follows one root with a
-//! fixed entry, and the facade offers it only with the `mcp` feature. The
-//! shell has an import path of several roots (the user's, the bricks, its
-//! own), and changes its entry when the user's shell comes or goes or fails.
-//! The state that matters is in the controllers, which a reload keeps.
+//! (`Setup::watch_roots`), which keeps the state of the QML across a save
+//! but comes only with the `dev` feature, for development: a user's
+//! `shell.qml` follows its files in a release too, and says through
+//! `Runtime` which shell it is and why the last one failed. The state that
+//! matters is in the controllers, which a reload keeps.
 
 use std::cell::{Cell, RefCell};
 use std::collections::hash_map::DefaultHasher;
