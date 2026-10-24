@@ -560,22 +560,7 @@ fn wait_named_when(
             } else {
                 format!(" ({problem})")
             };
-            let url = text(&published(w)["pages"][0]["url"]);
-            let path = url.strip_prefix("file://").unwrap_or(&url).to_owned();
-            let parent = std::path::Path::new(&path).parent().map(|d| {
-                std::fs::read_dir(d)
-                    .map(|r| {
-                        r.flatten()
-                            .map(|e| e.file_name().to_string_lossy().into_owned())
-                            .collect::<Vec<_>>()
-                    })
-                    .ok()
-            });
-            format!(
-                "{name} to be shown{problem}; exists={} dir={parent:?}; {}",
-                std::path::Path::new(&path).exists(),
-                describe(w)
-            )
+            format!("{name} to be shown{problem}; {}", describe(w))
         },
     )?;
     match named(world, &brick, name) {
