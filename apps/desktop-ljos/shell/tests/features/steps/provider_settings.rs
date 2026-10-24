@@ -1953,9 +1953,13 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(&format!("the user removes {Q}"), |world, c, _| {
-        // TODO(port): ComposerAttachSteps' removeComposerAttachment and
-        // ThemeLibrarySteps' removesTheme answer first for an attachment and a
-        // theme; they are not ported yet.
+        if super::composer_attach::remove_composer_attachment(world, &c[0])? {
+            return Ok(());
+        }
+        // In Settings → Appearance it is one of this device's themes.
+        if super::theme_library::removes_theme(world, &c[0])? {
+            return Ok(());
+        }
         let rows = variables(world, "Claude Work");
         let id = fake(world).instance_id.clone();
         let Some(index) = rows.iter().position(|row| row["name"] == json!(c[0])) else {

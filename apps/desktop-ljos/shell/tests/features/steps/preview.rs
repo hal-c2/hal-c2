@@ -477,8 +477,10 @@ pub fn register(steps: &mut Steps) {
         wait_for_urls(world, &[&c[0], &c[1]])
     });
     steps.step(&format!("{Q} is listed"), |world, c, _| {
-        // The model picker's own "is listed" is the composer picker's owner's:
-        // it answers before this does when the picker is open.
+        // The model picker's scenarios first, then an open command palette.
+        if super::composer_picker::model_picker_lists(world, &c[0], true)? {
+            return Ok(());
+        }
         let title = c[0].clone();
         let open = world
             .with::<Palette, _>(|p, _| p.is_open())

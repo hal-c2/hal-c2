@@ -916,6 +916,9 @@ pub fn register(steps: &mut Steps) {
     // for the model picker's "shows <reason>" scenarios; call its port here
     // once it exists.
     steps.step(&format!("{Q} shows {Q}"), |world, c, _| {
+        if super::composer_picker::model_picker_shows(world, &c[0], &c[1])? {
+            return Ok(());
+        }
         let transcript = terminal_session(world, &c[0])?.transcript();
         expect!(
             transcript.contains(&unescaped(&c[1])),

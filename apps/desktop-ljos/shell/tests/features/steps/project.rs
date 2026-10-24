@@ -569,7 +569,10 @@ pub fn register(steps: &mut Steps) {
         if let Some(answer) = world.answer_question.take() {
             return answer(world, false);
         }
-        // TODO(port): CheckpointEditSteps' cancelRewindQuestion ("Edit from here?") goes here.
+        // "Edit from here?" (timeline/checkpoints).
+        if super::checkpoint_edit::cancel_rewind_question(world)? {
+            return Ok(());
+        }
         world.dispatch("project.remove.cancel", json!({}))
     });
     steps.step(&format!("the folder explorer shows {Q}"), |world, c, _| {

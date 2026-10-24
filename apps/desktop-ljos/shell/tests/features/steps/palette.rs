@@ -728,8 +728,9 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(&format!("{Q} is not listed"), |world, c, _| {
-        // TODO(port): ComposerPickerSteps' modelPickerLists answers first
-        // while the composer brick is shown; it is not ported.
+        if super::composer_picker::model_picker_lists(world, &c[0], false)? {
+            return Ok(());
+        }
         let row = index_of(world, &c[0], "")?;
         expect!(row.is_none(), "{}", describe(world));
         Ok(())
