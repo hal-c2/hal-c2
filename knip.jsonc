@@ -4,7 +4,6 @@
   "rules": { "types": "off", "nsTypes": "off" },
   "workspaces": {
     ".": {
-      // Keep vendored reference repositories outside the root project.
       "project": ["*.{js,mjs,cjs,ts,mts,cts}"],
     },
     "scripts": {
