@@ -164,6 +164,15 @@ defmodule HalC2.Orchestration.Settlement do
   end
 
   @doc """
+  Whether the thread of sidebar row `row` settles on its own now, by the current
+  settings, from its synced links; a thread without links is not looked up.
+  """
+  def settles_now?(row) do
+    {on_merge, after_days} = resolved(HalC2.Settings.settings(), row["projectId"])
+    settled_at(row, nil, System.system_time(:millisecond), after_days, on_merge) != nil
+  end
+
+  @doc """
   When a thread settles, as an ISO time, or nil (`resolveAutoSettlementAt`).
   `pull_request` (`%{"state", "mergedAt", "closedAt"}`) stands in for a thread
   without visible links; linked threads decide from their snapshots.

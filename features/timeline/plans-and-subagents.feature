@@ -3,6 +3,7 @@
 #   packages/contracts/src/orchestrationV2.ts (plan.updated, subagent.updated, proposed_plan, todo_list, subagent, handoff, fork, compaction, thread_created, delegated_task.request, delegated_task.wake-policy, delegated_task.completion-delivery.acknowledge, delegated_task.completion-delivery.dispose)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (proposed_plan, todo_list)
 #   apps/server-ex/lib/hal_c2/orchestration/delegation.ex (delegate_task, completion wake, no answer)
+#   apps/server-ex/lib/hal_c2/pull_requests/wakes.ex (a pull request's wake)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (message_item: a message with a notification is a notification item; users_run)
 #   apps/server/src/orchestration-v2/Notification.ts (notificationTurnItem)
 #   apps/web/src/session-logic.ts (notification work rows, getUserQueuedThreadRuns)
@@ -305,6 +306,47 @@ Feature: Plans and subagents
     Then the timeline says "Tax tests finished"
     And the result is not shown as a message of the user's
 
+  @shared @backlog-mobile
+  Scenario: A finished task's notification names its worker and links to it
+    Given a task the agent delegated as "Tax tests" finished with "12 tests added"
+    When the user reads the parent thread
+    Then the worker's notification reads "Tax tests finished"
+    And the notification links to the worker's thread
+
+  @desktop @backlog-mobile
+  Scenario: A finished task's result is kept apart from the agent's replies until opened
+    Given a task the agent delegated as "Tax tests" finished with "12 tests added"
+    When the user reads the parent thread
+    Then the worker's result "12 tests added" is hidden until the user opens it
+
+  @tui
+  Scenario: A finished task's notification previews the worker's result
+    Given a task the agent delegated as "Tax tests" finished with "12 tests added"
+    When the user reads the parent thread
+    Then the worker's notification previews "12 tests added"
+
+  @mc
+  Scenario: A finished task's notification carries the worker's thread, title and result
+    Given the agent delegated a task and chose to carry on
+    When the subagent finishes with "12 tests added"
+    Then the parent's notification names the worker's thread and carries "12 tests added"
+
+  @mc
+  Scenario: A delegated task's first message in the worker's thread says it is from the parent
+    Given the agent delegated a task and chose to carry on
+    When the subagent finishes with "12 tests added"
+    Then the worker's first message says it is from the parent
+    And the user can open the parent
+
+  # Proven by tst_TurnRequests.qml test_waitingResultOpensItsWorkersThread until the native runner can queue a run.
+  @desktop @backlog-desktop @backlog-mobile @backlog-tui
+  Scenario: A result waiting to wake the parent names its worker and opens its thread
+    Given the agent delegated a task and chose to carry on
+    And the subagent finishes with "12 tests added"
+    When the user looks at the result waiting to wake the parent
+    Then it names the worker
+    And the user can open the worker's thread from it
+
   @shared @backlog-mobile @backlog-tui
   Scenario: A result a thread stored as a user message still shows as a notification
     Given a thread stored the failed result of the delegated task "Tax tests" as a user message
@@ -392,6 +434,15 @@ Feature: Plans and subagents
     Given the agent's background work woke it up
     When the user reads the parent thread
     Then the timeline says "Background activity updated"
+    And nothing says a message was sent by another agent
+
+  # The MC wakes a thread when a pull request it owns needs attention
+  # (features/mc/orchestration/pull-request-wakes.feature).
+  @shared @backlog-mobile
+  Scenario: A pull request that woke the agent shows as a notification, not a message of the user's
+    Given a pull request the thread owns woke its agent because its checks failed
+    When the user reads the parent thread
+    Then the timeline says "acme/app#12: checks failing"
     And nothing says a message was sent by another agent
 
   @shared @backlog-mobile @backlog-tui

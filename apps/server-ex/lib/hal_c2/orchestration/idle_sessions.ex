@@ -9,7 +9,9 @@ defmodule HalC2.Orchestration.IdleSessions do
   A check runs every few minutes over the threads that have a live process. The same
   check ends a started run that no process drives any more (its provider's session
   stopped without ending it, leaving only the run's record), so the send fails
-  explicitly and the thread takes its next message.
+  explicitly and the thread takes its next message. And it settles the delegated task of
+  a subagent thread no process drives that went quiet without its task hearing (a
+  report lost or given up on: `HalC2.Orchestration.Delegation.settle_if_quiet/1`).
   """
 
   use GenServer
@@ -70,6 +72,29 @@ defmodule HalC2.Orchestration.IdleSessions do
     end
   end
 
+  # Subagent threads of this MC with nothing running and no process, whose caller still
+  # waits on a task (working, or its task item pending): the rest settled long ago.
+  defp settle_quiet_tasks do
+    rows = HalC2.Shell.rows()
+
+    waiting =
+      for {{mc, id}, {"thread", row}} <- rows,
+          mc == node(),
+          waiting?(row),
+          into: MapSet.new(),
+          do: id
+
+    for {{mc, thread_id},
+         {"thread", %{"lineage" => %{"relationshipToParent" => "subagent"} = lineage} = row}} <-
+          rows,
+        mc == node() and row["activeRunId"] == nil and row["deletedAt"] == nil,
+        MapSet.member?(waiting, lineage["parentThreadId"]),
+        not live?(thread_id),
+        do: HalC2.Orchestration.Delegation.settle_if_quiet(thread_id)
+  end
+
+  defp waiting?(row), do: row["activeRunId"] != nil or (row["pendingBackgroundTasks"] || []) != []
+
   # A provider process of the thread is still up: its run is its own to end.
   defp live?(thread_id) do
     Enum.any?(
@@ -80,6 +105,7 @@ defmodule HalC2.Orchestration.IdleSessions do
 
   defp release_idle do
     end_abandoned()
+    settle_quiet_tasks()
     now = System.system_time(:millisecond)
     idle_ms = Application.get_env(:hal_c2, :session_idle_ms, :timer.minutes(30))
     pinned_ms = Application.get_env(:hal_c2, :session_max_pin_ms, :timer.hours(4))

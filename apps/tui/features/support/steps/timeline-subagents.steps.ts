@@ -155,6 +155,49 @@ step("a task the agent delegated as {string} finished", async (ctx: TurnWorld, t
   await sync(ctx);
 });
 
+step(
+  "a task the agent delegated as {string} finished with {string}",
+  async (ctx: TurnWorld, title: string, result: string) => {
+    await listChildThread(ctx);
+    // delegation.ex: the notification names the worker and carries its result.
+    await startNotifiedRun(
+      ctx,
+      `<delegated_task_result taskId="task-1">\n${result}\n</delegated_task_result>`,
+      {
+        source: { kind: "delegated_task", taskIds: ["task-1"] },
+        outcome: "completed",
+        summary: `${title} finished`,
+        workerThreadId: CHILD.id,
+        workerTitle: title,
+        detail: result,
+      },
+    );
+  },
+);
+
+step("the worker's notification reads {string}", async (ctx: TurnWorld, text: string) => {
+  expect(
+    shownItems(ctx)
+      .flatMap(linesOf)
+      .some((line) => line.includes(text)),
+  ).toBe(true);
+  expect(await snapshot(ctx)).toContain(text);
+});
+
+step("the notification links to the worker's thread", async (ctx: TurnWorld) => {
+  await clickText(ctx, `${CHILD.title} finished`);
+  await settle();
+  expect(openThreadId(ctx)).toBe(CHILD.id);
+});
+
+step("the worker's notification previews {string}", async (ctx: TurnWorld, text: string) => {
+  expect(
+    shownItems(ctx)
+      .flatMap(linesOf)
+      .some((line) => line.includes(`${CHILD.title} finished`) && line.includes(text)),
+  ).toBe(true);
+});
+
 step("the agent's background work woke it up", async (ctx: TurnWorld) => {
   // claude/thread_runtime.ex wake.
   await startNotifiedRun(ctx, "Background task completed.", {
@@ -162,6 +205,21 @@ step("the agent's background work woke it up", async (ctx: TurnWorld) => {
     outcome: "updated",
     summary: "Background activity updated",
   });
+
+  step(
+    "a pull request the thread owns woke its agent because its checks failed",
+    async (ctx: TurnWorld) => {
+      // pull_requests/wakes.ex wake.
+      await startNotifiedRun(ctx, "Pull request acme/app#12 needs your attention.", {
+        source: { kind: "pull_request", pullRequests: ["github.com/acme/app#12"] },
+        outcome: "failed",
+        summary: "acme/app#12: checks failing",
+      });
+      const fixture = await turns(ctx);
+      Object.assign(fixture.messages.at(-1)!, { createdBy: "system", creationSource: "server" });
+      await sync(ctx);
+    },
+  );
   const fixture = await turns(ctx);
   Object.assign(fixture.messages.at(-1)!, { createdBy: "agent", creationSource: "provider" });
   await sync(ctx);

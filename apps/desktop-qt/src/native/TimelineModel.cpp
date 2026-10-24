@@ -297,6 +297,8 @@ QString markerDetail(const QJsonObject& item) {
   const QString type = text(item, QLatin1String("type"));
   if (type == QLatin1String("fork")) return QStringLiteral("Continues in %1").arg(text(item, QLatin1String("targetThreadId")));
   if (type == QLatin1String("thread_created")) return text(item, QLatin1String("title"));
+  // A worker's result, which the card under its title shows.
+  if (const auto notice = timeline::noticeOf(item); notice && !notice->workerThreadId.isEmpty()) return notice->detail;
   return {};
 }
 
@@ -1452,6 +1454,10 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
       if (row.kind == QLatin1String("subagent")) return text(item, QLatin1String("childThreadId"));
       if (type == QLatin1String("user_message") && text(item, QLatin1String("createdBy")) == QLatin1String("agent")) {
         return text(item, QLatin1String("senderThreadId"));
+      }
+      // A finished worker's notification opens the worker's thread.
+      if (row.kind == QLatin1String("marker")) {
+        if (const auto notice = timeline::noticeOf(item)) return notice->workerThreadId;
       }
       return QString();
     case PullRequestUrlRole: {

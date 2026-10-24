@@ -1545,6 +1545,12 @@ defmodule HalC2.OrchestrationTest do
 
     child = StreamState.get(current(child_id), "thread")[child_id]
 
+    # The worker's thread can say which thread asked for it.
+    assert [%{"senderThreadId" => ^parent_id}] =
+             current(child_id)
+             |> StreamState.list("message")
+             |> Enum.filter(&(&1["role"] == "user"))
+
     assert %{"relationshipToParent" => "subagent", "parentThreadId" => ^parent_id} =
              child["lineage"]
 
@@ -1576,7 +1582,10 @@ defmodule HalC2.OrchestrationTest do
              "runId" => run_id,
              "source" => %{"kind" => "delegated_task", "taskIds" => [^task_id]},
              "outcome" => "completed",
-             "summary" => "Say hello finished"
+             "summary" => "Say hello finished",
+             "workerThreadId" => ^child_id,
+             "workerTitle" => "Say hello",
+             "detail" => "Hello from codex"
            } = item
 
     assert run_id == woken["id"]
