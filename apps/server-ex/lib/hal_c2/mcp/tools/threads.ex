@@ -515,11 +515,11 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  # Why a provider cannot run a thread now; empty when it can.
+  # One provider's entry in orchestrator_capabilities, narrowed by the call's arguments.
   defp capabilities_provider(provider, args, options?, all?) do
     constraints = constraints(provider)
     models = provider["models"] || []
-    query = args["query"] && String.downcase(args["query"])
+    query = if is_binary(args["query"]), do: String.downcase(args["query"])
 
     matching =
       Enum.filter(models, fn model ->
@@ -558,6 +558,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     }
   end
 
+  # Why a provider cannot run a thread now; empty when it can.
   defp constraints(provider) do
     [
       provider["enabled"] == false && "Provider instance is disabled.",
