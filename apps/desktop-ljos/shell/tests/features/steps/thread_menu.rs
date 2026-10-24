@@ -916,7 +916,9 @@ pub fn register(steps: &mut Steps) {
     });
     steps.step(&format!("{Q} opens"), |world, c, _| {
         world.sync()?; // a thread the MC just made is listed by now
-        // TODO(port): FilesViewer::fileOpened, a file the viewer opened.
+        if super::files_viewer::file_opened(world, &c[0])? {
+            return Ok(());
+        }
         let key = key_of(world, &c[0])?;
         world.wait_for_with(
             |w| route_thread(w) == key,

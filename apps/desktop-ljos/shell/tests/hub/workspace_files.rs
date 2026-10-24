@@ -545,6 +545,20 @@ fn edits_save_themselves_shortly_after_the_user_stops_typing() {
 }
 
 #[test]
+fn a_stretched_save_delay_holds_the_write_back() {
+    let f = files_on("/w", true);
+    f.answer(0, listing(&[]));
+    f.open_with("a.txt", "one\n");
+    f.set("editing", Value::Bool(true));
+    WorkspaceFiles::set_save_delay(&f.engine, f.files, 5_000);
+    f.invoke("edit", &[Value::from("one\ntwo\n")]);
+    f.pass(SAVE_DELAY_MS);
+    assert!(f.asked("projects.writeFile").is_empty());
+    f.pass(5_000 - SAVE_DELAY_MS);
+    assert_eq!(f.asked("projects.writeFile").len(), 1);
+}
+
+#[test]
 fn closing_the_file_saves_pending_edits_first() {
     let f = files_on("/w", true);
     f.answer(0, listing(&[]));

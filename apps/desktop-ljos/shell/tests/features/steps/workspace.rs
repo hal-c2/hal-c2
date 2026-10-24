@@ -4,8 +4,7 @@
 //! threads/titles.feature, source-control/refs-and-branches.feature and
 //! source-control/worktrees-and-setup-scripts.feature.
 //!
-//! Not ported here, as they sit on helpers other step files own: the
-//! editors a `config` shape lists (FakeConfig, SettingsSteps), renaming a
+//! Not ported here, as they sit on helpers other step files own: renaming a
 //! managed folder or a provider instance (FilesFolders, ProviderSettings) and
 //! the archive's list (ArchivedThreads), and the draft that a branch ties to
 //! a machine (LoadBalancing's cluster).
@@ -366,6 +365,22 @@ fn current_repo(world: &mut World) -> Repo {
         .unwrap_or_default()
 }
 
+/// The editors the MC's `config` lists, announced again to the shell.
+fn set_editors(world: &mut World, editors: Value) -> Outcome {
+    let fake = super::settings::fake_config(&mut world.mc);
+    fake.config.insert("availableEditors".into(), editors);
+    let mut config = fake.config.clone();
+    config.insert("settings".into(), Value::Object(fake.settings.clone()));
+    let mc = &world.mc;
+    for id in mc.subscribers("config") {
+        if text(&mc.shape_of(id)["environment"]) != mc.environment_id {
+            continue;
+        }
+        mc.send(&json!({"t": "config", "id": id, "config": config}));
+    }
+    world.sync()
+}
+
 fn expect_editor_call(world: &mut World, editor: &str, cwd: &str) -> Outcome {
     let calls = world.mc.part::<FakeGit>().editor_calls.clone();
     let last = calls.last();
@@ -562,9 +577,10 @@ pub fn register(steps: &mut Steps) {
 
     // Titles.
     steps.step(&format!("the user renames {Q} to {Q}"), |world, c, _| {
-        // TODO(port): a managed folder (FilesFolders' renameManagedFolder)
-        // takes the same words in desktop-qt; another worker owns that helper.
-        // The same words rename a provider instance in the Providers settings.
+        // A managed folder takes the same words; so does a provider instance.
+        if super::files_folder::rename_managed_folder(world, &c[0], &c[1])? {
+            return Ok(());
+        }
         if world.state("providerSettings")["open"] == json!(true) {
             return super::provider_settings::rename_provider_instance(world, &c[0], &c[1]);
         }
@@ -758,8 +774,15 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| search(world, &c[0]),
     );
     steps.step(&format!("only {Q} is listed"), |world, c, _| {
-        // TODO(port): the archive lists the same words (ArchivedThreads'
-        // archiveListsOnly); another worker owns that helper.
+        // The archive page lists the same words as the branch list.
+        if !super::archived_threads::groups_of(world).is_empty() {
+            expect!(
+                super::archived_threads::archive_lists_only(world, &c[0]),
+                "the archive lists {}",
+                show(&world.state("archivedThreads"))
+            );
+            return Ok(());
+        }
         let names = branch_names(world);
         expect!(names == [c[0].clone()], "the list is {}", names.join(", "));
         Ok(())
@@ -1201,6 +1224,24 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
+    // The header's editor button opens the preferred editor.
+    steps.step(
+        &format!("the user has picked {Q} as their preferred editor"),
+        |world, c, _| {
+            let picked = editor_id(&c[0]);
+            set_editors(world, json!([editor_id("Zed"), picked]))?;
+            dispatch(world, "workspace.openInEditor", json!({"editorId": picked}))?;
+            world.sync()?;
+            let state = workspace(world);
+            expect!(
+                state["preferredEditorId"] == picked.as_str(),
+                "the header shows {}",
+                show(&state)
+            );
+            world.mc.part::<FakeGit>().editor_calls.clear();
+            Ok(())
+        },
+    );
     steps.step(
         "the user opens the thread's workspace from the header",
         |world, _, _| dispatch(world, "workspace.openInEditor", Value::Null),
