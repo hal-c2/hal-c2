@@ -113,13 +113,23 @@ that driver; an explicit `providerInstanceId` is honored exactly and fails
 when unavailable. Selecting a different provider without a model uses that
 provider's first advertised model.
 
+`workspace` picks the child's checkout: the caller's (the default), the
+project root, a new worktree cut from the caller's branch, or an existing
+worktree of the project. Anything but the caller's own checkout needs a
+full-access caller in default mode, as `hal_c2_thread_launch` does, and is
+refused before anything is created, so a task never falls back to the caller's
+checkout. A child whose worktree cannot be prepared ends its task with why.
+
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the
 `delegated_task.request` command.
 
 `mode: "async"` returns the current durable state immediately.
 `mode: "wait"` waits for the task result, including nested work and completion follow-ups, or until
-the timeout expires. A wait timeout does not cancel the child; the result sets
+the timeout expires, capped at the caller's `maxWaitMs` (in
+`orchestrator_capabilities`): an hour on Claude and Codex, whose MCP tool
+timeout the MC raises past it, and 55 s on the ACP providers, whose clients give
+up on a tool call after 60 s. A wait timeout does not cancel the child; the result sets
 `waitTimedOut: true`, and the caller can continue with `task_status`. The result is assembled in
 [`delegation.ex`](../../apps/server-ex/lib/hal_c2/orchestration/delegation.ex).
 
