@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use chrono::{DateTime, Datelike, Duration, NaiveTime, TimeZone, Utc};
+use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use serde_json::{Map, Value, json};
 
 use super::settings_rows::turn_row;
@@ -797,8 +798,17 @@ pub fn register(steps: &mut Steps) {
         project_thread_commands(world);
         let key = key_of(world, &c[0])?;
         let now = world.now();
-        // Sent without a round trip: a thread the window shows is visited
-        // the moment it wakes, and the row is read before the MC says so.
+        // A thread the window shows is visited the moment it wakes, so the
+        // marker only stays on one the user is not looking at. desktop-qt
+        // reads its row in-process before that visit; here the row crosses a
+        // socket, so the window looks elsewhere first.
+        if super::thread_menu::route_thread(world) == key {
+            world.with::<Navigation, _>(|n, engine| n.open(engine, Route::Home))?;
+            world.wait_for_with(
+                |w| super::thread_menu::route_thread(w) != key,
+                |_| format!("the window to leave {key}"),
+            )?;
+        }
         let id = id_in(&key).to_owned();
         let row = world
             .mc
