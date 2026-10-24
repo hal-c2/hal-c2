@@ -2673,12 +2673,18 @@ fn register_slack(steps: &mut Steps) {
         wait_hidden(world, "plannerDateField:startField")?;
         wait_hidden(world, "plannerDateField:targetField")
     });
-    steps.step("a screen reader names the settings:", |world, _, _| {
-        shown_named(world, "plannerSettings")?;
-        // TODO(ljos#108): a test cannot read the accessibility tree (an
-        // item's `Accessible.name`, its children), so the names a screen
-        // reader gives the settings' inputs cannot be collected.
-        fail!("a test cannot read the Accessible.name of the settings' inputs (ljos#108)")
+    steps.step("a screen reader names the settings:", |world, _, table| {
+        let settings = shown_named(world, "plannerSettings")?;
+        let names = world.accessible_input_names(settings)?;
+        for row in table.iter() {
+            expect!(
+                names.iter().filter(|name| **name == row[0]).count() == 1,
+                "no one setting is named {} among {}",
+                row[0],
+                names.join(", ")
+            );
+        }
+        Ok(())
     });
     steps.step(
         &format!("{Q} is saved with no field for its start date"),
