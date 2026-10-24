@@ -8,6 +8,7 @@ composer/attachments.feature: A very large paste becomes a text file attachment
 composer/attachments.feature: Dropping a folder into a remote environment is refused
 composer/attachments.feature: Dropping a folder references its path
 composer/attachments.feature: Paste as Text keeps a very large paste in the draft
+composer/attachments.feature: Removing an attachment takes it out of the draft
 composer/attachments.feature: The user attaches an image by choosing it
 composer/attachments.feature: The user attaches images by dropping them on the composer
 composer/attachments.feature: The user checks what text a Snap Shot captured [with accessibility elements that have no names, that the elements have no readable names or values]
@@ -59,8 +60,10 @@ composer/editors-and-keys.feature: Stashing an empty draft brings back the only 
 composer/editors-and-keys.feature: Switching threads returns Vim keys to insert mode
 composer/editors-and-keys.feature: Text meant for another thread is not inserted
 composer/editors-and-keys.feature: The stash keeps the 20 newest prompts
+composer/editors-and-keys.feature: Turning rich text off keeps the draft as plain Markdown
 composer/editors-and-keys.feature: Vim keys can be turned on from settings
 composer/model-and-mode.feature: A branch that does not exist is created when chosen
+composer/model-and-mode.feature: A model that cannot be used says why and cannot be chosen
 composer/model-and-mode.feature: A new thread can run on a machine that has other projects
 composer/model-and-mode.feature: A started thread can move to another provider
 composer/model-and-mode.feature: Favourite models are listed first and can be unfavourited
@@ -68,6 +71,9 @@ composer/model-and-mode.feature: Models are grouped by provider
 composer/model-and-mode.feature: Models from unavailable providers cannot be chosen
 composer/model-and-mode.feature: New threads start with the default permissions
 composer/model-and-mode.feature: New worktree mode needs a base branch before sending
+composer/model-and-mode.feature: Searching the models matches provider and model names [claude, sonnet, gpt-5-codex]
+composer/model-and-mode.feature: Searching the models matches provider and model names [codex, gpt-5-codex, opus]
+composer/model-and-mode.feature: Searching the models matches provider and model names [opus, opus, gpt-5-codex]
 composer/model-and-mode.feature: The chosen model is shown with its provider
 composer/model-and-mode.feature: The last model used with each provider is remembered
 composer/model-and-mode.feature: The model picker shortcut opens and closes the model picker
@@ -85,9 +91,11 @@ composer/model-and-mode.feature: The user sets what the agent may do without ask
 composer/model-and-mode.feature: The user sets what the agent may do without asking [Supervised]
 composer/model-and-mode.feature: The user switches the model for the next turn
 composer/model-and-mode.feature: Unavailable providers stay listed with the reason
+composer/qt-scenarios.feature: A disabled model shows its reason and cannot be chosen
 composer/qt-scenarios.feature: A jump shortcut chooses the numbered model
 composer/qt-scenarios.feature: An unavailable provider is shown but cannot be chosen
 composer/qt-scenarios.feature: Arrow keys and Enter choose a model
+composer/qt-scenarios.feature: Choosing a model in the picker asks the shell to switch
 composer/qt-scenarios.feature: Enter sends the draft in the foreground
 composer/qt-scenarios.feature: Favourite models are listed first and can be unfavourited
 composer/qt-scenarios.feature: Searching the model picker matches provider and model names
@@ -190,6 +198,7 @@ connections/connection-health.feature: A server on another HAL-C2 version warns 
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0, 1.3.2, warns of a version mismatch]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0, 1.4.0-nightly.20260901, does not warn]
 connections/connection-health.feature: A server on another HAL-C2 version warns only when it is behind [1.4.0-nightly.20260902, 1.4.0-nightly.20260901, warns of a version mismatch]
+connections/connection-health.feature: A thread left for longer comes back from what the client kept
 connections/connection-health.feature: A thread left for under five minutes resumes without a snapshot
 connections/connection-health.feature: An environment on this machine is reached without a network
 connections/connection-health.feature: An offline device waits instead of retrying
@@ -205,6 +214,7 @@ connections/connection-health.feature: The user copies a connection's trace id f
 connections/environments.feature: A preference saved by an older build snaps to the nearest choice
 connections/environments.feature: The icon cannot be changed [the environment is not connected, connect to the environment to change its icon]
 connections/environments.feature: The icon cannot be changed [the environment's server predates icons, the server is too old to keep an icon and should update]
+connections/environments.feature: The icon cannot be changed [the user's session cannot change settings, this session cannot change the environment's settings]
 connections/environments.feature: Turning load balancing off keeps the preferences
 connections/local-cache.feature: A desktop app shows what it kept while its MC is still starting
 connections/local-cache.feature: A kept thread is asked for once its MC has listed it
@@ -284,14 +294,129 @@ files/adding-projects.feature: A user with no projects is invited to add one
 files/adding-projects.feature: Adding a folder from the desktop and mobile apps registers it and starts a thread
 files/adding-projects.feature: Adding an existing project from the desktop and mobile apps opens its latest thread
 files/adding-projects.feature: Clone progress is shown while the user keeps working
+files/adding-projects.feature: Dragging a single local folder over the window offers to open it as a project
 files/adding-projects.feature: Dropping a folder adds it as a project and starts a thread
 files/adding-projects.feature: Dropping a folder while the environment is disconnected reports a failure
+files/adding-projects.feature: Drops that are not a single local folder are refused [a file]
+files/adding-projects.feature: Drops that are not a single local folder are refused [two folders]
+files/adding-projects.feature: Folder drops are refused when the app shows a remote environment
+files/file-explorer.feature: A file can be sent to the composer as a mention
+files/file-explorer.feature: A folder that fails to load can be retried
+files/file-explorer.feature: A project the desktop cannot list can be retried
+files/file-explorer.feature: Adding a file to the chat without an open chat is refused
+files/file-explorer.feature: Expanding a folder loads its children on demand
+files/file-explorer.feature: Expanding and collapsing every folder at once
+files/file-explorer.feature: File actions available from a file entry [copy a mention of, a mention of "src/app.ts" is on the clipboard]
+files/file-explorer.feature: File actions available from a file entry [open with the editor, the file opens in the user's editor]
+files/file-explorer.feature: File actions available from a file entry [open, the file opens in the viewer]
+files/file-explorer.feature: File actions available from a file entry [reveal in its folder, the system file manager shows the file]
+files/file-explorer.feature: Filtering the tree can hide entries that do not match
+files/file-explorer.feature: The tree follows the file open in the viewer
+files/file-explorer.feature: The tree refreshes when the agent changes files
+files/file-viewer-and-editing.feature: A failed save is reported and the edit is kept
+files/file-viewer-and-editing.feature: A file opens in the user's editor when the thread runs on this computer
+files/file-viewer-and-editing.feature: A file outside the project the agent left can be edited [on another machine of the cluster]
+files/file-viewer-and-editing.feature: A file outside the project the agent left can be edited [on this computer]
+files/file-viewer-and-editing.feature: A file outside the project turns read-only when the MC refuses to save it
+files/file-viewer-and-editing.feature: A file that fails to load can be retried
+files/file-viewer-and-editing.feature: A media preview that fails to load can be retried [assets/logo.png, image, is shown]
+files/file-viewer-and-editing.feature: A partial preview says how much of the file is shown
+files/file-viewer-and-editing.feature: A requested line is revealed even when it is past the end of the file
+files/file-viewer-and-editing.feature: An attachment can be removed from the draft while it is open
+files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC on another machine the client is paired with, opens "src/app.ts" in an editor]
+files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC on another machine the client is paired with, opens the thread's workspace in an editor from the thread's details]
+files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC on another machine the client is paired with, reveals "src/app.ts" in the file manager]
+files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC reached through an SSH port forward, follows the path "src/app.ts" in a terminal]
+files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC reached through an SSH port forward, opens "src/app.ts" in an editor]
+files/file-viewer-and-editing.feature: An editor or file manager never starts on another machine [an MC reached through an SSH port forward, opens the thread in their editor]
+files/file-viewer-and-editing.feature: Closing a file returns to the tree
+files/file-viewer-and-editing.feature: Closing the file saves pending edits first
+files/file-viewer-and-editing.feature: Copying a file larger than one megabyte copies its first megabyte and says so [from the command palette]
+files/file-viewer-and-editing.feature: Copying a file larger than one megabyte copies its first megabyte and says so [from the viewer]
+files/file-viewer-and-editing.feature: Edits save themselves shortly after the user stops typing
+files/file-viewer-and-editing.feature: Media files are previewed instead of shown as text [assets/logo.png, an image]
+files/file-viewer-and-editing.feature: Media files of a thread on another machine are previewed
+files/file-viewer-and-editing.feature: Rendered files can be switched to their source and back [README.md]
+files/file-viewer-and-editing.feature: Rendered files can be switched to their source and back [data/orders.csv]
+files/file-viewer-and-editing.feature: Rendered files can be switched to their source and back [public/index.html]
+files/file-viewer-and-editing.feature: Some files open read-only [a file larger than one megabyte]
+files/file-viewer-and-editing.feature: The open file's text is copied whole [from the command palette]
+files/file-viewer-and-editing.feature: The open file's text is copied whole [from the viewer]
+files/file-viewer-and-editing.feature: The path trail lets the user jump to a sibling file
+files/file-viewer-and-editing.feature: The rendered or source choice is remembered on this device
+files/file-viewer-and-editing.feature: The thread's workspace opens in the preferred editor from the thread's details
+files/file-viewer-and-editing.feature: Ticking a Markdown task writes the file
+files/file-viewer-and-editing.feature: Word wrap can be turned on and off
 files/files-on-another-machine.feature: A file of a thread on another machine opens in this machine's apps [follows the path "src/cart.ts" in a terminal, the editor]
+files/files-on-another-machine.feature: A file of a thread on another machine opens in this machine's apps [opens "src/cart.ts" in "VS Code", "VS Code"]
 files/files-on-another-machine.feature: A file of a thread on another machine opens in this machine's apps [reveals "src/cart.ts" in the file manager, the file manager]
+files/files-on-another-machine.feature: A machine that cannot show the folder says what it needs
+files/files-on-another-machine.feature: A machine that cannot show the folder yet points at HAL-C2's file viewer
+files/folder-operations.feature: A folder that cannot be trashed is left in place
+files/folder-operations.feature: A managed folder replaced by a link is no longer managed
+files/folder-operations.feature: A trashed folder can be recovered from the system Trash
+files/folder-operations.feature: An ordinary folder inside a project can still be changed
+files/folder-operations.feature: Cancelling a folder operation leaves the disk unchanged
+files/folder-operations.feature: Creating a folder
+files/folder-operations.feature: Files are shown but cannot be changed
+files/folder-operations.feature: Folder management is only offered for the local environment
+files/folder-operations.feature: Folders that are or contain a project cannot be renamed, moved or trashed [move to the Trash, /home/sam/code/clients]
+files/folder-operations.feature: Folders that are or contain a project cannot be renamed, moved or trashed [move, /home/sam/code/clients]
+files/folder-operations.feature: Folders that are or contain a project cannot be renamed, moved or trashed [rename, /home/sam/code/clients/shop]
+files/folder-operations.feature: Folders that are too broad or unsafe cannot be chosen to manage [a folder that does not exist]
+files/folder-operations.feature: Folders that are too broad or unsafe cannot be chosen to manage [a link to another folder]
+files/folder-operations.feature: Folders that are too broad or unsafe cannot be chosen to manage [the filesystem root]
+files/folder-operations.feature: Folders that are too broad or unsafe cannot be chosen to manage [the home folder]
+files/folder-operations.feature: Moving a folder into itself is refused
+files/folder-operations.feature: Moving a folder keeps its contents
+files/folder-operations.feature: Names that would overwrite or escape are refused [creates a folder, shop, A file or folder already exists with that name.]
+files/folder-operations.feature: Names that would overwrite or escape are refused [moves "tmp" into a folder, archive, The destination already exists. Nothing was overwritten.]
+files/folder-operations.feature: Names that would overwrite or escape are refused [renames "old", a/b, Enter one folder name, without path separators or leading/trailing whitespace.]
+files/folder-operations.feature: Opening a managed folder as a project
+files/folder-operations.feature: Renaming a folder keeps its contents
+files/folder-operations.feature: The explorer starts at the project the user is looking at
+files/folder-operations.feature: Trashing a folder requires typing its name
+files/project-file.feature: A saved default workspace wins over hal-c2.json
+files/project-file.feature: Actions declared in hal-c2.json are offered for import
+files/project-file.feature: An invalid hal-c2.json is reported and ignored
+files/project-file.feature: Importing skips actions that already exist
+files/project-file.feature: hal-c2.json may contain comments
+files/project-file.feature: hal-c2.json sets the default workspace for new threads
+files/project-identity.feature: A picked icon still shows on environments that do not know monograms
+files/project-identity.feature: A project without an icon shows a two-character monogram [M7 Forge, M7]
+files/project-identity.feature: A project without an icon shows a two-character monogram [Nebula, NA]
+files/project-identity.feature: A project without an icon shows a two-character monogram [Silver Orchard, SO]
+files/project-identity.feature: An environment icon cannot always be changed ["laptop" is disconnected, Connect to this environment to change its icon.]
+files/project-identity.feature: An environment icon cannot always be changed ["laptop" runs a server too old to keep one, This environment's server is too old to keep an icon. Update it to choose one.]
+files/project-identity.feature: An environment icon cannot always be changed [the user's session cannot change settings, Your session on this environment cannot change its settings.]
+files/project-identity.feature: Choosing an image searches only image files in the project
+files/project-identity.feature: Choosing the detected kind clears the choice
+files/project-identity.feature: Monograms take one or two letters or numbers [#!, cannot be saved]
+files/project-identity.feature: Monograms take one or two letters or numbers [7, is saved as "7"]
+files/project-identity.feature: Monograms take one or two letters or numbers [abc, cannot be saved]
+files/project-identity.feature: Monograms take one or two letters or numbers [sh, is saved as "SH"]
+files/project-identity.feature: Resetting the icon returns to the automatic icon
+files/project-identity.feature: The user applies an environment theme
+files/project-identity.feature: The user chooses the kind of machine an environment runs on
+files/project-identity.feature: The user picks a project icon [the "rocket" symbol in teal]
+files/project-identity.feature: The user picks a project icon [the emoji "🛒"]
+files/project-identity.feature: The user picks a project icon [the image file "assets/logo.png"]
+files/project-identity.feature: The user picks a project icon [the monogram "SH" in rose]
 files/project-scripts-and-actions.feature: A failure to start an action is reported
+files/project-scripts-and-actions.feature: A preview address opens automatically only when one is set
+files/project-scripts-and-actions.feature: A shortcut still used by another project's action is kept
+files/project-scripts-and-actions.feature: Adding an action
+files/project-scripts-and-actions.feature: An action needs a name and a command [no command, Command is required.]
+files/project-scripts-and-actions.feature: An action needs a name and a command [no name, Name is required.]
+files/project-scripts-and-actions.feature: An action runs from its keyboard shortcut
+files/project-scripts-and-actions.feature: Clearing a shortcut removes it
+files/project-scripts-and-actions.feature: Deleting an action asks first and cannot be undone
+files/project-scripts-and-actions.feature: Editing an action
+files/project-scripts-and-actions.feature: Only one action can be the setup script
 files/project-scripts-and-actions.feature: Running an action types its command into a terminal for the thread's workspace
 files/project-scripts-and-actions.feature: Running an action while the terminal is busy opens a new terminal
 files/project-scripts-and-actions.feature: The action the user ran last is offered first
+files/project-scripts-and-actions.feature: The project's actions can be run from the thread's details
 files/removing-and-listing-projects.feature: A confirmation for a project that goes away closes
 files/removing-and-listing-projects.feature: A removal the environment refuses keeps the project and says why
 files/removing-and-listing-projects.feature: Cancelling removal keeps the project
@@ -308,6 +433,7 @@ files/search.feature: The file picker opens the chosen file
 files/search.feature: The file picker says when nothing matches
 files/search.feature: The result count summarises matches and files
 files/search.feature: The search is cleared when the user switches project
+mc/orchestration/queue-and-steering.feature: A usage limit keeps the queue as it was
 mc/orchestration/runs.feature: A failed turn keeps the output it had already produced
 mc/orchestration/runs.feature: A provider retry is recorded as a retry
 mc/platform/storage-layout.feature: The desktop app's control socket lives in the runtime directory [XDG_RUNTIME_DIR is "/run/user/1000", /run/user/1000/hal-c2]
@@ -330,22 +456,35 @@ navigation/appearance.feature: Choosing an appearance mode [Light, light]
 navigation/appearance.feature: Choosing an appearance mode [System, in the operating system's appearance]
 navigation/appearance.feature: Clearing one appearance's theme returns it to the theme choice
 navigation/appearance.feature: Clearing the theme choice returns to the standard theme
+navigation/appearance.feature: Composer context retreats by default
+navigation/appearance.feature: Composer context stays visible after the first message
 navigation/appearance.feature: Diff colors can be changed [Blue & orange, blue and orange]
 navigation/appearance.feature: Diff colors can be changed [Red & green, green and red]
 navigation/appearance.feature: Different themes for light and dark
+navigation/appearance.feature: Font preferences change their part of the app [code, JetBrains Mono, 13, code blocks and diffs]
+navigation/appearance.feature: Font preferences change their part of the app [interface, Inter, 14, everything outside code and the terminal]
+navigation/appearance.feature: Font preferences change their part of the app [prompt, Inter, 15, the composer]
+navigation/appearance.feature: Font preferences change their part of the app [terminal, JetBrains Mono, 12, the terminal]
 navigation/appearance.feature: Font smoothing is offered only on macOS
 navigation/appearance.feature: Holding the appearance shortcut does not spin through modes
 navigation/appearance.feature: Interface sliders change the look [glass opacity, 50, translucent surfaces are more see-through]
+navigation/appearance.feature: Panel animations respect reduced motion
 navigation/appearance.feature: Panels open and close immediately by default
 navigation/appearance.feature: Settings → Appearance marks the theme in use, the standard theme included
+navigation/appearance.feature: Switching threads never replays panel transitions
 navigation/appearance.feature: System appearance follows the operating system as it changes
 navigation/appearance.feature: The appearance shortcut cycles through the modes [Dark, System]
 navigation/appearance.feature: The appearance shortcut cycles through the modes [Light, Dark]
 navigation/appearance.feature: The appearance shortcut cycles through the modes [System, Light]
+navigation/appearance.feature: The environment can be identified at a glance [Artwork, the app shows the Nightly artwork]
+navigation/appearance.feature: The environment can be identified at a glance [None, the app shows no environment marker]
+navigation/appearance.feature: The environment can be identified at a glance [Version pill, the app shows a Nightly version pill]
 navigation/appearance.feature: The theme shortcut opens the theme picker without leaving the thread
+navigation/appearance.feature: Word wrap applies to code
 navigation/command-palette.feature: A command that fails says so
 navigation/command-palette.feature: A leading ">" limits the palette to actions
 navigation/command-palette.feature: A number shortcut runs the Nth entry
+navigation/command-palette.feature: A settings result opens that setting
 navigation/command-palette.feature: A thread entry names its project and branch
 navigation/command-palette.feature: A thread with a linked pull request copies the link instead of the id
 navigation/command-palette.feature: Add project walks the user to a new project
@@ -381,6 +520,7 @@ navigation/command-palette.feature: Linking is not offered where the environment
 navigation/command-palette.feature: Message content search reports while it runs
 navigation/command-palette.feature: No matches at all
 navigation/command-palette.feature: No matching actions
+navigation/command-palette.feature: Open pull requests is offered when any environment supports pull requests
 navigation/command-palette.feature: Open pull requests shows the pull requests page as the user left it
 navigation/command-palette.feature: Picking a sub-item applies it [Change appearance, Dark, the app appearance is dark]
 navigation/command-palette.feature: Picking a sub-item applies it [Change theme, Nord, the active theme is "Nord"]
@@ -390,6 +530,7 @@ navigation/command-palette.feature: Pressing a mode's shortcut again closes that
 navigation/command-palette.feature: Pull requests are only offered where the environment supports them
 navigation/command-palette.feature: Reopening the palette starts from the root list
 navigation/command-palette.feature: Settings are listed after actions and projects and before threads
+navigation/command-palette.feature: Shortcut entries sort after the settings they mirror
 navigation/command-palette.feature: The current thread is marked
 navigation/command-palette.feature: The palette closes from its shortcut
 navigation/command-palette.feature: The palette opens from its shortcut
@@ -418,9 +559,14 @@ navigation/environment-themes.feature: Editing the shell theme file recolors the
 navigation/environment-themes.feature: Extra connections do not impose their themes
 navigation/environment-themes.feature: Selecting a published theme follows its updates
 navigation/environment-themes.feature: Settings → Appearance says a shell theme file is in charge
+navigation/focus.feature: A settings result opens from the keyboard
+navigation/focus.feature: Escape clears the settings search
 navigation/focus.feature: Leaving settings goes back to the thread
+navigation/focus.feature: Nothing matches the settings search
 navigation/focus.feature: Number shortcuts pick entries in an open picker
+navigation/focus.feature: Searching settings lists matching settings with their section
 navigation/focus.feature: The palette keeps focus while it is open
+navigation/focus.feature: The search follows a query set elsewhere
 navigation/focus.feature: The window's shortcuts still run while the command palette is open [mod+b, sidebar.toggle]
 navigation/focus.feature: The window's shortcuts still run while the command palette is open [mod+p, filePicker.toggle]
 navigation/focus.feature: Thread shortcuts do nothing while the command palette is open [mod+alt+b, rightPanel.toggle]
@@ -431,7 +577,9 @@ navigation/focus.feature: Typing while a terminal starts stays in the composer
 navigation/header.feature: A new thread can run on another machine's checkout of the project
 navigation/header.feature: A thread on another machine of the cluster has its header
 navigation/header.feature: Leaving the thread lands on a new draft in the most recent project
+navigation/header.feature: Opening the thread without picking uses the first editor the machine has
 navigation/header.feature: Renaming from the thread list starts editing the title in the header
+navigation/header.feature: The header of a thread on another machine lists this computer's editors
 navigation/header.feature: The header of a thread on another machine says so while that machine is offline
 navigation/header.feature: The header opens the checkout's pull request in the browser
 navigation/keybinding-customisation.feature: A condition limits where a rule applies [!(terminalOpen && previewOpen), both the terminal and preview are open, does not run]
@@ -621,22 +769,69 @@ navigation/landing.feature: Opening the app lands on a new thread in the most re
 navigation/landing.feature: The first project added lands on its draft
 navigation/landing.feature: The open thread going away lands on a new thread
 navigation/landing.feature: With no projects the window stays home
+navigation/layout.feature: A hidden right panel does no work
+navigation/layout.feature: A hidden sidebar stays hidden after a restart
+navigation/layout.feature: A tab kind that the thread cannot show is not offered
+navigation/layout.feature: A window too narrow for the sidebar and the thread shows the sidebar over the thread
+navigation/layout.feature: Adding a tab to the right panel [agents]
+navigation/layout.feature: Adding a tab to the right panel [diff]
+navigation/layout.feature: Adding a tab to the right panel [files]
+navigation/layout.feature: Adding a tab to the right panel [previews]
+navigation/layout.feature: Adding a tab to the right panel [pull request]
+navigation/layout.feature: Adding a tab to the right panel [terminal]
+navigation/layout.feature: Choosing the project in the header starts a new thread there
+navigation/layout.feature: Closing a right panel tab
+navigation/layout.feature: Hiding the sidebar
+navigation/layout.feature: Hiding the terminal
+navigation/layout.feature: Hiding the thread details panel
+navigation/layout.feature: Maximizing the right panel
+navigation/layout.feature: Opening and closing the right panel
+navigation/layout.feature: Resetting the sidebar width
+navigation/layout.feature: Resizing the right panel
+navigation/layout.feature: Resizing the sidebar is remembered
+navigation/layout.feature: Right panel contents survive a visit to settings
+navigation/layout.feature: Right panel contents survive closing the panel
+navigation/layout.feature: Settings replace the thread list with the settings sections
+navigation/layout.feature: Showing the sidebar again from the header
+navigation/layout.feature: Showing the terminal from the header
+navigation/layout.feature: Switching between right panel tabs
+navigation/layout.feature: The header names the project and thread
+navigation/layout.feature: The header offers no action to run when the project has none
+navigation/layout.feature: The header offers no editor when the environment has none
+navigation/layout.feature: The header opens the thread's workspace in another editor
+navigation/layout.feature: The header opens the thread's workspace in the preferred editor
+navigation/layout.feature: The header prefers the host's default editor until the user picks another
+navigation/layout.feature: The header runs any of the project's actions
+navigation/layout.feature: The header runs the project's action the user ran last
+navigation/layout.feature: The right panel's tabs and width survive a restart
+navigation/layout.feature: The sidebar cannot be narrower than its minimum or wider than the window allows
+navigation/layout.feature: The sidebar shortcut hides and shows the sidebar
+navigation/layout.feature: The sidebar snaps rather than animating its width
+navigation/layout.feature: The thread details panel leads to the thread it was forked from
+navigation/layout.feature: The thread title uses the room it has
+navigation/layout.feature: The thread's git actions are in the header
+navigation/layout.feature: Toggling the thread details panel
+navigation/palette-add-project.feature: A clone's destination starts in the add project base directory
 navigation/palette-add-project.feature: A folder that does not exist is created and added
 navigation/palette-add-project.feature: A folder that does not exist yet can be created
 navigation/palette-add-project.feature: A highlighted folder is added with mod+Enter [Linux, Ctrl+Enter]
 navigation/palette-add-project.feature: A highlighted folder is added with mod+Enter [macOS, ⌘Enter]
 navigation/palette-add-project.feature: A project can come from several sources [a Git URL]
+navigation/palette-add-project.feature: A project can come from several sources [a local folder]
 navigation/palette-add-project.feature: A project can come from several sources [a repository on GitHub]
 navigation/palette-add-project.feature: A project can come from several sources [a repository on GitLab]
 navigation/palette-add-project.feature: A repository source that is not set up points to its settings
 navigation/palette-add-project.feature: An environment that goes away mid-flow is reported
+navigation/palette-add-project.feature: Browsing starts in the home folder
 navigation/palette-add-project.feature: Cloning asks for a repository then a destination
+navigation/palette-add-project.feature: Failures while adding a project are reported [registration, Failed to add project]
 navigation/palette-add-project.feature: Failures while adding a project are reported [the clone, Clone failed]
 navigation/palette-add-project.feature: Failures while adding a project are reported [the repository lookup, Repository lookup failed]
 navigation/palette-add-project.feature: Relative paths need a current project
 navigation/palette-add-project.feature: The folder browser names what Enter does
 navigation/palette-add-project.feature: The user chooses which environment receives the project
 navigation/palette-add-project.feature: mod+Enter adds the highlighted folder
+navigation/qt-scenarios.feature: The header's terminal toggle opens and closes the terminal drawer
 navigation/qt-shell-backlog.feature: A device tab streams a device screen
 navigation/qt-shell-backlog.feature: Opening a folder still reaches the running window after a launch without one
 navigation/qt-shell-backlog.feature: Opening a folder that is already a project reuses it
@@ -662,6 +857,7 @@ navigation/theme-editor.feature: Importing theme files [one VS Code theme file, 
 navigation/theme-editor.feature: Importing theme files [three theme files at once, the user is told "3 themes added"]
 navigation/theme-editor.feature: Opening the theme editor moves the keyboard into it
 navigation/theme-editor.feature: Pasting theme JSON
+navigation/theme-editor.feature: Removing a theme asks first
 navigation/theme-editor.feature: Removing some variants of a theme collection
 navigation/theme-editor.feature: Saving an edited theme applies it
 navigation/theme-editor.feature: The advanced view edits every color by family
@@ -672,10 +868,14 @@ navigation/theme-editor.feature: The theme editor survives navigation
 navigation/theme-editor.feature: The theme import dialog takes the keyboard
 navigation/theme-editor.feature: Two colors are enough to make a theme
 navigation/toasts.feature: A failure without a reason still says something went wrong
+navigation/toasts.feature: A toast goes away on its own after five seconds
 navigation/toasts.feature: Dismissing a toast
 navigation/toasts.feature: Newer toasts do not push older ones out
+navigation/toasts.feature: Toasts wait while the user looks them over
 navigation/welcome-wizard.feature: A bad invite link is reported
 navigation/welcome-wizard.feature: A failed history import is reported
+navigation/welcome-wizard.feature: A new installation starts with the wizard
+navigation/welcome-wizard.feature: A workspace that cannot be confirmed yet says it is still connecting
 navigation/welcome-wizard.feature: Adding a computer with an invite link
 navigation/welcome-wizard.feature: An existing workspace skips the wizard
 navigation/welcome-wizard.feature: Continuing waits for the selected computers
@@ -695,6 +895,7 @@ navigation/welcome-wizard.feature: The setup terminal cannot open
 navigation/welcome-wizard.feature: The setup terminal uses the provider's own home and environment
 navigation/welcome-wizard.feature: The user can skip configuring agents and importing projects
 navigation/welcome-wizard.feature: Unchecking a computer does not disconnect it
+navigation/welcome-wizard.feature: Unreadable settings are never replaced with defaults
 navigation/windows.feature: A restart skips a saved window that names another folder
 navigation/windows.feature: A second window works on its own
 navigation/windows.feature: A setting that fails to save says so in the window that changed it
@@ -749,6 +950,7 @@ plugins/ui-plugins.feature: A plugin URL that cannot be reached is reported
 preview/devices.feature: A Device tab in the background streams nothing
 preview/devices.feature: A device an agent opens shows as a side panel tab
 preview/devices.feature: A device powered off from a thread the user left closes that thread's tab
+preview/devices.feature: A device tab the user closed does not come back on its own
 preview/devices.feature: A device that sends nothing is an error the user can retry
 preview/devices.feature: A device the MC cannot open says why
 preview/devices.feature: A stopped device is offered to start
@@ -758,6 +960,7 @@ preview/devices.feature: A tab turned to another device never shows the last one
 preview/devices.feature: A touch taken away mid-drag ends where it was
 preview/devices.feature: An Android emulator that rotates starts its video over
 preview/devices.feature: An environment without devices says so
+preview/devices.feature: Closing a device tab stops watching but leaves the device open
 preview/devices.feature: Device support that is off points to its settings
 preview/devices.feature: Following the pointer opens the Integrations settings
 preview/devices.feature: Picking a device shows its screen
@@ -768,6 +971,19 @@ preview/devices.feature: Touches and keys reach a simulator through the MC
 preview/devices.feature: Touches, keys and buttons reach an emulator through the MC
 preview/devices.feature: Video that arrives in pieces still shows the screen
 preview/devices.feature: Video the desktop cannot decode is an error, not endless reconnecting
+preview/remote.feature: A client drops its old tabs after the MC restarts
+preview/remote.feature: A desktop whose MC is on another machine opens a dev server's address as it is
+preview/remote.feature: A dev server link in a reply opens through the forward
+preview/remote.feature: A dev server link opens through the forward after its tab closed elsewhere
+preview/remote.feature: A late tab list from before a change is ignored
+preview/remote.feature: A remote client suggests the MC's dev servers, not its own
+preview/remote.feature: The desktop opens a dev server on another machine through the forward
+preview/surfaces.feature: A browser tab whose close fails comes back
+preview/surfaces.feature: A closed browser tab stays closed while the close is in flight
+preview/surfaces.feature: A new browser tab offers local servers and recent pages
+preview/surfaces.feature: The desktop lists the thread's browser tabs to open in the browser
+preview/surfaces.feature: The desktop's list of browser tabs follows the MC
+preview/surfaces.feature: The user adds a browser tab from the side panel
 providers/codex.feature: A plan Codex marked finished can still be implemented
 providers/models.feature: A hidden model can be shown again
 providers/models.feature: Favourite, hidden and ordered models are remembered on the device
@@ -798,6 +1014,8 @@ providers/usage.feature: An offline environment is marked not saved and can be r
 providers/usage.feature: Environments still scanning are shown as they finish
 providers/usage.feature: Environments with different prices show the price as mixed
 providers/usage.feature: Usage can be filtered by environment
+settings/background-service.feature: Clients report what the user is looking at
+settings/background-service.feature: The user sets custom background intervals
 settings/connections.feature: A copy that the clipboard refuses reveals the link instead
 settings/connections.feature: A machine on its own offers no choice of machine for a pairing link
 settings/connections.feature: A machine that does not say where it is reached is paired at the address this desktop reached it at
@@ -824,19 +1042,142 @@ settings/connections.feature: Tailscale that cannot publish the machine leaves n
 settings/connections.feature: The QR code of a pairing link keeps a size a phone can scan [a narrow window, whole, smaller]
 settings/connections.feature: The QR code of a pairing link keeps a size a phone can scan [a wide window, whole, at its full size]
 settings/connections.feature: The QR code of a pairing link keeps a size a phone can scan [a window narrower than a code can be read, no smaller than a phone can scan]
+settings/diagnostics.feature: Force killing a process asks first
+settings/diagnostics.feature: The user opens the logs folder
 settings/general.feature: A changed row can be reset to its default
+settings/general.feature: A confirmation setting decides whether the user is asked first [Confirm thread archiving, off, archives, the thread is archived straight away]
+settings/general.feature: A confirmation setting decides whether the user is asked first [Confirm thread archiving, on, archives, the archive action must be chosen a second time]
+settings/general.feature: A confirmation setting decides whether the user is asked first [Confirm thread deletion, off, deletes, the thread is deleted straight away]
+settings/general.feature: A confirmation setting decides whether the user is asked first [Confirm thread deletion, on, deletes, the user is asked before the history is deleted]
+settings/general.feature: A confirmation setting decides whether the user is asked first [Confirm thread unpinning, off, unpins, the thread is unpinned straight away]
+settings/general.feature: A confirmation setting decides whether the user is asked first [Confirm thread unpinning, on, unpins, the user is asked before the thread is unpinned]
 settings/general.feature: A row at its default offers no reset
+settings/general.feature: A scheduled continuation can be cancelled from the thread
+settings/general.feature: A text generation model that cannot be saved is reported
+settings/general.feature: A thread stopped by a usage limit follows the limit settings [Auto-resume limited threads, is scheduled to continue]
+settings/general.feature: A thread stopped by a usage limit follows the limit settings [Snooze limited threads, is snoozed until it wakes]
+settings/general.feature: An empty base directory opens the add project browser at home
+settings/general.feature: Changing the layout from a diff also changes the setting
+settings/general.feature: Composer preferences change how the composer behaves [Collapse composer on scroll, off, the composer keeps its size while scrolling]
+settings/general.feature: Composer preferences change how the composer behaves [Collapse composer on scroll, on, the composer of an existing thread shrinks to one line while scrolling]
+settings/general.feature: Composer preferences change how the composer behaves [Rich text composer, off, the composer shows plain text]
+settings/general.feature: Composer preferences change how the composer behaves [Rich text composer, on, Markdown is shown formatted while typing]
+settings/general.feature: Composer preferences change how the composer behaves [Show skills in slash menu, off, skills are only listed after a dollar sign]
+settings/general.feature: Composer preferences change how the composer behaves [Show skills in slash menu, on, skills are listed in the slash command menu as well as after a dollar sign]
+settings/general.feature: Diff defaults apply when a diff opens [Default diff file state, Collapsed, with every file collapsed]
+settings/general.feature: Diff defaults apply when a diff opens [Default diff file state, Expanded, with every file expanded]
+settings/general.feature: Diff defaults apply when a diff opens [Diff layout, Split, side by side]
+settings/general.feature: Diff defaults apply when a diff opens [Diff layout, Stacked, stacked]
+settings/general.feature: Diff defaults apply when a diff opens [Hide whitespace changes, on, without whitespace-only edits]
+settings/general.feature: Environments with different streaming modes read as mixed
+settings/general.feature: Follow-up behaviour decides what a message sent during a run does [Queue, waits until the run ends]
+settings/general.feature: Follow-up behaviour decides what a message sent during a run does [Steer, is sent into the current run]
+settings/general.feature: Hold mode also quits on two quick presses
+settings/general.feature: Legacy features are folded away until asked for
+settings/general.feature: Proactive panels open the linked pull request first
+settings/general.feature: Proactive panels open the working tree diff for large changes
+settings/general.feature: Restart continuation cannot be turned on for an environment that lacks it
+settings/general.feature: Settling rows are hidden when a chosen environment cannot settle threads
+settings/general.feature: Text generation is unavailable without a provider that can generate text
+settings/general.feature: The add project browser opens in the chosen base directory
+settings/general.feature: The quit shortcut follows the chosen behaviour [direct, the app quits at once]
+settings/general.feature: The quit shortcut follows the chosen behaviour [double-click, the app quits only after the shortcut is pressed twice]
+settings/general.feature: The quit shortcut follows the chosen behaviour [hold, the app quits only after the shortcut is held]
+settings/general.feature: The send shortcut decides what Enter does [Enter, multiline, is sent]
+settings/general.feature: The send shortcut decides what Enter does [Enter, single line, is sent]
+settings/general.feature: The send shortcut decides what Enter does [Modifier and Enter always, single line, gets a new line]
+settings/general.feature: The send shortcut decides what Enter does [Modifier and Enter for multiline prompts, multiline, gets a new line]
+settings/general.feature: The send shortcut decides what Enter does [Modifier and Enter for multiline prompts, single line, is sent]
+settings/general.feature: The user chooses how times are written [12-hour, with AM and PM]
+settings/general.feature: The user chooses how times are written [24-hour, on a 24-hour clock]
+settings/general.feature: The user chooses how times are written [System default, the way the system clock is configured]
 settings/general.feature: Turning inactive settling on starts from the default number of days
+settings/general.feature: Turning project grouping back on restores the grouping mode used before
+settings/general.feature: Turning project grouping off shows each environment's projects separately
+settings/general.feature: With proactive panels off no panel opens on its own
+settings/integrations.feature: A failed tool update explains what to check
+settings/integrations.feature: Agent device access can be granted and taken away
+settings/integrations.feature: Device settings change on every selected environment
+settings/integrations.feature: Leaving the page during a device tool check keeps the switches usable
+settings/integrations.feature: Several environments show one environment's device status at a time
+settings/integrations.feature: The Slack section that could not load says why and tries again
+settings/integrations.feature: The page shows how to make the Slack app
+settings/integrations.feature: The user connects Slack with the app's tokens
+settings/integrations.feature: The user disconnects Slack
+settings/integrations.feature: Tokens Slack refuses leave Slack disconnected
+settings/integrations.feature: Turning off the device hub also turns off agent device access
 settings/licenses.feature: A search with no match says so
 settings/licenses.feature: Each notice names its version, license and where it is used
+settings/licenses.feature: Notices load without an environment
 settings/licenses.feature: Notices that fail to load can be retried
 settings/licenses.feature: Opening an entry shows its full notice text
 settings/licenses.feature: Optional device tools are listed though they are not bundled
 settings/licenses.feature: Searching narrows the notices [MIT, license]
 settings/licenses.feature: Searching narrows the notices [effect, package name]
 settings/licenses.feature: Searching narrows the notices [mobile, app component]
+settings/licenses.feature: The licenses page opens from General settings
+settings/load-balancing.feature: A draft already tied to a machine is not moved
+settings/load-balancing.feature: A machine is skipped when it cannot take work [does not answer in time]
+settings/load-balancing.feature: A machine is skipped when it cannot take work [does not have the chosen provider signed in]
+settings/load-balancing.feature: A machine is skipped when it cannot take work [has 5% of memory free]
+settings/load-balancing.feature: A machine is skipped when it cannot take work [instead has no checkout of the repository]
+settings/load-balancing.feature: A machine is skipped when it cannot take work [is at 95% CPU]
+settings/load-balancing.feature: A machine is skipped when it cannot take work [is offline]
+settings/load-balancing.feature: A machine is skipped when it cannot take work [is set to manual only]
+settings/load-balancing.feature: A new thread starts on the machine with the most room
+settings/load-balancing.feature: A thread stays on the machine the user picked when no other has more room
 settings/load-balancing.feature: Load balancing goes when the cluster is one machine again
+settings/load-balancing.feature: Load balancing is off by default
 settings/load-balancing.feature: Load balancing needs more than one machine
+settings/load-balancing.feature: Preferring a machine sends it more new threads
+settings/notifications.feature: A toast appears instead while HAL-C2 is in front
+settings/notifications.feature: Archived threads and subagents do not notify
+settings/notifications.feature: Clicking a notification opens the thread
+settings/notifications.feature: Notifications need the system's permission
+settings/notifications.feature: The app badge counts unseen notifications and clears on focus
+settings/notifications.feature: The notification mode decides what happens when a thread finishes in the background [Notifications only, a system notification "Thread completed" is shown]
+settings/notifications.feature: The notification mode decides what happens when a thread finishes in the background [Notifications with sound, a system notification is shown and the sound plays]
+settings/notifications.feature: The notification mode decides what happens when a thread finishes in the background [Off, nothing is shown or played]
+settings/notifications.feature: The notification mode decides what happens when a thread finishes in the background [Sound only, the completion sound plays]
+settings/notifications.feature: The thread on screen does not notify
+settings/notifications.feature: The title says what the thread needs [asks a question, Input needed]
+settings/notifications.feature: The title says what the thread needs [asks for approval, Approval needed]
+settings/notifications.feature: The title says what the thread needs [fails, Thread failed]
+settings/notifications.feature: The title says what the thread needs [finishes, Thread completed]
+settings/notifications.feature: The title says what the thread needs [hits its usage limit, Usage limit reached]
+settings/project-actions.feature: A project's own actions replace the defaults
+settings/project-actions.feature: A save rejected by the environment is reported
+settings/project-actions.feature: A save that cannot be applied is reported
+settings/project-actions.feature: Actions from hal-c2.json can be imported without editing them first
+settings/project-actions.feature: An environment without actions says so
+settings/project-actions.feature: An invalid hal-c2.json is flagged in the panel
+settings/project-actions.feature: Default actions apply to every project on the environment
+settings/project-actions.feature: Environments that disagree are shown as different
+settings/project-actions.feature: Environments too old for project overrides are left out
+settings/project-actions.feature: Resetting a project's actions returns to the defaults
+settings/project-actions.feature: The list marks the setup action and desktop-only previews
+settings/project-defaults.feature: A model unavailable on an environment is not saved
+settings/project-defaults.feature: Defaults are unavailable when no environment is connected
+settings/project-defaults.feature: Environments that disagree show the value as mixed
+settings/project-defaults.feature: No default model means the model is picked automatically
+settings/project-defaults.feature: Without providers the model cannot be chosen
+settings/projects.feature: A checkout that disappears is reported as no longer available
+settings/projects.feature: A project name cannot be empty
+settings/projects.feature: A project removed elsewhere is reported as no longer available
+settings/projects.feature: A rename that fails on one environment names that environment
+settings/projects.feature: Cancelling a removal requested from the folder explorer leaves the project
+settings/projects.feature: Removing a project everywhere removes every checkout
+settings/projects.feature: Removing from the desktop folder explorer opens the removal in settings
+settings/projects.feature: Removing one checkout keeps the others
+settings/projects.feature: Renaming a project renames every checkout
+settings/projects.feature: Renaming with a disconnected checkout asks the user to reconnect
+settings/projects.feature: The icon of a project is chosen and reset from the panel
+settings/projects.feature: The panel asks the user to pick a project first
+settings/projects.feature: The panel explains how to add a first project
+settings/projects.feature: The panel keeps following the project when grouping changes
+settings/projects.feature: The panel lists every checkout with where it lives
+settings/projects.feature: The panel points to other project settings
+settings/projects.feature: The removal confirmation names what will be cleared
 settings/providers-panel.feature: A change that cannot be saved is reported
 settings/providers-panel.feature: A custom model id is checked before it is saved [, Enter a model slug.]
 settings/providers-panel.feature: A custom model id is checked before it is saved [claude-fable-5-1, That model is already built in.]
@@ -910,6 +1251,7 @@ settings/providers-panel.feature: The registry step needs an agent or a manual s
 settings/providers-panel.feature: The signed-in account email stays hidden until asked
 settings/providers-panel.feature: This machine is listed first among environments
 settings/providers-panel.feature: Turning an instance off and on
+settings/resource-telemetry.feature: Processes are grouped by what they are for
 settings/saving-settings.feature: A change before the MC's settings are read is not saved
 settings/saving-settings.feature: A change is saved at the version the desktop read
 settings/saving-settings.feature: A change made over a stale copy keeps the other client's change
@@ -922,9 +1264,66 @@ settings/saving-settings.feature: Device preferences are read back when the desk
 settings/saving-settings.feature: Settings another client saves reach the desktop
 settings/saving-settings.feature: The MC's configuration reaches the desktop and follows its changes
 settings/saving-settings.feature: The desktop reads the MC's settings when it connects
+settings/scheduled-tasks.feature: A link to a task that is gone says so
+settings/scheduled-tasks.feature: A slow save does not close a task opened after it
+settings/scheduled-tasks.feature: A task runs in the workspace the user chose [a new worktree, a fresh worktree from the base]
+settings/scheduled-tasks.feature: A task runs in the workspace the user chose [a specific checkout, the chosen checkout path]
+settings/scheduled-tasks.feature: A task runs in the workspace the user chose [the project checkout, the project root]
+settings/scheduled-tasks.feature: An incomplete task cannot be saved [on an environment that is disconnected, Reconnect this environment before saving]
+settings/scheduled-tasks.feature: An incomplete task cannot be saved [that runs every 0 minutes, Invalid interval]
+settings/scheduled-tasks.feature: An incomplete task cannot be saved [that uses a specific checkout with no path, Checkout path is required]
+settings/scheduled-tasks.feature: An incomplete task cannot be saved [without a prompt, Scheduled task is incomplete]
+settings/scheduled-tasks.feature: An open editor says when its task was deleted elsewhere
+settings/scheduled-tasks.feature: Each task shows when it runs next and how it last went
+settings/scheduled-tasks.feature: Editing a task with a sub-minute interval says saving raises it
+settings/scheduled-tasks.feature: Scheduled tasks on a disconnected environment offer to reconnect
+settings/scheduled-tasks.feature: The base branch is picked from the project's branches
+settings/scheduled-tasks.feature: The last weekday of a task cannot be turned off
+settings/scheduled-tasks.feature: The list follows the settings scope
+settings/scheduled-tasks.feature: The user creates a task with the defaults
+settings/scheduled-tasks.feature: The user deletes a task
+settings/scopes-and-inheritance.feature: A device preference is saved on this device only
+settings/scopes-and-inheritance.feature: A model missing on one environment cannot be applied to all of them
+settings/scopes-and-inheritance.feature: A project change is saved as an override for that project
+settings/scopes-and-inheritance.feature: A setting cannot be changed while its environment is disconnected
+settings/scopes-and-inheritance.feature: A value that differs between environments shows as mixed
+settings/scopes-and-inheritance.feature: An environment-wide change is saved on every connected environment
+settings/scopes-and-inheritance.feature: An environment-wide setting cannot be changed at project scope
+settings/scopes-and-inheritance.feature: Changing one axis of the scope keeps the other [all environments, "hal-c2" across all checkouts]
+settings/scopes-and-inheritance.feature: Changing one axis of the scope keeps the other [all projects, every project on "Laptop"]
+settings/scopes-and-inheritance.feature: Changing one axis of the scope keeps the other [the environment "Build box", "hal-c2" on "Build box"]
+settings/scopes-and-inheritance.feature: Offline environments are marked when choosing one
+settings/scopes-and-inheritance.feature: Resetting a project override inherits the environment's value again
+settings/scopes-and-inheritance.feature: Saving on some environments but not others is reported
+settings/scopes-and-inheritance.feature: The environment view lists and clears project overrides
+settings/scopes-and-inheritance.feature: The inheritance chain shows which layer wins
+settings/scopes-and-inheritance.feature: The page states the project and environment being edited
+settings/search-and-navigation.feature: A search result inside a folded section opens the fold
+settings/search-and-navigation.feature: A theme that cannot be restored rolls back
 settings/search-and-navigation.feature: Back with nowhere to return to lands on a new thread
+settings/search-and-navigation.feature: Cancelling the restore changes nothing
+settings/search-and-navigation.feature: Choosing a section opens it
+settings/search-and-navigation.feature: Confirming the restore resets the listed settings
+settings/search-and-navigation.feature: Device-only sections do not ask where settings apply
+settings/search-and-navigation.feature: Escape clears the search
 settings/search-and-navigation.feature: Leaving settings returns to where the user was
 settings/search-and-navigation.feature: Moving between sections is one step back
+settings/search-and-navigation.feature: Moving between sections keeps the chosen scope
+settings/search-and-navigation.feature: Nothing matches the search
+settings/search-and-navigation.feature: Opening a search result goes to that setting
+settings/search-and-navigation.feature: Opening the same result again scrolls back to it
+settings/search-and-navigation.feature: Restoring defaults lists what will change and asks first
+settings/search-and-navigation.feature: Results are ranked by how well the title matches [mod+b, Sidebar: Toggle]
+settings/search-and-navigation.feature: Results are ranked by how well the title matches [model, Default model]
+settings/search-and-navigation.feature: The keyboard moves through sections
+settings/search-and-navigation.feature: The page names where the user is [diagnostics, Diagnostics]
+settings/search-and-navigation.feature: The page names where the user is [the Appearance section, Appearance]
+settings/search-and-navigation.feature: The page names where the user is [the Archive section, Archive]
+settings/search-and-navigation.feature: The page names where the user is [the Cluster section, Cluster]
+settings/search-and-navigation.feature: The page names where the user is [the Keybindings section, Keybindings]
+settings/search-and-navigation.feature: The page names where the user is [the Providers section, Providers]
+settings/search-and-navigation.feature: The page names where the user is [the open source licenses page, Open source licenses]
+settings/search-and-navigation.feature: The slash key starts a settings search
 settings/snap-shot.feature: A shortcut that cannot be used is refused [a modifier with no key on Linux, Linux shortcuts need a letter, number or function key]
 settings/snap-shot.feature: A shortcut that cannot be used is refused [a shortcut HAL-C2 already uses, it collides with a HAL-C2 keybinding]
 settings/snap-shot.feature: A shortcut that cannot be used is refused [a shortcut the system reserves, the system reserves it]
@@ -938,15 +1337,31 @@ settings/snap-shot.feature: Snap Shot is off until the user turns it on
 settings/snap-shot.feature: The desktop does not allow the shortcut
 settings/snap-shot.feature: Turning Snap Shot off
 settings/snap-shot.feature: Turning on Snap Shot starts setup
+settings/source-control-writing.feature: A writer model that cannot be used is explained
+settings/source-control-writing.feature: A writer model that could not be saved
+settings/source-control-writing.feature: Choosing a separate writer model
+settings/source-control-writing.feature: Choosing a writing style [Conventional Commits, Use Conventional Commit prefixes and keep change request text concise.]
+settings/source-control-writing.feature: Choosing a writing style [Custom instructions, Use your instructions for change descriptions and change requests in every project.]
+settings/source-control-writing.feature: Choosing a writing style [Repository conventions, In each project, matches recent change descriptions and change request titles.]
+settings/source-control-writing.feature: Custom instructions for several environments at once
+settings/source-control-writing.feature: Going back to the text generation model
+settings/source-control-writing.feature: Ignoring the repository's pull request template
+settings/source-control-writing.feature: Pull request templates are followed until turned off
+settings/source-control-writing.feature: Writing custom instructions
+settings/source-control.feature: A fetch interval of zero turns background fetching off
 settings/source-control.feature: A host that is not supported yet is marked coming soon
 settings/source-control.feature: A missing tool shows how to install it
 settings/source-control.feature: A tool that is not signed in says so
+settings/source-control.feature: Changing the automatic fetch interval
 settings/source-control.feature: Hiding a revealed account again
 settings/source-control.feature: Nothing detected yet
 settings/source-control.feature: Rescanning after installing a tool
+settings/source-control.feature: Resetting the fetch interval to the background profile
 settings/source-control.feature: Revealing a signed-in account
 settings/source-control.feature: The environment could not be scanned
 settings/source-control.feature: The panel lists each tool with its state
+settings/storage.feature: A machine too old for storage cleanup asks to be updated
+settings/storage.feature: Settings for several machines show mixed values
 settings/updates.feature: At launch a closed update offer stays closed for that version
 settings/updates.feature: At launch an offered update that is refused says why
 settings/updates.feature: At launch an outdated provider is offered its update
@@ -982,6 +1397,11 @@ settings/usage.feature: Usage of one environment leaves the others out
 settings/usage.feature: Usage remembers the view the user last chose
 settings/usage.feature: Usage that could not be read can be read again
 settings/usage.feature: Without limits to show the page says so
+source-control/checkpoint-diffs.feature: A diff can be shown side by side or as one column
+source-control/checkpoint-diffs.feature: A large file's changes start collapsed and can be expanded
+source-control/checkpoint-diffs.feature: A turn's diff that cannot be loaded can be asked for again
+source-control/checkpoint-diffs.feature: Every file of a diff can be collapsed and expanded at once
+source-control/checkpoint-diffs.feature: Picking a turn's diff from the thread
 source-control/commit-and-generated-messages.feature: A blank message is written by the writer model
 source-control/commit-and-generated-messages.feature: A commit offers to push it
 source-control/commit-and-generated-messages.feature: A failed action is reported
@@ -992,6 +1412,8 @@ source-control/commit-and-generated-messages.feature: Committing on the default 
 source-control/commit-and-generated-messages.feature: Committing only the files the user picked
 source-control/commit-and-generated-messages.feature: Committing with a message the user wrote
 source-control/commit-and-generated-messages.feature: Leaving every file out disables committing
+source-control/commit-and-generated-messages.feature: No editor to open a changed file in
+source-control/commit-and-generated-messages.feature: Opening a changed file from the commit review
 source-control/commit-and-generated-messages.feature: The progress toast names the stage and the hook's last line
 source-control/commit-and-generated-messages.feature: The running action shows its stage, elapsed time and last hook line
 source-control/errors.feature: A failed git action stays on screen until dismissed
@@ -1095,6 +1517,7 @@ source-control/review-diffs.feature: A thread in its own worktree reviews that w
 source-control/review-diffs.feature: Choosing what to compare against
 source-control/review-diffs.feature: Collapsing and expanding every file
 source-control/review-diffs.feature: Commenting on lines adds review context to the composer
+source-control/review-diffs.feature: Opening a diff file in the editor
 source-control/review-diffs.feature: Refreshing the diff by hand
 source-control/review-diffs.feature: Removing a line comment before sending
 source-control/review-diffs.feature: Switching between stacked and split views on the desktop and phone
@@ -1155,6 +1578,7 @@ terminal/io.feature: Ctrl+C with nothing selected still interrupts the program
 terminal/io.feature: The usual copy and paste keys work in the terminal [Ctrl+C, the selected text is on the clipboard]
 terminal/io.feature: The usual copy and paste keys work in the terminal [Ctrl+V, the clipboard text is sent to the shell]
 terminal/links-and-graphics.feature: A plain click on a link does not follow it
+terminal/links-and-graphics.feature: Programs that ask for enhanced keyboard reporting receive it
 terminal/links-and-graphics.feature: The web terminal follows the app's theme and font
 terminal/reconnect.feature: The web terminal keeps up to 512 KiB of output per terminal
 terminal/sessions.feature: A new terminal opened from the drawer uses the thread's launch context
@@ -1166,6 +1590,7 @@ terminal/sessions.feature: The desktop terminal keeps a sensible height [900, 75
 terminal/sessions.feature: The terminal toggle is only offered where a terminal can run
 terminal/sessions.feature: The user shows and hides the terminal on desktop
 terminal/tabs.feature: A split group holds at most four terminals
+terminal/tabs.feature: A terminal tab runs its own terminal beside the drawer's
 terminal/tabs.feature: Closing a terminal asks before stopping its process
 terminal/tabs.feature: Closing a terminal tab stops its terminals
 terminal/tabs.feature: Closing several terminals asks once for all of them
@@ -1331,6 +1756,11 @@ threads/pinning-and-order.feature: Unpinning asks first when the user wants conf
 threads/pull-request-links.feature: An environment that cannot find pull requests says it needs an update
 threads/pull-request-links.feature: Choosing a different pull request from a pull request link
 threads/pull-request-links.feature: Unlinking returns the thread to its branch pull request
+threads/qt-scenarios.feature: A new thread starts in the project in scope
+threads/qt-scenarios.feature: A snoozed thread offers to wake instead of settle
+threads/qt-scenarios.feature: Arrow keys and Enter open another thread
+threads/qt-scenarios.feature: Settling a thread from the list
+threads/qt-scenarios.feature: Shift+F10 opens the focused thread's menu beside it
 threads/search.feature: An offline environment is left out of the search
 threads/search.feature: Leaving a search
 threads/search.feature: Moving through search results with the keyboard
@@ -1380,7 +1810,9 @@ threads/snooze.feature: A thread that is waiting on the user cannot be snoozed [
 threads/snooze.feature: A thread that is waiting on the user cannot be snoozed [is waiting for an answer to a question]
 threads/snooze.feature: A thread that is waiting on the user cannot be snoozed [is waiting for an approval]
 threads/snooze.feature: A thread with a running agent can be snoozed
+threads/snooze.feature: Dismissing the woke marker
 threads/snooze.feature: On Sunday "next week" and "tomorrow" are the same choice
+threads/snooze.feature: Opening a woken thread clears its woke marker
 threads/snooze.feature: Snoozed threads are shelved in their own section
 threads/snooze.feature: Snoozing several threads at once
 threads/snooze.feature: Snoozing the open thread moves on to the next thread
@@ -1463,6 +1895,13 @@ timeline/approvals-and-questions.feature: The user answers an approval request [
 timeline/approvals-and-questions.feature: The user answers the agent's question [one answer, "SQLite", "SQLite"]
 timeline/approvals-and-questions.feature: The user answers the agent's question [several answers, "Postgres" and "MySQL", "Postgres" and "MySQL"]
 timeline/approvals-and-questions.feature: The user writes their own answer
+timeline/checkpoints.feature: A revert the MC refuses says why
+timeline/checkpoints.feature: Cancelling a revert leaves the thread as it was
+timeline/checkpoints.feature: Either way in asks first, then keeps or restores the files [its reply, Keep files, the MC is asked to leave the files as they are]
+timeline/checkpoints.feature: Either way in asks first, then keeps or restores the files [its reply, Revert files too, the workspace files match the end of turn 1]
+timeline/checkpoints.feature: Either way in asks first, then keeps or restores the files [the diff panel, Keep files, the MC is asked to leave the files as they are]
+timeline/checkpoints.feature: Either way in asks first, then keeps or restores the files [the diff panel, Revert files too, the workspace files match the end of turn 1]
+timeline/checkpoints.feature: Rolling back to a checkpoint asks first because it cannot be undone
 timeline/markdown.feature: A GitHub alert shows its kind [CAUTION, Caution]
 timeline/markdown.feature: A GitHub alert shows its kind [IMPORTANT, Important]
 timeline/markdown.feature: A GitHub alert shows its kind [NOTE, Note]
@@ -1477,6 +1916,7 @@ timeline/markdown.feature: Markup in a message is shown as it was written
 timeline/markdown.feature: Table cells can be collapsed and expanded
 timeline/markdown.feature: The user copies a code block
 timeline/notifications.feature: A newer alert for a thread replaces its older one
+timeline/notifications.feature: A notification's action runs it
 timeline/notifications.feature: A system notification is not shown without permission
 timeline/notifications.feature: A thread that changes state raises an alert [asks for approval, Approval needed]
 timeline/notifications.feature: A thread that changes state raises an alert [asks the user a question, Input needed]
@@ -1485,6 +1925,7 @@ timeline/notifications.feature: A thread that changes state raises an alert [fai
 timeline/notifications.feature: A thread that changes state raises an alert [stops at the provider's usage limit, Usage limit reached]
 timeline/notifications.feature: Clicking a system notification opens its own thread
 timeline/notifications.feature: Coming back to the window clears its system notifications
+timeline/notifications.feature: Dismissing the last notification hides the notifications
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Notifications only, shown, not played]
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Notifications with sound, shown, played]
 timeline/notifications.feature: The alert setting decides between a system notification and a sound [Off, not shown, not played]
@@ -1596,3 +2037,4 @@ timeline/tool-calls.feature: Consecutive tool calls in a running turn show only 
 timeline/tool-calls.feature: Failed calls are not counted as work done
 timeline/tool-calls.feature: Files changed by a turn are listed under its reply
 timeline/tool-calls.feature: The previous tool calls can be shown and hidden again
+timeline/tool-calls.feature: The user opens the diff of one turn
