@@ -866,12 +866,6 @@ pub fn register(steps: &mut Steps) {
                 let before = scripts_of(world, &project).len();
                 brick::shown(world)?.click(world, &format!("threadDetailsImport-{name}"))?;
                 world.sync()?;
-                // The column is a clipped Flickable, which Ljós does not click
-                // into yet (issue-clip-anchored-hit-test.md); the button's own
-                // dispatch stands in until it does.
-                if scripts_of(world, &project).len() <= before {
-                    world.dispatch("projectActions.import", json!({"name": name}))?;
-                }
                 let shown = project.clone();
                 world.wait_for_with(
                     {

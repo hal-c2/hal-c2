@@ -29,7 +29,10 @@ use hal_c2_shell::session::Session;
 use hal_c2_shell::thread_view::time::Clock;
 use hal_c2_shell::{Launch, this_machine};
 use ljos::App;
-use ljos::prelude::{Engine, OpenUrlService, Platform, Value};
+use ljos::prelude::{
+    ClipboardError, ClipboardImage, ClipboardMode, ClipboardService, Engine, OpenUrlService,
+    Platform, Value,
+};
 use ljos::testing::TestWindow;
 use serde_json::json;
 
@@ -44,6 +47,11 @@ pub const OTHER_MACHINE: &str = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a
 
 /// The longest a step waits for anything, as desktop-qt's qWaitFor.
 const WAIT: Duration = Duration::from_secs(5);
+/// The test window's size, which it keeps.
+pub const WINDOW: (f64, f64) = (1280.0, 800.0);
+
+/// The longest a wait sleeps before it lets the shell's clock catch up.
+const FRAME: Duration = Duration::from_millis(16);
 
 /// Raised by whatever has something for the scenario's thread: the fake
 /// MC's socket, the shell's connection, its cache and its other threads.
@@ -186,7 +194,7 @@ impl World {
             .register(hal_c2_shell::register)
             .build_engine();
         // Before the shell starts, for its timers to start on the window's clock.
-        let window = TestWindow::new(&engine, 1280.0, 800.0);
+        let window = TestWindow::new(&engine, WINDOW.0, WINDOW.1);
         let wake = |signal: &Arc<Signal>| {
             let signal = signal.clone();
             move || signal.notify()
@@ -232,6 +240,7 @@ impl World {
             true
         });
         Platform::of(&engine).set_open_url(Rc::new(Urls(self.recorded.clone())));
+        Platform::of(&engine).set_clipboard(Rc::new(RecordedClipboard(self.recorded.clone())));
         let recorded = self.recorded.clone();
         let _ = engine.connect_by_name(
             Bridge::of(&engine).object(),
@@ -573,7 +582,9 @@ impl World {
                 continue;
             }
             // Until something arrives, or the shell's next timer is due.
-            let mut timeout = WAIT - waited;
+            // An animation is no timer, so a frame at a time: the shell's
+            // clock moves only when this loop moves it.
+            let mut timeout = (WAIT - waited).min(FRAME);
             if let Some(shell) = &self.shell
                 && let Some(due) = shell.engine.next_timer_deadline()
             {
@@ -588,6 +599,7 @@ impl World {
 
     /// Lets `ms` pass on the shell's clock, the wall clock staying put.
     pub fn advance(&mut self, ms: u64) -> Outcome {
+        self.await_answers()?;
         let Some(shell) = &mut self.shell else {
             return Ok(());
         };
@@ -596,6 +608,28 @@ impl World {
             .engine
             .set_wall_clock_origin(Some(self.now.timestamp_millis() as f64));
         Ok(())
+    }
+
+    /// Serves the fake MC until the shell's promised platform answers (a
+    /// task such as pairing's HTTP exchange) have come back. TestWindow's
+    /// advance waits for them on this thread first, and this thread is the
+    /// one that answers the fake MC: waiting there would leave a request to
+    /// it unanswered until the client's own timeout. Held answers are a
+    /// step's to release; one still out after WAIT is TestWindow's to wait
+    /// for and give up on.
+    fn await_answers(&mut self) -> Outcome {
+        let started = Instant::now();
+        loop {
+            let Some(shell) = &self.shell else {
+                return Ok(());
+            };
+            let platform = Platform::of(&shell.engine);
+            if platform.pending() == 0 || platform.is_held() || started.elapsed() >= WAIT {
+                return Ok(());
+            }
+            self.pump()?;
+            self.signal.wait(FRAME);
+        }
     }
 
     /// Shows the component `root` of `source` in the shell's window, in
@@ -620,10 +654,21 @@ impl World {
             .map_or(0, |list| list.ops().len())
     }
 
+    /// The window point (x, y) of the shown brick, brought inside the
+    /// window (Brick::reach); any other point is where it is, and a pointer
+    /// outside the window misses as a real one would.
+    fn reach(&mut self, x: f64, y: f64) -> Outcome<(f64, f64)> {
+        match self.part::<crate::brick::Shown>().0 {
+            Some(brick) => brick.reach(self, x, y),
+            None => Ok((x, y)),
+        }
+    }
+
     /// The user presses and releases the primary button at (x, y) of the
     /// window.
     pub fn click_at(&mut self, x: f64, y: f64) -> Outcome {
         use ljos::item::PointerEvent;
+        let (x, y) = self.reach(x, y)?;
         let Some(shell) = &mut self.shell else {
             return Err(Failure("the app is not running".into()));
         };
@@ -637,6 +682,7 @@ impl World {
     /// shows on hover shows.
     pub fn hover_at(&mut self, x: f64, y: f64) -> Outcome {
         use ljos::item::{MouseButtons, PointerEvent};
+        let (x, y) = self.reach(x, y)?;
         let Some(shell) = &mut self.shell else {
             return Err(Failure("the app is not running".into()));
         };
@@ -644,6 +690,16 @@ impl World {
         shell
             .window
             .pointer(&PointerEvent::moved(x, y, MouseButtons::empty(), now));
+        self.pump()
+    }
+
+    /// The user types `text` in the window, into whatever has the keyboard
+    /// focus.
+    pub fn type_text(&mut self, text: &str) -> Outcome {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        shell.window.commit(text);
         self.pump()
     }
 
@@ -717,6 +773,7 @@ impl World {
         modifiers: ljos::item::Modifiers,
     ) -> Outcome {
         use ljos::item::PointerEvent;
+        let (x, y) = self.reach(x, y)?;
         let Some(shell) = &mut self.shell else {
             return Err(Failure("the app is not running".into()));
         };
@@ -753,6 +810,64 @@ impl World {
         let taken = shell.window.pointer(&event(shell.window.now()));
         self.pump()?;
         Ok(taken)
+    }
+
+    /// The user turns the mouse wheel `notches` over (x, y) of the window
+    /// (positive: away from the user, showing what is further up). Whether
+    /// an item used it.
+    pub fn wheel(&mut self, x: f64, y: f64, notches: f64) -> Outcome<bool> {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        let event = ljos::item::WheelEvent::notches(x, y, 0.0, notches, shell.window.now());
+        let taken = shell.window.wheel(&event);
+        self.pump()?;
+        Ok(taken)
+    }
+}
+
+/// The platform clipboard the shell's own items (a terminal's copy, a paste
+/// through `Shell.clipboardText`) read and write: the one `World::clipboard`
+/// and `set_clipboard` see, so a copy by any route lands where steps look.
+struct RecordedClipboard(Rc<Recorded>);
+
+impl ClipboardService for RecordedClipboard {
+    fn text(&self, mode: ClipboardMode) -> Option<String> {
+        (mode == ClipboardMode::Clipboard).then(|| self.0.clipboard.borrow().clone())
+    }
+
+    fn set_text(&self, mode: ClipboardMode, text: &str) -> Result<(), ClipboardError> {
+        if mode != ClipboardMode::Clipboard {
+            return Err(ClipboardError::Unavailable);
+        }
+        if self.0.clipboard_fails.get() {
+            return Err(ClipboardError::Denied);
+        }
+        *self.0.clipboard.borrow_mut() = text.to_owned();
+        Ok(())
+    }
+
+    fn html(&self) -> Option<String> {
+        None
+    }
+
+    fn set_html(&self, _: &str, alt_text: &str) -> Result<(), ClipboardError> {
+        self.set_text(ClipboardMode::Clipboard, alt_text)
+    }
+
+    fn image(&self) -> Option<ClipboardImage> {
+        None
+    }
+
+    fn set_image(&self, _: ClipboardImage) -> Result<(), ClipboardError> {
+        Err(ClipboardError::Unavailable)
+    }
+
+    fn clear(&self, mode: ClipboardMode) -> Result<(), ClipboardError> {
+        if mode == ClipboardMode::Clipboard {
+            self.0.clipboard.borrow_mut().clear();
+        }
+        Ok(())
     }
 }
 

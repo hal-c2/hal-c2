@@ -113,8 +113,7 @@ fn apply_metadata(mc: &mut FakeMc, command: &Value) {
 }
 
 fn extension(mc: &mut FakeMc) {
-    mc.effects
-        .push(Rc::new(|mc, command| apply_metadata(mc, command)));
+    mc.effects.push(Rc::new(apply_metadata));
     // The checkouts a domain fakes whole (GitSteps) answer first.
     mc.on_shape("vcs", |mc, id, shape| {
         let cwd = text(&shape["cwd"]);
@@ -563,11 +562,12 @@ pub fn register(steps: &mut Steps) {
 
     // Titles.
     steps.step(&format!("the user renames {Q} to {Q}"), |world, c, _| {
-        // A managed folder takes the same words; a provider instance
-        // (ProviderSettings' renameProviderInstance) does too, and its owner
-        // adds the call.
+        // A managed folder takes the same words; so does a provider instance.
         if super::files_folder::rename_managed_folder(world, &c[0], &c[1])? {
             return Ok(());
+        }
+        if world.state("providerSettings")["open"] == json!(true) {
+            return super::provider_settings::rename_provider_instance(world, &c[0], &c[1]);
         }
         let state = workspace(world);
         expect!(
@@ -759,8 +759,15 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| search(world, &c[0]),
     );
     steps.step(&format!("only {Q} is listed"), |world, c, _| {
-        // TODO(port): the archive lists the same words (ArchivedThreads'
-        // archiveListsOnly); another worker owns that helper.
+        // The archive page lists the same words as the branch list.
+        if !super::archived_threads::groups_of(world).is_empty() {
+            expect!(
+                super::archived_threads::archive_lists_only(world, &c[0]),
+                "the archive lists {}",
+                show(&world.state("archivedThreads"))
+            );
+            return Ok(());
+        }
         let names = branch_names(world);
         expect!(names == [c[0].clone()], "the list is {}", names.join(", "));
         Ok(())
