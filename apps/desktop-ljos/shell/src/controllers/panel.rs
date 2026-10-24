@@ -583,6 +583,31 @@ impl RightPanel {
         self.files
     }
 
+    /// The Diff tab's ThreadDiff.
+    pub fn diff(&self) -> Option<ObjectId> {
+        self.diff
+    }
+
+    /// The Agents tab's AgentsModel.
+    pub fn agents(&self) -> Option<ObjectId> {
+        self.agents
+    }
+
+    /// The Pull requests tab's ThreadPullRequests.
+    pub fn pull_requests(&self) -> Option<ObjectId> {
+        self.pull_requests
+    }
+
+    /// The pull request review's PullRequestReview.
+    pub fn review(&self) -> Option<ObjectId> {
+        self.review
+    }
+
+    /// The Device tab's ThreadDevices.
+    pub fn devices(&self) -> Option<ObjectId> {
+        self.devices
+    }
+
     pub fn active_tab(&self) -> String {
         self.current().active
     }
