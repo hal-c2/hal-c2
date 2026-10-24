@@ -88,6 +88,7 @@ fn fixture() -> Fixture {
     let clock = Clock {
         now: Rc::new(move || clock_now.get()),
         zone: Zone::utc(),
+        locale: ljos::locale::Locale::named("en_US"),
     };
     let mut core = Timeline::new("env-1:thread-1");
     core.set_clock(clock.clone());

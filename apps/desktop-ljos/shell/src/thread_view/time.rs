@@ -2,16 +2,18 @@
 //! ("9:41 AM", "yesterday at 9:41 AM", "9/20 9:41 AM"), durations ("Worked
 //! for 2m 5s") and a row's long time ("9:41 AM, 23rd September 2026").
 //!
-//! The clock and the time zone are given, so tests read one day the same
-//! everywhere.
+//! The clock, the time zone and the locale are given, so tests read one day
+//! the same everywhere.
 
 use std::rc::Rc;
+use std::sync::LazyLock;
 
-use chrono::{
-    DateTime, Datelike, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
-};
+use chrono::{DateTime, Datelike, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use ljos::locale::{DateTime as LocalFields, FormatType, Locale};
+use regex::Regex;
 
 use crate::json::Json;
+use crate::sidebar_model;
 
 /// What "now" is.
 pub type Now = Rc<dyn Fn() -> DateTime<Utc>>;
@@ -53,11 +55,13 @@ impl Zone {
     }
 }
 
-/// The clock and zone the view reads times on.
+/// The clock, zone and locale the view reads times on.
 #[derive(Clone)]
 pub struct Clock {
     pub now: Now,
     pub zone: Zone,
+    /// What writes them (ThreadStore::setLocale): the application's.
+    pub locale: Locale,
 }
 
 impl Default for Clock {
@@ -65,22 +69,27 @@ impl Default for Clock {
         Clock {
             now: Rc::new(Utc::now),
             zone: Zone::Local,
+            locale: Locale::system(),
         }
     }
 }
 
 impl std::fmt::Debug for Clock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Clock").field("zone", &self.zone).finish()
+        f.debug_struct("Clock")
+            .field("zone", &self.zone)
+            .field("locale", &self.locale.name())
+            .finish()
     }
 }
 
 impl Clock {
-    /// A clock stopped at `at`, read in UTC: for tests.
+    /// A clock stopped at `at`, read in UTC and en-US: for tests.
     pub fn fixed(at: DateTime<Utc>) -> Clock {
         Clock {
             now: Rc::new(move || at),
             zone: Zone::utc(),
+            locale: Locale::named("en_US"),
         }
     }
 
@@ -110,39 +119,46 @@ pub fn time_of(value: Option<&Json>, zone: Zone) -> Option<DateTime<Utc>> {
     parse_iso(value?.as_str()?, zone)
 }
 
-// TODO(ljos#76): SidebarModel::timeOfDay, and QLocale. The time of day in
-// the device's timestampFormat, as sidebar::timeOfDay reads it; the
-// sidebar's port should own this once it lands. Only en-US is read:
-// "locale" is its short time ("9:41 AM"), not the system locale's.
-pub fn time_of_day(local: NaiveDateTime, timestamp_format: &str) -> String {
-    let (hour, minute) = (local.hour(), local.minute());
-    if timestamp_format == "24-hour" {
-        return format!("{hour:02}:{minute:02}");
-    }
-    // "12-hour", and en-US's short time.
-    let twelve = match hour % 12 {
-        0 => 12,
-        h => h,
-    };
-    let half = if hour < 12 { "AM" } else { "PM" };
-    format!("{twelve}:{minute:02} {half}")
+/// A wall-clock time in the device's timestampFormat (sidebar::timeOfDay).
+pub fn time_of_day(local: NaiveDateTime, timestamp_format: &str, locale: &Locale) -> String {
+    sidebar_model::time_of_day(&local.and_utc(), timestamp_format, locale)
 }
 
-/// en-US's numeric date, as Intl's {month: "numeric", day: "numeric"}
-/// (and year: "numeric" with `with_year`): "9/20", "9/20/2025".
-// TODO(ljos#76): QLocale::dateFormat(ShortFormat), only en-US here.
-pub fn numeric_date(date: NaiveDate, with_year: bool) -> String {
-    if with_year {
-        format!("{}/{}/{}", date.month(), date.day(), date.year())
+/// The locale's numeric date, as Intl's {month: "numeric", day: "numeric"}
+/// (and year: "numeric" with `with_year`): "9/20", "9/20/2025" in en-US.
+pub fn numeric_date(date: NaiveDate, with_year: bool, locale: &Locale) -> String {
+    static DAY: LazyLock<Regex> = LazyLock::new(|| Regex::new("d+").expect("day"));
+    static MONTH: LazyLock<Regex> = LazyLock::new(|| Regex::new("M+").expect("month"));
+    static YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new("y+").expect("year"));
+    // The year and the separator joining it to the day or month.
+    static NO_YEAR: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new("^y+[^dMy]*|[^dMy]*y+$|y+[^dMy]*").expect("no year"));
+    let format = locale.date_format(FormatType::Short);
+    let format = DAY.replace_all(&format, "d");
+    let format = MONTH.replace_all(&format, "M");
+    let format = if with_year {
+        YEAR.replace_all(&format, "yyyy")
     } else {
-        format!("{}/{}", date.month(), date.day())
-    }
+        NO_YEAR.replace_all(&format, "")
+    };
+    let at = LocalFields {
+        year: date.year(),
+        month: date.month(),
+        day: date.day(),
+        ..LocalFields::default()
+    };
+    locale.format_pattern(&at, &format)
 }
 
 /// formatDayAwareTimestamp for a time that has happened: "9:41 AM",
 /// "yesterday at 9:41 AM", "9/20 9:41 AM".
-pub fn day_aware(local: NaiveDateTime, today: NaiveDate, timestamp_format: &str) -> String {
-    let time = time_of_day(local, timestamp_format);
+pub fn day_aware(
+    local: NaiveDateTime,
+    today: NaiveDate,
+    timestamp_format: &str,
+    locale: &Locale,
+) -> String {
+    let time = time_of_day(local, timestamp_format, locale);
     let days = (today - local.date()).num_days();
     if days <= 0 {
         return time;
@@ -152,7 +168,7 @@ pub fn day_aware(local: NaiveDateTime, today: NaiveDate, timestamp_format: &str)
     }
     format!(
         "{} {time}",
-        numeric_date(local.date(), local.date().year() != today.year())
+        numeric_date(local.date(), local.date().year() != today.year(), locale)
     )
 }
 
@@ -162,7 +178,7 @@ pub fn stamp(at: Option<DateTime<Utc>>, clock: &Clock, timestamp_format: &str) -
         return String::new();
     };
     let today = clock.zone.local(clock.now()).date();
-    day_aware(clock.zone.local(at), today, timestamp_format)
+    day_aware(clock.zone.local(at), today, timestamp_format, &clock.locale)
 }
 
 /// A time that may be ahead, as a usage limit's reset reads: "9:41 AM"
@@ -176,21 +192,25 @@ pub fn upcoming_stamp(at: Option<DateTime<Utc>>, clock: &Clock, timestamp_format
     let today = clock.zone.local(clock.now()).date();
     let days = (local.date() - today).num_days();
     if days < 0 {
-        return day_aware(local, today, timestamp_format);
+        return day_aware(local, today, timestamp_format, &clock.locale);
     }
-    let time = time_of_day(local, timestamp_format);
+    let time = time_of_day(local, timestamp_format, &clock.locale);
     match days {
         0 => time,
         1 => format!("tomorrow at {time}"),
         _ => format!(
             "{} {time}",
-            numeric_date(local.date(), local.date().year() != today.year())
+            numeric_date(
+                local.date(),
+                local.date().year() != today.year(),
+                &clock.locale
+            )
         ),
     }
 }
 
-/// The long form of a time, in English, for a tooltip: "9:41 AM, 23rd
-/// September 2026".
+/// The long form of a time, in English but for the time of day, for a
+/// tooltip: "9:41 AM, 23rd September 2026".
 pub fn long_time(at: DateTime<Utc>, clock: &Clock, timestamp_format: &str) -> String {
     const MONTHS: [&str; 12] = [
         "January",
@@ -210,7 +230,7 @@ pub fn long_time(at: DateTime<Utc>, clock: &Clock, timestamp_format: &str) -> St
     let day = local.day();
     format!(
         "{}, {day}{} {} {}",
-        time_of_day(local, timestamp_format),
+        time_of_day(local, timestamp_format, &clock.locale),
         ordinal_suffix(day),
         MONTHS[local.month0() as usize],
         local.year()
@@ -302,6 +322,28 @@ mod tests {
             "12/31/2025 12:05 AM"
         );
         assert_eq!(super::stamp(None, &c, "locale"), "");
+    }
+
+    // The locale writes the time and the numeric date (TimelineModel's
+    // numericDate), as Qt's de-DE does.
+    #[test]
+    fn stamps_read_in_the_locale() {
+        let c = Clock {
+            locale: Locale::named("de_DE"),
+            ..clock()
+        };
+        let stamp = |t: &str| stamp(Some(at(t)), &c, "locale");
+        assert_eq!(stamp("2026-09-23T17:05:00Z"), "17:05");
+        assert_eq!(stamp("2026-09-20T09:05:00Z"), "20.9 09:05");
+        assert_eq!(stamp("2025-12-31T00:05:00Z"), "31.12.2025 00:05");
+        assert_eq!(
+            numeric_date(
+                NaiveDate::from_ymd_opt(2025, 12, 31).unwrap(),
+                false,
+                &Locale::named("ja_JP")
+            ),
+            "12/31"
+        );
     }
 
     #[test]

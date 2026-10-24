@@ -50,6 +50,7 @@ impl World {
         let mut agents = Agents::new(Clock {
             now: Rc::new(move || clock_now.get()),
             zone: Zone::utc(),
+            locale: ljos::locale::Locale::named("en_US"),
         });
         agents.set_environment("env-1");
         let view = Mirror::of(&mut agents);

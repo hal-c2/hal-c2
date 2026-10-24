@@ -827,6 +827,15 @@ impl Timeline {
         self.redraw_times();
     }
 
+    /// The locale its times are written in (ThreadStore's).
+    pub fn set_locale(&mut self, locale: &ljos::locale::Locale) {
+        if locale.name() == self.clock.locale.name() {
+            return;
+        }
+        self.clock.locale = locale.clone();
+        self.redraw_times();
+    }
+
     fn redraw_times(&mut self) {
         self.out.push(Out::TimesChanged);
         if self.rows.is_empty() {

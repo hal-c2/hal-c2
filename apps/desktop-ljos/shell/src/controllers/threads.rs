@@ -22,6 +22,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use ljos::locale::Locale;
 use ljos::prelude::{
     Atom, Cx, Engine, ObjectId, QmlObject, Time, TimerId, Value, qml_impl, qml_singleton,
 };
@@ -227,6 +228,7 @@ impl Controller for ThreadStore {
         let status = hook(ThreadStore::status_changed);
         init.mc.on_status(Box::new(move |engine, _| status(engine)));
         *shared(engine).timestamp_format.borrow_mut() = "locale".into();
+        shared(engine).clock.borrow_mut().locale = Locale::of(engine);
         ThreadStore {
             phase: init.mc.status().phase,
             mc: init.mc,
@@ -261,6 +263,12 @@ impl Controller for ThreadStore {
             });
             let me = self.me.clone();
             Settings::of(engine).on_device_changed(move |engine| {
+                let me = me.clone();
+                Bridge::of(engine).defer(engine, move |engine| me.run(engine, Self::read_settings));
+            });
+            // The times are written in the application's locale.
+            let me = self.me.clone();
+            let _ = ljos::locale::on_change(engine, move |engine, _| {
                 let me = me.clone();
                 Bridge::of(engine).defer(engine, move |engine| me.run(engine, Self::read_settings));
             });
@@ -308,7 +316,9 @@ impl ThreadStore {
         self.evict_idle(engine);
     }
 
+    /// The device's timestampFormat and the application's locale.
     fn read_settings(&mut self, engine: &Engine) {
+        shared(engine).clock.borrow_mut().locale = Locale::of(engine);
         let format = Settings::of(engine)
             .device_value("timestampFormat")
             .and_then(|v| v.as_str().map(str::to_owned))
@@ -712,15 +722,17 @@ impl Drop for ThreadStore {
     }
 }
 
-/// The device's time format, and where the thread works and its
+/// The device's time format and the locale, and where the thread works and its
 /// environment's other threads are named, read from the store when asked.
 fn configure(engine: &Engine, model: ObjectId) {
     let format = shared(engine).timestamp_format.borrow().clone();
+    let locale = shared(engine).clock.borrow().locale.clone();
     let held = store::get(engine).map(|s| Rc::downgrade(&s));
     let key = TimelineModel::read(engine, model, |t| t.thread_key().to_owned()).unwrap_or_default();
     let environment = environment_of(&key).to_owned();
     TimelineModel::update(engine, model, |t| {
         t.set_timestamp_format(&format);
+        t.set_locale(&locale);
         let Some(held) = held else { return };
         // Where it works: its worktree, else its project's root
         // (WorkspaceController::Place::cwd).
