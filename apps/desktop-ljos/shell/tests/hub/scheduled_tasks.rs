@@ -150,7 +150,10 @@ fn the_next_run_reads_against_the_shells_clock() {
             .to_rfc3339()
     );
     listed(&hub, &[due]);
-    assert_eq!(state(&hub)["environments"][0]["tasks"][0]["when"], "Next run in 3h");
+    assert_eq!(
+        state(&hub)["environments"][0]["tasks"][0]["when"],
+        "Next run in 3h"
+    );
 }
 
 #[test]
