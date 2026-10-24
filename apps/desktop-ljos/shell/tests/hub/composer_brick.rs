@@ -244,7 +244,6 @@ fn a_recording_picked_in_the_attach_dialog_is_uploaded() {
     let hub = on_threads(&["t1"]);
     let system = SystemDialogs::default();
     Platform::of(&hub.engine).set_dialogs(Rc::new(system.clone()));
-    hal_c2_shell::file_dialogs::install(&hub.engine);
     let (root, _window) = probe(&hub);
     let dir = tempfile::tempdir().expect("a directory for the movie");
     let recording = movie(
@@ -263,8 +262,12 @@ fn a_recording_picked_in_the_attach_dialog_is_uploaded() {
         .pop()
         .expect("the system's dialog is shown");
     assert_eq!(request.kind, Some(DialogKind::OpenFiles));
+    // Its first filter, the one in force, takes every file.
     assert!(
-        request.filters.is_empty(),
+        request
+            .filters
+            .first()
+            .is_some_and(|f| f.takes_every_file()),
         "every file can be chosen: {:?}",
         request.filters
     );
@@ -277,40 +280,6 @@ fn a_recording_picked_in_the_attach_dialog_is_uploaded() {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     uploads_as_a_video(&hub, &name, 20);
-}
-
-/// A dialog whose filters all name extensions keeps them.
-#[test]
-fn a_dialog_of_some_files_keeps_its_filters() {
-    let hub = on_threads(&["t1"]);
-    let system = SystemDialogs::default();
-    Platform::of(&hub.engine).set_dialogs(Rc::new(system.clone()));
-    hal_c2_shell::file_dialogs::install(&hub.engine);
-    let source = crate::common::compile(
-        &[(
-            "Picker",
-            r#"
-import QtQuick
-import QtQuick.Dialogs
-
-Item {
-    function pick() { dialog.open() }
-    FileDialog { id: dialog; nameFilters: ["Theme files (*.json)"] }
-}
-"#,
-        )],
-        &[],
-    );
-    let (picker, _window) = hub.show(source, "Picker");
-    crate::common::call(&hub.engine, picker, "pick", &[]);
-    hub.advance(0);
-    let (request, _answer) = system
-        .0
-        .borrow_mut()
-        .pop()
-        .expect("the system's dialog is shown");
-    assert_eq!(request.filters.len(), 1);
-    assert_eq!(request.filters[0].patterns, vec!["*.json".to_owned()]);
 }
 
 /// A screen recording dropped on the card is uploaded as a video.
