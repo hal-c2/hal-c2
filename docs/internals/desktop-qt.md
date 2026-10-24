@@ -193,7 +193,9 @@ Windows, `<root>/config/shell/` under `--home-dir` or `HAL_C2_HOME`, and
 `~/.config/hal-c2-dev/shell/` for a `--dev` shell; `--config-dir` overrides just this
 directory. The shell creates it at startup and watches it, so a shell the hosted
 server migrates from an old `~/.hal-c2/shell/` or `~/.t3/shell/` loads without a
-restart.
+restart. desktop-ljos reads the same directory, so a rice applies to both desktop
+clients; everything else it keeps one `desktop-ljos` level down
+(`apps/desktop-ljos/shell/src/storage.rs`).
 
 ### `theme.json`
 

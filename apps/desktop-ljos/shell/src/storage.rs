@@ -1,7 +1,9 @@
 //! Where the shell keeps its files: desktop-qt's StoragePaths, resolved as
 //! packages/shared/src/xdgDirs.ts resolves them, with every directory one
-//! `desktop-ljos` level down so this client and desktop-qt never share a
-//! file (a cache or a pairing one wrote is not the other's to read).
+//! `desktop-ljos` level down so this client and desktop-qt never share state
+//! (a cache or a pairing one wrote is not the other's to read). What the user
+//! writes to change how the app looks and behaves (theme, shell, QML modules,
+//! plugins, preferences) is the config home's `shell`, shared with desktop-qt.
 //!
 //!   1. `--home-dir` is one root for everything (`<root>/config`, data, state,
 //!      cache);
@@ -29,6 +31,9 @@ pub struct StoragePaths {
     pub data: PathBuf,
     pub state: PathBuf,
     pub cache: PathBuf,
+    /// The user's theme, shell, QML modules, plugins and preferences: the
+    /// config home's `shell`, not this client's own level.
+    pub shell: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,7 +97,6 @@ pub fn resolve(
         Profile::Development => "hal-c2-dev",
         Profile::Installed => "hal-c2",
     };
-    let mine = |dir: PathBuf| dir.join(CLIENT_DIR);
     if platform == Platform::Windows {
         // Data, state and cache share %LOCALAPPDATA%, so each kind gets its
         // own folder there. An XDG variable is already a base for one kind
@@ -100,41 +104,52 @@ pub fn resolve(
         let app_data = absolute("APPDATA").unwrap_or_else(|| user_home.join("AppData/Roaming"));
         let local = absolute("LOCALAPPDATA").unwrap_or_else(|| user_home.join("AppData/Local"));
         let kind = |variable: &str, fallback: &Path, name: &str| match absolute(variable) {
-            Some(configured) => mine(configured.join(app)),
-            None => mine(fallback.join(app).join(name)),
+            Some(configured) => configured.join(app),
+            None => fallback.join(app).join(name),
         };
-        return StoragePaths {
-            root: None,
-            config: kind("XDG_CONFIG_HOME", &app_data, "config"),
-            data: kind("XDG_DATA_HOME", &local, "data"),
-            state: kind("XDG_STATE_HOME", &local, "state"),
-            cache: kind("XDG_CACHE_HOME", &local, "cache"),
-        };
+        return nested(
+            None,
+            [
+                kind("XDG_CONFIG_HOME", &app_data, "config"),
+                kind("XDG_DATA_HOME", &local, "data"),
+                kind("XDG_STATE_HOME", &local, "state"),
+                kind("XDG_CACHE_HOME", &local, "cache"),
+            ],
+        );
     }
     let kind = |variable: &str, fallback: &str| {
-        mine(
-            absolute(variable)
-                .unwrap_or_else(|| user_home.join(fallback))
-                .join(app),
-        )
+        absolute(variable)
+            .unwrap_or_else(|| user_home.join(fallback))
+            .join(app)
     };
-    StoragePaths {
-        root: None,
-        config: kind("XDG_CONFIG_HOME", ".config"),
-        data: kind("XDG_DATA_HOME", ".local/share"),
-        state: kind("XDG_STATE_HOME", ".local/state"),
-        cache: kind("XDG_CACHE_HOME", ".cache"),
-    }
+    nested(
+        None,
+        [
+            kind("XDG_CONFIG_HOME", ".config"),
+            kind("XDG_DATA_HOME", ".local/share"),
+            kind("XDG_STATE_HOME", ".local/state"),
+            kind("XDG_CACHE_HOME", ".cache"),
+        ],
+    )
 }
 
 fn under(root: &Path) -> StoragePaths {
-    let kind = |name| root.join(name).join(CLIENT_DIR);
+    nested(
+        Some(root.to_path_buf()),
+        ["config", "data", "state", "cache"].map(|kind| root.join(kind)),
+    )
+}
+
+/// The HAL-C2 config, data, state and cache directories, each with this
+/// client's level, and the config's shared `shell`.
+fn nested(root: Option<PathBuf>, [config, data, state, cache]: [PathBuf; 4]) -> StoragePaths {
     StoragePaths {
-        root: Some(root.to_path_buf()),
-        config: kind("config"),
-        data: kind("data"),
-        state: kind("state"),
-        cache: kind("cache"),
+        root,
+        shell: config.join("shell"),
+        config: config.join(CLIENT_DIR),
+        data: data.join(CLIENT_DIR),
+        state: state.join(CLIENT_DIR),
+        cache: cache.join(CLIENT_DIR),
     }
 }
 
@@ -230,6 +245,7 @@ mod tests {
         assert_eq!(s(&paths.data), "/home/me/.local/share/hal-c2/desktop-ljos");
         assert_eq!(s(&paths.state), "/home/me/.local/state/hal-c2/desktop-ljos");
         assert_eq!(s(&paths.cache), "/home/me/.cache/hal-c2/desktop-ljos");
+        assert_eq!(s(&paths.shell), "/home/me/.config/hal-c2/shell");
     }
 
     #[test]
@@ -270,6 +286,7 @@ mod tests {
         let paths = on_unix(&[("HAL_C2_HOME", "/srv/hal-c2")], Some("/scratch/sandbox"));
         assert_eq!(paths.root.as_deref(), Some(Path::new("/scratch/sandbox")));
         assert_eq!(s(&paths.cache), "/scratch/sandbox/cache/desktop-ljos");
+        assert_eq!(s(&paths.shell), "/scratch/sandbox/config/shell");
         let dev = on(
             &[],
             Some("/scratch/sandbox"),
@@ -294,6 +311,7 @@ mod tests {
         );
         assert_eq!(paths.root, None);
         assert_eq!(s(&paths.config), "/home/me/.config/hal-c2-dev/desktop-ljos");
+        assert_eq!(s(&paths.shell), "/home/me/.config/hal-c2-dev/shell");
         assert_eq!(s(&paths.data), "/xdg/data/hal-c2-dev/desktop-ljos");
     }
 
@@ -316,6 +334,10 @@ mod tests {
             "C:/Users/me/AppData/Roaming/hal-c2/config/desktop-ljos"
         );
         assert_eq!(s(&paths.data), "D:/xdg/data/hal-c2/desktop-ljos");
+        assert_eq!(
+            s(&paths.shell),
+            "C:/Users/me/AppData/Roaming/hal-c2/config/shell"
+        );
         assert_eq!(
             s(&paths.cache),
             "C:/Users/me/AppData/Local/hal-c2/cache/desktop-ljos"

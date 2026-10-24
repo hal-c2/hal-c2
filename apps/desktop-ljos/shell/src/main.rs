@@ -288,13 +288,13 @@ fn connect_to(options: &mut Options) -> Result<(), String> {
     };
     let paths = StoragePaths::resolve(options.home_dir.as_deref(), profile);
     // The user's theme, plugins, preferences and shell sit in the config
-    // home's `shell` unless `--config-dir` names another. Made up front so
-    // their watchers are live from the start (main.cpp).
+    // home's `shell`, desktop-qt's too, unless `--config-dir` names another.
+    // Made up front so their watchers are live from the start (main.cpp).
     let config_dir = options
         .launch
         .config_dir
         .take()
-        .unwrap_or_else(|| paths.config.join("shell"));
+        .unwrap_or_else(|| paths.shell.clone());
     let _ = std::fs::create_dir_all(&config_dir);
     // Its `qml` and `shell.qml` join the QML the shell is made of.
     options.roots = options.roots.clone().with_user(config_dir.clone());
