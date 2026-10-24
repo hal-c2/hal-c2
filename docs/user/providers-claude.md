@@ -106,3 +106,7 @@ config directory and put the router's endpoint and credential variables in that
 instance's **Environment variables**. The router must run where the environment
 can reach it. Follow the [Claude Code Router instructions](https://github.com/musistudio/claude-code-router)
 for its installation and routing configuration.
+
+## Subagents
+
+Claude can run its own subagents, including ones in the background that do not show up as threads. To keep child work visible, set **Settings > General > Subagents** to **HAL-C2 workers**. Claude's own subagent tool is then turned off and agents delegate to HAL-C2 workers instead. The change applies when an agent's session next starts, which interrupts a Claude turn in progress at its next message. Codex follows the same setting; OpenCode, Grok, Muse Code, Cursor and Antigravity do not yet.
