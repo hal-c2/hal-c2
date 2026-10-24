@@ -50,6 +50,7 @@ pub mod settings_background;
 pub mod settings_background_activity;
 pub mod settings_composer;
 pub mod settings_connections;
+pub mod settings_general;
 pub mod settings_limited_threads;
 pub mod settings_nav;
 pub mod settings_pages;
@@ -125,6 +126,7 @@ pub fn register(steps: &mut Steps) {
     settings_background_activity::register(steps);
     settings_composer::register(steps);
     settings_connections::register(steps);
+    settings_general::register(steps);
     settings_limited_threads::register(steps);
     settings_nav::register(steps);
     settings_pages::register(steps);
