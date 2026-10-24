@@ -11,6 +11,7 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, TurnWatch}
+  alias HalC2.PullRequests.Opened
   alias HalC2.StreamState
 
   @flush_ms 50
@@ -245,35 +246,50 @@ defmodule HalC2.Orchestration.TurnWriter do
     state
   end
 
-  @doc "Finishes an item with `status`, applying `fun` to its turn item (and message)."
+  @doc """
+  Finishes an item with `status`, applying `fun` to its turn item (and message). A
+  command that printed the pull request it created links it to the thread
+  (`HalC2.PullRequests.Opened`).
+  """
   def finish_item(state, native, status, fun) do
-    %{id: item_id, node: node_id, message: message_id} = Map.fetch!(state.items, native)
+    %{id: item_id, node: node_id, message: message_id} = item = Map.fetch!(state.items, native)
     at = Entities.now()
 
-    commit(state, fn stream ->
-      [
-        Orchestration.upsert(
-          stream,
-          "turn-item",
-          item_id,
-          &(fun.(&1) |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at}))
-        ),
-        Orchestration.upsert(
-          stream,
-          "node",
-          node_id,
-          &Map.merge(&1, %{"status" => status, "completedAt" => at})
-        ),
-        message_id &&
+    opened =
+      HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
+        changes = [
           Orchestration.upsert(
             stream,
-            "message",
-            message_id,
-            &(fun.(&1) |> Map.put("updatedAt", at))
-          )
-      ]
-    end)
+            "turn-item",
+            item_id,
+            &(fun.(&1)
+              |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at}))
+          ),
+          Orchestration.upsert(
+            stream,
+            "node",
+            node_id,
+            &Map.merge(&1, %{"status" => status, "completedAt" => at})
+          ),
+          message_id &&
+            Orchestration.upsert(
+              stream,
+              "message",
+              message_id,
+              &(fun.(&1) |> Map.put("updatedAt", at))
+            )
+        ]
 
+        opened =
+          case item[:kind] == :command && StreamState.get(stream, "turn-item")[item_id] do
+            %{} = current -> current |> fun.() |> then(&Opened.urls(&1["input"], &1["output"]))
+            _ -> []
+          end
+
+        {Enum.filter(changes, &is_tuple/1), opened}
+      end)
+
+    if opened != [], do: Opened.link(state.thread_id, opened)
     state
   end
 

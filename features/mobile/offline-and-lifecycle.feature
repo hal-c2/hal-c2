@@ -432,28 +432,32 @@ Feature: Staying useful through backgrounding and bad connections
     Then the composer still reads "also check lint"
     And "add a test" keeps waiting to send
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Signing out keeps the unsent work of relayed environments
     Given the user has drafts and waiting messages for "Office Mac", reached through HAL-C2 Connect
     When the user signs out of HAL-C2 Connect
     Then the relayed environments are removed from the phone
     And the drafts and waiting messages for them are kept for that account
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Signing back in restores that account's unsent work
     Given the user signed out with drafts and waiting messages for "Office Mac"
     When the user signs in to the same account again
     Then the drafts are back, merged with anything typed since
     And the waiting messages are sent once "Office Mac" connects
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Another account does not receive the previous account's unsent work
     Given the user signed out with drafts and waiting messages for "Office Mac"
     When a different account signs in on the phone
     Then the previous account's drafts and waiting messages are not shown
     And they are kept until that previous account signs in again
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Unsent work that could not be saved at sign-out is not lost
     Given the phone cannot save the waiting messages for relayed environments
     When the user signs out of HAL-C2 Connect

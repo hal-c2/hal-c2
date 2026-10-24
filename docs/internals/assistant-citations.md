@@ -3,7 +3,7 @@
 Citations carry the selected excerpt and source identity in ordinary message text.
 Drafts, clipboard copies, stashes, and sent messages keep that representation
 without a separate citation store. The saved quote remains usable when its source
-disappears or changes. The [shared format](../../packages/shared/src/assistantCitations.ts) uses
+disappears or changes. The [citation schema](../../packages/contracts/src/assistantCitations.ts) uses
 stable environment IDs without a connection origin, so moving between local, remote,
 and tunnel connections does not change a citation's identity.
 

@@ -1,4 +1,3 @@
-import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import type {
   CommandId,
   EnvironmentId,
@@ -28,12 +27,6 @@ export type AddProjectRemoteProviderKind = Extract<
   "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops"
 >;
 export type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
-
-export function canCreateProjectInEnvironment(
-  connectionPhase: EnvironmentConnectionPhase | null | undefined,
-): boolean {
-  return connectionPhase === "connected";
-}
 
 export type AddProjectRemoteSourceReadiness = Record<
   AddProjectRemoteSource,

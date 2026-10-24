@@ -108,4 +108,4 @@ Feature: A window with no thread lands on a new thread
     Scenario: The hosted web app with nothing connected explains how to add a machine
       Given the user opens the hosted web app with no environment saved
       Then the page says "Connect to a computer running HAL-C2"
-      And it says to add the machine with a pairing link, or to sign in to HAL-C2 Connect where that is offered
+      And it says to add the machine with a pairing link

@@ -1,14 +1,12 @@
 # Environment authentication
 
-The environment issues its own sessions and enforces their capabilities. Cloud
-identity and relay credentials belong to a separate trust boundary, described in
-[HAL-C2 Connect](./hal-c2-connect.md). A relay token is never an environment login.
+The environment issues its own sessions and enforces their capabilities.
 
 ## Authority survives transport changes
 
 Pairing delegates a set of scopes. Exchanging a bootstrap credential can narrow
 that grant but cannot widen it. Ordinary pairing does not grant access-management
-or relay-management authority. Creating another pairing link requires both
+authority. Creating another pairing link requires both
 `access:write` and every scope being delegated. The
 [auth handlers](../../apps/server-ex/lib/hal_c2/auth.ex) enforce this at issuance;
 client labels and device metadata have no authorization role.

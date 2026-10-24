@@ -193,6 +193,3 @@ export function getBrowseParentPath(currentPath: string): string | null {
 export function canNavigateUp(currentPath: string): boolean {
   return hasTrailingPathSeparator(currentPath) && getBrowseParentPath(currentPath) !== null;
 }
-
-export * from "./projectCommands.ts";
-export * from "./projectEntities.ts";

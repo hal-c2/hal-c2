@@ -60,14 +60,8 @@
     "vscode": {
       "extensions": ["oxc.oxc-vscode", "rust-lang.rust-analyzer"],
       "settings": {
-        // .repos is a large vendored read-only reference tree; watching it
-        // burns CPU and file handles.
         "files.watcherExclude": {
-          "**/.repos/**": true,
           "**/.hal-c2/**": true
-        },
-        "search.exclude": {
-          "**/.repos": true
         }
       }
     }
