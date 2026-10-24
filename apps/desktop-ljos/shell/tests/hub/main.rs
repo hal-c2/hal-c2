@@ -66,6 +66,7 @@ mod terminals;
 mod theme;
 mod theme_prop;
 mod threads;
+mod timeline_brick;
 mod toasts;
 mod usage;
 mod windows;
@@ -216,5 +217,16 @@ impl Window {
         let mut window = self.0.borrow_mut();
         let now = window.now();
         window.pointer(&PointerEvent::moved(x, y, MouseButtons::empty(), now))
+    }
+
+    /// Gives the window a wheel or touchpad event; true when something
+    /// used it.
+    pub fn wheel(&self, ev: &ljos::item::WheelEvent) -> bool {
+        self.0.borrow_mut().wheel(ev)
+    }
+
+    /// The time on the window's clock, for the events given it.
+    pub fn now(&self) -> ljos::prelude::Time {
+        self.0.borrow().now()
     }
 }
