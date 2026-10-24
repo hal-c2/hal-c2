@@ -4,9 +4,12 @@
 
 use crate::harness::Steps;
 
+pub mod cluster;
 pub mod connection;
 pub mod connection_health;
 pub mod mc;
+pub mod member;
+pub mod settings_connections;
 pub mod stream;
 pub mod thread_menu;
 pub mod thread_snooze;
@@ -15,9 +18,12 @@ pub mod viewing;
 
 /// Every domain's steps.
 pub fn register(steps: &mut Steps) {
+    cluster::register(steps);
     connection::register(steps);
     connection_health::register(steps);
     mc::register(steps);
+    member::register(steps);
+    settings_connections::register(steps);
     stream::register(steps);
     thread_menu::register(steps);
     thread_snooze::register(steps);
