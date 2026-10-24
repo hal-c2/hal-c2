@@ -802,6 +802,12 @@ pub fn editor(world: &mut World) -> Outcome<(Brick, ObjectId)> {
 
 /// The item named `object_name` anywhere in the composer's window, popups
 /// included; none when there is none.
+/// `composer_part` for a wait's condition, which only reads the world: the
+/// composer must already be on screen.
+pub fn composer_part_now(world: &World, object_name: &str) -> Option<ObjectId> {
+    composer_shown(world)?.find(world, object_name).ok()?
+}
+
 pub fn composer_part(world: &mut World, object_name: &str) -> Outcome<Option<ObjectId>> {
     let brick = composer_brick(world)?;
     brick.find(world, object_name)

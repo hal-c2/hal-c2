@@ -605,8 +605,9 @@ pub fn register(steps: &mut Steps) {
         world.sync()
     });
     steps.step(&format!("the user is looking at {Q}"), |world, c, _| {
-        // TODO(port): FilesViewerSteps' lookAtFile goes first, a file the
-        // viewer opens.
+        if super::files_viewer::look_at_file(world, &c[0])? {
+            return Ok(());
+        }
         if !fake(world).threads.contains_key(&c[0]) && move_::show_machine_thread(world, &c[0])? {
             return Ok(());
         }
