@@ -8,6 +8,8 @@ pub mod add_project;
 pub mod connection;
 pub mod connection_health;
 pub mod fake_files;
+pub mod file_search;
+pub mod files_explorer;
 pub mod files_media;
 pub mod files_workspace;
 pub mod launch;
@@ -29,6 +31,8 @@ pub fn register(steps: &mut Steps) {
     connection::register(steps);
     connection_health::register(steps);
     fake_files::register(steps);
+    file_search::register(steps);
+    files_explorer::register(steps);
     files_media::register(steps);
     launch::register(steps);
     launch_folder::register(steps);
