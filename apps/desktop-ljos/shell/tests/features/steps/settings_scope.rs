@@ -318,7 +318,7 @@ pub fn register(steps: &mut Steps) {
             let project = c[0].clone();
             world.wait_for_with(
                 |w| all_overriding(w, &project, &selection("opus")),
-                |w| describe_documents(w),
+                describe_documents,
             )
         },
     );
@@ -443,7 +443,7 @@ pub fn register(steps: &mut Steps) {
                         .iter()
                         .all(|environment| override_on(w, &project, environment).is_none())
                 },
-                |w| describe_documents(w),
+                describe_documents,
             )
         },
     );
@@ -565,7 +565,7 @@ pub fn register(steps: &mut Steps) {
                         .as_array()
                         .is_none_or(Vec::is_empty)
             },
-            |w| describe_documents(w),
+            describe_documents,
         )?;
         // The environment's own model is untouched, and is what the project now gets.
         expect!(
@@ -612,7 +612,7 @@ pub fn register(steps: &mut Steps) {
                 all.iter()
                     .all(|e| held(w, e).get(MODEL) == Some(&selection("opus")))
             },
-            |w| describe_documents(w),
+            describe_documents,
         )?;
         wait_for_model_row(world, "one default model", |row| {
             row["mixed"] != true && row["label"] == "Claude · Opus"

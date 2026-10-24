@@ -288,7 +288,7 @@ fn open_diff(world: &mut World) -> Outcome {
     let patch = patch_of("src/rates.ts") + &patch_of("src/cart.ts");
     finish_turn_with_patch(world, 1, &patch, json!([]))?;
     world.dispatch("panel.open", json!({"tab": "diff", "turn": -1}))?;
-    world.wait_for_with(|w| diff_facts(w).status == "ready", |w| describe_diff(w))
+    world.wait_for_with(|w| diff_facts(w).status == "ready", describe_diff)
 }
 
 // --- The quit shortcut ----------------------------------------------------------
