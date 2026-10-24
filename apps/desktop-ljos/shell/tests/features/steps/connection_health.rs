@@ -1075,8 +1075,11 @@ pub fn register(steps: &mut Steps) {
             let subs = stream_subscriptions(world, THREAD);
             watched(world).stream_subs_before = subs;
             if !c[0].is_empty() {
+                // On the wall clock and on the shell's, where the thread
+                // left is let go.
                 let later = world.now() + Span::minutes(6);
                 world.set_time(later);
+                world.advance(6 * 60 * 1000)?;
             }
             Ok(())
         },
@@ -1087,6 +1090,7 @@ pub fn register(steps: &mut Steps) {
             if world.now() == now() {
                 let later = world.now() + Span::minutes(4);
                 world.set_time(later);
+                world.advance(4 * 60 * 1000)?;
             }
             let thread = watched(world).thread.clone();
             look(world, &thread, true)
