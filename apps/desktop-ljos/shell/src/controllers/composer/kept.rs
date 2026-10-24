@@ -5,7 +5,7 @@
 //! Other controllers read it here without waiting on the composer.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
@@ -197,6 +197,9 @@ pub struct Data {
     /// Files added to a question's answer, by request then question; not
     /// kept across a restart.
     pub answer_files: HashMap<String, BTreeMap<String, Vec<Attachment>>>,
+    /// The threads whose `queue.resume` the MC has not answered: one request
+    /// at a time per thread, whichever window asks.
+    pub resuming: HashSet<String>,
     path: Option<PathBuf>,
     /// The images last written beside the drafts, so a keystroke does not
     /// rewrite them.

@@ -15,12 +15,16 @@ use super::text::{
     stale_request,
 };
 use super::{
-    Composer, Recall, back, find_attachment, now_iso, string, thread_of, toast, toast_error, uuid,
+    Composer, Recall, back, find_attachment, now_iso, publish_everywhere, string, thread_of, toast,
+    toast_error, uuid,
 };
 use crate::composer_model as model;
+use crate::controller;
 use crate::controllers::settings::Settings;
+use crate::controllers::toasts::{DEFAULT_TIMEOUT_MS, Toasts};
 use crate::controllers::workspace;
 use crate::json::Json;
+use crate::store;
 use crate::thread_view::summary::{Obj, as_object, text as field};
 
 static SLASH_MODE: LazyLock<Option<Regex>> =
@@ -344,6 +348,7 @@ impl Composer {
                     self.end_queued_edit(engine, false);
                 }
             }
+            "composer.queue.resume" => return self.resume_queue(engine),
             "composer.queue.steer" => {
                 // Without a run, the first queued one (the steer key).
                 let mut run_id = string(payload, "runId");
@@ -606,6 +611,79 @@ impl Composer {
                 }
             }),
         );
+        true
+    }
+
+    /// Lets the MC start a queue it holds (after a restart or a usage
+    /// limit). One request at a time per thread across every window, and
+    /// only for a queue still held: a click on a stale card, after another
+    /// device resumed it, asks nothing. The thread's stream has to be caught
+    /// up too: the held flag a reconnected window still shows may be one the
+    /// MC has since cleared. The answer is handled apart from this window,
+    /// which may close before it comes: a refusal is told in the window that
+    /// asked, else in the one in front.
+    fn resume_queue(&mut self, engine: &Engine) -> bool {
+        let Some(thread) = thread_of(engine, &self.thread) else {
+            return true;
+        };
+        let key = self.thread.clone();
+        if kept::read(engine, |d| d.resuming.contains(&key)) || !self.queue_held(engine) {
+            return true;
+        }
+        let live = self.read_timeline(engine, |t| t.thread_key() == key && t.status() == "live");
+        let connected = self.mc.is_ready()
+            && store::with(engine, |s| s.synchronized() && s.thread_online(&key));
+        if !connected || !live {
+            // One warning however often the button is pressed while
+            // reconnecting: a toast still showing is renewed rather than
+            // stacked.
+            let title = "Not connected: queue not resumed";
+            let description = "Reconnecting to the environment. Try again once it is connected.";
+            let shown = self.not_connected_toast.clone();
+            let id = controller::with::<Toasts, _>(engine, |t, e| {
+                if !shown.is_empty()
+                    && t.replace(e, &shown, "warning", title, description, Vec::new(), 5000)
+                {
+                    return shown;
+                }
+                t.show(e, "warning", title, description, None, DEFAULT_TIMEOUT_MS)
+            });
+            if let Some(id) = id {
+                self.not_connected_toast = id;
+            }
+            return true;
+        }
+        // The shared MC, not this window's: the answer has to clear
+        // `resuming` even when this window has closed. It comes as the
+        // window that asked while that is open, else as the one in front.
+        let Some(mc) = controller::mc(engine) else {
+            return true;
+        };
+        kept::write(engine, |d| d.resuming.insert(key.clone()));
+        mc.dispatch_command(
+            &thread.environment_id,
+            json!({"type": "queue.resume", "threadId": thread.id}),
+            Box::new(move |engine, result| {
+                // Cleared by the answer alone, not by the held flag clearing
+                // on the stream: the answer may come first, and until the
+                // event follows, the button is enabled for a queue still
+                // shown as held. A click then asks again, which is harmless:
+                // `queue.resume` only clears the flag and starts the next run
+                // if none is active. Holding `resuming` until the flag clears
+                // would instead leave "Resuming…" stuck whenever the queue is
+                // held again at once (the next run hitting the same usage
+                // limit).
+                kept::write(engine, |d| d.resuming.remove(&key));
+                if let Err(error) = result {
+                    toast_error(engine, "Failed to resume the queue.", &error.message);
+                }
+                publish_everywhere(engine);
+            }),
+        );
+        // This window greys the button now, so a second click cannot ask
+        // again; the others follow once the composer returns.
+        self.publish(engine);
+        publish_everywhere(engine);
         true
     }
 
