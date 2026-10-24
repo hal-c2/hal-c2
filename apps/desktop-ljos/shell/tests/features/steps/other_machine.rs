@@ -6,10 +6,10 @@
 
 use serde_json::json;
 
-use super::files_workspace::{editor_calls, open_files_tab, set_config, show_calls};
+use super::files_workspace::{editor_calls, open_files_tab, serve_config, set_config, show_calls};
+use crate::expect;
 use crate::harness::{Q, Steps, at, text};
 use crate::world::{OTHER_MACHINE, World};
-use crate::expect;
 
 /// What the MCs had been asked to start before the user acted.
 #[derive(Default)]
@@ -25,6 +25,7 @@ fn toast_titles(world: &World) -> Vec<String> {
 }
 
 pub fn register(steps: &mut Steps) {
+    steps.extension(serve_config);
     steps.step(
         "the thread's files are on (?:an MC on another machine the client is paired with|an MC reached through an SSH port forward)",
         |world, _, _| {
@@ -46,14 +47,20 @@ pub fn register(steps: &mut Steps) {
         },
     );
 
-    steps.step(&format!("the user reveals {Q} in the file manager"), |world, c, _| {
-        world.dispatch("files.reveal", json!({"path": c[0]}))?;
-        world.sync()
-    });
-    steps.step(&format!("the user opens {Q} in an editor"), |world, c, _| {
-        world.dispatch("files.openInEditor", json!({"path": c[0]}))?;
-        world.sync()
-    });
+    steps.step(
+        &format!("the user reveals {Q} in the file manager"),
+        |world, c, _| {
+            world.dispatch("files.reveal", json!({"path": c[0]}))?;
+            world.sync()
+        },
+    );
+    steps.step(
+        &format!("the user opens {Q} in an editor"),
+        |world, c, _| {
+            world.dispatch("files.openInEditor", json!({"path": c[0]}))?;
+            world.sync()
+        },
+    );
     steps.step(
         &format!("the user follows the path {Q} in a terminal"),
         |world, c, _| {

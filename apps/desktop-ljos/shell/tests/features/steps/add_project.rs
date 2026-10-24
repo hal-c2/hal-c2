@@ -148,9 +148,10 @@ pub fn row_titled(world: &World, title: &str) -> Option<usize> {
 /// Types `query` into the palette's field.
 pub fn set_query(world: &mut World, query: &str) -> Outcome {
     let object = palette(world)?;
-    if let Err(error) = world
-        .engine()
-        .write_by_name(object, "query", Value::String(Atom::from(query)))
+    if let Err(error) =
+        world
+            .engine()
+            .write_by_name(object, "query", Value::String(Atom::from(query)))
     {
         fail!("query: {error}");
     }
@@ -179,7 +180,11 @@ fn choose(world: &mut World, title: &str) -> Outcome {
 fn browse(world: &mut World) -> Outcome {
     {
         let files = fake_files(&mut world.mc);
-        for folder in ["/home/sam/code", "/home/sam/code/shop", "/home/sam/code/api"] {
+        for folder in [
+            "/home/sam/code",
+            "/home/sam/code/shop",
+            "/home/sam/code/api",
+        ] {
             files.folders.insert(folder.to_owned());
         }
     }
@@ -206,7 +211,9 @@ fn created(world: &World) -> Vec<Json> {
         .mc
         .calls
         .iter()
-        .filter(|rpc| rpc.method == "projects.mutate" && rpc.payload["type"] == json!("project.create"))
+        .filter(|rpc| {
+            rpc.method == "projects.mutate" && rpc.payload["type"] == json!("project.create")
+        })
         .map(|rpc| rpc.payload.clone())
         .collect()
 }
@@ -307,22 +314,22 @@ pub fn register(steps: &mut Steps) {
     );
 
     // The folder browser.
-    steps.step("the user is browsing for a project folder", |world, _, _| {
-        browse(world)
-    });
-    steps.step("the user types a path that does not exist", |world, _, _| {
-        type_path(world, "~/code/brand-new")?;
-        expect!(count(world) == 0, "{}", describe(world));
-        Ok(())
-    });
+    steps.step(
+        "the user is browsing for a project folder",
+        |world, _, _| browse(world),
+    );
+    steps.step(
+        "the user types a path that does not exist",
+        |world, _, _| {
+            type_path(world, "~/code/brand-new")?;
+            expect!(count(world) == 0, "{}", describe(world));
+            Ok(())
+        },
+    );
     steps.step("no project is active", |world, _, _| {
         let route = world.state("route");
         let kind = at(&route, "kind");
-        expect!(
-            kind != "thread" && kind != "draft",
-            "{}",
-            show(&route)
-        );
+        expect!(kind != "thread" && kind != "draft", "{}", show(&route));
         Ok(())
     });
     steps.step(
@@ -347,9 +354,10 @@ pub fn register(steps: &mut Steps) {
             fail!("{}", describe(world));
         };
         let object = palette(world)?;
-        if let Err(error) = world
-            .engine()
-            .write_by_name(object, "highlighted", Value::Int(row as i32))
+        if let Err(error) =
+            world
+                .engine()
+                .write_by_name(object, "highlighted", Value::Int(row as i32))
         {
             fail!("highlighted: {error}");
         }
@@ -420,16 +428,19 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
-    steps.step("the highlighted folder is added as a project", |world, _, _| {
-        let commands = created(world);
-        let highlighted = world.mc.part::<AddProject>().highlighted.clone();
-        expect!(
-            commands.len() == 1 && commands[0]["workspaceRoot"] == json!(highlighted),
-            "the MC was asked to create {}; {}",
-            show(&json!(commands)),
-            describe(world)
-        );
-        expect!(!is_open(world), "{}", describe(world));
-        Ok(())
-    });
+    steps.step(
+        "the highlighted folder is added as a project",
+        |world, _, _| {
+            let commands = created(world);
+            let highlighted = world.mc.part::<AddProject>().highlighted.clone();
+            expect!(
+                commands.len() == 1 && commands[0]["workspaceRoot"] == json!(highlighted),
+                "the MC was asked to create {}; {}",
+                show(&json!(commands)),
+                describe(world)
+            );
+            expect!(!is_open(world), "{}", describe(world));
+            Ok(())
+        },
+    );
 }

@@ -7,15 +7,14 @@ use serde_json::json;
 
 use super::fake_files::fake_files;
 use super::files_workspace::{
-    OpenedInEditor, choose, describe_tree, editor_calls, file_status, open_files_tab,
-    open_path, set_config, show_calls, show_panel, tree, visible_paths, wait_for_tree,
-    workspace_root,
+    OpenedInEditor, choose, describe_tree, editor_calls, file_status, open_files_tab, open_path,
+    set_config, show_calls, show_panel, tree, visible_paths, wait_for_tree, workspace_root,
 };
 use super::stream::{add_item, start_run};
 use crate::brick;
+use crate::expect;
 use crate::harness::{Outcome, Q, Steps, at, show};
 use crate::world::World;
-use crate::expect;
 
 #[derive(Default)]
 struct Explorer {
@@ -89,29 +88,29 @@ pub fn register(steps: &mut Steps) {
     // The user has the file's folder open when the agent's change lands.
     steps.step(&format!("the agent creates {Q}"), |world, c, _| {
         open_files_tab(world)?;
-        let folder = c[0].rsplit_once('/').map_or("", |(folder, _)| folder).to_owned();
+        let folder = c[0]
+            .rsplit_once('/')
+            .map_or("", |(folder, _)| folder)
+            .to_owned();
         if !folder.is_empty() {
             let tree = tree(world)?;
             FileTreeModel::update(world.engine(), tree, |t| t.expand(&folder));
         }
         wait_for_tree(world)?;
-        expect!(!visible_paths(world).contains(&c[0]), "{}", describe_tree(world));
+        expect!(
+            !visible_paths(world).contains(&c[0]),
+            "{}",
+            describe_tree(world)
+        );
         fake_files(&mut world.mc)
             .files
             .insert(c[0].clone(), "export const checkout = true;\n".into());
         start_run(world, 30, "running")?;
-        add_item(
-            world,
-            "file_change",
-            json!({"changes": [{"path": c[0]}]}),
-        )?;
+        add_item(world, "file_change", json!({"changes": [{"path": c[0]}]}))?;
         Ok(())
     });
     steps.step(&format!("{Q} appears in the tree"), |world, c, _| {
-        world.wait_for_with(
-            |w| visible_paths(w).contains(&c[0]),
-            |w| describe_tree(w),
-        )
+        world.wait_for_with(|w| visible_paths(w).contains(&c[0]), describe_tree)
     });
 
     steps.step(&format!("the user adds {Q} to the chat"), |world, c, _| {
@@ -135,7 +134,11 @@ pub fn register(steps: &mut Steps) {
         world.dispatch("settings.open", json!({}))?;
         world.sync()?;
         let composer = world.state("composer");
-        expect!(composer.is_null(), "a composer is open: {}", show(&composer));
+        expect!(
+            composer.is_null(),
+            "a composer is open: {}",
+            show(&composer)
+        );
         Ok(())
     });
     steps.step(
@@ -243,4 +246,3 @@ pub fn register(steps: &mut Steps) {
         },
     );
 }
-

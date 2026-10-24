@@ -8,10 +8,10 @@ use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use serde_json::{Value as Json, json};
 
 use super::files_workspace::{editor_calls, open_files_tab, set_config, workspace_root};
+use crate::expect;
 use crate::fake_mc::{FakeMc, Rpc};
 use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::world::{THIS_MACHINE, World};
-use crate::expect;
 
 /// What the MC on this machine answers `files.localPath` with.
 struct MachineFolders {
@@ -51,7 +51,12 @@ fn unsupported_message(label: &str, platform: &str) -> String {
 fn files_local_path(mc: &mut FakeMc, rpc: &Rpc) {
     let (answers, can_show, unsupported_on, root) = {
         let f = mc.part::<MachineFolders>();
-        (f.answers, f.can_show, f.unsupported_on.clone(), f.root.clone())
+        (
+            f.answers,
+            f.can_show,
+            f.unsupported_on.clone(),
+            f.root.clone(),
+        )
     };
     if !answers {
         mc.reply(rpc, Json::Null);
@@ -94,7 +99,10 @@ fn files_local_path(mc: &mut FakeMc, rpc: &Rpc) {
 
 /// Every `shell.openInEditor` since the user acted, with the MC it went to.
 fn started_now(world: &World) -> Vec<Rpc> {
-    let before = world.mc.peek::<MachineFolders>().map_or(0, |f| f.calls_before);
+    let before = world
+        .mc
+        .peek::<MachineFolders>()
+        .map_or(0, |f| f.calls_before);
     world
         .mc
         .calls
@@ -136,10 +144,12 @@ fn wait_for_toast(world: &mut World, told: String) -> Outcome {
 }
 
 pub fn register(steps: &mut Steps) {
-    steps.extension(|mc| mc.on_rpc("files.localPath", |mc, rpc| {
+    steps.extension(|mc| {
+        mc.on_rpc("files.localPath", |mc, rpc| {
             files_local_path(mc, rpc);
             Ok(())
-        }));
+        })
+    });
 
     steps.step(
         "the client is connected to the MC on the user's machine",
@@ -155,10 +165,13 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
-    steps.step(&format!("that MC is in a cluster with {Q}"), |world, c, _| {
-        world.mc.join_named(&c[0]);
-        world.sync()
-    });
+    steps.step(
+        &format!("that MC is in a cluster with {Q}"),
+        |world, c, _| {
+            world.mc.join_named(&c[0]);
+            world.sync()
+        },
+    );
     steps.step(&format!("{Q} has the project {Q} at {Q}"), |world, c, _| {
         world.mc.send_peer_row_of(
             &c[0],
@@ -264,12 +277,18 @@ pub fn register(steps: &mut Steps) {
                 ),
             )?;
             let started = started_since_acting(world)?;
-            expect!(started.is_empty(), "the MC was asked {}", describe(&started));
+            expect!(
+                started.is_empty(),
+                "the MC was asked {}",
+                describe(&started)
+            );
             Ok(())
         },
     );
     steps.step(
-        &format!("the user is told the file is on {Q} and to edit or copy it in HAL-C2's file viewer"),
+        &format!(
+            "the user is told the file is on {Q} and to edit or copy it in HAL-C2's file viewer"
+        ),
         |world, c, _| wait_for_toast(world, unsupported_message(&c[0], "macOS")),
     );
 }

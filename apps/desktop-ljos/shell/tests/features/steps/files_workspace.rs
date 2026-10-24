@@ -280,3 +280,12 @@ pub struct OpenedInEditor {
     pub path: String,
     pub editor: String,
 }
+
+/// Answers a `config` subscription with the fields `set_config` set so far.
+pub fn serve_config(mc: &mut crate::fake_mc::FakeMc) {
+    mc.on_shape("config", |mc, id, _| {
+        let config = Json::Object(mc.part::<ConfigFields>().0.clone());
+        mc.send(&json!({"t": "config", "id": id, "config": config}));
+        Ok(())
+    });
+}
