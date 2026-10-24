@@ -24,6 +24,7 @@ pub mod files_media;
 pub mod files_workspace;
 pub mod git;
 pub mod header;
+pub mod integrations_settings;
 pub mod keybinding;
 pub mod keymap;
 pub mod launch;
@@ -97,6 +98,7 @@ pub fn register(steps: &mut Steps) {
     files_media::register(steps);
     git::register(steps);
     header::register(steps);
+    integrations_settings::register(steps);
     keybinding::register(steps);
     keymap::register(steps);
     launch::register(steps);
