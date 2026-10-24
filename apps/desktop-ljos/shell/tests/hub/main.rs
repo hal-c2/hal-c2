@@ -56,6 +56,7 @@ mod runtime;
 mod scheduled_tasks;
 mod scripted_run;
 mod settings;
+mod sidebar_row;
 mod simple_pages;
 mod slack;
 mod snap_shot;
@@ -82,6 +83,7 @@ use hal_c2_shell::Launch;
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::json::Json;
 use ljos::App;
+use ljos::item::{MouseButtons, PointerEvent};
 use ljos::keys::KeyEvent;
 use ljos::prelude::Engine;
 use ljos::testing::TestWindow;
@@ -206,5 +208,13 @@ impl Window {
     /// Gives the window `ev`; true when something kept it.
     pub fn key(&self, ev: &KeyEvent) -> bool {
         self.0.borrow_mut().key(ev)
+    }
+
+    /// Moves the pointer to (`x`, `y`) in the window with no button held:
+    /// hover. Whether something took it.
+    pub fn hover(&self, x: f64, y: f64) -> bool {
+        let mut window = self.0.borrow_mut();
+        let now = window.now();
+        window.pointer(&PointerEvent::moved(x, y, MouseButtons::empty(), now))
     }
 }
