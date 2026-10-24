@@ -112,6 +112,39 @@ Item {
     function brickAt(item, fx, fy) {
         return item.mapToItem(null, item.width * fx, item.height * fy)
     }
+    function brickAtPx(item, x, y) {
+        return item.mapToItem(null, x, y)
+    }
+    function brickTopIndex(view) {
+        return view.indexAt(view.contentX, view.contentY + 1)
+    }
+    function brickTreeNodeIn(item, path) {
+        if (!item) return null
+        if (item.objectName === "diffTreeNode" && item.modelData && item.modelData.path === path) return item
+        var kids = item.children || []
+        for (var i = 0; i < kids.length; i++) {
+            var found = brickTreeNodeIn(kids[i], path)
+            if (found) return found
+        }
+        return null
+    }
+    function brickTreeNode(path) {
+        return brickTreeNodeIn(brickProbe, path)
+    }
+    function brickLineCommentIn(item, file, line) {
+        if (!item) return null
+        if (item.objectName === "diffLineComment" && item.row && item.row.newLine === line
+            && item.row.sign === "+" && item.row.file === file) return item
+        var kids = item.children || []
+        for (var i = 0; i < kids.length; i++) {
+            var found = brickLineCommentIn(kids[i], file, line)
+            if (found) return found
+        }
+        return null
+    }
+    function brickLineComment(file, line) {
+        return brickLineCommentIn(brickProbe, file, line)
+    }
 %BODY%
 }
 "#;
@@ -287,6 +320,53 @@ impl Brick {
                 _ => None,
             },
         )
+    }
+
+    /// The Diff panel's tree entry of `path`, if the tree draws it.
+    pub fn tree_node(&self, world: &World, path: &str) -> Outcome<Option<ObjectId>> {
+        Ok(
+            match self.call(world, "brickTreeNode", &[Value::from(path)])? {
+                Value::Object(item) => Some(item),
+                _ => None,
+            },
+        )
+    }
+
+    /// The comment button of the added line `line` of file `file` (its
+    /// index in the diff), if the list has drawn that line.
+    pub fn line_comment(&self, world: &World, file: usize, line: i32) -> Outcome<Option<ObjectId>> {
+        Ok(
+            match self.call(
+                world,
+                "brickLineComment",
+                &[Value::from(file as i32), Value::from(line)],
+            )? {
+                Value::Object(item) => Some(item),
+                _ => None,
+            },
+        )
+    }
+
+    /// The index of the row at the top of the list `view`.
+    pub fn top_index(&self, world: &World, view: ObjectId) -> Outcome<i32> {
+        let value = self.call(world, "brickTopIndex", &[Value::Object(view)])?;
+        let engine = world.engine();
+        match engine.to_js_string(&value).to_string().parse::<f64>() {
+            Ok(index) => Ok(index as i32),
+            Err(_) => fail!("the list has no top row: {value:?}"),
+        }
+    }
+
+    /// The point (x, y), in `item`'s own pixels, in window coordinates.
+    pub fn at_px(&self, world: &World, item: ObjectId, x: f64, y: f64) -> Outcome<(f64, f64)> {
+        match self.call(
+            world,
+            "brickAtPx",
+            &[Value::Object(item), Value::from(x), Value::from(y)],
+        )? {
+            Value::Point(p) => Ok((p.x, p.y)),
+            other => fail!("no point for the item: {other:?}"),
+        }
     }
 
     /// `item`'s point at (fx, fy) of its size, in window coordinates.
