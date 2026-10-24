@@ -205,6 +205,21 @@ step("the agent's background work woke it up", async (ctx: TurnWorld) => {
     outcome: "updated",
     summary: "Background activity updated",
   });
+
+  step(
+    "a pull request the thread owns woke its agent because its checks failed",
+    async (ctx: TurnWorld) => {
+      // pull_requests/wakes.ex wake.
+      await startNotifiedRun(ctx, "Pull request acme/app#12 needs your attention.", {
+        source: { kind: "pull_request", pullRequests: ["github.com/acme/app#12"] },
+        outcome: "failed",
+        summary: "acme/app#12: checks failing",
+      });
+      const fixture = await turns(ctx);
+      Object.assign(fixture.messages.at(-1)!, { createdBy: "system", creationSource: "server" });
+      await sync(ctx);
+    },
+  );
   const fixture = await turns(ctx);
   Object.assign(fixture.messages.at(-1)!, { createdBy: "agent", creationSource: "provider" });
   await sync(ctx);

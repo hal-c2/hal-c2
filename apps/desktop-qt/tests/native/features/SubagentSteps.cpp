@@ -240,6 +240,11 @@ const Steps steps([] {
     startNotifiedRun(world, {{QStringLiteral("source"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("background_task")}}},
                              {QStringLiteral("outcome"), QStringLiteral("updated")}, {QStringLiteral("summary"), QStringLiteral("Background activity updated")}});
   });
+  step(QStringLiteral("a pull request the thread owns woke its agent because its checks failed"), [](World& world, const Captures&, const Table&) {
+    // pull_requests/wakes.ex wake.
+    startNotifiedRun(world, {{QStringLiteral("source"), QJsonObject{{QStringLiteral("kind"), QStringLiteral("pull_request")}, {QStringLiteral("pullRequests"), QJsonArray{QStringLiteral("github.com/acme/app#12")}}}},
+                             {QStringLiteral("outcome"), QStringLiteral("failed")}, {QStringLiteral("summary"), QStringLiteral("acme/app#12: checks failing")}});
+  });
   step(QStringLiteral("a thread stored the agent's own wake-up as a user message"), [](World& world, const Captures&, const Table&) {
     const QString run = startRun(world);
     set(world, QStringLiteral("turn-item"), QStringLiteral("message:") + run,

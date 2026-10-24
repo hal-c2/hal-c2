@@ -1,9 +1,12 @@
 defmodule HalC2.DelegationPropTest do
   @moduledoc """
   A state machine over one delegated task: how its child thread's runs start, queue,
-  end and are rolled back, how each end is reported to the caller (at once, late, never,
-  or again), and the MC restarting (`Delegation.reconcile/2` at boot), also when the
-  restart interrupts the child's working run and nothing continues it (`Recovery`).
+  end (with an answer or without a word) and are rolled back, the background commands
+  a run leaves running and their end, how each end is reported to the caller (at once,
+  late, never, or again), the checks for a quiet child (Grok's background work ending,
+  the periodic check), and the MC restarting (`Delegation.reconcile/2` at boot), also
+  when the restart interrupts the child's working run and nothing continues it
+  (`Recovery`).
 
   The child's runs are written to its stream as the turn writer leaves them, with no
   provider behind them; the caller has a turn running, so the result message a report
@@ -12,13 +15,17 @@ defmodule HalC2.DelegationPropTest do
 
   - the task, its node and its turn item agree on how it ended;
   - once settled the task never changes, and its result reaches the caller at most once;
-  - it ended when a child run did, never when a report got through or the MC started,
-    with that run's answer;
-  - a report of a run that ended settles the task as that run ended;
-  - a restart, or a report of a run since rolled back, settles it only once the child
-    has nothing running or queued, and a restart always does then;
+  - it is never settled while its child has a run active or queued, or a background
+    command of a run not rolled back still running (hal-c2/hal-c2#508);
+  - it ended as and when the child's last run not rolled back did, never when a report
+    got through or the MC started, with the child's last answer in such a run;
+  - a report, a check for a quiet child, or a restart settles it once the child is
+    quiet, and a background command ending on a provider that wakes itself does not;
   - a delegation without a task prompt is refused, whatever the task is doing, and
-    starts nothing.
+    starts nothing;
+  - a child whose worktree is still being prepared is working, and a task whose child
+    fails or is cancelled while preparing settles as that, with why, though no turn
+    ever ran in it.
   """
 
   use ExUnit.Case, async: false
@@ -63,23 +70,39 @@ defmodule HalC2.DelegationPropTest do
   # --- model ----------------------------------------------------------------------
 
   # runs: the child's runs in ordinal order, %{id, status, ended_as}, `ended_as` how
-  # the run ended before any rollback; held: runs whose end is yet to be reported.
-  def initial_state, do: %{runs: [], held: []}
+  # the run ended before any rollback; held: runs whose end is yet to be reported;
+  # commands: background commands, %{id, run, open}.
+  def initial_state, do: %{runs: [], held: [], commands: []}
 
   def command(state) do
     running = for %{status: "running"} = run <- state.runs, do: run.id
+    preparing = for %{status: "preparing"} = run <- state.runs, do: run.id
     queued = for %{status: "queued"} = run <- state.runs, do: run.id
     ended = for %{status: s} = run <- state.runs, s in @ended, do: run.id
     reported = for %{ended_as: s} = run <- state.runs, s != nil, do: [run.id, s]
     held = for [id, _] = args <- reported, id in state.held, do: args
+    open = for %{open: true} = command <- state.commands, do: command.id
 
     frequency(
       [
         {1, {:call, __MODULE__, :restart, []}},
-        {1, {:call, __MODULE__, :delegate_blank, [blank_task()]}}
+        {1, {:call, __MODULE__, :delegate_blank, [blank_task()]}},
+        {1, {:call, __MODULE__, :check, []}}
       ] ++
         if(running == [], do: [], else: [{1, {:call, __MODULE__, :restart_unresumed, []}}]) ++
-        if(working?(state), do: [], else: [{4, {:call, __MODULE__, :start, [next(state)]}}]) ++
+        if(working?(state),
+          do: [],
+          else: [
+            {4, {:call, __MODULE__, :start, [next(state)]}},
+            {1, {:call, __MODULE__, :start_preparing, [next(state)]}}
+          ]
+        ) ++
+        if(preparing == [],
+          do: [],
+          else: [
+            {3, {:call, __MODULE__, :prepare_end, [hd(preparing), oneof(~w(failed cancelled))]}}
+          ]
+        ) ++
         if(running != [] and queued == [],
           do: [{1, {:call, __MODULE__, :queue, [next(state)]}}],
           else: []
@@ -90,7 +113,20 @@ defmodule HalC2.DelegationPropTest do
           else: [
             {5,
              {:call, __MODULE__, :finish,
-              [hd(running), oneof(@ended), frequency([{3, :at_once}, {2, :late}, {1, :lost}])]}}
+              [
+                hd(running),
+                oneof(@ended),
+                frequency([{3, :at_once}, {2, :late}, {1, :lost}]),
+                frequency([{3, true}, {1, false}])
+              ]}},
+            {2,
+             {:call, __MODULE__, :background, ["bg-#{length(state.commands) + 1}", hd(running)]}}
+          ]
+        ) ++
+        if(open == [],
+          do: [],
+          else: [
+            {3, {:call, __MODULE__, :end_background, [oneof(open), oneof([:wakes, :quiet])]}}
           ]
         ) ++
         if(held == [],
@@ -119,15 +155,24 @@ defmodule HalC2.DelegationPropTest do
 
   defp next(state), do: "run-#{length(state.runs) + 1}"
 
-  defp working?(state), do: Enum.any?(state.runs, &(&1.status in ~w(running queued)))
+  defp working?(state), do: Enum.any?(state.runs, &(&1.status in ~w(preparing running queued)))
 
-  def precondition(state, {:call, _, :start, _}), do: not working?(state)
+  def precondition(state, {:call, _, call, _}) when call in [:start, :start_preparing],
+    do: not working?(state)
 
   def precondition(state, {:call, _, :queue, _}),
     do: Enum.any?(state.runs, &(&1.status == "running"))
 
+  def precondition(state, {:call, _, :background, [id, run]}),
+    do:
+      Enum.any?(state.runs, &(&1.id == run and &1.status == "running")) and
+        not Enum.any?(state.commands, &(&1.id == id))
+
+  def precondition(state, {:call, _, :end_background, [id, _]}),
+    do: Enum.any?(state.commands, &(&1.id == id and &1.open))
+
   def precondition(state, {:call, _, call, [id | _]})
-      when call in [:cancel_queued, :finish, :roll_back, :report] do
+      when call in [:cancel_queued, :finish, :roll_back, :report, :prepare_end] do
     case Enum.find(state.runs, &(&1.id == id)) do
       nil -> false
       run -> allowed?(call, run, state)
@@ -138,11 +183,19 @@ defmodule HalC2.DelegationPropTest do
 
   defp allowed?(:cancel_queued, run, _), do: run.status == "queued"
   defp allowed?(:finish, run, _), do: run.status == "running"
+  defp allowed?(:prepare_end, run, _), do: run.status == "preparing"
   defp allowed?(:roll_back, run, _), do: run.status in @ended
   defp allowed?(:report, run, _), do: run.ended_as != nil
 
   def next_state(state, _result, {:call, _, :start, [id]}),
     do: %{state | runs: state.runs ++ [%{id: id, status: "running", ended_as: nil}]}
+
+  def next_state(state, _result, {:call, _, :start_preparing, [id]}),
+    do: %{state | runs: state.runs ++ [%{id: id, status: "preparing", ended_as: nil}]}
+
+  # Never reported again: its end is how the preparation ended, not a turn's answer.
+  def next_state(state, _result, {:call, _, :prepare_end, [id, status]}),
+    do: update(state, id, &%{&1 | status: status})
 
   def next_state(state, _result, {:call, _, :queue, [id]}),
     do: %{state | runs: state.runs ++ [%{id: id, status: "queued", ended_as: nil}]}
@@ -150,7 +203,7 @@ defmodule HalC2.DelegationPropTest do
   def next_state(state, _result, {:call, _, :cancel_queued, [id]}),
     do: update(state, id, &%{&1 | status: "cancelled"})
 
-  def next_state(state, _result, {:call, _, :finish, [id, status, how]}) do
+  def next_state(state, _result, {:call, _, :finish, [id, status, how, _said]}) do
     state = update(state, id, &%{&1 | status: status, ended_as: status})
     if how == :late, do: %{state | held: [id | state.held]}, else: state
   end
@@ -161,7 +214,18 @@ defmodule HalC2.DelegationPropTest do
   def next_state(state, _result, {:call, _, :roll_back, [id]}),
     do: update(state, id, &%{&1 | status: "rolled_back"})
 
+  def next_state(state, _result, {:call, _, :background, [id, run]}),
+    do: %{state | commands: state.commands ++ [%{id: id, run: run, open: true}]}
+
+  def next_state(state, _result, {:call, _, :end_background, [id, _]}),
+    do: %{
+      state
+      | commands: Enum.map(state.commands, &if(&1.id == id, do: %{&1 | open: false}, else: &1))
+    }
+
   def next_state(state, _result, {:call, _, :restart, []}), do: state
+
+  def next_state(state, _result, {:call, _, :check, []}), do: state
 
   def next_state(state, _result, {:call, _, :delegate_blank, _}), do: state
 
@@ -173,16 +237,17 @@ defmodule HalC2.DelegationPropTest do
           else: run
       end
 
-    %{state | runs: runs}
+    %{state | runs: runs, commands: Enum.map(state.commands, &%{&1 | open: false})}
   end
 
   defp update(state, id, fun),
     do: %{state | runs: Enum.map(state.runs, &if(&1.id == id, do: fun.(&1), else: &1))}
 
-  # Every command returns the task before and after it, and the child's runs after.
-  def postcondition(state, {:call, _, call, args}, {before, task, runs}) do
-    agree?(task) and kept?(before, task) and when_ended?(before, task, runs) and
-      delivered_once?() and expected?(state, call, args, before, task, runs)
+  # Every command returns the task before and after it, and the child's stream after.
+  def postcondition(_state, {:call, _, call, args}, {before, task, child}) do
+    agree?(task) and kept?(before, task) and never_owing?(before, task, child) and
+      as_ended?(before, task, child) and delivered_once?() and
+      expected?(call, args, before, task, child)
   end
 
   defp agree?(%{"subagent" => s, "node" => n, "item" => i}),
@@ -190,12 +255,16 @@ defmodule HalC2.DelegationPropTest do
 
   defp kept?(before, task), do: not settled?(before) or before == task
 
-  defp when_ended?(before, task, runs) do
+  # Settled only once the child is quiet: nothing running, queued, or owed.
+  defp never_owing?(before, task, child),
+    do: settled?(before) or not settled?(task) or quiet?(child)
+
+  # As the child's last run not rolled back ended, with its last answer in such a run.
+  defp as_ended?(before, task, child) do
     settled?(before) or not settled?(task) or
-      Enum.any?(runs, fn run ->
-        run["completedAt"] == task["subagent"]["completedAt"] and
-          task["subagent"]["result"] in [nil, answered(run["id"])]
-      end)
+      (task["subagent"]["status"] == ended_as(child) and
+         task["subagent"]["completedAt"] == ended_at(child) and
+         task["subagent"]["result"] == (last_answer(child) || prepared(child)))
   end
 
   defp delivered_once? do
@@ -212,49 +281,87 @@ defmodule HalC2.DelegationPropTest do
       end)
   end
 
-  # A report of an ended run settles an unsettled task as that run ended.
-  defp expected?(_state, :finish, [id, status, :at_once], before, task, _runs),
-    do: settled?(before) or ended_as?(task, id, status)
-
-  defp expected?(state, :report, [id, _], before, task, runs) do
-    run = Enum.find(state.runs, &(&1.id == id))
+  # What checks for a quiet child settles an unsettled task once it is quiet; the rest
+  # settles nothing. A background command ending on a provider that wakes itself is no
+  # reason to check: its wake run, queued after, ends and reports.
+  defp expected?(call, args, before, task, child) do
+    checks =
+      case {call, args} do
+        {:finish, [_, _, :at_once, _]} -> true
+        {:end_background, [_, :quiet]} -> true
+        {call, _} -> call in [:report, :check, :prepare_end, :restart, :restart_unresumed]
+      end
 
     cond do
       settled?(before) -> true
-      run.status != "rolled_back" -> ended_as?(task, id, run.ended_as)
-      true -> not settled?(task) or not busy?(runs)
+      checks -> settled?(task) == (runs(child) != [] and quiet?(child))
+      true -> not settled?(task)
     end
   end
-
-  # A restart settles a task whose child has stopped, and only then.
-  defp expected?(_state, call, [], before, task, runs)
-       when call in [:restart, :restart_unresumed] do
-    cond do
-      settled?(before) -> true
-      runs == [] -> not settled?(task)
-      busy?(runs) -> not settled?(task)
-      true -> settled?(task)
-    end
-  end
-
-  defp expected?(_state, _call, _args, before, task, _runs),
-    do: settled?(before) or not settled?(task)
-
-  defp ended_as?(task, id, status) do
-    run = StreamState.get(stream(@child), "run")[id]
-
-    task["subagent"]["status"] == status and
-      task["subagent"]["completedAt"] == run["completedAt"] and
-      task["subagent"]["result"] == answered(id)
-  end
-
-  # What the run said before it ended: nothing for one boot interrupted.
-  defp answered(id),
-    do: if(StreamState.get(stream(@child), "message")["answer-#{id}"], do: answer(id))
 
   defp settled?(task), do: task["subagent"]["status"] in @ended
 
-  defp busy?(runs), do: Enum.any?(runs, &(&1["status"] in ~w(running queued)))
+  defp runs(child), do: StreamState.list(child, "run") |> Enum.sort_by(& &1["ordinal"])
+
+  # Runs not rolled back, but for one boot held in the queue and that never started.
+  defp kept_runs(child),
+    do:
+      Enum.reject(
+        runs(child),
+        &(&1["status"] == "rolled_back" or HalC2.Projection.Shell.held_never_started?(&1))
+      )
+
+  defp quiet?(child),
+    do:
+      not Enum.any?(runs(child), &(&1["status"] in ~w(preparing running queued))) and
+        not owing?(child)
+
+  # A background command still running, of a run not rolled back, after a latest run
+  # that was not.
+  defp owing?(child) do
+    rolled_back = for %{"status" => "rolled_back", "id" => id} <- runs(child), do: id
+
+    List.last(runs(child))["status"] != "rolled_back" and
+      Enum.any?(
+        StreamState.list(child, "turn-item"),
+        &(&1["type"] == "command_execution" and &1["status"] == "running" and
+            &1["runId"] not in rolled_back)
+      )
+  end
+
+  defp ended_as(child), do: (List.last(kept_runs(child)) || %{})["status"] || "cancelled"
+
+  defp ended_at(child) do
+    run = List.last(kept_runs(child)) || List.last(runs(child))
+    run["completedAt"] || run["updatedAt"]
+  end
+
+  defp last_answer(child) do
+    messages = StreamState.get(child, "message")
+
+    kept_runs(child)
+    |> Enum.map(&messages["answer-#{&1["id"]}"])
+    |> Enum.reject(&is_nil/1)
+    |> List.last(%{})
+    |> Map.get("text")
+  end
+
+  # Why a child whose last run never started ended, as its preparation items say.
+  defp prepared(child) do
+    items = StreamState.get(child, "turn-item")
+    id = (List.last(kept_runs(child)) || %{})["id"]
+
+    cond do
+      items["turn-item:workspace-preparation-failure:#{id}"] ->
+        "Workspace preparation failed: no space left"
+
+      items["turn-item:workspace-preparation:#{id}"]["status"] == "cancelled" ->
+        "Workspace preparation was cancelled."
+
+      true ->
+        nil
+    end
+  end
 
   # --- the real side ----------------------------------------------------------------
 
@@ -320,20 +427,60 @@ defmodule HalC2.DelegationPropTest do
 
   def start(id), do: observe(fn -> commit(@child, [{"run", id, run(id, "running")}]) end)
 
+  # A run waiting on its worktree, with the "Preparing workspace" item the MC gives it.
+  def start_preparing(id) do
+    observe(fn ->
+      commit(@child, [
+        {"run", id, run(id, "preparing")},
+        {"turn-item", "turn-item:workspace-preparation:#{id}",
+         %{
+           "id" => "turn-item:workspace-preparation:#{id}",
+           "ordinal" => item_ordinal(),
+           "type" => "command_execution",
+           "runId" => id,
+           "input" => "Preparing workspace",
+           "status" => "running"
+         }}
+      ])
+    end)
+  end
+
+  # The worktree setup fails or is cancelled. The report to the caller comes from a
+  # process of its own; its hook names it, and its exit is the receipt that it is done.
+  def prepare_end(id, status) do
+    observe(fn ->
+      Application.put_env(:hal_c2, :delegation_hook, {__MODULE__, :reporting, [self()]})
+      failure = if status == "failed", do: %{"message" => "no space left"}
+      :ok = HalC2.Orchestration.fail_prepared(@child, id, status, failure)
+      assert_receive {:reporter, reporter}, 5_000
+      ref = Process.monitor(reporter)
+      assert_receive {:DOWN, ^ref, _, _, _}, 5_000
+      Application.delete_env(:hal_c2, :delegation_hook)
+    end)
+  end
+
+  def reporting(pid, :reporting, _id), do: send(pid, {:reporter, self()})
+  def reporting(_pid, _stage, _id), do: :ok
+
   def queue(id), do: observe(fn -> commit(@child, [{"run", id, run(id, "queued")}]) end)
 
   def cancel_queued(id),
     do: observe(fn -> commit(@child, [{"run", id, ended(id, "cancelled")}]) end)
 
-  # The run ends with its answer; its end is reported to the caller at once, later
-  # (`report/1`), or never, as a crash between the two would lose it.
-  def finish(id, status, how) do
+  # The run ends with its answer, or without a word (a turn that only handled a
+  # monitor's update); its end is reported to the caller at once, later (`report/1`),
+  # or never, as a crash between the two would lose it.
+  def finish(id, status, how, said) do
     observe(fn ->
-      commit(@child, [
-        {"message", "answer-#{id}",
-         %{"id" => "answer-#{id}", "runId" => id, "role" => "assistant", "text" => answer(id)}},
-        {"run", id, ended(id, status)}
-      ])
+      answer =
+        if said,
+          do: [
+            {"message", "answer-#{id}",
+             %{"id" => "answer-#{id}", "runId" => id, "role" => "assistant", "text" => answer(id)}}
+          ],
+          else: []
+
+      commit(@child, answer ++ [{"run", id, ended(id, status)}])
 
       if how == :at_once, do: Delegation.finished(@child, id, status)
     end)
@@ -341,6 +488,36 @@ defmodule HalC2.DelegationPropTest do
 
   # The end of run `id`, reported as it ended (`status`), whatever happened to it since.
   def report(id, status), do: observe(fn -> Delegation.finished(@child, id, status) end)
+
+  # Run `run` starts a command that keeps running in the background.
+  def background(id, run) do
+    observe(fn ->
+      commit(@child, [
+        {"turn-item", id,
+         %{
+           "id" => id,
+           "ordinal" => item_ordinal(),
+           "type" => "command_execution",
+           "runId" => run,
+           "input" => "npm run dev",
+           "status" => "running"
+         }}
+      ])
+    end)
+  end
+
+  # The command ends. A provider that wakes itself for it (Codex, Claude) starts a run
+  # about it, which this model starts as any other; one that does not (Grok) checks
+  # whether the child is quiet now.
+  def end_background(id, how) do
+    observe(fn ->
+      commit(@child, [{"turn-item", id, %{"status" => "completed"}}])
+      if how == :quiet, do: Delegation.settle_if_quiet(@child)
+    end)
+  end
+
+  # The periodic check for a child no provider process drives.
+  def check, do: observe(fn -> Delegation.settle_if_quiet(@child) end)
 
   def roll_back(id),
     do: observe(fn -> commit(@child, [{"run", id, %{"status" => "rolled_back"}}]) end)
@@ -368,7 +545,7 @@ defmodule HalC2.DelegationPropTest do
   defp observe(fun) do
     before = task()
     fun.()
-    {before, task(), StreamState.list(stream(@child), "run")}
+    {before, task(), stream(@child)}
   end
 
   defp task do
@@ -408,6 +585,9 @@ defmodule HalC2.DelegationPropTest do
         for({kind, eid, s} <- entities, do: {kind, eid, %{"s" => s}})
       )
   end
+
+  # Turn items are numbered, as the MC numbers them (`Orchestration.next_ordinal/1`).
+  defp item_ordinal, do: HalC2.Orchestration.next_ordinal(stream(@child))
 
   defp stream(id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(id))
 end

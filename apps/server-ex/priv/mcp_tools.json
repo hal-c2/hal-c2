@@ -172,12 +172,51 @@
   },
   {
     "name": "delegate_task",
-    "description": "Delegate one task to a HAL-C2-owned child agent/subagent of THIS thread and run it with only the supplied task prompt, without copying parent conversation history. Prefer native subagent tools for same-provider work when available. Use this for cross-provider work, when native delegation is unavailable, or when the user explicitly requests HAL-C2-owned child tasks. The childThreadId is backing storage, not an ordinary top-level thread. Provider, model, model options (see orchestrator_capabilities), runtime mode, and interaction mode inherit unless target overrides them. Prefer mode='async' for long work; mode='wait' blocks until completion or timeout. timeoutMs on mode=wait is only the parent's wait budget and does not cancel the child. waitTimedOut on that wait call means the timeout fired; keep that taskId and read status on later task_status. An async child's completion wakes this thread through a notification, steered into active turns where supported or queued otherwise, so end the turn instead of polling or spawning watchers; use task_status only when the result is needed mid-turn.",
+    "description": "Delegate one task to a HAL-C2-owned child agent/subagent of THIS thread and run it with only the supplied task prompt, without copying parent conversation history. Prefer native subagent tools for same-provider work when available. Use this for cross-provider work, when native delegation is unavailable, or when the user explicitly requests HAL-C2-owned child tasks. The childThreadId is backing storage, not an ordinary top-level thread. Provider, model, model options (see orchestrator_capabilities), runtime mode, and interaction mode inherit unless target overrides them. Prefer mode='async' for long work; mode='wait' blocks until completion or timeout. timeoutMs on mode=wait is only the parent's wait budget and does not cancel the child. waitTimedOut on that wait call means the timeout fired; keep that taskId and read status on later task_status. An async child's completion wakes this thread through a notification, steered into active turns where supported or queued otherwise, so end the turn instead of polling or spawning watchers; use task_status only when the result is needed mid-turn. To give the subagent its own checkout pass workspace; do not ask it to run git worktree add itself, which does not update its binding.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "task": {
           "type": "string"
+        },
+        "workspace": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": { "type": { "enum": ["inherit"] } },
+              "required": ["type"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": { "type": { "enum": ["root"] } },
+              "required": ["type"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": { "enum": ["existing_worktree"] },
+                "worktreePath": { "type": "string" },
+                "branch": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+              },
+              "required": ["type", "worktreePath"],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": { "enum": ["worktree"] },
+                "baseRef": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                "branch": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                "startFromOrigin": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] }
+              },
+              "required": ["type"],
+              "additionalProperties": false
+            },
+            { "type": "null" }
+          ],
+          "description": "Where the subagent works. Omitted (or {type:\"inherit\"}) is the caller's own worktree and branch, unlike hal_c2_thread_launch where omitted means the project root. {type:\"worktree\"} makes a new git worktree before the subagent starts, from baseRef (default: the caller's current branch, or its commit when detached) with startFromOrigin false (default), so local commits are included and uncommitted edits are not, on branch (default: generated from the task). {type:\"existing_worktree\",worktreePath} uses another checkout of this project; {type:\"root\"} the project's main checkout. These need a full-access/default caller. A workspace that cannot be made refuses the task; it never falls back to the caller's checkout. Preparation time counts against mode='wait' timeoutMs. The result and task_status report worktreePath and branch."
         },
         "target": {
           "anyOf": [
@@ -3795,7 +3834,7 @@
   },
   {
     "name": "task_status",
-    "description": "Read a HAL-C2-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState is working until the task ends, then result_available. summary is the final task result, including provider errors on failure, and remains stable after publication. hasPendingChildRuns reports whether the child thread still has queued or executing runs. Reading a terminal result acknowledges its automatic parent delivery.",
+    "description": "Read a HAL-C2-owned delegated task created by this parent thread. childRunId identifies the original delegated run. workState is working while the child has a run active or queued, waiting_for_children while no run is active but the child still owes background work (commands, tools, or tasks of its own), and result_available once the task has ended. A task ends only when its child is quiet, never on a turn that left work running. summary is the final task result, the child's last answer, including provider errors on failure, and remains stable after publication. hasPendingChildRuns reports whether the child thread still has queued or executing runs.",
     "inputSchema": {
       "type": "object",
       "properties": {
