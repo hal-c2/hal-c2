@@ -2093,7 +2093,7 @@ impl ProviderSettings {
         ids.sort_by(|a, b| {
             (*b == local)
                 .cmp(&(*a == local))
-                .then_with(|| labels[a].cmp(&labels[b]))
+                .then_with(|| crate::sidebar_model::locale_compare(&labels[a], &labels[b]))
         });
         let environments: Vec<Json> = ids
             .iter()

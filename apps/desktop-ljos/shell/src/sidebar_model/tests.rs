@@ -505,6 +505,25 @@ fn projects_sort_by_their_latest_thread() {
 }
 
 #[test]
+fn projects_of_one_age_go_by_the_system_locales_alphabet() {
+    // The C locale has no alphabet: Qt's order there is by code unit.
+    if ljos::locale::Locale::system().name() == "C" {
+        return;
+    }
+    let projects: Vec<Project> = ["z", "b", "B", "\u{e4}", "a"]
+        .iter()
+        .map(|title| project("e", title, &format!("/{title}"), json!({})))
+        .collect();
+    let titles: Vec<String> = group_projects(&projects, &GroupingSettings::default(), "", &[])
+        .into_iter()
+        .map(|g| g.summary["displayName"].as_str().unwrap().to_owned())
+        .collect();
+    // Letters, then accents, then case: not code units (`B a b z ä`), nor
+    // case folded (`a B b z ä`).
+    assert_eq!(titles, ["a", "\u{e4}", "b", "B", "z"]);
+}
+
+#[test]
 fn windows_paths_fold() {
     assert_eq!(normalize_path(" C:/Work/Shop/ "), "c:\\work\\shop");
     assert_eq!(normalize_path("C:\\"), "c:\\");

@@ -1215,15 +1215,10 @@ impl Workspace {
                 }
             }
         }
-        // Qt's localeAwareCompare; case-insensitive first comes closest
-        // without a collator.
         checkouts.sort_by(|a, b| {
-            b.primary.cmp(&a.primary).then_with(|| {
-                a.label
-                    .to_lowercase()
-                    .cmp(&b.label.to_lowercase())
-                    .then_with(|| a.label.cmp(&b.label))
-            })
+            b.primary
+                .cmp(&a.primary)
+                .then_with(|| sidebar_model::locale_compare(&a.label, &b.label))
         });
         checkouts
             .into_iter()

@@ -19,8 +19,9 @@ mcp = ["ljos/mcp"]
 [dependencies]
 # dev-qml: the shell compiles its QML at start-up (the README says why).
 # render: `--render`. media: the Device tab's screen is decoded with Ljós's
-# stream decoder (src/device/decoder.rs).
-ljos = { workspace = true, features = ["shell", "dev-qml", "render", "media"] }
+# stream decoder (src/device/decoder.rs). collation: names sort by the
+# locale's alphabet (sidebar_model::locale_compare, `localeCompare`).
+ljos = { workspace = true, features = ["shell", "dev-qml", "render", "media", "collation"] }
 hal_c2_mc.workspace = true
 # The kept session (src/session.rs).
 serde.workspace = true

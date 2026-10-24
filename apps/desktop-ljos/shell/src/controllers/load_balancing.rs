@@ -190,15 +190,17 @@ impl LoadBalancing {
             return;
         }
         // This machine first, the rest by name.
-        // TODO(ljos#75): Qt compared with QString::localeAwareCompare; this
-        // is a plain lowercase compare.
         let mut named: Vec<(String, String)> = machines
             .into_iter()
             .map(|id| (scope.label(engine, &id), id))
             .collect();
         named.sort_by(|(a_label, a), (b_label, b)| {
-            ((b == &local).cmp(&(a == &local)))
-                .then_with(|| a_label.to_lowercase().cmp(&b_label.to_lowercase()))
+            ((b == &local).cmp(&(a == &local))).then_with(|| {
+                crate::sidebar_model::locale_compare(
+                    &a_label.to_lowercase(),
+                    &b_label.to_lowercase(),
+                )
+            })
         });
         let settings = Settings::of(engine);
         let document = settings.settings();
