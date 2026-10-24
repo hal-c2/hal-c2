@@ -190,6 +190,12 @@ pub fn reload(engine: &Engine) {
     match qml::compile(&roots) {
         Ok(compiled) => {
             engine.set_component_source(compiled.source);
+            // Plugin pages are QML text; a fresh compiler reads the files
+            // as they are now, as `App::qml_dirs` gave the first one.
+            if let Ok(dirs) = roots.dirs() {
+                let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+                ljos::dev::install_text_compiler(engine, &paths);
+            }
             next_generation(engine, &state);
         }
         // A root that cannot be read: what is shown stays, and says why.

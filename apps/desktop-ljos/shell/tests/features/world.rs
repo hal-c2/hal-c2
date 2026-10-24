@@ -195,6 +195,12 @@ impl World {
             .locale("en_US")
             .register(hal_c2_shell::register)
             .build_engine();
+        // What `App::qml_dirs` gives main.rs: a plugin page is QML text.
+        let dirs = hal_c2_shell::qml::Roots::checkout()
+            .dirs()
+            .expect("the shell's QML");
+        let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+        ljos::dev::install_text_compiler(&engine, &paths);
         // Before the shell starts, for its timers to start on the window's clock.
         let window = TestWindow::new(&engine, WINDOW.0, WINDOW.1);
         let wake = |signal: &Arc<Signal>| {
