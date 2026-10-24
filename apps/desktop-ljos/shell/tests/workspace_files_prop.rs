@@ -3,6 +3,8 @@
 //! runs each RPC on its own) may. Meanwhile the user switches workspace,
 //! shows and hides the tab, opens and closes folders and files, searches,
 //! retries, and the agent changes the files and the tree is listed again.
+//! A media file is never read: it previews from an address the MC signs,
+//! which may run out, fail to load, and be signed again.
 //! The port of desktop-qt's tests/prop/tst_WorkspaceFilesProp.cpp.
 //!
 //! The model is what the user should see: each folder's listing from the
@@ -14,6 +16,7 @@
 
 mod common;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -42,12 +45,21 @@ fn parent_of(path: &str) -> &str {
 type Entry = (String, bool);
 
 /// A workspace's disk at a version: `d/e` deep, a file in each folder, the
-/// top's and the deepest's named after the version so a stale listing shows.
+/// top's and the deepest's named after the version so a stale listing shows,
+/// and an image and a video.
 fn listing_of(root: &str, version: u32, folder: &str) -> Vec<Entry> {
     let tag = &root[1.min(root.len())..];
     match folder {
-        "" => vec![("d".into(), true), (format!("{tag}-{version}.txt"), false)],
-        "d" => vec![("d/e".into(), true), (format!("d/{tag}.md"), false)],
+        "" => vec![
+            ("d".into(), true),
+            ("logo.png".into(), false),
+            (format!("{tag}-{version}.txt"), false),
+        ],
+        "d" => vec![
+            ("d/e".into(), true),
+            ("d/clip.mp4".into(), false),
+            (format!("d/{tag}.md"), false),
+        ],
         _ => vec![(format!("d/e/{tag}-{version}.txt"), false)],
     }
 }
@@ -70,6 +82,16 @@ fn matches_of(root: &str, version: u32, query: &str) -> Vec<String> {
 
 fn contents_of(root: &str, version: u32, path: &str) -> String {
     format!("{root}:{path}@{version}")
+}
+
+fn is_media(path: &str) -> bool {
+    path.ends_with(".png") || path.ends_with(".mp4")
+}
+
+/// The address the MC signs `count`-th, for `path`.
+fn address_of(count: u32, path: &str) -> String {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    format!("/api/assets/{count}/{name}")
 }
 
 fn entries_json(entries: &[Entry]) -> Json {
@@ -96,6 +118,7 @@ enum Kind {
     List,
     Search,
     Read,
+    Sign,
 }
 
 /// One request the MC holds: what it is for, and its answer as the disk was.
@@ -149,6 +172,15 @@ struct Model {
     open_path: String,
     file_status: &'static str,
     text: String,
+    /// A media file's address, and whether it still works.
+    media_url: String,
+    fresh: bool,
+    /// How many addresses the MC has signed.
+    signed_count: u32,
+    /// The signing "Open in browser" waits for, and the addresses the
+    /// browser got.
+    open_on_sign: Option<u32>,
+    opened: Vec<String>,
     pending: Vec<Request>,
     seq: u32,
     /// The newest request of each folder, search and read of this workspace.
@@ -173,6 +205,11 @@ impl Model {
             open_path: String::new(),
             file_status: "none",
             text: String::new(),
+            media_url: String::new(),
+            fresh: false,
+            signed_count: 0,
+            open_on_sign: None,
+            opened: Vec::new(),
             pending: Vec::new(),
             seq: 0,
             latest_list: HashMap::new(),
@@ -215,6 +252,7 @@ impl Model {
                 request.contents = contents_of(&self.root, self.version(), key);
                 self.latest_read = Some(self.seq);
             }
+            Kind::Sign => self.latest_read = Some(self.seq),
         }
         self.pending.push(request);
     }
@@ -298,7 +336,41 @@ impl Model {
         self.open_path.clear();
         self.file_status = "none";
         self.text.clear();
+        self.media_url.clear();
         self.latest_read = None;
+    }
+
+    /// WorkspaceFiles::openMedia: the browser gets the address shown while
+    /// it works, else the next one signed for this open.
+    fn open_media(&mut self) {
+        if !is_media(&self.open_path) {
+            return;
+        }
+        if self.file_status == "ready" && !self.expired() {
+            self.opened.push(self.media_url.clone());
+            return;
+        }
+        self.reload();
+        self.open_on_sign = self.latest_read;
+    }
+
+    /// A media file shown with an address that no longer works.
+    fn expired(&self) -> bool {
+        is_media(&self.open_path) && (self.media_url.is_empty() || !self.fresh)
+    }
+
+    /// WorkspaceFiles::reloadFile: a media file is signed for, any other
+    /// read.
+    fn reload(&mut self) {
+        self.file_status = "loading";
+        self.media_url.clear();
+        let kind = if is_media(&self.open_path) {
+            Kind::Sign
+        } else {
+            Kind::Read
+        };
+        let path = self.open_path.clone();
+        self.ask(kind, &path);
     }
 
     fn set_target(&mut self, next: &str) {
@@ -324,16 +396,18 @@ impl Model {
         if self.active && !self.root.is_empty() && self.folder("").state == State::Unloaded {
             self.reload_tree();
         }
+        if self.active && self.file_status == "ready" && self.expired() {
+            self.reload();
+        }
     }
 
     fn open(&mut self, path: &str) {
         if self.root.is_empty() {
             return;
         }
-        if path != self.open_path || self.file_status != "ready" {
+        if path != self.open_path || self.file_status != "ready" || self.expired() {
             self.open_path = path.into();
-            self.file_status = "loading";
-            self.ask(Kind::Read, path);
+            self.reload();
         }
         self.set_query("");
         self.revealing = path.into();
@@ -345,7 +419,7 @@ impl Model {
     }
 
     /// The MC answers the request, the `rank`-th like it (oldest first).
-    fn answer(&mut self, like: &Request, rank: usize, ok: bool) {
+    fn answer(&mut self, like: &Request, rank: usize, ok: bool, lasting: bool) {
         let at = self
             .pending
             .iter()
@@ -355,6 +429,10 @@ impl Model {
             .map(|(at, _)| at)
             .expect("a pending request");
         let request = self.pending.remove(at);
+        let sign = request.kind == Kind::Sign;
+        if sign && ok {
+            self.signed_count += 1;
+        }
         if request.root != self.root {
             return;
         }
@@ -380,12 +458,19 @@ impl Model {
                     Vec::new()
                 };
             }
-            Kind::Read => {
+            Kind::Read | Kind::Sign => {
                 if self.latest_read != Some(request.seq) {
                     return;
                 }
                 self.file_status = if ok { "ready" } else { "error" };
                 self.text = if ok { request.contents } else { String::new() };
+                if sign && ok {
+                    self.media_url = address_of(self.signed_count, &request.key);
+                    self.fresh = lasting;
+                    if self.open_on_sign.take() == Some(request.seq) {
+                        self.opened.push(self.media_url.clone());
+                    }
+                }
             }
         }
     }
@@ -484,6 +569,9 @@ struct Sut {
     held: Vec<(Request, usize)>,
     /// How many of the MC's calls were looked at.
     seen: usize,
+    signed_count: u32,
+    /// The addresses handed to the browser.
+    opened: Rc<RefCell<Vec<String>>>,
 }
 
 impl Sut {
@@ -498,6 +586,15 @@ impl Sut {
         let files = WorkspaceFiles::create(&engine, None, mc.clone()).expect("the files");
         let tree = WorkspaceFiles::tree(&engine, files).expect("its tree");
         WorkspaceFiles::set_target(&engine, files, "env-a", "", "");
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        let heard = opened.clone();
+        engine
+            .connect_by_name(files, "mediaOpened", move |_, args| {
+                if let Some(Value::String(url)) = args.first() {
+                    heard.borrow_mut().push((**url).to_owned());
+                }
+            })
+            .expect("mediaOpened");
         Sut {
             engine,
             window,
@@ -507,6 +604,8 @@ impl Sut {
             versions: HashMap::new(),
             held: Vec::new(),
             seen: 0,
+            signed_count: 0,
+            opened,
         }
     }
 
@@ -516,14 +615,27 @@ impl Sut {
         self.window.advance(SEARCH_DELAY_MS as u64).unwrap();
         let calls = self.mc.calls.borrow().clone();
         for (index, (_, method, payload)) in calls.iter().enumerate().skip(self.seen) {
-            let text = |key: &str| payload.get(key).and_then(Json::as_str).unwrap_or("");
+            // A signing names the workspace by its folder, or by its thread
+            // (/w1's is w1).
+            let of = match method.as_str() {
+                "assets.createUrl" => payload.get("resource").unwrap_or(payload),
+                _ => payload,
+            };
+            let text = |key: &str| of.get(key).and_then(Json::as_str).unwrap_or("");
             let (kind, key) = match method.as_str() {
                 "projects.listEntries" => (Kind::List, text("directoryPath")),
                 "projects.searchEntries" => (Kind::Search, text("query")),
                 "projects.readFile" => (Kind::Read, text("relativePath")),
+                "assets.createUrl" => (Kind::Sign, text("path")),
                 _ => continue,
             };
-            let root = text("cwd");
+            let thread = text("threadId");
+            let root = if thread.is_empty() {
+                text("cwd").to_owned()
+            } else {
+                format!("/{thread}")
+            };
+            let root = root.as_str();
             let version = self.versions.get(root).copied().unwrap_or(0);
             let mut request = Request {
                 kind,
@@ -542,13 +654,14 @@ impl Sut {
                         .collect();
                 }
                 Kind::Read => request.contents = contents_of(root, version, key),
+                Kind::Sign => {}
             }
             self.held.push((request, index));
         }
         self.seen = calls.len();
     }
 
-    fn answer(&mut self, like: &Request, rank: usize, ok: bool) {
+    fn answer(&mut self, like: &Request, rank: usize, ok: bool, lasting: bool) {
         let at = self
             .held
             .iter()
@@ -560,6 +673,15 @@ impl Sut {
         let (request, index) = self.held.remove(at);
         let result = if !ok {
             Err(McError::new("no"))
+        } else if request.kind == Kind::Sign {
+            // An hour, or less than the minute the client keeps in hand.
+            self.signed_count += 1;
+            let now = hal_c2_shell::controllers::sidebar::now_ms(&self.engine);
+            let expires = now + if lasting { 3_600_000 } else { 30_000 };
+            Ok(json!({
+                "relativeUrl": address_of(self.signed_count, &request.key),
+                "expiresAt": expires as f64,
+            }))
         } else if request.kind == Kind::Read {
             Ok(json!({"contents": request.contents}))
         } else {
@@ -591,12 +713,14 @@ impl Sut {
 
 #[derive(Clone, Debug)]
 enum Op {
-    Target(usize),
+    /// A workspace, a thread's (true) or a draft's.
+    Target(usize, bool),
     Active(bool),
     /// Index into the folders; skipped unless the tree shows it.
     Toggle(usize),
-    /// Index into the pending requests, ok or refused.
-    Answer(usize, bool),
+    /// Index into the pending requests, ok or refused, and whether a signed
+    /// address is good for an hour or has all but run out.
+    Answer(usize, bool, bool),
     Change,
     /// Index into the failed folders.
     Retry(usize),
@@ -604,29 +728,44 @@ enum Op {
     /// Index into the files of the current disk.
     Open(usize),
     Close,
+    /// The preview could not load an address: the one shown (true), or one
+    /// it showed before.
+    MediaFailed(bool),
+    /// The file's "Try again".
+    ReloadFile,
+    /// "Open in browser" on a video.
+    OpenMedia,
 }
 
 fn op() -> impl Strategy<Value = Op> {
     prop_oneof![
-        (0..ROOTS.len()).prop_map(Op::Target),
+        (0..ROOTS.len(), any::<bool>()).prop_map(|(i, thread)| Op::Target(i, thread)),
         any::<bool>().prop_map(Op::Active),
         (0..FOLDERS.len()).prop_map(Op::Toggle),
         (0..FOLDERS.len()).prop_map(Op::Toggle),
-        (0..16usize, prop_oneof![4 => Just(true), 1 => Just(false)])
-            .prop_map(|(i, ok)| Op::Answer(i, ok)),
-        (0..16usize, prop_oneof![4 => Just(true), 1 => Just(false)])
-            .prop_map(|(i, ok)| Op::Answer(i, ok)),
-        (0..16usize, prop_oneof![4 => Just(true), 1 => Just(false)])
-            .prop_map(|(i, ok)| Op::Answer(i, ok)),
-        (0..16usize, prop_oneof![4 => Just(true), 1 => Just(false)])
-            .prop_map(|(i, ok)| Op::Answer(i, ok)),
+        answer(),
+        answer(),
+        answer(),
+        answer(),
         Just(Op::Change),
         (0..4usize).prop_map(Op::Retry),
         (0..QUERIES.len()).prop_map(Op::Query),
-        (0..3usize).prop_map(Op::Open),
-        (0..3usize).prop_map(Op::Open),
+        (0..8usize).prop_map(Op::Open),
+        (0..8usize).prop_map(Op::Open),
         Just(Op::Close),
+        any::<bool>().prop_map(Op::MediaFailed),
+        Just(Op::ReloadFile),
+        Just(Op::OpenMedia),
     ]
+}
+
+fn answer() -> impl Strategy<Value = Op> {
+    (
+        0..16usize,
+        prop_oneof![4 => Just(true), 1 => Just(false)],
+        any::<bool>(),
+    )
+        .prop_map(|(i, ok, lasting)| Op::Answer(i, ok, lasting))
 }
 
 /// Compares the Files tab with the model; the failure says which part.
@@ -684,6 +823,13 @@ fn check(model: &Model, sut: &Sut) -> Result<(), String> {
     if model.file_status != "loading" {
         same("text", text, model.text.clone())?;
     }
+    // The fake MC has no origin, so an address stays as the MC signed it.
+    same("media address", facts.media_url, model.media_url.clone())?;
+    same(
+        "opened in the browser",
+        format!("{:?}", sut.opened.borrow()),
+        format!("{:?}", model.opened),
+    )?;
     Ok(())
 }
 
@@ -692,9 +838,15 @@ fn run(ops: Vec<Op>) -> Result<(), TestCaseError> {
     let mut sut = Sut::new();
     for op in ops {
         let done = match op.clone() {
-            Op::Target(i) => {
-                model.set_target(ROOTS[i]);
-                WorkspaceFiles::set_target(&sut.engine, sut.files, "env-a", ROOTS[i], "");
+            Op::Target(i, thread) => {
+                let root = ROOTS[i];
+                let thread = if thread {
+                    &root[1.min(root.len())..]
+                } else {
+                    ""
+                };
+                model.set_target(root);
+                WorkspaceFiles::set_target(&sut.engine, sut.files, "env-a", root, thread);
                 true
             }
             Op::Active(active) => {
@@ -719,7 +871,7 @@ fn run(ops: Vec<Op>) -> Result<(), TestCaseError> {
                 }
                 shown
             }
-            Op::Answer(i, ok) => {
+            Op::Answer(i, ok, lasting) => {
                 if model.pending.is_empty() {
                     false
                 } else {
@@ -729,8 +881,8 @@ fn run(ops: Vec<Op>) -> Result<(), TestCaseError> {
                         .iter()
                         .filter(|r| r.same(&request))
                         .count();
-                    model.answer(&request, rank, ok);
-                    sut.answer(&request, rank, ok);
+                    model.answer(&request, rank, ok, lasting);
+                    sut.answer(&request, rank, ok, lasting);
                     true
                 }
             }
@@ -801,6 +953,46 @@ fn run(ops: Vec<Op>) -> Result<(), TestCaseError> {
                 common::call(&sut.engine, sut.files, "closeFile", &[]);
                 true
             }
+            Op::MediaFailed(shown) => {
+                if model.media_url.is_empty() {
+                    false
+                } else {
+                    let url = if shown {
+                        model.media_url.clone()
+                    } else {
+                        format!("{}-old", model.media_url)
+                    };
+                    if shown {
+                        model.media_url.clear();
+                        model.file_status = "error";
+                    }
+                    common::call(
+                        &sut.engine,
+                        sut.files,
+                        "mediaFailed",
+                        &[Value::from(url.as_str())],
+                    );
+                    true
+                }
+            }
+            Op::ReloadFile => {
+                if model.open_path.is_empty() {
+                    false
+                } else {
+                    model.reload();
+                    common::call(&sut.engine, sut.files, "reloadFile", &[]);
+                    true
+                }
+            }
+            Op::OpenMedia => {
+                if is_media(&model.open_path) {
+                    model.open_media();
+                    common::call(&sut.engine, sut.files, "openMedia", &[]);
+                    true
+                } else {
+                    false
+                }
+            }
         };
         if !done {
             continue;
@@ -814,7 +1006,7 @@ fn run(ops: Vec<Op>) -> Result<(), TestCaseError> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(64))]
+    #![proptest_config(ProptestConfig::with_cases(256))]
 
     /// The Files tab shows the newest answers about the workspace on screen.
     #[test]
