@@ -558,6 +558,17 @@ Feature: Moving a thread and its agent to another machine
       And the agent of "caller" waits for the turn and reads "done" in "Alpha"
 
     @mc
+    Scenario: An agent cannot start a turn a thread it moved no longer allows it
+      Given the thread "caller" runs in full-access mode
+      And "Alpha" is in plan mode
+      And the agent of "caller" moves "Alpha" to "desktop"
+      And "Alpha" leaves plan mode on "desktop"
+      And "planner" runs in plan mode
+      When the agent of "planner" sends "say done" to "Alpha"
+      Then the agent of "planner" is refused with "interaction_mode_escalation_denied"
+      And no turn runs on "desktop"
+
+    @mc
     Scenario: An agent interrupts a turn on a thread it moved
       Given the thread "caller" runs in full-access mode
       And the agent of "caller" moves "Alpha" to "desktop"

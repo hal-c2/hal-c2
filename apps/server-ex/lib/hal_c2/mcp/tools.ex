@@ -37,6 +37,8 @@ defmodule HalC2.Mcp.Tools do
     "full-access" => 3
   }
   @finished ~w(completed failed interrupted cancelled rolled_back)
+  # How long the MC a thread moved to has to answer a send, stop or read.
+  @owner_timeout :timer.minutes(2)
 
   @doc "The advertised tools (MCP `tools/list`)."
   def list do
@@ -186,9 +188,8 @@ defmodule HalC2.Mcp.Tools do
 
   def run("hal_c2_thread_send", args, %{row: me} = caller) do
     with {:ok, row} <- project_thread(me, args["threadId"]),
-         :ok <- live(caller),
-         :ok <- no_escalation(me, row) do
-      deliver(row["id"], me["id"], args)
+         :ok <- live(caller) do
+      deliver(row["id"], me, args)
     end
   end
 
@@ -587,19 +588,22 @@ defmodule HalC2.Mcp.Tools do
   def stream(thread_id), do: HalC2.Streams.state(thread_id)
 
   @doc """
-  Sends an agent's message to a thread of this MC, or of the MC it moved to: `auto`
-  steers a running turn and starts one otherwise.
+  Sends the message of `sender`, the calling agent's thread row, to a thread of this
+  MC, or of the MC it moved to: `auto` steers a running turn and starts one otherwise.
+  The thread's modes are checked where it lives, as they are now.
   """
   def deliver(id, sender, args) do
     case HalC2.Shell.row(node(), id) do
       {"thread", %{"movedTo" => %{"mc" => mc}}} when is_binary(mc) ->
-        on_mc(mc, __MODULE__, :deliver, [id, sender, args])
+        on_mc(mc, __MODULE__, :deliver, [id, sender, args], @owner_timeout)
 
       {"thread", %{"archivedAt" => archived}} when archived != nil ->
         {:error, "thread_not_sendable", "The thread is archived."}
 
       {"thread", row} ->
-        dispatch_message(row, sender, args)
+        # The stream's modes: the sidebar row trails a change.
+        with :ok <- no_escalation(sender, thread(id) || row),
+             do: dispatch_message(row, sender["id"], args)
 
       nil ->
         {:error, "thread_not_found", "The thread was not found."}
@@ -653,7 +657,7 @@ defmodule HalC2.Mcp.Tools do
   def interrupt(id, args) do
     case HalC2.Shell.row(node(), id) do
       {"thread", %{"movedTo" => %{"mc" => mc}}} when is_binary(mc) ->
-        on_mc(mc, __MODULE__, :interrupt, [id, args])
+        on_mc(mc, __MODULE__, :interrupt, [id, args], @owner_timeout)
 
       {"thread", _row} ->
         # From the stream: the sidebar row trails a run's start.
@@ -686,17 +690,26 @@ defmodule HalC2.Mcp.Tools do
   # runs on that MC, in the project it moved into. `:here` for a thread that did not move.
   defp on_owner(%{"movedTo" => %{"mc" => mc, "projectId" => project}}, name, args, caller)
        when is_binary(mc) and is_binary(project) do
-    on_mc(mc, __MODULE__, :run, [
-      name,
-      args,
-      %{caller | row: %{caller.row | "projectId" => project}}
-    ])
+    on_mc(
+      mc,
+      __MODULE__,
+      :run,
+      [name, args, %{caller | row: %{caller.row | "projectId" => project}}],
+      owner_timeout(name, args)
+    )
   end
 
   defp on_owner(_row, _name, _args, _caller), do: :here
 
-  defp on_mc(mc, module, fun, args) do
-    :erpc.call(String.to_existing_atom(mc), module, fun, args, :timer.minutes(10))
+  # How long the other MC has to answer: a wait for as long as it may wait, and a
+  # little more, so its own timeout answers first.
+  defp owner_timeout("hal_c2_thread_wait", args),
+    do: wait_timeout(args["timeoutMs"]) + :timer.seconds(30)
+
+  defp owner_timeout(_name, _args), do: @owner_timeout
+
+  defp on_mc(mc, module, fun, args, timeout) do
+    :erpc.call(String.to_atom(mc), module, fun, args, timeout)
   catch
     :error, {:erpc, reason} ->
       {:error, "thread_unreachable",

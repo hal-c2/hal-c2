@@ -1688,13 +1688,46 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
        %{args: [caller, text, title]} = context do
     id = World.thread_id(context, title)
 
-    assert {:ok, %{"threadId" => ^id, "runId" => run}} =
-             World.mcp_tool(context, caller, "hal_c2_thread_send", %{
-               "threadId" => id,
-               "message" => text
-             })
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_send", %{
+        "threadId" => id,
+        "message" => text
+      })
 
-    Map.put(context, :remote_run, run)
+    case result do
+      {:ok, %{"threadId" => ^id, "runId" => run}} -> Map.put(context, :remote_run, run)
+      _ -> Map.put(context, :mcp_result, result)
+    end
+  end
+
+  step "{string} is in plan mode", %{args: [title]} = context do
+    World.patch_thread(context, title, %{"interactionMode" => "plan"})
+  end
+
+  step "{string} leaves plan mode on {string}", %{args: [title, machine]} = context do
+    assert {:ok, _} =
+             Machines.on(context, machine, HalC2.Orchestration, :dispatch, [
+               %{
+                 "type" => "thread.interaction-mode.set",
+                 "commandId" => "command:leave-plan",
+                 "threadId" => World.thread_id(context, title),
+                 "interactionMode" => "default"
+               }
+             ])
+
+    context
+  end
+
+  step "the agent of {string} is refused with {string}", %{args: [_caller, code]} = context do
+    refute context[:remote_run]
+    assert {:error, ^code, _} = context.mcp_result
+    context
+  end
+
+  step "no turn runs on {string}", %{args: [machine]} = context do
+    id = World.thread_id(context, "Alpha")
+    assert Machines.on(context, machine, Machines, :entities, [id, "run"]) == []
+    context
   end
 
   step "the turn runs on {string}", %{args: [machine]} = context do
