@@ -180,4 +180,15 @@ impl Window {
     pub fn key(&self, ev: &KeyEvent) -> bool {
         self.0.borrow_mut().key(ev)
     }
+
+    /// Gives the window a wheel or touchpad event; true when something
+    /// used it.
+    pub fn wheel(&self, ev: &ljos::item::WheelEvent) -> bool {
+        self.0.borrow_mut().wheel(ev)
+    }
+
+    /// The time on the window's clock, for the events given it.
+    pub fn now(&self) -> ljos::prelude::Time {
+        self.0.borrow().now()
+    }
 }
