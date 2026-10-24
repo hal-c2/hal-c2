@@ -6,7 +6,10 @@ defmodule HalC2.WebSocketTerminalPropTest do
   then every output event after it, under its own id, until its own unsub, and an
   unsub ends the socket's attach only with its last subscription. Output the
   terminal flushed while a subscription's attach was still in flight is in its
-  snapshot and is not sent to it again.
+  snapshot and is not sent to it again. A terminal that stops without closing
+  (stopped here, as one whose MC left the cluster is lost) tells every
+  subscription to `resync`, and the next attach opens it again from its saved
+  scrollback.
 
   The shell is `cat` on a PTY and output is handed to the terminal as erlexec
   sends it, flushed on the test's word, so attaches race the pending batch
@@ -21,6 +24,8 @@ defmodule HalC2.WebSocketTerminalPropTest do
   alias HalC2.Test.WsClient
 
   @moduletag timeout: :infinity
+  # The terminals `kill/0` stops log their crash.
+  @moduletag :capture_log
 
   @ids [1, 2, 3]
   @key {"th-1", "term-1"}
@@ -118,12 +123,15 @@ defmodule HalC2.WebSocketTerminalPropTest do
             {2, {:call, __MODULE__, :race_sub_attach, [oneof(free), token]}}
           ],
           else: []
-        )
+        ) ++
+        if(state.started, do: [{1, {:call, __MODULE__, :kill, []}}], else: [])
     )
   end
 
   def precondition(state, {:call, _, :sub, [id]}), do: id not in state.subs
   def precondition(state, {:call, _, :unsub, [id]}), do: id in state.subs
+
+  def precondition(state, {:call, _, :kill, []}), do: state.started
 
   def precondition(state, {:call, _, :output, [token]}),
     do: state.started and token == "t#{state.n}"
@@ -137,6 +145,9 @@ defmodule HalC2.WebSocketTerminalPropTest do
   def next_state(state, _result, {:call, _, :unsub, [id]}),
     do: %{state | subs: List.delete(state.subs, id)}
 
+  # The subscriptions were forgotten; the next one starts the terminal again.
+  def next_state(state, _result, {:call, _, :kill, []}), do: %{state | subs: [], started: false}
+
   def next_state(state, _result, {:call, _, :output, [token]}),
     do: %{state | text: state.text <> token <> "\r\n", n: state.n + 1}
 
@@ -148,6 +159,9 @@ defmodule HalC2.WebSocketTerminalPropTest do
     do: frames == [{id, :snapshot, state.text}]
 
   def postcondition(_state, {:call, _, :unsub, _}, frames), do: frames == []
+
+  def postcondition(state, {:call, _, :kill, []}, frames),
+    do: frames == Enum.sort(for id <- state.subs, do: {id, :resync})
 
   def postcondition(state, {:call, _, :output, [token]}, frames),
     do: frames == Enum.sort(for id <- state.subs, do: {id, :output, token <> "\r\n"})
@@ -164,6 +178,16 @@ defmodule HalC2.WebSocketTerminalPropTest do
 
   def sub(id), do: send_frame(%{"t" => "sub", "id" => id, "shape" => shape()})
   def unsub(id), do: send_frame(%{"t" => "unsub", "id" => id})
+
+  # Stops the terminal abnormally with its scrollback saved, as a terminal that
+  # lived past its last quiet moment has it on disk. Its `terminate/2` unregisters
+  # it before this returns, so the next attach starts it again.
+  def kill do
+    pid = terminal_pid()
+    :ok = HalC2.Terminal.save(elem(@key, 0))
+    :ok = GenServer.stop(pid, :lost)
+    terminal_frames()
+  end
 
   def output(token) do
     pid = terminal_pid()
@@ -227,7 +251,8 @@ defmodule HalC2.WebSocketTerminalPropTest do
   end
 
   # The snapshot and output frames sent before the pong answering a ping sent
-  # now, sorted, as `{id, :snapshot, history}` and `{id, :output, text}`. The
+  # now, sorted, as `{id, :snapshot, history}`, `{id, :output, text}` and
+  # `{id, :resync}`. The
   # terminal is made to flush and read back first, so everything a step caused
   # is already on its way to the socket before the ping's frame.
   defp terminal_frames do
@@ -245,9 +270,11 @@ defmodule HalC2.WebSocketTerminalPropTest do
     Process.put({__MODULE__, :client}, client)
 
     Enum.sort(
-      for %{"t" => "terminal", "id" => id, "event" => event} <- frames,
-          frame <- List.wrap(frame(id, event)),
-          do: frame
+      for(
+        %{"t" => "terminal", "id" => id, "event" => event} <- frames,
+        frame <- List.wrap(frame(id, event)),
+        do: frame
+      ) ++ for(%{"t" => "resync", "id" => id} <- frames, do: {id, :resync})
     )
   end
 
