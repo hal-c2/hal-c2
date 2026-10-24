@@ -752,4 +752,17 @@ impl World {
         self.pump()?;
         Ok(taken)
     }
+
+    /// The user turns the mouse wheel `notches` over (x, y) of the window
+    /// (positive: away from the user, showing what is further up). Whether
+    /// an item used it.
+    pub fn wheel(&mut self, x: f64, y: f64, notches: f64) -> Outcome<bool> {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        let event = ljos::item::WheelEvent::notches(x, y, 0.0, notches, shell.window.now());
+        let taken = shell.window.wheel(&event);
+        self.pump()?;
+        Ok(taken)
+    }
 }

@@ -54,6 +54,7 @@ pub mod storage_layout;
 pub mod stream;
 pub mod thread_fork;
 pub mod thread_create;
+pub mod local_cache;
 pub mod thread_limit;
 pub mod thread_list;
 pub mod thread_order;
@@ -122,6 +123,7 @@ pub fn register(steps: &mut Steps) {
     stream::register(steps);
     thread_fork::register(steps);
     thread_create::register(steps);
+    local_cache::register(steps);
     thread_limit::register(steps);
     thread_list::register(steps);
     thread_order::register(steps);
