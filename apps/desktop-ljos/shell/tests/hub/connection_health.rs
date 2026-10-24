@@ -358,8 +358,8 @@ fn a_remote_mc_is_not_tried_without_a_network_and_woken_when_it_returns() {
     *rig.mc.origin.borrow_mut() = Some("https://mc.example".into());
     rig.with_health(|c, engine| {
         c.set_network(Network {
-            disconnected: Rc::new(move || d.get()),
-            interface_up: Rc::new(move || u.get()),
+            disconnected: Rc::new(move |_| d.get()),
+            interface_up: Rc::new(move |_| u.get()),
         });
         c.network_changed(engine);
     });
@@ -373,6 +373,39 @@ fn a_remote_mc_is_not_tried_without_a_network_and_woken_when_it_returns() {
     up.set(false);
     *rig.mc.origin.borrow_mut() = Some("http://127.0.0.1:7000".into());
     rig.with_health(|c, engine| c.network_changed(engine));
+    assert_eq!(rig.mc.online.borrow().last(), Some(&true));
+}
+
+#[test]
+fn the_systems_reachability_says_whether_a_remote_mc_is_tried() {
+    use ljos::system::{NetworkStatus, Reachability, report_network_status};
+    let rig = Rig::new("reachability");
+    *rig.mc.origin.borrow_mut() = Some("https://mc.example".into());
+    // The system's word alone: no interface overrules it here.
+    rig.with_health(|c, _| {
+        c.set_network(Network {
+            interface_up: Rc::new(|_| false),
+            ..Network::default()
+        })
+    });
+    let report = |reachability| {
+        report_network_status(
+            &rig.engine,
+            NetworkStatus {
+                reachability,
+                ..NetworkStatus::default()
+            },
+        )
+    };
+    report(Reachability::Disconnected);
+    assert_eq!(rig.mc.online.borrow().last(), Some(&false));
+    let woken = rig.mc.wakes.get();
+    report(Reachability::Online);
+    assert_eq!(rig.mc.online.borrow().last(), Some(&true));
+    assert_eq!(rig.mc.wakes.get(), woken + 1);
+    // A system that cannot tell is not offline.
+    report(Reachability::Disconnected);
+    report(Reachability::Unknown);
     assert_eq!(rig.mc.online.borrow().last(), Some(&true));
 }
 
