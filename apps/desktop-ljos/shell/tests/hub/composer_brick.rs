@@ -310,3 +310,25 @@ Item {
     assert_eq!(request.filters.len(), 1);
     assert_eq!(request.filters[0].patterns, vec!["*.json".to_owned()]);
 }
+
+/// A screen recording dropped on the card is uploaded as a video.
+#[test]
+fn a_recording_dropped_on_the_card_is_uploaded() {
+    let hub = on_threads(&["t1"]);
+    let (root, _window) = probe(&hub);
+    let dir = tempfile::tempdir().expect("a directory for the movie");
+    let recording = movie(dir.path(), "rec.mov");
+    let at = match hub.engine.read_by_name(root, "beside") {
+        Value::Point(p) => (p.x, p.y),
+        other => panic!("a point: {other:?}"),
+    };
+    assert!(ljos::prelude::external_drag(
+        &hub.engine,
+        &ljos::prelude::ExternalDrag::Dropped {
+            files: vec![recording],
+            at: Some(at),
+        },
+    ));
+    deliver(&hub);
+    uploads_as_a_video(&hub, "rec.mov", 20);
+}
