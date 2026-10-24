@@ -677,3 +677,31 @@ impl Drop for World {
         this_machine::set_id_for_testing(None);
     }
 }
+
+impl World {
+    /// The user presses and releases `button` at (x, y) of the window while
+    /// holding `modifiers`.
+    pub fn click_at_with(
+        &mut self,
+        x: f64,
+        y: f64,
+        button: ljos::item::MouseButtons,
+        modifiers: ljos::item::Modifiers,
+    ) -> Outcome {
+        use ljos::item::PointerEvent;
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        let now = shell.window.now();
+        let mut press = PointerEvent::press(x, y, now);
+        press.button = Some(button);
+        press.buttons = button;
+        press.modifiers = modifiers;
+        let mut release = PointerEvent::release(x, y, now);
+        release.button = Some(button);
+        release.modifiers = modifiers;
+        shell.window.pointer(&press);
+        shell.window.pointer(&release);
+        self.pump()
+    }
+}
