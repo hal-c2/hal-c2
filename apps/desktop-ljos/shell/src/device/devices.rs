@@ -596,12 +596,9 @@ impl Devices {
                 continue;
             }
             any_android = any_android || platform == "android";
-            // Qt compares names with localeAwareCompare; without a collator,
-            // case-insensitively, then as written.
             devices.sort_by(|a, b| {
                 flag(b, "booted").cmp(&flag(a, "booted")).then_with(|| {
-                    let (a, b) = (text(a, "name"), text(b, "name"));
-                    a.to_lowercase().cmp(&b.to_lowercase()).then(a.cmp(&b))
+                    crate::sidebar_model::locale_compare(&text(a, "name"), &text(b, "name"))
                 })
             });
             let rows: Vec<Json> = devices

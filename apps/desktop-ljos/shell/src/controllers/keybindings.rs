@@ -213,12 +213,9 @@ static KNOWN_VARIABLES: LazyLock<HashSet<String>> = LazyLock::new(|| {
     known
 });
 
-/// QString::localeAwareCompare, near enough for command ids and keys:
-/// case-insensitive first.
+/// QString::localeAwareCompare.
 fn collate(a: &str, b: &str) -> Ordering {
-    a.to_lowercase()
-        .cmp(&b.to_lowercase())
-        .then_with(|| a.cmp(b))
+    crate::sidebar_model::locale_compare(a, b)
 }
 
 fn text<'a>(value: &'a Json, key: &str) -> &'a str {

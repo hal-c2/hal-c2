@@ -348,11 +348,11 @@ impl ProjectClone {
         self.discover(engine, environment_id);
         // Git URL, then the providers ready first, each part by label.
         let mut providers = PROVIDERS;
-        providers.sort_by_key(|p| {
-            (
-                !self.readiness(environment_id, p.kind).0,
-                p.label.to_lowercase(),
-            )
+        providers.sort_by(|a, b| {
+            let ready = |p: &Source| self.readiness(environment_id, p.kind).0;
+            ready(b)
+                .cmp(&ready(a))
+                .then_with(|| model::locale_compare(a.label, b.label))
         });
         std::iter::once(URL)
             .chain(providers)

@@ -849,13 +849,14 @@ fn thread_sort_timestamp(thread: &Thread, sort_order: &str) -> f64 {
     first_timestamp(Some(&thread.updated_at), &thread.created_at)
 }
 
-/// QString::localeAwareCompare, without a locale: case folded first.
-// TODO(ljos#75): Settings::locale — collation by the user's locale; Ljós
-// has no collator yet, so titles compare case-insensitively, then exactly.
+/// QString::localeAwareCompare: by the system locale's collation
+/// (`LC_COLLATE`), so `a ä b B z` in English. The `C` locale orders by
+/// UTF-16 code units, as Qt's does.
 pub(crate) fn locale_compare(left: &str, right: &str) -> Ordering {
-    left.to_lowercase()
-        .cmp(&right.to_lowercase())
-        .then_with(|| left.cmp(right))
+    thread_local! {
+        static COLLATOR: ljos::locale::Collator = ljos::locale::Locale::system().collator();
+    }
+    COLLATOR.with(|collator| collator.compare(left, right))
 }
 
 /// The client settings grouping and ordering read: sidebarProjectGroupingMode
