@@ -20,6 +20,8 @@ if [[ " $* " != *" --mc-origin"* && " $* " != *" --pair"* ]]; then
   fi
   args=(--pair "$link" "${args[@]}")
 fi
+# The window reloads the checkout's bricks and the config dir's shell.qml as they
+# are saved (shell/src/runtime.rs), so a dev run needs no rebuild for QML.
 features=()
 # LJOS_MCP (desktop-ljos:inspect) serves Ljós's inspector; its token file goes
 # where desktop-ljos:observe and desktop-ljos:attach look.
