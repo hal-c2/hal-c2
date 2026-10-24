@@ -167,6 +167,14 @@ Feature: Delegating tasks to subagents
     Then the wait returns the task as working and says the wait timed out
 
   @mc
+  Scenario: A wait gives up before the caller's MCP client would
+    Given thread "acp" exists in "demo"
+    And "acp" has a running turn on "grok"
+    And the MCP client of an ACP provider gives up on a tool call after 1 second
+    When the agent in "acp" on "grok" delegates a task to "codex" and waits 2 hours
+    Then the wait returns the task as working and says the wait timed out
+
+  @mc
   Scenario Outline: Wait timeouts are clamped
     When the agent in "parent" delegates a task and waits <asked> ms
     Then the wait lasts at most <used> ms
