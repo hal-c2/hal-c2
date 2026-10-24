@@ -51,6 +51,7 @@ pub mod settings_limited_threads;
 pub mod settings_pages;
 pub mod settings_projects;
 pub mod settings_rows;
+pub mod settings_scope;
 pub mod settings_scoped_rows;
 pub mod settings_search;
 pub mod settings_text_generation;
@@ -120,6 +121,7 @@ pub fn register(steps: &mut Steps) {
     settings_pages::register(steps);
     settings_projects::register(steps);
     settings_rows::register(steps);
+    settings_scope::register(steps);
     settings_scoped_rows::register(steps);
     settings_search::register(steps);
     settings_text_generation::register(steps);
