@@ -48,6 +48,7 @@ use crate::thread_view::previews::ThreadPreviews;
 use crate::thread_view::pull_request_review::{PullRequestReview, Review};
 use crate::thread_view::pull_requests::{self, ThreadPullRequests};
 use crate::thread_view::thread_diff::ThreadDiff;
+use crate::thread_view::time::Clock;
 use crate::thread_view::workspace_files::WorkspaceFiles;
 
 /// The kinds of tab the panel shows; a terminal, review or device tab's id
@@ -591,6 +592,14 @@ impl RightPanel {
     /// The Agents tab's AgentsModel.
     pub fn agents(&self) -> Option<ObjectId> {
         self.agents
+    }
+
+    /// The Agents tab reads its times on `clock`, as the threads' timelines
+    /// do (ThreadStore::set_clock).
+    pub fn set_clock(&mut self, engine: &Engine, clock: Clock) {
+        if let Some(agents) = self.agents {
+            AgentsModel::update(engine, agents, |a| a.set_clock(clock));
+        }
     }
 
     /// The Pull requests tab's ThreadPullRequests.
