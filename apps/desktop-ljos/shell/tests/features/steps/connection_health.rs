@@ -868,16 +868,33 @@ pub fn register(steps: &mut Steps) {
             world.client().set_pong_timeout(Duration::from_millis(20));
             world.mc.answer_pings = false;
             world.mc.stop_accepting();
+            // The client checks one ping at a time: a ping still on its way
+            // (the shell's own, on open) keeps its longer deadline, and its
+            // late pong answers for this one. Each answer is asked again.
+            let answered = Rc::new(Cell::new(false));
+            let seen = answered.clone();
+            let listener = world.client().on_checked(move |alive| {
+                if alive {
+                    seen.set(true);
+                }
+            });
             world.client().wake();
-            world.wait_for_with(
-                |w| w.client().phase() == Phase::Retrying,
+            let dropped = world.wait_for_with(
+                |w| {
+                    if answered.replace(false) {
+                        w.client().wake();
+                    }
+                    w.client().phase() == Phase::Retrying
+                },
                 |w| {
                     format!(
                         "the unanswered connection to be dropped; it is {}",
                         show(&connection(w))
                     )
                 },
-            )
+            );
+            world.client().remove_listener(listener);
+            dropped
         },
     );
     steps.step(&format!("the environment reads {Q}"), |world, c, _| {
