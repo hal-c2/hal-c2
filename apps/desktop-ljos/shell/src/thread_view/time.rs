@@ -110,22 +110,22 @@ pub fn time_of(value: Option<&Json>, zone: Zone) -> Option<DateTime<Utc>> {
     parse_iso(value?.as_str()?, zone)
 }
 
-// TODO(ljos#76): SidebarModel::timeOfDay, and QLocale. The time of day in
-// the device's timestampFormat, as sidebar::timeOfDay reads it; the
-// sidebar's port should own this once it lands. Only en-US is read:
-// "locale" is its short time ("9:41 AM"), not the system locale's.
+/// The time of day in the device's timestampFormat, as sidebar::timeOfDay
+/// reads it.
 pub fn time_of_day(local: NaiveDateTime, timestamp_format: &str) -> String {
     let (hour, minute) = (local.hour(), local.minute());
-    if timestamp_format == "24-hour" {
-        return format!("{hour:02}:{minute:02}");
+    match timestamp_format {
+        "24-hour" => format!("{hour:02}:{minute:02}"),
+        "12-hour" => {
+            let twelve = match hour % 12 {
+                0 => 12,
+                h => h,
+            };
+            let half = if hour < 12 { "AM" } else { "PM" };
+            format!("{twelve}:{minute:02} {half}")
+        }
+        _ => crate::sidebar_model::short_time(hour, minute),
     }
-    // "12-hour", and en-US's short time.
-    let twelve = match hour % 12 {
-        0 => 12,
-        h => h,
-    };
-    let half = if hour < 12 { "AM" } else { "PM" };
-    format!("{twelve}:{minute:02} {half}")
 }
 
 /// en-US's numeric date, as Intl's {month: "numeric", day: "numeric"}

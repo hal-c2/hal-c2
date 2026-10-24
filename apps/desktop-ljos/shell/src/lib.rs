@@ -80,6 +80,9 @@ pub fn register(engine: &Engine) {
     engine.register_singleton::<controllers::palette::PaletteObject>(MODULE, v);
     thread_view::register(engine);
     bridge::Bridge::of(engine);
+    // The times the rows write follow the application's locale.
+    sidebar_model::use_locale(&ljos::locale::Locale::of(engine));
+    let _ = ljos::locale::on_change(engine, |_, locale| sidebar_model::use_locale(locale));
 }
 
 /// What the shell is launched with: main.cpp's options, and the MC
