@@ -26,8 +26,9 @@ Uploads begin when you add an attachment. All uploads must finish before the
 message can send. Retry or remove a failed upload. On desktop, reloading
 before an upload finishes requires you to attach that file again.
 
-You can drag or paste images into the desktop composer. HEIC and HEIF
-photos are converted to JPEG there and when selected from the mobile photo
+On desktop, you can paste images into the composer, or drop files anywhere
+over the conversation to attach them; a dropped folder is referenced by its
+path. HEIC and HEIF photos are converted to JPEG there and when selected from the mobile photo
 library; photos over the image limit are also resized to fit. On mobile, you can
 also send files to HAL-C2 through another app's system share sheet.
 

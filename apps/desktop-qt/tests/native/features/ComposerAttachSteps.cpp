@@ -15,6 +15,7 @@
 #include <QQuickItem>
 #include <QTest>
 #include <QUrl>
+#include <memory>
 
 #include "Brick.h"
 #include "ComposerBrick.h"
@@ -112,6 +113,50 @@ void drop(World& world, QMimeData& data) {
   QDropEvent event(at, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
   QCoreApplication::sendEvent(&brick.window(), &event);
   world.sync();
+}
+
+// A drag from another application over the conversation, while it lasts:
+// what it carries and where it is.
+struct Dragged {
+  std::shared_ptr<QMimeData> data;
+  QPoint at;
+  QString file;
+  QString folder;
+};
+
+// Over the timeline's part of the conversation, above the composer.
+QPoint overConversation(World& world) {
+  Brick& brick = composerBrick(world);
+  return brick.at(brick.item(QStringLiteral("conversationDrop")), 0.5, 0.2);
+}
+
+// Drags `data` from outside the window to `at`, as the platform delivers it.
+void dragOver(World& world, const std::shared_ptr<QMimeData>& data, const QPoint& at) {
+  Brick& brick = composerBrick(world);
+  Dragged& dragged = world.mc.part<Dragged>();
+  if (dragged.data != data) {
+    dragged.data = data;
+    QDragEnterEvent enter(at, Qt::CopyAction, data.get(), Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&brick.window(), &enter);
+  }
+  dragged.at = at;
+  QDragMoveEvent move(at, Qt::CopyAction, data.get(), Qt::LeftButton, Qt::NoModifier);
+  QCoreApplication::sendEvent(&brick.window(), &move);
+  world.sync();
+}
+
+// The drag leaves the window.
+void dragLeave(World& world) {
+  Brick& brick = composerBrick(world);
+  QDragLeaveEvent leave;
+  QCoreApplication::sendEvent(&brick.window(), &leave);
+  world.mc.part<Dragged>().data.reset();
+  world.sync();
+}
+
+bool dropHintShown(World& world) {
+  Brick& brick = composerBrick(world);
+  return brick.item(QStringLiteral("conversationDropHint"))->isVisible() && brick.shows(QStringLiteral("Drop files to attach"));
 }
 
 QVariantMap attachment(World& world, const QString& name) {
@@ -377,6 +422,54 @@ const Steps steps([] {
            QStringLiteral("the toasts are %1").arg(show(toasts(world))));
   });
 
+  // Dragging over the conversation.
+  step(QStringLiteral("the user drags %1 and the folder %1 from the desktop over the conversation").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QDir dir(world.homeDir() + QStringLiteral("/checkout/") + c[1]);
+    expect(dir.mkpath(QStringLiteral(".")), QStringLiteral("could not make %1").arg(dir.path()));
+    auto data = std::make_shared<QMimeData>();
+    data->setUrls({imageFile(world, c[0]), QUrl::fromLocalFile(dir.path())});
+    world.mc.part<Dragged>().file = c[0];
+    world.mc.part<Dragged>().folder = c[1];
+    dragOver(world, data, overConversation(world));
+  });
+  step(QStringLiteral("the user is dragging %1 over the conversation").arg(q), [](World& world, const Captures& c, const Table&) {
+    auto data = std::make_shared<QMimeData>();
+    data->setUrls({imageFile(world, c[0])});
+    dragOver(world, data, overConversation(world));
+    expect(dropHintShown(world), QStringLiteral("the conversation does not offer the drop"));
+  });
+  step(QStringLiteral("the user drops them there"), [](World& world, const Captures&, const Table&) {
+    Dragged& dragged = world.mc.part<Dragged>();
+    expect(dragged.data != nullptr, QStringLiteral("nothing is dragged"));
+    QDropEvent event(dragged.at, Qt::CopyAction, dragged.data.get(), Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&composerBrick(world).window(), &event);
+    world.sync();
+    expect(!dropHintShown(world), QStringLiteral("the conversation still offers the drop"));
+  });
+  step(QStringLiteral("the draft carries %1 and references the folder %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return carried(world) == QStringList{c[0]}; }, [&] { return QStringLiteral("the draft to carry %1; it carries %2").arg(c[0], carried(world).join(u", ")); });
+    expect(chip(world, c[0])->isVisible(), QStringLiteral("%1 is not shown").arg(c[0]));
+    settleComposer(world);
+    const QString path = QDir(world.homeDir() + QStringLiteral("/checkout/") + c[1]).absolutePath();
+    const QString link = QStringLiteral("[%1](%2)").arg(c[1].section(u'/', -1), path);
+    expect(draftText(world).contains(link) && composerEditor(world)->property("text") == draftText(world), QStringLiteral("the draft reads \"%1\"").arg(draftText(world)));
+  });
+  step(QStringLiteral("the drag leaves the conversation"), [](World& world, const Captures&, const Table&) { dragLeave(world); });
+  step(QStringLiteral("the conversation no longer says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(!dropHintShown(world) && !composerBrick(world).shows(c[0]), QStringLiteral("the conversation still says \"%1\"").arg(c[0]));
+  });
+  step(QStringLiteral("dragging selected text over the conversation never shows it"), [](World& world, const Captures&, const Table&) {
+    auto data = std::make_shared<QMimeData>();
+    data->setText(QStringLiteral("the cart totals add up"));
+    // Over the timeline, then over the composer.
+    dragOver(world, data, overConversation(world));
+    expect(!dropHintShown(world), QStringLiteral("the conversation offers to attach dragged text"));
+    dragOver(world, data, composerBrick(world).at(composerEditor(world)));
+    expect(!dropHintShown(world), QStringLiteral("the composer offers to attach dragged text"));
+    dragLeave(world);
+    expect(carried(world).isEmpty(), QStringLiteral("the draft carries %1").arg(carried(world).join(u", ")));
+  });
+
   // Snap Shots on the draft.
   const auto snapShot = [](World& world, QJsonObject source) {
     source.insert(QStringLiteral("kind"), QStringLiteral("snap-shot"));
@@ -532,6 +625,12 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+bool conversationDropSays(World& world, const QString& text) {
+  if (!composerBrickShown(world) || world.mc.part<Dragged>().data == nullptr) return false;
+  world.waitFor([&] { return dropHintShown(world) && composerBrick(world).shows(text); }, QStringLiteral("the conversation to say \"%1\"").arg(text));
+  return true;
+}
 
 bool removeComposerAttachment(World& world, const QString& name) {
   if (!composerBrickShown(world) || !carried(world).contains(name)) return false;

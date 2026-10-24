@@ -1,7 +1,8 @@
 # Sources:
 #   docs/user/composer.md (attachments, large pastes, images, prompt stash files)
 #   apps/server-ex/lib/hal_c2/attachments.ex (upload URL, claim, size limits, pending expiry)
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (image picker, file drop, clipboard paste, attachment removal)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (image picker, clipboard paste, attachment removal)
+#   apps/desktop-qt/qml/HalC2/Bricks/ConversationDrop.qml (file drop over the conversation)
 #   apps/tui/src/composerAttachments.ts (image paths in prompts and editor output)
 #   apps/tui/src/components/ChatView.tsx (clipboard image paste, image-only prompts, files browser attach)
 #   apps/web/src/chatAttachment.ts (message and attachment limits)
@@ -39,14 +40,14 @@ Feature: Attaching images and files to a message
     When the user drops "a.png" and "b.jpg" onto the composer
     Then the draft carries both images
 
-  @backlog @desktop
+  @desktop
   Scenario: Files dragged anywhere over the conversation can be dropped to attach
     When the user drags "a.png" and the folder "src/components" from the desktop over the conversation
     Then the conversation says "Drop files to attach"
     When the user drops them there
     Then the draft carries "a.png" and references the folder "src/components"
 
-  @backlog @desktop
+  @desktop
   Scenario: The drop hint goes when the drag leaves or is not of files
     Given the user is dragging "a.png" over the conversation
     When the drag leaves the conversation
