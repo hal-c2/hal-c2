@@ -9,6 +9,7 @@ ComposerAttachment 1.0 ComposerAttachment.qml
 ModelPicker 1.0 ModelPicker.qml
 ProviderIcon 1.0 ProviderIcon.qml
 ComposerVimKeys 1.0 ComposerVimKeys.qml
+ConversationDrop 1.0 ConversationDrop.qml
 ProjectFolderDrop 1.0 ProjectFolderDrop.qml
 ContextMenuHost 1.0 ContextMenuHost.qml
 DefaultLayout 1.0 DefaultLayout.qml

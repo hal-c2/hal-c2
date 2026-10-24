@@ -16,6 +16,7 @@ qt_add_qml_module(hal_c2_bricks
     ModelPicker.qml
     ProviderIcon.qml
     ComposerVimKeys.qml
+    ConversationDrop.qml
     ProjectFolderDrop.qml
     FolderExplorer.qml
     FolderOperationDialog.qml

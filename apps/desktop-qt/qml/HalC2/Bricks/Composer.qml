@@ -242,7 +242,7 @@ Rectangle {
     }
 
     // Files join the draft (or the answer the agent waits on); a folder is
-    // named by its path.
+    // named by its path. The picker and ConversationDrop hand them here.
     function attach(urls) {
         const files = Shell.readAttachmentFiles(urls);
         const folders = Shell.directoryPaths(urls);
@@ -657,17 +657,6 @@ Rectangle {
             color: Theme.palette.color("surface", "#141416")
             border.color: composer.outline
             border.width: 1
-
-            DropArea {
-                anchors.fill: parent
-                keys: ["text/uri-list"]
-                onDropped: drop => {
-                    if (drop.hasUrls) {
-                        composer.attach(drop.urls);
-                        drop.accept(Qt.CopyAction);
-                    }
-                }
-            }
 
             ColumnLayout {
                 id: cardColumn
