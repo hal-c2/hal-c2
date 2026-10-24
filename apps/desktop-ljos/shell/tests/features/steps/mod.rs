@@ -4,6 +4,7 @@
 
 use crate::harness::Steps;
 
+pub mod checkpoint_edit;
 pub mod clone;
 pub mod connection;
 pub mod connection_health;
@@ -19,6 +20,7 @@ pub mod workspace;
 
 /// Every domain's steps.
 pub fn register(steps: &mut Steps) {
+    checkpoint_edit::register(steps);
     clone::register(steps);
     connection::register(steps);
     connection_health::register(steps);
