@@ -190,7 +190,9 @@ impl World {
 
     /// As main.rs wires it.
     fn start(&mut self) {
+        // en-US, as desktop-qt's World sets the sidebar's locale.
         let engine = App::new("features")
+            .locale("en_US")
             .register(hal_c2_shell::register)
             .build_engine();
         // Before the shell starts, for its timers to start on the window's clock.

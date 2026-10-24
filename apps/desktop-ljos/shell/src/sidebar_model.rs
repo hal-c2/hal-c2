@@ -9,6 +9,7 @@ use chrono::{
     DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime,
     SecondsFormat, TimeZone, Timelike, Utc,
 };
+use ljos::locale::{FormatType, Locale};
 use serde_json::{Map, Value, json};
 
 const MINUTE_MS: i64 = 60 * 1000;
@@ -1633,8 +1634,6 @@ pub fn time_of_day<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -
 }
 
 /// "12-hour", "24-hour" or "locale", the timestampFormat setting.
-// TODO(ljos#76): Settings::locale — "locale" is QLocale's short time
-// format; without the system locale from Rust it reads as 24-hour "H:mm".
 fn locale_time<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> String {
     let (hour, minute) = (local.hour(), local.minute());
     match timestamp_format {
@@ -1646,8 +1645,36 @@ fn locale_time<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> St
             format!("{h}:{minute:02} {}", if hour < 12 { "AM" } else { "PM" })
         }
         "24-hour" => format!("{hour:02}:{minute:02}"),
-        _ => format!("{hour}:{minute:02}"),
+        _ => short_time(hour, minute),
     }
+}
+
+thread_local! {
+    /// The application's locale, which the "locale" time format writes by;
+    /// the shell keeps it ([`use_locale`]). Unit tests read en-US, as
+    /// desktop-qt's do.
+    static LOCALE: std::cell::RefCell<Locale> = std::cell::RefCell::new(if cfg!(test) {
+        Locale::named("en_US")
+    } else {
+        Locale::system()
+    });
+}
+
+/// The locale the "locale" time format writes by, as
+/// SidebarModel::setLocale sets it.
+pub fn use_locale(locale: &Locale) {
+    LOCALE.with(|l| *l.borrow_mut() = locale.clone());
+}
+
+/// A time of day in the application locale's short time format, with
+/// plain spaces: QLocale::toString(time, QLocale::ShortFormat).
+pub fn short_time(hour: u32, minute: u32) -> String {
+    let at = ljos::locale::DateTime {
+        hour,
+        minute,
+        ..ljos::locale::DateTime::from_unix_ms(0, 0)
+    };
+    LOCALE.with(|l| plain_spaces(&l.borrow().format_time(&at, FormatType::Short)))
 }
 
 /// `date` at `hour`:00 in `zone`; an hour a daylight saving change skips
