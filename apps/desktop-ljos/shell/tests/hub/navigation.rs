@@ -154,6 +154,29 @@ fn a_settings_section_comes_back_and_each_change_is_saved() {
     assert_eq!(saved(dir.path())["kind"], "usage");
 }
 
+/// A settings page the app was closed on shows its content when it comes
+/// back: the page's controller activates after the route is restored and
+/// must read it, not wait for the next navigation.
+#[test]
+fn a_settings_page_restored_with_the_app_is_open() {
+    for (key, section) in [
+        ("deviceSettings", "/settings/integrations"),
+        ("projectSettings", "/settings/projects"),
+        ("scheduledTasks", "/settings/scheduled-tasks"),
+        ("sourceControlSettings", "/settings/source-control"),
+    ] {
+        let dir = state();
+        std::fs::write(
+            dir.path().join("shell-route.json"),
+            json!({"kind": "settings", "section": section}).to_string(),
+        )
+        .unwrap();
+        let hub = hub_with(launch(dir.path()), &[("t1", "One")]);
+        assert!(navigation::at_section(&route(&hub), section), "{section}");
+        assert_eq!(hub.published(key)["open"], true, "{key} at {section}");
+    }
+}
+
 #[test]
 fn a_file_that_names_no_route_starts_at_home() {
     let dir = state();

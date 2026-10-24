@@ -28,6 +28,7 @@ use serde_json::json;
 
 use crate::bridge::Bridge;
 use crate::controller::{self, Controller, Init, Me};
+use crate::controllers::thread_menu::ThreadMenu;
 use crate::controllers::toasts::{Action, Toasts};
 use crate::controllers::workspace;
 use crate::json::Json;
@@ -972,12 +973,13 @@ impl Git {
             }
             "action_failed" => {
                 self.finish_action(engine);
+                let remedy = self.failure_remedy(&event);
                 toast(
                     engine,
                     "error",
                     "Action failed",
                     &text(&event, "message"),
-                    None,
+                    remedy,
                     0,
                 );
             }
@@ -1020,6 +1022,39 @@ impl Git {
                 );
             }
             _ => {}
+        }
+    }
+
+    /// A failure with a known remedy offers it (GitActionFailureCta): the page
+    /// that fixes it, or the command that does, copied while the failure stays
+    /// up to read.
+    fn failure_remedy(&self, event: &Json) -> Option<Action> {
+        let cta = event.get("cta").cloned().unwrap_or(Json::Null);
+        match text(&cta, "kind").as_str() {
+            "open_url" => {
+                let url = text(&cta, "url");
+                let bridge = self.bridge;
+                Some(Action::new(text(&cta, "label"), move |engine| {
+                    bridge.open_external(engine, &url);
+                }))
+            }
+            "copy_command" => {
+                let command = text(&cta, "command");
+                Some(
+                    Action::new(text(&cta, "label"), move |engine| {
+                        controller::with::<ThreadMenu, _>(engine, |menu, engine| {
+                            menu.copy(
+                                engine,
+                                &command,
+                                "Command copied",
+                                "Failed to copy the command",
+                            )
+                        });
+                    })
+                    .keeping_toast(),
+                )
+            }
+            _ => None,
         }
     }
 
