@@ -51,6 +51,7 @@ pub mod stash;
 pub mod storage_layout;
 pub mod stream;
 pub mod terminal;
+pub mod terminal_close;
 pub mod terminal_session;
 pub mod thread_fork;
 pub mod thread_menu;
@@ -113,6 +114,7 @@ pub fn register(steps: &mut Steps) {
     storage_layout::register(steps);
     stream::register(steps);
     terminal::register(steps);
+    terminal_close::register(steps);
     terminal_session::register(steps);
     thread_fork::register(steps);
     thread_menu::register(steps);
