@@ -1612,6 +1612,14 @@ defmodule HalC2.Orchestration do
       end)
 
     start_next(thread_id)
+
+    # A child that never starts has no turn to report; a task waiting on it ends here.
+    if result == :ok,
+      do:
+        Task.start(fn ->
+          HalC2.Orchestration.Delegation.report(thread_id, run_id, status)
+        end)
+
     result
   end
 
