@@ -796,7 +796,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     cond do
       is_map(get_in(caps, ["sessionCapabilities", "resume"])) ->
         case Connection.call(state.conn, "session/resume", params, 60_000) do
-          {:ok, result} -> {:ok, native, remember_model(state, result)}
+          {:ok, result} -> {:ok, native, opened(state, result)}
           {:error, _} -> new_session(state, turn)
         end
 
@@ -806,7 +806,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         state = %{state | replaying: false}
 
         case result do
-          {:ok, result} -> {:ok, native, remember_model(state, result || %{})}
+          {:ok, result} -> {:ok, native, opened(state, result || %{})}
           {:error, _} -> new_session(state, turn)
         end
 
@@ -824,7 +824,7 @@ defmodule HalC2.Acp.ThreadRuntime do
            %{"cwd" => turn.cwd, "mcpServers" => mcp_servers(state, turn)},
            60_000
          ) do
-      {:ok, %{"sessionId" => id} = result} -> {:ok, id, remember_model(state, result)}
+      {:ok, %{"sessionId" => id} = result} -> {:ok, id, opened(state, result)}
       {:ok, other} -> {:error, {:unexpected, other}, state}
       {:error, reason} -> {:error, reason, state}
     end
@@ -848,6 +848,14 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A session that opens without saying its model gets the turn's model set again.
+  defp opened(state, result) do
+    named? =
+      Enum.any?(result["configOptions"] || [], &(&1["id"] == "model")) or is_map(result["models"])
+
+    remember_model(if(named?, do: state, else: %{state | model: nil}), result)
+  end
+
   defp remember_model(state, result) do
     state =
       case HalC2.Acp.session_models(result) do
@@ -866,9 +874,8 @@ defmodule HalC2.Acp.ThreadRuntime do
           %{} = models ->
             %{state | model: models["currentModelId"], model_method: "session/set_model"}
 
-          # A session that does not say its model gets the turn's model set again.
           _ ->
-            %{state | model: nil}
+            state
         end
     end
   end
