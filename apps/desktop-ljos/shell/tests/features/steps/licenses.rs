@@ -247,7 +247,7 @@ pub fn register(steps: &mut Steps) {
         // What the settings navigation marks for the route (SettingsNav.currentSection).
         let marked = Brick::new(
             world,
-            "import QtQuick\nimport HalC2.Shell\nimport \"qrc:/hal-c2/settings/settingsPages.js\" as Pages\n\
+            "import QtQuick\nimport HalC2.Shell\nimport \"HalC2/Bricks/js/settingsPages.js\" as Pages\n\
              Item { property string current: Pages.current(Shell.state.route.section) }\n",
             10.0,
             10.0,
