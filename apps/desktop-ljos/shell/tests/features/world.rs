@@ -627,6 +627,20 @@ impl World {
         self.pump()
     }
 
+    /// The pointer moves to (x, y) of the window, no button held: what
+    /// shows on hover shows.
+    pub fn hover_at(&mut self, x: f64, y: f64) -> Outcome {
+        use ljos::item::{MouseButtons, PointerEvent};
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        let now = shell.window.now();
+        shell
+            .window
+            .pointer(&PointerEvent::moved(x, y, MouseButtons::empty(), now));
+        self.pump()
+    }
+
     /// The user presses a key in the window. Whether an item took it.
     pub fn key(&mut self, event: &ljos::item::KeyEvent) -> Outcome<bool> {
         let Some(shell) = &mut self.shell else {
