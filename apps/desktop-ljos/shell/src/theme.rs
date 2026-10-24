@@ -238,7 +238,11 @@ pub fn install(engine: &Engine, config_dir: Option<PathBuf>) {
     let _ = cx.set(ThemeStore::PATH, Atom::from(shown.as_str()));
     let _ = cx.set(ThemeStore::PALETTE, Some(obj));
     let state = ThemeState::of(engine);
-    *state.desktop_font.borrow_mut() = Some(Font::default());
+    *state.desktop_font.borrow_mut() = Some(system_font(
+        &Font::default(),
+        cfg!(target_os = "macos"),
+        &ljos::font_families(),
+    ));
     *state.watcher.borrow_mut() = path.as_ref().and_then(|p| watch(p, &state.changes));
     *state.path.borrow_mut() = path;
     Bridge::of(engine).watch(engine, "theme", apply_base_theme);
@@ -293,6 +297,42 @@ pub fn application_font_family(engine: &Engine) -> String {
     let file = state.file.borrow();
     let base = state.base.borrow();
     Derived::of(&file, &base).font_ui
+}
+
+/// The families macOS's interface font (San Francisco, Qt's
+/// `.AppleSystemUIFont`) goes by in a font list, by macOS version.
+const MACOS_SYSTEM_FAMILIES: [&str; 5] = [
+    "System Font",
+    ".SF NS",
+    "SF Pro Text",
+    "SF Pro",
+    ".AppleSystemUIFont",
+];
+
+/// What desktop-qt starts from (`QGuiApplication::font()`), given the
+/// font Ljós starts from (`desktop`) and the families `installed`. On
+/// Linux Ljós reads the desktop's font, and on Windows its default is
+/// Qt's (Segoe UI through its `system-ui` family, 9 pt, 12 px). On macOS
+/// it is Qt's generic Unix one (Sans Serif, 9 pt, 12 px), which is drawn
+/// in Helvetica, where Qt has the system's: San Francisco at 13 pt, 13 px
+/// under macOS's 72 dpi. So on macOS it is the system's family at 13 px
+/// (`system-ui` when none of its names is installed), a pixel size since
+/// Ljós counts a point as 4/3 px everywhere. TODO(ljos#?): the platform's
+/// font is Ljós's to start from, as it is Qt's.
+pub fn system_font(desktop: &Font, on_macos: bool, installed: &[String]) -> Font {
+    if !on_macos {
+        return desktop.clone();
+    }
+    let family = MACOS_SYSTEM_FAMILIES
+        .iter()
+        .find_map(|name| installed.iter().find(|f| f.eq_ignore_ascii_case(name)))
+        .map_or("system-ui", String::as_str);
+    Font {
+        family: Atom::from(family),
+        point_size: -1.0,
+        pixel_size: 13,
+        ..desktop.clone()
+    }
 }
 
 /// Makes `fontUi` the application font (desktop-qt's
@@ -735,7 +775,7 @@ fn show(engine: &Engine) {
 
 #[cfg(test)]
 mod tests {
-    use super::{first_font_family, fixed_width};
+    use super::{Font, first_font_family, fixed_width, system_font};
 
     #[test]
     fn a_font_list_is_its_first_installed_family() {
@@ -763,5 +803,36 @@ mod tests {
         assert_eq!(fixed("jetbrains mono"), "jetbrains mono");
         assert_eq!(fixed("No Such Mono"), "No Such Mono, monospace");
         assert_eq!(fixed(""), "");
+    }
+
+    #[test]
+    fn macos_text_starts_in_the_system_font_at_13_px() {
+        // Ljós's own start, which drew macOS text a pixel smaller.
+        let ljos = Font::fallback();
+        assert_eq!(ljos.read_pixel_size(), 12);
+        let installed = ["Helvetica".to_owned(), ".SF NS".to_owned()];
+        let mac = system_font(&ljos, true, &installed);
+        assert_eq!(&*mac.family, ".SF NS");
+        assert_eq!(mac.read_pixel_size(), 13);
+        assert_eq!(mac.weight, ljos.weight);
+        // Whatever the case of the name listed.
+        let listed = ["system font".to_owned()];
+        assert_eq!(&*system_font(&ljos, true, &listed).family, "system font");
+        // None of its names listed: Ljós's own reading of system-ui.
+        let none = system_font(&ljos, true, &["Helvetica".to_owned()]);
+        assert_eq!(&*none.family, "system-ui");
+        assert_eq!(none.read_pixel_size(), 13);
+    }
+
+    #[test]
+    fn linux_and_windows_keep_the_font_ljos_starts_from() {
+        let desktop = Font {
+            family: "Cantarell".into(),
+            point_size: 11.0,
+            ..Font::fallback()
+        };
+        let kept = system_font(&desktop, false, &[".SF NS".to_owned()]);
+        assert_eq!(&*kept.family, "Cantarell");
+        assert_eq!(kept.read_pixel_size(), desktop.read_pixel_size());
     }
 }
