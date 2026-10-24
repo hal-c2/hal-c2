@@ -28,8 +28,15 @@ Feature: Delegating tasks to subagents
     When the agent in "parent" delegates "Write the migration\nUse the new schema"
     Then a new thread marked as a subagent of "parent" exists
     And it was created by an agent through MCP
-    And its first message is the task prompt
+    And its first message ends with the task prompt
     And its title is "Write the migration"
+
+  @mc
+  Scenario: The subagent is told whom it works for and that its last message is the report
+    When the agent in "parent" delegates a task
+    Then the subagent's first message names "parent" as the thread that delegated it
+    And it says the final message is the report to that thread
+    And it says to finish its own work, including its own workers, before the last turn
 
   @mc
   Scenario: Task titles are cut to 80 characters

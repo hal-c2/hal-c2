@@ -365,7 +365,7 @@ defmodule HalC2.Orchestration.Delegation do
         },
         "initialMessage" => %{
           "messageId" => "message:delegate:" <> HalC2.Environment.uuid4(),
-          "text" => spec["task"],
+          "text" => preamble(thread) <> spec["task"],
           "attachments" => []
         }
       })
@@ -379,6 +379,16 @@ defmodule HalC2.Orchestration.Delegation do
         settle(thread["id"], %{"id" => task_id}, "failed", message, "disposed")
         {:error, message}
     end
+  end
+
+  # What a delegated child is told before its task: who it works for and that its last
+  # message is the report, so it finishes its own background work and workers first.
+  defp preamble(thread) do
+    """
+    You are a HAL-C2 worker delegated by the thread "#{thread["title"]}". Your final message is your report to it: lead with the outcome, then evidence (files, commands, test results), then anything left undone. Finish your own work, including waiting on your background work and your own workers, before you end your last turn.
+
+    Task:
+    """
   end
 
   defp update(parent_id, task_id, fields) do
