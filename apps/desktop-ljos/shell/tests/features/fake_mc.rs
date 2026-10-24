@@ -159,6 +159,9 @@ struct Told {
     rows: BTreeMap<String, Value>,
 }
 
+/// What a faked checkout's `vcs` snapshot is made from.
+pub type Checkout = Rc<dyn Fn(&mut FakeMc) -> Value>;
+
 pub struct FakeMc {
     pub name: String,
     pub environment_id: String,
@@ -189,7 +192,7 @@ pub struct FakeMc {
     pub effects: Vec<Effect>,
     /// Checkouts whose whole status a domain fakes, by folder: the `vcs`
     /// snapshot (`local`, `remote`) the workspace's `vcs` shape sends for them.
-    pub checkouts: HashMap<String, Rc<dyn Fn(&mut FakeMc) -> Value>>,
+    pub checkouts: HashMap<String, Checkout>,
     pub capabilities: Value,
     pub hold_snapshot: bool,
     /// False: the MC has stopped answering, its socket still open.
