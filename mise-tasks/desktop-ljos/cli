@@ -8,6 +8,14 @@ prefix="$root/.hal-c2/ljos-cli"
 # Built again only when the pin moves; the first build compiles Ljós (minutes).
 if [[ "$(cat "$prefix/rev" 2>/dev/null)" != "$rev" ]]; then
   echo "building ljos at ${rev:0:9}..." >&2
+  # Cargo keeps a git dependency built at the old pin as fresh, so a moved pin
+  # links crates from both revs: the build starts over for a new pin, and an
+  # interrupted one at the same pin carries on.
+  if [[ "$(cat target/ljos-cli/rev 2>/dev/null)" != "$rev" ]]; then
+    rm -rf target/ljos-cli
+    mkdir -p target/ljos-cli
+    echo "$rev" >target/ljos-cli/rev
+  fi
   mise exec -- cargo install -q --locked --git https://github.com/hal-c2/ljos-ui --rev "$rev" \
     ljos_cli --root "$prefix" --target-dir target/ljos-cli
   echo "$rev" >"$prefix/rev"
