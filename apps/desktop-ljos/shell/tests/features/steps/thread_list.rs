@@ -426,8 +426,10 @@ pub fn register(steps: &mut Steps) {
 
     // Opening and scoping.
     steps.step("the user opens \"([^\"./:]*)\"", |world, c, _| {
-        // TODO(port): PlannerSteps' openPlannerView, a view of the planner
-        // plugin when the MC runs it (steps/planner.rs is not ported yet).
+        // A view of the planner plugin, when the MC runs it.
+        if super::planner::open_planner_view(world, &c[0])? {
+            return Ok(());
+        }
         let key = ensure_thread(world, &c[0], "")?;
         world.dispatch("thread.open", json!({"key": key}))
     });
