@@ -1,7 +1,8 @@
 defmodule HalC2.NativeSubagentsPropTest do
   @moduledoc """
-  A state machine over the subagents setting (`nativeSubagents`) and two threads, one on
-  Codex (`HalC2.Codex.ThreadRuntime`) and one on Claude (`HalC2.Claude.ThreadRuntime`):
+  A state machine over the subagents setting (`nativeSubagents`) and three threads, on
+  Codex (`HalC2.Codex.ThreadRuntime`), Claude (`HalC2.Claude.ThreadRuntime`) and Kimi
+  CLI (`HalC2.Acp.ThreadRuntime`):
   switch the setting between the provider's own subagents and HAL-C2's workers, run a
   turn on either thread, and release either thread's provider session.
 
@@ -10,10 +11,13 @@ defmodule HalC2.NativeSubagentsPropTest do
   delegate exactly when the choice is HAL-C2's workers. A Codex thread reads the choice
   when its session starts its native thread and keeps it until the session is
   released: the native thread's subagent features and every turn's instructions follow
-  the kept choice, whatever the setting says meanwhile.
+  the kept choice, whatever the setting says meanwhile. Kimi, whose Agent tool cannot be
+  taken away, is told the choice with the first prompt of each session it opens, and
+  nothing with the prompts after it.
 
-  Turns run on the fakes in `test/support/fake_codex.py` and `fake_claude.py`, which
-  append what they are sent to a trace the test reads after each turn completes.
+  Turns run on the fakes in `test/support/fake_codex.py`, `fake_claude.py` and
+  `fake_acp_scripted.py`, which append what they are sent to a trace the test reads
+  after each turn completes.
   """
 
   use ExUnit.Case, async: false
@@ -26,10 +30,12 @@ defmodule HalC2.NativeSubagentsPropTest do
 
   @threads %{
     codex: {"codex-thread", %{"instanceId" => "codex", "model" => "gpt-5.4"}},
-    claude: {"claude-thread", %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"}}
+    claude: {"claude-thread", %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"}},
+    kimi: {"kimi-thread", %{"instanceId" => "kimi", "model" => "fake/one"}}
   }
   @fake_codex Path.expand("../../test/support/fake_codex.py", __DIR__)
   @fake_claude Path.expand("../../test/support/fake_claude.py", __DIR__)
+  @fake_acp Path.expand("../../test/support/fake_acp_scripted.py", __DIR__)
   @off %{"multi_agent" => false, "multi_agent_v2" => false}
   @wait_ms 10_000
 
@@ -43,6 +49,8 @@ defmodule HalC2.NativeSubagentsPropTest do
         HalC2.Prop.stop_services()
         Application.delete_env(:hal_c2, :codex_command)
         Application.delete_env(:hal_c2, :claude_command)
+        Application.delete_env(:hal_c2, :acp_commands)
+        HalC2.Acp.forget("kimi")
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, history, state, result)))
@@ -63,6 +71,17 @@ defmodule HalC2.NativeSubagentsPropTest do
       Process.put({:read, provider}, 0)
     end
 
+    # The fake ACP agent logs to `log.jsonl` in its directory.
+    kimi = Path.join(home, "kimi")
+    File.mkdir_p!(kimi)
+    Process.put({:trace, :kimi}, Path.join(kimi, "log.jsonl"))
+    Process.put({:read, :kimi}, 0)
+
+    File.write!(
+      Path.join(kimi, "config.json"),
+      JSON.encode!(%{"capabilities" => %{"mcpCapabilities" => %{"http" => true}}})
+    )
+
     Application.put_env(:hal_c2, :codex_command, [
       "env",
       "FAKE_CODEX_TRACE=#{Process.get({:trace, :codex})}",
@@ -78,6 +97,12 @@ defmodule HalC2.NativeSubagentsPropTest do
       "-u",
       @fake_claude
     ])
+
+    Application.put_env(:hal_c2, :acp_commands, %{
+      "kimi" => ["env", "FAKE_DIR=#{kimi}", "python3", "-u", @fake_acp]
+    })
+
+    HalC2.Acp.forget("kimi")
 
     HalC2.Prop.start_services([
       {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
@@ -99,6 +124,18 @@ defmodule HalC2.NativeSubagentsPropTest do
       HalC2.Settings
     ])
 
+    {doc, version} = HalC2.Settings.get()
+
+    instances = %{
+      "kimi" => %{
+        "driver" => "acpRegistry",
+        "enabled" => true,
+        "config" => %{"agentId" => "kimi"}
+      }
+    }
+
+    {:ok, _} = HalC2.Settings.put(Map.put(doc, "providerInstances", instances), version)
+
     for {tid, selection} <- Map.values(@threads) do
       :ok = HalC2.Streams.subscribe(tid, self(), nil)
 
@@ -119,15 +156,16 @@ defmodule HalC2.NativeSubagentsPropTest do
   # --- model ----------------------------------------------------------------------
 
   # workers: whether the setting keeps agents to HAL-C2's workers; codex: the choice the
-  # Codex session kept when it started its native thread, nil while it has none;
-  # turns: each thread's completed turns.
-  def initial_state, do: %{workers: false, codex: nil, turns: %{codex: 0, claude: 0}}
+  # Codex session kept when it started its native thread, nil while it has none; kimi:
+  # whether the Kimi thread holds a session; turns: each thread's completed turns.
+  def initial_state,
+    do: %{workers: false, codex: nil, kimi: false, turns: %{codex: 0, claude: 0, kimi: 0}}
 
   def command(_state) do
     frequency([
       {2, {:call, __MODULE__, :choose, [oneof([:provider, :workers])]}},
-      {4, {:call, __MODULE__, :turn, [oneof([:codex, :claude])]}},
-      {1, {:call, __MODULE__, :release, [oneof([:codex, :claude])]}}
+      {4, {:call, __MODULE__, :turn, [oneof([:codex, :claude, :kimi])]}},
+      {1, {:call, __MODULE__, :release, [oneof([:codex, :claude, :kimi])]}}
     ])
   end
 
@@ -138,10 +176,16 @@ defmodule HalC2.NativeSubagentsPropTest do
 
   def next_state(state, _result, {:call, _, :turn, [provider]}) do
     state = update_in(state.turns[provider], &(&1 + 1))
-    if provider == :codex, do: %{state | codex: state.codex || {state.workers}}, else: state
+
+    case provider do
+      :codex -> %{state | codex: state.codex || {state.workers}}
+      :kimi -> %{state | kimi: true}
+      :claude -> state
+    end
   end
 
   def next_state(state, _result, {:call, _, :release, [:codex]}), do: %{state | codex: nil}
+  def next_state(state, _result, {:call, _, :release, [:kimi]}), do: %{state | kimi: false}
   def next_state(state, _result, {:call, _, :release, [:claude]}), do: state
 
   def postcondition(state, {:call, _, :turn, [:claude]}, seen) do
@@ -161,6 +205,14 @@ defmodule HalC2.NativeSubagentsPropTest do
       completed: state.turns.codex + 1,
       features: if(state.codex, do: :none, else: {:started, if(workers, do: @off)}),
       instructions: told_to(workers)
+    }
+  end
+
+  # A turn that opens a session announces HAL-C2's tools with its prompt.
+  def postcondition(state, {:call, _, :turn, [:kimi]}, seen) do
+    seen == %{
+      completed: state.turns.kimi + 1,
+      instructions: if(state.kimi, do: :none, else: told_to(state.workers))
     }
   end
 
@@ -215,6 +267,29 @@ defmodule HalC2.NativeSubagentsPropTest do
       disallowed: flag(argv, "--disallowedTools"),
       prompt: told(flag(argv, "--append-system-prompt"))
     }
+  end
+
+  defp told(:kimi, entries) do
+    [text] =
+      for %{
+            "recv" => %{
+              "method" => "session/prompt",
+              "params" => %{"prompt" => [%{"text" => t} | _]}
+            }
+          } <-
+            entries,
+          do: t
+
+    instructions =
+      case Regex.run(
+             ~r{<hal_c2_orchestration_instructions>(.*)</hal_c2_orchestration_instructions>}s,
+             text
+           ) do
+        [_, instructions] -> told(instructions)
+        nil -> :none
+      end
+
+    %{instructions: instructions}
   end
 
   defp told(:codex, entries) do
