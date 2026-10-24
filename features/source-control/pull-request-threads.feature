@@ -5,6 +5,8 @@
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink, thread.pull-request-link.sync, thread.pull-request-synced)
 #   apps/server-ex/lib/hal_c2/pull_requests/checkout.ex
 #   apps/server-ex/lib/hal_c2/pull_requests/discovery.ex
+#   apps/server-ex/lib/hal_c2/pull_requests/opened.ex (pull requests a thread's command created, or headed by its worktree's commit)
+#   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (finish_item)
 #   apps/server-ex/lib/hal_c2/pull_requests/sync.ex
 #   apps/server-ex/lib/hal_c2/mcp/tools/pull_requests.ex (link_pull_request, unlink_pull_request, list_thread_pull_requests)
 #   apps/server-ex/lib/hal_c2/orchestration.ex (thread.pull-request.link)
@@ -367,6 +369,45 @@ Feature: Threads that work on or link pull requests
   Scenario: Creating a pull request from a thread links it
     When the user creates a pull request from "Tax work"
     Then "Tax work" lists the new pull request
+
+  # Every runtime finishes its command items through the turn writer, which reads them.
+  @mc
+  Scenario: The pull request the agent's command opened is linked
+    When the agent in "Tax work" runs "gh pr create --fill" and it prints pull request 43
+    Then "Tax work" lists pull request 43
+
+  @mc
+  Scenario: A command that only reads a pull request links nothing
+    When the agent in "Tax work" runs "gh pr view 43" and it prints pull request 43
+    Then "Tax work" still has no linked pull request
+
+  # Linked as one the thread created, not as its branch's pull request: the branch slot
+  # holds one pull request and follows the branch, while a worktree's commits can be
+  # pushed under several names, and a link the user removes must stay removed.
+  @mc
+  Scenario: A pull request headed by the worktree's commit under another branch name is linked
+    Given "Tax work" works in a worktree of its own on the branch "feature/tax"
+    And its own commit was pushed as the open pull request 45 from the branch "fix/tax-rounding"
+    When the thread's pull requests are looked for
+    Then "Tax work" lists pull request 45
+    And "Tax work" shows no pull request as its branch's
+
+  # A stacked worktree starts at its parent's head, which is the parent's pull request.
+  @mc
+  Scenario: A worktree with no commit of its own does not take the pull request it started from
+    Given "Tax work" works in a worktree of its own on the branch "feature/tax"
+    And the commit it started from heads the open pull request 45 from the branch "feature/base"
+    When the thread's pull requests are looked for
+    Then "Tax work" links no pull request and its commit is not asked about
+
+  # Catching up with the parent (a fast-forward, a reset, a rebase with nothing to replay)
+  # moves the worktree onto a commit someone else made.
+  @mc
+  Scenario: A worktree that only caught up with its parent does not take the parent's pull request
+    Given "Tax work" works in a worktree of its own on the branch "feature/tax"
+    And it fast-forwarded to a newer commit that heads the open pull request 45 from the branch "feature/base"
+    When the thread's pull requests are looked for
+    Then "Tax work" links no pull request and its commit is not asked about
 
   @mc
   Scenario: The branch's pull request is discovered on its own

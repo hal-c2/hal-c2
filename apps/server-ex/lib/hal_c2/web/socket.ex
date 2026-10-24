@@ -226,32 +226,6 @@ defmodule HalC2.Web.Socket do
     end
   end
 
-  def handle_info({:hal_c2_relay_client_install, mc, event}, state) do
-    case state.by_terminal do
-      %{{:relay_client_install, ^mc} => id} ->
-        case event do
-          {:error, detail} ->
-            frame = Map.put(error_frame(id, detail["reason"]), "detail", detail)
-            {:push, Protocol.encode(frame), unsubscribe(state, id)}
-
-          %{"type" => "complete"} ->
-            frames = [
-              Protocol.encode(%{"t" => "relayClientInstall", "id" => id, "event" => event}),
-              Protocol.encode(%{"t" => "end", "id" => id})
-            ]
-
-            {:push, frames, unsubscribe(state, id)}
-
-          _ ->
-            {:push, Protocol.encode(%{"t" => "relayClientInstall", "id" => id, "event" => event}),
-             state}
-        end
-
-      _ ->
-        {:ok, state}
-    end
-  end
-
   def handle_info({:hal_c2_git_action, action_id, event}, state) do
     case state.by_terminal do
       %{{:git_action, ^action_id} => id} ->
@@ -628,32 +602,6 @@ defmodule HalC2.Web.Socket do
            state
            | subs: Map.put(state.subs, id, shape),
              by_terminal: Map.put(state.by_terminal, {:server_update, mc}, id)
-         }}
-
-      {:error, reason} ->
-        {:push, Protocol.encode(error_frame(id, reason)), state}
-    end
-  end
-
-  # Installing software on the host is for sessions that may change its relay setup.
-  defp subscribe(state, id, {:relay_client_install, mc} = shape, _) do
-    allowed =
-      state.session == nil or
-        Enum.any?(
-          HalC2.Auth.clients(),
-          &(&1["sessionId"] == state.session and "relay:write" in &1["scopes"])
-        )
-
-    case allowed && remote(mc, HalC2.Connect.RelayClient, :start_install, [self()]) do
-      false ->
-        {:push, Protocol.encode(error_frame(id, "relay:write is required")), state}
-
-      {:ok, :ok} ->
-        {:ok,
-         %{
-           state
-           | subs: Map.put(state.subs, id, shape),
-             by_terminal: Map.put(state.by_terminal, {:relay_client_install, mc}, id)
          }}
 
       {:error, reason} ->
@@ -1197,13 +1145,6 @@ defmodule HalC2.Web.Socket do
 
       {{:server_update, mc, _input}, subs} ->
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, {:server_update, mc})}
-
-      {{:relay_client_install, mc}, subs} ->
-        %{
-          state
-          | subs: subs,
-            by_terminal: Map.delete(state.by_terminal, {:relay_client_install, mc})
-        }
 
       {{:git_action, _mc, %{"actionId" => action_id}}, subs} ->
         %{

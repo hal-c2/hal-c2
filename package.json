@@ -29,8 +29,7 @@
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check",
     "dist:gnome-extension": "gnome-extensions pack native/gnome-snap-shot --extra-source=captureService.js --extra-source=captureFeedback.js --extra-source=feedbackGeometry.js --out-dir=release --force",
-    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist packages/*/dist .vite-plus apps/*/.vite-plus packages/*/.vite-plus",
-    "sync:repos": "node scripts/sync-reference-repos.ts"
+    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist packages/*/dist .vite-plus apps/*/.vite-plus packages/*/.vite-plus"
   },
   "devDependencies": {
     "@effect/tsgo": "catalog:",

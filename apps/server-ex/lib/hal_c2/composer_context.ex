@@ -10,7 +10,7 @@ defmodule HalC2.ComposerContext do
   keeps records pointing at uploads once they are claimed into the thread.
 
   A quote of an earlier reply is a self-contained `[Assistant quote](hal-c2-citation://v1/...)`
-  link (`@hal-c2/shared/assistantCitations`). The provider reads `[assistant-quote-N]`
+  link (`AssistantCitation` in `@hal-c2/contracts`). The provider reads `[assistant-quote-N]`
   in its place and the quotes as data in a closing `<assistant_citations>` block.
   """
 

@@ -39,13 +39,9 @@ import {
   ThreadHistoryController,
   threadHistoryControllerLayer,
 } from "./threadHistoryController.ts";
-import {
-  EMPTY_ENVIRONMENT_THREAD_STATE,
-  makeEnvironmentThreadState,
-  ThreadSnapshotLoader,
-  type EnvironmentThreadState,
-  type ThreadSnapshotLoadResult,
-} from "./threads.ts";
+import { ThreadSnapshotLoader, type ThreadSnapshotLoadResult } from "./threadSnapshot.ts";
+import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threadState.ts";
+import { makeEnvironmentThreadState } from "./threads.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),

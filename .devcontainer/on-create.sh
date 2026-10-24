@@ -61,8 +61,6 @@ HAL-C2 devcontainer
 
   vp test run <files>   run the tests you touched (vp lint <files> to lint)
   mise run mc           run the dev MC (port 3780, forwarded)
-  cp .env.example .env  optional: enable HAL-C2 Connect cloud features
-                        (public identifiers, not secrets)
 
 Details: docs/internals/devcontainer.md
 EOF

@@ -337,7 +337,7 @@ defmodule HalC2.SlackTest do
     {:ok, _} = Slack.connect(tokens())
     stop_supervised!(Slack)
 
-    HalC2.Connect.Secrets.put(
+    HalC2.Secrets.put(
       "slack",
       JSON.encode!(%{"botToken" => "xoxb-revoked", "appToken" => FakeSlack.app_token()})
     )

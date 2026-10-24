@@ -1,8 +1,8 @@
 # Remote architecture
 
 Each connection joins a client to one environment over HTTP and WebSocket. The
-environment owns providers, execution, files, and durable state. Direct access,
-Tailscale, and HAL-C2 Connect change how the client reaches that MC; they do
+environment owns providers, execution, files, and durable state. Direct access and
+Tailscale change how the client reaches that MC; they do
 not introduce another execution model. See
 [remote access](../user/remote-access.md) for setup.
 
@@ -39,8 +39,7 @@ environment type. `mix hal_c2.pair --tailscale`
 ([`HalC2.TailscaleServe`](../../apps/server-ex/lib/hal_c2/tailscale_serve.ex)) maps the machine's
 MagicDNS name to the local listener and the MC uses it as the pairing endpoint.
 Authentication remains the environment's responsibility for every route. See
-[environment authentication](./environment-auth.md) and the
-[HAL-C2 Connect trust boundary](./hal-c2-connect.md).
+[environment authentication](./environment-auth.md).
 
 MCs outlive several client releases. Clients must use advertised capabilities
 (the `capabilities` map of the environment descriptor) and handle their
