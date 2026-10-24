@@ -1,7 +1,7 @@
 [
   {
     "name": "create_threads",
-    "description": "Create one or more ORDINARY TOP-LEVEL HAL-C2 conversations. This is not delegation and does not create child agents/subagents. For delegated work, prefer native subagents within the current provider; call delegate_task for cross-provider or explicitly HAL-C2-owned child tasks. Use create_threads for a batch of separate top-level threads sharing this checkout. Prefer hal_c2_thread_launch for a single thread. Both require the user to request separate/new/top-level threads or conversations. Each entry may override provider, model, options, runtime mode, and interaction mode; omitted settings inherit. Project, branch, and worktree always inherit and cannot be overridden here. For independent implementation or a PR stack in its own worktree, use hal_c2_thread_launch with workspaceStrategy instead of asking the agent to create a worktree in its prompt.",
+    "description": "Create up to 20 ORDINARY TOP-LEVEL HAL-C2 threads that share this checkout (same project, branch and worktree; none can be overridden). This is not delegation: no child is owned by this thread and no result is delivered back, so follow the threads with hal_c2_thread_read. For child work you want results from, use delegate_task. For one thread, or any thread that needs its own branch or worktree, use hal_c2_thread_launch with workspaceStrategy. Each entry may override provider, model, options, runtime mode, and interaction mode (see orchestrator_capabilities); omitted settings inherit. Never create worktrees with shell commands.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -172,7 +172,7 @@
   },
   {
     "name": "delegate_task",
-    "description": "Delegate one task to a HAL-C2-owned child agent/subagent of THIS thread and run it with only the supplied task prompt, without copying parent conversation history. Prefer native subagent tools for same-provider work when available. Use this for cross-provider work, when native delegation is unavailable, or when the user explicitly requests HAL-C2-owned child tasks. The childThreadId is backing storage, not an ordinary top-level thread. Provider, model, model options (see orchestrator_capabilities), runtime mode, and interaction mode inherit unless target overrides them. Prefer mode='async' for long work; mode='wait' blocks until completion or timeout. timeoutMs on mode=wait is only the parent's wait budget and does not cancel the child. waitTimedOut on that wait call means the timeout fired; keep that taskId and read status on later task_status. An async child's completion wakes this thread through a notification, steered into active turns where supported or queued otherwise, so end the turn instead of polling or spawning watchers; use task_status only when the result is needed mid-turn.",
+    "description": "Hand one task to a HAL-C2-owned child agent of THIS thread. The child runs with only `task` as its prompt (no parent history) in this thread's worktree, is visible in the Agents panel, can be cancelled with task_cancel, and wakes this thread when it finishes. Use it for long-running or user-visible work and for any worker that will itself fan out; your provider's own subagent tool is only for quick read-only lookups within the current turn. The childThreadId is backing storage, not an ordinary top-level thread. Needs an active run of this thread on the same provider instance, so it fails with parent_not_active from an idle or finished turn. Provider, model, model options (see orchestrator_capabilities with providerInstanceId and model), runtime mode, and interaction mode inherit unless target or the overrides say otherwise. mode='async' (default): returns a taskId at once; end your turn, do not poll, sleep, or spawn watchers, because the child's result arrives as a new message in this thread (queued, not steered into a running turn). Use task_status only when the result is needed mid-turn. mode='wait': blocks until completion or timeoutMs (default 10 minutes, clamped to 1 ms..1 hour; non-numeric values mean the default). waitTimedOut=true means the budget elapsed and the child still runs; keep the taskId and read it later with task_status.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -578,9 +578,27 @@
   },
   {
     "name": "orchestrator_capabilities",
-    "description": "List the V2 provider instances, models, inherited runtime settings, and app-owned orchestration features available to this HAL-C2 thread. For a separate top-level thread in a new or existing worktree, use hal_c2_thread_launch with workspaceStrategy.",
+    "description": "List the provider instances and models usable for delegate_task and hal_c2_thread_launch, plus the inherited runtime settings. The default answer is compact: per provider, availability and a capped list of model ids and labels (modelCount gives the rest). Narrow it with providerInstanceId (that provider's full model list), model (one model, with its option descriptors), query (substring of model id or label), or includeOptions=true (option descriptors on every listed model). For a thread in a new or existing worktree, use hal_c2_thread_launch with workspaceStrategy.",
     "inputSchema": {
       "type": "object",
+      "properties": {
+        "providerInstanceId": {
+          "type": "string",
+          "description": "Only this provider instance, with its full model list."
+        },
+        "model": {
+          "type": "string",
+          "description": "Only the model with this id, with its option descriptors."
+        },
+        "query": {
+          "type": "string",
+          "description": "Only models whose id or label contains this text (case-insensitive)."
+        },
+        "includeOptions": {
+          "type": "boolean",
+          "description": "Include option descriptors on every listed model (large)."
+        }
+      },
       "additionalProperties": false
     }
   },
@@ -2765,7 +2783,7 @@
   },
   {
     "name": "hal_c2_thread_launch",
-    "description": "Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work, a new thread, or a PR stack in its own worktree; use delegate_task for child subagents. Set workspaceStrategy to {type:\"worktree\",baseRef:\"parent-branch\",branch:\"new-branch\",startFromOrigin:false} for a new worktree based on local commits, or {type:\"existing_worktree\",worktreePath:\"/absolute/path\",branch:\"existing-branch\"} to use an existing checkout. For upstream commits, set startFromOrigin:true. Omitted workspaceStrategy means the project root, NOT the caller's worktree. Omit projectId/modelSelection/modes to inherit those settings. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use hal_c2_thread_read/hal_c2_thread_wait to follow preparation. After errors or lost responses, inspect hal_c2_thread_list before retrying. Attachments must be pending uploads. Requires a full-access/default caller.",
+    "description": "Start a separate TOP-LEVEL thread with an explicit workspace binding before its agent runs. Use it for independent work that needs its own branch or worktree (a PR, a stack) or should outlive this thread; use delegate_task for child work whose result comes back to you. workspaceStrategy: {type:\"worktree\",baseRef:\"parent-branch\",branch:\"new-branch\",startFromOrigin:false} for a new worktree on local commits (startFromOrigin:true for upstream commits), {type:\"existing_worktree\",worktreePath:\"/absolute/path\",branch:\"existing-branch\"} (paths from hal_c2_worktree_list), or {type:\"root\"}. Omitting it means the project root, NOT the caller's worktree. Never create worktrees with `git worktree add` or ask the agent to: that does not update the thread binding. Put the task in message. Omit projectId/modelSelection/modes to inherit them. There is no retry key and the result is not delivered back: retain threadId, follow it with hal_c2_thread_read or hal_c2_thread_wait, and after an error or lost response check hal_c2_thread_list before retrying. Attachments must be pending uploads. Requires a full-access/default caller.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3580,7 +3598,7 @@
   },
   {
     "name": "hal_c2_thread_wait",
-    "description": "Wait for a HAL-C2 thread run to reach a terminal durable state. Without runId, the latest run at call time is selected; an idle thread returns immediately. Timeout does not interrupt work, so call again or use hal_c2_thread_read/list after timedOut=true. Waiting reports status only and does not acknowledge a delegated result.",
+    "description": "Wait for a HAL-C2 thread run to reach a terminal durable state. Without runId, the latest run at call time is selected; an idle thread returns immediately. timeoutMs defaults to 10 minutes and is clamped to 1 ms..1 hour; non-numeric values mean the default. Timeout does not interrupt work: timedOut=true, call again or use hal_c2_thread_read/list. Prefer ending your turn for delegate_task children, whose results arrive as messages. Waiting reports status only and does not acknowledge a delegated result.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3760,7 +3778,7 @@
   },
   {
     "name": "task_cancel",
-    "description": "Request interruption of an active HAL-C2-owned delegated task and dispose its automatic parent delivery. Completed task results remain available.",
+    "description": "Interrupt a running delegated task and drop its pending result message. Fails with task_not_cancellable if the task already finished; use task_status for its result.",
     "inputSchema": {
       "type": "object",
       "properties": {
