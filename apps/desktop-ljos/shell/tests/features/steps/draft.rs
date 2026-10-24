@@ -224,7 +224,7 @@ pub fn register(steps: &mut Steps) {
 
     // What the shell shows.
     steps.step(
-        &format!("(?:the window shows a new draft|a new thread starts) in {Q}"),
+        &format!("(?:the window shows a new draft|(?:a|the) new thread starts) in {Q}"),
         |world, c, _| expect_new_draft(world, &c[0]),
     );
     steps.step(&format!("a draft thread opens in {Q}"), |world, c, _| {

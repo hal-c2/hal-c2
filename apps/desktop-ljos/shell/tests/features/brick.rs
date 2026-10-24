@@ -470,6 +470,26 @@ impl Brick {
         )
     }
 
+    /// The visible item named `object_name` at or under `item`, looking
+    /// only through visible items.
+    pub fn visible_in(
+        &self,
+        world: &World,
+        item: ObjectId,
+        object_name: &str,
+    ) -> Outcome<Option<ObjectId>> {
+        Ok(
+            match self.call(
+                world,
+                "brickVisibleIn",
+                &[Value::Object(item), Value::from(object_name)],
+            )? {
+                Value::Object(found) => Some(found),
+                _ => None,
+            },
+        )
+    }
+
     /// The Diff panel's tree entry of `path`, if the tree draws it.
     pub fn tree_node(&self, world: &World, path: &str) -> Outcome<Option<ObjectId>> {
         Ok(

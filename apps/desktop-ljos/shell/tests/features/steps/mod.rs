@@ -71,6 +71,7 @@ pub mod provider_list;
 pub mod provider_settings;
 pub mod pull_request;
 pub mod pull_request_list;
+pub mod qt_scenarios;
 pub mod review_diff;
 pub mod scheduled_tasks;
 pub mod screenshot;
@@ -198,6 +199,7 @@ pub fn register(steps: &mut Steps) {
     provider_settings::register(steps);
     pull_request::register(steps);
     pull_request_list::register(steps);
+    qt_scenarios::register(steps);
     review_diff::register(steps);
     scheduled_tasks::register(steps);
     screenshot::register(steps);

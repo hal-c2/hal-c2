@@ -677,6 +677,10 @@ pub fn register(steps: &mut Steps) {
         if super::composer_picker::model_picker_chooses(world, &c[0])? {
             return Ok(());
         }
+        // A notification card's action.
+        if super::qt_scenarios::notification_chooses(world, &c[0])? {
+            return Ok(());
+        }
         // The welcome wizard's Select all / Select none.
         if super::onboarding::onboarding_chooses(world, &c[0])? {
             return Ok(());
