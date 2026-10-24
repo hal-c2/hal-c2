@@ -122,7 +122,10 @@ pub fn parse_file(text: &[u8]) -> Result<Map<String, Json>, String> {
             "Theme ids may only contain lowercase letters, numbers, and hyphens.".to_owned(),
         );
     }
-    if data.reserved.contains(&id) || data.themes.iter().any(|t| string_of(&t["id"]) == id) {
+    if data.reserved.contains(&id)
+        || id == super::STANDARD_ID
+        || data.themes.iter().any(|t| string_of(&t["id"]) == id)
+    {
         return Err(format!("The theme id \"{id}\" is reserved."));
     }
     let mut theme = Map::new();
