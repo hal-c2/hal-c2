@@ -177,12 +177,9 @@ fn reload_makes_the_next_generation_of_what_the_files_say_now() {
     assert_eq!(generation(&hub), 2);
     assert_eq!(shown(&hub), "mine");
     assert_eq!(read(&hub, "usingUserShell"), "true");
-    // The host's root stays, hidden: it cannot be replaced.
-    assert!(hub.engine.is_alive(first));
-    assert!(matches!(
-        hub.engine.read_by_name(first, "visible"),
-        Value::Bool(false)
-    ));
+    // No host shows it here, so nothing takes its window: it goes.
+    hub.advance(1);
+    assert!(!hub.engine.is_alive(first));
 
     let second = runtime::window(&hub.engine).unwrap();
     std::fs::remove_file(dir.path().join("config/shell.qml")).unwrap();
@@ -300,7 +297,7 @@ fn a_reloaded_shell_is_the_window_that_closes_and_reopens() {
     assert_eq!(engine.quit_requested(), !cfg!(target_os = "macos"));
 
     // A click on the Dock icon with no window shown brings back the shell
-    // shown, not the host's first root.
+    // shown; the host's first root went with the reload.
     let app = engine.singleton::<ljos::prelude::Application>().unwrap();
     engine
         .emit_by_name(app, "reopened", &[Value::Bool(false)])
@@ -309,8 +306,5 @@ fn a_reloaded_shell_is_the_window_that_closes_and_reopens() {
         engine.read_by_name(mine, "visible"),
         Value::Bool(true)
     ));
-    assert!(matches!(
-        engine.read_by_name(first, "visible"),
-        Value::Bool(false)
-    ));
+    assert!(!engine.is_alive(first));
 }
