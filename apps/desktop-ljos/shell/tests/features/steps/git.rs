@@ -385,17 +385,6 @@ fn run(mc: &mut FakeMc, id: i64, input: Json) {
 }
 
 fn extension(mc: &mut FakeMc) {
-    // The workspace's `vcs` shape opens with the checkout's whole status.
-    mc.on_shape("vcs", |mc, id, shape| {
-        let cwd = text(&shape["cwd"]);
-        let Some(status) = mc.checkouts.get(&cwd).cloned() else {
-            return Ok(());
-        };
-        let status = status(mc);
-        mc.send(&json!({"t": "vcs", "id": id, "event": {
-            "_tag": "snapshot", "local": status["local"], "remote": status["remote"]}}));
-        Ok(())
-    });
     mc.on_shape("gitAction", |mc, id, shape| {
         run(mc, id, shape["input"].clone());
         Ok(())
