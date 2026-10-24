@@ -19,6 +19,7 @@ use chrono::{DateTime, Utc};
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller;
 use hal_c2_shell::controllers::archived_threads::ArchivedThreads;
+use hal_c2_shell::controllers::panel::RightPanel;
 use hal_c2_shell::controllers::threads::ThreadStore;
 use hal_c2_shell::controllers::toasts::Toasts;
 use hal_c2_shell::controllers::usage::Usage;
@@ -415,6 +416,9 @@ impl World {
         let _ = controller::with::<ThreadStore, _>(&engine, |c, engine| {
             c.set_clock(engine, Clock::fixed(time))
         });
+        let _ = controller::with::<RightPanel, _>(&engine, |c, engine| {
+            c.set_clock(engine, Clock::fixed(time))
+        });
         let _ = controller::with::<Usage, _>(&engine, |c, _| c.set_clock(move || time));
         let _ = controller::with::<ArchivedThreads, _>(&engine, |c, _| c.set_clock(move || time));
         let _ = controller::with::<Toasts, _>(&engine, |c, engine| c.expire(engine));
@@ -711,5 +715,27 @@ impl World {
         shell.window.pointer(&press);
         shell.window.pointer(&release);
         self.pump()
+    }
+
+    /// What the window painted for `item` itself at its last frame, op by op.
+    pub fn painted_ops(&self, item: ljos::ObjectId) -> Vec<ljos::item::DrawOp> {
+        self.shell
+            .as_ref()
+            .and_then(|shell| shell.window.painted(item))
+            .map_or_else(Vec::new, |list| list.ops().to_vec())
+    }
+
+    /// The user's pointer does what `event` makes of the window's time.
+    /// Whether an item took it.
+    pub fn pointer(
+        &mut self,
+        event: impl FnOnce(ljos::prelude::Time) -> ljos::item::PointerEvent,
+    ) -> Outcome<bool> {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        let taken = shell.window.pointer(&event(shell.window.now()));
+        self.pump()?;
+        Ok(taken)
     }
 }
