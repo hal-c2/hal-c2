@@ -250,7 +250,7 @@ pub fn register(steps: &mut Steps) {
                 show(&rollback)
             );
             // Turn 1 stays; the second message and what followed are gone.
-            world.wait_for_with(|w| answers(w) == ["Answer 1"], |w| describe(w))?;
+            world.wait_for_with(|w| answers(w) == ["Answer 1"], describe)?;
             let id = second(world)?;
             expect!(
                 read(world, |t| t.index_of(&id))?.is_none(),

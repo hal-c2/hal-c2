@@ -113,8 +113,7 @@ fn apply_metadata(mc: &mut FakeMc, command: &Value) {
 }
 
 fn extension(mc: &mut FakeMc) {
-    mc.effects
-        .push(Rc::new(|mc, command| apply_metadata(mc, command)));
+    mc.effects.push(Rc::new(apply_metadata));
     // The checkouts a domain fakes whole (GitSteps) answer first.
     mc.on_shape("vcs", |mc, id, shape| {
         let cwd = text(&shape["cwd"]);
