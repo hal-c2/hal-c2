@@ -230,6 +230,7 @@ defmodule HalC2.Orchestration.Delegation do
   after the work's item ended, and the child is not quiet until that run has ended.
   """
   def settle_if_quiet(thread_id) do
+    hook(:settling, thread_id)
     child = stream(thread_id)
 
     with %{"lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => parent_id}} <-
@@ -239,9 +240,20 @@ defmodule HalC2.Orchestration.Delegation do
              StreamState.list(stream(parent_id), "subagent"),
              &(&1["childThreadId"] == thread_id)
            ),
-         true <- task["status"] not in @terminal,
-         # A child that has not started its first run yet has not begun the task.
-         [_ | _] = runs <- StreamState.list(child, "run"),
+         true <- task["status"] in @terminal or settle_quiet(child, parent_id, task) do
+      # The task may have been the last thing its caller, itself a subagent, waited on.
+      # Checked whenever the task has ended, not only by the call that ended it, so a
+      # report retried after this check failed (`report/5`) checks again.
+      settle_if_quiet(parent_id)
+    end
+
+    :ok
+  end
+
+  # Settles `task` if its child is quiet; true once the task has ended.
+  defp settle_quiet(child, parent_id, task) do
+    # A child that has not started its first run yet has not begun the task.
+    with [_ | _] = runs <- StreamState.list(child, "run"),
          true <- quiet?(child),
          {status, run, ended_at} <- last_end(runs) do
       result = answer(child) || preparation_failure(child, run)
@@ -257,17 +269,16 @@ defmodule HalC2.Orchestration.Delegation do
              settle(parent_id, task, status, result, &delivery/2, :once, ended_at, true),
            do: Orchestration.dispatched(parent_id, wake(parent_id, task, status, result), sent)
 
-      # The task may have been the last thing its caller, itself a subagent, waited on.
-      settle_if_quiet(parent_id)
+      true
+    else
+      _ -> false
     end
-
-    :ok
   end
 
   @doc """
-  `finished/3` from the end of a child's run, tried again while a thread it reads is
-  too busy to answer, or it fails: a report given up on leaves the task to the periodic
-  check (`settle_if_quiet/1`) or the next boot (`reconcile/2`). Retries `attempts` times, waiting twice as long each time from `backoff` ms.
+  `finished/3` from the end of a child's run (or of background work no provider wakes
+  itself for), tried again while a thread it reads is too busy to answer, or it fails:
+  a report given up on leaves the task to the periodic check (`settle_if_quiet/1`) or the next boot (`reconcile/2`). Retries `attempts` times, waiting twice as long each time from `backoff` ms.
   """
   def report(thread_id, run_id, status, attempts \\ 6, backoff \\ 2_000) do
     hook(:reporting, thread_id)
@@ -655,7 +666,7 @@ defmodule HalC2.Orchestration.Delegation do
 
     text = """
     <delegated_task_result taskId="#{attr(task["id"])}" title="#{attr(task["title"])}" status="#{attr(status)}" childThreadId="#{attr(child)}">
-    #{cap_result(answer, child)}
+    #{close_tag_safe(answer)}
     </delegated_task_result>
     """
 
@@ -675,7 +686,7 @@ defmodule HalC2.Orchestration.Delegation do
         "summary" => "#{label} #{ended}",
         "workerThreadId" => child,
         "workerTitle" => label,
-        "detail" => cap_result(answer, child)
+        "detail" => cap_result(answer)
       },
       "delegatedCompletion" => %{
         "parentRunId" => task["runId"],
@@ -685,18 +696,21 @@ defmodule HalC2.Orchestration.Delegation do
     }
   end
 
-  # How much of a worker's answer the provider prompt and the timeline notification
-  # carry; the rest stays readable in the worker's own thread.
+  # The agent reads the whole answer; a closing tag quoted inside it (a previous result,
+  # say) must not end the envelope early.
+  defp close_tag_safe(text),
+    do: Regex.replace(~r{</(?=delegated_task_result)}i, text, "&lt;/")
+
+  # How much of a worker's answer the timeline notification carries, so clients don't
+  # render megabytes; the rest stays readable in the worker's own thread.
   @result_cap 8_192
 
-  defp cap_result(text, child) when byte_size(text) > @result_cap do
+  defp cap_result(text) when byte_size(text) > @result_cap do
     kept = text |> binary_part(0, @result_cap) |> trim_invalid()
-
-    kept <>
-      "\n\n[result truncated at #{@result_cap} bytes; read the rest with hal_c2_thread_read on thread #{child}]"
+    kept <> "\n\n[result truncated at #{@result_cap} bytes; the rest is in the worker's thread]"
   end
 
-  defp cap_result(text, _child), do: text
+  defp cap_result(text), do: text
 
   # A byte cut can split a UTF-8 character; drop the broken tail.
   defp trim_invalid(text) do
@@ -909,6 +923,10 @@ defmodule HalC2.Orchestration.Delegation do
     cond do
       type == "existing_worktree" and is_binary(asked["worktreePath"]) and
           asked["worktreePath"] == thread["worktreePath"] ->
+        resolve_workspace(thread, nil)
+
+      # A caller already in the project root is asking for its own checkout.
+      type == "root" and is_nil(thread["worktreePath"]) ->
         resolve_workspace(thread, nil)
 
       thread["runtimeMode"] != "full-access" or thread["interactionMode"] != "default" ->

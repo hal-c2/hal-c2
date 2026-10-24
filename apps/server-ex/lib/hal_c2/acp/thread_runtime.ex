@@ -1664,7 +1664,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Ends the background task or subagent Grok knows as `task`: a subagent by its
   # tool call or its session id.
   # Nothing wakes an ACP agent when its background work ends, so between turns that
-  # may be the last thing a delegated task of this thread waited on.
+  # may be the last thing a delegated task of this thread waited on: checked as a run's
+  # end is, retried while a thread it reads is busy (`Delegation.report/5`).
   defp end_task(state, task, status) do
     subagent =
       Enum.find(state.subagents, fn {id, e} ->
@@ -1680,7 +1681,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     if ended != state and ended.turn == nil do
       thread_id = state.thread_id
-      Task.start(fn -> Orchestration.Delegation.settle_if_quiet(thread_id) end)
+      Task.start(fn -> Orchestration.Delegation.report(thread_id, nil, nil) end)
     end
 
     ended

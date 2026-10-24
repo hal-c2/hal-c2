@@ -476,7 +476,12 @@ function itemPayload(
             title: itemSummary(item),
             detail: item.detail,
             icon: "subagent",
-            status: item.outcome === "failed" ? "failed" : status,
+            status:
+              item.outcome === "failed"
+                ? "failed"
+                : item.outcome === "cancelled"
+                  ? "stopped"
+                  : status,
             childThreadId: item.workerThreadId,
           }
         : { title: itemSummary(item), status, data: item };
