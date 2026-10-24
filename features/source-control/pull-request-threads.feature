@@ -5,7 +5,7 @@
 #   packages/contracts/src/orchestrationV2.ts (thread.pull-request.link, thread.pull-request.unlink, thread.pull-request-link.sync, thread.pull-request-synced)
 #   apps/server-ex/lib/hal_c2/pull_requests/checkout.ex
 #   apps/server-ex/lib/hal_c2/pull_requests/discovery.ex
-#   apps/server-ex/lib/hal_c2/pull_requests/opened.ex (pull requests a thread's command created)
+#   apps/server-ex/lib/hal_c2/pull_requests/opened.ex (pull requests a thread's command created, or headed by its worktree's commit)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (finish_item)
 #   apps/server-ex/lib/hal_c2/pull_requests/sync.ex
 #   apps/server-ex/lib/hal_c2/mcp/tools/pull_requests.ex (link_pull_request, unlink_pull_request, list_thread_pull_requests)
@@ -380,6 +380,17 @@ Feature: Threads that work on or link pull requests
   Scenario: A command that only reads a pull request links nothing
     When the agent in "Tax work" runs "gh pr view 43" and it prints pull request 43
     Then "Tax work" still has no linked pull request
+
+  # Linked as one the thread created, not as its branch's pull request: the branch slot
+  # holds one pull request and follows the branch, while a worktree's commits can be
+  # pushed under several names, and a link the user removes must stay removed.
+  @mc
+  Scenario: A pull request headed by the worktree's commit under another branch name is linked
+    Given "Tax work" works in a worktree of its own on the branch "feature/tax"
+    And its commit was pushed as the open pull request 45 from the branch "fix/tax-rounding"
+    When the thread's pull requests are looked for
+    Then "Tax work" lists pull request 45
+    And "Tax work" shows no pull request as its branch's
 
   @mc
   Scenario: The branch's pull request is discovered on its own

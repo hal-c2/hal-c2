@@ -2,7 +2,8 @@ defmodule HalC2.PullRequests.Opened do
   @moduledoc """
   Links the pull requests a thread opened itself, with `source: "created"`: the ones its
   agent's command printed as it created them (`urls/2`, from
-  `HalC2.Orchestration.TurnWriter`). A pull request the thread already carries,
+  `HalC2.Orchestration.TurnWriter`), and the ones `HalC2.PullRequests.Discovery` finds
+  whose head is the thread's worktree commit. A pull request the thread already carries,
   as a tombstone too, is left as it is, so one the user unlinked stays unlinked.
   """
 

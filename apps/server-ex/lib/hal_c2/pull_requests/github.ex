@@ -807,6 +807,29 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
+  @doc """
+  The open pull requests whose head is commit `sha`, under any branch name, in whichever
+  repository `gh` reads the checkout at `cwd` against: `[%{"number", "url", "state"}]`.
+  A commit GitHub has not seen has none.
+  """
+  def head_pull_requests(cwd, sha) do
+    case gh_json(cwd, ["api", "repos/{owner}/{repo}/commits/#{sha}/pulls"]) do
+      {:ok, prs} when is_list(prs) ->
+        {:ok,
+         for(
+           %{"number" => number, "html_url" => url, "state" => "open", "head" => head} <- prs,
+           is_integer(number) and is_binary(url) and head["sha"] == sha,
+           do: %{"number" => number, "url" => url, "state" => "open"}
+         )}
+
+      {:ok, _} ->
+        decoded(:error)
+
+      {:error, {_, detail}} = error ->
+        if detail =~ ~r/no commit found/i, do: {:ok, []}, else: error
+    end
+  end
+
   # --- one pull request ----------------------------------------------------------------
 
   @doc "`PullRequestSummary`'s host fields, from `gh pr view`."
