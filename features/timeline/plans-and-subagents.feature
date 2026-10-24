@@ -306,12 +306,23 @@ Feature: Plans and subagents
     And the result is not shown as a message of the user's
 
   @shared @backlog-mobile
-  Scenario: A finished task's notification names its worker and carries its result
+  Scenario: A finished task's notification names its worker and links to it
     Given a task the agent delegated as "Tax tests" finished with "12 tests added"
     When the user reads the parent thread
     Then the worker's notification reads "Tax tests finished"
-    And the worker's result "12 tests added" is hidden until the user opens it
     And the notification links to the worker's thread
+
+  @desktop @backlog-mobile
+  Scenario: A finished task's result is kept apart from the agent's replies until opened
+    Given a task the agent delegated as "Tax tests" finished with "12 tests added"
+    When the user reads the parent thread
+    Then the worker's result "12 tests added" is hidden until the user opens it
+
+  @tui
+  Scenario: A finished task's notification previews the worker's result
+    Given a task the agent delegated as "Tax tests" finished with "12 tests added"
+    When the user reads the parent thread
+    Then the worker's notification previews "12 tests added"
 
   @mc
   Scenario: A finished task's notification carries the worker's thread, title and result
