@@ -80,9 +80,11 @@ defmodule HalC2.PullRequests.Wakes do
   end
 
   # A quick look at a sidebar row before its stream decides: whether a link has a
-  # snapshot it has not heard, holding news only once no run is working.
+  # snapshot it has not heard. A busy thread waits for its run's end, which changes the
+  # row again.
   defp due?(row) do
-    away? = row["archivedAt"] != nil or row["settledAt"] != nil
+    waiting? =
+      row["archivedAt"] != nil or row["settledAt"] != nil or row["activityRunStatus"] != nil
 
     row["deletedAt"] == nil and
       Enum.any?(Links.visible(row["pullRequests"] || []), fn link ->
@@ -93,12 +95,11 @@ defmodule HalC2.PullRequests.Wakes do
           {nil, _} ->
             true
 
-          _ when away? ->
+          _ when waiting? ->
             false
 
           {heard, snapshot} ->
-            advance(heard, snapshot, []) != heard or
-              (changes(heard, snapshot) != [] and row["activityRunStatus"] == nil)
+            advance(heard, snapshot, []) != heard or changes(heard, snapshot) != []
         end
       end)
   end
@@ -127,8 +128,9 @@ defmodule HalC2.PullRequests.Wakes do
 
   defp decide(state, thread_id, thread) do
     links = Links.of(thread)
-    idle? = not Enum.any?(StreamState.list(state, "run"), &(&1["status"] in @busy))
-    {quiet, told, news} = hear(links, away?(thread), idle?)
+    runs = StreamState.list(state, "run")
+    idle? = not Enum.any?(runs, &(&1["status"] in @busy))
+    {quiet, told, news} = hear(links, away?(thread), idle?, runs)
 
     cond do
       news == [] ->
@@ -159,12 +161,13 @@ defmodule HalC2.PullRequests.Wakes do
   What a thread hears of `links`: `{quiet, told, news}`, the links as they are with
   everything heard that needs no telling, as they are once the news is told too, and
   the news as `[{link, changes}]`. Away (settled or archived), a thread hears nothing
-  but a new link's baseline; busy, news waits.
+  but a new link's baseline; busy, news waits. `runs` are the thread's, for
+  `changes/3`.
   """
-  def hear(links, away?, idle?) do
+  def hear(links, away?, idle?, runs \\ []) do
     {quiet, told, news} =
       Enum.reduce(links, {[], [], []}, fn link, {quiet, told, news} ->
-        case hear_link(link, away?, idle?) do
+        case hear_link(link, away?, idle?, runs) do
           {link, []} -> {[link | quiet], [link | told], news}
           {next, changes} -> {[link | quiet], [next | told], [{link, changes} | news]}
         end
@@ -173,7 +176,7 @@ defmodule HalC2.PullRequests.Wakes do
     {Enum.reverse(quiet), Enum.reverse(told), Enum.reverse(news)}
   end
 
-  defp hear_link(link, away?, idle?) do
+  defp hear_link(link, away?, idle?, runs) do
     heard = link["heard"]
     snapshot = link["snapshot"]
 
@@ -188,7 +191,7 @@ defmodule HalC2.PullRequests.Wakes do
         {link, []}
 
       true ->
-        case changes(heard, snapshot) do
+        case changes(heard, snapshot, runs) do
           [] -> {Map.put(link, "heard", advance(heard, snapshot, [])), []}
           _ when not idle? -> {link, []}
           changes -> {Map.put(link, "heard", advance(heard, snapshot, changes)), changes}
@@ -240,7 +243,9 @@ defmodule HalC2.PullRequests.Wakes do
         Map.put(
           next,
           "activityAt",
-          latest(heard["activityAt"], get_in(snapshot, ["activity", "at"]))
+          heard["activityAt"]
+          |> latest(get_in(snapshot, ["activity", "at"]))
+          |> latest(get_in(snapshot, ["ownActivity", "at"]))
         )
 
       Map.has_key?(heard, "activityAt") ->
@@ -255,12 +260,15 @@ defmodule HalC2.PullRequests.Wakes do
   The news in `snapshot` for a thread that heard `heard`, oldest kind first: a merge
   or a close; while open, checks that went to failing, checks that pass again after
   the thread heard they failed, and a conflict with the base branch; and a review or
-  comment newer than any it heard (`{:activity, activity}`).
+  comment newer than any it heard (`{:activity, activity}`). One by the signed-in
+  account counts only when none of the thread's `runs` was going as it was posted:
+  that one is the agent's own.
   """
-  def changes(heard, snapshot) do
+  def changes(heard, snapshot, runs \\ []) do
     state = snapshot["state"]
     open? = state == "open"
-    activity = snapshot["activity"]
+    new? = &(is_map(&1) and later?(&1["at"], heard["activityAt"]))
+    own = snapshot["ownActivity"]
 
     [
       state == "merged" and heard["state"] != "merged" and :merged,
@@ -271,10 +279,22 @@ defmodule HalC2.PullRequests.Wakes do
         :checks_passing,
       open? and snapshot["mergeability"] == "conflicting" and
         heard["mergeability"] != "conflicting" and :conflicting,
-      Map.has_key?(heard, "activityAt") and is_map(activity) and
-        later?(activity["at"], heard["activityAt"]) and {:activity, activity}
+      Map.has_key?(heard, "activityAt") and new?.(snapshot["activity"]) and
+        {:activity, snapshot["activity"]},
+      Map.has_key?(heard, "activityAt") and new?.(own) and not during_run?(own["at"], runs) and
+        {:activity, own}
     ]
     |> Enum.filter(& &1)
+  end
+
+  defp during_run?(at, runs) do
+    at = JS.epoch_ms(at)
+
+    Enum.any?(runs, fn run ->
+      start = JS.epoch_ms(run["requestedAt"] || run["startedAt"])
+      done = JS.epoch_ms(run["completedAt"])
+      start != nil and start <= at and (done == nil or at <= done)
+    end)
   end
 
   defp later?(at, nil), do: JS.epoch_ms(at) != nil

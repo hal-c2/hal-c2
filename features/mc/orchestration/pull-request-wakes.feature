@@ -98,6 +98,24 @@ Feature: A thread hears when a pull request it owns needs attention
     And the message says "Checks are failing."
     And the message says "New comment from owner-1."
 
+  # The account the MC reads GitHub as is often the one the agent posts with, so what
+  # it posts while the thread works is the agent's own.
+  @mc
+  Scenario: A comment the agent posts while it works does not wake it
+    Given the agent of "t1" is working
+    When the agent comments as the account the MC is signed in as and the MC reads "acme/app#12" again
+    And the turn of "t1" ends
+    Then the agent of "t1" is not woken
+
+  @mc
+  Scenario: A review that lands while the agent works still wakes it after the agent's own comment
+    Given the agent of "t1" is working
+    When a member publishes a review that asks for changes and the MC reads "acme/app#12" again
+    And the agent comments as the account the MC is signed in as and the MC reads "acme/app#12" again
+    And the turn of "t1" ends
+    Then the agent of "t1" is woken once about "acme/app#12"
+    And the message says "New review from member-1 (changes requested)."
+
   @mc
   Scenario: The message names the pull request and how to read more
     When its checks start failing and the MC reads "acme/app#12" again

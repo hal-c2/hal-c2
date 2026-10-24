@@ -779,9 +779,9 @@ defmodule HalC2.PullRequests.GitHub do
             "changedFiles" => pr["changedFiles"] || 0,
             "reviewDecision" => review_decision(pr["reviewDecision"], pr["latestReviews"]),
             "checksState" => rollup(head_rollup),
-            "mergeability" => mergeability(pr["mergeable"]),
-            "activity" => activity(pr, viewer)
-          }}
+            "mergeability" => mergeability(pr["mergeable"])
+          }
+          |> Map.merge(activity(pr, viewer))}
        end}
     else
       false -> {:ok, %{}}
@@ -790,9 +790,12 @@ defmodule HalC2.PullRequests.GitHub do
   end
 
   # The newest published review or comment by the repository's owner, a member or a
-  # collaborator, the signed-in account, or a trusted review bot, as
-  # `%{"at", "author", "kind", "state"}`; nil when there is none.
+  # collaborator, or a trusted review bot (`activity`), and the newest by the signed-in
+  # account (`ownActivity`), which may be the agent's own, each as
+  # `%{"at", "author", "kind", "state"}` or nil. One without an author is skipped.
   defp activity(pr, viewer) do
+    viewer = String.downcase(viewer || "")
+
     comments =
       for node <- get_in(pr, ["comments", "nodes"]) || [],
           is_map(node),
@@ -803,8 +806,19 @@ defmodule HalC2.PullRequests.GitHub do
           is_map(node) and up(node["state"]) not in [nil, "PENDING"],
           do: {node, node["submittedAt"], "review", String.downcase(up(node["state"]))}
 
-    (comments ++ reviews)
-    |> Enum.filter(fn {node, at, _, _} -> is_binary(at) and trusted?(node, viewer) end)
+    {own, others} =
+      (comments ++ reviews)
+      |> Enum.filter(fn {node, at, _, _} -> is_binary(at) and author_login(node) != nil end)
+      |> Enum.split_with(fn {node, _, _, _} -> String.downcase(author_login(node)) == viewer end)
+
+    %{
+      "activity" => others |> Enum.filter(fn {node, _, _, _} -> trusted?(node) end) |> newest(),
+      "ownActivity" => newest(own)
+    }
+  end
+
+  defp newest(activities) do
+    activities
     |> Enum.max_by(fn {_, at, _, _} -> HalC2.Projection.JS.epoch_ms(at) || 0 end, fn -> nil end)
     |> case do
       nil ->
@@ -815,11 +829,9 @@ defmodule HalC2.PullRequests.GitHub do
     end
   end
 
-  defp trusted?(node, viewer) do
-    login = String.downcase(author_login(node) || "")
-
+  defp trusted?(node) do
     up(node["authorAssociation"]) in @trusted_associations or
-      (login != "" and login == String.downcase(viewer || "")) or login in @trusted_bots
+      String.downcase(author_login(node)) in @trusted_bots
   end
 
   defp author_login(node) do

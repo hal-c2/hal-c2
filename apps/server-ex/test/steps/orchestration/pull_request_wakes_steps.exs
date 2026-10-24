@@ -107,8 +107,9 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
     context |> link(thread, pr) |> read()
   end
 
+  # The turn ends after every change so far, so what the agent posted falls within it.
   step "the turn of {string} ends", %{args: [thread]} = context do
-    at = World.iso_from_now(0)
+    {context, at} = tick(context)
 
     context
     |> World.put_entity(thread, "run", context.working, %{
@@ -224,6 +225,9 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
 
         "the account the MC is signed in as comments" ->
           comment(pr_state, at, "monalisa", "User", "NONE")
+
+        "the agent comments as the account the MC is signed in as" ->
+          comment(pr_state, at, "monalisa", "User", "OWNER")
 
         "Copilot comments" ->
           review(pr_state, at, "COMMENTED", "copilot-pull-request-reviewer", "Bot", "NONE")

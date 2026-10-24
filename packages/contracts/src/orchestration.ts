@@ -271,6 +271,13 @@ export type ThreadPullRequestLinkSource = typeof ThreadPullRequestLinkSource.Typ
  * fields are optional: a host whose cheap read lacks them leaves them out, and snapshots
  * written before they existed still decode.
  */
+const ThreadPullRequestActivity = Schema.Struct({
+  at: IsoDateTime,
+  author: Schema.String,
+  kind: Schema.Literals(["review", "comment"]),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
 export const ThreadPullRequestSnapshot = Schema.Struct({
   state: PullRequestState,
   title: TrimmedNonEmptyString,
@@ -289,16 +296,10 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
   checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
   mergeability: Schema.optional(PullRequestMergeability),
   // The newest published review or comment from a trusted author; null when there is none.
-  activity: Schema.optional(
-    Schema.NullOr(
-      Schema.Struct({
-        at: IsoDateTime,
-        author: Schema.String,
-        kind: Schema.Literals(["review", "comment"]),
-        state: Schema.optional(Schema.NullOr(Schema.String)),
-      }),
-    ),
-  ),
+  activity: Schema.optional(Schema.NullOr(ThreadPullRequestActivity)),
+  // The newest by the account the MC reads the host as, kept apart because it may be the
+  // agent's own.
+  ownActivity: Schema.optional(Schema.NullOr(ThreadPullRequestActivity)),
 });
 export type ThreadPullRequestSnapshot = typeof ThreadPullRequestSnapshot.Type;
 
