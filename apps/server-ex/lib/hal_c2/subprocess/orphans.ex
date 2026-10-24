@@ -322,7 +322,20 @@ defmodule HalC2.Subprocess.Orphans do
   # suppressed), and only that silence is read as `:gone`; a non-zero exit that
   # says something, output that does not parse, and a `ps` that cannot run at
   # all are failures, not proof of absence: `:unknown`.
-  defp ps_process_result(pid) do
+  # `ps` runs in a process of its own: `System.cmd` links its port to the
+  # caller, and a caller trapping exits (a provider session, which stops on
+  # any `:EXIT`) would be handed the port's `{:EXIT, port, :normal}`.
+  @doc false
+  def ps_process_result(pid) do
+    {runner, ref} = spawn_monitor(fn -> exit({:ps, run_ps(pid)}) end)
+
+    receive do
+      {:DOWN, ^ref, :process, ^runner, {:ps, outcome}} -> outcome
+      {:DOWN, ^ref, :process, ^runner, _crash} -> :unknown
+    end
+  end
+
+  defp run_ps(pid) do
     ps_outcome(
       System.cmd("ps", ps_args(pid),
         stderr_to_stdout: true,
