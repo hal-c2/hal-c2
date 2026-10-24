@@ -326,11 +326,13 @@ fn main() -> ExitCode {
     }
 
     // What the ratchet holds and this run did not pass. A held scenario the
-    // run did not pick is missing only when the run was for all of them.
+    // run did not pick is missing only when the run was for all of them (the
+    // backlog is not what RATCHET holds).
     let ran: BTreeSet<&String> = ids.iter().collect();
+    let whole = default_scope && !args.backlog;
     let regressed: Vec<&String> = held
         .iter()
-        .filter(|id| !passing.contains(*id) && (default_scope || ran.contains(id)))
+        .filter(|id| !passing.contains(*id) && (whole || ran.contains(id)))
         .collect();
     if !regressed.is_empty() {
         println!(
@@ -353,7 +355,10 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     let new: Vec<&String> = passing.iter().filter(|id| !held.contains(*id)).collect();
-    if args.raise {
+    if args.raise && args.backlog {
+        // A backlog scenario that passes loses its tag first; then it is held.
+        println!("\nnot raising RATCHET from a backlog run");
+    } else if args.raise {
         if new.is_empty() {
             println!(
                 "\nRATCHET holds every passing scenario already ({})",
