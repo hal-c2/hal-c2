@@ -30,6 +30,7 @@ pub mod launch;
 pub mod launch_folder;
 pub mod licenses;
 pub mod link;
+pub mod load_balancing;
 pub mod machine_files;
 pub mod markdown;
 pub mod mc;
@@ -42,6 +43,8 @@ pub mod plan;
 pub mod planner;
 pub mod plugin;
 pub mod project;
+pub mod provider_list;
+pub mod provider_settings;
 pub mod pull_request;
 pub mod pull_request_list;
 pub mod review_diff;
@@ -64,6 +67,8 @@ pub mod thread_worktree_setup;
 pub mod timeline;
 pub mod toast;
 pub mod turn;
+pub mod usage;
+pub mod usage_limits_command;
 pub mod viewing;
 pub mod workspace;
 
@@ -94,6 +99,7 @@ pub fn register(steps: &mut Steps) {
     launch_folder::register(steps);
     licenses::register(steps);
     link::register(steps);
+    load_balancing::register(steps);
     machine_files::register(steps);
     markdown::register(steps);
     mc::register(steps);
@@ -106,6 +112,8 @@ pub fn register(steps: &mut Steps) {
     planner::register(steps);
     plugin::register(steps);
     project::register(steps);
+    provider_list::register(steps);
+    provider_settings::register(steps);
     pull_request::register(steps);
     pull_request_list::register(steps);
     review_diff::register(steps);
@@ -128,6 +136,8 @@ pub fn register(steps: &mut Steps) {
     timeline::register(steps);
     toast::register(steps);
     turn::register(steps);
+    usage::register(steps);
+    usage_limits_command::register(steps);
     viewing::register(steps);
     workspace::register(steps);
 }
