@@ -384,8 +384,17 @@ fn opened_through_forward(world: &mut World, url: &str) -> Outcome {
             )
         },
     )?;
+    // A pathless address is opened with its root path.
+    let rooted = |address: &str| {
+        let rest = address.split("://").nth(1).unwrap_or(address);
+        if rest.contains('/') {
+            address.to_owned()
+        } else {
+            format!("{address}/")
+        }
+    };
     expect!(
-        world.opened_urls() == [url.to_owned()],
+        world.opened_urls().iter().map(|u| rooted(u)).collect::<Vec<_>>() == [rooted(url)],
         "the browser opened {:?}",
         world.opened_urls()
     );

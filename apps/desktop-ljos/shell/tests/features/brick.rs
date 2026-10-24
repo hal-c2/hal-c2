@@ -38,7 +38,9 @@ Item {
     function brickFindIn(item, name) {
         if (!item) return null
         if (item.objectName === name) return item
-        var kids = item.children || []
+        // data, not children: a closed Popup is no visual child, as
+        // findChild finds it in Qt.
+        var kids = item.data || item.children || []
         for (var i = 0; i < kids.length; i++) {
             var found = brickFindIn(kids[i], name)
             if (found) return found
@@ -86,12 +88,30 @@ Item {
         }
         return null
     }
+    function brickFindAllVisibleIn(item, name, out) {
+        if (!item || !item.visible) return
+        if (item.objectName === name) out.push(item)
+        var kids = item.children || []
+        for (var i = 0; i < kids.length; i++) brickFindAllVisibleIn(kids[i], name, out)
+    }
+    function brickFindVisibleNth(name, n) {
+        var out = []
+        var trees = brickTrees()
+        for (var i = 0; i < trees.length; i++) brickFindAllVisibleIn(trees[i], name, out)
+        return n < out.length ? out[n] : null
+    }
     function brickShowsIn(item, text) {
         if (!item || !item.visible) return false
         if (item.text !== undefined && String(item.text) === text) return true
         var kids = item.children || []
         for (var i = 0; i < kids.length; i++) {
             if (brickShowsIn(kids[i], text)) return true
+        }
+        // A menu declared in a control keeps its entries in contentData.
+        var content = item.contentData || []
+        for (var j = 0; j < content.length; j++) {
+            if (kids.indexOf(content[j]) >= 0) continue
+            if (brickShowsIn(content[j], text)) return true
         }
         return false
     }
@@ -165,6 +185,39 @@ Item {
             return next.mapToItem(null, place.x + 4, place.y + place.height / 2)
         }
         return seen.join(" | ")
+    }
+    function brickAtPx(item, x, y) {
+        return item.mapToItem(null, x, y)
+    }
+    function brickTopIndex(view) {
+        return view.indexAt(view.contentX, view.contentY + 1)
+    }
+    function brickTreeNodeIn(item, path) {
+        if (!item) return null
+        if (item.objectName === "diffTreeNode" && item.modelData && item.modelData.path === path) return item
+        var kids = item.children || []
+        for (var i = 0; i < kids.length; i++) {
+            var found = brickTreeNodeIn(kids[i], path)
+            if (found) return found
+        }
+        return null
+    }
+    function brickTreeNode(path) {
+        return brickTreeNodeIn(brickProbe, path)
+    }
+    function brickLineCommentIn(item, file, line) {
+        if (!item) return null
+        if (item.objectName === "diffLineComment" && item.row && item.row.newLine === line
+            && item.row.sign === "+" && item.row.file === file) return item
+        var kids = item.children || []
+        for (var i = 0; i < kids.length; i++) {
+            var found = brickLineCommentIn(kids[i], file, line)
+            if (found) return found
+        }
+        return null
+    }
+    function brickLineComment(file, line) {
+        return brickLineCommentIn(brickProbe, file, line)
     }
 %BODY%
 }
@@ -259,8 +312,41 @@ impl Brick {
             probe,
             takes_keys: false,
         };
-        expect!(brick.root(world).is_some(), "the brick did not load: {qml}");
+        let Some(root) = brick.root(world) else {
+            fail!("the brick did not load: {qml}");
+        };
+        // desktop-qt's Brick sizes its root to the brick, as a Loader or an
+        // anchored host sizes a page in the app.
+        brick.write(world, root, "width", Value::from(width))?;
+        brick.write(world, root, "height", Value::from(height))?;
         Ok(brick)
+    }
+
+    /// Where the window point (x, y) of the brick is once the brick has
+    /// moved so the point lies inside the window. desktop-qt's window takes
+    /// the brick's size, so a point far down a tall page is in it; a test
+    /// window keeps its size (ljos-ui: TestWindow cannot change size), so
+    /// the brick moves under it instead, as a page scrolls.
+    pub fn reach(&self, world: &mut World, x: f64, y: f64) -> Outcome<(f64, f64)> {
+        let (width, height) = crate::world::WINDOW;
+        let shift = |at: f64, size: f64| {
+            if (0.0..size).contains(&at) {
+                0.0
+            } else {
+                size / 2.0 - at
+            }
+        };
+        let (dx, dy) = (shift(x, width), shift(y, height));
+        if dx == 0.0 && dy == 0.0 {
+            return Ok((x, y));
+        }
+        for (name, by) in [("x", dx), ("y", dy)] {
+            if by != 0.0 {
+                let now = world.engine().read_by_name(self.probe, name).to_number();
+                self.write(world, self.probe, name, Value::from(now + by))?;
+            }
+        }
+        Ok((x + dx, y + dy))
     }
 
     /// Shows `qml` and keeps it as the world's brick.
@@ -382,6 +468,53 @@ impl Brick {
                 _ => None,
             },
         )
+    }
+
+    /// The Diff panel's tree entry of `path`, if the tree draws it.
+    pub fn tree_node(&self, world: &World, path: &str) -> Outcome<Option<ObjectId>> {
+        Ok(
+            match self.call(world, "brickTreeNode", &[Value::from(path)])? {
+                Value::Object(item) => Some(item),
+                _ => None,
+            },
+        )
+    }
+
+    /// The comment button of the added line `line` of file `file` (its
+    /// index in the diff), if the list has drawn that line.
+    pub fn line_comment(&self, world: &World, file: usize, line: i32) -> Outcome<Option<ObjectId>> {
+        Ok(
+            match self.call(
+                world,
+                "brickLineComment",
+                &[Value::from(file as i32), Value::from(line)],
+            )? {
+                Value::Object(item) => Some(item),
+                _ => None,
+            },
+        )
+    }
+
+    /// The index of the row at the top of the list `view`.
+    pub fn top_index(&self, world: &World, view: ObjectId) -> Outcome<i32> {
+        let value = self.call(world, "brickTopIndex", &[Value::Object(view)])?;
+        let engine = world.engine();
+        match engine.to_js_string(&value).to_string().parse::<f64>() {
+            Ok(index) => Ok(index as i32),
+            Err(_) => fail!("the list has no top row: {value:?}"),
+        }
+    }
+
+    /// The point (x, y), in `item`'s own pixels, in window coordinates.
+    pub fn at_px(&self, world: &World, item: ObjectId, x: f64, y: f64) -> Outcome<(f64, f64)> {
+        match self.call(
+            world,
+            "brickAtPx",
+            &[Value::Object(item), Value::from(x), Value::from(y)],
+        )? {
+            Value::Point(p) => Ok((p.x, p.y)),
+            other => fail!("no point for the item: {other:?}"),
+        }
     }
 
     /// `item`'s point at (fx, fy) of its size, in window coordinates.
@@ -592,5 +725,24 @@ impl Brick {
             _ => 0.0,
         };
         (read("width"), read("height"))
+    }
+
+    /// The `n`th visible item named `object_name`, in document order.
+    pub fn find_visible_nth(
+        &self,
+        world: &World,
+        object_name: &str,
+        n: usize,
+    ) -> Outcome<Option<ObjectId>> {
+        Ok(
+            match self.call(
+                world,
+                "brickFindVisibleNth",
+                &[Value::from(object_name), Value::Int(n as i32)],
+            )? {
+                Value::Object(found) => Some(found),
+                _ => None,
+            },
+        )
     }
 }

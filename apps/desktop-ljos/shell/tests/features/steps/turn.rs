@@ -401,8 +401,10 @@ fn tells(world: &World, told: &str) -> bool {
             }
         }
     }
-    // TODO(port): OnboardingSteps::onboardingTells, the welcome wizard's
-    // pairing, setup terminal or import error.
+    // The welcome wizard's pairing, setup terminal or import error.
+    if super::onboarding::onboarding_tells(world, told) {
+        return true;
+    }
     if world
         .told_in_place
         .as_ref()
@@ -651,8 +653,9 @@ pub fn register(steps: &mut Steps) {
         answer(world, json!(c[0]))
     });
     steps.step(&format!("the agent receives {Q}"), |world, c, _| {
-        // TODO(port): ComposerWorkspaceSteps::composerMessageReceived, the
-        // composer's own sent message, is another file's.
+        if crate::steps::composer_defaults::composer_message_received(world, &c[0])? {
+            return Ok(());
+        }
         let received = received_answer(world)?;
         expect!(
             received == json!(c[0]),

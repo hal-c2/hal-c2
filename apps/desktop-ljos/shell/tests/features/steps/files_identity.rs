@@ -164,16 +164,6 @@ fn open_picker(world: &mut World, project: &str) -> Outcome {
     manage(world, project)?;
     brick::shown(world)?.click(world, "choose")?;
     world.sync()?;
-    // The page is a clipped Flickable, which Ljós does not click into yet
-    // (issue-clip-anchored-hit-test.md); the button's own dispatch stands in
-    // until it does.
-    if is_empty(&picker(world)) {
-        let key = world.state("projectSettings")["checkouts"][0]["key"].clone();
-        world.dispatch(
-            "projectIcon.open",
-            json!({"projectKey": key, "name": project}),
-        )?;
-    }
     world.wait_for("the icon picker to open", |w| !is_empty(&picker(w)))?;
     let brick = brick::shown(world)?;
     world.wait_for("the icon picker to show", move |w| {

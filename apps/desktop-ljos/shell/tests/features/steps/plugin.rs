@@ -134,7 +134,14 @@ fn describe(world: &World) -> String {
     if let Some(map) = state.as_object_mut() {
         map.remove("files");
     }
-    format!("the plugins are {}", show(&state))
+    // TODO(ljos#105): a plugin file is QML text, which the shell cannot
+    // compile while it runs.
+    let gap = if show(&state).contains("has no compiler") {
+        " (ljos#105)"
+    } else {
+        ""
+    };
+    format!("the plugins are {}{gap}", show(&state))
 }
 
 fn count(value: &Json) -> usize {
@@ -683,6 +690,9 @@ pub fn register(steps: &mut Steps) {
         wait_shown(world, "statusbar", &c[0], "")
     });
     steps.step(&format!("the user disables {Q}"), |world, c, _| {
+        if crate::steps::mc_plugin::is_mc_plugin(world, &c[0]) {
+            return crate::steps::mc_plugin::switch_mc_plugin(world, &c[0]);
+        }
         // The plugin list's own switch.
         toggle(world, &c[0])
     });
@@ -739,6 +749,9 @@ pub fn register(steps: &mut Steps) {
         )
     });
     steps.step(&format!("the user enables {Q}"), |world, c, _| {
+        if crate::steps::mc_plugin::is_mc_plugin(world, &c[0]) {
+            return crate::steps::mc_plugin::switch_mc_plugin(world, &c[0]);
+        }
         toggle(world, &c[0])
     });
     steps.step("\"statusbar\" shows the clock again", |world, _, _| {
