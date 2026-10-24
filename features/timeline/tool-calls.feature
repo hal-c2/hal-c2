@@ -19,6 +19,8 @@
 #   apps/tui/src/components/MessagesTimeline.tsx (changed-files tree, open diff per turn and per file)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (command, file, web and tool items)
 #   https://github.com/MoonshotAI/kimi-cli/blob/1.52.0/src/kimi_cli/acp/session.py (Kimi's tool calls)
+#   https://github.com/MoonshotAI/kimi-cli/blob/1.52.0/src/kimi_cli/metadata.py (where Kimi keeps a session's record)
+#   apps/server-ex/lib/hal_c2/acp/kimi.ex (Kimi's subagents, read from that record)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
 
 Feature: Tool calls and file changes
@@ -408,6 +410,16 @@ Feature: Tool calls and file changes
       | ReadFile  | a file read                          |
       | Grep      | a file search                        |
       | WriteFile | a tool call that names only its file |
+
+  # Kimi's Agent tool runs a subagent whose work ACP never carries: Kimi writes it only
+  # to the session's own record on the MC's machine, which the MC reads while it runs.
+  @mc
+  Scenario: A Kimi subagent's work shows in its own thread
+    Given Kimi hands a task to one of its subagents
+    When the MC projects the subagent
+    Then the subagent's thread opens with its task
+    And the subagent's thinking, commands and replies appear in its thread
+    And the subagent's result is its answer, without Kimi's header
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
   @shared @backlog-mobile

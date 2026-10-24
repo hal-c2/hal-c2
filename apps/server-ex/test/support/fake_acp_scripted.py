@@ -21,8 +21,10 @@
 # session, else the prompt's]}, {"request": {method,
 # params}} (waits for the answer), {"permission": toolCall} (session/request_permission
 # with allow_once/allow_always/reject_once), {"waitCancel": true}, {"exit": code},
-# {"error": {code, message}} (ends the prompt with it), {"stop": reason}.
-import json, os, sys
+# {"error": {code, message}} (ends the prompt with it), {"stop": reason},
+# {"kimiWire": [message]} (appends to the session's record as Kimi CLI keeps it:
+# $KIMI_SHARE_DIR/sessions/<md5 of cwd>/<session id>/wire.jsonl).
+import hashlib, json, os, sys
 
 DIR = os.environ["FAKE_DIR"]
 LOG = os.path.join(DIR, "log.jsonl")
@@ -58,6 +60,17 @@ log({"start": {"argv": sys.argv, "cwd": os.getcwd(), "pid": os.getpid(),
                "env": {k: v for k, v in os.environ.items() if k.startswith(ENV_PREFIXES)}}})
 
 cancelled = False
+cwds = {}
+
+
+def kimi_wire(sid, messages):
+    cwd = cwds.get(sid, os.getcwd())
+    path = os.path.join(os.environ["KIMI_SHARE_DIR"], "sessions",
+                        hashlib.md5(cwd.encode("utf-8")).hexdigest(), sid)
+    os.makedirs(path, exist_ok=True)
+    with open(os.path.join(path, "wire.jsonl"), "a") as f:
+        for m in messages:
+            f.write(json.dumps({"timestamp": 0, "message": m}) + "\n")
 backlog = []  # messages read while a turn waited on something else
 next_id = [0]
 
@@ -149,6 +162,8 @@ def run_turn(mid, sid, text):
         elif "error" in step:
             send({"id": mid, "error": step["error"]})
             return
+        elif "kimiWire" in step:
+            kimi_wire(sid, step["kimiWire"])
         elif "stop" in step:
             send({"id": mid, "result": {"stopReason": step["stop"]}})
             return
@@ -193,6 +208,7 @@ while True:
             result["modes"] = cfg["modes"]
         if method == "session/new":
             result["sessionId"] = "fake-session-%d-%d" % (os.getpid(), sessions)
+            cwds[result["sessionId"]] = params.get("cwd") or os.getcwd()
         send({"id": mid, "result": result})
     elif (method == "session/set_config_option" and cfg.get("rejectUnknownModels")
           and params.get("configId") == "model"

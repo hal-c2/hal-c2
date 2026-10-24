@@ -180,20 +180,150 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
       ]
     }
 
+    context |> kimi(turn) |> FakeAcp.thread("Agent work")
+  end
+
+  @kimi_task "List the modules in lib"
+  @kimi_header "agent_id: a1\nresumed: false\nactual_subagent_type: explore\nstatus: completed\n\n"
+
+  # Kimi's Agent tool: its arguments stream in like any call's, and the subagent's work
+  # goes only to the session's record, as `SubagentEvent`s under the call's id (the
+  # part of ACP's id after the turn's). The call ends with Kimi's header and the answer.
+  step "Kimi hands a task to one of its subagents", context do
+    args =
+      JSON.encode!(%{
+        "description" => "Survey lib",
+        "subagent_type" => "explore",
+        "prompt" => @kimi_task
+      })
+
+    call = fn update, title, text ->
+      %{
+        "update" => %{
+          "sessionUpdate" => update,
+          "toolCallId" => "turn-1/tool_agent",
+          "title" => title,
+          "status" => "in_progress",
+          "content" => [%{"type" => "content", "content" => %{"type" => "text", "text" => text}}]
+        }
+      }
+    end
+
+    sub = fn parent, type, payload ->
+      %{
+        "type" => "SubagentEvent",
+        "payload" => %{
+          "parent_tool_call_id" => parent,
+          "agent_id" => "a1",
+          "subagent_type" => "explore",
+          "event" => %{"type" => type, "payload" => payload}
+        }
+      }
+    end
+
+    shell = %{"type" => "function", "id" => "tool_ls", "function" => %{"name" => "Shell"}}
+
+    record = [
+      %{"type" => "StepBegin", "payload" => %{"n" => 1}},
+      sub.("tool_agent", "StepBegin", %{"n" => 1}),
+      sub.("tool_agent", "ContentPart", %{"type" => "think", "think" => "Look at lib."}),
+      sub.("tool_agent", "ToolCall", put_in(shell, ["function", "arguments"], ~s({"comm))),
+      sub.("tool_agent", "ToolCallPart", %{"arguments_part" => ~s(and":"ls lib"})}),
+      sub.("tool_other", "ContentPart", %{"type" => "text", "text" => "Not this one's."}),
+      sub.("tool_agent", "ToolResult", %{
+        "tool_call_id" => "tool_ls",
+        "return_value" => %{"is_error" => false, "output" => "a.ex\nb.ex\n", "message" => ""}
+      }),
+      sub.("tool_agent", "ContentPart", %{"type" => "text", "text" => "lib has "}),
+      sub.("tool_agent", "ContentPart", %{"type" => "text", "text" => "two modules"})
+    ]
+
+    turn = %{
+      "match" => "survey the code",
+      "steps" => [
+        call.("tool_call", "Agent", ""),
+        call.("tool_call_update", "Agent: Survey lib", args),
+        %{"kimiWire" => record},
+        %{
+          "update" => %{
+            "sessionUpdate" => "tool_call_update",
+            "toolCallId" => "turn-1/tool_agent",
+            "status" => "completed",
+            "content" => [
+              %{
+                "type" => "content",
+                "content" => %{
+                  "type" => "text",
+                  "text" => @kimi_header <> "[summary]\nlib has two modules"
+                }
+              }
+            ]
+          }
+        },
+        %{"text" => "The survey is done."}
+      ]
+    }
+
+    context |> kimi(turn) |> FakeAcp.thread("Agent work")
+  end
+
+  step "the MC projects the subagent", context do
+    context = FakeAcp.send_message(context, "survey the code")
+    state = FakeAcp.await_run(context, "completed")
+    assert [subagent] = StreamState.list(state, "subagent")
+    child = HalC2.Streams.Server.state(HalC2.Streams.ensure(subagent["childThreadId"]))
+    Map.merge(context, %{subagent: subagent, child: child})
+  end
+
+  step "the subagent's thread opens with its task", context do
+    assert %{"title" => "Survey lib", "prompt" => @kimi_task, "status" => "completed"} =
+             context.subagent
+
+    assert [%{"role" => "user", "text" => @kimi_task} | _] =
+             Enum.sort_by(StreamState.list(context.child, "message"), & &1["createdAt"])
+
+    context
+  end
+
+  step "the subagent's thinking, commands and replies appear in its thread", context do
+    items = Enum.sort_by(StreamState.list(context.child, "turn-item"), & &1["ordinal"])
+
+    assert [
+             %{"type" => "user_message"},
+             %{"type" => "reasoning", "text" => "Look at lib."},
+             %{"type" => "command_execution", "input" => "ls lib", "output" => "a.ex\nb.ex\n"} =
+               command,
+             %{"type" => "assistant_message", "text" => "lib has two modules"}
+           ] = items
+
+    assert command["status"] == "completed"
+    context
+  end
+
+  step "the subagent's result is its answer, without Kimi's header", context do
+    assert context.subagent["result"] == "lib has two modules"
+    context
+  end
+
+  # Kimi CLI as a registry instance, running the fake with `turn`, and keeping its
+  # session records in the fake's directory.
+  defp kimi(context, turn) do
     context = FakeAcp.install(context, "kimi", %{"turns" => [turn | FakeAcp.turns()]})
     World.put_app_env(:acp_commands, %{"kimi" => [context.fakes["kimi"].bin]})
     HalC2.Acp.forget("kimi")
     ExUnit.Callbacks.on_exit(fn -> HalC2.Acp.forget("kimi") end)
+    share = Path.join(context.fakes["kimi"].dir, "kimi")
 
     FakeAcp.settings(fn settings ->
       put_in(settings, [Access.key("providerInstances", %{}), "kimi"], %{
         "driver" => "acpRegistry",
         "enabled" => true,
-        "config" => %{"agentId" => "kimi"}
+        "config" => %{"agentId" => "kimi"},
+        "environment" => [%{"name" => "KIMI_SHARE_DIR", "value" => share}]
       })
     end)
 
-    FakeAcp.thread(context, "Agent work")
+    context
   end
 
   step "the MC projects the call", context do

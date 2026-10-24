@@ -38,7 +38,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 13
+  @state_version 14
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -153,6 +153,9 @@ defmodule HalC2.Acp.ThreadRuntime do
        agent: nil,
        # Whether the agent is Kimi CLI, whose tool calls `Kimi.update/1` reshapes.
        kimi: false,
+       # Kimi's session record while its subagents run (`Kimi.read/2`): %{path, offset,
+       # timer}.
+       wire: nil,
        mode: nil,
        capabilities: %{},
        session_id: nil,
@@ -512,6 +515,9 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
 
+  def handle_info(:kimi_wire, %{wire: %{} = wire} = state),
+    do: {:noreply, read_wire(%{state | wire: %{wire | timer: nil}})}
+
   def handle_info(message, state) do
     case :gen_server.check_response(message, state.prompts, true) do
       {{:reply, result}, label, prompts} ->
@@ -653,7 +659,9 @@ defmodule HalC2.Acp.ThreadRuntime do
       |> migrate()
 
   defp migrate(%{v: 12} = state),
-    do: Map.merge(state, %{v: 13, kimi: Kimi.agent?(state.agent)})
+    do: state |> Map.merge(%{v: 13, kimi: Kimi.agent?(state.agent)}) |> migrate()
+
+  defp migrate(%{v: 13} = state), do: Map.merge(state, %{v: 14, wire: nil})
 
   # --- session -------------------------------------------------------------------
 
@@ -1463,6 +1471,8 @@ defmodule HalC2.Acp.ThreadRuntime do
     ~r/===\s*Task\s+(#{@uuid})\s*===/i
   ]
 
+  defp subagent_call?(call, %{kimi: true}), do: Kimi.subagent?(call)
+
   # Grok's Task / spawn_subagent tool.
   defp subagent_call?(call, %{turn: %{ids: %{driver: "grok"}}}) do
     title = String.downcase(call["title"] || "")
@@ -1535,6 +1545,35 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # Kimi names its Agent call's task only once the arguments have streamed in, and its
+  # subagent's work is in its session record (`HalC2.Acp.Kimi`), read until it ends.
+  defp subagent_call(%{kimi: true} = state, id, call) do
+    state = flush(state)
+    input = call["rawInput"] || %{}
+
+    case {state.subagents[id], input["prompt"]} do
+      {nil, prompt} when is_binary(prompt) ->
+        sub =
+          NativeSubagent.start(state.turn.ids, id, %{
+            "prompt" => prompt,
+            "title" => input["description"],
+            "model" => input["model"]
+          })
+
+        entry = %{sub: sub, session: nil, done: false}
+
+        %{state | subagents: Map.put(state.subagents, id, entry)}
+        |> read_wire()
+        |> kimi_call(id, call)
+
+      {nil, _} ->
+        state
+
+      _ ->
+        kimi_call(state, id, call)
+    end
+  end
+
   defp subagent_call(state, id, call) do
     state = flush(state)
     output = content_text(call["content"]) || raw_output(call["rawOutput"])
@@ -1584,6 +1623,64 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp background?(entry), do: Map.get(entry, :background, false)
+
+  defp kimi_call(state, id, call) do
+    entry = state.subagents[id]
+
+    if call["status"] in ["completed", "failed"] and not entry.done do
+      # What the subagent did before it ended is in the record by now.
+      state = read_wire(state)
+      entry = state.subagents[id]
+      output = content_text(call["content"]) || raw_output(call["rawOutput"])
+      status = if call["status"] == "failed", do: "failed", else: "completed"
+      sub = NativeSubagent.finish(entry.sub, status, Kimi.result(output))
+      %{state | subagents: Map.put(state.subagents, id, %{entry | sub: sub, done: true})}
+    else
+      state
+    end
+  end
+
+  # Kimi's session record is read from where it reaches before a turn's prompt is
+  # sent, with no subagent running: the turn's subagents' work comes after. By the
+  # time an Agent call's update reaches the MC, its subagent may have written some.
+  defp watch_wire(%{kimi: false} = state, _turn), do: state
+
+  defp watch_wire(state, turn) do
+    path = Kimi.wire(HalC2.Acp.instance_env(state.agent), turn.cwd, state.session_id)
+    running = Enum.any?(state.subagents, fn {_, e} -> not e.done end)
+
+    case state.wire do
+      %{path: ^path} when running -> state
+      wire -> %{state | wire: %{path: path, offset: Kimi.size(path), timer: wire[:timer]}}
+    end
+  end
+
+  # Kimi only writes its subagents' work to its record, so the record is read again
+  # each second while one runs.
+  defp read_wire(%{wire: %{} = wire} = state) do
+    {events, offset} = Kimi.read(wire.path, wire.offset)
+
+    subagents =
+      Enum.reduce(events, state.subagents, fn {parent, event}, subagents ->
+        case Enum.find(subagents, fn {id, e} -> not e.done and Kimi.tool_id(id) == parent end) do
+          {id, entry} -> Map.put(subagents, id, %{entry | sub: Kimi.work(entry.sub, event)})
+          nil -> subagents
+        end
+      end)
+
+    running = Enum.any?(subagents, fn {_, e} -> not e.done end)
+
+    timer =
+      cond do
+        wire.timer -> wire.timer
+        running -> Process.send_after(self(), :kimi_wire, 1_000)
+        true -> nil
+      end
+
+    %{state | subagents: subagents, wire: %{wire | offset: offset, timer: timer}}
+  end
+
+  defp read_wire(state), do: state
 
   # --- Grok's background work -------------------------------------------------------
 
@@ -2221,7 +2318,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   # connection's mailbox before this returns, and a steer or a cancel this process sends
   # the same connection later lands behind it, so the agent reads the prompt first.
   defp prompt(state, turn) do
-    state = %{state | leaf: leaf(state)}
+    state = %{state | leaf: leaf(state)} |> watch_wire(turn)
     prompt = acp_prompt(turn, state.capabilities, state.announce)
     params = %{"sessionId" => state.session_id, "prompt" => prompt}
     prompts = Connection.request(state.conn, "session/prompt", params, :prompt, state.prompts)
