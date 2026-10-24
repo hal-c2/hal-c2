@@ -415,7 +415,7 @@ pub fn register(steps: &mut Steps) {
                 }
                 "an unreadable date" => json!({"mode": "date", "date": "next friday", "time": "09:00"}),
                 // New York's clocks go from 02:00 to 03:00 on 14 March 2027.
-                // TODO(port): SidebarModel::setTimeZone takes a named zone; the
+                // TODO(ljos#119): SidebarModel::setTimeZone takes a named zone; the
                 // shell's sidebar::set_time_zone takes a fixed offset, which
                 // has no daylight saving change to skip.
                 _ => fail!("the sidebar's zone is a fixed offset, with no daylight saving change"),
