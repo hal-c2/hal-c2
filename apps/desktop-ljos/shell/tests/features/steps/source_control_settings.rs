@@ -2,17 +2,17 @@
 //! SourceControlSettingsSteps.cpp): the discovery scenarios of
 //! settings/source-control.feature. The fake answers
 //! `server.discoverSourceControl` with the tools a scenario gives the
-//! machine.
+//! machine; the fetch interval and writing-style scenarios check what the
+//! section saves through FakeConfig.
 //!
-//! TODO(port): the fetch interval and writing-style scenarios save through
-//! FakeConfig (`settings.rs`, ported by another worker), so their steps wait
-//! for it: the fetch interval, the writing style, change request templates
-//! and the writer model.
 
 use hal_c2_shell::controllers::navigation::{Navigation, Route};
+use hal_c2_shell::controllers::settings_scope::SettingsScope;
 use serde_json::{Value, json};
 
 use crate::fake_mc::FakeMc;
+use crate::steps::settings::{document_of, fake_config, publish_providers, save_elsewhere};
+use crate::steps::settings_scoped_rows::held_all;
 use crate::harness::{Outcome, Q, Steps, at, show};
 use crate::world::World;
 use crate::{expect, fail};
@@ -60,6 +60,8 @@ struct FakeSourceControl {
     version_control: Vec<Value>,
     hosts: Vec<Value>,
     refusal: String,
+    /// The writing style the scenario picked.
+    mode: String,
 }
 
 impl Default for FakeSourceControl {
@@ -76,6 +78,7 @@ impl Default for FakeSourceControl {
                 host_item("bitbucket", "Bitbucket", "", true, "unknown", ""),
             ],
             refusal: String::new(),
+            mode: String::new(),
         }
     }
 }
@@ -169,9 +172,95 @@ fn scan(world: &mut World) -> Outcome {
     )
 }
 
+fn provider(instance: &str, name: &str, model: &str, enabled: bool) -> Value {
+    json!({
+        "instanceId": instance,
+        "driver": instance,
+        "displayName": name,
+        "enabled": enabled,
+        "installed": true,
+        "status": "ready",
+        "auth": {"status": "authenticated"},
+        "models": [{"slug": model, "name": model}],
+    })
+}
+
+/// What the MC has saved of the settings.
+fn saved(world: &World) -> Value {
+    held_all(world)
+}
+
+fn style(settings: &Value) -> &Value {
+    &settings["sourceControlWritingStyle"]
+}
+
+fn wait_saved(world: &mut World, what: &str, done: impl Fn(&Value) -> bool) -> Outcome {
+    world.wait_for_with(
+        |w| done(&saved(w)),
+        |w| format!("{what}; the settings are {}", show(&saved(w))),
+    )
+}
+
+/// The background activity's fetch interval override in ms, -1 without one.
+fn fetch_override(settings: &Value) -> i64 {
+    settings["backgroundActivity"]["overrides"]["automaticGitFetchInterval"]
+        .as_f64()
+        .map_or(-1, |ms| ms as i64)
+}
+
+fn part_of(world: &World, key: &str) -> Value {
+    section(world)[key].clone()
+}
+
+fn set_interval(world: &mut World, seconds: i64) -> Outcome {
+    send(world, "fetchInterval", json!({"seconds": seconds}))?;
+    wait_saved(
+        world,
+        &format!("a {seconds} second fetch interval to be saved"),
+        move |settings| fetch_override(settings) == seconds * 1000,
+    )?;
+    world.wait_for_with(
+        |w| part_of(w, "fetchInterval")["seconds"].as_i64() == Some(seconds),
+        |w| {
+            format!(
+                "the interval to show {seconds} seconds; it is {}",
+                show(&part_of(w, "fetchInterval"))
+            )
+        },
+    )
+}
+
+fn mode_of(label: &str) -> String {
+    match label {
+        "Repository conventions" => "repo_conventions".into(),
+        "Conventional Commits" => "conventional_commits".into(),
+        "Custom instructions" => "custom".into(),
+        other => other.into(),
+    }
+}
+
+fn writer_key(settings: &Value) -> String {
+    let selection = &settings["sourceControlWriterModelSelection"];
+    if selection.as_object().is_none_or(|o| o.is_empty()) {
+        return String::new();
+    }
+    format!(
+        "{}:{}",
+        selection["instanceId"].as_str().unwrap_or_default(),
+        selection["model"].as_str().unwrap_or_default()
+    )
+}
+
+const INSTRUCTIONS: &str = "Keep titles under 50 characters.";
+
 fn open(world: &mut World) -> Outcome {
-    // TODO(port): desktop-qt gives the MC's config two providers (FakeConfig)
-    // and waits for the settings scope to be editable.
+    fake_config(&mut world.mc).config.insert(
+        "providers".into(),
+        json!([
+            provider("codex", "Codex", "codex-model", true),
+            provider("claude", "Claude", "claude-model", true)
+        ]),
+    );
     world.connect()?;
     world.sync()?;
     world.with::<Navigation, _>(|n, engine| {
@@ -180,7 +269,9 @@ fn open(world: &mut World) -> Outcome {
     world.wait_for_with(
         |w| {
             let section = section(w);
-            section["open"].as_bool() == Some(true) && at(&section, "discovery.status") == "ready"
+            section["open"].as_bool() == Some(true)
+                && at(&section, "discovery.status") == "ready"
+                && w.state("settingsScope")["editable"] == true
         },
         |w| {
             format!(
@@ -463,4 +554,334 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+
+    steps.step(
+        "the user sets the automatic Git fetch interval to (\\d+) seconds",
+        |world, c, _| send(world, "fetchInterval", json!({"seconds": c[0].parse::<i64>().unwrap_or(0)})),
+    );
+    steps.step(
+        "Git fetches every (\\d+) seconds while a thread is on screen",
+        |world, c, _| {
+            let seconds: i64 = c[0].parse().unwrap_or(0);
+            wait_saved(
+                world,
+                &format!("a {seconds} second fetch interval to be saved"),
+                move |settings| fetch_override(settings) == seconds * 1000,
+            )?;
+            world.wait_for_with(
+                |w| part_of(w, "fetchInterval")["seconds"].as_i64() == Some(seconds),
+                |w| {
+                    format!(
+                        "the interval to show; it is {}",
+                        show(&part_of(w, "fetchInterval"))
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        "the user set the automatic Git fetch interval to (\\d+) seconds",
+        |world, c, _| set_interval(world, c[0].parse().unwrap_or(0)),
+    );
+    steps.step("the user resets the fetch interval", |world, _, _| {
+        send(world, "resetFetchInterval", Value::Null)
+    });
+    steps.step(
+        "the interval follows the background activity profile again",
+        |world, _, _| {
+            wait_saved(world, "the fetch override to go", |s| fetch_override(s) < 0)?;
+            world.wait_for_with(
+                |w| {
+                    let interval = part_of(w, "fetchInterval");
+                    interval["custom"] != true && interval["seconds"] == interval["preset"]
+                },
+                |w| {
+                    format!(
+                        "the interval to follow its preset; it is {}",
+                        show(&part_of(w, "fetchInterval"))
+                    )
+                },
+            )
+        },
+    );
+    steps.step("Git never fetches in the background", |world, _, _| {
+        wait_saved(world, "fetching to be turned off", |s| fetch_override(s) == 0)
+    });
+
+    // source-control-writing.feature
+    steps.step(&format!("the user picks the writing style {Q}"), |world, c, _| {
+        let mode = mode_of(&c[0]);
+        fake(world).mode = mode.clone();
+        send(world, "writingMode", json!({"mode": mode}))
+    });
+    steps.step(&format!("the panel explains {Q}"), |world, c, _| {
+        let said = c[0].clone();
+        world.wait_for_with(
+            |w| part_of(w, "writingStyle")["description"] == said.as_str(),
+            |w| {
+                format!(
+                    "the style to be explained; it is {}",
+                    show(&part_of(w, "writingStyle"))
+                )
+            },
+        )
+    });
+    steps.step(
+        "generated commits and pull requests follow that style",
+        |world, _, _| {
+            let mode = fake(world).mode.clone();
+            wait_saved(world, &format!("the {mode} style to be saved"), move |s| {
+                style(s)["mode"] == mode.as_str()
+            })
+        },
+    );
+    steps.step("the writing style is Custom instructions", |world, _, _| {
+        save_elsewhere(
+            &mut world.mc,
+            "sourceControlWritingStyle",
+            json!({"mode": "custom"}),
+            false,
+        );
+        world.wait_for_with(
+            |w| part_of(w, "writingStyle")["mode"] == "custom",
+            |w| {
+                format!(
+                    "the custom style to show; it is {}",
+                    show(&part_of(w, "writingStyle"))
+                )
+            },
+        )
+    });
+    steps.step(
+        &format!("the user writes {Q} as the instructions"),
+        |world, c, _| send(world, "instructions", json!({"text": c[0]})),
+    );
+    steps.step(
+        "generated commits and pull requests follow those instructions",
+        |world, _, _| {
+            wait_saved(world, "the instructions to be saved", |s| {
+                style(s)["mode"] == "custom" && style(s)["customInstructions"] == INSTRUCTIONS
+            })
+        },
+    );
+    steps.step("the settings scope covers two environments", |world, _, _| {
+        // A server whose style differs, so the instructions are one for both.
+        document_of(&mut world.mc, "server").settings.insert(
+            "sourceControlWritingStyle".into(),
+            json!({"mode": "conventional_commits"}),
+        );
+        world.mc.join_named("server");
+        world.wait_for_with(
+            |w| {
+                w.state("settingsScope")["environments"]
+                    .as_array()
+                    .is_some_and(|e| e.len() == 2)
+            },
+            |w| {
+                format!(
+                    "two environments; the scope is {}",
+                    show(&w.state("settingsScope"))
+                )
+            },
+        )?;
+        world.dispatch("settingsScope.environment", json!({"id": ""}))?;
+        world.wait_for_with(
+            |w| {
+                SettingsScope::of(w.engine()).targets().len() == 2
+                    && part_of(w, "writingStyle")["mixed"] == true
+            },
+            |w| {
+                format!(
+                    "both environments' styles, mixed; the section is {}",
+                    show(&section(w))
+                )
+            },
+        )
+    });
+    steps.step("the user writes custom instructions", |world, _, _| {
+        send(world, "instructions", json!({"text": INSTRUCTIONS}))
+    });
+    steps.step("both environments use those instructions", |world, _, _| {
+        let custom = |s: &Value| {
+            style(s)["mode"] == "custom" && style(s)["customInstructions"] == INSTRUCTIONS
+        };
+        world.wait_for_with(
+            |w| {
+                let server = w
+                    .mc
+                    .peek::<crate::steps::settings::FakeConfig>()
+                    .and_then(|f| f.documents.get("server"))
+                    .map_or(Value::Null, |d| Value::Object(d.settings.clone()));
+                custom(&saved(w)) && custom(&server)
+            },
+            |w| format!("both to use the instructions; here {}", show(&saved(w))),
+        )
+    });
+    steps.step(
+        "following change request templates is shown on",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| part_of(w, "templates")["value"] == true,
+                |w| {
+                    format!(
+                        "templates to be shown followed; the row is {}",
+                        show(&part_of(w, "templates"))
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        "the environment's settings leave templates followed",
+        |world, _, _| {
+            // Absent means followed: the MC writes to a repository's template unless told not to.
+            let saved = saved(world);
+            expect!(
+                style(&saved)["followChangeRequestTemplates"] != false,
+                "the environment to follow templates; its settings are {}",
+                show(&saved)
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the user turns off following change request templates",
+        |world, _, _| send(world, "templates", json!({"enabled": false})),
+    );
+    steps.step(
+        "pull request descriptions are written without the repository's template",
+        |world, _, _| {
+            wait_saved(world, "templates to be turned off", |s| {
+                style(s)["followChangeRequestTemplates"] == false
+            })?;
+            world.wait_for_with(
+                |w| part_of(w, "templates")["value"] != true,
+                |w| {
+                    format!(
+                        "the row to be off; it is {}",
+                        show(&part_of(w, "templates"))
+                    )
+                },
+            )
+        },
+    );
+    steps.step(
+        "the user turns on a separate source control writer model and picks one",
+        |world, _, _| {
+            send(world, "writerModel", json!({"enabled": true}))?;
+            wait_saved(world, "a writer model to be saved", |s| {
+                !writer_key(s).is_empty()
+            })?;
+            send(
+                world,
+                "pickWriterModel",
+                json!({"key": "claude:claude-model"}),
+            )
+        },
+    );
+    steps.step(
+        "commits, pull requests and branch names are written by that model",
+        |world, _, _| {
+            wait_saved(world, "Claude to write source control text", |s| {
+                writer_key(s) == "claude:claude-model"
+            })
+        },
+    );
+    steps.step(
+        "a separate source control writer model is on",
+        |world, _, _| {
+            save_elsewhere(
+                &mut world.mc,
+                "sourceControlWriterModelSelection",
+                json!({"instanceId": "codex", "model": "codex-model"}),
+                false,
+            );
+            world.wait_for_with(
+                |w| part_of(w, "writerModel")["on"] == true,
+                |w| {
+                    format!(
+                        "the writer model to be on; it is {}",
+                        show(&part_of(w, "writerModel"))
+                    )
+                },
+            )
+        },
+    );
+    steps.step("the user turns it off", |world, _, _| {
+        send(world, "writerModel", json!({"enabled": false}))
+    });
+    steps.step(
+        "the environment's text generation model writes source control text again",
+        |world, _, _| {
+            wait_saved(world, "the writer model to be off", |s| {
+                s["sourceControlWriterModelSelection"].is_null()
+            })
+        },
+    );
+    steps.step("the provider of a model is turned off", |world, _, _| {
+        publish_providers(
+            &mut world.mc,
+            vec![
+                provider("codex", "Codex", "codex-model", true),
+                provider("claude", "Claude", "claude-model", false),
+            ],
+        );
+        Ok(())
+    });
+    steps.step("the user looks at the writer model choices", |world, _, _| {
+        world.wait_for_with(
+            |w| {
+                part_of(w, "writerModel")["models"]
+                    .as_array()
+                    .is_some_and(|models| {
+                        models
+                            .iter()
+                            .any(|m| !m["reason"].as_str().unwrap_or_default().is_empty())
+                    })
+            },
+            |w| {
+                format!(
+                    "a model to be unusable; the choices are {}",
+                    show(&part_of(w, "writerModel"))
+                )
+            },
+        )
+    });
+    steps.step(
+        "that model cannot be picked and the reason is shown",
+        |world, _, _| {
+            let reason = part_of(world, "writerModel")["models"]
+                .as_array()
+                .and_then(|models| models.iter().find(|m| m["key"] == "claude:claude-model"))
+                .and_then(|m| m["reason"].as_str().map(str::to_owned))
+                .unwrap_or_default();
+            expect!(
+                reason == "Claude is turned off.",
+                "Claude's model to say why; it says \"{reason}\""
+            );
+            let writes = fake_config(&mut world.mc).writes.len();
+            send(
+                world,
+                "pickWriterModel",
+                json!({"key": "claude:claude-model"}),
+            )?;
+            world.sync()?;
+            expect!(
+                fake_config(&mut world.mc).writes.len() == writes,
+                "picking it to save nothing"
+            );
+            Ok(())
+        },
+    );
+    steps.step("saving settings fails", |world, _, _| {
+        fake_config(&mut world.mc).refuse_writes = "The settings file is read-only.".into();
+        Ok(())
+    });
+    steps.step("the user picks a writer model", |world, _, _| {
+        send(
+            world,
+            "pickWriterModel",
+            json!({"key": "codex:codex-model"}),
+        )
+    });
 }

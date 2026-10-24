@@ -77,7 +77,7 @@ fn shell(world: &mut World) -> Outcome<Brick> {
     settings_shell(world, 900.0, 300.0)
 }
 
-fn rows(world: &mut World) -> Outcome<Vec<Json>> {
+pub fn rows(world: &mut World) -> Outcome<Vec<Json>> {
     let brick = shell(world)?;
     let root = brick.root(world).ok_or_else(|| Failure("no shell".into()))?;
     Ok(
@@ -88,11 +88,11 @@ fn rows(world: &mut World) -> Outcome<Vec<Json>> {
     )
 }
 
-fn is_result(row: &Json) -> bool {
+pub fn is_result(row: &Json) -> bool {
     row["result"] == json!(true)
 }
 
-fn describe_rows(world: &mut World) -> String {
+pub fn describe_rows(world: &mut World) -> String {
     let lines: Vec<String> = rows(world)
         .unwrap_or_default()
         .iter()
@@ -189,7 +189,7 @@ fn wait_in_view(world: &mut World, target: &str) -> Outcome {
 }
 
 /// Types `typed` into whatever has the keyboard, a key at a time.
-fn type_text(world: &mut World, typed: &str) -> Outcome {
+pub fn type_text(world: &mut World, typed: &str) -> Outcome {
     for ch in typed.chars() {
         let upper = ch.to_ascii_uppercase();
         world.key(&KeyEvent::press(upper as i32).with_text(ch.to_string()))?;
