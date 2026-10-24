@@ -651,8 +651,9 @@ pub fn register(steps: &mut Steps) {
         answer(world, json!(c[0]))
     });
     steps.step(&format!("the agent receives {Q}"), |world, c, _| {
-        // TODO(port): ComposerWorkspaceSteps::composerMessageReceived, the
-        // composer's own sent message, is another file's.
+        if crate::steps::composer_defaults::composer_message_received(world, &c[0])? {
+            return Ok(());
+        }
         let received = received_answer(world)?;
         expect!(
             received == json!(c[0]),
