@@ -15,6 +15,7 @@ pub mod connection;
 pub mod connection_health;
 pub mod connections;
 pub mod device;
+pub mod diagnostics;
 pub mod draft;
 pub mod fake_files;
 pub mod file_search;
@@ -88,6 +89,7 @@ pub fn register(steps: &mut Steps) {
     connection_health::register(steps);
     connections::register(steps);
     device::register(steps);
+    diagnostics::register(steps);
     draft::register(steps);
     fake_files::register(steps);
     file_search::register(steps);
