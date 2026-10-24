@@ -80,6 +80,31 @@ defmodule HalC2.Steps.Orchestration.McpServer do
     context
   end
 
+  step "the agent of {string} on {string} waits on {string} for 2 hours",
+       %{args: [caller, instance, thread]} = context do
+    # The thread is idle, so the wait answers at once whatever it would allow.
+    requested = 2 * 60 * 60 * 1_000
+
+    result =
+      World.mcp_tool(
+        context,
+        caller,
+        "hal_c2_thread_wait",
+        %{"threadId" => World.thread_id(context, thread), "timeoutMs" => requested},
+        instance
+      )
+
+    context
+    |> Map.put(:mcp_result, result)
+    |> Map.put(:wait_limit, HalC2.Mcp.Tools.wait_limit(requested, instance))
+  end
+
+  step "the wait is cut to less than a minute", context do
+    assert {:ok, %{"timedOut" => false}} = context.mcp_result
+    assert context.wait_limit < 60_000
+    context
+  end
+
   step "asking again for {string} on {string} gives the same credential",
        %{args: [thread, instance]} = context do
     assert HalC2.Mcp.server(World.thread_id(context, thread), instance).authorization ==
