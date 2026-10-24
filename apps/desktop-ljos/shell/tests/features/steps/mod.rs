@@ -4,12 +4,24 @@
 
 use crate::harness::Steps;
 
+pub mod add_project;
 pub mod composer_brick;
 pub mod connection;
 pub mod connection_health;
+pub mod fake_files;
+pub mod file_search;
+pub mod files_explorer;
+pub mod files_media;
+pub mod files_workspace;
 pub mod keybinding;
 pub mod keymap;
+pub mod launch;
+pub mod launch_folder;
+pub mod machine_files;
+pub mod markdown;
 pub mod mc;
+pub mod other_machine;
+pub mod project;
 pub mod settings;
 pub mod settings_pages;
 pub mod settings_rows;
@@ -22,12 +34,23 @@ pub mod viewing;
 
 /// Every domain's steps.
 pub fn register(steps: &mut Steps) {
+    add_project::register(steps);
     composer_brick::register(steps);
     connection::register(steps);
     connection_health::register(steps);
+    fake_files::register(steps);
+    file_search::register(steps);
+    files_explorer::register(steps);
+    files_media::register(steps);
     keybinding::register(steps);
     keymap::register(steps);
+    launch::register(steps);
+    launch_folder::register(steps);
+    machine_files::register(steps);
+    markdown::register(steps);
     mc::register(steps);
+    other_machine::register(steps);
+    project::register(steps);
     settings::register(steps);
     settings_pages::register(steps);
     settings_rows::register(steps);
