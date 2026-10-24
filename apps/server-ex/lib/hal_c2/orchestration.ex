@@ -2333,7 +2333,8 @@ defmodule HalC2.Orchestration do
     do: %{"interactionMode" => command["interactionMode"], "updatedAt" => at}
 
   # A thread's pull requests are keyed by host, repository and number. Linking again
-  # changes nothing, except that a user or agent brings back a stack layer they unlinked.
+  # changes nothing, except that a user or agent brings back a stack layer they unlinked;
+  # a link the MC made on its own (`"automatic"`, `HalC2.PullRequests.Opened`) never does.
   # A first manual link keeps the branch's pull request beside it.
   defp thread_fields("thread.pull-request.link", command, thread, at) do
     links = PullRequests.of(thread)
@@ -2342,7 +2343,8 @@ defmodule HalC2.Orchestration do
     source = command["source"]
 
     if existing &&
-         (existing["source"] != "stack-dismissed" or source in ["stack", "stack-dismissed"]) do
+         (existing["source"] != "stack-dismissed" or source in ["stack", "stack-dismissed"] or
+            command["automatic"] == true) do
       %{}
     else
       link =
@@ -2367,26 +2369,28 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # A layer of a native stack stays as a tombstone, so the sync does not link it again.
-  # It forgets what the thread heard of it, so a link back starts from a new baseline.
+  # A layer of a native stack, or a pull request the thread created, stays as a
+  # tombstone, so the sync or discovery (`HalC2.PullRequests.Opened`) does not link it
+  # again. It forgets what the thread heard of it, so a link back starts from a new
+  # baseline.
   defp thread_fields("thread.pull-request.unlink", command, thread, at) do
     links = PullRequests.of(thread)
     key = PullRequests.normalize(command)
     existing = Enum.find(links, &(PullRequests.normalize(&1) == key))
 
-    stacked? =
+    tombstone? =
       existing != nil and
-        (existing["source"] == "stack" or existing["stack"] != nil or
+        (existing["source"] in ["stack", "created"] or existing["stack"] != nil or
            Enum.any?(links, fn link ->
              Map.delete(PullRequests.normalize(link), "number") == Map.delete(key, "number") and
                Enum.any?((link["stack"] || %{})["layers"] || [], &(&1["number"] == key["number"]))
            end))
 
     cond do
-      existing == nil ->
+      existing == nil or existing["source"] == "stack-dismissed" ->
         %{}
 
-      stacked? ->
+      tombstone? ->
         links
         |> Enum.map(fn link ->
           if link == existing,
