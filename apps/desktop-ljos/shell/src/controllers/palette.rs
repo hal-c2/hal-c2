@@ -2317,7 +2317,7 @@ impl Palette {
         self.views.last().map_or(String::new(), |v| v.title.clone())
     }
 
-    fn placeholder(&self, engine: &Engine) -> String {
+    pub fn placeholder(&self, engine: &Engine) -> String {
         match self.mode {
             Mode::Files => "Search files…".into(),
             Mode::Content => {
