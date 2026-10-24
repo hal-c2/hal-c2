@@ -272,3 +272,11 @@ pub fn ensure_viewer_file(world: &mut World, path: &str) {
     };
     files.files.insert(path.to_owned(), contents.to_owned());
 }
+
+/// The file another surface (a diff's open in editor) last opened, and the
+/// editor it chose; empty when none did.
+#[derive(Default)]
+pub struct OpenedInEditor {
+    pub path: String,
+    pub editor: String,
+}
