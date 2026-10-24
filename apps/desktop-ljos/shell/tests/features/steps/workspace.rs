@@ -562,9 +562,10 @@ pub fn register(steps: &mut Steps) {
 
     // Titles.
     steps.step(&format!("the user renames {Q} to {Q}"), |world, c, _| {
-        // TODO(port): a managed folder (FilesFolders' renameManagedFolder)
-        // takes the same words in desktop-qt; another worker owns that helper.
-        // The same words rename a provider instance in the Providers settings.
+        // A managed folder takes the same words; so does a provider instance.
+        if super::files_folder::rename_managed_folder(world, &c[0], &c[1])? {
+            return Ok(());
+        }
         if world.state("providerSettings")["open"] == json!(true) {
             return super::provider_settings::rename_provider_instance(world, &c[0], &c[1]);
         }

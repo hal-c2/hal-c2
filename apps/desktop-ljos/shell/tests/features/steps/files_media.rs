@@ -77,7 +77,7 @@ fn signings(world: &mut World) -> Outcome<Vec<crate::fake_mc::Rpc>> {
 fn source_is_media(world: &World, image: ObjectId) -> bool {
     let source = world.engine().read_by_name(image, "source");
     let url = text_prop(world, "mediaUrl");
-    matches!(&source, Value::String(s) if s.as_str() == url)
+    matches!(&source, Value::String(s) | Value::Url(s) if s.as_str() == url)
 }
 
 pub fn register(steps: &mut Steps) {

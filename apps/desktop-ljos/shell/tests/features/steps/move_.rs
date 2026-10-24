@@ -776,8 +776,9 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(&format!("{Q} is offered"), |world, c, _| {
-        // TODO(port): FilesIdentitySteps' checkIconImageOffered, the
-        // project icon picker's images, offered in the same words.
+        if super::files_identity::check_icon_image_offered(world, &c[0], true)? {
+            return Ok(());
+        }
         let entry = item(world, &format!("machine:{}", c[0]));
         let listed = choice_offered(world, &c[0]);
         expect!(
