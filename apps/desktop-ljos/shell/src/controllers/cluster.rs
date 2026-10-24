@@ -1,7 +1,8 @@
 //! `cluster`, desktop-qt's ClusterController: this machine's cluster, a
 //! settings page the shell owns (apps/server-ex `HalC2.Cluster`). The MC
 //! does the work of status, invite, join and remove over the shell's own
-//! connection (`cluster.*` RPCs).
+//! connection (`cluster.*` RPCs), including sending the version it runs to
+//! the other members (`cluster.update`).
 //!
 //! Publishes `cluster`: {busy, status, error, needsAdmin (the session lacks
 //! the access scopes that manage the cluster), invite, notice {kind, text}}.
@@ -10,7 +11,8 @@
 //! `cluster.close`); opening it reads the status afresh.
 //!
 //! Actions: `cluster.refresh`, `cluster.invite {tailscale?}`,
-//! `cluster.invite.copy`, `cluster.join {link}`, `cluster.remove {id}`.
+//! `cluster.invite.copy`, `cluster.join {link}`, `cluster.update`,
+//! `cluster.remove {id}`.
 
 use std::rc::Rc;
 
@@ -135,6 +137,7 @@ impl Controller for Cluster {
                     );
                 }
             }
+            "cluster.update" => self.update(engine),
             "cluster.remove" => {
                 let id = settings_page::text(payload, "id").to_owned();
                 if id.is_empty() {
@@ -247,6 +250,62 @@ impl Cluster {
                 text.push_str(LOCAL_ONLY_HINT);
             }
             c.set_notice(engine, if local_only { "error" } else { "success" }, &text);
+        });
+    }
+
+    /// Each connected member on another version takes the one this machine
+    /// runs from it. Members restart or load it in place, so the cluster is
+    /// read again afterwards.
+    fn update(&mut self, engine: &Engine) {
+        self.generation += 1;
+        self.set(engine, "busy", json!(true));
+        self.call(engine, "cluster.update", json!({}), |c, engine, result| {
+            c.state.insert("busy".into(), json!(false));
+            let answer = match result {
+                Err(error) => {
+                    c.set_notice(
+                        engine,
+                        "error",
+                        &format!("Update failed: {}", error.message),
+                    );
+                    c.refresh(engine);
+                    return;
+                }
+                Ok(answer) => object_or_empty(answer),
+            };
+            let version = settings_page::text(&answer, "version").to_owned();
+            let members = answer
+                .get("members")
+                .and_then(Json::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let mut lines = Vec::new();
+            let mut failed = false;
+            for member in &members {
+                let label = settings_page::text(member, "label");
+                match settings_page::text(member, "outcome") {
+                    "updated" => lines.push(format!("{label} updated to {version}.")),
+                    "restarting on it" => {
+                        lines.push(format!("{label} is restarting on {version}."))
+                    }
+                    "has not finished" => lines.push(format!("{label} is still updating.")),
+                    outcome => {
+                        failed = true;
+                        lines.push(format!("{label} could not update: {outcome}"));
+                    }
+                }
+            }
+            if lines.is_empty() {
+                lines.push(format!(
+                    "No connected machine needs an update to {version}."
+                ));
+            }
+            c.set_notice(
+                engine,
+                if failed { "error" } else { "success" },
+                &lines.join(" "),
+            );
+            c.refresh(engine);
         });
     }
 
