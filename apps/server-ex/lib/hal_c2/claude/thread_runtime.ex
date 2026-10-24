@@ -845,7 +845,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       partial_messages: true,
       mcp: turn.launch.mcp,
       # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude.
-      env: Enum.to_list(HalC2.Settings.instance_env(Entities.instance(turn.ids))),
+      env: session_env(turn),
       log: state.thread_id
     ]
 
@@ -857,6 +857,17 @@ defmodule HalC2.Claude.ThreadRuntime do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  # The environment of the turn's `claude`. Its MCP client gives up on a tool after 60 s
+  # unless told otherwise, which cuts HAL-C2's waiting tools short.
+  @doc false
+  def session_env(turn) do
+    Enum.to_list(HalC2.Settings.instance_env(Entities.instance(turn.ids))) ++
+      if(turn.launch.mcp,
+        do: [{"MCP_TOOL_TIMEOUT", to_string(HalC2.Mcp.tool_timeout_ms())}],
+        else: []
+      )
   end
 
   # The `claude` the turn's instance runs: its binary path in settings, else the one on PATH.

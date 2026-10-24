@@ -67,6 +67,32 @@ defmodule HalC2.Mcp do
     if Process.whereis(__MODULE__) && allowed, do: server(thread_id, instance)
   end
 
+  @doc """
+  How long a provider's MCP client waits on one tool call, in milliseconds: past the
+  longest wait an HAL-C2 tool accepts (an hour), so a wait ends with its own result
+  instead of the client's 60-second default.
+  """
+  def tool_timeout_ms, do: 3_900_000
+
+  @doc """
+  The longest a waiting tool (`hal_c2_thread_wait`, `delegate_task` in wait mode) may
+  block for a caller on provider `instance`. Claude and Codex are given `tool_timeout_ms/0`;
+  the other providers take their MCP servers over ACP, which has no field for a tool
+  timeout, so they keep their client's 60 s default and a wait is clamped under it
+  (`:acp_max_wait_ms`, which tests shorten).
+  """
+  def max_wait_ms(instance) do
+    driver =
+      Enum.find_value(
+        HalC2.Environment.providers(),
+        &(&1["instanceId"] == instance && &1["driver"])
+      )
+
+    if driver in ["claudeAgent", "codex"],
+      do: 3_600_000,
+      else: Application.get_env(:hal_c2, :acp_max_wait_ms, 55_000)
+  end
+
   @doc "What agents are told about the tools, for their system or developer prompt."
   def instructions do
     case :persistent_term.get({__MODULE__, :instructions}, nil) do

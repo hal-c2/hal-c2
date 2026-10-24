@@ -332,7 +332,7 @@ defmodule HalC2.Mcp.Tools.Threads do
   end
 
   # Compact by default: an agent cannot read the full option tree of hundreds of models.
-  def run("orchestrator_capabilities", args, %{row: me}) do
+  def run("orchestrator_capabilities", args, %{row: me} = caller) do
     parent = thread(me["id"]) || me
     only = if is_binary(args["providerInstanceId"]), do: args["providerInstanceId"]
     providers = HalC2.Environment.providers()
@@ -357,6 +357,7 @@ defmodule HalC2.Mcp.Tools.Threads do
          "inheritedModel" => get_in(parent, ["modelSelection", "model"]),
          "runtimeMode" => parent["runtimeMode"],
          "interactionMode" => parent["interactionMode"],
+         "maxWaitMs" => HalC2.Mcp.max_wait_ms(caller.instance),
          "providers" => listed,
          "features" => %{
            "appOwnedSubagents" => true,
