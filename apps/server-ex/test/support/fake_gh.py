@@ -9,8 +9,11 @@
 # such as `gh pr checkout` whose effect is on the checkout.
 # A rule with "since" answering a GraphQL issue listing keeps only the issues whose
 # "updatedAt" is at or after the listing's `filter.since`, as GitHub's `filterBy` does.
+# A rule with "summaries" ({"owner/name#number": pullRequest node}, and "viewer", a
+# login) answers a batched GraphQL summary read alias by alias, whichever pull requests
+# it asks for and in whatever order; one it does not know is null.
 # Every call is appended to $FAKE_GH_LOG as a JSON line {"cmd", "args", "stdin", "cwd"}.
-import json, os, subprocess, sys, time
+import json, os, re, subprocess, sys, time
 from datetime import datetime
 
 
@@ -21,6 +24,15 @@ def since(out, stdin):
     issues = out["data"]["repository"]["issues"]
     nodes = [n for n in issues["nodes"] if datetime.fromisoformat(n["updatedAt"]) >= datetime.fromisoformat(after)]
     return {"data": {"repository": {"issues": {**issues, "nodes": nodes}}}}
+
+def summaries(rule, stdin):
+    query = json.loads(stdin).get("query", "")
+    data = {"viewer": {"login": rule.get("viewer", "monalisa")}}
+    for alias, owner, name, number in re.findall(
+        r'(s\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\) \{ pullRequest\(number: (\d+)\)', query
+    ):
+        data[alias] = {"pullRequest": rule["summaries"].get(f"{owner}/{name}#{number}")}
+    return {"data": data}
 
 cmd = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
@@ -40,6 +52,8 @@ for rule in rules:
         out = rule.get("stdout", "")
         if rule.get("since"):
             out = since(out, stdin)
+        if "summaries" in rule:
+            out = summaries(rule, stdin)
         try:
             sys.stdout.write(out if isinstance(out, str) else json.dumps(out))
             sys.stderr.write(rule.get("stderr", ""))
