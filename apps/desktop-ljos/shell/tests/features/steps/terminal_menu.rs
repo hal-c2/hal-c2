@@ -13,7 +13,7 @@ use ljos::item::{Modifiers, MouseButtons, PointerEvent};
 use serde_json::{Value, json};
 
 use crate::brick::{self, Brick, Shown, key_event};
-use crate::harness::{Failure, Outcome, Q, Steps, at, show, text};
+use crate::harness::{Outcome, Q, Steps, text};
 use crate::steps::settings::fake_config;
 use crate::steps::terminal::{
     FakeTerminals, describe_rows, describe_terminal_calls, drawer_available, drawer_open,
@@ -151,12 +151,7 @@ fn offer(world: &World, brick: &Brick, object_name: &str) -> Outcome<Offer> {
 }
 
 /// A key the user presses in the terminal, which takes the keyboard first.
-fn press_in_terminal(
-    world: &mut World,
-    brick: Brick,
-    terminal: ObjectId,
-    spelt: &str,
-) -> Outcome {
+fn press_in_terminal(world: &mut World, brick: Brick, terminal: ObjectId, spelt: &str) -> Outcome {
     take_keyboard(world, brick, terminal)?;
     let event = key_event(spelt)?;
     world.key(&event)?;
@@ -164,7 +159,9 @@ fn press_in_terminal(
 }
 
 fn take_keyboard(world: &mut World, brick: Brick, terminal: ObjectId) -> Outcome {
-    let _ = world.engine().invoke_by_name(terminal, "forceActiveFocus", &[]);
+    let _ = world
+        .engine()
+        .invoke_by_name(terminal, "forceActiveFocus", &[]);
     world.pump()?;
     world.wait_for("the terminal to take the keyboard", move |w| {
         brick.flag(w, terminal, "activeFocus")
@@ -194,7 +191,12 @@ fn point_on(world: &World, brick: &Brick, terminal: ObjectId, link: &str) -> Out
 fn follow(world: &mut World, printed: &str, link: &str, modifiers: Modifiers) -> Outcome {
     let (brick, terminal) = drawn_terminal(world)?;
     let thread_id = shown_thread(world);
-    print(&mut world.mc, &thread_id, "term-1", &format!("{printed}\r\n"));
+    print(
+        &mut world.mc,
+        &thread_id,
+        "term-1",
+        &format!("{printed}\r\n"),
+    );
     let wanted = link.to_owned();
     let shown = printed.to_owned();
     world.wait_for_with(
@@ -219,7 +221,8 @@ fn editor_call(world: &World) -> Option<Value> {
 fn lightness(colour: &str) -> i32 {
     let hex = colour.trim_start_matches('#');
     let rgb = &hex[hex.len().saturating_sub(6)..];
-    let channel = |at: usize| i32::from_str_radix(rgb.get(at..at + 2).unwrap_or("00"), 16).unwrap_or(0);
+    let channel =
+        |at: usize| i32::from_str_radix(rgb.get(at..at + 2).unwrap_or("00"), 16).unwrap_or(0);
     let (r, g, b) = (channel(0), channel(2), channel(4));
     (r.max(g).max(b) + r.min(g).min(b)) / 2
 }
@@ -444,18 +447,23 @@ pub fn register(steps: &mut Steps) {
         },
     );
 
-    steps.step("the user switches the app to a dark theme", |world, _, _| {
-        let (brick, terminal) = drawn_terminal(world)?;
-        world.dispatch("theme.mode", json!({"mode": "light"}))?;
-        world.wait_for("the app to be drawn light", |w| appearance(w) == "light")?;
-        world.mc.part::<MenuWorld>().selected = brick.text_of(world, terminal, "backgroundColor");
-        let settings = Settings::of(world.engine());
-        let written = settings.write_device(world.engine(), "fontFamilyTerminal", json!("Courier"))
-            && settings.write_device(world.engine(), "fontSizeTerminal", json!(15));
-        expect!(written, "{}", settings.device_error());
-        world.dispatch("theme.mode", json!({"mode": "dark"}))?;
-        world.wait_for("the app to be drawn dark", |w| appearance(w) == "dark")
-    });
+    steps.step(
+        "the user switches the app to a dark theme",
+        |world, _, _| {
+            let (brick, terminal) = drawn_terminal(world)?;
+            world.dispatch("theme.mode", json!({"mode": "light"}))?;
+            world.wait_for("the app to be drawn light", |w| appearance(w) == "light")?;
+            world.mc.part::<MenuWorld>().selected =
+                brick.text_of(world, terminal, "backgroundColor");
+            let settings = Settings::of(world.engine());
+            let written =
+                settings.write_device(world.engine(), "fontFamilyTerminal", json!("Courier"))
+                    && settings.write_device(world.engine(), "fontSizeTerminal", json!(15));
+            expect!(written, "{}", settings.device_error());
+            world.dispatch("theme.mode", json!({"mode": "dark"}))?;
+            world.wait_for("the app to be drawn dark", |w| appearance(w) == "dark")
+        },
+    );
     steps.step(
         "the terminal's colours and selection follow the dark theme",
         |world, _, _| {
@@ -497,40 +505,51 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("the terminal uses the app's terminal font", |world, _, _| {
-        let brick = brick::shown(world)?;
-        let terminal = brick.item(world, "HalC2Terminal")?;
-        let font = move |w: &World| match brick.read(w, terminal, "font") {
-            // Ljós reads a family as a CSS-like list, and the shell appends the
-            // generic `monospace` to one this machine lacks (`fixed_width`):
-            // the family asked for is the list's head.
-            ljos::prelude::Value::Font(f) => (
-                f.family.split(',').next().unwrap_or_default().trim().to_owned(),
-                f.pixel_size.to_string(),
-            ),
-            _ => (String::new(), String::new()),
-        };
-        world.wait_for_with(
-            move |w| font(w) == ("Courier".to_owned(), "15".to_owned()),
-            move |w| {
-                let (family, size) = font(w);
-                format!("the terminal in Courier at 15; it is in {family} at {size}")
-            },
-        )
-    });
+    steps.step(
+        "the terminal uses the app's terminal font",
+        |world, _, _| {
+            let brick = brick::shown(world)?;
+            let terminal = brick.item(world, "HalC2Terminal")?;
+            let font = move |w: &World| match brick.read(w, terminal, "font") {
+                // Ljós reads a family as a CSS-like list, and the shell appends the
+                // generic `monospace` to one this machine lacks (`fixed_width`):
+                // the family asked for is the list's head.
+                ljos::prelude::Value::Font(f) => (
+                    f.family
+                        .split(',')
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_owned(),
+                    f.pixel_size.to_string(),
+                ),
+                _ => (String::new(), String::new()),
+            };
+            world.wait_for_with(
+                move |w| font(w) == ("Courier".to_owned(), "15".to_owned()),
+                move |w| {
+                    let (family, size) = font(w);
+                    format!("the terminal in Courier at 15; it is in {family} at {size}")
+                },
+            )
+        },
+    );
 
     // Links in the output (TerminalSplits follows the one under a
     // Ctrl-click).
-    steps.step("the user's links open in the system browser", |world, _, _| {
-        // The setting's default (BrowserLinkTarget "system").
-        drawn_terminal(world)?;
-        let settings = Settings::of(world.engine()).settings();
-        let target = settings
-            .get("browserLinkTarget")
-            .map_or_else(|| "system".to_owned(), text);
-        expect!(target == "system", "links open in {target}");
-        Ok(())
-    });
+    steps.step(
+        "the user's links open in the system browser",
+        |world, _, _| {
+            // The setting's default (BrowserLinkTarget "system").
+            drawn_terminal(world)?;
+            let settings = Settings::of(world.engine()).settings();
+            let target = settings
+                .get("browserLinkTarget")
+                .map_or_else(|| "system".to_owned(), text);
+            expect!(target == "system", "links open in {target}");
+            Ok(())
+        },
+    );
     steps.step(
         &format!("the user follows {Q} in the terminal"),
         |world, c, _| {
@@ -625,8 +644,7 @@ pub fn register(steps: &mut Steps) {
             })?;
             let asked = editor_call(world).unwrap_or_default();
             expect!(
-                asked["editor"] == "zed"
-                    && text(&asked["cwd"]).ends_with("/src/app.ts:12:4"),
+                asked["editor"] == "zed" && text(&asked["cwd"]).ends_with("/src/app.ts:12:4"),
                 "the editor was asked for {asked}"
             );
             expect!(world.opened_urls().is_empty(), "the browser was opened");

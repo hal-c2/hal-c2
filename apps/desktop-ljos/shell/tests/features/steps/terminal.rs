@@ -48,7 +48,11 @@ fn str_of<'a>(value: &'a Value, key: &str) -> &'a str {
 }
 
 fn terminal_key(input: &Value) -> String {
-    format!("{}/{}", str_of(input, "threadId"), str_of(input, "terminalId"))
+    format!(
+        "{}/{}",
+        str_of(input, "threadId"),
+        str_of(input, "terminalId")
+    )
 }
 
 fn terminal_summary(thread_id: &str, terminal_id: &str, cwd: &str) -> Value {
@@ -276,10 +280,7 @@ pub fn active_terminal(world: &World) -> String {
 
 pub fn active_group_size(world: &World) -> usize {
     terminals_of(world, |t| {
-        t.group_sizes()
-            .get(&t.active_group())
-            .copied()
-            .unwrap_or(0)
+        t.group_sizes().get(&t.active_group()).copied().unwrap_or(0)
     })
     .unwrap_or(0)
 }
@@ -293,13 +294,19 @@ pub fn tab_labels(world: &World) -> String {
 }
 
 pub fn terminal_session(world: &World, terminal_id: &str) -> Outcome<Session> {
-    match tabs_of(world).into_iter().find(|t| t.terminal_id == terminal_id) {
+    match tabs_of(world)
+        .into_iter()
+        .find(|t| t.terminal_id == terminal_id)
+    {
         Some(Tab {
             session: Some(session),
             ..
         }) => Ok(session),
         Some(_) => fail!("{terminal_id} has no session"),
-        None => fail!("no tab for {terminal_id}; the tabs are {}", tab_labels(world)),
+        None => fail!(
+            "no tab for {terminal_id}; the tabs are {}",
+            tab_labels(world)
+        ),
     }
 }
 
@@ -356,7 +363,9 @@ pub fn terminal_writes(world: &World, terminal_id: &str) -> Vec<String> {
     };
     fake.calls
         .iter()
-        .filter(|call| call["method"] == "terminal.write" && call["payload"]["terminalId"] == terminal_id)
+        .filter(|call| {
+            call["method"] == "terminal.write" && call["payload"]["terminalId"] == terminal_id
+        })
         .map(|call| text(&call["payload"]["data"]))
         .collect()
 }
@@ -367,7 +376,12 @@ pub fn action_id(name: &str) -> String {
 }
 
 pub fn add_action(world: &mut World, project: &str, name: &str, command: &str) -> Outcome {
-    let mut row = world.mc.projects.get(project).cloned().unwrap_or(Value::Null);
+    let mut row = world
+        .mc
+        .projects
+        .get(project)
+        .cloned()
+        .unwrap_or(Value::Null);
     let mut scripts = row["scripts"].as_array().cloned().unwrap_or_default();
     scripts.push(json!({
         "id": action_id(name),
@@ -379,7 +393,9 @@ pub fn add_action(world: &mut World, project: &str, name: &str, command: &str) -
     row["scripts"] = Value::Array(scripts);
     world.mc.projects.insert(project.to_owned(), row.clone());
     let mc = world.mc.name.clone();
-    world.mc.send_rows(&mc, vec![json!([project, "project", row])]);
+    world
+        .mc
+        .send_rows(&mc, vec![json!([project, "project", row])]);
     world.sync()
 }
 
@@ -580,10 +596,13 @@ pub fn register(steps: &mut Steps) {
             world.sync()
         },
     );
-    steps.step(&format!("the MC prints {Q} in {Q} of {Q}"), |world, c, _| {
-        print(&mut world.mc, &c[2], &c[1], &unescaped(&c[0]));
-        world.sync()
-    });
+    steps.step(
+        &format!("the MC prints {Q} in {Q} of {Q}"),
+        |world, c, _| {
+            print(&mut world.mc, &c[2], &c[1], &unescaped(&c[0]));
+            world.sync()
+        },
+    );
     steps.step(&format!("the MC closes {Q} of {Q}"), |world, c, _| {
         close_terminal(&mut world.mc, &c[1], &c[0]);
         world.sync()
@@ -619,16 +638,22 @@ pub fn register(steps: &mut Steps) {
         &format!("the user is looking at a thread in {Q} on a worktree"),
         |world, c, _| show_thread(world, &c[0], &format!("/work/{}-wt", c[0])),
     );
-    steps.step("the thread's terminal is running a command", |world, _, _| {
-        let thread_id = ensure_thread(world)?;
-        add_terminal(&mut world.mc, &thread_id, "term-1", "", true);
-        world.sync()
-    });
-    steps.step("terminals cannot be opened for the thread", |world, _, _| {
-        world.mc.part::<FakeTerminals>().refuse_open =
-            "Terminal limit reached on this machine".to_owned();
-        Ok(())
-    });
+    steps.step(
+        "the thread's terminal is running a command",
+        |world, _, _| {
+            let thread_id = ensure_thread(world)?;
+            add_terminal(&mut world.mc, &thread_id, "term-1", "", true);
+            world.sync()
+        },
+    );
+    steps.step(
+        "terminals cannot be opened for the thread",
+        |world, _, _| {
+            world.mc.part::<FakeTerminals>().refuse_open =
+                "Terminal limit reached on this machine".to_owned();
+            Ok(())
+        },
+    );
     steps.step(&format!("the user runs the action {Q}"), |world, c, _| {
         ensure_thread(world)?;
         dispatch(
@@ -651,7 +676,12 @@ pub fn register(steps: &mut Steps) {
                         .is_some_and(|open| open["cwd"] == folder)
                         && terminal_writes(w, "term-1") == [wanted.clone()]
                 },
-                move |w| format!("{ran} in {worktree}; the MC got {}", describe_terminal_calls(w)),
+                move |w| {
+                    format!(
+                        "{ran} in {worktree}; the MC got {}",
+                        describe_terminal_calls(w)
+                    )
+                },
             )
         },
     );
@@ -785,26 +815,26 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
-    steps.step(
-        &format!("{Q} attaches {Q} of {Q} in {Q}"),
-        |world, c, _| {
-            let (environment, terminal, thread, cwd) =
-                (c[0].clone(), c[1].clone(), c[2].clone(), c[3].clone());
-            let (t2, th2) = (terminal.clone(), thread.clone());
-            world.wait_for_with(
-                move |w| {
-                    terminal_shape(w, &thread, &terminal)
-                        .is_some_and(|s| s["environment"] == environment && s["input"]["cwd"] == cwd)
-                },
-                move |w| {
-                    let got = terminal_shape(w, &th2, &t2)
-                        .map(|s| show(&s))
-                        .unwrap_or_else(|| "nothing".to_owned());
-                    format!("{} to attach {} of {} in {}; got {got}", c[0], c[1], c[2], c[3])
-                },
-            )
-        },
-    );
+    steps.step(&format!("{Q} attaches {Q} of {Q} in {Q}"), |world, c, _| {
+        let (environment, terminal, thread, cwd) =
+            (c[0].clone(), c[1].clone(), c[2].clone(), c[3].clone());
+        let (t2, th2) = (terminal.clone(), thread.clone());
+        world.wait_for_with(
+            move |w| {
+                terminal_shape(w, &thread, &terminal)
+                    .is_some_and(|s| s["environment"] == environment && s["input"]["cwd"] == cwd)
+            },
+            move |w| {
+                let got = terminal_shape(w, &th2, &t2)
+                    .map(|s| show(&s))
+                    .unwrap_or_else(|| "nothing".to_owned());
+                format!(
+                    "{} to attach {} of {} in {}; got {got}",
+                    c[0], c[1], c[2], c[3]
+                )
+            },
+        )
+    });
     steps.step(
         &format!("{Q} of {Q} starts with {Q} set to {Q}"),
         |world, c, _| {
@@ -963,9 +993,10 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
-    steps.step("the user is told the limit is 4 per group", |world, _, _| {
-        wait_for_toast(world, "At most 4 terminals per group.")
-    });
+    steps.step(
+        "the user is told the limit is 4 per group",
+        |world, _, _| wait_for_toast(world, "At most 4 terminals per group."),
+    );
 
     // The header's terminal button (navigation/layout.feature),
     // Workspace.qml's terminal.toggle.
@@ -987,18 +1018,21 @@ pub fn register(steps: &mut Steps) {
     steps.step("the user (?:shows|hides) the terminal", |world, _, _| {
         dispatch(world, "terminal.toggle", json!({}))
     });
-    steps.step("the terminal drawer opens under the thread", |world, _, _| {
-        let thread_id = shown_thread(world);
-        world.wait_for_with(
-            move |w| {
-                drawer_open(w)
-                    && terminals_of(w, |t| t.thread_key().ends_with(&format!(":{thread_id}")))
-                        .unwrap_or(false)
-                    && terminal_attach(w, &thread_id, "term-1").is_some()
-            },
-            describe_rows,
-        )
-    });
+    steps.step(
+        "the terminal drawer opens under the thread",
+        |world, _, _| {
+            let thread_id = shown_thread(world);
+            world.wait_for_with(
+                move |w| {
+                    drawer_open(w)
+                        && terminals_of(w, |t| t.thread_key().ends_with(&format!(":{thread_id}")))
+                            .unwrap_or(false)
+                        && terminal_attach(w, &thread_id, "term-1").is_some()
+                },
+                describe_rows,
+            )
+        },
+    );
     steps.step("the terminal drawer closes", |world, _, _| {
         world.wait_for("the terminal drawer to close", |w| !drawer_open(w))
     });
@@ -1028,21 +1062,25 @@ pub fn register(steps: &mut Steps) {
     fn panel(world: &World) -> String {
         show(&world.state("panel"))
     }
-    steps.step("the terminal tab runs a terminal of its own", |world, _, _| {
-        let thread_id = shown_thread(world);
-        world.wait_for_with(
-            move |w| {
-                let rows = rows_in(w, true);
-                rows.len() == 1
-                    && *at(&w.state("panel"), "activeId") == json!(format!("terminal:{}", rows[0].group))
-                    && terminal_attach(w, &thread_id, &rows[0].terminal_id).is_some()
-            },
-            |w| format!("{}; the panel shows {}", describe_rows(w), panel(w)),
-        )?;
-        let id = rows_in(world, true)[0].terminal_id.clone();
-        world.mc.part::<FakeTerminals>().panel_terminal = id;
-        Ok(())
-    });
+    steps.step(
+        "the terminal tab runs a terminal of its own",
+        |world, _, _| {
+            let thread_id = shown_thread(world);
+            world.wait_for_with(
+                move |w| {
+                    let rows = rows_in(w, true);
+                    rows.len() == 1
+                        && *at(&w.state("panel"), "activeId")
+                            == json!(format!("terminal:{}", rows[0].group))
+                        && terminal_attach(w, &thread_id, &rows[0].terminal_id).is_some()
+                },
+                |w| format!("{}; the panel shows {}", describe_rows(w), panel(w)),
+            )?;
+            let id = rows_in(world, true)[0].terminal_id.clone();
+            world.mc.part::<FakeTerminals>().panel_terminal = id;
+            Ok(())
+        },
+    );
     steps.step(
         "the terminal drawer still shows only its first terminal",
         |world, _, _| {
@@ -1084,7 +1122,13 @@ pub fn register(steps: &mut Steps) {
                         .is_some_and(|p| p["deleteHistory"] == true)
                         && rows_in(w, true).is_empty()
                 },
-                |w| format!("{}; the MC got {}", describe_rows(w), describe_terminal_calls(w)),
+                |w| {
+                    format!(
+                        "{}; the MC got {}",
+                        describe_rows(w),
+                        describe_terminal_calls(w)
+                    )
+                },
             )?;
             let state = world.state("panel");
             for tab in at(&state, "tabs").as_array().into_iter().flatten() {
@@ -1183,7 +1227,8 @@ pub fn register(steps: &mut Steps) {
             rows.len() == 1
                 && rows[0].terminal_id == terminal_id
                 && at(&world.state("panel"), "isOpen") == true
-                && *at(&world.state("panel"), "activeId") == json!(format!("terminal:{}", rows[0].group)),
+                && *at(&world.state("panel"), "activeId")
+                    == json!(format!("terminal:{}", rows[0].group)),
             "{}; the panel shows {}",
             describe_rows(world),
             panel(world)
@@ -1210,7 +1255,12 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             let project = shown_project(world)?;
             for name in c {
-                add_action(world, &project, name, &format!("bun {}", name.to_lowercase()))?;
+                add_action(
+                    world,
+                    &project,
+                    name,
+                    &format!("bun {}", name.to_lowercase()),
+                )?;
             }
             Ok(())
         },
@@ -1238,7 +1288,10 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             world.sync()?;
             let workspace = world.state("workspace");
-            let scripts = at(&workspace, "scripts").as_array().cloned().unwrap_or_default();
+            let scripts = at(&workspace, "scripts")
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             expect!(
                 !scripts.is_empty(),
                 "the header offers no action: {}",
@@ -1312,7 +1365,9 @@ pub fn register(steps: &mut Steps) {
     steps.step("the header offers no action to run", |world, _, _| {
         world.sync()?;
         let workspace = world.state("workspace");
-        let none = at(&workspace, "scripts").as_array().is_none_or(Vec::is_empty);
+        let none = at(&workspace, "scripts")
+            .as_array()
+            .is_none_or(Vec::is_empty);
         expect!(
             workspace.as_object().is_some_and(|o| !o.is_empty()) && none,
             "the header shows {}",

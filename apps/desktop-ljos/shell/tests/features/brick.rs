@@ -71,6 +71,18 @@ Item {
         }
         return null
     }
+    function brickFindAllVisibleIn(item, name, out) {
+        if (!item || !item.visible) return
+        if (item.objectName === name) out.push(item)
+        var kids = item.children || []
+        for (var i = 0; i < kids.length; i++) brickFindAllVisibleIn(kids[i], name, out)
+    }
+    function brickFindVisibleNth(name, n) {
+        var out = []
+        var trees = brickTrees()
+        for (var i = 0; i < trees.length; i++) brickFindAllVisibleIn(trees[i], name, out)
+        return n < out.length ? out[n] : null
+    }
     function brickShowsIn(item, text) {
         if (!item || !item.visible) return false
         if (item.text !== undefined && String(item.text) === text) return true
@@ -516,6 +528,27 @@ impl Brick {
                 world,
                 "brickFindIn",
                 &[Value::Object(item), Value::from(object_name)],
+            )? {
+                Value::Object(found) => Some(found),
+                _ => None,
+            },
+        )
+    }
+}
+
+impl Brick {
+    /// The `n`th visible item named `object_name`, in document order.
+    pub fn find_visible_nth(
+        &self,
+        world: &World,
+        object_name: &str,
+        n: usize,
+    ) -> Outcome<Option<ObjectId>> {
+        Ok(
+            match self.call(
+                world,
+                "brickFindVisibleNth",
+                &[Value::from(object_name), Value::Int(n as i32)],
             )? {
                 Value::Object(found) => Some(found),
                 _ => None,

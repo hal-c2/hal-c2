@@ -17,9 +17,9 @@ use serde_json::{Value, json};
 use crate::brick::{self, Brick};
 use crate::harness::{Failure, Outcome, Q, Steps, at, show, text};
 use crate::steps::terminal::{
-    active_terminal, add_action, attached, describe_rows, describe_terminal_calls, drawer_available,
-    drawer_open, ensure_project, ensure_thread, print, rows_in, show_thread, shown_thread,
-    tab_labels, terminal_attach, terminal_call, terminal_session, terminal_writes,
+    active_terminal, add_action, attached, describe_rows, describe_terminal_calls,
+    drawer_available, drawer_open, ensure_project, ensure_thread, print, rows_in, show_thread,
+    shown_thread, tab_labels, terminal_attach, terminal_call, terminal_session, terminal_writes,
 };
 use crate::world::World;
 use crate::{expect, fail};
@@ -102,12 +102,10 @@ fn drawer_brick(world: &mut World, height: f64) -> Outcome<Brick> {
 /// What the drawer's Terminal item draws.
 fn drawn(world: &World, brick: &Brick) -> Outcome<String> {
     let terminal = brick.item(world, "HalC2Terminal")?;
-    Ok(
-        match world.engine().invoke_by_name(terminal, "text", &[]) {
-            Ok(value) => world.engine().to_js_string(&value).to_string(),
-            Err(e) => fail!("the drawer's terminal has no text: {e:?}"),
-        },
-    )
+    Ok(match world.engine().invoke_by_name(terminal, "text", &[]) {
+        Ok(value) => world.engine().to_js_string(&value).to_string(),
+        Err(e) => fail!("the drawer's terminal has no text: {e:?}"),
+    })
 }
 
 /// The user takes the drawer's top edge to where the drawer would be
@@ -308,10 +306,7 @@ pub fn register(steps: &mut Steps) {
         let drawer = brick.item(world, "drawer")?;
         let wanted: i32 = c[0].parse().unwrap_or_default();
         world.wait_for_with(
-            move |w| {
-                height_of(&brick, w, drawer) as i32 == wanted
-                    && drawer_height(w) == wanted
-            },
+            move |w| height_of(&brick, w, drawer) as i32 == wanted && drawer_height(w) == wanted,
             move |w| {
                 format!(
                     "the drawer to be {wanted} tall; it is {} and the shell keeps {}",
@@ -338,7 +333,12 @@ pub fn register(steps: &mut Steps) {
             let watched = session.clone();
             world.wait_for_with(
                 move |_| watched.transcript().contains(BUILD),
-                |_| format!("the build output; the terminal shows \"{}\"", session.transcript()),
+                |_| {
+                    format!(
+                        "the build output; the terminal shows \"{}\"",
+                        session.transcript()
+                    )
+                },
             )?;
             let attaches = attaches_of(world, &thread_id, "term-1");
             let session = terminal_session(world, "term-1")?;
@@ -348,14 +348,17 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("the user hides the terminal and shows it again", |world, _, _| {
-        world.dispatch("terminal.toggle", json!({}))?;
-        world.wait_for("the terminal drawer to hide", |w| !drawer_open(w))?;
-        world.sync()?;
-        world.dispatch("terminal.toggle", json!({}))?;
-        world.wait_for("the terminal drawer to show", drawer_open)?;
-        world.sync()
-    });
+    steps.step(
+        "the user hides the terminal and shows it again",
+        |world, _, _| {
+            world.dispatch("terminal.toggle", json!({}))?;
+            world.wait_for("the terminal drawer to hide", |w| !drawer_open(w))?;
+            world.sync()?;
+            world.dispatch("terminal.toggle", json!({}))?;
+            world.wait_for("the terminal drawer to show", drawer_open)?;
+            world.sync()
+        },
+    );
     steps.step(
         "the same output is still on screen without a reload",
         |world, _, _| {
@@ -365,7 +368,10 @@ pub fn register(steps: &mut Steps) {
                 let kept = world.mc.part::<SessionWorld>();
                 (kept.session.clone(), kept.attaches)
             };
-            expect!(Some(&session) == kept.as_ref(), "the terminal was made again");
+            expect!(
+                Some(&session) == kept.as_ref(),
+                "the terminal was made again"
+            );
             expect!(
                 session.transcript().contains(BUILD),
                 "the terminal shows \"{}\"",
@@ -442,19 +448,13 @@ pub fn register(steps: &mut Steps) {
             drag_drawer(world, &brick, 900.0, height)?;
             world.wait_for_with(
                 move |w| f64::from(drawer_height(w)) == height,
-                move |w| {
-                    format!(
-                        "the drawer to be {height} tall; it is {}",
-                        drawer_height(w)
-                    )
-                },
+                move |w| format!("the drawer to be {height} tall; it is {}", drawer_height(w)),
             )?;
             world.sync()
         },
     );
     steps.step("the desktop starts again", |world, _, _| {
-        let key = world
-            .with::<Navigation, _>(|n, _| n.thread_key().to_owned())?;
+        let key = world.with::<Navigation, _>(|n, _| n.thread_key().to_owned())?;
         world.restart()?;
         world.connect()?;
         world.wait_for_with(
@@ -483,7 +483,9 @@ pub fn register(steps: &mut Steps) {
             world.wait_for_with(
                 {
                     let active = active.clone();
-                    move |w| drawer_open(w) && drawer_height(w) == height && active_terminal(w) == active
+                    move |w| {
+                        drawer_open(w) && drawer_height(w) == height && active_terminal(w) == active
+                    }
                 },
                 {
                     let active = active.clone();
@@ -510,12 +512,7 @@ pub fn register(steps: &mut Steps) {
             let drawer = brick.item(world, "drawer")?;
             world.wait_for_with(
                 move |w| height_of(&brick, w, drawer) as i32 == height,
-                move |w| {
-                    format!(
-                        "the drawer drawn {} tall",
-                        height_of(&brick, w, drawer)
-                    )
-                },
+                move |w| format!("the drawer drawn {} tall", height_of(&brick, w, drawer)),
             )
         },
     );
@@ -618,7 +615,10 @@ pub fn register(steps: &mut Steps) {
                 let kept = world.mc.part::<SessionWorld>();
                 (kept.session.clone(), kept.attaches)
             };
-            expect!(Some(&session) == kept.as_ref(), "the terminal was attached anew");
+            expect!(
+                Some(&session) == kept.as_ref(),
+                "the terminal was attached anew"
+            );
             let now = attaches_of(world, thread_id, "term-1");
             expect!(
                 now == attaches && attaches == 1,
@@ -697,7 +697,12 @@ pub fn register(steps: &mut Steps) {
             world.dispatch("workspace.runScript", json!({ "scriptId": "dev" }))?;
             world.wait_for_with(
                 |w| terminal_writes(w, "term-1").contains(&"bun dev\r".to_owned()),
-                |w| format!("the script to run; the MC got {}", describe_terminal_calls(w)),
+                |w| {
+                    format!(
+                        "the script to run; the MC got {}",
+                        describe_terminal_calls(w)
+                    )
+                },
             )?;
             let Some(open) = terminal_call(world, "terminal.open", &thread_id, "term-1") else {
                 fail!("the script's terminal was never opened");

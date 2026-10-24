@@ -21,7 +21,7 @@ use crate::steps::terminal::{
     terminal_attach, terminal_call, terminal_session, terminal_writes,
 };
 use crate::world::World;
-use crate::{expect, fail};
+use crate::expect;
 
 #[derive(Default)]
 struct CloseWorld {
@@ -163,31 +163,38 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("its process stops and its history is deleted", |world, _, _| {
-        let terminal = world.mc.part::<CloseWorld>().terminal.clone();
-        let thread_id = shown_thread(world);
-        let (watched, id) = (terminal.clone(), thread_id.clone());
-        world.wait_for_with(
-            move |w| {
-                terminal_call(w, "terminal.close", &id, &watched)
-                    .is_some_and(|payload| payload["deleteHistory"] == json!(true))
-                    && !has_tab(w, &watched)
-            },
-            |w| {
-                format!(
-                    "{}; the MC got {}",
-                    describe_rows(w),
-                    describe_terminal_calls(w)
-                )
-            },
-        )?;
-        let key = format!("{thread_id}/{terminal}");
-        expect!(
-            !world.mc.part::<FakeTerminals>().terminals.contains_key(&key),
-            "the MC still runs {terminal}"
-        );
-        Ok(())
-    });
+    steps.step(
+        "its process stops and its history is deleted",
+        |world, _, _| {
+            let terminal = world.mc.part::<CloseWorld>().terminal.clone();
+            let thread_id = shown_thread(world);
+            let (watched, id) = (terminal.clone(), thread_id.clone());
+            world.wait_for_with(
+                move |w| {
+                    terminal_call(w, "terminal.close", &id, &watched)
+                        .is_some_and(|payload| payload["deleteHistory"] == json!(true))
+                        && !has_tab(w, &watched)
+                },
+                |w| {
+                    format!(
+                        "{}; the MC got {}",
+                        describe_rows(w),
+                        describe_terminal_calls(w)
+                    )
+                },
+            )?;
+            let key = format!("{thread_id}/{terminal}");
+            expect!(
+                !world
+                    .mc
+                    .part::<FakeTerminals>()
+                    .terminals
+                    .contains_key(&key),
+                "the MC still runs {terminal}"
+            );
+            Ok(())
+        },
+    );
     steps.step(
         "the user closes it and declines the confirmation",
         |world, _, _| {
@@ -259,7 +266,10 @@ pub fn register(steps: &mut Steps) {
         "the user is asked once to close 3 terminals, naming each of them",
         |world, _, _| {
             let asked_so_far = asked_count(world);
-            expect!(asked_so_far == 1, "the shell asked {asked_so_far} questions");
+            expect!(
+                asked_so_far == 1,
+                "the shell asked {asked_so_far} questions"
+            );
             let asked = question(world);
             let description = text(&asked["description"]);
             expect!(
@@ -342,33 +352,36 @@ pub fn register(steps: &mut Steps) {
             world.sync()
         },
     );
-    steps.step("the terminal closes without a confirmation", |world, _, _| {
-        let thread_id = shown_thread(world);
-        world.wait_for_with(
-            move |w| {
-                terminal_call(w, "terminal.close", &thread_id, "term-2").is_some()
-                    && !has_tab(w, "term-2")
-            },
-            |w| {
-                format!(
-                    "{}; the MC got {}",
-                    describe_rows(w),
-                    describe_terminal_calls(w)
-                )
-            },
-        )?;
-        expect!(
-            asked_count(world) == 0 && question(world).is_null(),
-            "the shell asked {}",
-            show(&question(world))
-        );
-        expect!(
-            tab_labels(world) == "Terminal 1" && drawer_open(world),
-            "the tabs are {}",
-            tab_labels(world)
-        );
-        Ok(())
-    });
+    steps.step(
+        "the terminal closes without a confirmation",
+        |world, _, _| {
+            let thread_id = shown_thread(world);
+            world.wait_for_with(
+                move |w| {
+                    terminal_call(w, "terminal.close", &thread_id, "term-2").is_some()
+                        && !has_tab(w, "term-2")
+                },
+                |w| {
+                    format!(
+                        "{}; the MC got {}",
+                        describe_rows(w),
+                        describe_terminal_calls(w)
+                    )
+                },
+            )?;
+            expect!(
+                asked_count(world) == 0 && question(world).is_null(),
+                "the shell asked {}",
+                show(&question(world))
+            );
+            expect!(
+                tab_labels(world) == "Terminal 1" && drawer_open(world),
+                "the tabs are {}",
+                tab_labels(world)
+            );
+            Ok(())
+        },
+    );
 
     steps.step(
         "the user opens a terminal in a folder that no longer exists",
@@ -461,7 +474,11 @@ pub fn register(steps: &mut Steps) {
     steps.step("the client keeps the newest 512 KiB", |world, _, _| {
         let transcript = terminal_session(world, "term-1")?.transcript();
         let close = world.mc.part::<CloseWorld>();
-        let (printed, first, last) = (close.printed, close.first_chunk.clone(), close.last_chunk.clone());
+        let (printed, first, last) = (
+            close.printed,
+            close.first_chunk.clone(),
+            close.last_chunk.clone(),
+        );
         expect!(printed > 512 * 1024, "only {printed} bytes were printed");
         let size = transcript.encode_utf16().count();
         expect!(
