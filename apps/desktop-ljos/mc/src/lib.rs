@@ -38,6 +38,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 
+pub use self::core::DEFAULT_RETRY_DELAYS;
 pub use client::{AuthorizedRequest, ListenerId, McClient, SubId, WeakMcClient};
 pub use driver::{McHandle, spawn};
 pub use http::fetch;

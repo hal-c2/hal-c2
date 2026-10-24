@@ -2317,7 +2317,7 @@ impl Palette {
         self.views.last().map_or(String::new(), |v| v.title.clone())
     }
 
-    fn placeholder(&self, engine: &Engine) -> String {
+    pub fn placeholder(&self, engine: &Engine) -> String {
         match self.mode {
             Mode::Files => "Search files…".into(),
             Mode::Content => {
@@ -2383,7 +2383,7 @@ impl Palette {
 
     /// A line over the results: the environments a thread search did not
     /// reach, or the content search's count ("3 results in 2 files").
-    fn status(&self, engine: &Engine) -> String {
+    pub fn status(&self, engine: &Engine) -> String {
         // A thread search only reaches the environments that are online:
         // the others are named.
         if self.mode == Mode::Command

@@ -563,7 +563,13 @@ impl SnapShot {
             return;
         }
         let modifier = text(payload, "modifier");
-        let held = format!("{modifier}:{}", text(payload, "code"));
+        // The key's scan code, a number from SnapShotSettings.qml; a native
+        // caller may name the key instead ("ShiftLeft").
+        let code = match payload.get("code") {
+            Some(Json::String(name)) => name.clone(),
+            _ => int(payload, "code").to_string(),
+        };
+        let held = format!("{modifier}:{code}");
         if !flag(payload, "down") {
             self.held.remove(&held);
             return;

@@ -15,7 +15,7 @@ use ljos::prelude::{Application, ApplicationState, Engine, ObjectId, Value};
 use serde_json::json;
 
 use crate::controller::{self, Controller, Init, Me};
-use crate::controllers::workspace;
+use crate::controllers::{sidebar, workspace};
 use crate::json::Json;
 use crate::mc::Mc;
 
@@ -94,7 +94,7 @@ impl ClientActivity {
             "appState": if focused { "active" } else { "inactive" },
             "scopes": Json::Array(scopes),
             "ttlMs": LEASE_MS,
-            "observedAt": now_iso8601(),
+            "observedAt": now_iso8601(engine),
         });
         self.mc.call(
             &environment,
@@ -132,27 +132,11 @@ fn client_id(engine: &Engine) -> String {
     format!("{process}:{}", controller::window_id(engine))
 }
 
-/// UTC now as `2026-10-16T12:00:00.000Z`.
-fn now_iso8601() -> String {
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_millis()) as i64;
-    let (days, rest) = (ms.div_euclid(86_400_000), ms.rem_euclid(86_400_000));
-    // Civil from days (Howard Hinnant's algorithm).
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{:03}Z",
-        rest / 3_600_000,
-        rest / 60_000 % 60,
-        rest / 1000 % 60,
-        rest % 1000
-    )
+/// The wall clock (the engine's, pinned in tests) as
+/// `2026-10-16T12:00:00.000Z`.
+fn now_iso8601(engine: &Engine) -> String {
+    chrono::DateTime::from_timestamp_millis(sidebar::now_ms(engine))
+        .unwrap_or_default()
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
 }
