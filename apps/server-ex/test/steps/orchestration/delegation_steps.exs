@@ -342,9 +342,32 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
-  step "its first message is the task prompt", context do
+  step "its first message ends with the task prompt", context do
     [message | _] = messages(context, "subagent")
-    assert message["text"] == context.task
+    assert String.ends_with?(message["text"], context.task)
+    context
+  end
+
+  step "the subagent's first message names {string} as the thread that delegated it",
+       %{args: [parent]} = context do
+    [message | _] = messages(context, "subagent")
+    assert message["text"] =~ ~s(delegated by the thread "#{parent}")
+    context
+  end
+
+  step "it says the final message is the report to that thread", context do
+    [message | _] = messages(context, "subagent")
+    assert message["text"] =~ "final message is your report"
+    context
+  end
+
+  step "it says to finish its own work, including its own workers, before the last turn",
+       context do
+    [message | _] = messages(context, "subagent")
+
+    assert message["text"] =~
+             "Finish your own work, including waiting on your background work and your own workers"
+
     context
   end
 
@@ -943,7 +966,8 @@ defmodule HalC2.Steps.Orchestration.Delegation do
              child["lineage"]
 
     World.await_runs(context, "subagent", ["running"])
-    assert [%{"text" => "wait for it"} | _] = messages(context, "subagent")
+    assert [%{"text" => text} | _] = messages(context, "subagent")
+    assert String.ends_with?(text, "wait for it")
 
     assert %{"origin" => "app_owned", "status" => "running", "childThreadId" => child_id} =
              task(context)

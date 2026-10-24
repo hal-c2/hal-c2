@@ -718,7 +718,9 @@ defmodule HalC2.Steps.Providers.Pi do
     assert [%{"status" => "completed", "childThreadId" => child_id, "result" => answer} = task] =
              StreamState.list(state, "subagent")
 
-    assert answer == "Reply to Write the release notes after []"
+    # The fake echoes its prompt: the MC's worker preamble, then the task.
+    assert "Reply to You are a HAL-C2 worker " <> _ = answer
+    assert String.ends_with?(answer, "\nTask:\nWrite the release notes after []")
 
     assert [%{"childThreadId" => ^child_id, "nodeId" => node_id}] =
              StreamState.list(state, "turn-item") |> Enum.filter(&(&1["type"] == "subagent"))
@@ -729,11 +731,13 @@ defmodule HalC2.Steps.Providers.Pi do
     assert %{"lineage" => %{"parentThreadId" => ^thread_id, "relationshipToParent" => "subagent"}} =
              StreamState.get(child, "thread")[child_id]
 
-    assert [{"user", "Write the release notes"}, {"assistant", ^answer}] =
+    assert [{"user", task_text}, {"assistant", ^answer}] =
              child
              |> StreamState.list("message")
              |> Enum.sort_by(& &1["createdAt"])
              |> Enum.map(&{&1["role"], &1["text"]})
+
+    assert String.ends_with?(task_text, "\nTask:\nWrite the release notes")
 
     context
   end
