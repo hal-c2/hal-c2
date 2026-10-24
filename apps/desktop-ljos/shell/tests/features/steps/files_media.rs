@@ -12,8 +12,7 @@ use serde_json::json;
 
 use super::fake_files::fake_files;
 use super::files_workspace::{
-    ensure_viewer_file, environment, file_status, open_path, show_panel,
-    text_prop, workspace_root,
+    ensure_viewer_file, environment, file_status, open_path, show_panel, text_prop, workspace_root,
 };
 use super::stream::{self, FakeStreams};
 use crate::brick;
@@ -112,7 +111,9 @@ pub fn register(steps: &mut Steps) {
     );
     steps.step(&format!("loading {Q} fails once"), |world, c, _| {
         ensure_viewer_file(world, &c[0]);
-        fake_files(&mut world.mc).load_fails_once.insert(c[0].clone());
+        fake_files(&mut world.mc)
+            .load_fails_once
+            .insert(c[0].clone());
         Ok(())
     });
     steps.step(
@@ -120,7 +121,8 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             show_panel(world)?;
             world.wait_for_with(|w| file_status(w) == "error", describe_media)?;
-            let told = text_prop(world, "fileProblem") == format!("The {} could not be loaded.", c[0])
+            let told = text_prop(world, "fileProblem")
+                == format!("The {} could not be loaded.", c[0])
                 && drawn(world, "fileRetry")?;
             expect!(told, "{}", describe_media(world));
             Ok(())
@@ -140,7 +142,8 @@ pub fn register(steps: &mut Steps) {
             |w| {
                 format!(
                     "the {} tab; {}",
-                    w.with::<RightPanel, _>(|p, _| p.active_tab()).unwrap_or_default(),
+                    w.with::<RightPanel, _>(|p, _| p.active_tab())
+                        .unwrap_or_default(),
                     describe_media(w)
                 )
             },
@@ -161,34 +164,37 @@ pub fn register(steps: &mut Steps) {
     });
 
     // A thread of the project on another member of the cluster, open.
-    steps.step("the thread is on another machine of the cluster", |world, _, _| {
-        world.mc.join(stream::PEER, stream::PEER_ENVIRONMENT);
-        world.mc.send_peer_row_of(
-            stream::PEER_ENVIRONMENT,
-            stream::PROJECT,
-            &json!({"id": stream::PROJECT, "title": stream::PROJECT,
+    steps.step(
+        "the thread is on another machine of the cluster",
+        |world, _, _| {
+            world.mc.join(stream::PEER, stream::PEER_ENVIRONMENT);
+            world.mc.send_peer_row_of(
+                stream::PEER_ENVIRONMENT,
+                stream::PROJECT,
+                &json!({"id": stream::PROJECT, "title": stream::PROJECT,
                     "workspaceRoot": format!("/work/{}", stream::PROJECT), "scripts": []}),
-            "project",
-        );
-        world.mc.send_peer_row(
-            stream::PEER_ENVIRONMENT,
-            stream::PEER_THREAD,
-            &json!({"id": stream::PEER_THREAD, "title": "Remote", "projectId": stream::PROJECT,
+                "project",
+            );
+            world.mc.send_peer_row(
+                stream::PEER_ENVIRONMENT,
+                stream::PEER_THREAD,
+                &json!({"id": stream::PEER_THREAD, "title": "Remote", "projectId": stream::PROJECT,
                     "createdAt": "2026-09-23T09:00:00Z", "updatedAt": "2026-09-23T09:00:00Z"}),
-        );
-        world.sync()?;
-        let fake = world.mc.part::<FakeStreams>();
-        fake.thread = stream::PEER_THREAD.into();
-        fake.environment = stream::PEER_ENVIRONMENT.into();
-        stream::look(
-            world,
-            &format!("{}:{}", stream::PEER_ENVIRONMENT, stream::PEER_THREAD),
-            true,
-        )?;
-        world.wait_for("the Files tab to follow the thread", |w| {
-            environment(w) == stream::PEER_ENVIRONMENT && !workspace_root(w).is_empty()
-        })
-    });
+            );
+            world.sync()?;
+            let fake = world.mc.part::<FakeStreams>();
+            fake.thread = stream::PEER_THREAD.into();
+            fake.environment = stream::PEER_ENVIRONMENT.into();
+            stream::look(
+                world,
+                &format!("{}:{}", stream::PEER_ENVIRONMENT, stream::PEER_THREAD),
+                true,
+            )?;
+            world.wait_for("the Files tab to follow the thread", |w| {
+                environment(w) == stream::PEER_ENVIRONMENT && !workspace_root(w).is_empty()
+            })
+        },
+    );
     steps.step(
         "the image comes from the machine the thread is on",
         |world, _, _| {

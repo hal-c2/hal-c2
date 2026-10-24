@@ -190,23 +190,25 @@ fn link_at(
         fail!("\"{needle}\" is not shown in \"{all}\"");
     };
     let at = all[..byte].encode_utf16().count() + needle.encode_utf16().count() / 2;
-    let rect = match world
-        .engine()
-        .invoke_by_name(edit, "positionToRectangle", &[Value::Int(at as i32)])
-    {
-        Ok(Value::Rect(rect)) => rect,
-        Ok(other) => fail!("positionToRectangle gave {other:?}"),
-        Err(error) => fail!("positionToRectangle: {error}"),
-    };
+    let rect =
+        match world
+            .engine()
+            .invoke_by_name(edit, "positionToRectangle", &[Value::Int(at as i32)])
+        {
+            Ok(Value::Rect(rect)) => rect,
+            Ok(other) => fail!("positionToRectangle gave {other:?}"),
+            Err(error) => fail!("positionToRectangle: {error}"),
+        };
     let (x, y) = (rect.x + 1.0, rect.y + rect.height / 2.0);
-    let link = match world
-        .engine()
-        .invoke_by_name(edit, "linkAt", &[Value::from(x), Value::from(y)])
-    {
-        Ok(Value::String(s)) => s.as_str().to_owned(),
-        Ok(_) => String::new(),
-        Err(error) => fail!("linkAt: {error}"),
-    };
+    let link =
+        match world
+            .engine()
+            .invoke_by_name(edit, "linkAt", &[Value::from(x), Value::from(y)])
+        {
+            Ok(Value::String(s)) => s.as_str().to_owned(),
+            Ok(_) => String::new(),
+            Err(error) => fail!("linkAt: {error}"),
+        };
     let (width, height) = (
         f64::from(int_of(world, edit, "width")).max(1.0),
         f64::from(int_of(world, edit, "height")).max(1.0),
@@ -272,7 +274,12 @@ fn activated(world: &mut World) -> Outcome<Vec<Json>> {
     Ok(json_list(&str_of(world, root, "activated")))
 }
 
-fn click_link(world: &mut World, point: (f64, f64), button: MouseButtons, with: Modifiers) -> Outcome {
+fn click_link(
+    world: &mut World,
+    point: (f64, f64),
+    button: MouseButtons,
+    with: Modifiers,
+) -> Outcome {
     world.click_at_with(point.0, point.1, button, with)
 }
 
@@ -306,19 +313,24 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
-    steps.step("the heading and the list are shown as text", |world, _, _| {
-        let message = reply(world, 4)?;
-        let prose = within(world, message, "markdownProse");
-        let Some(&first) = prose.first() else {
-            fail!("the reply has no text");
-        };
-        let shown = plain(world, first)?;
-        expect!(
-            shown.contains("Cart totals") && shown.contains("Tax second") && !shown.contains('#'),
-            "the reply reads \"{shown}\""
-        );
-        Ok(())
-    });
+    steps.step(
+        "the heading and the list are shown as text",
+        |world, _, _| {
+            let message = reply(world, 4)?;
+            let prose = within(world, message, "markdownProse");
+            let Some(&first) = prose.first() else {
+                fail!("the reply has no text");
+            };
+            let shown = plain(world, first)?;
+            expect!(
+                shown.contains("Cart totals")
+                    && shown.contains("Tax second")
+                    && !shown.contains('#'),
+                "the reply reads \"{shown}\""
+            );
+            Ok(())
+        },
+    );
     steps.step(
         "the quote, the code block and the table are each shown in their own form",
         |world, _, _| {
@@ -426,11 +438,14 @@ pub fn register(steps: &mut Steps) {
         let copy = one(world, message, "copyCode")?;
         click(world, copy)
     });
-    steps.step("the code block's source is on the clipboard", |world, _, _| {
-        let clipboard = world.clipboard();
-        expect!(clipboard == SOURCE, "the clipboard holds \"{clipboard}\"");
-        Ok(())
-    });
+    steps.step(
+        "the code block's source is on the clipboard",
+        |world, _, _| {
+            let clipboard = world.clipboard();
+            expect!(clipboard == SOURCE, "the clipboard holds \"{clipboard}\"");
+            Ok(())
+        },
+    );
     steps.step("the code block shows it was copied", |world, _, _| {
         let message = reply(world, 2)?;
         let button = one(world, message, "copyCode")?;
@@ -453,7 +468,8 @@ pub fn register(steps: &mut Steps) {
             let message = reply(world, 1)?;
             let toggle = one(world, message, "wrapCode")?;
             let on = c[0] == "on";
-            let checked = |w: &World| w.engine().read_by_name(toggle, "checked") == Value::Bool(true);
+            let checked =
+                |w: &World| w.engine().read_by_name(toggle, "checked") == Value::Bool(true);
             expect!(checked(world) != on, "line wrap is already {}", c[0]);
             click(world, toggle)?;
             expect!(checked(world) == on, "line wrap did not turn {}", c[0]);
@@ -465,7 +481,8 @@ pub fn register(steps: &mut Steps) {
         let code = one(world, message, "codeText")?;
         let block = one(world, message, "markdownCode")?;
         let lines = int_of(world, code, "lineCount");
-        let (code_width, block_width) = (int_of(world, code, "width"), int_of(world, block, "width"));
+        let (code_width, block_width) =
+            (int_of(world, code, "width"), int_of(world, block, "width"));
         if c[0] == "wraps" {
             expect!(
                 lines > 1 && code_width <= block_width,
@@ -481,7 +498,9 @@ pub fn register(steps: &mut Steps) {
     });
 
     // Tables.
-    steps.step("the agent's reply has a table", |world, _, _| answer(world, TABLE));
+    steps.step("the agent's reply has a table", |world, _, _| {
+        answer(world, TABLE)
+    });
     steps.step(
         "the user copies the table as (Markdown|CSV)",
         |world, c, _| {
@@ -489,30 +508,40 @@ pub fn register(steps: &mut Steps) {
             let message = reply(world, 1)?;
             let copy = one(world, message, "copyTable")?;
             click(world, copy)?;
-            let name = if c[0] == "CSV" { "copyTableCsv" } else { "copyTableMarkdown" };
+            let name = if c[0] == "CSV" {
+                "copyTableCsv"
+            } else {
+                "copyTableMarkdown"
+            };
             let brick = timeline_brick(world)?;
             let entry = move |w: &World| -> Option<ObjectId> {
                 let mut found = Vec::new();
                 named(w.engine(), brick.root(w)?, name, &mut found);
                 (found.len() == 1 && brick.flag(w, found[0], "visible")).then(|| found[0])
             };
-            world.wait_for_with(|w| entry(w).is_some(), |_| format!("the copy menu to offer {}", c[0]))?;
+            world.wait_for_with(
+                |w| entry(w).is_some(),
+                |_| format!("the copy menu to offer {}", c[0]),
+            )?;
             match entry(world) {
                 Some(item) => click(world, item),
                 None => fail!("the copy menu went away"),
             }
         },
     );
-    steps.step("the table is on the clipboard as (Markdown|CSV)", |world, c, _| {
-        let expected = if c[0] == "CSV" {
-            "Region,Rate\n\"EU, north\",21%\na|b,\"\"\"q\"\"\""
-        } else {
-            "| Region | Rate |\n| --- | ---: |\n| EU, north | 21% |\n| a\\|b | \"q\" |"
-        };
-        let clipboard = world.clipboard();
-        expect!(clipboard == expected, "the clipboard holds \"{clipboard}\"");
-        Ok(())
-    });
+    steps.step(
+        "the table is on the clipboard as (Markdown|CSV)",
+        |world, c, _| {
+            let expected = if c[0] == "CSV" {
+                "Region,Rate\n\"EU, north\",21%\na|b,\"\"\"q\"\"\""
+            } else {
+                "| Region | Rate |\n| --- | ---: |\n| EU, north | 21% |\n| a\\|b | \"q\" |"
+            };
+            let clipboard = world.clipboard();
+            expect!(clipboard == expected, "the clipboard holds \"{clipboard}\"");
+            Ok(())
+        },
+    );
     steps.step(
         "the agent's reply has a table with a long cell",
         |world, _, _| {
@@ -525,18 +554,21 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
-    steps.step("the user (collapses|expands) the table cells", |world, c, _| {
-        let message = reply(world, 1)?;
-        let toggle = one(world, message, "expandTable")?;
-        let expand = c[0] == "expands";
-        let checked = world.engine().read_by_name(toggle, "checked") == Value::Bool(true);
-        expect!(
-            checked != expand,
-            "the table cells are already {}",
-            if expand { "expanded" } else { "collapsed" }
-        );
-        click(world, toggle)
-    });
+    steps.step(
+        "the user (collapses|expands) the table cells",
+        |world, c, _| {
+            let message = reply(world, 1)?;
+            let toggle = one(world, message, "expandTable")?;
+            let expand = c[0] == "expands";
+            let checked = world.engine().read_by_name(toggle, "checked") == Value::Bool(true);
+            expect!(
+                checked != expand,
+                "the table cells are already {}",
+                if expand { "expanded" } else { "collapsed" }
+            );
+            click(world, toggle)
+        },
+    );
     steps.step("the long cell (stays on one line|wraps)", |world, c, _| {
         let message = reply(world, 1)?;
         let cells = within(world, message, "tableCell");
@@ -589,9 +621,10 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step(&format!("the agent answers with a link to {Q}"), |world, c, _| {
-        answer(world, &format!("Open [the pricing docs]({}) now.", c[0]))
-    });
+    steps.step(
+        &format!("the agent answers with a link to {Q}"),
+        |world, c, _| answer(world, &format!("Open [the pricing docs]({}) now.", c[0])),
+    );
     steps.step(
         "the link's text is shown and nothing can be opened",
         |world, _, _| {
@@ -606,7 +639,11 @@ pub fn register(steps: &mut Steps) {
             );
             click_link(world, point, MouseButtons::LEFT, Modifiers::empty())?;
             let opened = activated(world)?;
-            expect!(opened.is_empty(), "the click opened {}", show(&json!(opened)));
+            expect!(
+                opened.is_empty(),
+                "the click opened {}",
+                show(&json!(opened))
+            );
             Ok(())
         },
     );
@@ -703,9 +740,15 @@ pub fn register(steps: &mut Steps) {
     });
 
     // Alerts.
-    steps.step(&format!("the agent answers with a {Q} alert"), |world, c, _| {
-        answer(world, &format!("> [!{}]\n> Refunds reuse the old rate.", c[0]))
-    });
+    steps.step(
+        &format!("the agent answers with a {Q} alert"),
+        |world, c, _| {
+            answer(
+                world,
+                &format!("> [!{}]\n> Refunds reuse the old rate.", c[0]),
+            )
+        },
+    );
     steps.step(&format!("the quote is titled {Q}"), |world, c, _| {
         let message = reply(world, 1)?;
         let quote = one(world, message, "markdownQuote")?;
@@ -736,7 +779,10 @@ pub fn register(steps: &mut Steps) {
             let edit = *prose.first()?;
             plain(w, edit).ok()?.contains("refunds").then_some(edit)
         };
-        world.wait_for_with(|w| edit(w).is_some(), |_| "the user's message to be shown".into())?;
+        world.wait_for_with(
+            |w| edit(w).is_some(),
+            |_| "the user's message to be shown".into(),
+        )?;
         let Some(edit) = edit(world) else {
             fail!("the message went away");
         };
@@ -746,7 +792,9 @@ pub fn register(steps: &mut Steps) {
     });
 
     // Bare web addresses (scrolling-and-links.feature).
-    steps.step(&format!("the agent writes {Q}"), |world, c, _| answer(world, &c[0]));
+    steps.step(&format!("the agent writes {Q}"), |world, c, _| {
+        answer(world, &c[0])
+    });
     steps.step(&format!("{Q} can be opened as a link"), |world, c, _| {
         let brick = timeline_brick(world)?;
         let message = reply(world, 1)?;

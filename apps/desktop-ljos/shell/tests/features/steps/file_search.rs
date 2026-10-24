@@ -8,7 +8,9 @@ use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use hal_c2_shell::controllers::palette::Palette;
 use serde_json::json;
 
-use super::add_project::{count, describe, id_at, is_open, kind_at, prop, role_text, searching, set_query};
+use super::add_project::{
+    count, describe, id_at, is_open, kind_at, prop, role_text, searching, set_query,
+};
 use super::fake_files::fake_files;
 use super::files_workspace::{int_prop, open_path};
 use super::stream::look_at_thread;
@@ -76,7 +78,10 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(&format!("{Q} contains the line {Q}"), |world, c, _| {
-        let file = fake_files(&mut world.mc).files.entry(c[0].clone()).or_default();
+        let file = fake_files(&mut world.mc)
+            .files
+            .entry(c[0].clone())
+            .or_default();
         file.push_str(&c[1]);
         file.push('\n');
         Ok(())
@@ -115,12 +120,15 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step(&format!("the matches are grouped under {Q}"), |world, c, _| {
-        let grouped = row_of(world, "match", &c[0])
-            .is_some_and(|row| role_text(world, row, "group") == c[0]);
-        expect!(grouped, "{}", describe(world));
-        Ok(())
-    });
+    steps.step(
+        &format!("the matches are grouped under {Q}"),
+        |world, c, _| {
+            let grouped = row_of(world, "match", &c[0])
+                .is_some_and(|row| role_text(world, row, "group") == c[0]);
+            expect!(grouped, "{}", describe(world));
+            Ok(())
+        },
+    );
     steps.step("the user opens the match", |world, _, _| {
         let Some(row) = row_of(world, "match", "") else {
             fail!("{}", describe(world));
@@ -214,4 +222,3 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
 }
-

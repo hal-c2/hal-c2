@@ -225,22 +225,25 @@ pub fn register(steps: &mut Steps) {
             launch_again(world, path)
         },
     );
-    steps.step("a new thread opens in the existing project", |world, _, _| {
-        world.wait_for_with(
-            |w| draft_project(w) == "api",
-            |w| {
-                format!(
-                    "a new thread in the project; the route is {}",
-                    show(&w.state("route"))
-                )
-            },
-        )?;
-        let forwarded = world.part::<Launches>().forwarded;
-        expect!(
-            forwarded && created(world).is_empty(),
-            "a second project was created: {}",
-            show(&json!(created(world)))
-        );
-        Ok(())
-    });
+    steps.step(
+        "a new thread opens in the existing project",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| draft_project(w) == "api",
+                |w| {
+                    format!(
+                        "a new thread in the project; the route is {}",
+                        show(&w.state("route"))
+                    )
+                },
+            )?;
+            let forwarded = world.part::<Launches>().forwarded;
+            expect!(
+                forwarded && created(world).is_empty(),
+                "a second project was created: {}",
+                show(&json!(created(world)))
+            );
+            Ok(())
+        },
+    );
 }
