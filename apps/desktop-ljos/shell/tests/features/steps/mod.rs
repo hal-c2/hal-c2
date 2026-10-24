@@ -7,6 +7,7 @@ use crate::harness::Steps;
 pub mod add_project;
 pub mod agents;
 pub mod alert;
+pub mod appearance_rows;
 pub mod archived_threads;
 pub mod centre;
 pub mod checkpoint_edit;
@@ -134,6 +135,7 @@ pub fn register(steps: &mut Steps) {
     add_project::register(steps);
     agents::register(steps);
     alert::register(steps);
+    appearance_rows::register(steps);
     archived_threads::register(steps);
     centre::register(steps);
     checkpoint_edit::register(steps);
