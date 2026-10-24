@@ -1757,6 +1757,57 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  step "the agent of {string} runs on a Claude instance {string} does not have",
+       %{args: [_caller, machine]} = context do
+    context =
+      World.update_settings(context, %{
+        "providerInstances" => %{"claude-work" => %{"driver" => "claudeAgent"}}
+      })
+
+    assert HalC2.Mcp.max_wait_ms("claude-work") == 3_600_000
+
+    refute Machines.on(context, machine, HalC2.Environment, :providers, [])
+           |> Enum.any?(&(&1["instanceId"] == "claude-work"))
+
+    Map.put(context, :caller_instance, "claude-work")
+  end
+
+  step "{string} cuts the waits of agents it does not know to 1 second",
+       %{args: [machine]} = context do
+    Machines.on(context, machine, Application, :put_env, [:hal_c2, :acp_max_wait_ms, 1_000])
+    context
+  end
+
+  step "the agent of {string} waits 3 seconds on {string}",
+       %{args: [caller, title]} = context do
+    started = System.monotonic_time(:millisecond)
+
+    result =
+      World.mcp_tool(
+        context,
+        caller,
+        "hal_c2_thread_wait",
+        %{"threadId" => World.thread_id(context, title), "timeoutMs" => 3_000},
+        context[:caller_instance] || "codex"
+      )
+
+    Map.merge(context, %{
+      mcp_result: result,
+      waited: System.monotonic_time(:millisecond) - started
+    })
+  end
+
+  step "it waits the 3 seconds and is told the turn is still running", context do
+    run = context.remote_run
+
+    assert {:ok, %{"runId" => ^run, "status" => status, "timedOut" => true}} =
+             context.mcp_result
+
+    assert status in ~w(running waiting)
+    assert context.waited >= 3_000
+    context
+  end
+
   step "the turn is running on {string}", %{args: [machine]} = context do
     id = World.thread_id(context, "Alpha")
     :ok = Machines.on(context, machine, HalC2.Streams, :subscribe, [id, self(), nil])
