@@ -43,6 +43,7 @@ pub mod other_machine;
 pub mod panel;
 pub mod plan;
 pub mod plugin;
+pub mod preview;
 pub mod project;
 pub mod pull_request;
 pub mod pull_request_list;
@@ -108,6 +109,7 @@ pub fn register(steps: &mut Steps) {
     panel::register(steps);
     plan::register(steps);
     plugin::register(steps);
+    preview::register(steps);
     project::register(steps);
     pull_request::register(steps);
     pull_request_list::register(steps);
