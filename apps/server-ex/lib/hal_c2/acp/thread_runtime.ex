@@ -38,7 +38,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 11
+  @state_version 12
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -151,6 +151,8 @@ defmodule HalC2.Acp.ThreadRuntime do
        thread_id: thread_id,
        conn: nil,
        agent: nil,
+       # Whether the agent is Kimi CLI, whose tool calls `Kimi.update/1` reshapes.
+       kimi: false,
        mode: nil,
        capabilities: %{},
        session_id: nil,
@@ -400,7 +402,8 @@ defmodule HalC2.Acp.ThreadRuntime do
       subagent_ended?(update) -> {:noreply, subagent_ended(state, update)}
       commands = available_commands(update) -> {:noreply, offer(state, commands)}
       state.turn == nil -> {:noreply, state}
-      true -> {:noreply, update(Kimi.update(update, state.agent), state)}
+      state.kimi -> {:noreply, update(Kimi.update(update), state)}
+      true -> {:noreply, update(update, state)}
     end
   end
 
@@ -639,7 +642,11 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp migrate(%{v: 9} = state),
     do: state |> Map.merge(%{v: 10, prompts: :gen_server.reqids_new(), answer: nil}) |> migrate()
 
-  defp migrate(%{v: 10} = state), do: Map.merge(state, %{v: 11, last_run: nil})
+  defp migrate(%{v: 10} = state),
+    do: state |> Map.merge(%{v: 11, last_run: nil}) |> migrate()
+
+  defp migrate(%{v: 11} = state),
+    do: Map.merge(state, %{v: 12, kimi: Kimi.agent?(state.agent)})
 
   # --- session -------------------------------------------------------------------
 
@@ -724,6 +731,7 @@ defmodule HalC2.Acp.ThreadRuntime do
          state
          | conn: conn,
            agent: instance,
+           kimi: Kimi.agent?(instance),
            mode: mode,
            server: server,
            capabilities: init["agentCapabilities"] || %{}

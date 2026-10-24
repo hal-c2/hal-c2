@@ -17,22 +17,25 @@ defmodule HalC2.Acp.Kimi do
     "Grep" => "search"
   }
 
-  @doc """
-  An update from `instance`: a Kimi `tool_call` or `tool_call_update` with its
-  tool's name as its title, a `kind` for the tools that have one, and its arguments
-  as `rawInput` once they are whole JSON. Any other update is returned as it is.
-  """
-  def update(%{"sessionUpdate" => s} = call, instance)
-      when s in ["tool_call", "tool_call_update"] do
-    if agent?(instance), do: call |> name() |> arguments(), else: call
-  end
+  # The arguments that carry a file's text, which stays out of the timeline as a
+  # read's does: it is too much to send to every client.
+  @file_text %{"WriteFile" => ["content"], "StrReplaceFile" => ["edit"]}
 
-  def update(update, _instance), do: update
-
-  defp agent?(instance) do
+  @doc "Whether a provider instance runs Kimi CLI."
+  def agent?(instance) do
     HalC2.Acp.driver(instance) == "acpRegistry" and
       HalC2.Acp.setting(instance, "agentId") == "kimi"
   end
+
+  @doc """
+  A Kimi `tool_call` or `tool_call_update` with its tool's name as its title, a
+  `kind` for the tools that have one, and its arguments as `rawInput` once they are
+  whole JSON. Any other update is returned as it is.
+  """
+  def update(%{"sessionUpdate" => s} = call) when s in ["tool_call", "tool_call_update"],
+    do: call |> name() |> arguments()
+
+  def update(update), do: update
 
   defp name(%{"title" => title} = call) when is_binary(title) do
     [name | _] = String.split(title, ": ", parts: 2)
@@ -52,8 +55,12 @@ defmodule HalC2.Acp.Kimi do
     call = Map.delete(call, "content")
 
     case JSON.decode(text) do
-      {:ok, %{} = input} -> call |> Map.put("rawInput", input) |> located(input)
-      _ -> call
+      {:ok, %{} = input} ->
+        input = Map.drop(input, @file_text[call["title"]] || [])
+        call |> Map.put("rawInput", input) |> located(input)
+
+      _ ->
+        call
     end
   end
 

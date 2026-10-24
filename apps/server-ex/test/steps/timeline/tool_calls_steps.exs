@@ -209,7 +209,7 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     Map.put(context, :projected, item)
   end
 
-  step ~r/^the timeline shows it as a (?<kind>file read|file search|web search|command|tool call)$/,
+  step ~r/^the timeline shows it as a (?<kind>file read|file search|web search|command|tool call that names only its file)$/,
        %{args: [kind]} = context do
     item = context.projected
     assert item["status"] == "completed"
@@ -230,9 +230,10 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
         assert %{"type" => "command_execution", "input" => "ls -la", "output" => "export {}"} =
                  item
 
-      "tool call" ->
+      # The file's text stays out of the timeline, as a read's does.
+      "tool call that names only its file" ->
         assert %{"type" => "dynamic_tool", "toolName" => "WriteFile"} = item
-        assert item["input"] == %{"path" => "notes.md", "content" => "hi"}
+        assert item["input"] == %{"path" => "notes.md"}
     end
 
     context

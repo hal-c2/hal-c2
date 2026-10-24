@@ -403,11 +403,11 @@ Feature: Tool calls and file changes
     Then the timeline shows it as <timeline kind>
 
     Examples:
-      | tool      | timeline kind |
-      | Shell     | a command     |
-      | ReadFile  | a file read   |
-      | Grep      | a file search |
-      | WriteFile | a tool call   |
+      | tool      | timeline kind                        |
+      | Shell     | a command                            |
+      | ReadFile  | a file read                          |
+      | Grep      | a file search                        |
+      | WriteFile | a tool call that names only its file |
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
   @shared @backlog-mobile
