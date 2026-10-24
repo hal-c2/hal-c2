@@ -126,7 +126,11 @@ fn comment(world: &mut World, body: &str) -> Outcome {
         json!({"id": id, "comment": body}),
     )?;
     world.wait_for_with(
-        |w| quotes(w).first().is_some_and(|q| text(&q["comment"]) == body),
+        |w| {
+            quotes(w)
+                .first()
+                .is_some_and(|q| text(&q["comment"]) == body)
+        },
         |w| {
             format!(
                 "the comment {}; the composer shows {}",
@@ -163,10 +167,13 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("the user selects those lines and adds them to the chat", |world, _, _| {
-        let selection = world.part::<ContextState>().selection.clone();
-        add(world, selection)
-    });
+    steps.step(
+        "the user selects those lines and adds them to the chat",
+        |world, _, _| {
+            let selection = world.part::<ContextState>().selection.clone();
+            add(world, selection)
+        },
+    );
     steps.step(
         &format!("the user adds line (\\d+) of {Q} to the chat"),
         |world, c, _| {
@@ -199,7 +206,12 @@ pub fn register(steps: &mut Steps) {
             let expected = vec![c[0].clone()];
             world.wait_for_with(
                 |w| labels(w) == expected,
-                |w| format!("the excerpt; the composer shows {}", show(&json!(labels(w)))),
+                |w| {
+                    format!(
+                        "the excerpt; the composer shows {}",
+                        show(&json!(labels(w)))
+                    )
+                },
             )
         },
     );
@@ -286,15 +298,14 @@ pub fn register(steps: &mut Steps) {
                 &file,
                 json!({"targets": {}, "stash": [stashed]}).to_string(),
             )
-            .map_err(|e| crate::harness::Failure(format!("cannot write {}: {e}", file.display())))?;
+            .map_err(|e| {
+                crate::harness::Failure(format!("cannot write {}: {e}", file.display()))
+            })?;
             world.restart()?;
             open_turn_thread(world)?;
             world.dispatch("composer.stash.restore", json!({"id": "s1"}))?;
             world.wait_for_with(
-                |w| {
-                    chips(w).len() == 1
-                        && at(&composer_state(w), "text") == "why does this fail?"
-                },
+                |w| chips(w).len() == 1 && at(&composer_state(w), "text") == "why does this fail?",
                 |w| {
                     format!(
                         "the restored draft; the composer shows {}",
@@ -303,7 +314,11 @@ pub fn register(steps: &mut Steps) {
                 },
             )?;
             let chips = chips(world);
-            expect!(text(&chips[0]["text"]).is_empty(), "{}", show(&Value::Array(chips)));
+            expect!(
+                text(&chips[0]["text"]).is_empty(),
+                "{}",
+                show(&Value::Array(chips))
+            );
             Ok(())
         },
     );
@@ -328,10 +343,7 @@ pub fn register(steps: &mut Steps) {
             show(&message)
         );
         // And the draft is left without it.
-        world.wait_for_with(
-            |w| chips(w).is_empty(),
-            |w| show(&Value::Array(chips(w))),
-        )
+        world.wait_for_with(|w| chips(w).is_empty(), |w| show(&Value::Array(chips(w))))
     });
 
     // What a send carries.
@@ -340,7 +352,12 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             world.wait_for_with(
                 |w| last_message(w).and_then(|m| terminal_record(&m)).is_some(),
-                |w| format!("a message with an excerpt; the MC has {}", w.describe_commands()),
+                |w| {
+                    format!(
+                        "a message with an excerpt; the MC has {}",
+                        w.describe_commands()
+                    )
+                },
             )?;
             let message = last_message(world).unwrap_or(Value::Null);
             let record = terminal_record(&message).unwrap_or(Value::Null);
@@ -389,13 +406,16 @@ pub fn register(steps: &mut Steps) {
         "the assistant replied with a paragraph about caching",
         |world, _, _| open_turn_thread(world),
     );
-    steps.step("the user cites that paragraph in the composer", |world, _, _| {
-        cite(world)
-    });
+    steps.step(
+        "the user cites that paragraph in the composer",
+        |world, _, _| cite(world),
+    );
     steps.step("the draft carries the quoted paragraph", |world, _, _| {
         let quotes = quotes(world);
         expect!(
-            quotes.first().is_some_and(|q| text(&q["text"]) == PARAGRAPH),
+            quotes
+                .first()
+                .is_some_and(|q| text(&q["text"]) == PARAGRAPH),
             "the composer shows {}",
             show(&Value::Array(quotes))
         );
@@ -428,11 +448,17 @@ pub fn register(steps: &mut Steps) {
             let query = |key: &str| {
                 parsed
                     .as_ref()
-                    .and_then(|u| u.query_pairs().find(|(k, _)| k == key).map(|(_, v)| v.into_owned()))
+                    .and_then(|u| {
+                        u.query_pairs()
+                            .find(|(k, _)| k == key)
+                            .map(|(_, v)| v.into_owned())
+                    })
                     .unwrap_or_default()
             };
             expect!(
-                parsed.as_ref().is_some_and(|u| u.path().ends_with("/msg-caching"))
+                parsed
+                    .as_ref()
+                    .is_some_and(|u| u.path().ends_with("/msg-caching"))
                     && query("text") == PARAGRAPH
                     && query("comment") == c[0],
                 "the message cites {}",
