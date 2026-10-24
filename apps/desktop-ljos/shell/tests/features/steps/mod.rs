@@ -41,6 +41,7 @@ pub mod plugin;
 pub mod project;
 pub mod pull_request;
 pub mod pull_request_list;
+pub mod review_diff;
 pub mod screenshot;
 pub mod settings;
 pub mod settings_connections;
@@ -101,6 +102,7 @@ pub fn register(steps: &mut Steps) {
     project::register(steps);
     pull_request::register(steps);
     pull_request_list::register(steps);
+    review_diff::register(steps);
     screenshot::register(steps);
     settings::register(steps);
     settings_connections::register(steps);
