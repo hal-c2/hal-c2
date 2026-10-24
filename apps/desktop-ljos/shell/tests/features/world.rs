@@ -597,6 +597,7 @@ impl World {
 
     /// Lets `ms` pass on the shell's clock, the wall clock staying put.
     pub fn advance(&mut self, ms: u64) -> Outcome {
+        self.await_answers()?;
         let Some(shell) = &mut self.shell else {
             return Ok(());
         };
@@ -605,6 +606,28 @@ impl World {
             .engine
             .set_wall_clock_origin(Some(self.now.timestamp_millis() as f64));
         Ok(())
+    }
+
+    /// Serves the fake MC until the shell's promised platform answers (a
+    /// task such as pairing's HTTP exchange) have come back. TestWindow's
+    /// advance waits for them on this thread first, and this thread is the
+    /// one that answers the fake MC: waiting there would leave a request to
+    /// it unanswered until the client's own timeout. Held answers are a
+    /// step's to release; one still out after WAIT is TestWindow's to wait
+    /// for and give up on.
+    fn await_answers(&mut self) -> Outcome {
+        let started = Instant::now();
+        loop {
+            let Some(shell) = &self.shell else {
+                return Ok(());
+            };
+            let platform = Platform::of(&shell.engine);
+            if platform.pending() == 0 || platform.is_held() || started.elapsed() >= WAIT {
+                return Ok(());
+            }
+            self.pump()?;
+            self.signal.wait(FRAME);
+        }
     }
 
     /// Shows the component `root` of `source` in the shell's window, in
