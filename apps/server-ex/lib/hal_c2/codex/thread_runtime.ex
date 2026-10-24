@@ -190,6 +190,9 @@ defmodule HalC2.Codex.ThreadRuntime do
        # Apart from `instance`, which is the resolved one a turn's quota belongs to.
        conn_instance: nil,
        native_thread_id: nil,
+       # Whether the native thread was started kept to HAL-C2's workers
+       # (`HalC2.Mcp.workers_only?/1`): its features and every turn's instructions follow it.
+       workers_only: false,
        turn: nil,
        # The instance the latest turn runs as: a turn's quota belongs to it.
        instance: nil,
@@ -558,6 +561,7 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:running, %{})
      |> Map.put_new(:background, %{})
      |> Map.put_new(:last_run, nil)
+     |> Map.put_new(:workers_only, false)
      |> Map.put(:instance, instance)
      |> Map.put_new(:conn_instance, :unknown)
      |> Map.put(:v, @state_version)}
@@ -845,6 +849,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   # A fork's first turn starts from a copy of the source thread, cut after its turn;
   # a session carried from another machine is forked whole from its rollout's path.
   defp ensure_native_thread(state, %{fork: %{thread: source, turn: last} = fork} = turn) do
+    state = workers_only(state, turn)
+
     params =
       thread_params(state, turn)
       |> Map.put("threadId", source)
@@ -858,6 +864,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp ensure_native_thread(state, turn) do
+    state = workers_only(state, turn)
     params = thread_params(state, turn)
 
     result =
@@ -906,10 +913,15 @@ defmodule HalC2.Codex.ThreadRuntime do
           }
       end
 
-    if HalC2.Settings.hal_c2_subagents?(),
+    if state.workers_only,
       do: Map.put(mcp, "features", %{"multi_agent" => false, "multi_agent_v2" => false}),
       else: mcp
   end
+
+  # Codex takes `features` only when a native thread starts, so the choice is read then
+  # and kept for the thread's turns.
+  defp workers_only(state, turn),
+    do: %{state | workers_only: HalC2.Mcp.workers_only?(mcp(state, turn))}
 
   defp mcp(state, turn), do: HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids))
 
@@ -931,7 +943,10 @@ defmodule HalC2.Codex.ThreadRuntime do
         "mode" => if(Map.get(turn, :interaction_mode) == "plan", do: "plan", else: "default"),
         "settings" =>
           if(mcp(state, turn),
-            do: %{"model" => turn.model, "developer_instructions" => HalC2.Mcp.instructions()},
+            do: %{
+              "model" => turn.model,
+              "developer_instructions" => HalC2.Mcp.instructions(state.workers_only)
+            },
             else: %{"model" => turn.model}
           )
       }

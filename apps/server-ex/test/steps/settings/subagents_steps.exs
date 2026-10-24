@@ -29,15 +29,20 @@ defmodule HalC2.Steps.Settings.Subagents do
     context
   end
 
+  # An agent that can delegate is one given HAL-C2's MCP server (any non-nil `for_agent/2`).
   step "the instructions given to agents end by telling them to delegate with {string}",
        %{args: [tool]} = context do
-    assert HalC2.Mcp.instructions() =~ ~r/built-in subagents\. Delegate child work with `#{tool}`/
+    assert HalC2.Mcp.instructions(HalC2.Mcp.workers_only?(%{})) =~
+             ~r/built-in subagents\. Delegate child work with `#{tool}`/
+
     context
   end
 
   step "the instructions given to agents do not tell them to delegate with {string} instead",
        %{args: [_tool]} = context do
-    refute HalC2.Mcp.instructions() =~ "The user keeps agents to HAL-C2's workers"
+    refute HalC2.Mcp.instructions(HalC2.Mcp.workers_only?(%{})) =~
+             "The user keeps agents to HAL-C2's workers"
+
     context
   end
 end

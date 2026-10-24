@@ -1346,6 +1346,20 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "the project turns the HAL-C2 tools off", context do
+    context = World.fake_providers(context)
+    Mc.ensure(HalC2.Mcp)
+    id = World.project(context).id
+
+    context =
+      World.update_settings(context, %{
+        "projectSettingsOverrides" => %{id => %{"enableAgentBrowserAccess" => false}}
+      })
+
+    assert HalC2.Settings.for_project(id)["enableAgentBrowserAccess"] == false
+    context
+  end
+
   step "Claude is started with no tools disallowed", context do
     %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
     refute "--disallowedTools" in argv
@@ -1359,6 +1373,25 @@ defmodule HalC2.Steps.Providers.Claude do
     assert ["--disallowedTools", "#{first},#{second}"] ==
              Enum.slice(argv, Enum.find_index(argv, &(&1 == "--disallowedTools")), 2)
 
+    context
+  end
+
+  step "Claude is told to delegate with {string}", %{args: [tool]} = context do
+    %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
+    prompt = Enum.at(argv, Enum.find_index(argv, &(&1 == "--append-system-prompt")) + 1)
+    assert prompt == HalC2.Mcp.instructions(true)
+    assert prompt =~ "Delegate child work with `#{tool}`"
+    context
+  end
+
+  # Created first, so the thread's sidebar row (which names its project) is in place
+  # when the turn starts.
+  step "a Claude turn starts in a thread that already exists", context do
+    selection = %{"instanceId" => "claudeAgent", "model" => "sonnet"}
+    context = World.create_thread(context, @thread, nil, %{"modelSelection" => selection})
+    :ok = HalC2.Streams.subscribe(World.thread_id(context, @thread), self(), nil)
+    {{:ok, _}, context} = World.send_message(context, @thread, "hello")
+    World.await_runs(context, @thread, ["completed"])
     context
   end
 

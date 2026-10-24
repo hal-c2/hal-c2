@@ -102,16 +102,24 @@ defmodule HalC2.Mcp do
   end
 
   @doc """
-  What agents are told about the tools, for their system or developer prompt. When the
-  user keeps agents to HAL-C2's workers (`nativeSubagents`), it ends by saying so.
+  Whether an agent session given `mcp` (`for_agent/2`) is kept to HAL-C2's workers: the
+  user chose so (`nativeSubagents`) and the agent has the tools to delegate with. An
+  adapter reads it once per session, for both the provider tool it takes away and
+  `instructions/1`, so the two cannot disagree.
   """
-  def instructions do
-    if Process.whereis(HalC2.Settings) && HalC2.Settings.hal_c2_subagents?(),
-      do: base_instructions() <> @workers_only,
-      else: base_instructions()
-  end
+  def workers_only?(nil), do: false
 
-  defp base_instructions do
+  def workers_only?(_mcp),
+    do: Process.whereis(HalC2.Settings) != nil and HalC2.Settings.hal_c2_subagents?()
+
+  @doc """
+  What agents are told about the tools, for their system or developer prompt. For a
+  session kept to HAL-C2's workers (`workers_only?/1`) it ends by saying so.
+  """
+  def instructions(workers_only \\ false)
+  def instructions(true), do: instructions(false) <> @workers_only
+
+  def instructions(false) do
     case :persistent_term.get({__MODULE__, :instructions}, nil) do
       nil ->
         text = File.read!(Application.app_dir(:hal_c2, "priv/mcp_instructions.md"))

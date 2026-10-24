@@ -11,7 +11,9 @@ Feature: Subagents setting
   Agents can split work up with their provider's own built-in subagents, whose work shows in
   HAL-C2 only as a summary, or with HAL-C2 workers (`delegate_task`), which have threads the
   user can open and follow. One setting chooses between them for an environment. It is read
-  when an agent's session starts, and it leaves a session that is already running alone.
+  when an agent's session starts: Claude restarts its session when its next turn starts, and a
+  Codex thread keeps the choice it started with until its session restarts. An agent whose
+  project turned HAL-C2's tools off has no workers to delegate to, so it keeps its provider's.
 
   @mc
   Scenario Outline: The MC reads the subagents setting
@@ -25,12 +27,12 @@ Feature: Subagents setting
       | HAL-C2 workers     | must     |
 
   @mc
-  Scenario: Agents are told to delegate with HAL-C2 workers when the setting says so
+  Scenario: Agents that can delegate are told to use HAL-C2 workers when the setting says so
     Given the subagents setting is HAL-C2 workers
     Then the instructions given to agents end by telling them to delegate with "delegate_task"
 
   @mc
-  Scenario: Agents are told nothing more when the provider's own subagents are allowed
+  Scenario: Agents that can delegate are told nothing more when the provider's own subagents are allowed
     Given the subagents setting is the provider's own
     Then the instructions given to agents do not tell them to delegate with "delegate_task" instead
 

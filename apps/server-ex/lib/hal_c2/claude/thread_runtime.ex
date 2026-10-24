@@ -67,9 +67,10 @@ defmodule HalC2.Claude.ThreadRuntime do
   @sidechain ~w(assistant user stream_event)
   @task_status %{"completed" => "completed", "failed" => "failed", "stopped" => "cancelled"}
 
-  # The subagent tool, taken from the CLI when the user keeps agents to HAL-C2's workers
-  # (`nativeSubagents`). Part of the launch, so a change restarts the CLI at the next turn.
-  defp disallowed_tools, do: if(HalC2.Settings.hal_c2_subagents?(), do: @agent_tools, else: [])
+  # The subagent tool, taken from the CLI for a session kept to HAL-C2's workers
+  # (`HalC2.Mcp.workers_only?/1`). Part of the launch, so a change restarts the CLI when
+  # the next turn starts.
+  defp disallowed_tools(mcp), do: if(HalC2.Mcp.workers_only?(mcp), do: @agent_tools, else: [])
 
   def driver, do: "claudeAgent"
 
@@ -270,7 +271,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       |> Provider.launch(Map.get(turn, :options, %{}), Entities.instance(ids))
       |> auto_compact(Entities.instance(ids))
       |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
-      |> Map.put(:disallowed_tools, disallowed_tools())
+      |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp)))
       |> Map.put(:instance, Entities.instance(ids))
 
     turn = turn |> Map.put(:ids, ids) |> Map.put(:launch, launch)

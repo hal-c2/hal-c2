@@ -174,6 +174,13 @@ Feature: Claude
     And the subagents setting is HAL-C2 workers
     When a Claude turn starts
     Then Claude is started with its "Agent" and "Task" tools disallowed
+    And Claude is told to delegate with "delegate_task"
+
+  Scenario: Claude keeps its own subagent tool when it has no HAL-C2 tools to delegate with
+    Given the project turns the HAL-C2 tools off
+    And the subagents setting is HAL-C2 workers
+    When a Claude turn starts in a thread that already exists
+    Then Claude is started with no tools disallowed
 
   Scenario: Reverting a Claude turn restores the conversation to that point
     Given a Claude thread with three turns
