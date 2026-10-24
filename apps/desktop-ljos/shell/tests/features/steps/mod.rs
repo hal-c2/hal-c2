@@ -4,6 +4,7 @@
 
 use crate::harness::Steps;
 
+pub mod add_project;
 pub mod connection;
 pub mod connection_health;
 pub mod fake_files;
@@ -18,6 +19,7 @@ pub mod viewing;
 
 /// Every domain's steps.
 pub fn register(steps: &mut Steps) {
+    add_project::register(steps);
     connection::register(steps);
     connection_health::register(steps);
     fake_files::register(steps);
