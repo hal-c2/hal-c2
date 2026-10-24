@@ -227,6 +227,33 @@ for line in sys.stdin:
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}i", "role": "assistant", "content": [{"type": "text", "text": "Watching the log"}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "Watching the log", "session_id": session})
         continue
+    # "subagent works on: TASK": a subagent (tool use agent-N) runs TASK in the turn,
+    # its own messages under its tool call: partial text, then text, a Bash call and a
+    # task list, their results, and its answer "The tests pass".
+    if text.startswith("subagent works on: "):
+        agent, task = f"agent-{turn}", text[len("subagent works on: "):]
+        side = lambda msg: send({**msg, "session_id": session, "parent_tool_use_id": agent})
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "message": {"id": f"m{turn}s", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {
+            "description": "Helper", "prompt": task, "subagent_type": "general-purpose"}}]}})
+        send({"type": "system", "subtype": "task_started", "session_id": session, "task_id": f"task-{agent}", "tool_use_id": agent,
+              "description": "Helper", "task_type": "local_agent", "prompt": task, "is_backgrounded": False})
+        side({"type": "user", "message": {"role": "user", "content": task}})
+        side({"type": "stream_event", "event": {"type": "message_start", "message": {"id": f"s{turn}a"}}})
+        side({"type": "stream_event", "event": {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}})
+        side({"type": "stream_event", "event": {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Running the"}}})
+        side({"type": "assistant", "uuid": f"sub-uuid-{turn}a", "message": {"id": f"s{turn}a", "role": "assistant", "content": [
+            {"type": "text", "text": "Running the tests"},
+            {"type": "tool_use", "id": f"sub-bash-{turn}", "name": "Bash", "input": {"command": "mix test"}},
+            {"type": "tool_use", "id": f"sub-todo-{turn}", "name": "TodoWrite", "input": {"todos": [{"content": "Run the tests", "status": "in_progress", "activeForm": "Running"}]}}]}})
+        side({"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": f"sub-bash-{turn}", "content": "12 tests, 0 failures", "is_error": False},
+            {"type": "tool_result", "tool_use_id": f"sub-todo-{turn}", "content": "Todos updated", "is_error": False}]}})
+        side({"type": "assistant", "uuid": f"sub-uuid-{turn}b", "message": {"id": f"s{turn}b", "role": "assistant", "content": [{"type": "text", "text": "The tests pass"}]}})
+        send({"type": "user", "session_id": session, "parent_tool_use_id": None, "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": agent,
+              "content": [{"type": "text", "text": "The tests pass"}]}]}})
+        send({"type": "assistant", "session_id": session, "parent_tool_use_id": None, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}u", "role": "assistant", "content": [{"type": "text", "text": "The subagent says the tests pass"}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
     if text.startswith("subagent "):
         agent, bash = f"agent-{turn}", f"bash-{turn}"
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}s", "role": "assistant", "content": [{"type": "tool_use", "id": agent, "name": "Agent", "input": {

@@ -562,20 +562,20 @@ Feature: Claude
     Then the earlier list is marked superseded
     And a list that had already completed stays completed
 
-  @backlog @mc
+  @mc
   Scenario: A Claude subagent's task list does not replace the thread's
     Given Claude's task list is shown in the thread
     When a subagent writes a task list of its own
     Then the thread's task list is unchanged
 
-  @backlog @mc
+  @mc
   Scenario: A Claude subagent's thread opens with the task it was given
     When Claude starts a subagent with the task "Check the tests"
     Then the subagent's thread starts with "Check the tests" as its first message
     And the tools the subagent uses appear in the subagent's thread
     And the subagent's own messages do not appear in the parent thread
 
-  @backlog @mc
+  @mc
   Scenario: A Claude subagent's progress is shown in its own thread
     Given Claude has a subagent running
     When Claude reports the subagent's progress

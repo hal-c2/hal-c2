@@ -56,6 +56,15 @@ defmodule HalC2.Claude.ThreadRuntime do
   @web_tools ~w(WebSearch WebFetch)
   # Claude's subagent tool; "Task" before Claude Code 2.1.
   @agent_tools ~w(Agent Task)
+  # The turn item types of `tool_kind/2`'s kinds.
+  @item_types %{
+    command: "command_execution",
+    file: "file_change",
+    web: "web_search",
+    tool: "dynamic_tool"
+  }
+  # The messages a subagent sends under its tool call (`parent_tool_use_id`).
+  @sidechain ~w(assistant user stream_event)
   @task_status %{"completed" => "completed", "failed" => "failed", "stopped" => "cancelled"}
 
   def driver, do: "claudeAgent"
@@ -89,6 +98,22 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp steer_call(pid, run_id, message) do
     timeout = Application.get_env(:hal_c2, :claude_steer_timeout_ms, 30_000)
     HalC2.RuntimeSteer.call(pid, run_id, message, timeout)
+  end
+
+  @doc """
+  Whether `tool_use_id` (an MCP call's `_meta["claudecode/toolUseId"]`) is a tool call
+  of one of the thread's running subagents rather than of Claude itself. A call the
+  runtime has not seen yet counts as Claude's own.
+  """
+  @spec subagent_tool?(String.t(), String.t()) :: boolean
+  def subagent_tool?(thread_id, tool_use_id) do
+    case Registry.lookup(HalC2.Claude.Registry, thread_id) do
+      [{pid, _}] -> GenServer.call(pid, {:subagent_tool?, tool_use_id}, 15_000)
+      [] -> false
+    end
+  catch
+    # A runtime that stopped has no subagents running.
+    :exit, _ -> false
   end
 
   @doc """
@@ -362,6 +387,16 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   def handle_call({:steer, _run_id, _message}, _from, state),
     do: {:reply, {:error, "no running turn"}, state}
+
+  def handle_call({:subagent_tool?, tool_use_id}, _from, state) do
+    reply =
+      Enum.any?(state.work, fn
+        {_, %{sub: %{} = sub}} -> is_map_key(Map.get(sub, :tools, %{}), tool_use_id)
+        _ -> false
+      end) or buffered_subagent_tool?(state.wake, tool_use_id)
+
+    {:reply, reply, state}
+  end
 
   def handle_call({:respond, request_id, response}, _from, state) do
     case Map.pop(state.requests, request_id) do
@@ -884,6 +919,20 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   # --- messages ------------------------------------------------------------------
 
+  # What a subagent says and does (a message under its tool call, `parent_tool_use_id`)
+  # is its own (`sidechain/3`), never a wake. It keeps its place among a wake's messages
+  # waiting for their run, where the call that started the subagent may be.
+  defp receive_message(
+         %{"type" => type, "parent_tool_use_id" => parent} = message,
+         %{turn: nil, wake: %{buffer: buffer} = wake} = state
+       )
+       when type in @sidechain and is_binary(parent) and is_list(buffer),
+       do: %{state | wake: %{wake | buffer: [message | buffer]}}
+
+  defp receive_message(%{"type" => type, "parent_tool_use_id" => parent} = message, state)
+       when type in @sidechain and is_binary(parent),
+       do: message(message, state)
+
   # Claude runs one turn at a time and ends each with one `result`, so which turn a
   # result ends follows from the order: a wake Claude is running when a user's turn
   # starts ends first (`take_wake/2`), and between the MC's turns every result is a
@@ -1011,6 +1060,10 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp take_wake(state, _session), do: {state, []}
 
+  defp message(%{"type" => type, "parent_tool_use_id" => parent} = message, state)
+       when type in @sidechain and is_binary(parent),
+       do: sidechain(message, parent, state)
+
   defp message(%{"type" => "rate_limit_event", "rate_limit_info" => %{} = info}, state) do
     # `with_ids/1` recovers the latest turn's ids when this runtime has not
     # run one, so between-turns quota joins that turn's instance too.
@@ -1023,7 +1076,12 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp message(%{"type" => "system", "subtype" => "task_notification"} = task, state) do
     tool = state.tasks[task["task_id"]] || task["tool_use_id"]
     status = Map.get(@task_status, task["status"], "failed")
-    state = if state.work[tool], do: end_work(state, tool, status, task["summary"]), else: state
+
+    state =
+      if state.work[tool],
+        do: end_work(state, tool, status, task["summary"], summary: true),
+        else: state
+
     %{state | tasks: Map.delete(state.tasks, task["task_id"])}
   end
 
@@ -1035,12 +1093,20 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     text = non_empty(task["summary"], non_empty(task["description"], ""))
 
-    case state.work[state.tasks[task["task_id"]]] do
-      %{sub: %{} = sub} when text != "" -> NativeSubagent.progress(sub, text)
-      _ -> :ok
-    end
+    case state.tasks[task["task_id"]] do
+      tool when is_map_key(state.work, tool) and text != "" ->
+        case state.work[tool] do
+          %{sub: %{} = sub} = work ->
+            sub = NativeSubagent.progress(sub, text, thinking: true)
+            put_in(state.work[tool], %{work | sub: sub})
 
-    state
+          _ ->
+            state
+        end
+
+      _ ->
+        state
+    end
   end
 
   defp message(
@@ -1451,6 +1517,156 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp resumable(_state, _to), do: nil
 
+  # --- a subagent's own messages ----------------------------------------------------
+
+  # A message of the subagent that tool call `parent` started (or resumed): what it says
+  # and the tools it calls go to its child thread, never this thread's turn, so the
+  # turn's text, rollback head, sign-in failure and end are its own. What it leaves
+  # running in the background (a command, a monitor, a subagent of its own) runs in
+  # this thread's Claude process, which must stay up for it, so that is this thread's
+  # background work. Its partial messages are dropped: the complete message follows.
+  defp sidechain(%{"type" => "stream_event"}, _parent, state), do: state
+
+  defp sidechain(
+         %{"type" => "assistant", "message" => %{"content" => content} = message},
+         parent,
+         state
+       )
+       when is_list(content) do
+    {own, theirs} =
+      content |> Enum.with_index() |> Enum.split_with(fn {block, _} -> parent_work?(block) end)
+
+    state
+    |> parent_work(Enum.map(own, &elem(&1, 0)))
+    |> to_subagent(parent, fn sub ->
+      Enum.reduce(theirs, sub, fn {block, index}, sub ->
+        subagent_block(sub, block, block_key(message["id"], index))
+      end)
+    end)
+  end
+
+  defp sidechain(%{"type" => "user", "message" => %{"content" => content}}, parent, state)
+       when is_list(content) do
+    {own, theirs} =
+      Enum.split_with(content, fn
+        %{"type" => "tool_result", "tool_use_id" => tool_id} ->
+          is_map_key(state.work, tool_id) or is_map_key(state.items, tool_id)
+
+        _ ->
+          false
+      end)
+
+    state = Enum.reduce(own, state, &tool_result(&2, &1["tool_use_id"], &1))
+    to_subagent(state, parent, fn sub -> Enum.reduce(theirs, sub, &subagent_result/2) end)
+  end
+
+  defp sidechain(_message, _parent, state), do: state
+
+  defp parent_work?(%{"type" => "tool_use", "name" => "Monitor"}), do: true
+  defp parent_work?(block), do: background_launch?(block)
+
+  defp parent_work(state, []), do: state
+
+  defp parent_work(%{turn: nil} = state, blocks) do
+    case with_ids(state) do
+      %{last_ids: nil} = state ->
+        state
+
+      state ->
+        blocks
+        |> Enum.reduce(
+          %{state | turn: %{ids: state.last_ids}},
+          &assistant_block(&1, nil, nil, &2)
+        )
+        |> Map.put(:turn, nil)
+    end
+  end
+
+  defp parent_work(state, blocks),
+    do: Enum.reduce(blocks, flush(state), &assistant_block(&1, nil, nil, &2))
+
+  # Claude names a subagent's tool call before anything the subagent says, and this
+  # runtime records the subagent then, so a message under a tool call it does not know
+  # comes from a subagent that has ended, or that a runtime before this one started:
+  # nothing will claim it later, and it is not this thread's.
+  defp to_subagent(state, parent, fun) do
+    case running_subagent(state, parent) do
+      {tool, work} ->
+        put_in(state.work[tool], %{work | sub: fun.(work.sub)})
+
+      nil ->
+        Logger.debug("claude #{state.thread_id}: dropped a message of subagent #{parent}")
+        state
+    end
+  end
+
+  # The work of the subagent tool call `parent` started, or of the call (SendMessage)
+  # that resumed it.
+  defp running_subagent(state, parent) do
+    id = "node:subagent:#{driver()}:#{parent}"
+
+    case state.work[parent] do
+      %{sub: %{}} = work -> {parent, work}
+      _ -> Enum.find(state.work, &match?({_, %{sub: %{id: ^id}}}, &1))
+    end
+  end
+
+  # A subagent's message waiting with a wake for its run (`receive_message/2`) has not
+  # recorded its tool calls yet.
+  defp buffered_subagent_tool?(%{buffer: buffer}, tool_use_id) when is_list(buffer) do
+    Enum.any?(buffer, fn
+      %{"type" => "assistant", "parent_tool_use_id" => parent, "message" => %{"content" => c}}
+      when is_binary(parent) and is_list(c) ->
+        Enum.any?(c, &match?(%{"type" => "tool_use", "id" => ^tool_use_id}, &1))
+
+      _ ->
+        false
+    end)
+  end
+
+  defp buffered_subagent_tool?(_wake, _tool_use_id), do: false
+
+  defp subagent_block(sub, %{"type" => "text", "text" => text}, key),
+    do: NativeSubagent.item(sub, key, "assistant_message", "completed", %{"text" => text})
+
+  defp subagent_block(sub, %{"type" => "thinking", "thinking" => text}, key),
+    do:
+      NativeSubagent.item(sub, key, "reasoning", "completed", %{
+        "text" => text,
+        "streaming" => false
+      })
+
+  # Shown as their question card and plan, which reach the parent as prompts.
+  defp subagent_block(sub, %{"type" => "tool_use", "name" => name}, _key)
+       when name in ["AskUserQuestion", "ExitPlanMode"],
+       do: sub
+
+  defp subagent_block(sub, %{"type" => "tool_use", "id" => tool_id, "name" => name} = block, _key) do
+    {kind, fields} = tool_kind(name, block["input"] || %{})
+    sub = NativeSubagent.item(sub, tool_id, @item_types[kind], "running", fields)
+    Map.put(sub, :tools, Map.put(Map.get(sub, :tools, %{}), tool_id, kind))
+  end
+
+  defp subagent_block(sub, _block, _key), do: sub
+
+  defp subagent_result(%{"type" => "tool_result", "tool_use_id" => tool_id} = result, sub) do
+    case Map.pop(Map.get(sub, :tools, %{}), tool_id) do
+      {nil, _} ->
+        sub
+
+      {kind, tools} ->
+        status = if result["is_error"] == true, do: "failed", else: "completed"
+        field = result_field(kind)
+        fields = if field, do: %{field => result_text(result["content"])}, else: %{}
+
+        sub
+        |> NativeSubagent.item(tool_id, @item_types[kind], status, fields)
+        |> Map.put(:tools, tools)
+    end
+  end
+
+  defp subagent_result(_block, sub), do: sub
+
   defp tool_block(%{"id" => tool_id, "name" => name} = block, state) do
     input = block["input"] || %{}
 
@@ -1462,23 +1678,32 @@ defmodule HalC2.Claude.ThreadRuntime do
         do: put_in(state.work[tool_id], %{sub: nil, item: nil, background: true}),
         else: state
 
-    {kind, fields} =
-      cond do
-        name == "Bash" ->
-          {:command, %{"input" => input["command"] || "", "output" => ""}}
-
-        name in @file_tools ->
-          {:file, %{"fileName" => input["file_path"] || input["notebook_path"] || name}}
-
-        name in @web_tools ->
-          {:web, %{"patterns" => Enum.filter([input["query"], input["url"]], &is_binary/1)}}
-
-        true ->
-          {:tool, %{"toolName" => name, "input" => input}}
-      end
-
+    {kind, fields} = tool_kind(name, input)
     ensure_item(state, tool_id, kind, fields)
   end
+
+  # The item a tool call shows as: its kind (`TurnWriter.ensure_item/4`) and fields.
+  defp tool_kind(name, input) do
+    cond do
+      name == "Bash" ->
+        {:command, %{"input" => input["command"] || "", "output" => ""}}
+
+      name in @file_tools ->
+        {:file, %{"fileName" => input["file_path"] || input["notebook_path"] || name}}
+
+      name in @web_tools ->
+        {:web, %{"patterns" => Enum.filter([input["query"], input["url"]], &is_binary/1)}}
+
+      true ->
+        {:tool, %{"toolName" => name, "input" => input}}
+    end
+  end
+
+  # Where a tool's result goes on its item.
+  defp result_field(:command), do: "output"
+  defp result_field(:file), do: "diffStr"
+  defp result_field(:tool), do: "output"
+  defp result_field(_kind), do: nil
 
   defp tool_result(state, tool_id, result) do
     case state.work[tool_id] do
@@ -1551,12 +1776,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         output = result_text(result["content"])
 
         finish_item(state, tool_id, status, fn entity ->
-          case kind do
-            :command -> Map.put(entity, "output", output)
-            :file -> Map.put(entity, "diffStr", output)
-            :tool -> Map.put(entity, "output", output)
-            _ -> entity
-          end
+          if field = result_field(kind), do: Map.put(entity, field, output), else: entity
         end)
     end
   end
@@ -1679,10 +1899,10 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # Ends one piece of work: its subagent with the task's `result`, or its command item.
-  defp end_work(state, tool, status, result) do
+  defp end_work(state, tool, status, result, opts \\ []) do
     case state.work[tool] do
       %{sub: %{} = sub} ->
-        NativeSubagent.finish(sub, status, result)
+        NativeSubagent.finish(sub, status, result, opts)
 
       %{item: %{id: item_id, node: node_id}} ->
         at = Entities.now()

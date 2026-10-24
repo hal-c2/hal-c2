@@ -148,6 +148,22 @@ Feature: Delegating tasks to subagents
       | the task asks for full access while "parent" is approval-required | runtime_mode_escalation_denied     |
       | the task asks for default mode while "parent" is in plan mode     | interaction_mode_escalation_denied |
 
+  # A Claude subagent shares its thread's MCP credential; Claude names the tool call
+  # behind each MCP call, which tells the subagent's calls from Claude's own.
+  @mc
+  Scenario: A Claude subagent cannot delegate a task
+    Given thread "lead" on "claudeAgent" has a subagent running
+    When the subagent in "lead" delegates a task
+    Then the tool fails with code "capability_denied"
+    And the refusal says a native subagent can't own HAL-C2 workers and to start such work with delegate_task
+    And "lead" has no delegated task
+
+  @mc
+  Scenario: Claude still delegates while its subagent runs
+    Given thread "lead" on "claudeAgent" has a subagent running
+    When Claude in "lead" delegates a task itself
+    Then "lead" has a delegated task
+
   @mc
   Scenario: A delegation without a task prompt is refused, not started empty
     When the agent in "parent" delegates with its prompt under another name
