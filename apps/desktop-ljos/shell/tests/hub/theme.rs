@@ -219,6 +219,47 @@ fn the_appearance_rows_reach_the_published_theme() {
     );
 }
 
+// ThemeStore::applyInterfaceFont (tst_ShellRuntime): the interface font is
+// the application's while the app runs. What names no family takes it, what
+// names its own keeps it, and a reset is the desktop's font again.
+#[test]
+fn the_interface_font_reaches_what_is_on_screen() {
+    let (hub, _dir) = hub();
+    let source = crate::common::compile(
+        &[(
+            "Probe",
+            "import QtQuick\nimport QtQuick.Controls\nItem {\n\
+             Label { id: label; font.pixelSize: 20 }\n\
+             Button { id: button }\n\
+             Label { id: code; font.family: \"monospace\" }\n\
+             property string label: label.font.family\n\
+             property int labelSize: label.font.pixelSize\n\
+             property string button: button.font.family\n\
+             property string code: code.font.family\n}",
+        )],
+        &[],
+    );
+    let (root, _window) = hub.show(source, "Probe");
+    let family = |name: &str| {
+        hub.engine
+            .to_js_string(&hub.engine.read_by_name(root, name))
+            .to_string()
+    };
+    let desktop = family("label");
+    let settings = Settings::of(&hub.engine);
+    assert!(settings.write_device(&hub.engine, "fontFamilySans", json!("Literata")));
+    hub.advance(0);
+    assert_eq!(&*ljos::application_font(&hub.engine).family, "Literata");
+    assert_eq!(family("label"), "Literata");
+    assert_eq!(family("button"), "Literata");
+    assert_eq!(family("code"), "monospace");
+    assert_eq!(hub.engine.read_by_name(root, "labelSize").to_number(), 20.0);
+
+    assert!(settings.write_device(&hub.engine, "fontFamilySans", json!("")));
+    hub.advance(0);
+    assert_eq!(family("label"), desktop);
+}
+
 #[test]
 fn every_theme_offered_carries_its_swatch() {
     let (hub, _dir) = hub();

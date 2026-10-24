@@ -12,15 +12,14 @@
 //! `folders/watch.rs` does.
 //!
 //! `fontUi` is the application's font ([`set_application_font`]), set from
-//! the saved theme before the root is made. Ljós cannot change it while the
-//! app runs (TODO(ljos#84)), so a font chosen later shows on the next start.
+//! the saved theme before the root is made and again whenever it changes.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use ljos::ljos_engine::Font;
+use ljos::item::Font;
 use ljos::prelude::{Atom, Color, Cx, Engine, ObjectId, QmlObject, Value, qml_impl, qml_singleton};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
@@ -297,8 +296,9 @@ pub fn application_font_family(engine: &Engine) -> String {
 
 /// Makes `fontUi` the application font (desktop-qt's
 /// `ThemeStore::applyInterfaceFont`): the desktop's font in that family.
-/// Process-wide, and only what is made afterwards takes it, so a host calls
-/// it once, after [`crate::start`] and before it makes the root.
+/// What inherits its font takes it at once. A host calls it after
+/// [`crate::start`] and before it makes the root; the theme calls it again
+/// when `fontUi` changes.
 pub fn set_application_font(engine: &Engine) {
     let family = application_font_family(engine);
     let Some(mut font) = ThemeState::of(engine).desktop_font.borrow().clone() else {
@@ -307,7 +307,7 @@ pub fn set_application_font(engine: &Engine) {
     if !family.is_empty() {
         font.family = Atom::from(family.as_str());
     }
-    Font::set_application_font(Some(&font));
+    ljos::set_application_font(engine, Some(&font));
 }
 
 /// The resolved theme the theme controller publishes (`ShellThemeState`).
@@ -720,9 +720,9 @@ fn show(engine: &Engine) {
     );
     let follows_system = file.follows_system_appearance;
     drop((d, base, file));
-    // TODO(ljos#84): the application font follows `fontUi` here
-    // (set_application_font, and what is drawn already takes its family),
-    // once Ljós can change it while the app runs.
+    // TODO(ljos#84): a plain Text, TextInput or TextEdit already made keeps
+    // the family it was made with; desktop-qt gives it the new one.
+    set_application_font(engine);
     platform_window::apply_window_theme(
         engine,
         loaded && transparent,
