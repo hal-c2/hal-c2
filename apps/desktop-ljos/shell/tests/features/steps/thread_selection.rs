@@ -5,7 +5,7 @@
 //! that select (Ctrl/Cmd and Shift) are SidebarThreadRow.qml's.
 //! desktop-qt's ThreadSelectionSteps.cpp.
 
-use chrono::{DateTime, Duration, Local, TimeZone};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use regex::Regex;
 use serde_json::{Map, Value, json};
 
@@ -580,7 +580,7 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "all three threads are snoozed until Thursday at 09:00",
         |world, _, _| {
-            let thursday = Local
+            let thursday = Utc
                 .with_ymd_and_hms(2026, 9, 24, 9, 0, 0)
                 .single()
                 .map(|t| t.timestamp_millis());

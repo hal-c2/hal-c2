@@ -6,6 +6,7 @@ use crate::harness::Steps;
 
 pub mod add_project;
 pub mod agents;
+pub mod archived_threads;
 pub mod centre;
 pub mod checkpoint_edit;
 pub mod clone;
@@ -53,6 +54,7 @@ pub mod storage_layout;
 pub mod stream;
 pub mod thread_fork;
 pub mod thread_create;
+pub mod thread_limit;
 pub mod thread_list;
 pub mod thread_order;
 pub mod thread_menu;
@@ -73,6 +75,7 @@ pub mod workspace;
 pub fn register(steps: &mut Steps) {
     add_project::register(steps);
     agents::register(steps);
+    archived_threads::register(steps);
     centre::register(steps);
     checkpoint_edit::register(steps);
     clone::register(steps);
@@ -119,6 +122,7 @@ pub fn register(steps: &mut Steps) {
     stream::register(steps);
     thread_fork::register(steps);
     thread_create::register(steps);
+    thread_limit::register(steps);
     thread_list::register(steps);
     thread_order::register(steps);
     thread_settle_settings::register(steps);
