@@ -79,7 +79,12 @@ fn set_override(world: &mut World, project: &str, scripts: Value) {
         .unwrap_or_default();
     overrides.insert(project.to_owned(), json!({ SCRIPTS: scripts }));
     let environment = world.mc.environment_id.clone();
-    save_on(&mut world.mc, &environment, OVERRIDES, Value::Object(overrides));
+    save_on(
+        &mut world.mc,
+        &environment,
+        OVERRIDES,
+        Value::Object(overrides),
+    );
 }
 
 /// This machine's MC keeps project overrides, as its config says.
@@ -153,7 +158,12 @@ fn open_actions(world: &mut World, project: &str) -> Outcome {
         let title = project.to_owned();
         world.wait_for_with(
             |w| find_project(w, &title).is_some(),
-            |w| format!("{title} to be offered; the scope is {}", show(&scope_state(w))),
+            |w| {
+                format!(
+                    "{title} to be offered; the scope is {}",
+                    show(&scope_state(w))
+                )
+            },
         )?;
         key = find_project(world, project).unwrap_or_default();
     }
@@ -176,7 +186,10 @@ fn find_project(world: &World, title: &str) -> Option<String> {
 }
 
 fn add(world: &mut World, name: &str, command: &str) -> Outcome {
-    world.dispatch("projectActions.add", json!({"name": name, "command": command}))
+    world.dispatch(
+        "projectActions.add",
+        json!({"name": name, "command": command}),
+    )
 }
 
 /// Another project on this machine, with `own` actions if any.
@@ -261,16 +274,19 @@ pub fn register(steps: &mut Steps) {
         "the user opens the Actions settings for all projects",
         |world, _, _| open_actions(world, ""),
     );
-    steps.step("the user is told no actions are configured", |world, _, _| {
-        world.wait_for_with(|w| names(&panel(w)["scripts"]).is_empty(), describe)?;
-        let (visible, _) = drawn_text(world, "noActions")?;
-        let brick = settings_shell(world, 900.0, 2000.0)?;
-        expect!(
-            visible && brick.shows(world, "No actions configured.")?,
-            "the page does not say so"
-        );
-        Ok(())
-    });
+    steps.step(
+        "the user is told no actions are configured",
+        |world, _, _| {
+            world.wait_for_with(|w| names(&panel(w)["scripts"]).is_empty(), describe)?;
+            let (visible, _) = drawn_text(world, "noActions")?;
+            let brick = settings_shell(world, 900.0, 2000.0)?;
+            expect!(
+                visible && brick.shows(world, "No actions configured.")?,
+                "the page does not say so"
+            );
+            Ok(())
+        },
+    );
     steps.step(
         &format!("the user adds the default action {Q} running {Q} for all projects"),
         |world, c, _| {
@@ -287,7 +303,11 @@ pub fn register(steps: &mut Steps) {
         &format!("{Q} is offered in every project on {Q} that has no actions of its own"),
         |world, c, _| {
             add_project(world, "docs", json!([]))?;
-            add_project(world, "tools", json!([script("Lint", "bun lint", false, "")]))?;
+            add_project(
+                world,
+                "tools",
+                json!([script("Lint", "bun lint", false, "")]),
+            )?;
             expect_offered(world, "shop", &[&c[0]])?;
             expect_offered(world, "docs", &[&c[0]])?;
             // A project with its own keeps them.
@@ -319,37 +339,42 @@ pub fn register(steps: &mut Steps) {
             let (project, wanted) = (c[0].clone(), vec![c[1].clone(), c[2].clone()]);
             world.wait_for_with(
                 |w| {
-                    names(&override_of(&held_all(w), &project)) == wanted
-                        && panel(w)["own"] == true
+                    names(&override_of(&held_all(w), &project)) == wanted && panel(w)["own"] == true
                 },
                 describe,
             )?;
             expect_offered(world, &c[0], &[&c[1], &c[2]])
         },
     );
-    steps.step(&format!("other projects still offer only {Q}"), |world, c, _| {
-        expect!(
-            names(&held_all(world)[SCRIPTS]) == [c[0].clone()],
-            "{}",
-            describe(world)
-        );
-        add_project(world, "docs", json!([]))?;
-        expect_offered(world, "docs", &[&c[0]])
-    });
+    steps.step(
+        &format!("other projects still offer only {Q}"),
+        |world, c, _| {
+            expect!(
+                names(&held_all(world)[SCRIPTS]) == [c[0].clone()],
+                "{}",
+                describe(world)
+            );
+            add_project(world, "docs", json!([]))?;
+            expect_offered(world, "docs", &[&c[0]])
+        },
+    );
     steps.step(&format!("{Q} has its own actions"), |world, c, _| {
         let environment = world.mc.environment_id.clone();
         save_on(&mut world.mc, &environment, SCRIPTS, dev());
         set_override(world, &c[0], json!([script("Lint", "bun lint", false, "")]));
         Ok(())
     });
-    steps.step(&format!("the user resets the actions of {Q}"), |world, c, _| {
-        open_actions(world, &c[0])?;
-        world.wait_for_with(
-            |w| panel(w)["own"] == true && names(&panel(w)["scripts"]) == ["Lint"],
-            describe,
-        )?;
-        world.dispatch("projectActions.reset", Value::Null)
-    });
+    steps.step(
+        &format!("the user resets the actions of {Q}"),
+        |world, c, _| {
+            open_actions(world, &c[0])?;
+            world.wait_for_with(
+                |w| panel(w)["own"] == true && names(&panel(w)["scripts"]) == ["Lint"],
+                describe,
+            )?;
+            world.dispatch("projectActions.reset", Value::Null)
+        },
+    );
     steps.step(
         &format!("{Q} offers the default actions of {Q} again"),
         |world, c, _| {
@@ -381,17 +406,16 @@ pub fn register(steps: &mut Steps) {
         &format!("the user opens the Actions settings for {Q}"),
         |world, c, _| open_actions(world, &c[0]),
     );
-    steps.step(&format!("{Q} is marked as the setup action"), |world, c, _| {
-        let wanted = c[0].clone();
-        world.wait_for_with(|w| names(&panel(w)["scripts"]).contains(&wanted), describe)?;
-        let (visible, text) = mark(world, &c[0], "setup")?;
-        expect!(
-            visible && text == "setup",
-            "{} has no setup mark",
-            c[0]
-        );
-        Ok(())
-    });
+    steps.step(
+        &format!("{Q} is marked as the setup action"),
+        |world, c, _| {
+            let wanted = c[0].clone();
+            world.wait_for_with(|w| names(&panel(w)["scripts"]).contains(&wanted), describe)?;
+            let (visible, text) = mark(world, &c[0], "setup")?;
+            expect!(visible && text == "setup", "{} has no setup mark", c[0]);
+            Ok(())
+        },
+    );
     steps.step(
         &format!("{Q} is marked as having a preview on desktop only"),
         |world, c, _| {
@@ -428,9 +452,10 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("the checkout's hal-c2.json is invalid", |world, _, _| {
-        fake_files(&mut world.mc)
-            .files
-            .insert("hal-c2.json".into(), "{ \"scripts\": [ { \"name\": \"Lint\" ".into());
+        fake_files(&mut world.mc).files.insert(
+            "hal-c2.json".into(),
+            "{ \"scripts\": [ { \"name\": \"Lint\" ".into(),
+        );
         Ok(())
     });
 
@@ -464,29 +489,38 @@ pub fn register(steps: &mut Steps) {
     );
 
     // Saves that do not land.
-    steps.step("no connected environment can take the change", |world, _, _| {
-        open_actions(world, "")?;
-        world.mc.stop_accepting();
-        world.mc.drop_connection();
-        world.wait_for("the shell to see the drop", |w| !w.client_ready())?;
-        world.wait_for_with(|w| panel(w)["available"] == false, describe)
-    });
+    steps.step(
+        "no connected environment can take the change",
+        |world, _, _| {
+            open_actions(world, "")?;
+            world.mc.stop_accepting();
+            world.mc.drop_connection();
+            world.wait_for("the shell to see the drop", |w| !w.client_ready())?;
+            world.wait_for_with(|w| panel(w)["available"] == false, describe)
+        },
+    );
     steps.step("the user adds a default action", |world, _, _| {
         if panel(world)["settings"] != true {
             open_actions(world, "")?;
         }
         add(world, "Dev", "bun dev")
     });
-    steps.step("the user is told the actions were not saved", |world, _, _| {
-        expect_told(world, "Actions not saved")?;
-        let writes = fake_config(&mut world.mc).writes.len();
-        expect!(writes == 0, "{}", describe(world));
-        Ok(())
-    });
-    steps.step(&format!("{Q} rejects the settings change"), |world, _, _| {
-        fake_config(&mut world.mc).refuse_writes = "disk full".into();
-        Ok(())
-    });
+    steps.step(
+        "the user is told the actions were not saved",
+        |world, _, _| {
+            expect_told(world, "Actions not saved")?;
+            let writes = fake_config(&mut world.mc).writes.len();
+            expect!(writes == 0, "{}", describe(world));
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("{Q} rejects the settings change"),
+        |world, _, _| {
+            fake_config(&mut world.mc).refuse_writes = "disk full".into();
+            Ok(())
+        },
+    );
     steps.step(
         "the user is told the project actions failed to save",
         |world, _, _| {
@@ -506,7 +540,12 @@ pub fn register(steps: &mut Steps) {
         &format!("{Q} runs a server without project overrides"),
         |world, c, _| {
             // The same repository on both, so "shop" is one project with two checkouts.
-            let mut local = world.mc.projects.get("shop").cloned().unwrap_or(Value::Null);
+            let mut local = world
+                .mc
+                .projects
+                .get("shop")
+                .cloned()
+                .unwrap_or(Value::Null);
             local["repositoryIdentity"] = json!({"canonicalKey": REPOSITORY, "name": "shop"});
             world.mc.projects.insert("shop".into(), local.clone());
             world.mc.send_row_of("shop", &local, "project");
@@ -532,9 +571,7 @@ pub fn register(steps: &mut Steps) {
             world.wait_for_with(
                 |w| {
                     SettingsScope::of(w.engine()).targets().len() == 2
-                        && SettingsScope::of(w.engine())
-                            .settings(SERVER)
-                            .is_some()
+                        && SettingsScope::of(w.engine()).settings(SERVER).is_some()
                 },
                 |w| {
                     format!(

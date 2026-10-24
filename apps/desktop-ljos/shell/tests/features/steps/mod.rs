@@ -64,6 +64,7 @@ pub mod settings_connections;
 pub mod settings_general;
 pub mod settings_limited_threads;
 pub mod settings_nav;
+pub mod settings_notifications;
 pub mod settings_pages;
 pub mod settings_project_actions;
 pub mod settings_projects;
@@ -156,6 +157,7 @@ pub fn register(steps: &mut Steps) {
     settings_general::register(steps);
     settings_limited_threads::register(steps);
     settings_nav::register(steps);
+    settings_notifications::register(steps);
     settings_pages::register(steps);
     settings_project_actions::register(steps);
     settings_projects::register(steps);

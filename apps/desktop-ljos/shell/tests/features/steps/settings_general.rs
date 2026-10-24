@@ -176,7 +176,12 @@ fn diff_facts(world: &World) -> DiffFacts {
                     d.split(),
                     d.all_expanded(),
                     (0..d.file_count())
-                        .map(|file| (d.path(file).unwrap_or_default().to_owned(), d.expanded(file)))
+                        .map(|file| {
+                            (
+                                d.path(file).unwrap_or_default().to_owned(),
+                                d.expanded(file),
+                            )
+                        })
                         .collect::<Vec<_>>(),
                 )
             })
@@ -197,14 +202,21 @@ fn describe_diff(world: &World) -> String {
         .files
         .iter()
         .map(|(path, expanded)| {
-            format!("{path} ({})", if *expanded { "expanded" } else { "collapsed" })
+            format!(
+                "{path} ({})",
+                if *expanded { "expanded" } else { "collapsed" }
+            )
         })
         .collect();
     format!(
         "the diff is {}, {}, whitespace {}: {}",
         facts.status,
         if facts.split { "split" } else { "stacked" },
-        if facts.ignore_whitespace { "hidden" } else { "shown" },
+        if facts.ignore_whitespace {
+            "hidden"
+        } else {
+            "shown"
+        },
         files.join(", ")
     )
 }
@@ -276,10 +288,7 @@ fn open_diff(world: &mut World) -> Outcome {
     let patch = patch_of("src/rates.ts") + &patch_of("src/cart.ts");
     finish_turn_with_patch(world, 1, &patch, json!([]))?;
     world.dispatch("panel.open", json!({"tab": "diff", "turn": -1}))?;
-    world.wait_for_with(
-        |w| diff_facts(w).status == "ready",
-        |w| describe_diff(w),
-    )
+    world.wait_for_with(|w| diff_facts(w).status == "ready", |w| describe_diff(w))
 }
 
 // --- The quit shortcut ----------------------------------------------------------
@@ -319,7 +328,13 @@ fn press_quit_shortcut(world: &mut World, held_ms: u64, release_mod: bool) -> Ou
     world.advance(held_ms - elapsed)?;
     send_key(world, KeyKind::Release, KEY_Q, ctrl, false)?;
     if release_mod {
-        send_key(world, KeyKind::Release, KEY_CONTROL, Modifiers::empty(), false)?;
+        send_key(
+            world,
+            KeyKind::Release,
+            KEY_CONTROL,
+            Modifiers::empty(),
+            false,
+        )?;
     }
     world.sync()
 }
@@ -423,9 +438,10 @@ pub fn register(steps: &mut Steps) {
 
     // The time format, as the sidebar's snooze times read (10:00 now; this
     // evening is 18:00).
-    steps.step(&format!("the user sets the time format to {Q}"), |world, c, _| {
-        choose_row(world, "timestampFormat", &c[0])
-    });
+    steps.step(
+        &format!("the user sets the time format to {Q}"),
+        |world, c, _| choose_row(world, "timestampFormat", &c[0]),
+    );
     steps.step(
         "timestamps are shown (the way the system clock is configured|with AM and PM|on a 24-hour clock)",
         |world, c, _| {
@@ -443,7 +459,9 @@ pub fn register(steps: &mut Steps) {
 
     // Diffs.
     steps.step(
-        &format!("the user sets \"(Hide whitespace changes|Default diff file state|Diff layout)\" to {Q}"),
+        &format!(
+            "the user sets \"(Hide whitespace changes|Default diff file state|Diff layout)\" to {Q}"
+        ),
         |world, c, _| {
             let key = row_key(&c[0]);
             if c[1] == "on" || c[1] == "off" {
@@ -495,21 +513,27 @@ pub fn register(steps: &mut Steps) {
     steps.step(&format!("the diff layout setting is {Q}"), |world, c, _| {
         choose_row(world, "diffLayout", &c[0])
     });
-    steps.step("the user switches an open diff to side by side", |world, _, _| {
-        open_diff(world)?;
-        expect!(!diff_facts(world).split, "{}", describe_diff(world));
-        // As the diff's toolbar does (DiffPanel.qml).
-        let Some(model) = diff_model(world) else {
-            return Err(Failure("the diff has no model".into()));
-        };
-        DiffModel::update(world.engine(), model, |d| d.set_split(true));
-        world.pump()
-    });
-    steps.step(&format!("the diff layout setting reads {Q}"), |world, c, _| {
-        let shown = row_text(world, "diffLayout")?;
-        expect!(shown == c[0], "the row reads \"{shown}\"");
-        Ok(())
-    });
+    steps.step(
+        "the user switches an open diff to side by side",
+        |world, _, _| {
+            open_diff(world)?;
+            expect!(!diff_facts(world).split, "{}", describe_diff(world));
+            // As the diff's toolbar does (DiffPanel.qml).
+            let Some(model) = diff_model(world) else {
+                return Err(Failure("the diff has no model".into()));
+            };
+            DiffModel::update(world.engine(), model, |d| d.set_split(true));
+            world.pump()
+        },
+    );
+    steps.step(
+        &format!("the diff layout setting reads {Q}"),
+        |world, c, _| {
+            let shown = row_text(world, "diffLayout")?;
+            expect!(shown == c[0], "the row reads \"{shown}\"");
+            Ok(())
+        },
+    );
 
     // Proactive panels.
     steps.step("proactive panels are (on|off)", |world, c, _| {
@@ -540,28 +564,39 @@ pub fn register(steps: &mut Steps) {
             world.sync()
         },
     );
-    steps.step("the pull request panel opens with the thread", |world, _, _| {
-        world.wait_for_with(
-            |w| {
-                let panel = panel_state(w);
-                panel["isOpen"] == json!(true) && text(&panel["activeId"]).contains("pull-request")
-            },
-            describe_panel,
-        )
-    });
-    steps.step("the working tree diff opens with the thread", |world, _, _| {
-        world.wait_for_with(
-            |w| {
-                let panel = panel_state(w);
-                panel["isOpen"] == json!(true)
-                    && panel["activeId"] == json!("diff")
-                    && diff_facts(w).status == "ready"
-            },
-            |w| format!("{}; {}", describe_panel(w), describe_diff(w)),
-        )?;
-        expect!(diff_facts(world).files.len() == 3, "{}", describe_diff(world));
-        Ok(())
-    });
+    steps.step(
+        "the pull request panel opens with the thread",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    let panel = panel_state(w);
+                    panel["isOpen"] == json!(true)
+                        && text(&panel["activeId"]).contains("pull-request")
+                },
+                describe_panel,
+            )
+        },
+    );
+    steps.step(
+        "the working tree diff opens with the thread",
+        |world, _, _| {
+            world.wait_for_with(
+                |w| {
+                    let panel = panel_state(w);
+                    panel["isOpen"] == json!(true)
+                        && panel["activeId"] == json!("diff")
+                        && diff_facts(w).status == "ready"
+                },
+                |w| format!("{}; {}", describe_panel(w), describe_diff(w)),
+            )?;
+            expect!(
+                diff_facts(world).files.len() == 3,
+                "{}",
+                describe_diff(world)
+            );
+            Ok(())
+        },
+    );
     steps.step("no side panel opens by itself", |world, _, _| {
         world.sync()?;
         let panel = panel_state(world);
@@ -665,7 +700,11 @@ pub fn register(steps: &mut Steps) {
             let steers = message["deliveryIntent"] == json!("steer") && mode == "start_immediately";
             let queues = message.get("deliveryIntent").is_none() && mode == "queue_after_active";
             expect!(
-                if c[0].starts_with("waits") { queues } else { steers },
+                if c[0].starts_with("waits") {
+                    queues
+                } else {
+                    steers
+                },
                 "the MC was sent {}",
                 show(message)
             );
@@ -678,33 +717,36 @@ pub fn register(steps: &mut Steps) {
         "\"(Confirm thread unpinning|Confirm thread archiving|Confirm thread deletion)\" is (on|off)",
         |world, c, _| turn_row(world, row_key(&c[0]), c[1] == "on"),
     );
-    steps.step("the user (unpins|archives|deletes) a thread", |world, c, _| {
-        project_thread_commands(world);
-        open_turn_thread(world)?;
-        let key = format!("{}:{THREAD}", world.mc.environment_id);
-        let state = world.part::<General>();
-        state.action = c[0].clone();
-        state.thread = key.clone();
-        if c[0] == "unpins" {
-            update_row(world, THREAD, |row| {
-                row.insert("pinnedAt".into(), json!("2026-09-23T09:30:00Z"));
-                row.insert("pinOrderKey".into(), json!("a0"));
-            })?;
-            let pinned = key.clone();
-            world.wait_for("the thread to be pinned", move |w| {
-                section_of(w, &pinned) == "pinned"
-            })?;
-        }
-        // From the thread's menu, as the sidebar offers it.
-        open_menu_at(world, &key, 40.0, 120.0)?;
-        let id = match c[0].as_str() {
-            "unpins" => "unpin",
-            "archives" => "archive",
-            _ => "delete",
-        };
-        pick(world, id)?;
-        world.sync()
-    });
+    steps.step(
+        "the user (unpins|archives|deletes) a thread",
+        |world, c, _| {
+            project_thread_commands(world);
+            open_turn_thread(world)?;
+            let key = format!("{}:{THREAD}", world.mc.environment_id);
+            let state = world.part::<General>();
+            state.action = c[0].clone();
+            state.thread = key.clone();
+            if c[0] == "unpins" {
+                update_row(world, THREAD, |row| {
+                    row.insert("pinnedAt".into(), json!("2026-09-23T09:30:00Z"));
+                    row.insert("pinOrderKey".into(), json!("a0"));
+                })?;
+                let pinned = key.clone();
+                world.wait_for("the thread to be pinned", move |w| {
+                    section_of(w, &pinned) == "pinned"
+                })?;
+            }
+            // From the thread's menu, as the sidebar offers it.
+            open_menu_at(world, &key, 40.0, 120.0)?;
+            let id = match c[0].as_str() {
+                "unpins" => "unpin",
+                "archives" => "archive",
+                _ => "delete",
+            };
+            pick(world, id)?;
+            world.sync()
+        },
+    );
     steps.step(
         "the user is asked before the (?:thread is unpinned|history is deleted)",
         |world, _, _| {
@@ -716,7 +758,8 @@ pub fn register(steps: &mut Steps) {
                 "Delete thread \"Tax line\"?"
             };
             expect!(
-                asked["title"] == json!(title) && commands_of(world, &command_of(&action)).is_empty(),
+                asked["title"] == json!(title)
+                    && commands_of(world, &command_of(&action)).is_empty(),
                 "the question is {}; the MC has {}",
                 show(&asked),
                 world.describe_commands()
@@ -731,22 +774,30 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("the archive action must be chosen a second time", |world, _, _| {
-        // The menu's Archive only asks; the question's own Archive archives.
-        let asked = question(world)?;
-        expect!(
-            asked["confirmLabel"] == json!("Archive")
-                && commands_of(world, "thread.archive").is_empty(),
-            "the question is {}; the MC has {}",
-            show(&asked),
-            world.describe_commands()
-        );
-        answer_question(world, true)?;
-        world.wait_for_with(
-            |w| commands_of(w, "thread.archive").len() == 1,
-            |w| format!("the thread to be archived; the MC has {}", w.describe_commands()),
-        )
-    });
+    steps.step(
+        "the archive action must be chosen a second time",
+        |world, _, _| {
+            // The menu's Archive only asks; the question's own Archive archives.
+            let asked = question(world)?;
+            expect!(
+                asked["confirmLabel"] == json!("Archive")
+                    && commands_of(world, "thread.archive").is_empty(),
+                "the question is {}; the MC has {}",
+                show(&asked),
+                world.describe_commands()
+            );
+            answer_question(world, true)?;
+            world.wait_for_with(
+                |w| commands_of(w, "thread.archive").len() == 1,
+                |w| {
+                    format!(
+                        "the thread to be archived; the MC has {}",
+                        w.describe_commands()
+                    )
+                },
+            )
+        },
+    );
     steps.step(
         "the thread is (?:unpinned|archived|deleted) straight away",
         |world, _, _| {
@@ -794,15 +845,18 @@ pub fn register(steps: &mut Steps) {
         expect!(asked == 1, "the app was asked to quit {asked} times");
         Ok(())
     });
-    steps.step("the app quits only after the shortcut is held", |world, _, _| {
-        expect!(quit_requests(world) == 0, "a quick press quit the app");
-        // Long after the quick press, so this is not a second press of two.
-        world.advance(5000)?;
-        press_quit_shortcut(world, quit::HOLD.as_millis() as u64 + 40, true)?;
-        let asked = quit_requests(world);
-        expect!(asked == 1, "holding asked the app to quit {asked} times");
-        Ok(())
-    });
+    steps.step(
+        "the app quits only after the shortcut is held",
+        |world, _, _| {
+            expect!(quit_requests(world) == 0, "a quick press quit the app");
+            // Long after the quick press, so this is not a second press of two.
+            world.advance(5000)?;
+            press_quit_shortcut(world, quit::HOLD.as_millis() as u64 + 40, true)?;
+            let asked = quit_requests(world);
+            expect!(asked == 1, "holding asked the app to quit {asked} times");
+            Ok(())
+        },
+    );
     steps.step(
         "the app quits only after the shortcut is pressed twice",
         |world, _, _| {
@@ -810,7 +864,10 @@ pub fn register(steps: &mut Steps) {
             world.advance(220)?;
             press_quit_shortcut(world, 80, true)?;
             let asked = quit_requests(world);
-            expect!(asked == 1, "the second press asked the app to quit {asked} times");
+            expect!(
+                asked == 1,
+                "the second press asked the app to quit {asked} times"
+            );
             Ok(())
         },
     );
@@ -825,7 +882,11 @@ pub fn register(steps: &mut Steps) {
 
     // Legacy features.
     steps.step("the legacy features section is folded", |world, _, _| {
-        for key in ["planModeEnabled", "contextWindowMeterEnabled", "legacySidebarEnabled"] {
+        for key in [
+            "planModeEnabled",
+            "contextWindowMeterEnabled",
+            "legacySidebarEnabled",
+        ] {
             expect!(!row_shown(world, key)?, "{key} is shown");
         }
         let page = general_page(world)?;
@@ -844,7 +905,11 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the legacy plan mode, context window indicator and per-project sidebar can be turned on",
         |world, _, _| {
-            for key in ["planModeEnabled", "contextWindowMeterEnabled", "legacySidebarEnabled"] {
+            for key in [
+                "planModeEnabled",
+                "contextWindowMeterEnabled",
+                "legacySidebarEnabled",
+            ] {
                 expect!(
                     row_shown(world, key)? && !setting_on(world, key),
                     "{key} is not offered"

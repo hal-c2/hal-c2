@@ -8,12 +8,12 @@ use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use hal_c2_shell::controllers::settings_scope::SettingsScope;
 use serde_json::{Map, Value, json};
 
+use crate::expect;
 use crate::harness::{Outcome, Q, Steps, at, show};
 use crate::steps::settings::{document_of, fake_config};
 use crate::steps::settings_rows::expect_row_locked;
 use crate::steps::settings_scoped_rows::with_capabilities;
 use crate::world::World;
-use crate::expect;
 
 fn supported() -> Value {
     json!({"storageCleanup": true, "projectWorktreeCleanup": true})
@@ -67,7 +67,9 @@ fn cleanup_of(world: &mut World, environment: &str, key: &str) -> Value {
     } else {
         document_of(&mut world.mc, environment).settings.clone()
     };
-    settings.get("storageCleanup").map_or(Value::Null, |c| c[key].clone())
+    settings
+        .get("storageCleanup")
+        .map_or(Value::Null, |c| c[key].clone())
 }
 
 fn open_storage(world: &mut World) -> Outcome {
@@ -181,18 +183,26 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("the user views storage settings for both machines", |world, _, _| {
-        open_storage(world)?;
-        world.wait_for_with(
-            |w| scope(w)["environments"].as_array().map(Vec::len) == Some(3),
-            |w| format!("three environments; the scope is {}", show(&scope(w))),
-        )?;
-        choose_environment(world, "")
-    });
+    steps.step(
+        "the user views storage settings for both machines",
+        |world, _, _| {
+            open_storage(world)?;
+            world.wait_for_with(
+                |w| scope(w)["environments"].as_array().map(Vec::len) == Some(3),
+                |w| format!("three environments; the scope is {}", show(&scope(w))),
+            )?;
+            choose_environment(world, "")
+        },
+    );
     steps.step("that rule shows as mixed", |world, _, _| {
         world.wait_for_with(
             |w| rule(w, "worktreeAfterDays")["mixed"] == json!(true),
-            |w| format!("inactive worktrees to be mixed; storage is {}", show(&storage(w))),
+            |w| {
+                format!(
+                    "inactive worktrees to be mixed; storage is {}",
+                    show(&storage(w))
+                )
+            },
         )?;
         expect!(
             rule(world, "worktreeOnMerge")["mixed"] != json!(true),
@@ -208,13 +218,20 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("the user opens storage settings", |world, _, _| open_storage(world));
+    steps.step("the user opens storage settings", |world, _, _| {
+        open_storage(world)
+    });
     steps.step(
         "the user is asked to update that machine first",
         |world, _, _| {
             world.wait_for_with(
                 |w| storage(w)["status"] == "unsupported",
-                |w| format!("storage settings to ask for an update; they are {}", show(&storage(w))),
+                |w| {
+                    format!(
+                        "storage settings to ask for an update; they are {}",
+                        show(&storage(w))
+                    )
+                },
             )?;
             expect!(
                 storage(world)["notice"]
@@ -251,7 +268,9 @@ pub fn register(steps: &mut Steps) {
                     "rootPath": format!("/work/{}", c[0]),
                     "name": c[0],
                 });
-                world.mc.send_peer_row_of(&environment, &id, &row, "project");
+                world
+                    .mc
+                    .send_peer_row_of(&environment, &id, &row, "project");
             }
             // And another project, only here.
             world.mc.projects.insert("docs".into(), project_row("docs"));
@@ -270,9 +289,10 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
-    steps.step(&format!("the user chooses the environment {Q}"), |world, c, _| {
-        choose_environment(world, &c[0])
-    });
+    steps.step(
+        &format!("the user chooses the environment {Q}"),
+        |world, c, _| choose_environment(world, &c[0]),
+    );
     steps.step("the user chooses all environments", |world, _, _| {
         choose_environment(world, "")
     });
@@ -307,7 +327,13 @@ pub fn register(steps: &mut Steps) {
                         && now["environmentLabel"] == "All environments"
                         && now["connective"] == "across"
                 },
-                |w| format!("{} across all environments; the scope is {}", c[0], show(&scope(w))),
+                |w| {
+                    format!(
+                        "{} across all environments; the scope is {}",
+                        c[0],
+                        show(&scope(w))
+                    )
+                },
             )?;
             // Only the environments with a checkout of it.
             let mut targets = SettingsScope::of(world.engine()).targets();
@@ -330,7 +356,13 @@ pub fn register(steps: &mut Steps) {
                         && now["projectLabel"] == "All projects"
                         && now["environmentLabel"] == c[0].as_str()
                 },
-                |w| format!("every project on {}; the scope is {}", c[0], show(&scope(w))),
+                |w| {
+                    format!(
+                        "every project on {}; the scope is {}",
+                        c[0],
+                        show(&scope(w))
+                    )
+                },
             )
         },
     );
@@ -346,7 +378,13 @@ pub fn register(steps: &mut Steps) {
                     .and_then(|rows| rows.iter().find(|row| row["label"] == c[0].as_str()))
                     .is_some_and(|row| row["online"] != json!(true))
             },
-            |w| format!("{} to be listed offline; the scope is {}", c[0], show(&scope(w))),
+            |w| {
+                format!(
+                    "{} to be listed offline; the scope is {}",
+                    c[0],
+                    show(&scope(w))
+                )
+            },
         )
     });
     steps.step(
@@ -368,9 +406,10 @@ pub fn register(steps: &mut Steps) {
         document_of(&mut world.mc, &c[0]).refuse_writes = "disk full".into();
         Ok(())
     });
-    steps.step("the user changes an environment-wide setting", |world, _, _| {
-        change(world)
-    });
+    steps.step(
+        "the user changes an environment-wide setting",
+        |world, _, _| change(world),
+    );
     steps.step("the user changes a setting", |world, _, _| change(world));
     steps.step(
         &format!("the change is saved on {Q} and on {Q}"),
@@ -388,7 +427,10 @@ pub fn register(steps: &mut Steps) {
                                 .and_then(|f| f.documents.get(environment))
                                 .map(|d| d.settings.clone())
                         };
-                        settings.is_some_and(|s| s.get("storageCleanup").is_some_and(|c| c["worktreeOnMerge"] == json!(true)))
+                        settings.is_some_and(|s| {
+                            s.get("storageCleanup")
+                                .is_some_and(|c| c["worktreeOnMerge"] == json!(true))
+                        })
                     };
                     saved(&c[0]) && saved(&c[1]) && saved(&this)
                 },
@@ -396,14 +438,18 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(
-        &format!("the user is told the setting saved on some environments and could not update {Q}"),
+        &format!(
+            "the user is told the setting saved on some environments and could not update {Q}"
+        ),
         |world, c, _| {
             world.wait_for_with(
                 |w| {
                     w.state("toasts")["items"].as_array().is_some_and(|items| {
                         items.iter().any(|toast| {
                             toast["title"] == "Setting saved on some environments"
-                                && toast["description"].as_str().is_some_and(|d| d.contains(&c[0]))
+                                && toast["description"]
+                                    .as_str()
+                                    .is_some_and(|d| d.contains(&c[0]))
                         })
                     })
                 },
@@ -421,13 +467,20 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step(&format!("the user is editing settings for {Q}"), |world, c, _| {
-        open_storage(world)?;
-        choose_environment(world, &c[0])
-    });
+    steps.step(
+        &format!("the user is editing settings for {Q}"),
+        |world, c, _| {
+            open_storage(world)?;
+            choose_environment(world, &c[0])
+        },
+    );
     steps.step("the user looks at an environment setting", |world, _, _| {
         world.wait_for_with(
-            |w| scope(w)["disabledReason"].as_str().is_some_and(|r| !r.is_empty()),
+            |w| {
+                scope(w)["disabledReason"]
+                    .as_str()
+                    .is_some_and(|r| !r.is_empty())
+            },
             |w| format!("the scope to be disabled; it is {}", show(&scope(w))),
         )
     });

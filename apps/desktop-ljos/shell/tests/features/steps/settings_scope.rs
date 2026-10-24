@@ -10,13 +10,13 @@ use hal_c2_shell::controllers::settings_scope::SettingsScope;
 use serde_json::{Map, Value, json};
 
 use crate::brick;
+use crate::expect;
 use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::steps::project_settings::expect_toast;
 use crate::steps::settings::{FakeConfig, document_of, fake_config, publish_providers, save_on};
 use crate::steps::settings_rows::{choose_row, page_item, row_shown};
 use crate::steps::settings_search::settings_shell;
 use crate::world::World;
-use crate::expect;
 
 const MODEL: &str = "defaultModelSelection";
 const PROVIDER: &str = "claudeAgent";
@@ -111,7 +111,11 @@ fn held(world: &World, environment: &str) -> Map<String, Value> {
 }
 
 fn override_on(world: &World, project: &str, environment: &str) -> Option<Value> {
-    SettingsScope::override_of(&held(world, environment), &checkout_on(project, environment), MODEL)
+    SettingsScope::override_of(
+        &held(world, environment),
+        &checkout_on(project, environment),
+        MODEL,
+    )
 }
 
 fn set_override(world: &mut World, project: &str, environment: &str, value: Option<Value>) {
@@ -185,11 +189,7 @@ fn choose_project(world: &mut World, title: &str) -> Outcome {
     )
 }
 
-fn wait_for_model_row(
-    world: &mut World,
-    what: &str,
-    holds: impl Fn(&Value) -> bool,
-) -> Outcome {
+fn wait_for_model_row(world: &mut World, what: &str, holds: impl Fn(&Value) -> bool) -> Outcome {
     world.wait_for_with(
         |w| project_panel(w)["open"] == true && holds(&model_row(w)),
         |w| format!("{what}; the panel is {}", show(&project_panel(w))),
@@ -253,7 +253,10 @@ const SECTIONS: [(&str, &str); 8] = [
     ("the Cluster section", "/settings/cluster"),
     ("the Archive section", "/settings/archived"),
     ("diagnostics", "/settings/diagnostics"),
-    ("the open source licenses page", "/settings/open-source-licenses"),
+    (
+        "the open source licenses page",
+        "/settings/open-source-licenses",
+    ),
 ];
 
 pub fn register(steps: &mut Steps) {
@@ -263,7 +266,9 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             connect_if_needed(world)?;
             let brick = shell(world)?;
-            world.wait_for("the page to say where settings apply", |w| asks_where(w, brick))?;
+            world.wait_for("the page to say where settings apply", |w| {
+                asks_where(w, brick)
+            })?;
             let project = scope_display(world, brick, "scopeProject");
             let environment = scope_display(world, brick, "scopeEnvironment");
             expect!(
@@ -317,28 +322,31 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
-    steps.step("other projects keep the environment's default model", |world, _, _| {
-        world.sync()?;
-        for environment in world.mc.members.clone() {
-            let settings = held(world, &environment);
+    steps.step(
+        "other projects keep the environment's default model",
+        |world, _, _| {
+            world.sync()?;
+            for environment in world.mc.members.clone() {
+                let settings = held(world, &environment);
+                expect!(
+                    !settings.contains_key(MODEL)
+                        && settings
+                            .get("projectSettingsOverrides")
+                            .and_then(Value::as_object)
+                            .is_some_and(|o| o.len() == 1),
+                    "{}",
+                    describe_documents(world)
+                );
+            }
+            // And the environment with no checkout of it is not written to.
             expect!(
-                !settings.contains_key(MODEL)
-                    && settings
-                        .get("projectSettingsOverrides")
-                        .and_then(Value::as_object)
-                        .is_some_and(|o| o.len() == 1),
+                fake_config(&mut world.mc).writes.is_empty(),
                 "{}",
                 describe_documents(world)
             );
-        }
-        // And the environment with no checkout of it is not written to.
-        expect!(
-            fake_config(&mut world.mc).writes.is_empty(),
-            "{}",
-            describe_documents(world)
-        );
-        Ok(())
-    });
+            Ok(())
+        },
+    );
 
     // This device's preferences.
     steps.step(
@@ -371,15 +379,18 @@ pub fn register(steps: &mut Steps) {
     });
 
     // An environment-wide row at project scope.
-    steps.step("the user looks at an environment-wide setting", |world, _, _| {
-        open_section(world, "/settings/general")?;
-        world.setting_row = ENVIRONMENT_WIDE.to_owned();
-        expect!(
-            row_shown(world, ENVIRONMENT_WIDE)?,
-            "the page has no {ENVIRONMENT_WIDE} row"
-        );
-        Ok(())
-    });
+    steps.step(
+        "the user looks at an environment-wide setting",
+        |world, _, _| {
+            open_section(world, "/settings/general")?;
+            world.setting_row = ENVIRONMENT_WIDE.to_owned();
+            expect!(
+                row_shown(world, ENVIRONMENT_WIDE)?,
+                "the page has no {ENVIRONMENT_WIDE} row"
+            );
+            Ok(())
+        },
+    );
     steps.step(
         "the user is told to select an environment to change it",
         |world, _, _| {
@@ -402,14 +413,17 @@ pub fn register(steps: &mut Steps) {
     );
 
     // Overrides.
-    steps.step(&format!("{Q} overrides the default model"), |world, c, _| {
-        // The environments default to Opus; the project keeps Sonnet.
-        for environment in world.mc.members.clone() {
-            settings_of(world, &environment).insert(MODEL.into(), selection("opus"));
-            set_override(world, &c[0], &environment, Some(selection("sonnet")));
-        }
-        Ok(())
-    });
+    steps.step(
+        &format!("{Q} overrides the default model"),
+        |world, c, _| {
+            // The environments default to Opus; the project keeps Sonnet.
+            for environment in world.mc.members.clone() {
+                settings_of(world, &environment).insert(MODEL.into(), selection("opus"));
+                set_override(world, &c[0], &environment, Some(selection("sonnet")));
+            }
+            Ok(())
+        },
+    );
     steps.step(
         "the user resets the default model to the inherited value",
         |world, _, _| {
@@ -433,11 +447,14 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
-    steps.step("the default model shows the environment's value", |world, _, _| {
-        wait_for_model_row(world, "the environment's model without a reset", |row| {
-            row["label"] == "Claude · Opus" && row["resettable"] != true
-        })
-    });
+    steps.step(
+        "the default model shows the environment's value",
+        |world, _, _| {
+            wait_for_model_row(world, "the environment's model without a reset", |row| {
+                row["label"] == "Claude · Opus" && row["resettable"] != true
+            })
+        },
+    );
 
     // Where a value comes from.
     steps.step(
@@ -459,13 +476,16 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step("the user asks where the default model comes from", |world, _, _| {
-        if at(&world.state("route"), "section") != "/settings/projects" {
-            open_section(world, "/settings/projects")?;
-        }
-        wait_for_model_row(world, "the default model row", offers_models)?;
-        world.dispatch("projectSettings.inspect", json!({"key": "model"}))
-    });
+    steps.step(
+        "the user asks where the default model comes from",
+        |world, _, _| {
+            if at(&world.state("route"), "section") != "/settings/projects" {
+                open_section(world, "/settings/projects")?;
+            }
+            wait_for_model_row(world, "the default model row", offers_models)?;
+            world.dispatch("projectSettings.inspect", json!({"key": "model"}))
+        },
+    );
     steps.step(
         "the project, environment, repository file and built-in default layers are listed in that order",
         |world, _, _| {
@@ -589,7 +609,8 @@ pub fn register(steps: &mut Steps) {
             |w| {
                 let mut all = w.mc.members.clone();
                 all.push(w.mc.environment_id.clone());
-                all.iter().all(|e| held(w, e).get(MODEL) == Some(&selection("opus")))
+                all.iter()
+                    .all(|e| held(w, e).get(MODEL) == Some(&selection("opus")))
             },
             |w| describe_documents(w),
         )?;
@@ -644,20 +665,30 @@ pub fn register(steps: &mut Steps) {
     );
     steps.step(
         "is told to select that environment to choose its model separately",
-        |world, _, _| model_toast(world, "Select that environment to choose its model separately."),
+        |world, _, _| {
+            model_toast(
+                world,
+                "Select that environment to choose its model separately.",
+            )
+        },
     );
 
     // Sections and their titles (search-and-navigation.feature).
     let names: Vec<&str> = SECTIONS.iter().map(|(name, _)| *name).collect();
-    steps.step(&format!("the user opens ({})", names.join("|")), |world, c, _| {
-        let sections: HashMap<&str, &str> = SECTIONS.into_iter().collect();
-        // General asks where settings apply, before the user moves on.
-        if world.shell_subscriptions() > 0 && world.mc.part::<Scoped>().project.is_empty() {
-            let brick = shell(world)?;
-            world.wait_for("General to say where settings apply", |w| asks_where(w, brick))?;
-        }
-        open_section(world, sections[c[0].as_str()])
-    });
+    steps.step(
+        &format!("the user opens ({})", names.join("|")),
+        |world, c, _| {
+            let sections: HashMap<&str, &str> = SECTIONS.into_iter().collect();
+            // General asks where settings apply, before the user moves on.
+            if world.shell_subscriptions() > 0 && world.mc.part::<Scoped>().project.is_empty() {
+                let brick = shell(world)?;
+                world.wait_for("General to say where settings apply", |w| {
+                    asks_where(w, brick)
+                })?;
+            }
+            open_section(world, sections[c[0].as_str()])
+        },
+    );
     steps.step(&format!("the page is titled {Q}"), |world, c, _| {
         let brick = shell(world)?;
         let title = c[0].clone();
@@ -676,7 +707,10 @@ pub fn register(steps: &mut Steps) {
             world.wait_for("the Appearance page", |w| {
                 breadcrumb(w, brick).1 == "Settings / Appearance"
             })?;
-            expect!(!asks_where(world, brick), "the page asks where settings apply");
+            expect!(
+                !asks_where(world, brick),
+                "the page asks where settings apply"
+            );
             Ok(())
         },
     );

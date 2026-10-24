@@ -16,8 +16,8 @@ use serde_json::{Value, json};
 
 use crate::brick::{Brick, Shown};
 use crate::harness::{Failure, Outcome, Q, Steps, at, show, text};
-use crate::steps::stream::{self, PROJECT, THREAD};
 use crate::steps::settings_composer::drawn_bold;
+use crate::steps::stream::{self, PROJECT, THREAD};
 use crate::steps::turn::open_turn_thread;
 use crate::world::World;
 use crate::{expect, fail};
