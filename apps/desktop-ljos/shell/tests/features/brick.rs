@@ -87,6 +87,46 @@ Item {
         }
         return false
     }
+    function brickHolds(item, text) {
+        if (!item) return false
+        if (item.text !== undefined && String(item.text) === text) return true
+        var kids = item.children || []
+        for (var i = 0; i < kids.length; i++) {
+            if (brickHolds(kids[i], text)) return true
+        }
+        return false
+    }
+    function brickFindHoldingIn(item, name, text) {
+        if (!item) return null
+        if (item.objectName === name && brickHolds(item, text)) return item
+        var kids = item.children || []
+        for (var i = 0; i < kids.length; i++) {
+            var found = brickFindHoldingIn(kids[i], name, text)
+            if (found) return found
+        }
+        return null
+    }
+    function brickFindHolding(name, text) {
+        var trees = brickTrees()
+        for (var i = 0; i < trees.length; i++) {
+            var found = brickFindHoldingIn(trees[i], name, text)
+            if (found) return found
+        }
+        return null
+    }
+    function brickVisibleIn(item, name) {
+        if (!item || !item.visible) return null
+        if (item.objectName === name) return item
+        var kids = item.children || []
+        for (var i = 0; i < kids.length; i++) {
+            var found = brickVisibleIn(kids[i], name)
+            if (found) return found
+        }
+        return null
+    }
+    function brickVisibleBeside(item, name) {
+        return brickVisibleIn(item.parent, name)
+    }
     function brickAt(item, fx, fy) {
         return item.mapToItem(null, item.width * fx, item.height * fy)
     }
@@ -266,6 +306,46 @@ impl Brick {
             Some(item) => Ok(item),
             None => fail!("the brick has no {object_name}"),
         }
+    }
+
+    /// The item named `object_name` that has a Text or Label showing `text`
+    /// somewhere inside it.
+    pub fn find_holding(
+        &self,
+        world: &World,
+        object_name: &str,
+        text: &str,
+    ) -> Outcome<Option<ObjectId>> {
+        Ok(
+            match self.call(
+                world,
+                "brickFindHolding",
+                &[Value::from(object_name), Value::from(text)],
+            )? {
+                Value::Object(item) => Some(item),
+                _ => None,
+            },
+        )
+    }
+
+    /// The visible item named `object_name` within `item`'s parent: the
+    /// actions that show beside a row while the pointer is over it.
+    pub fn visible_beside(
+        &self,
+        world: &World,
+        item: ObjectId,
+        object_name: &str,
+    ) -> Outcome<Option<ObjectId>> {
+        Ok(
+            match self.call(
+                world,
+                "brickVisibleBeside",
+                &[Value::Object(item), Value::from(object_name)],
+            )? {
+                Value::Object(found) => Some(found),
+                _ => None,
+            },
+        )
     }
 
     /// `item`'s point at (fx, fy) of its size, in window coordinates.
