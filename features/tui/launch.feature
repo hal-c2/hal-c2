@@ -344,7 +344,8 @@ Feature: Launching and leaving the terminal client
     Then every environment is listed with whether it is reachable
     And activating a reachable environment switches the client to it
 
-  @tui
+  # HAL-C2 Connect and its cloudflared relay client were removed.
+  @dropped @tui
   Scenario: The user checks the relay client and installs it
     Given the relay client is not installed
     When the user checks relay status from the terminal client

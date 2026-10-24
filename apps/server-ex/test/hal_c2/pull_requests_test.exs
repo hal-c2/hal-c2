@@ -560,6 +560,34 @@ defmodule HalC2.PullRequestsTest do
     assert {:ok, nil} = PullRequests.set_reaction(input)
   end
 
+  test "a commit's pull requests are the open ones it heads; a commit GitHub lacks has none",
+       %{dir: dir} do
+    pr = fn number, state, sha ->
+      %{
+        "number" => number,
+        "html_url" => "https://github.com/acme/widgets/pull/#{number}",
+        "state" => state,
+        "head" => %{"sha" => sha, "ref" => "fix/#{number}"}
+      }
+    end
+
+    # The commit is also an older commit of #3, and the merged #2 was headed by it.
+    rules!(dir, [
+      %{
+        "args" => ["api", "commits/abc/pulls"],
+        "stdout" => [pr.(1, "open", "abc"), pr.(2, "closed", "abc"), pr.(3, "open", "def")]
+      },
+      %{
+        "args" => ["api", "commits/zzz/pulls"],
+        "exit" => 1,
+        "stderr" => "gh: No commit found for SHA: zzz (HTTP 422)\n"
+      }
+    ])
+
+    assert {:ok, [%{"number" => 1, "state" => "open"}]} = GitHub.head_pull_requests(dir, "abc")
+    assert {:ok, []} = GitHub.head_pull_requests(dir, "zzz")
+  end
+
   test "a pull request opens in a worktree of its own, which is reused", %{dir: dir} do
     origin = Path.join(dir, "origin")
     File.mkdir_p!(origin)
