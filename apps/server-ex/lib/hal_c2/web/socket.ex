@@ -31,7 +31,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 8
+  @state_version 9
 
   # The services `watch_spec/1` subscribes to as `{kind, mc}`, by kind.
   @services %{
@@ -86,6 +86,10 @@ defmodule HalC2.Web.Socket do
       # The monitor of each stream subscription's server => {its id, the server}.
       monitors: %{},
       by_terminal: %{},
+      # The monitor of each followed terminal => {its MC, its key, its pid}.
+      terminals: %{},
+      # MC => the keys of its terminals lost with it, attached again when it is back.
+      lost: %{},
       buffers: %{},
       shell: %{},
       flush_scheduled: false
@@ -298,10 +302,37 @@ defmodule HalC2.Web.Socket do
     {:push, frames ++ shell_frames, %{state | flush_scheduled: false}}
   end
 
+  def handle_info({:hal_c2_terminal_down, mc, key, reason}, state),
+    do: terminal_down(state, mc, key, reason)
+
+  # An MC whose terminals were lost with it is back: they are attached again.
+  def handle_info({:nodeup, mc, _info}, state) do
+    case Map.pop(state.lost, mc) do
+      {nil, _} ->
+        {:ok, state}
+
+      {keys, lost} ->
+        # The last lost MC is back: no more cluster news is wanted.
+        if lost == %{}, do: :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+
+        {frames, state} =
+          Enum.flat_map_reduce(keys, %{state | lost: lost}, &resync_terminal(&2, &1))
+
+        if frames == [], do: {:ok, state}, else: {:push, frames, state}
+    end
+  end
+
   # A stream's server stopped, and its subscribers with it. What it sent first is
   # already here and goes out, then the client follows the stream again from what
   # it holds: a `resync` without an offset keeps its own. An MC that left the
-  # cluster is not asked again until the client sees it back.
+  # cluster is not asked again until the client sees it back. A followed terminal
+  # that stopped is `terminal_down/4`'s.
+  def handle_info({:DOWN, ref, :process, _server, reason}, %{terminals: terminals} = state)
+      when is_map_key(terminals, ref) do
+    {{mc, key, _pid}, terminals} = Map.pop(terminals, ref)
+    terminal_down(%{state | terminals: terminals}, mc, key, reason)
+  end
+
   def handle_info({:DOWN, ref, :process, _server, reason}, %{monitors: monitors} = state)
       when is_map_key(monitors, ref) do
     {id, _server} = monitors[ref]
@@ -555,18 +586,20 @@ defmodule HalC2.Web.Socket do
       {:ok, {:ok, snapshot}} ->
         frame = %{"type" => "snapshot", "snapshot" => snapshot}
 
+        state = %{
+          state
+          | subs: Map.put(state.subs, id, {:terminal, mc, key}),
+            by_terminal:
+              Map.update(
+                state.by_terminal,
+                key,
+                %{id => snapshot["sequence"]},
+                &Map.put(&1, id, snapshot["sequence"])
+              )
+        }
+
         {:push, Protocol.encode(%{"t" => "terminal", "id" => id, "event" => frame}),
-         %{
-           state
-           | subs: Map.put(state.subs, id, {:terminal, mc, key}),
-             by_terminal:
-               Map.update(
-                 state.by_terminal,
-                 key,
-                 %{id => snapshot["sequence"]},
-                 &Map.put(&1, id, snapshot["sequence"])
-               )
-         }}
+         watch_terminal(state, mc, key)}
 
       {:ok, {:error, %{} = error}} ->
         {:push, Protocol.encode(error_frame(id, error)), state}
@@ -904,6 +937,10 @@ defmodule HalC2.Web.Socket do
     %{state | by_terminal: by_terminal, v: 8}
   end
 
+  # Version 9: followed terminals are monitored, and those lost with their MC kept.
+  defp migrate(%{v: 8} = state),
+    do: state |> Map.merge(%{terminals: %{}, lost: %{}, v: 9}) |> migrate()
+
   defp migrate(state), do: state
 
   defp session_scopes(nil), do: :all
@@ -1038,6 +1075,121 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # A terminal drops this socket when it goes away, as it does when its MC leaves
+  # the cluster for a moment. Unwatched, the subscriptions would hear nothing more
+  # while what the user types still reaches the shell, so the terminal is
+  # monitored, once for all of its subscriptions here (`terminal_down/4`).
+  defp watch_terminal(state, mc, key) do
+    found =
+      case remote(mc, Registry, :lookup, [HalC2.Terminal.Registry, key]) do
+        {:ok, [{pid, _}]} -> {:ok, pid}
+        {:ok, []} -> {:error, :noproc}
+        {:error, _} -> {:error, :noconnection}
+      end
+
+    watching = for {ref, {_, ^key, pid}} <- state.terminals, do: {ref, pid}
+
+    {kept, stale} =
+      Enum.split_with(watching, fn {_ref, pid} -> found == {:ok, pid} end)
+
+    for {ref, _} <- stale, do: Process.demonitor(ref, [:flush])
+    terminals = Map.drop(state.terminals, Enum.map(stale, &elem(&1, 0)))
+
+    case {found, kept} do
+      {{:ok, pid}, []} ->
+        %{state | terminals: Map.put(terminals, Process.monitor(pid), {mc, key, pid})}
+
+      {{:ok, _}, _} ->
+        %{state | terminals: terminals}
+
+      # Gone again before it could be monitored.
+      {{:error, reason}, _} ->
+        send(self(), {:hal_c2_terminal_down, mc, key, reason})
+        %{state | terminals: terminals}
+    end
+  end
+
+  # Nothing here follows the terminal any more: it is no longer awaited either,
+  # and cluster news stops with the last one that was.
+  defp unwatch_terminal(state, key) do
+    gone = for {ref, {_, ^key, _}} <- state.terminals, do: ref
+    for ref <- gone, do: Process.demonitor(ref, [:flush])
+
+    lost =
+      for {mc, keys} <- state.lost, (left = keys -- [key]) != [], into: %{}, do: {mc, left}
+
+    if state.lost != %{} and lost == %{},
+      do: :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+
+    %{state | terminals: Map.drop(state.terminals, gone), lost: lost}
+  end
+
+  # A terminal that closed said so first. Any other end is told to its
+  # subscriptions as a `resync`, which attaches them again (a stopped terminal
+  # is opened anew from its saved scrollback); while its MC cannot be reached
+  # they are told so in the terminal, and resync once it is back.
+  defp terminal_down(state, _mc, _key, :normal), do: {:ok, state}
+
+  defp terminal_down(state, mc, key, _reason) do
+    if mc == node() or mc in Node.list() do
+      case resync_terminal(state, key) do
+        {[], state} -> {:ok, state}
+        {frames, state} -> {:push, frames, state}
+      end
+    else
+      lose_terminal(state, mc, key)
+    end
+  end
+
+  # Unfollowed meanwhile: nothing awaits it.
+  defp lose_terminal(state, _mc, key) when not is_map_key(state.by_terminal, key),
+    do: {:ok, state}
+
+  defp lose_terminal(state, mc, key) do
+    # The 3-tuple messages of `node_type`, which `follow/4`'s `{:nodedown, mc}` is not.
+    # Turned off by the `nodeup` that empties `lost`.
+    if state.lost == %{}, do: :ok = :net_kernel.monitor_nodes(true, node_type: :all)
+    lost = Map.update(state.lost, mc, [key], &Enum.uniq([key | &1]))
+
+    {thread_id, terminal_id} = key
+
+    frames =
+      for {id, _floor} <- Map.get(state.by_terminal, key, %{}) do
+        event = %{
+          "type" => "error",
+          "threadId" => thread_id,
+          "terminalId" => terminal_id,
+          "message" => "lost the connection to #{mc}; reattaching when it is back"
+        }
+
+        Protocol.encode(%{"t" => "terminal", "id" => id, "event" => event})
+      end
+
+    # Back before the monitor started: no nodeup is coming.
+    if mc in Node.list(), do: send(self(), {:nodeup, mc, []})
+
+    if frames == [],
+      do: {:ok, %{state | lost: lost}},
+      else: {:push, frames, %{state | lost: lost}}
+  end
+
+  # Forgets the terminal's subscriptions here and tells each to `resync`.
+  defp resync_terminal(state, key) do
+    ids = Map.keys(Map.get(state.by_terminal, key, %{}))
+
+    state =
+      unwatch_terminal(
+        %{
+          state
+          | subs: Map.drop(state.subs, ids),
+            by_terminal: Map.delete(state.by_terminal, key)
+        },
+        key
+      )
+
+    {Enum.map(ids, &Protocol.encode(%{"t" => "resync", "id" => &1})), state}
+  end
+
   defp terminal_seq(%{"sequence" => seq}) when is_integer(seq), do: seq
   defp terminal_seq(%{"snapshot" => %{"sequence" => seq}}) when is_integer(seq), do: seq
   defp terminal_seq(_event), do: nil
@@ -1140,7 +1292,10 @@ defmodule HalC2.Web.Socket do
               :erpc.cast(mc, HalC2.Terminal, :detach, [thread_id, terminal_id, self()])
             end
 
-            %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
+            unwatch_terminal(
+              %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)},
+              key
+            )
         end
 
       {{:server_update, mc, _input}, subs} ->
