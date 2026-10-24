@@ -230,6 +230,36 @@ impl Brick {
         )
     }
 
+    /// The item named `object_name` at or under `root`, if any.
+    pub fn find_under(
+        &self,
+        world: &World,
+        root: ObjectId,
+        object_name: &str,
+    ) -> Outcome<Option<ObjectId>> {
+        let found = self.call(
+            world,
+            "brickFindIn",
+            &[Value::Object(root), Value::from(object_name)],
+        )?;
+        Ok(match found {
+            Value::Object(item) => Some(item),
+            _ => None,
+        })
+    }
+
+    /// Whether `item`, or a visible item under it, shows `text`.
+    pub fn shows_under(&self, world: &World, item: ObjectId, text: &str) -> Outcome<bool> {
+        Ok(matches!(
+            self.call(
+                world,
+                "brickShowsIn",
+                &[Value::Object(item), Value::from(text)]
+            )?,
+            Value::Bool(true)
+        ))
+    }
+
     /// The item named `object_name` (fails the step when there is none).
     pub fn item(&self, world: &World, object_name: &str) -> Outcome<ObjectId> {
         match self.find(world, object_name)? {
