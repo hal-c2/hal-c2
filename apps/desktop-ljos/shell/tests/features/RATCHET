@@ -526,6 +526,14 @@ source-control/refs-and-branches.feature: The thread's branch follows the checko
 source-control/repository-discovery-clone-publish.feature: A host that is not ready is explained before publishing
 source-control/repository-discovery-clone-publish.feature: Publishing walks through provider, repository and summary
 source-control/repository-discovery-clone-publish.feature: Starting to publish from the git actions
+source-control/review-diffs.feature: A thread in its own worktree reviews that worktree
+source-control/review-diffs.feature: Choosing what to compare against
+source-control/review-diffs.feature: Collapsing and expanding every file
+source-control/review-diffs.feature: Commenting on lines adds review context to the composer
+source-control/review-diffs.feature: Refreshing the diff by hand
+source-control/review-diffs.feature: Removing a line comment before sending
+source-control/review-diffs.feature: Switching between stacked and split views on the desktop and phone
+source-control/review-diffs.feature: Wrapping long lines
 source-control/stacked-pull-requests.feature: A stack that could not be refreshed says it may be stale
 source-control/stacked-pull-requests.feature: Confirming a stack merge shows scope and strategy
 source-control/stacked-pull-requests.feature: Confirming a stack rebase warns it rewrites history
