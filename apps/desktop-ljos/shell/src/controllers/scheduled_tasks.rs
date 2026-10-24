@@ -865,7 +865,7 @@ impl ScheduledTasks {
             return;
         }
         let scope = SettingsScope::of(engine);
-        let now_ms = chrono::Utc::now().timestamp_millis();
+        let now_ms = crate::controllers::sidebar::now_ms(engine);
         let shown = if scope.kind(engine) == "unavailable" || !self.open {
             Vec::new()
         } else {

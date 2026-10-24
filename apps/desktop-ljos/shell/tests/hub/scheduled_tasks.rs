@@ -139,6 +139,21 @@ fn the_section_follows_the_tasks_while_it_shows() {
 }
 
 #[test]
+fn the_next_run_reads_against_the_shells_clock() {
+    let (hub, _dir) = clustered();
+    hub.engine.set_wall_clock_origin(Some(1_700_000_000_000.0));
+    open(&hub, SECTION);
+    let mut due = task("a", true);
+    due["nextRunAt"] = json!(
+        chrono::DateTime::from_timestamp_millis(1_700_000_000_000 + 3 * 3_600_000)
+            .unwrap()
+            .to_rfc3339()
+    );
+    listed(&hub, &[due]);
+    assert_eq!(state(&hub)["environments"][0]["tasks"][0]["when"], "Next run in 3h");
+}
+
+#[test]
 fn a_task_is_enabled_run_and_deleted_one_call_at_a_time() {
     let (hub, _dir) = ready(&[task("a", false)]);
     hub.dispatch(

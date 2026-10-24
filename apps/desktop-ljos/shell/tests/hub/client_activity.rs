@@ -138,3 +138,12 @@ fn nothing_is_said_to_an_mc_that_is_not_there_and_all_of_it_when_it_is_back() {
     assert_eq!(watched(&report), ["thread:t2", "vcs:/w/wt"]);
     assert_eq!(report["focused"], json!(false));
 }
+
+#[test]
+fn a_report_says_when_it_was_made_on_the_shells_clock() {
+    let hub = hub("observed");
+    hub.engine.set_wall_clock_origin(Some(1_790_000_000_000.0));
+    open(&hub, "t2");
+    let (_, report) = reports(&hub).pop().expect("a report");
+    assert_eq!(report["observedAt"], "2026-09-21T14:13:20.000Z");
+}
