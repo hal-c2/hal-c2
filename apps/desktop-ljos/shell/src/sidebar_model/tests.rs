@@ -731,7 +731,7 @@ fn presets_step_by_calendar_days() {
     let zone = FixedOffset::east_opt(0).unwrap();
     // A Wednesday morning.
     let now = zone.with_ymd_and_hms(2026, 9, 23, 9, 0, 0).unwrap();
-    let presets = snooze_presets(&now, "24-hour");
+    let presets = snooze_presets(&now, "24-hour", &Locale::named("en_US"));
     let ids: Vec<&str> = presets.iter().map(|p| p.id.as_str()).collect();
     assert_eq!(
         ids,
@@ -745,7 +745,7 @@ fn presets_step_by_calendar_days() {
 
     // Late in the day there is no evening; on a Sunday tomorrow is next week.
     let sunday_night = zone.with_ymd_and_hms(2026, 9, 27, 17, 30, 0).unwrap();
-    let ids: Vec<String> = snooze_presets(&sunday_night, "12-hour")
+    let ids: Vec<String> = snooze_presets(&sunday_night, "12-hour", &Locale::named("en_US"))
         .into_iter()
         .map(|p| p.id)
         .collect();
@@ -756,12 +756,23 @@ fn presets_step_by_calendar_days() {
 fn wake_descriptions_name_the_day() {
     let zone = FixedOffset::east_opt(0).unwrap();
     let now = zone.with_ymd_and_hms(2026, 9, 23, 9, 0, 0).unwrap();
-    let describe = |at: &str| wake_description(at, &now, "12-hour");
+    let en = Locale::named("en_US");
+    let describe = |at: &str| wake_description(at, &now, "12-hour", &en);
     assert_eq!(describe("2026-09-23T17:30:00Z"), "5:30 PM");
     assert_eq!(describe("2026-09-24T09:00:00Z"), "tomorrow 9:00 AM");
     assert_eq!(describe("2026-09-28T00:00:00Z"), "Mon 12:00 AM");
     assert_eq!(describe("2026-10-05T09:00:00Z"), "Oct 5, 9:00 AM");
     assert_eq!(describe("nope"), "");
+    // "locale" is the locale's short time; days and months are its words.
+    let de = Locale::named("de_DE");
+    let describe = |at: &str| wake_description(at, &now, "locale", &de);
+    assert_eq!(describe("2026-09-23T17:30:00Z"), "17:30");
+    assert_eq!(describe("2026-09-28T00:00:00Z"), "Mo. 00:00");
+    assert_eq!(describe("2026-10-05T09:00:00Z"), "Okt. 5, 09:00");
+    assert_eq!(
+        wake_description("2026-09-23T17:30:00Z", &now, "locale", &en),
+        "5:30 PM"
+    );
 }
 
 #[test]

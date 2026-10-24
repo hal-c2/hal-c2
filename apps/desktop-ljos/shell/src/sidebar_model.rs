@@ -6,9 +6,10 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use chrono::{
-    DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime,
-    SecondsFormat, TimeZone, Timelike, Utc,
+    DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Offset,
+    SecondsFormat, TimeZone, Utc,
 };
+use ljos::locale::{DateTime as LocalFields, FormatType, Locale};
 use serde_json::{Map, Value, json};
 
 const MINUTE_MS: i64 = 60 * 1000;
@@ -1575,22 +1576,29 @@ pub fn resolve_custom_snooze<Tz: TimeZone>(
     (wake > now).then(|| format_iso(&wake))
 }
 
-/// "12-hour", "24-hour" or "locale", the timestampFormat setting.
-// TODO(ljos#76): Settings::locale — "locale" is QLocale's short time
-// format; without the system locale from Rust it reads as 24-hour "H:mm".
-pub fn time_of_day<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> String {
-    let (hour, minute) = (local.hour(), local.minute());
-    match timestamp_format {
-        "12-hour" => {
-            let h = match hour % 12 {
-                0 => 12,
-                h => h,
-            };
-            format!("{h}:{minute:02} {}", if hour < 12 { "AM" } else { "PM" })
-        }
-        "24-hour" => format!("{hour:02}:{minute:02}"),
-        _ => format!("{hour}:{minute:02}"),
-    }
+/// "12-hour", "24-hour" or "locale" (the locale's short time), the
+/// timestampFormat setting, in `locale`'s words. Every no-break space
+/// (U+202F, U+00A0) is a plain one: CLDR's before AM and PM all but
+/// vanishes in the monospace meta lines ("8:46AM"). The two QML stamps that
+/// cannot call this (ComposerUsageLimits.qml, ConnectionsSettings.qml)
+/// repeat the set in a regex.
+pub fn time_of_day<Tz: TimeZone>(
+    local: &DateTime<Tz>,
+    timestamp_format: &str,
+    locale: &Locale,
+) -> String {
+    let at = fields(local);
+    let time = match timestamp_format {
+        "12-hour" => locale.format_pattern(&at, "h:mm AP"),
+        "24-hour" => locale.format_pattern(&at, "HH:mm"),
+        _ => locale.format_time(&at, FormatType::Short),
+    };
+    time.replace(['\u{202f}', '\u{a0}'], " ")
+}
+
+/// A zoned time as Ljós's locales read one.
+fn fields<Tz: TimeZone>(at: &DateTime<Tz>) -> LocalFields {
+    LocalFields::from_unix_ms(at.timestamp_millis(), at.offset().fix().local_minus_utc())
 }
 
 /// `date` at `hour`:00 in `zone`; an hour a daylight saving change skips
@@ -1602,21 +1610,13 @@ fn local_at<Tz: TimeZone>(zone: &Tz, date: NaiveDate, hour: u32) -> Option<DateT
     })
 }
 
-const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
-fn short_weekday(date: NaiveDate) -> &'static str {
-    WEEKDAYS[date.weekday().num_days_from_sunday() as usize]
-}
-
 pub fn snooze_presets<Tz: TimeZone>(
     now: &DateTime<Tz>,
     timestamp_format: &str,
+    locale: &Locale,
 ) -> Vec<SnoozePreset> {
     let zone = now.timezone();
-    let time = |at: &DateTime<Tz>| time_of_day(at, timestamp_format);
+    let time = |at: &DateTime<Tz>| time_of_day(at, timestamp_format, locale);
     let preset = |id: &str, label: &str, when: String, at: &DateTime<Tz>| SnoozePreset {
         id: id.into(),
         label: label.into(),
@@ -1660,7 +1660,7 @@ pub fn snooze_presets<Tz: TimeZone>(
     {
         let when = format!(
             "{} {}",
-            short_weekday(next_week.date_naive()),
+            locale.format_pattern(&fields(&next_week), "ddd"),
             time(&next_week)
         );
         presets.push(preset("next-week", "Next week", when, &next_week));
@@ -1673,6 +1673,7 @@ pub fn wake_description<Tz: TimeZone>(
     snoozed_until: &str,
     now: &DateTime<Tz>,
     timestamp_format: &str,
+    locale: &Locale,
 ) -> String {
     let Some(wake_ms) = parse_iso(Some(snoozed_until)) else {
         return String::new();
@@ -1681,18 +1682,18 @@ pub fn wake_description<Tz: TimeZone>(
     let Some(wake) = zone.timestamp_millis_opt(wake_ms).single() else {
         return String::new();
     };
-    let time = time_of_day(&wake, timestamp_format);
+    let time = time_of_day(&wake, timestamp_format, locale);
     let Some(start_of_today) = local_at(&zone, now.date_naive(), 0) else {
         return time;
     };
     let since = (wake.clone() - start_of_today).num_milliseconds();
     let day_delta = since.div_euclid(DAY_MS);
-    let date = wake.date_naive();
+    let date = |pattern: &str| locale.format_pattern(&fields(&wake), pattern);
     match day_delta {
         0 => time,
         1 => format!("tomorrow {time}"),
-        d if d < 7 => format!("{} {time}", short_weekday(date)),
-        _ => format!("{} {}, {time}", MONTHS[date.month0() as usize], date.day()),
+        d if d < 7 => format!("{} {time}", date("ddd")),
+        _ => format!("{}, {time}", date("MMM d")),
     }
 }
 
