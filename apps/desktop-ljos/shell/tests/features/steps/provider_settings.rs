@@ -4015,9 +4015,7 @@ fn list_custom_models(world: &mut World) {
             saved
         };
         let slug = text(&setting["slug"]);
-        let name = setting
-            .get("name")
-            .map_or_else(|| slug.clone(), text);
+        let name = setting.get("name").map_or_else(|| slug.clone(), text);
         models.push(json!({
             "slug": slug,
             "name": name,
