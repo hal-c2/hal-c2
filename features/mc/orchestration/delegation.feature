@@ -290,6 +290,14 @@ Feature: Delegating tasks to subagents
     And the work state is "working" until the task ends and "result_available" after
 
   @mc
+  Scenario: A task's work state says whether its subagent works, waits on work it left, or has ended
+    Given the agent in "parent" delegated a task whose subagent left a command running in the background
+    When the agent in "parent" asks for the task's status
+    Then the work state is "waiting_for_children"
+    When the command ends and the subagent's turn about it ends
+    Then the work state is "result_available"
+
+  @mc
   Scenario: Checking a task that does not exist
     When the agent in "parent" asks for the status of task "node:subagent:none"
     Then the tool fails with code "task_not_found"
@@ -401,8 +409,8 @@ Feature: Delegating tasks to subagents
     And the task's delivery is still pending
 
   @backlog @mc
-  Scenario: Cancelling a task whose subagent has nothing running to interrupt is refused
-    Given the agent in "parent" delegated a task that is not finished and whose subagent has no running turn
+  Scenario: Cancelling a task whose subagent has nothing running or in the background is refused
+    Given the agent in "parent" delegated a task that is not finished and whose subagent has nothing running or in the background
     When the agent cancels the task
     Then the tool fails with code "task_not_cancellable"
 
@@ -560,13 +568,15 @@ Feature: Delegating tasks to subagents
       | is interrupted without an assistant message               | Child task ended with status interrupted.          |
       | fails with "Rate limit reached" after it already answered | Rate limit reached                                 |
 
-  @backlog @mc
+  @mc
   Scenario: A task whose subagent is waiting on tasks of its own is not finished yet
     Given the agent in "parent" delegated a task
-    And the subagent's turn ended while tasks it delegated itself are still working
+    And the subagent's turn ended while a task it delegated itself is still working
     When the agent in "parent" asks for the task's status
     Then the work state is "waiting_for_children"
-    And it becomes "result_available" once those tasks are done
+    When the subagent's own task is done and the subagent's turn about it ends
+    Then the work state is "result_available"
+    And the task summary is the answer of the subagent's turn about its own task
 
   @backlog @mc
   Scenario: A subagent the provider started without a title or prompt is named after its parent
@@ -574,31 +584,72 @@ Feature: Delegating tasks to subagents
     When the provider of "parent" starts its second subagent with neither a title nor a prompt
     Then the subagent's thread is titled "Fix the parser subagent 2"
 
-  @backlog @mc
+  @mc
   Scenario Outline: A task whose subagent still owes work is not finished yet
     Given the agent in "parent" delegated a task
     And the subagent's turn ended while <owed>
     When the agent in "parent" asks for the task's status
-    Then the work state is "waiting_for_children"
+    Then the task is still running and the work state is "<state>"
 
     Examples:
-      | owed                                                              |
-      | a command it started is still running in the background           |
-      | a task it delegated finished but that result has not reached it   |
+      | owed                                                              | state                |
+      | a command it started is still running in the background           | waiting_for_children |
+      | a task it delegated finished but that result has not reached it   | working              |
 
-  @backlog @mc
+  @mc
   Scenario: A turn that only handled a monitor update is not the task's result
-    Given the agent in "parent" delegated a task and the subagent answered "Done: 3 files"
-    And the subagent later ran a turn only to handle an update from a monitor
-    When the agent in "parent" asks for the task's result
-    Then the result is "Done: 3 files"
+    Given the agent in "parent" delegated a task
+    And the subagent answered "Done: 3 files" with a turn to handle an update from a monitor queued behind it
+    When that turn ends without a word
+    Then the task summary is "Done: 3 files"
 
-  @backlog @mc
+  @mc
   Scenario: A rolled-back turn of the subagent is not the task's result
-    Given the agent in "parent" delegated a task and the subagent answered "First" and then "Second"
-    And the subagent's second turn was rolled back
-    When the agent in "parent" asks for the task's result
-    Then the result is "First"
+    Given the agent in "parent" delegated a task
+    And the subagent answered "First" and then "Second", with a third turn still working
+    And the subagent's second turn was rolled back before the task settled
+    When the third turn ends without a word
+    Then the task summary is "First"
+
+  # hal-c2/hal-c2#508: a turn that leaves work running is not the subagent's end.
+  @mc
+  Scenario: A subagent's own later turn that finishes its background work delivers the task's result
+    Given the agent in "parent" delegated a task whose subagent left a command running in the background
+    When the command ends and the subagent's turn about it ends
+    Then "parent" receives one result message, with the answer of the subagent's turn about the command
+    And no result message to "parent" says "The dev server is running."
+
+  # Codex and Claude end the work's item before the turn it wakes is queued.
+  @mc
+  Scenario: A task is not settled between its subagent's background work ending and the turn that work wakes
+    Given the agent in "parent" delegated a task whose subagent left a command running in the background
+    When the command ends and the subagent's turn about it ends
+    Then the task ended when its child's turn did
+    And the task summary is the answer of the subagent's turn about the command
+
+  @mc
+  Scenario: A Grok subagent's background work ending settles its task with its last answer
+    Given the agent in "parent" delegated a task to Grok whose subagent left work running in the background
+    When the agent in "parent" asks for the task's status
+    Then the work state is "waiting_for_children"
+    When Grok reports the subagent's background work ended
+    Then "parent" receives a system message carrying the delegated task result "Hello from acp"
+
+  # hal-c2/hal-c2#40: the end of the subagent's turn never reached its caller.
+  @mc
+  Scenario: A task whose end report was lost settles without a restart
+    Given the agent in "parent" delegated a task
+    And the subagent completed with "Done", and the report of its end was lost
+    When the subagent's session is released and the MC's periodic check runs
+    Then "parent" receives a system message carrying the delegated task result "Done"
+    And the lost report, arriving after all, does not deliver it again
+
+  @mc
+  Scenario: Cancelling a task that waits on background work stops that work
+    Given the agent in "parent" delegated a task whose subagent left a command running in the background
+    When the agent cancels the task
+    Then the task is cancelled and its delivery disposed
+    And the subagent's command is stopped
 
   @backlog @mc
   Scenario: A subagent the provider started is titled from its prompt, cut to 72 characters

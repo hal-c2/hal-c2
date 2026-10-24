@@ -2376,6 +2376,7 @@ defmodule HalC2.Orchestration do
   end
 
   # A layer of a native stack stays as a tombstone, so the sync does not link it again.
+  # It forgets what the thread heard of it, so a link back starts from a new baseline.
   defp thread_fields("thread.pull-request.unlink", command, thread, at) do
     links = PullRequests.of(thread)
     key = PullRequests.normalize(command)
@@ -2395,7 +2396,11 @@ defmodule HalC2.Orchestration do
 
       stacked? ->
         links
-        |> Enum.map(&if(&1 == existing, do: %{&1 | "source" => "stack-dismissed"}, else: &1))
+        |> Enum.map(fn link ->
+          if link == existing,
+            do: link |> Map.put("source", "stack-dismissed") |> Map.delete("heard"),
+            else: link
+        end)
         |> then(&Map.put(pull_request_fields(thread, &1), "updatedAt", at))
 
       true ->
