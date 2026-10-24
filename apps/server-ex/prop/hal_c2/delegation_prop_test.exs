@@ -18,7 +18,10 @@ defmodule HalC2.DelegationPropTest do
   - a restart, or a report of a run since rolled back, settles it only once the child
     has nothing running or queued, and a restart always does then;
   - a delegation without a task prompt is refused, whatever the task is doing, and
-    starts nothing.
+    starts nothing;
+  - a child whose worktree is still being prepared is working, and a task whose child
+    fails or is cancelled while preparing settles as that, with why, though no turn
+    ever ran in it.
   """
 
   use ExUnit.Case, async: false
@@ -68,6 +71,7 @@ defmodule HalC2.DelegationPropTest do
 
   def command(state) do
     running = for %{status: "running"} = run <- state.runs, do: run.id
+    preparing = for %{status: "preparing"} = run <- state.runs, do: run.id
     queued = for %{status: "queued"} = run <- state.runs, do: run.id
     ended = for %{status: s} = run <- state.runs, s in @ended, do: run.id
     reported = for %{ended_as: s} = run <- state.runs, s != nil, do: [run.id, s]
@@ -79,7 +83,19 @@ defmodule HalC2.DelegationPropTest do
         {1, {:call, __MODULE__, :delegate_blank, [blank_task()]}}
       ] ++
         if(running == [], do: [], else: [{1, {:call, __MODULE__, :restart_unresumed, []}}]) ++
-        if(working?(state), do: [], else: [{4, {:call, __MODULE__, :start, [next(state)]}}]) ++
+        if(working?(state),
+          do: [],
+          else: [
+            {4, {:call, __MODULE__, :start, [next(state)]}},
+            {1, {:call, __MODULE__, :start_preparing, [next(state)]}}
+          ]
+        ) ++
+        if(preparing == [],
+          do: [],
+          else: [
+            {3, {:call, __MODULE__, :prepare_end, [hd(preparing), oneof(~w(failed cancelled))]}}
+          ]
+        ) ++
         if(running != [] and queued == [],
           do: [{1, {:call, __MODULE__, :queue, [next(state)]}}],
           else: []
@@ -119,15 +135,16 @@ defmodule HalC2.DelegationPropTest do
 
   defp next(state), do: "run-#{length(state.runs) + 1}"
 
-  defp working?(state), do: Enum.any?(state.runs, &(&1.status in ~w(running queued)))
+  defp working?(state), do: Enum.any?(state.runs, &(&1.status in ~w(preparing running queued)))
 
-  def precondition(state, {:call, _, :start, _}), do: not working?(state)
+  def precondition(state, {:call, _, call, _}) when call in [:start, :start_preparing],
+    do: not working?(state)
 
   def precondition(state, {:call, _, :queue, _}),
     do: Enum.any?(state.runs, &(&1.status == "running"))
 
   def precondition(state, {:call, _, call, [id | _]})
-      when call in [:cancel_queued, :finish, :roll_back, :report] do
+      when call in [:cancel_queued, :finish, :roll_back, :report, :prepare_end] do
     case Enum.find(state.runs, &(&1.id == id)) do
       nil -> false
       run -> allowed?(call, run, state)
@@ -138,11 +155,19 @@ defmodule HalC2.DelegationPropTest do
 
   defp allowed?(:cancel_queued, run, _), do: run.status == "queued"
   defp allowed?(:finish, run, _), do: run.status == "running"
+  defp allowed?(:prepare_end, run, _), do: run.status == "preparing"
   defp allowed?(:roll_back, run, _), do: run.status in @ended
   defp allowed?(:report, run, _), do: run.ended_as != nil
 
   def next_state(state, _result, {:call, _, :start, [id]}),
     do: %{state | runs: state.runs ++ [%{id: id, status: "running", ended_as: nil}]}
+
+  def next_state(state, _result, {:call, _, :start_preparing, [id]}),
+    do: %{state | runs: state.runs ++ [%{id: id, status: "preparing", ended_as: nil}]}
+
+  # Never reported again: its end is how the preparation ended, not a turn's answer.
+  def next_state(state, _result, {:call, _, :prepare_end, [id, status]}),
+    do: update(state, id, &%{&1 | status: status})
 
   def next_state(state, _result, {:call, _, :queue, [id]}),
     do: %{state | runs: state.runs ++ [%{id: id, status: "queued", ended_as: nil}]}
@@ -194,7 +219,7 @@ defmodule HalC2.DelegationPropTest do
     settled?(before) or not settled?(task) or
       Enum.any?(runs, fn run ->
         run["completedAt"] == task["subagent"]["completedAt"] and
-          task["subagent"]["result"] in [nil, answered(run["id"])]
+          task["subagent"]["result"] in [nil, answered(run["id"]), prepared(run["status"])]
       end)
   end
 
@@ -219,6 +244,16 @@ defmodule HalC2.DelegationPropTest do
       run.status != "rolled_back" -> ended_as?(task, id, run.ended_as)
       true -> not settled?(task) or not busy?(runs)
     end
+  end
+
+  # A child that never started tells the caller why: the task ends as its preparation did.
+  defp expected?(_state, :prepare_end, [id, status], before, task, _runs) do
+    run = StreamState.get(stream(@child), "run")[id]
+
+    settled?(before) or
+      (task["subagent"]["status"] == status and
+         task["subagent"]["completedAt"] == run["completedAt"] and
+         task["subagent"]["result"] == prepared(status))
   end
 
   # A restart settles a task whose child has stopped, and only then.
@@ -247,9 +282,13 @@ defmodule HalC2.DelegationPropTest do
   defp answered(id),
     do: if(StreamState.get(stream(@child), "message")["answer-#{id}"], do: answer(id))
 
+  defp prepared("failed"), do: "Workspace preparation failed: no space left"
+  defp prepared("cancelled"), do: "Workspace preparation was cancelled."
+  defp prepared(_status), do: nil
+
   defp settled?(task), do: task["subagent"]["status"] in @ended
 
-  defp busy?(runs), do: Enum.any?(runs, &(&1["status"] in ~w(running queued)))
+  defp busy?(runs), do: Enum.any?(runs, &(&1["status"] in ~w(preparing running queued)))
 
   # --- the real side ----------------------------------------------------------------
 
@@ -314,6 +353,26 @@ defmodule HalC2.DelegationPropTest do
   end
 
   def start(id), do: observe(fn -> commit(@child, [{"run", id, run(id, "running")}]) end)
+
+  def start_preparing(id),
+    do: observe(fn -> commit(@child, [{"run", id, run(id, "preparing")}]) end)
+
+  # The worktree setup fails or is cancelled. The report to the caller comes from a
+  # process of its own; its hook names it, and its exit is the receipt that it is done.
+  def prepare_end(id, status) do
+    observe(fn ->
+      Application.put_env(:hal_c2, :delegation_hook, {__MODULE__, :reporting, [self()]})
+      failure = if status == "failed", do: %{"message" => "no space left"}
+      :ok = HalC2.Orchestration.fail_prepared(@child, id, status, failure)
+      assert_receive {:reporter, reporter}, 5_000
+      ref = Process.monitor(reporter)
+      assert_receive {:DOWN, ^ref, _, _, _}, 5_000
+      Application.delete_env(:hal_c2, :delegation_hook)
+    end)
+  end
+
+  def reporting(pid, :reporting, _id), do: send(pid, {:reporter, self()})
+  def reporting(_pid, _stage, _id), do: :ok
 
   def queue(id), do: observe(fn -> commit(@child, [{"run", id, run(id, "queued")}]) end)
 
