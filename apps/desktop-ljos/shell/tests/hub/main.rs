@@ -35,6 +35,7 @@ mod menus;
 mod navigation;
 mod navigation_prop;
 mod onboarding;
+mod overlay;
 mod page;
 mod palette;
 mod palette_search_prop;
