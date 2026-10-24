@@ -29,7 +29,10 @@ use hal_c2_shell::session::Session;
 use hal_c2_shell::thread_view::time::Clock;
 use hal_c2_shell::{Launch, this_machine};
 use ljos::App;
-use ljos::prelude::{Engine, OpenUrlService, Platform, Value};
+use ljos::prelude::{
+    ClipboardError, ClipboardImage, ClipboardMode, ClipboardService, Engine, OpenUrlService,
+    Platform, Value,
+};
 use ljos::testing::TestWindow;
 use serde_json::json;
 
@@ -230,6 +233,7 @@ impl World {
             true
         });
         Platform::of(&engine).set_open_url(Rc::new(Urls(self.recorded.clone())));
+        Platform::of(&engine).set_clipboard(Rc::new(RecordedClipboard(self.recorded.clone())));
         let recorded = self.recorded.clone();
         let _ = engine.connect_by_name(
             Bridge::of(&engine).object(),
@@ -751,5 +755,50 @@ impl World {
         let taken = shell.window.pointer(&event(shell.window.now()));
         self.pump()?;
         Ok(taken)
+    }
+}
+
+/// The platform clipboard the shell's own items (a terminal's copy, a paste
+/// through `Shell.clipboardText`) read and write: the one `World::clipboard`
+/// and `set_clipboard` see, so a copy by any route lands where steps look.
+struct RecordedClipboard(Rc<Recorded>);
+
+impl ClipboardService for RecordedClipboard {
+    fn text(&self, mode: ClipboardMode) -> Option<String> {
+        (mode == ClipboardMode::Clipboard).then(|| self.0.clipboard.borrow().clone())
+    }
+
+    fn set_text(&self, mode: ClipboardMode, text: &str) -> Result<(), ClipboardError> {
+        if mode != ClipboardMode::Clipboard {
+            return Err(ClipboardError::Unavailable);
+        }
+        if self.0.clipboard_fails.get() {
+            return Err(ClipboardError::Denied);
+        }
+        *self.0.clipboard.borrow_mut() = text.to_owned();
+        Ok(())
+    }
+
+    fn html(&self) -> Option<String> {
+        None
+    }
+
+    fn set_html(&self, _: &str, alt_text: &str) -> Result<(), ClipboardError> {
+        self.set_text(ClipboardMode::Clipboard, alt_text)
+    }
+
+    fn image(&self) -> Option<ClipboardImage> {
+        None
+    }
+
+    fn set_image(&self, _: ClipboardImage) -> Result<(), ClipboardError> {
+        Err(ClipboardError::Unavailable)
+    }
+
+    fn clear(&self, mode: ClipboardMode) -> Result<(), ClipboardError> {
+        if mode == ClipboardMode::Clipboard {
+            self.0.clipboard.borrow_mut().clear();
+        }
+        Ok(())
     }
 }
