@@ -645,6 +645,16 @@ impl World {
         self.pump()
     }
 
+    /// The user types `text` in the window, into whatever has the keyboard
+    /// focus.
+    pub fn type_text(&mut self, text: &str) -> Outcome {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        shell.window.commit(text);
+        self.pump()
+    }
+
     /// The user presses a key in the window. Whether an item took it.
     pub fn key(&mut self, event: &ljos::item::KeyEvent) -> Outcome<bool> {
         let Some(shell) = &mut self.shell else {
