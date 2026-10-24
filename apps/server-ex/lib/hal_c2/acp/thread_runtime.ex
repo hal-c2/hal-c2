@@ -37,7 +37,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
   alias HalC2.Acp.OpenCode
 
-  @state_version 11
+  @state_version 12
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -154,7 +154,8 @@ defmodule HalC2.Acp.ThreadRuntime do
        capabilities: %{},
        session_id: nil,
        model: nil,
-       # The models the session's `model` option lists.
+       model_method: "session/set_config_option",
+       # The models the session advertises, through configOptions or models.
        options: [],
        turn: nil,
        # The run the latest turn ran as, also one that failed to start: the run a
@@ -638,7 +639,11 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp migrate(%{v: 9} = state),
     do: state |> Map.merge(%{v: 10, prompts: :gen_server.reqids_new(), answer: nil}) |> migrate()
 
-  defp migrate(%{v: 10} = state), do: Map.merge(state, %{v: 11, last_run: nil})
+  defp migrate(%{v: 10} = state),
+    do: state |> Map.merge(%{v: 11, last_run: nil}) |> migrate()
+
+  defp migrate(%{v: 11} = state),
+    do: Map.merge(state, %{v: 12, model_method: "session/set_config_option"})
 
   # --- session -------------------------------------------------------------------
 
@@ -853,8 +858,17 @@ defmodule HalC2.Acp.ThreadRuntime do
     state = remember_config(state, result)
 
     case Enum.find(result["configOptions"] || [], &(&1["id"] == "model")) do
-      %{"currentValue" => model} -> %{state | model: model}
-      _ -> state
+      %{"currentValue" => model} ->
+        %{state | model: model, model_method: "session/set_config_option"}
+
+      _ ->
+        case result["models"] do
+          %{"currentModelId" => model} ->
+            %{state | model: model, model_method: "session/set_model"}
+
+          _ ->
+            state
+        end
     end
   end
 
@@ -1060,11 +1074,12 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp set_model_now(state, model)
        when is_binary(model) and model != "" and model != state.model do
-    case Connection.call(state.conn, "session/set_config_option", %{
-           "sessionId" => state.session_id,
-           "configId" => "model",
-           "value" => model
-         }) do
+    params =
+      if state.model_method == "session/set_model",
+        do: %{"sessionId" => state.session_id, "modelId" => model},
+        else: %{"sessionId" => state.session_id, "configId" => "model", "value" => model}
+
+    case Connection.call(state.conn, state.model_method, params) do
       {:ok, result} ->
         remember_config(%{state | model: model}, result || %{})
 

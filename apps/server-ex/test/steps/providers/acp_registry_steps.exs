@@ -957,6 +957,26 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     context
   end
 
+  step "{string} offers models through the session model list", %{args: [_]} = context do
+    ctx = acme(context, %{"legacyModels" => true})
+    assert [%{"slug" => "acme/fast"}, %{"slug" => "acme/smart"}] = Acp.check("acme")["models"]
+    ctx = run_on_acme(ctx, "hello", model: "acme/fast")
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  step "the agent's session uses the new model through set_model", context do
+    Acp.follow_up(context, context.thread, "which model")
+    Acp.await_runs(thread(context), 2)
+    assert Acp.assistant_text(thread(context)) =~ "model: acme/smart"
+
+    assert %{"params" => %{"modelId" => "acme/smart"}} =
+             List.last(Acp.requests(context, "acme", "session/set_model"))
+
+    assert Acp.requests(context, "acme", "session/set_config_option") == []
+    context
+  end
+
   step "the agent's session uses the new model for the next turn", context do
     Acp.follow_up(context, context.thread, "which model")
     Acp.await_runs(thread(context), 2)

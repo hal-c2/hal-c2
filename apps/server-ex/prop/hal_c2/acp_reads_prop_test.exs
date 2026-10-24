@@ -53,7 +53,7 @@ defmodule HalC2.AcpReadsPropTest do
     agents =
       Map.new([:a, :b], fn name ->
         path = Path.join(dir, "agent-#{name}")
-        File.write!(path, agent(port, token))
+        File.write!(path, agent(port, token, name))
         File.chmod!(path, 0o755)
         {name, path}
       end)
@@ -104,7 +104,7 @@ defmodule HalC2.AcpReadsPropTest do
     end
   end
 
-  defp agent(port, token) do
+  defp agent(port, token, name) do
     """
     #!/usr/bin/env python3
     import json, os, socket, sys
@@ -116,7 +116,11 @@ defmodule HalC2.AcpReadsPropTest do
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
     answer(request, {"protocolVersion": 1, "agentInfo": {"version": "1.0.0"}, "agentCapabilities": {}})
     model = {"id": "model", "currentValue": label, "options": [{"value": label, "name": label}]}
-    answer(json.loads(sys.stdin.readline()), {"sessionId": "s", "configOptions": [model]})
+    if #{if name == :b, do: "True", else: "False"}:
+        session = {"sessionId": "s", "models": {"currentModelId": label, "availableModels": [{"modelId": label, "name": label}]}}
+    else:
+        session = {"sessionId": "s", "configOptions": [model]}
+    answer(json.loads(sys.stdin.readline()), session)
     sys.stdin.read()
     """
   end
