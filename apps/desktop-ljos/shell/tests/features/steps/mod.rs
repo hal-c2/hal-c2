@@ -6,6 +6,8 @@ use crate::harness::Steps;
 
 pub mod connection;
 pub mod connection_health;
+pub mod licenses;
+pub mod link;
 pub mod mc;
 pub mod stream;
 pub mod thread_menu;
@@ -17,6 +19,8 @@ pub mod viewing;
 pub fn register(steps: &mut Steps) {
     connection::register(steps);
     connection_health::register(steps);
+    licenses::register(steps);
+    link::register(steps);
     mc::register(steps);
     stream::register(steps);
     thread_menu::register(steps);
