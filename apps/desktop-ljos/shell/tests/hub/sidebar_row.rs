@@ -101,7 +101,6 @@ fn hover(hub: &Hub, window: &Window, over: bool) {
 /// its age was. The header asks for 22 px either way, so the project line,
 /// title and branch stay where they were, level with the jump hint.
 #[test]
-#[ignore = "TODO(ljos#107): a nested layout's Layout.preferredHeight is cut down to its children's maximum, so the card's header is 16 px until the 22 px buttons show"]
 fn a_card_row_keeps_its_lines_when_hover_shows_its_actions() {
     let hub = Hub::new();
     let (root, window) = probe(&hub);
@@ -156,7 +155,6 @@ fn a_slim_row_keeps_its_title_when_hover_shows_its_actions() {
 /// though its children are shorter, and so does what follows it: the
 /// numbers are Qt's (qml6 6.11.2).
 #[test]
-#[ignore = "TODO(ljos#107): a nested layout's Layout.preferredHeight is cut down to its children's maximum"]
 fn a_nested_layout_keeps_its_preferred_height_over_shorter_children() {
     let hub = Hub::new();
     let source = crate::common::compile(&[("Nested", NESTED)], &[]);
