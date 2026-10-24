@@ -267,6 +267,12 @@ impl Controller for ScheduledTasks {
         SettingsScope::of(engine).on_changed(move |engine| {
             me.run(engine, |c, engine| c.follow(engine));
         });
+        // A window restored on this page has its route before this activates.
+        let route = self.bridge.published(engine, "route").unwrap_or(Json::Null);
+        if settings_page::shows(&route, &[SECTION]) {
+            self.open = true;
+            self.follow(engine);
+        }
         self.publish(engine);
     }
 

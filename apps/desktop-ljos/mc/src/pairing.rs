@@ -12,8 +12,20 @@ use crate::PROTOCOL;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 /// A QR code holds under 3000 characters, and a pairing link a fraction of
-/// that.
+/// that. The cap is on the link itself, in UTF-16 units (what the Qt client
+/// counts); the app's own link wraps it percent-encoded, so it is let longer.
 const LONGEST_INVITATION: usize = 2048;
+/// A unit costs at most nine characters once encoded: three UTF-8 bytes for a
+/// BMP character, and six for each half of a surrogate pair (four bytes,
+/// twelve characters, over two units). The wrapper's cap is a bound on
+/// everything it carries, not only the link: a worst-case encoded link leaves
+/// it about forty characters for any other query items, and the app's own
+/// wrapper has none.
+const LONGEST_WRAPPED_INVITATION: usize = 9 * LONGEST_INVITATION + 64;
+
+fn units(text: &str) -> usize {
+    text.encode_utf16().count()
+}
 
 /// Where a link says the MC is, in the order to try (`scheme://host[:port]`),
 /// and its single-use token.
@@ -102,7 +114,7 @@ pub struct Invitation {
 /// `pairingUrl`, decoded once, which is not itself an app link.
 pub fn read_invitation(received: &str) -> Option<Invitation> {
     let mut text = received.trim().to_owned();
-    if text.is_empty() || text.chars().count() > LONGEST_INVITATION {
+    if text.is_empty() || units(&text) > LONGEST_WRAPPED_INVITATION {
         return None;
     }
     let mut url = Url::parse(&text).ok()?;
@@ -129,6 +141,9 @@ pub fn read_invitation(received: &str) -> Option<Invitation> {
         };
         text = carried.trim().to_owned();
         url = Url::parse(&text).ok()?;
+    }
+    if text.is_empty() || units(&text) > LONGEST_INVITATION {
+        return None;
     }
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none_or(str::is_empty)
@@ -350,5 +365,96 @@ mod tests {
         }
         let long = format!("http://h/pair#token={}", "t".repeat(LONGEST_INVITATION));
         assert_eq!(read_invitation(&long), None);
+    }
+
+    fn wrapped(link: &str) -> String {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        query.append_pair("pairingUrl", link);
+        format!("hal-c2://pair?{}", query.finish())
+    }
+
+    /// A pairing link of exactly `size` UTF-16 units.
+    fn link_of_exactly(size: usize, padding: char) -> String {
+        let head = "https://mc.example.test/pair?p=";
+        let tail = "#token=abc";
+        let fill = (size - head.len() - tail.len()) / padding.len_utf16();
+        format!("{head}{}{tail}", padding.to_string().repeat(fill))
+    }
+
+    /// Both read, the plain link and the app's link carrying it.
+    fn reads_both_ways(link: &str) {
+        let plain = read_invitation(link).expect("plain");
+        assert_eq!(plain.link, link);
+        let carried = read_invitation(&wrapped(link)).expect("wrapped");
+        assert_eq!(carried, plain);
+    }
+
+    #[test]
+    fn the_cap_is_on_the_link_not_on_the_app_link_that_wraps_it() {
+        let mut link = String::from("https://mc.example.test:8443/pair?");
+        while link.len() < 1500 {
+            link.push_str("&a=b");
+        }
+        link.push_str("#token=abc");
+        assert!(wrapped(&link).len() > LONGEST_INVITATION);
+        reads_both_ways(&link);
+    }
+
+    #[test]
+    fn wide_characters_and_surrogate_pairs_are_read_wrapped_too() {
+        // Three UTF-8 bytes a unit: some 7,300 characters wrapped.
+        let wide = format!(
+            "https://mc.example.test/pair?padding={}#token=abc",
+            "\u{754C}".repeat(800)
+        );
+        assert!(wrapped(&wide).len() > 3 * LONGEST_INVITATION + 64);
+        reads_both_ways(&wide);
+        // Both caps meet: a link at the cap wraps to some 18,000 characters.
+        let at_cap = link_of_exactly(LONGEST_INVITATION, '\u{754C}');
+        assert_eq!(units(&at_cap), LONGEST_INVITATION);
+        assert!(wrapped(&at_cap).len() > 8 * LONGEST_INVITATION);
+        reads_both_ways(&at_cap);
+        // Two units and twelve characters encoded each.
+        let pairs = format!(
+            "https://mc.example.test/pair?padding={}#token=abc",
+            "\u{1F600}".repeat(1000)
+        );
+        assert!(units(&pairs) > 2000 && units(&pairs) <= LONGEST_INVITATION);
+        reads_both_ways(&pairs);
+    }
+
+    #[test]
+    fn the_caps_are_exact() {
+        let at_cap = link_of_exactly(LONGEST_INVITATION, 'a');
+        assert_eq!(units(&at_cap), LONGEST_INVITATION);
+        reads_both_ways(&at_cap);
+        let over = link_of_exactly(LONGEST_INVITATION + 1, 'a');
+        assert_eq!(read_invitation(&over), None);
+        assert_eq!(read_invitation(&wrapped(&over)), None);
+
+        // The wrapper's cap: padding is a query item beside the carried link,
+        // which stays within its cap, so only the wrapper's cap tells them apart.
+        let head = format!("{}&pad=", wrapped(&link_of_exactly(1500, 'a')));
+        assert!(head.len() < LONGEST_WRAPPED_INVITATION);
+        let at_wrapper_cap = format!(
+            "{head}{}",
+            "a".repeat(LONGEST_WRAPPED_INVITATION - head.len())
+        );
+        assert_eq!(at_wrapper_cap.len(), LONGEST_WRAPPED_INVITATION);
+        assert!(read_invitation(&at_wrapper_cap).is_some());
+        assert_eq!(read_invitation(&format!("{at_wrapper_cap}a")), None);
+    }
+
+    #[test]
+    fn a_wrapped_link_over_the_cap_is_turned_away_whatever_wraps_it() {
+        let link = link_of_exactly(2100, 'a');
+        assert_eq!(read_invitation(&link), None);
+        assert_eq!(read_invitation(&wrapped(&link)), None);
+        let short = wrapped(&link_of_exactly(1500, 'a'));
+        assert!(read_invitation(&short).is_some());
+        assert_eq!(
+            read_invitation(&format!("{short}&pad={}", "a".repeat(20_000))),
+            None
+        );
     }
 }

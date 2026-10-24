@@ -379,6 +379,150 @@ fn environments_on_one_revision_share_a_tab_and_one_on_another_gets_its_own() {
     assert_eq!(titles, ["Inbox · Laptop", "Inbox · Server"]);
 }
 
+/// The url the tab of `reviews`' inbox shows, empty while none is ready.
+fn tab_url(hub: &Hub) -> String {
+    state(hub)["pages"][0]["url"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn copy_of(cache: &Path, environment: &str) -> String {
+    format!(
+        "file://{}",
+        cache
+            .join(environment)
+            .join("reviews/r1/running/Inbox.qml")
+            .display()
+    )
+}
+
+/// Two environments run one revision; whichever one's copy is ready first is
+/// the one the tab shows, and the other becoming ready later leaves it alone,
+/// so the open page is not made anew.
+#[test]
+fn a_tab_keeps_the_copy_it_shows_when_another_environments_copy_gets_ready() {
+    for (first, second) in [("env-1", "env-2"), ("env-2", "env-1")] {
+        let (hub, cache) = hub(&format!("tab-keeps-{first}"));
+        plugins(&hub, "env-1", vec![reviews("r1")]);
+        plugins(&hub, "env-2", vec![reviews("r1")]);
+        assert_eq!(tab_url(&hub), "", "nothing is ready");
+        serve_all(&hub, first, "r1");
+        assert_eq!(tab_url(&hub), copy_of(&cache, first));
+        serve_all(&hub, second, "r1");
+        assert_eq!(
+            tab_url(&hub),
+            copy_of(&cache, first),
+            "{second} getting ready leaves the tab on {first}'s copy"
+        );
+        assert_eq!(
+            state(&hub)["pages"][0]["environments"],
+            json!(["env-1", "env-2"])
+        );
+    }
+}
+
+#[test]
+fn a_tab_whose_copy_goes_away_moves_to_one_that_is_ready() {
+    let (hub, cache) = hub("tab-moves");
+    plugins(&hub, "env-1", vec![reviews("r1")]);
+    plugins(&hub, "env-2", vec![reviews("r1")]);
+    serve_all(&hub, "env-2", "r1");
+    serve_all(&hub, "env-1", "r1");
+    assert_eq!(tab_url(&hub), copy_of(&cache, "env-2"));
+    cluster(&hub, false);
+    assert_eq!(tab_url(&hub), copy_of(&cache, "env-1"));
+}
+
+mod tab_prop {
+    use super::*;
+    use proptest::prelude::*;
+
+    const NAMES: [&str; 2] = ["env-1", "env-2"];
+
+    #[derive(Clone, Copy, Debug)]
+    enum Move {
+        /// The environment's MC reports its plugins.
+        Announce(usize),
+        /// Its files arrive.
+        Serve(usize),
+        /// The second environment goes offline, or comes back.
+        Leave,
+        Return,
+    }
+
+    fn moves() -> impl Strategy<Value = Move> {
+        prop_oneof![
+            (0..2usize).prop_map(Move::Announce),
+            (0..2usize).prop_map(Move::Serve),
+            Just(Move::Leave),
+            Just(Move::Return),
+        ]
+    }
+
+    /// What is true of the environments: told of its plugins, files kept
+    /// (they stay on disk), online.
+    #[derive(Default)]
+    struct Model {
+        announced: [bool; 2],
+        ready: [bool; 2],
+        away: bool,
+        shown: Option<usize>,
+    }
+
+    impl Model {
+        fn visible(&self, at: usize) -> bool {
+            self.announced[at] && self.ready[at] && !(at == 1 && self.away)
+        }
+
+        /// The copy the tab shows: the one it had while that is ready,
+        /// otherwise the first that is.
+        fn settle(&mut self) {
+            if self.shown.is_some_and(|at| self.visible(at)) {
+                return;
+            }
+            self.shown = (0..2).find(|&at| self.visible(at));
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+
+        #[test]
+        fn the_tab_shows_a_ready_copy_and_keeps_it_while_it_is(
+            steps in proptest::collection::vec(moves(), 1..30),
+        ) {
+            let (hub, cache) = hub("tab-prop");
+            let mut model = Model::default();
+            for step in steps {
+                match step {
+                    Move::Announce(at) if !(at == 1 && model.away) => {
+                        plugins(&hub, NAMES[at], vec![reviews("r1")]);
+                        model.announced[at] = true;
+                    }
+                    Move::Serve(at) if model.announced[at] && !(at == 1 && model.away) => {
+                        serve_all(&hub, NAMES[at], "r1");
+                        model.ready[at] = true;
+                    }
+                    Move::Leave if !model.away => {
+                        cluster(&hub, false);
+                        model.away = true;
+                        model.announced[1] = false;
+                    }
+                    Move::Return if model.away => {
+                        cluster(&hub, true);
+                        model.away = false;
+                    }
+                    _ => continue,
+                }
+                model.settle();
+                let expected = model.shown.map(|at| copy_of(&cache, NAMES[at])).unwrap_or_default();
+                prop_assert_eq!(tab_url(&hub), expected, "after {:?}", step);
+            }
+        }
+    }
+}
+
 #[test]
 fn what_the_window_keeps_out_of_the_sidebar_follows_what_runs() {
     let (hub, _) = hub("unlisted");

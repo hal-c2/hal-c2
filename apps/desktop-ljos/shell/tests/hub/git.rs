@@ -1,8 +1,13 @@
 //! `git`: the header's git pill for the route's checkout and what its buttons
 //! run (GitController.cpp, features/source-control/git-actions.feature).
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::McError;
+use ljos::prelude::{Platform, RecordedUrls};
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -215,6 +220,71 @@ fn a_failed_action_says_why_and_a_dropped_connection_does_not_resend_it() {
             .count()
             >= 1
     );
+}
+
+/// A push the MC refused, offering `cta`; the toast's id and its button's.
+fn refused(hub: &Hub, cta: Json) -> Json {
+    hub.dispatch("git.commit", json!({"message": "m"}));
+    frame(
+        hub,
+        json!({"kind": "action_failed", "message": "git push failed: refused", "cta": cta}),
+    );
+    let failure = toasts(hub)[0].clone();
+    assert_eq!(failure["title"], "Action failed");
+    failure
+}
+
+#[test]
+fn a_failure_a_settings_page_fixes_links_to_the_page() {
+    let hub = hub(local(true, false), remote(0, 0));
+    let opened = RecordedUrls::default();
+    Platform::of(&hub.engine).set_open_url(Rc::new(opened.clone()));
+    let failure = refused(
+        &hub,
+        json!({"kind": "open_url", "label": "Grant Workflows permission",
+               "url": "https://github.com/acme/shop/settings/installations"}),
+    );
+    assert_eq!(failure["actions"][0]["label"], "Grant Workflows permission");
+    hub.dispatch(
+        "notification.action",
+        json!({"id": failure["id"], "actionId": "primary"}),
+    );
+    assert_eq!(
+        opened.urls(),
+        ["https://github.com/acme/shop/settings/installations"]
+    );
+}
+
+#[test]
+fn a_failure_a_command_fixes_copies_the_command_and_stays_up() {
+    let hub = hub(local(true, false), remote(0, 0));
+    let copied = Rc::new(RefCell::new(Vec::<String>::new()));
+    let sink = copied.clone();
+    Bridge::of(&hub.engine).set_clipboard_writer(&hub.engine, move |t| {
+        sink.borrow_mut().push(t.to_owned());
+        true
+    });
+    let failure = refused(
+        &hub,
+        json!({"kind": "copy_command", "label": "Copy command",
+               "command": "gh auth refresh -s workflow"}),
+    );
+    assert_eq!(failure["actions"][0]["label"], "Copy command");
+    hub.dispatch(
+        "notification.action",
+        json!({"id": failure["id"], "actionId": "primary"}),
+    );
+    assert_eq!(*copied.borrow(), ["gh auth refresh -s workflow"]);
+    let after = titles(&hub);
+    assert!(after.contains(&"Action failed".to_owned()), "{after:?}");
+    assert!(after.contains(&"Command copied".to_owned()), "{after:?}");
+}
+
+#[test]
+fn a_failure_with_no_known_remedy_offers_nothing() {
+    let hub = hub(local(true, false), remote(0, 0));
+    let failure = refused(&hub, Json::Null);
+    assert_eq!(failure["actions"], json!([]));
 }
 
 #[test]

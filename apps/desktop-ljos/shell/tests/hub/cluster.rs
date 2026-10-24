@@ -1,6 +1,7 @@
 //! Settings → Cluster (`cluster`).
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use hal_c2_shell::bridge::Bridge;
@@ -150,6 +151,315 @@ fn a_removed_machines_drafts_go_with_it_once_the_mc_agrees() {
     answer(&hub, "env-1", "cluster.remove", Ok(members(&[])));
     assert_eq!(environments(), ["env-1"]);
     assert!(drafts::draft(&hub.engine, &kept).is_some());
+}
+
+/// This machine runs 2.0 and is clustered with `studio`, connected on 1.3.
+fn behind() -> serde_json::Value {
+    json!({"clustered": true, "version": "2.0", "members": [
+        {"id": "id-studio", "label": "studio", "version": "1.3", "connected": true}]})
+}
+
+#[test]
+fn sending_this_machines_version_says_how_each_member_took_it_and_reads_again() {
+    let hub = opened();
+    answer(&hub, "env-1", "cluster.status", Ok(behind()));
+    hub.dispatch("cluster.update", json!({}));
+    assert_eq!(state(&hub)["busy"], true);
+    assert_eq!(
+        crate::page::last(&hub, "env-1", "cluster.update"),
+        json!({})
+    );
+    answer(
+        &hub,
+        "env-1",
+        "cluster.update",
+        Ok(json!({"version": "2.0", "members": [
+            {"id": "id-studio", "label": "studio", "from": "1.3", "outcome": "updated"}]})),
+    );
+    assert_eq!(state(&hub)["busy"], false);
+    assert_eq!(
+        state(&hub)["notice"],
+        json!({"kind": "success", "text": "studio updated to 2.0."})
+    );
+    // The cluster is read again for the versions members now run.
+    assert_eq!(count(&hub, "cluster.status"), 2);
+}
+
+#[test]
+fn a_member_that_cannot_take_the_version_says_why() {
+    let hub = opened();
+    answer(&hub, "env-1", "cluster.status", Ok(behind()));
+    hub.dispatch("cluster.update", json!({}));
+    answer(
+        &hub,
+        "env-1",
+        "cluster.update",
+        Ok(json!({"version": "2.0", "members": [
+            {"label": "studio", "outcome": "This MC cannot update itself."},
+            {"label": "box", "outcome": "restarting on it"},
+            {"label": "den", "outcome": "has not finished"},
+            {"label": "hub", "outcome": "updated"}]})),
+    );
+    assert_eq!(
+        state(&hub)["notice"],
+        json!({"kind": "error", "text": "studio could not update: This MC cannot update itself. \
+            box is restarting on 2.0. den is still updating. hub updated to 2.0."})
+    );
+}
+
+#[test]
+fn nobody_to_update_and_a_refused_update_are_told() {
+    let hub = opened();
+    answer(&hub, "env-1", "cluster.status", Ok(members(&["a"])));
+    hub.dispatch("cluster.update", json!({}));
+    answer(
+        &hub,
+        "env-1",
+        "cluster.update",
+        Ok(json!({"version": "2.0", "members": []})),
+    );
+    assert_eq!(
+        state(&hub)["notice"],
+        json!({"kind": "success", "text": "No connected machine needs an update to 2.0."})
+    );
+    hub.dispatch("cluster.update", json!({}));
+    answer(
+        &hub,
+        "env-1",
+        "cluster.update",
+        Err(failure("access denied")),
+    );
+    assert_eq!(state(&hub)["busy"], false);
+    assert_eq!(
+        state(&hub)["notice"],
+        json!({"kind": "error", "text": "Update failed: access denied"})
+    );
+    assert_eq!(count(&hub, "cluster.status"), 3);
+}
+
+/// The machines the MC's cluster has, by label: connected, and the version.
+type Machines = BTreeMap<&'static str, (bool, &'static str)>;
+
+const MACHINES: [&str; 2] = ["laptop", "studio"];
+const VERSIONS: [&str; 2] = ["1.0", "2.0"];
+/// The machine that cannot take a version from another one.
+const STUCK: &str = "laptop";
+const REFUSAL: &str = "This MC cannot update itself.";
+
+fn together() -> Machines {
+    MACHINES.iter().map(|m| (*m, (true, "1.0"))).collect()
+}
+
+/// What the update the MC answers did to the machines, as the page says it:
+/// the notice's kind and text.
+fn updated(machines: &mut Machines) -> (&'static str, String) {
+    let mut lines = Vec::new();
+    let mut failed = false;
+    for (label, (connected, version)) in machines.iter_mut() {
+        if !*connected || *version == "2.0" {
+            continue;
+        }
+        if *label == STUCK {
+            failed = true;
+            lines.push(format!("{label} could not update: {REFUSAL}"));
+        } else {
+            lines.push(format!("{label} updated to 2.0."));
+            *version = "2.0";
+        }
+    }
+    if lines.is_empty() {
+        lines.push("No connected machine needs an update to 2.0.".to_owned());
+    }
+    (if failed { "error" } else { "success" }, lines.join(" "))
+}
+
+/// A call the MC holds: the `asked`th request, a read of the cluster or the
+/// update.
+#[derive(Clone, Debug)]
+struct Held {
+    update: bool,
+    asked: u32,
+}
+
+/// The page as the interleaving of reads, sendings and answers must leave it.
+#[derive(Clone, Debug)]
+struct Model {
+    mc: Machines,
+    open: bool,
+    shown: Machines,
+    notice: Option<(&'static str, String)>,
+    busy: bool,
+    /// Every read and update is a request; only the latest read's answer counts.
+    asked: u32,
+    held: Vec<Held>,
+}
+
+impl Model {
+    fn read(&mut self) {
+        self.asked += 1;
+        self.held.push(Held {
+            update: false,
+            asked: self.asked,
+        });
+    }
+
+    fn answer(&mut self, at: usize) {
+        let call = self.held.remove(at);
+        if !call.update {
+            if call.asked == self.asked {
+                self.shown = self.mc.clone();
+            }
+            return;
+        }
+        self.busy = false;
+        self.notice = Some(updated(&mut self.mc));
+        self.read();
+    }
+}
+
+#[derive(Clone, Debug)]
+enum Move {
+    Open(bool),
+    Refresh,
+    Update,
+    /// A machine connects, drops or moves to a version on its own.
+    Elsewhere(usize, bool, usize),
+    /// The MC answers the held call at this position (modulo how many).
+    Answer(usize),
+}
+
+fn moves() -> impl Strategy<Value = Move> {
+    prop_oneof![
+        2 => any::<bool>().prop_map(Move::Open),
+        2 => Just(Move::Refresh),
+        3 => Just(Move::Update),
+        2 => (0..MACHINES.len(), any::<bool>(), 0..VERSIONS.len())
+            .prop_map(|(m, c, v)| Move::Elsewhere(m, c, v)),
+        5 => (0..8usize).prop_map(Move::Answer),
+    ]
+}
+
+/// The cluster as the MC answers a read now.
+fn status_of(mc: &Machines) -> serde_json::Value {
+    json!({"clustered": true, "version": "2.0", "members": mc.iter()
+        .map(|(label, (connected, version))| json!({"id": format!("id-{label}"), "label": label,
+            "version": version, "connected": connected}))
+        .collect::<Vec<_>>()})
+}
+
+/// What the page shows of the cluster.
+fn shown_machines(hub: &Hub) -> BTreeMap<String, (bool, String)> {
+    state(hub)["status"]["members"]
+        .as_array()
+        .map(|members| {
+            members
+                .iter()
+                .map(|m| {
+                    (
+                        m["label"].as_str().unwrap().to_owned(),
+                        (
+                            m["connected"].as_bool().unwrap(),
+                            m["version"].as_str().unwrap().to_owned(),
+                        ),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The calls the MC holds, oldest first: their indexes in the hub's calls.
+fn held_calls(hub: &Hub) -> Vec<usize> {
+    let calls = hub.mc.calls.borrow();
+    (0..calls.len())
+        .filter(|&i| calls[i].1.starts_with("cluster.") && hub.mc.is_pending(i))
+        .collect()
+}
+
+proptest! {
+    /// The page shows the cluster as the latest read found it, says what the
+    /// last sending did, and is busy exactly while one is out, however reads,
+    /// sendings and the MC's answers interleave.
+    #[test]
+    fn the_page_is_what_reads_and_the_version_sent_leave_it(
+        steps in proptest::collection::vec(moves(), 1..40),
+    ) {
+        let hub = opened();
+        let mc = together();
+        answer(&hub, "env-1", "cluster.status", Ok(status_of(&mc)));
+        let mut model = Model {
+            mc: mc.clone(),
+            open: true,
+            shown: mc.clone(),
+            notice: None,
+            busy: false,
+            asked: 1,
+            held: Vec::new(),
+        };
+        for step in steps {
+            match step {
+                Move::Open(open) => {
+                    if model.open != open {
+                        model.open = open;
+                        if open {
+                            model.notice = None;
+                            model.read();
+                        }
+                        if open {
+                            hub.dispatch("cluster.open", json!({}));
+                        } else {
+                            hub.dispatch("settings.navigate", json!({"to": "/settings/general"}));
+                        }
+                    }
+                }
+                Move::Refresh => {
+                    model.read();
+                    hub.dispatch("cluster.refresh", json!({}));
+                }
+                Move::Update => {
+                    if model.open && !model.busy {
+                        model.busy = true;
+                        model.asked += 1;
+                        model.held.push(Held { update: true, asked: model.asked });
+                        hub.dispatch("cluster.update", json!({}));
+                    }
+                }
+                Move::Elsewhere(machine, connected, version) => {
+                    model.mc.insert(MACHINES[machine], (connected, VERSIONS[version]));
+                }
+                Move::Answer(at) => {
+                    if !model.held.is_empty() {
+                        let at = at % model.held.len();
+                        let index = held_calls(&hub)[at];
+                        // The MC answers with the cluster as it is when it answers.
+                        let result = if model.held[at].update {
+                            let members: Vec<_> = model
+                                .mc
+                                .iter()
+                                .filter(|(_, (c, v))| *c && *v != "2.0")
+                                .map(|(label, _)| json!({"id": format!("id-{label}"), "label": label,
+                                    "outcome": if *label == STUCK { REFUSAL } else { "updated" }}))
+                                .collect();
+                            json!({"version": "2.0", "members": members})
+                        } else {
+                            status_of(&model.mc)
+                        };
+                        model.answer(at);
+                        prop_assert!(hub.mc.reply(&hub.engine, index, Ok(result)));
+                    }
+                }
+            }
+            let page = state(&hub);
+            prop_assert_eq!(
+                shown_machines(&hub),
+                model.shown.iter().map(|(l, (c, v))| ((*l).to_owned(), (*c, (*v).to_owned()))).collect::<BTreeMap<_, _>>()
+            );
+            let notice = model.notice.as_ref().map(|(kind, text)| json!({"kind": kind, "text": text}));
+            prop_assert_eq!(page["notice"].clone(), notice.unwrap_or(serde_json::Value::Null));
+            prop_assert_eq!(page["busy"] == true, model.busy);
+            prop_assert_eq!(held_calls(&hub).len(), model.held.len());
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

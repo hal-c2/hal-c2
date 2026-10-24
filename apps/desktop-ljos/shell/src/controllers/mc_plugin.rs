@@ -435,6 +435,8 @@ pub struct McPlugin {
     /// "<environment>/<id>" → files.
     files: HashMap<String, Files>,
     pages: Vec<Json>,
+    /// Page key → the url its tab shows.
+    page_urls: HashMap<String, String>,
 }
 
 impl Controller for McPlugin {
@@ -457,6 +459,7 @@ impl Controller for McPlugin {
             running: HashMap::new(),
             files: HashMap::new(),
             pages: Vec::new(),
+            page_urls: HashMap::new(),
         }
     }
 
@@ -777,6 +780,8 @@ impl McPlugin {
         let mut environments = Vec::new();
         let mut pages: Vec<Json> = Vec::new();
         let mut page_at: HashMap<String, usize> = HashMap::new();
+        // Page key → the urls of its environments' copies that are ready.
+        let mut offered: HashMap<String, Vec<String>> = HashMap::new();
         let mut tabs: HashMap<String, usize> = HashMap::new();
         let mut thread_kinds = Map::new();
         let mut slot_parts = Vec::new();
@@ -843,6 +848,9 @@ impl McPlugin {
                     // environments coming and going leave it alone.
                     let group = format!("{page_key}@{}", text(entry, "revision"));
                     if let Some(&at) = page_at.get(&group) {
+                        if !url(path).is_empty() {
+                            offered.entry(group.clone()).or_default().push(url(path));
+                        }
                         let merged = &mut pages[at];
                         if let Some(list) = merged["environments"].as_array_mut() {
                             list.push(environment.clone().into());
@@ -854,6 +862,9 @@ impl McPlugin {
                         continue;
                     }
                     page_at.insert(group.clone(), pages.len());
+                    if !url(path).is_empty() {
+                        offered.entry(group.clone()).or_default().push(url(path));
+                    }
                     pages.push(json!({
                         "key": group,
                         "pluginId": id,
@@ -897,6 +908,24 @@ impl McPlugin {
                 "plugins": shown_plugins,
             }));
         }
+        // A page keeps the copy it shows while that copy is still ready: the
+        // copies of one revision are interchangeable, and a page made anew
+        // from another copy's url would lose whatever it held. Only the first
+        // copy to be ready, or a new revision, sets it.
+        let mut shown_urls = HashMap::new();
+        for page in &mut pages {
+            let key = text(page, "key").to_owned();
+            if let Some(kept) = self.page_urls.get(&key)
+                && offered.get(&key).is_some_and(|urls| urls.contains(kept))
+            {
+                page["url"] = kept.clone().into();
+                page["error"] = "".into();
+            }
+            if !text(page, "url").is_empty() {
+                shown_urls.insert(key, text(page, "url").to_owned());
+            }
+        }
+        self.page_urls = shown_urls;
         // A page split by version says which environments each of its tabs
         // is for.
         for page in &mut pages {
