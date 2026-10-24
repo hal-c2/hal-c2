@@ -245,7 +245,7 @@ pub fn choose(world: &mut World, path: &str, entry: &str) -> Outcome {
     let offered = item.is_some_and(|i| brick.flag(world, i, "enabled"));
     expect!(offered, "the menu does not offer {entry}");
     if let Some(item) = item
-        && let Err(error) = world.engine().invoke_by_name(item, "triggered", &[])
+        && let Err(error) = world.engine().emit_by_name(item, "triggered", &[])
     {
         fail!("triggered: {error}");
     }
