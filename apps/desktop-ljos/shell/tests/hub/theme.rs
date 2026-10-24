@@ -16,6 +16,7 @@ use hal_c2_shell::controllers::theme::{
     Mode, Themes, ThemesObject, canonical_color, derive_palette,
 };
 use hal_c2_shell::json::{Json, from_value};
+use ljos::item::Font;
 use ljos::prelude::{ColorScheme, Engine, QmlValue, Value};
 use serde_json::{Map, json};
 use tempfile::TempDir;
@@ -1218,4 +1219,44 @@ fn the_shell_theme_file_is_followed_as_it_changes() {
     std::fs::remove_file(&file).unwrap();
     delivered(&hub, &woken, |hub| theme_store(hub, "loaded") == "false");
     assert_eq!(theme_store(&hub, "lastError"), "");
+}
+
+/// Text with no size of its own beside text sized as the bricks size it.
+const UNSIZED: &str = r#"
+import QtQuick
+import QtQuick.Controls
+
+Item {
+    readonly property int plainSize: plain.font.pixelSize
+    readonly property real plainWidth: plain.implicitWidth
+    readonly property real plainHeight: plain.implicitHeight
+    readonly property real sizedWidth: sized.implicitWidth
+    readonly property real sizedHeight: sized.implicitHeight
+    readonly property int labelSize: label.font.pixelSize
+    readonly property string family: plain.font.family
+
+    Text { id: plain; text: "Hamburgefonstiv" }
+    Text { id: sized; text: "Hamburgefonstiv"; font.pixelSize: 13 }
+    Label { id: label; text: "Hamburgefonstiv" }
+}
+"#;
+
+/// On macOS desktop-qt's text starts in the system's font at 13 px
+/// (`QGuiApplication::font()`, 13 pt at macOS's 72 dpi) where Ljós's
+/// starts at 12, so the start the shell gives Ljós on macOS
+/// (`theme::system_font`) is what text without a size of its own is.
+#[test]
+fn macos_text_without_a_size_starts_at_desktop_qts_13_px() {
+    let hub = Hub::new();
+    let mac = hal_c2_shell::theme::system_font(&Font::fallback(), true, &[]);
+    ljos::set_application_font(&hub.engine, Some(&mac));
+    let source = crate::common::compile(&[("Unsized", UNSIZED)], &[]);
+    let (root, _window) = hub.show(source, "Unsized");
+    let read = |name| hub.engine.read_by_name(root, name).to_number();
+    assert_eq!(read("plainSize"), 13.0);
+    assert_eq!(read("labelSize"), 13.0);
+    assert_eq!(read("plainWidth"), read("sizedWidth"));
+    assert_eq!(read("plainHeight"), read("sizedHeight"));
+    let family = hub.engine.read_by_name(root, "family");
+    assert_eq!(hub.engine.to_js_string(&family).to_string(), "system-ui");
 }
