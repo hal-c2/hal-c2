@@ -12,6 +12,7 @@
 use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use serde_json::{Value, json};
 
+use super::settings::fake_config;
 use crate::fake_mc::FakeMc;
 use crate::harness::{Outcome, Q, Steps, at, show};
 use crate::world::World;
@@ -169,9 +170,27 @@ fn scan(world: &mut World) -> Outcome {
     )
 }
 
+fn provider(instance_id: &str, name: &str, model: &str) -> Value {
+    json!({
+        "instanceId": instance_id,
+        "driver": instance_id,
+        "displayName": name,
+        "enabled": true,
+        "installed": true,
+        "status": "ready",
+        "auth": {"status": "authenticated"},
+        "models": [{"slug": model, "name": model}],
+    })
+}
+
 fn open(world: &mut World) -> Outcome {
-    // TODO(port): desktop-qt gives the MC's config two providers (FakeConfig)
-    // and waits for the settings scope to be editable.
+    let providers = vec![
+        provider("codex", "Codex", "codex-model"),
+        provider("claude", "Claude", "claude-model"),
+    ];
+    fake_config(&mut world.mc)
+        .config
+        .insert("providers".into(), Value::Array(providers));
     world.connect()?;
     world.sync()?;
     world.with::<Navigation, _>(|n, engine| {
@@ -180,7 +199,9 @@ fn open(world: &mut World) -> Outcome {
     world.wait_for_with(
         |w| {
             let section = section(w);
-            section["open"].as_bool() == Some(true) && at(&section, "discovery.status") == "ready"
+            section["open"].as_bool() == Some(true)
+                && at(&section, "discovery.status") == "ready"
+                && w.state("settingsScope")["editable"] == json!(true)
         },
         |w| {
             format!(
