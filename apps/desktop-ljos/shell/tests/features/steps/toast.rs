@@ -153,9 +153,12 @@ pub fn register(steps: &mut Steps) {
             world.dispatch("notification.dismiss", json!({"id": toast["id"]}))
         },
     );
+    // On the wall clock and on the shell's, where a toast's timer runs.
     steps.step("(\\d+) seconds? pass(?:es)?", |world, c, _| {
-        let later = world.now() + Duration::seconds(c[0].parse().unwrap_or(0));
+        let seconds: i64 = c[0].parse().unwrap_or(0);
+        let later = world.now() + Duration::seconds(seconds);
         world.set_time(later);
+        world.advance(seconds.unsigned_abs() * 1000)?;
         world.pump()
     });
 }

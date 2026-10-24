@@ -292,9 +292,9 @@ pub fn register(steps: &mut Steps) {
 
     steps.step(&format!("the user sees {Q}"), |world, c, _| {
         // The archive's page title, or the welcome wizard's (or its recovery page's).
-        // TODO(port): OnboardingSteps' onboardingShows (the welcome wizard's text).
         let shown = |w: &World| {
             at(&w.state("archivedThreads"), "title") == &json!(c[0])
+                || super::onboarding::onboarding_shows(w, &c[0])
                 || w.peek_part::<Shown>()
                     .and_then(|shown| shown.0.as_ref())
                     .is_some_and(|brick| brick.shows(w, &c[0]).unwrap_or(false))
