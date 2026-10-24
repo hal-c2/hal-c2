@@ -52,6 +52,7 @@ pub mod stash;
 pub mod storage_layout;
 pub mod stream;
 pub mod thread_fork;
+pub mod thread_list;
 pub mod thread_menu;
 pub mod thread_pull_request_link;
 pub mod thread_row;
@@ -113,6 +114,7 @@ pub fn register(steps: &mut Steps) {
     storage_layout::register(steps);
     stream::register(steps);
     thread_fork::register(steps);
+    thread_list::register(steps);
     thread_menu::register(steps);
     thread_pull_request_link::register(steps);
     thread_row::register(steps);
