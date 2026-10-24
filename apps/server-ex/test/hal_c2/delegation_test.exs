@@ -95,10 +95,28 @@ defmodule HalC2.Orchestration.DelegationTest do
           "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"}
         }),
         run("cr", 1, child_status, completed(child_status))
+        | preparation(child_status)
       ])
 
     :ok
   end
+
+  # A run waiting on its worktree has the "Preparing workspace" item the MC gives it.
+  defp preparation("preparing"),
+    do: [
+      {"turn-item", "turn-item:workspace-preparation:cr",
+       %{
+         "s" => %{
+           "id" => "turn-item:workspace-preparation:cr",
+           "runId" => "cr",
+           "ordinal" => 1,
+           "type" => "command_execution",
+           "status" => "running"
+         }
+       }}
+    ]
+
+  defp preparation(_status), do: []
 
   defp completed(status) when status in ["running", "queued"], do: %{}
   defp completed(_), do: %{"completedAt" => @at}
@@ -204,6 +222,39 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       assert Delegation.reconcile("p") == 1
       assert %{"status" => "completed", "result" => "done"} = task()
+    end
+  end
+
+  describe "a task whose child fails or is cancelled while its worktree is prepared" do
+    # Nothing but `fail_prepared/4` ends such a child's run, so it must tell the caller.
+    for {status, failure, text} <- [
+          {"failed", %{"message" => "no space left"},
+           "Workspace preparation failed: no space left"},
+          {"cancelled", nil, "Workspace preparation was cancelled."}
+        ] do
+      test "the caller's task settles #{status} with why" do
+        delegate("preparing")
+        :ok = HalC2.Streams.watch("p", self())
+
+        assert :ok =
+                 HalC2.Orchestration.fail_prepared(
+                   "c",
+                   "cr",
+                   unquote(status),
+                   unquote(Macro.escape(failure))
+                 )
+
+        await_settled()
+        assert %{"status" => unquote(status), "result" => unquote(text)} = task()
+        assert item()["status"] == unquote(status)
+      end
+    end
+
+    defp await_settled do
+      if task()["status"] == "running" do
+        assert_receive {:hal_c2_stream, "p", _}, 5_000
+        await_settled()
+      end
     end
   end
 

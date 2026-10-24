@@ -113,6 +113,13 @@ that driver; an explicit `providerInstanceId` is honored exactly and fails
 when unavailable. Selecting a different provider without a model uses that
 provider's first advertised model.
 
+`workspace` picks the child's checkout: the caller's (the default), the
+project root, a new worktree cut from the caller's branch, or an existing
+worktree of the project. Anything but the caller's own checkout needs a
+full-access caller in default mode, as `hal_c2_thread_launch` does, and is
+refused before anything is created, so a task never falls back to the caller's
+checkout. A child whose worktree cannot be prepared ends its task with why.
+
 Delegation requires an active parent run owned by the MCP credential's
 provider session. The request becomes the
 `delegated_task.request` command.

@@ -42,6 +42,77 @@ Feature: Delegating tasks to subagents
     Then the subagent thread works in worktree "/work/p"
 
   @mc
+  Scenario: A task that asks to inherit works where the caller works
+    When the agent in "parent" delegates a task with workspace "{'type':'inherit'}"
+    Then the subagent thread works in worktree "/work/p"
+
+  @mc
+  Scenario: A task can ask for its own new worktree, cut from the caller's local commits
+    Given "parent" has a commit that is not on any other branch
+    When the agent in "parent" delegates a task with workspace "{'type':'worktree'}"
+    Then the subagent thread works in a new worktree other than "/work/p"
+    And that worktree has the caller's commit
+    And the task's status reports that worktreePath and branch
+    And the subagent's first turn starts in it, after it was prepared
+
+  @mc
+  Scenario: A task's new worktree can name its branch and base
+    When the agent in "parent" delegates a task with workspace "{'type':'worktree','baseRef':'main','branch':'task/a'}"
+    Then the subagent thread works in a new worktree on branch "task/a"
+    # startFromOrigin defaults to false; true fetches and starts from origin's copy of baseRef
+
+  @mc
+  Scenario: A caller that needs approval can ask for the root checkout it already works in
+    Given the task's caller "parent" works in the project root
+    And the task's caller "parent" is approval-required
+    When the agent in "parent" delegates a task with workspace "{'type':'root'}"
+    Then the subagent thread works in the project root
+
+  @mc
+  Scenario: A task can use another worktree of the project
+    Given the project has another worktree "/work/other" on branch "other"
+    When the agent in "parent" delegates a task with workspace "{'type':'existing_worktree','worktreePath':'/work/other'}"
+    Then the subagent thread works in worktree "/work/other" on branch "other"
+
+  @mc
+  Scenario Outline: A workspace that cannot be honoured refuses the task before it starts
+    Given the task asks for the workspace "<workspace>"
+    When the agent in "parent" delegates a task
+    Then the tool fails with code "workspace_invalid"
+    And "parent" has no subagent task
+    And the project has no worktree besides "/work/p"
+
+    Examples:
+      | workspace                                                |
+      | {'type':'existing_worktree','worktreePath':'/nowhere'}   |
+      | {'type':'existing_worktree','worktreePath':'relative'}   |
+      | {'type':'worktree','branch':'main'}                      |
+      | {'type':'worktree','baseRef':'no-such-ref'}              |
+
+  @mc
+  Scenario: A caller that needs approval cannot ask for another workspace
+    Given the task asks for the workspace "{'type':'worktree'}"
+    And the task's caller "parent" is approval-required
+    When the agent in "parent" delegates a task
+    Then the tool fails with code "workspace_escalation_denied"
+    And "parent" has no subagent task
+
+  @mc
+  Scenario: A worktree that cannot be prepared ends the task, not the caller's checkout
+    Given adding the next worktree fails
+    When the agent in "parent" delegates a task with workspace "{'type':'worktree'}"
+    Then the task ends "failed" with the result "Workspace preparation failed"
+    And the subagent never ran
+
+  @mc
+  Scenario: Cancelling a worktree's preparation ends the task
+    Given the next worktree is held while it is prepared
+    And the agent in "parent" delegated a task with workspace "{'type':'worktree'}"
+    When the worktree setup is cancelled
+    Then the task ends "cancelled" with the result "Workspace preparation was cancelled"
+    And the subagent never ran
+
+  @mc
   Scenario: The subagent uses the caller's model unless the task names another
     When the agent in "parent" delegates a task without naming a provider
     Then the subagent runs on "codex" with the caller's model
