@@ -152,12 +152,18 @@ defmodule HalC2.WebSocketTerminalPropTest do
   def next_state(state, _result, {:call, _, :sub, [id]}),
     do: %{state | subs: [id | state.subs], started: true}
 
-  def next_state(state, _result, {:call, _, :unsub, [id]}),
-    do: %{state | subs: List.delete(state.subs, id)}
+  # With its last subscription the terminal is no longer awaited.
+  def next_state(state, _result, {:call, _, :unsub, [id]}) do
+    subs = List.delete(state.subs, id)
+    %{state | subs: subs, lost: state.lost and subs != []}
+  end
 
   # The subscriptions were forgotten; the next one starts the terminal again.
-  def next_state(state, _result, {:call, _, :kill, []}), do: %{state | subs: [], started: false}
-  def next_state(state, _result, {:call, _, :lose, []}), do: %{state | lost: true}
+  def next_state(state, _result, {:call, _, :kill, []}),
+    do: %{state | subs: [], started: false, lost: false}
+
+  def next_state(state, _result, {:call, _, :lose, []}),
+    do: %{state | lost: state.lost or state.subs != []}
 
   def next_state(%{lost: true} = state, _result, {:call, _, :back, []}),
     do: %{state | subs: [], lost: false}

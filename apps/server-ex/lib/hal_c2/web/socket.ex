@@ -1161,10 +1161,19 @@ defmodule HalC2.Web.Socket do
     end
   end
 
+  # Nothing here follows the terminal any more: it is no longer awaited either,
+  # and cluster news stops with the last one that was.
   defp unwatch_terminal(state, key) do
     gone = for {ref, {_, ^key, _}} <- state.terminals, do: ref
     for ref <- gone, do: Process.demonitor(ref, [:flush])
-    %{state | terminals: Map.drop(state.terminals, gone)}
+
+    lost =
+      for {mc, keys} <- state.lost, (left = keys -- [key]) != [], into: %{}, do: {mc, left}
+
+    if state.lost != %{} and lost == %{},
+      do: :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+
+    %{state | terminals: Map.drop(state.terminals, gone), lost: lost}
   end
 
   # A terminal that closed said so first. Any other end is told to its
@@ -1183,6 +1192,10 @@ defmodule HalC2.Web.Socket do
       lose_terminal(state, mc, key)
     end
   end
+
+  # Unfollowed meanwhile: nothing awaits it.
+  defp lose_terminal(state, _mc, key) when not is_map_key(state.by_terminal, key),
+    do: {:ok, state}
 
   defp lose_terminal(state, mc, key) do
     # The 3-tuple messages of `node_type`, which `follow/4`'s `{:nodedown, mc}` is not.
