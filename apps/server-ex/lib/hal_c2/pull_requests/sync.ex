@@ -23,7 +23,7 @@ defmodule HalC2.PullRequests.Sync do
   @interval 60_000
   @slow_interval 15 * 60_000
   @snapshot_fields ~w(state title headBranch baseBranch isDraft updatedAt closedAt mergedAt)
-  @optional_fields ~w(author additions deletions changedFiles reviewDecision checksState mergeability)
+  @optional_fields ~w(author additions deletions changedFiles reviewDecision checksState mergeability activity)
 
   @doc "Options: `interval`, the sweep period in ms, or nil for no timer and no first sweep."
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
