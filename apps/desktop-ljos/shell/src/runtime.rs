@@ -18,7 +18,7 @@
 //!
 //! This is a reload of the whole shell and not Ljós's own hot reload
 //! (ARCHITECTURE.md §12.1, `Setup::watch`), which keeps the state of the
-//! QML across a save. TODO(ljos#?): Ljós's watcher follows one root with a
+//! QML across a save. TODO(ljos#98, ljos#99): Ljós's watcher follows one root with a
 //! fixed entry, and the facade offers it only with the `mcp` feature. The
 //! shell has an import path of several roots (the user's, the bricks, its
 //! own), and changes its entry when the user's shell comes or goes or fails.
@@ -311,7 +311,7 @@ fn make(engine: &Engine, key: &str, name: &str) -> Result<ObjectId, String> {
 /// Lets the previous generation's window go. The host's root is hidden and
 /// kept instead: Ljós shows another `Window` in a window of its own, but has
 /// no way for the app to replace its root, which stays the platform's first
-/// window. TODO(ljos#?): replace the root with the new generation's window,
+/// window. TODO(ljos#100): replace the root with the new generation's window,
 /// as `QuickScene::replace_root` does for Ljós's own reload.
 fn retire(engine: &Engine, state: &RuntimeState, old: ObjectId) {
     if state.root.get() == Some(old) {
