@@ -40,10 +40,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
+          persist-credentials: false
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1

@@ -143,7 +143,6 @@ Full glossary with file links: `docs/internals/glossary.md`
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
 - `packages/client-runtime` - client protocol and state code the TUI uses; the Qt clients' C++ mirrors parts of it.
-- `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency.
 
 ## Taste
 
