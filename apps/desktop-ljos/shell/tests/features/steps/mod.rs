@@ -23,6 +23,7 @@ pub mod connection_health;
 pub mod connections;
 pub mod device;
 pub mod draft;
+pub mod environment;
 pub mod fake_files;
 pub mod file_search;
 pub mod files_explorer;
@@ -34,6 +35,7 @@ pub mod keybinding;
 pub mod keymap;
 pub mod launch;
 pub mod launch_folder;
+pub mod layout;
 pub mod licenses;
 pub mod link;
 pub mod load_balancing;
@@ -48,6 +50,7 @@ pub mod navigation;
 pub mod onboarding;
 pub mod orchestration_view;
 pub mod other_machine;
+pub mod palette;
 pub mod plan;
 pub mod planner;
 pub mod plugin;
@@ -63,6 +66,7 @@ pub mod settings;
 pub mod settings_connections;
 pub mod settings_pages;
 pub mod settings_rows;
+pub mod shortcut;
 pub mod snap_shot;
 pub mod source_control_settings;
 pub mod stash;
@@ -83,6 +87,7 @@ pub mod turn;
 pub mod usage;
 pub mod usage_limits_command;
 pub mod viewing;
+pub mod window;
 pub mod workspace;
 
 /// Every domain's steps.
@@ -106,6 +111,7 @@ pub fn register(steps: &mut Steps) {
     connections::register(steps);
     device::register(steps);
     draft::register(steps);
+    environment::register(steps);
     fake_files::register(steps);
     file_search::register(steps);
     files_explorer::register(steps);
@@ -116,6 +122,7 @@ pub fn register(steps: &mut Steps) {
     keymap::register(steps);
     launch::register(steps);
     launch_folder::register(steps);
+    layout::register(steps);
     licenses::register(steps);
     link::register(steps);
     load_balancing::register(steps);
@@ -130,6 +137,7 @@ pub fn register(steps: &mut Steps) {
     onboarding::register(steps);
     orchestration_view::register(steps);
     other_machine::register(steps);
+    palette::register(steps);
     plan::register(steps);
     planner::register(steps);
     plugin::register(steps);
@@ -145,6 +153,7 @@ pub fn register(steps: &mut Steps) {
     settings_connections::register(steps);
     settings_pages::register(steps);
     settings_rows::register(steps);
+    shortcut::register(steps);
     snap_shot::register(steps);
     source_control_settings::register(steps);
     stash::register(steps);
@@ -165,5 +174,6 @@ pub fn register(steps: &mut Steps) {
     usage::register(steps);
     usage_limits_command::register(steps);
     viewing::register(steps);
+    window::register(steps);
     workspace::register(steps);
 }
