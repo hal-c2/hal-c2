@@ -4,6 +4,7 @@
 
 use crate::harness::Steps;
 
+pub mod agents;
 pub mod centre;
 pub mod connection;
 pub mod connection_health;
@@ -18,6 +19,7 @@ pub mod viewing;
 
 /// Every domain's steps.
 pub fn register(steps: &mut Steps) {
+    agents::register(steps);
     centre::register(steps);
     connection::register(steps);
     connection_health::register(steps);
