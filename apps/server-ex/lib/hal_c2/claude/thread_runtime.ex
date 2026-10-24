@@ -393,7 +393,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       Enum.any?(state.work, fn
         {_, %{sub: %{} = sub}} -> is_map_key(Map.get(sub, :tools, %{}), tool_use_id)
         _ -> false
-      end)
+      end) or buffered_subagent_tool?(state.wake, tool_use_id)
 
     {:reply, reply, state}
   end
@@ -1076,7 +1076,12 @@ defmodule HalC2.Claude.ThreadRuntime do
   defp message(%{"type" => "system", "subtype" => "task_notification"} = task, state) do
     tool = state.tasks[task["task_id"]] || task["tool_use_id"]
     status = Map.get(@task_status, task["status"], "failed")
-    state = if state.work[tool], do: end_work(state, tool, status, task["summary"]), else: state
+
+    state =
+      if state.work[tool],
+        do: end_work(state, tool, status, task["summary"], summary: true),
+        else: state
+
     %{state | tasks: Map.delete(state.tasks, task["task_id"])}
   end
 
@@ -1606,6 +1611,21 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
+  # A subagent's message waiting with a wake for its run (`receive_message/2`) has not
+  # recorded its tool calls yet.
+  defp buffered_subagent_tool?(%{buffer: buffer}, tool_use_id) when is_list(buffer) do
+    Enum.any?(buffer, fn
+      %{"type" => "assistant", "parent_tool_use_id" => parent, "message" => %{"content" => c}}
+      when is_binary(parent) and is_list(c) ->
+        Enum.any?(c, &match?(%{"type" => "tool_use", "id" => ^tool_use_id}, &1))
+
+      _ ->
+        false
+    end)
+  end
+
+  defp buffered_subagent_tool?(_wake, _tool_use_id), do: false
+
   defp subagent_block(sub, %{"type" => "text", "text" => text}, key),
     do: NativeSubagent.item(sub, key, "assistant_message", "completed", %{"text" => text})
 
@@ -1879,10 +1899,10 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # Ends one piece of work: its subagent with the task's `result`, or its command item.
-  defp end_work(state, tool, status, result) do
+  defp end_work(state, tool, status, result, opts \\ []) do
     case state.work[tool] do
       %{sub: %{} = sub} ->
-        NativeSubagent.finish(sub, status, result)
+        NativeSubagent.finish(sub, status, result, opts)
 
       %{item: %{id: item_id, node: node_id}} ->
         at = Entities.now()

@@ -1295,8 +1295,6 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   # --- helpers -----------------------------------------------------------------------
 
-  # Calls delegate_task; a waiting call runs in a task (`context.wait`) until the step
-  # that ends it. Once the child exists it is the scenario's "subagent" thread.
   # `delegate_task` as Claude calls it for its tool use `tool_use`.
   defp claude_delegates(context, thread, tool_use) do
     params = %{
@@ -1335,6 +1333,8 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     }
   end
 
+  # Calls delegate_task; a waiting call runs in a task (`context.wait`) until the step
+  # that ends it. Once the child exists it is the scenario's "subagent" thread.
   defp delegate(context, caller, input) do
     input =
       %{"task" => "wait for it"}
