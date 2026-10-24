@@ -19,6 +19,7 @@ use chrono::{DateTime, Utc};
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::controller;
 use hal_c2_shell::controllers::archived_threads::ArchivedThreads;
+use hal_c2_shell::controllers::panel::RightPanel;
 use hal_c2_shell::controllers::threads::ThreadStore;
 use hal_c2_shell::controllers::toasts::Toasts;
 use hal_c2_shell::controllers::usage::Usage;
@@ -413,6 +414,9 @@ impl World {
         let engine = shell.engine.clone();
         engine.set_wall_clock_origin(Some(time.timestamp_millis() as f64));
         let _ = controller::with::<ThreadStore, _>(&engine, |c, engine| {
+            c.set_clock(engine, Clock::fixed(time))
+        });
+        let _ = controller::with::<RightPanel, _>(&engine, |c, engine| {
             c.set_clock(engine, Clock::fixed(time))
         });
         let _ = controller::with::<Usage, _>(&engine, |c, _| c.set_clock(move || time));
