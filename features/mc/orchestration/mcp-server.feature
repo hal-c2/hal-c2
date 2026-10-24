@@ -47,12 +47,6 @@ Feature: The HAL-C2 MCP server agents receive
     And a wait by an agent on "claudeAgent" may last an hour
     And a wait by an agent on an ACP provider may not reach a minute
 
-  @mc
-  Scenario: A wait by an agent on an ACP provider is cut short of a minute
-    Given thread "other" in "demo" is idle
-    When the agent of "caller" on "opencode" waits on "other" for 2 hours
-    Then the wait is cut to less than a minute
-
   @mc @plugin-claude
   Scenario: A renewed credential replaces the old one in a running Claude thread
     Given the agent of a running Claude thread uses the "hal-c2" server
