@@ -135,6 +135,67 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     |> FakeAcp.thread("Agent work")
   end
 
+  # Kimi CLI's calls as `src/kimi_cli/acp/session.py` sends them: the tool's name as
+  # the title, the arguments' JSON streamed in as the content, the result at the end.
+  @kimi_args %{
+    "Shell" => %{"command" => "ls -la"},
+    "ReadFile" => %{"path" => "src/app.ts"},
+    "Grep" => %{"pattern" => "TODO"},
+    "WriteFile" => %{"path" => "notes.md", "content" => "hi"}
+  }
+
+  step "Kimi streams a {string} call's arguments while it runs", %{args: [tool]} = context do
+    args = JSON.encode!(Map.fetch!(@kimi_args, tool))
+    [key | _] = Map.values(Map.fetch!(@kimi_args, tool))
+
+    running = fn update, title, text ->
+      %{
+        "update" => %{
+          "sessionUpdate" => update,
+          "toolCallId" => "call-1",
+          "title" => title,
+          "status" => "in_progress",
+          "content" => [%{"type" => "content", "content" => %{"type" => "text", "text" => text}}]
+        }
+      }
+    end
+
+    turn = %{
+      "match" => "use the tool",
+      "steps" => [
+        running.("tool_call", tool, ""),
+        running.("tool_call_update", tool, String.slice(args, 0, 8)),
+        running.("tool_call_update", "#{tool}: #{key}", args),
+        %{
+          "update" => %{
+            "sessionUpdate" => "tool_call_update",
+            "toolCallId" => "call-1",
+            "status" => "completed",
+            "content" => [
+              %{"type" => "content", "content" => %{"type" => "text", "text" => "export {}"}}
+            ]
+          }
+        },
+        %{"text" => "Done."}
+      ]
+    }
+
+    context = FakeAcp.install(context, "kimi", %{"turns" => [turn | FakeAcp.turns()]})
+    World.put_app_env(:acp_commands, %{"kimi" => [context.fakes["kimi"].bin]})
+    HalC2.Acp.forget("kimi")
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Acp.forget("kimi") end)
+
+    FakeAcp.settings(fn settings ->
+      put_in(settings, [Access.key("providerInstances", %{}), "kimi"], %{
+        "driver" => "acpRegistry",
+        "enabled" => true,
+        "config" => %{"agentId" => "kimi"}
+      })
+    end)
+
+    FakeAcp.thread(context, "Agent work")
+  end
+
   step "the MC projects the call", context do
     context = FakeAcp.send_message(context, "use the tool")
     state = FakeAcp.await_run(context, "completed")
@@ -148,7 +209,7 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     Map.put(context, :projected, item)
   end
 
-  step ~r/^the timeline shows it as a (?<kind>file read|file search|web search)$/,
+  step ~r/^the timeline shows it as a (?<kind>file read|file search|web search|command|tool call that names only its file)$/,
        %{args: [kind]} = context do
     item = context.projected
     assert item["status"] == "completed"
@@ -164,6 +225,15 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
 
       "web search" ->
         assert %{"type" => "web_search", "patterns" => ["https://example.com/docs"]} = item
+
+      "command" ->
+        assert %{"type" => "command_execution", "input" => "ls -la", "output" => "export {}"} =
+                 item
+
+      # The file's text stays out of the timeline, as a read's does.
+      "tool call that names only its file" ->
+        assert %{"type" => "dynamic_tool", "toolName" => "WriteFile"} = item
+        assert item["input"] == %{"path" => "notes.md"}
     end
 
     context

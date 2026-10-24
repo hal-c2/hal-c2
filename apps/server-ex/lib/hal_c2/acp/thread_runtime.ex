@@ -35,9 +35,10 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, NativeSubagent}
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
+  alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 12
+  @state_version 13
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -150,6 +151,8 @@ defmodule HalC2.Acp.ThreadRuntime do
        thread_id: thread_id,
        conn: nil,
        agent: nil,
+       # Whether the agent is Kimi CLI, whose tool calls `Kimi.update/1` reshapes.
+       kimi: false,
        mode: nil,
        capabilities: %{},
        session_id: nil,
@@ -400,6 +403,7 @@ defmodule HalC2.Acp.ThreadRuntime do
       subagent_ended?(update) -> {:noreply, subagent_ended(state, update)}
       commands = available_commands(update) -> {:noreply, offer(state, commands)}
       state.turn == nil -> {:noreply, state}
+      state.kimi -> {:noreply, update(Kimi.update(update), state)}
       true -> {:noreply, update(update, state)}
     end
   end
@@ -643,7 +647,13 @@ defmodule HalC2.Acp.ThreadRuntime do
     do: state |> Map.merge(%{v: 11, last_run: nil}) |> migrate()
 
   defp migrate(%{v: 11} = state),
-    do: Map.merge(state, %{v: 12, model_method: "session/set_config_option"})
+    do:
+      state
+      |> Map.merge(%{v: 12, model_method: "session/set_config_option"})
+      |> migrate()
+
+  defp migrate(%{v: 12} = state),
+    do: Map.merge(state, %{v: 13, kimi: Kimi.agent?(state.agent)})
 
   # --- session -------------------------------------------------------------------
 
@@ -728,6 +738,7 @@ defmodule HalC2.Acp.ThreadRuntime do
          state
          | conn: conn,
            agent: instance,
+           kimi: Kimi.agent?(instance),
            mode: mode,
            server: server,
            capabilities: init["agentCapabilities"] || %{}
@@ -1387,7 +1398,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         state |> killed(id, call) |> finish_tool(id, call)
 
       true ->
-        state |> running_command(id, call) |> running_search(id, call)
+        state |> running_command(id, call) |> running_search(id, call) |> running_tool(id, call)
     end
   end
 
@@ -1426,6 +1437,22 @@ defmodule HalC2.Acp.ThreadRuntime do
       _ -> state
     end
   end
+
+  # A tool announced before its input (Kimi streams it in) shows it once it runs.
+  defp running_tool(state, id, %{"rawInput" => input}) do
+    with %{kind: :tool, id: item_id} = item <- state.items[id],
+         true <- item["input"] != input do
+      commit(state, fn stream ->
+        [Orchestration.upsert(stream, "turn-item", item_id, &Map.put(&1, "input", input))]
+      end)
+
+      %{state | items: Map.put(state.items, id, Map.put(item, "input", input))}
+    else
+      _ -> state
+    end
+  end
+
+  defp running_tool(state, _id, _call), do: state
 
   # --- provider subagents -----------------------------------------------------------
 
