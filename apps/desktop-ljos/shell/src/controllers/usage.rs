@@ -231,7 +231,8 @@ fn place_of(bucket: &Json, window: &Json, hourly: bool) -> i64 {
 }
 
 /// `2 PM` in `zone`. An hour the clocks repeat when they fall back says its
-/// offset too.
+/// offset too. The "%-I %p" pattern carries a literal ASCII space, so it
+/// cannot gain the no-break space `sidebar_model::plain_spaces` removes.
 fn hour_name(at: DateTime<Utc>, zone: &Zone) -> String {
     let local = zone.at(at);
     let name = local.format("%-I %p").to_string();
