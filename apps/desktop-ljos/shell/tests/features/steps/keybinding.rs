@@ -1543,9 +1543,9 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
     steps.step("two environments are connected", |world, _, _| {
-        // TODO(port): ComposerWorkspaceSteps::connectSecondComposerEnvironment,
-        // which sets up the composer's second environment when its scenario
-        // has one.
+        if crate::steps::composer_workspace::connect_second_composer_environment(world)? {
+            return Ok(());
+        }
         ensure_shell(world)?;
         world.mc.join("mc-b", "env-b");
         world.sync()?;
