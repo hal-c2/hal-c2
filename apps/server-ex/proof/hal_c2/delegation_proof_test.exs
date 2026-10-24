@@ -1,7 +1,8 @@
 defmodule HalC2.DelegationProofTest do
-  # One delegated task, its parent and a child thread with two runs, with the caller
-  # waiting or not and cancelling, a report that fails, and the MC stopping at any step
-  # and booting again. prop/hal_c2/delegation_prop_test.exs runs the code in sequence;
+  # One delegated task, its parent and a child thread with a few runs and a command it
+  # may leave running in the background, on a provider that wakes itself when the command
+  # ends or one that does not, with the caller waiting or not and cancelling, a report
+  # that fails, and the MC stopping at any step and booting again. prop/hal_c2/delegation_prop_test.exs runs the code in sequence;
   # this explores every interleaving up to the bounds.
   @tool "the agent's tool call, a thin front to start/3 and wait/3; the model has the call and the wait"
   @policy "changes the wake or delivery of a task already in the parent; no part of how it ends"
@@ -19,7 +20,8 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation.delegate/3" =>
         ~w(record launch launch-failed wait-done time-out),
       "HalC2.Orchestration.Delegation.wait/3" => ~w(wait-done time-out),
-      "HalC2.Orchestration.Delegation.finished/3" => ~w(finished finished-late),
+      "HalC2.Orchestration.Delegation.finished/3" => "finished",
+      "HalC2.Orchestration.Delegation.settle_if_quiet/1" => ~w(finished check sweep),
       "HalC2.Orchestration.Delegation.report/5" => "report-fail",
       "HalC2.Orchestration.Delegation.cancel/2" => ~w(cancel cancel-refused),
       "HalC2.Orchestration.Delegation.reconcile/2" => ~w(reconcile-boot reconcile-after),
@@ -46,6 +48,10 @@ defmodule HalC2.DelegationProofTest do
     environment: %{
       "child-end" => "a run of the child thread ends, and its report starts",
       "child-start" => "the user rolls back and asks again, so the child works again",
+      "bg-start" => "a run of the child leaves a command running in the background",
+      "bg-end" =>
+        "the command ends; Codex is woken with a run about it, Grok's runtime checks the child",
+      "wake-run" => "the Codex runtime queues its run about the command (a Claude CLI its own)",
       "crash" => "the MC stops: its calls, reports and waits die; its store stays",
       "restart" => "the MC starts again and boots",
       "parent-idle" => "the parent's own turn ends"
@@ -63,7 +69,12 @@ defmodule HalC2.DelegationProofTest do
         "A task still working when the MC stopped ends with the turn that continues it",
         "A task whose subagent is not continued after a restart is interrupted",
         "Cancelling a running task interrupts the subagent",
-        "Cancelling a finished task is refused"
+        "Cancelling a finished task is refused",
+        "A subagent's own later turn that finishes its background work delivers the task's result",
+        "A task is not settled between its subagent's background work ending and the turn that work wakes",
+        "A Grok subagent's background work ending settles its task with its last answer",
+        "A task whose end report was lost settles without a restart",
+        "Cancelling a task that waits on background work stops that work"
       ]
     }
 
@@ -72,10 +83,15 @@ defmodule HalC2.DelegationProofTest do
   @besides ~w(crash parent-idle child-start report-fail launch-failed time-out cancel)
 
   # The code's own rules, which a rule that stays enabled takes in the end.
-  @fair ~w(record launch wait-done child-end finished finished-late reconcile-boot
+  @fair ~w(record launch wait-done child-end finished bg-end wake-run check sweep reconcile-boot
            recover-settle continue skip-continue reconcile-after restart)
 
-  for init <- ["waiting-start(2)", "async-start(2)"] do
+  for init <- [
+        "waiting-start(2, wakes-itself)",
+        "async-start(2, wakes-itself)",
+        "waiting-start(2, grok)",
+        "async-start(2, grok)"
+      ] do
     test "a task settles once, from #{init}", %{proof: proof} do
       refute_reachable(proof, unquote(init), "settled-twice", [])
     end
@@ -94,6 +110,21 @@ defmodule HalC2.DelegationProofTest do
 
     test "a result acknowledged to a wait was there to read, from #{init}", %{proof: proof} do
       refute_reachable(proof, unquote(init), "unread", [])
+    end
+
+    test "a task never ends while a command of its child runs, from #{init}", %{proof: proof} do
+      refute_reachable(proof, unquote(init), "bg-settled", [])
+    end
+
+    # A provider that wakes itself (Codex, Claude) ends the command before it queues the
+    # run about it, and nothing the MC stores tells that gap from a quiet child: a report
+    # or a check landing in it settles the task early. A known limit, not claimed here.
+    if init =~ "grok" do
+      test "a task never ends while its child works or owes work, from #{init}", %{
+        proof: proof
+      } do
+        refute_reachable(proof, unquote(init), "owing-settled", [])
+      end
     end
 
     # Fewer faults than a report has attempts: a report that gave up leaves the task
