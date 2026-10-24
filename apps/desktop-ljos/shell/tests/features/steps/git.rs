@@ -1350,9 +1350,8 @@ pub fn register(steps: &mut Steps) {
             let Some(row) = found else {
                 fail!("the command palette does not list \"{}\"", c[0]);
             };
-            world.with::<hal_c2_shell::controllers::palette::Palette, _>(|p, engine| {
-                p.run(engine, row)
-            })?;
+            // `act` refreshes the palette's props, which a controller call leaves stale.
+            super::palette::act(world, |p, engine| p.run(engine, row))?;
             return world.sync();
         }
         // A keybinding command by its id ("terminal.new"), as a key or a

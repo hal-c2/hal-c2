@@ -392,13 +392,13 @@ fn press(world: &mut World, key: &str) -> Outcome {
         .filter(|n| (1..=9).contains(n))
         && palette_open(world)
     {
-        world.with::<Palette, _>(|p, engine| p.run(engine, n - 1))?;
+        super::palette::act(world, |p, engine| p.run(engine, n - 1))?;
         return world.sync();
     }
     // Its field takes Escape (a step back) and Backspace on an empty query
     // (out of a submenu) too.
     if palette_open(world) && key == "Escape" {
-        world.with::<Palette, _>(|p, engine| p.back(engine))?;
+        super::palette::act(world, |p, engine| p.back(engine))?;
         return world.sync();
     }
     // And mod+Enter, which adds the folder being browsed.
@@ -406,14 +406,14 @@ fn press(world: &mut World, key: &str) -> Outcome {
         && lower == "mod+enter"
         && world.with::<Palette, _>(|p, _| p.mode() == "browse")?
     {
-        world.with::<Palette, _>(|p, engine| p.add_browsed_folder(engine))?;
+        super::palette::act(world, |p, engine| p.add_browsed_folder(engine))?;
         return world.sync();
     }
     if palette_open(world)
         && key == "Backspace"
         && world.with::<Palette, _>(|p, _| p.query().is_empty())?
     {
-        world.with::<Palette, _>(|p, engine| p.leave_submenu(engine))?;
+        super::palette::act(world, |p, engine| p.leave_submenu(engine))?;
         return world.sync();
     }
     // Settings, SnapShots' recorder takes every key while it records
