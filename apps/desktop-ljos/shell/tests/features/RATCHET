@@ -2,7 +2,83 @@
 # `cargo test -p hal_c2_shell --test features` fails when one of them stops
 # passing; `-- --raise` adds the ones that newly pass. Never remove a line to
 # make a run pass: fix the regression.
+composer/drafting-and-sending.feature: A background prompt starts a thread without leaving the composer
+composer/drafting-and-sending.feature: A background prompt that fails can be restored
+composer/drafting-and-sending.feature: A message over the character limit is refused before sending
+composer/drafting-and-sending.feature: A new thread's first message leaves the composer as it is sent
+composer/drafting-and-sending.feature: A send the MC rejects restores the draft
+composer/drafting-and-sending.feature: Each thread keeps its own draft
+composer/drafting-and-sending.feature: Enter sends the message
+composer/drafting-and-sending.feature: Sending while disconnected keeps the draft
+composer/drafting-and-sending.feature: Shift+Enter starts a new line instead of sending
+composer/drafting-and-sending.feature: Switching threads before the draft syncs does not leak text into the new thread
+composer/drafting-and-sending.feature: Text typed while a new thread starts carries over to the thread
+composer/drafting-and-sending.feature: The send shortcut setting decides what Enter does [Enter, "hello", Enter, the message is sent]
+composer/drafting-and-sending.feature: The send shortcut setting decides what Enter does [Mod+Enter for multiline prompts, "hello", Enter, the message is sent]
+composer/drafting-and-sending.feature: The send shortcut setting decides what Enter does [Mod+Enter for multiline prompts, two lines, Enter, a new line is added to the draft]
+composer/drafting-and-sending.feature: The send shortcut setting decides what Enter does [Mod+Enter for multiline prompts, two lines, Mod+Enter, the message is sent]
+composer/drafting-and-sending.feature: The send shortcut setting decides what Enter does [Mod+Enter, "hello", Enter, a new line is added to the draft]
+composer/drafting-and-sending.feature: The send shortcut setting decides what Enter does [Mod+Enter, "hello", Mod+Enter, the message is sent]
+composer/drafting-and-sending.feature: The thread says a message is sending until its MC takes it
+composer/drafting-and-sending.feature: mod+alt+Enter starts a new thread in the background
+composer/editors-and-keys.feature: A restored prompt joins what the draft already holds
+composer/editors-and-keys.feature: A stashed prompt can be deleted
+composer/editors-and-keys.feature: Earlier prompts are recalled in an empty composer
+composer/editors-and-keys.feature: Enter in normal mode does not send
+composer/editors-and-keys.feature: Escape enters normal mode when Vim keys are on
+composer/editors-and-keys.feature: Inserted text replaces the selection without sending
+composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [$, the cursor moves to the end of the line]
+composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [A, the user inserts at the end of the line]
+composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [w, the cursor moves to "world"]
+composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [x, the draft reads "ello world"]
+composer/editors-and-keys.feature: Stashing a prompt clears the composer and it can be restored
+composer/editors-and-keys.feature: Stashing an empty draft brings back the only stashed prompt
+composer/editors-and-keys.feature: Switching threads returns Vim keys to insert mode
+composer/editors-and-keys.feature: Text meant for another thread is not inserted
+composer/editors-and-keys.feature: The stash keeps the 20 newest prompts
+composer/editors-and-keys.feature: Vim keys can be turned on from settings
+composer/qt-scenarios.feature: Enter sends the draft in the foreground
+composer/qt-scenarios.feature: Up below the first line moves the caret
+composer/qt-scenarios.feature: Up in an empty composer recalls the previous prompt
+composer/question-answers.feature: A proposed plan is implemented from the composer
+composer/question-answers.feature: A question can be dismissed without an answer
+composer/queue-and-steer.feature: A held queue is resumed from the composer
+composer/queue-and-steer.feature: A held queue says its messages are safe
+composer/queue-and-steer.feature: A held queue that only waits on the provider can be resumed
+composer/queue-and-steer.feature: A queued message can steer the running turn
+composer/queue-and-steer.feature: A removal the MC refuses is reported
+composer/queue-and-steer.feature: A resume that the MC refuses is reported
+composer/queue-and-steer.feature: A resume warning dismissed and shown again is one fresh warning
+composer/queue-and-steer.feature: A resume while reconnecting is refused with a warning
+composer/queue-and-steer.feature: A shortcut bound to stop interrupts the running turn
+composer/queue-and-steer.feature: A steer the MC refuses is reported
+composer/queue-and-steer.feature: An edit the MC refuses stays in the composer
+composer/queue-and-steer.feature: An edit whose message starts running is dropped when the draft had text
+composer/queue-and-steer.feature: An edit whose message starts running is kept when the draft was empty
+composer/queue-and-steer.feature: Editing the last queued message from the composer and cancelling restores the prior draft
+composer/queue-and-steer.feature: Leaving the thread ends the edit
+composer/queue-and-steer.feature: Queued messages are listed in the order they run
+composer/queue-and-steer.feature: Removing a queued message cancels its run
+composer/queue-and-steer.feature: Saving an edited queued message changes it and gives the draft back
+composer/queue-and-steer.feature: Stopping the running turn from an empty composer
+composer/queue-and-steer.feature: What the MC queued for the agent itself waits under what it stands for [a delegated task's result stored before results were notifications, Tax tests finished]
+composer/queue-and-steer.feature: What the MC queued for the agent itself waits under what it stands for [a delegated task's result, Tax tests finished]
+composer/queue-and-steer.feature: What the MC queued for the agent itself waits under what it stands for [the agent's own wake-up, Background activity updated]
+connections/cluster.feature: A cluster read that lands after a removal does not bring the member back
+connections/cluster.feature: A cluster the MC can no longer read is not shown as it was
+connections/cluster.feature: A join the MC refuses says why on the desktop
+connections/cluster.feature: A machine that cannot take the version says why on the desktop
 connections/cluster.feature: A member that joins later appears in the client without pairing again
+connections/cluster.feature: A member that left stays until the user removes it
+connections/cluster.feature: A session without administrative access sees the cluster read-only
+connections/cluster.feature: A user invites a machine from the desktop
+connections/cluster.feature: A user joins the desktop's machine to another's cluster with an invite
+connections/cluster.feature: A user removes a member from the desktop
+connections/cluster.feature: A user sends this machine's version to the other machines from the desktop
+connections/cluster.feature: Another settings section takes the cluster page's place
+connections/cluster.feature: Back leaves the desktop's cluster page
+connections/cluster.feature: The desktop says when only this machine can open an invite
+connections/cluster.feature: The desktop's settings show this machine's cluster
 connections/connection-health.feature: A client opened without a network waits for it
 connections/connection-health.feature: A cluster connection resumes each stream from where it stopped
 connections/connection-health.feature: A connection is ready only after the environment describes itself
@@ -28,26 +104,390 @@ connections/connection-health.feature: One connection serves every MC of a clust
 connections/connection-health.feature: Subscriptions follow a replaced connection
 connections/connection-health.feature: The environment's status names why it is reconnecting
 connections/connection-health.feature: The user copies a connection's trace id for a bug report
+connections/pairing.feature: A new pairing link can only be copied while its page is open
+connections/pairing.feature: Pairing again with a fresh link replaces a lost session
+desktop/native-centre.feature: A reply whose turn left no checkpoint cannot be reverted to
 desktop/native-connection.feature: A scripted run starts once the MC's first snapshot is in
 desktop/native-connection.feature: The shell connects with the MC's own access token
 desktop/native-connection.feature: The shell reconnects and subscribes again after the connection drops
+desktop/native-keybindings.feature: A focused terminal still hands the shell its own commands
+desktop/native-keybindings.feature: A key the shell has no command for stays with the focused control
+desktop/native-keybindings.feature: The native chrome's keys run in the shell
+desktop/native-navigation.feature: A new thread opens the project's draft
+desktop/native-navigation.feature: A thread deleted while the desktop was closed is not reopened
+desktop/native-navigation.feature: Leaving settings goes back to the thread
+desktop/native-navigation.feature: Opening a draft from the sidebar
+desktop/native-navigation.feature: Opening a thread from the sidebar
+desktop/native-navigation.feature: Opening pull requests
+desktop/native-navigation.feature: Opening usage
+desktop/native-navigation.feature: Reopening the desktop returns to the last thread
+desktop/native-projects.feature: A shell that may not reach local folders opens none
+desktop/native-projects.feature: Adding a project to an MC on another machine asks where it comes from
+desktop/native-projects.feature: Adding a project to an MC on this machine picks one of its folders
+desktop/native-projects.feature: An MC on another machine opens no local folders
+desktop/shell-host.feature: A screenshot of a desktop app that fails to start shows why and quits
 desktop/shell-host.feature: A screenshot taken without a display shows the app's window
+files/adding-projects.feature: A folder the environment refuses to add says why
+files/adding-projects.feature: A user with no projects is invited to add one
+files/adding-projects.feature: Adding a folder from the desktop and mobile apps registers it and starts a thread
+files/adding-projects.feature: Adding an existing project from the desktop and mobile apps opens its latest thread
+files/adding-projects.feature: Dropping a folder adds it as a project and starts a thread
+files/adding-projects.feature: Dropping a folder while the environment is disconnected reports a failure
+files/files-on-another-machine.feature: A file of a thread on another machine opens in this machine's apps [follows the path "src/cart.ts" in a terminal, the editor]
+files/files-on-another-machine.feature: A file of a thread on another machine opens in this machine's apps [reveals "src/cart.ts" in the file manager, the file manager]
+files/removing-and-listing-projects.feature: A confirmation for a project that goes away closes
+files/removing-and-listing-projects.feature: A removal the environment refuses keeps the project and says why
+files/removing-and-listing-projects.feature: Cancelling removal keeps the project
+files/removing-and-listing-projects.feature: Confirming removal clears the project and its drafts
+files/removing-and-listing-projects.feature: Removing a project asks for confirmation and explains what is lost
+files/removing-and-listing-projects.feature: Removing a registered folder from the folder explorer asks through project settings
+files/removing-and-listing-projects.feature: Removing the project the user is looking at returns home
+files/search.feature: Content search explains empty and invalid states [no project is open, Open a project to search its files.]
+files/search.feature: Content search explains empty and invalid states [nothing matches "zzz", No results found.]
+files/search.feature: Content search explains empty and invalid states [the query is empty, Type to search across your project.]
+files/search.feature: Content search explains empty and invalid states [the query is the regular expression "cart(", Invalid regular expression]
+files/search.feature: Content search groups matches by file and opens a match at its line
+files/search.feature: The file picker says when nothing matches
+files/search.feature: The result count summarises matches and files
+files/search.feature: The search is cleared when the user switches project
+mc/orchestration/runs.feature: A failed turn keeps the output it had already produced
+mc/orchestration/runs.feature: A provider retry is recorded as a retry
+mc/platform/storage-layout.feature: The desktop app's control socket lives in the runtime directory [XDG_RUNTIME_DIR is "/run/user/1000", /run/user/1000/hal-c2]
+mc/platform/websocket-protocol.feature: A client refuses a server speaking an unknown protocol
+mc/platform/websocket-protocol.feature: A client skips an event type it does not know
+navigation/focus.feature: Leaving settings goes back to the thread
+navigation/keybinding-customisation.feature: A condition limits where a rule applies [!terminalFocus, the composer has focus, runs]
+navigation/keybinding-customisation.feature: A condition limits where a rule applies [isDesktop, the user is in the desktop app, runs]
+navigation/keybinding-customisation.feature: A condition limits where a rule applies [somethingUnknown, anything, does not run]
+navigation/keybinding-customisation.feature: A condition limits where a rule applies [terminalFocus, the composer has focus, does not run]
+navigation/keybinding-customisation.feature: A condition limits where a rule applies [terminalOpen, the terminal is closed, does not run]
+navigation/keybinding-customisation.feature: A project script can be bound
+navigation/keybinding-customisation.feature: A reload of the keybindings is confirmed
+navigation/keybinding-customisation.feature: A rule the MC pushes applies at once
+navigation/keybinding-customisation.feature: A rule the MC removes stops applying
+navigation/keybinding-customisation.feature: An invalid rule is ignored and the rest still apply
+navigation/keybinding-customisation.feature: An unreadable file falls back to the defaults
+navigation/keybinding-customisation.feature: Defaults are kept alongside custom rules
+navigation/keybinding-customisation.feature: Reloads close together are confirmed once
+navigation/keybinding-customisation.feature: Starting with custom keybindings is not announced
+navigation/keybinding-customisation.feature: The last matching rule wins
+navigation/keybinding-settings.feature: A change is saved to every connected environment
+navigation/keybinding-settings.feature: A malformed condition is explained
+navigation/keybinding-settings.feature: A shortcut needs a modifier
+navigation/keybinding-settings.feature: Adding a binding for a command
+navigation/keybinding-settings.feature: An unknown condition variable is flagged
+navigation/keybinding-settings.feature: Commands have readable names [composer.sendAlternate, Composer: Opposite Queue or Steer Action]
+navigation/keybinding-settings.feature: Commands have readable names [composer.sendBackground, Composer: Start in Background]
+navigation/keybinding-settings.feature: Commands have readable names [script.test.run, Run Script: Test]
+navigation/keybinding-settings.feature: Commands have readable names [thread.copyReference, Pull Request: Copy Link or Thread ID]
+navigation/keybinding-settings.feature: Commands have readable names [thread.editQueuedMessage, Queue: Edit Last Queued Message]
+navigation/keybinding-settings.feature: Commands have readable names [thread.steerQueuedMessage, Queue: Send First Queued Message as Steer]
+navigation/keybinding-settings.feature: Conditions are built from variables, negation and groups
+navigation/keybinding-settings.feature: Conflicting bindings are called out
+navigation/keybinding-settings.feature: Default bindings cannot be removed, only rebound
+navigation/keybinding-settings.feature: Every command is listed with where its binding comes from
+navigation/keybinding-settings.feature: Recorded modifiers follow the platform [Linux, Ctrl, mod+y]
+navigation/keybinding-settings.feature: Recorded modifiers follow the platform [Linux, Super, meta+y]
+navigation/keybinding-settings.feature: Recorded modifiers follow the platform [macOS, Command, mod+y]
+navigation/keybinding-settings.feature: Recorded modifiers follow the platform [macOS, Control, ctrl+y]
+navigation/keybinding-settings.feature: Recording a new shortcut rebinds the command
+navigation/keybinding-settings.feature: Removing a custom binding
+navigation/keybinding-settings.feature: Resetting a custom binding restores the default
+navigation/keybinding-settings.feature: Save failures are reported [removes, Unable to remove keybinding]
+navigation/keybinding-settings.feature: Save failures are reported [saves, Unable to save keybinding]
+navigation/keybinding-settings.feature: Searching filters bindings [Custom, source]
+navigation/keybinding-settings.feature: Searching filters bindings [Start in Back, label]
+navigation/keybinding-settings.feature: Searching filters bindings [mod+shift+e, key]
+navigation/keybinding-settings.feature: Searching filters bindings [terminal.split, command]
+navigation/keybinding-settings.feature: Searching filters bindings [terminalFocus, condition]
+navigation/keybinding-settings.feature: The file cannot be opened
+navigation/keybinding-settings.feature: The file opens in the preferred editor
+navigation/keybindings.feature: A binding outside its context does nothing
+navigation/keybindings.feature: A command with no default binding can still be bound [rightPanel.toggleMaximized, mod+alt+m]
+navigation/keybindings.feature: A command with no default binding can still be bound [script.test.run, mod+alt+r]
+navigation/keybindings.feature: A command with no default binding can still be bound [thread.stop, mod+shift+.]
+navigation/keybindings.feature: A command with no default binding can still be bound [threadPanel.toggle, mod+alt+t]
+navigation/keybindings.feature: A default binding runs its command [appearance.cycle, mod+alt+shift+a, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [chat.new, mod+n, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [chat.new, mod+shift+o, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [chat.newLocal, mod+shift+n, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [commandPalette.toggle, mod+k, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [composer.branch, mod+shift+g, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [composer.effort, mod+shift+e, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [composer.host, mod+shift+h, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [composer.mode, mod+shift+a, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [composer.previousWorktree, mod+shift+l, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [composer.stash, mod+s, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [composer.workspace, mod+shift+x, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [diff.toggle, mod+d, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [editor.openFavorite, mod+o, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [filePicker.toggle, mod+p, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.jump.1, mod+1, with the model picker open, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.jump.2, mod+2, with the model picker open, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.jump.3, mod+3, with the model picker open, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.jump.4, mod+4, with the model picker open, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.jump.5, mod+5, with the model picker open, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.jump.6, mod+6, with the model picker open, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.jump.7, mod+7, with the model picker open, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.jump.8, mod+8, with the model picker open, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.jump.9, mod+9, with the model picker open, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.nextProvider, mod+shift+arrowdown, with the model picker open, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.previousProvider, mod+shift+arrowup, with the model picker open, aligned]
+navigation/keybindings.feature: A default binding runs its command [modelPicker.toggle, mod+shift+m, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [navigation.back, mod+[, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [navigation.forward, mod+], outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [preview.toggle, mod+shift+j, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [projectSearch.toggle, mod+shift+f, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [pullRequest.copyNumber, mod+shift+k, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [rightPanel.close, mod+w, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [rightPanel.toggle, mod+alt+b, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [sidebar.toggle, mod+b, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [terminal.close, mod+w, in a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [terminal.new, mod+n, in a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [terminal.split, mod+d, in a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [terminal.splitVertical, mod+shift+d, in a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [terminal.toggle, mod+j, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [theme.select, mod+alt+a, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [themeEditor.toggle, mod+alt+shift+t, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.copyReference, mod+shift+c, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.jump.1, mod+1, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.jump.2, mod+2, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.jump.3, mod+3, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.jump.4, mod+4, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.jump.5, mod+5, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.jump.6, mod+6, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.jump.7, mod+7, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.jump.8, mod+8, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.jump.9, mod+9, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.next, mod+shift+], anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.pin, mod+shift+p, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.previous, mod+shift+[, anywhere, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.settle, mod+shift+s, outside a terminal, aligned]
+navigation/keybindings.feature: A default binding runs its command [thread.steerQueuedMessage, mod+shift+enter, outside a terminal, aligned]
+navigation/keybindings.feature: A new local thread skips the project chooser
+navigation/keybindings.feature: A thread's number opens it
+navigation/keybindings.feature: A web shortcut works from the native chrome [chat.new, mod+n, aligned, the shell starts a new thread]
+navigation/keybindings.feature: A web shortcut works from the native chrome [chat.newLocal, mod+shift+n, aligned, the shell starts a new thread in place]
+navigation/keybindings.feature: A web shortcut works from the native chrome [commandPalette.toggle, mod+k, aligned, the shell opens the command palette]
+navigation/keybindings.feature: A web shortcut works from the native chrome [composer.branch, mod+shift+g, aligned, the composer opens its branch picker]
+navigation/keybindings.feature: A web shortcut works from the native chrome [composer.effort, mod+shift+e, aligned, the composer opens its effort picker]
+navigation/keybindings.feature: A web shortcut works from the native chrome [composer.host, mod+shift+h, aligned, the composer opens its host picker]
+navigation/keybindings.feature: A web shortcut works from the native chrome [composer.mode, mod+shift+a, aligned, the composer opens its mode picker]
+navigation/keybindings.feature: A web shortcut works from the native chrome [composer.previousWorktree, mod+shift+l, aligned, the draft takes the previous worktree]
+navigation/keybindings.feature: A web shortcut works from the native chrome [composer.stash, mod+s, aligned, the composer stashes its prompt]
+navigation/keybindings.feature: A web shortcut works from the native chrome [composer.workspace, mod+shift+x, aligned, the composer opens its workspace picker]
+navigation/keybindings.feature: A web shortcut works from the native chrome [diff.toggle, mod+d, aligned, the shell toggles the Diff tab]
+navigation/keybindings.feature: A web shortcut works from the native chrome [editor.openFavorite, mod+o, aligned, the shell opens the preferred editor]
+navigation/keybindings.feature: A web shortcut works from the native chrome [filePicker.toggle, mod+p, aligned, the shell opens the palette on files]
+navigation/keybindings.feature: A web shortcut works from the native chrome [modelPicker.toggle, mod+shift+m, aligned, the shell toggles the composer's picker]
+navigation/keybindings.feature: A web shortcut works from the native chrome [navigation.back, mod+[, aligned, the shell goes back]
+navigation/keybindings.feature: A web shortcut works from the native chrome [navigation.forward, mod+], aligned, the shell goes forward]
+navigation/keybindings.feature: A web shortcut works from the native chrome [preview.toggle, mod+shift+j, aligned, the shell toggles the Previews tab]
+navigation/keybindings.feature: A web shortcut works from the native chrome [projectSearch.toggle, mod+shift+f, aligned, the shell opens the palette's text search]
+navigation/keybindings.feature: A web shortcut works from the native chrome [rightPanel.toggle, mod+alt+b, aligned, the shell toggles the right panel]
+navigation/keybindings.feature: A web shortcut works from the native chrome [sidebar.toggle, mod+b, aligned, the shell toggles the sidebar]
+navigation/keybindings.feature: A web shortcut works from the native chrome [terminal.toggle, mod+j, aligned, the shell toggles the terminal drawer]
+navigation/keybindings.feature: A web shortcut works from the native chrome [theme.select, mod+alt+a, aligned, the shell opens the palette on themes]
+navigation/keybindings.feature: A web shortcut works from the native chrome [thread.copyReference, mod+shift+c, aligned, the shell copies the thread's reference]
+navigation/keybindings.feature: A web shortcut works from the native chrome [thread.jump.1, mod+1, aligned, the shell opens the sidebar's first]
+navigation/keybindings.feature: A web shortcut works from the native chrome [thread.jump.9, mod+9, aligned, the shell opens the sidebar's ninth]
+navigation/keybindings.feature: A web shortcut works from the native chrome [thread.next, mod+shift+], aligned, the shell opens the sidebar's next]
+navigation/keybindings.feature: A web shortcut works from the native chrome [thread.pin, mod+shift+p, aligned, the shell pins the thread]
+navigation/keybindings.feature: A web shortcut works from the native chrome [thread.previous, mod+shift+[, aligned, the shell opens the sidebar's previous]
+navigation/keybindings.feature: A web shortcut works from the native chrome [thread.settle, mod+shift+s, aligned, the shell settles the thread]
+navigation/keybindings.feature: Back and forward move through visited threads like browser history
+navigation/keybindings.feature: Ctrl stays Ctrl on macOS
+navigation/keybindings.feature: Keys without a modifier are never taken by the window
+navigation/keybindings.feature: Opening a thread after going back leaves nothing to go forward to
+navigation/keybindings.feature: Terminal shortcuts act on the focused terminal [mod+d, a second terminal opens side by side]
+navigation/keybindings.feature: Terminal shortcuts act on the focused terminal [mod+n, a new terminal opens instead of a new thread]
+navigation/keybindings.feature: Terminal shortcuts act on the focused terminal [mod+shift+d, a second terminal opens stacked below]
+navigation/keybindings.feature: Terminal shortcuts act on the focused terminal [mod+w, the focused terminal closes]
+navigation/keybindings.feature: The back shortcut returns where the user came from
+navigation/keybindings.feature: The new thread shortcut starts one in the project the window shows
+navigation/keybindings.feature: The next and previous thread follow the sidebar
+navigation/keybindings.feature: The next thread reaches a thread on another machine of the cluster
+navigation/keybindings.feature: The preview shortcut shows and hides the preview
+navigation/keybindings.feature: The same key runs different commands in different contexts
+navigation/keybindings.feature: The terminal shortcut shows and hides the thread's terminal
+navigation/keybindings.feature: There is no thread past either end of the sidebar
+navigation/keybindings.feature: mod means the platform's primary modifier [Linux, Ctrl]
+navigation/keybindings.feature: mod means the platform's primary modifier [Windows, Ctrl]
+navigation/keybindings.feature: mod means the platform's primary modifier [macOS, Command]
+navigation/landing.feature: A new thread that can not be started says so and tries again
+navigation/landing.feature: The first project added lands on its draft
+navigation/landing.feature: The open thread going away lands on a new thread
+navigation/landing.feature: With no projects the window stays home
+navigation/qt-shell-backlog.feature: A device tab streams a device screen
+navigation/qt-shell-backlog.feature: Opening a folder still reaches the running window after a launch without one
+navigation/qt-shell-backlog.feature: Opening a folder that is already a project reuses it
+navigation/qt-shell-backlog.feature: Opening a folder while the app runs adds it to the running window
+navigation/qt-shell-backlog.feature: Thread number shortcuts work in the native desktop shell
+navigation/windows.feature: The window title follows the thread's title
+plugins/keymaps.feature: Resetting keybindings removes every override
+plugins/ui-plugins.feature: A plugin URL that cannot be reached is reported
+preview/devices.feature: A Device tab in the background streams nothing
+preview/devices.feature: A device an agent opens shows as a side panel tab
+preview/devices.feature: A device powered off from a thread the user left closes that thread's tab
+preview/devices.feature: A device that sends nothing is an error the user can retry
+preview/devices.feature: A device the MC cannot open says why
+preview/devices.feature: A stopped device is offered to start
+preview/devices.feature: A stream that ends connects again
+preview/devices.feature: A stream the MC refuses is an error
+preview/devices.feature: A tab turned to another device never shows the last one's picture
+preview/devices.feature: A touch taken away mid-drag ends where it was
+preview/devices.feature: An Android emulator that rotates starts its video over
+preview/devices.feature: An environment without devices says so
+preview/devices.feature: Device support that is off points to its settings
+preview/devices.feature: Following the pointer opens the Integrations settings
+preview/devices.feature: Picking a device shows its screen
+preview/devices.feature: Powering a device off closes it and its tab
+preview/devices.feature: Rotating a simulator turns its screen
+preview/devices.feature: The tab says it is connecting until the first picture
+preview/devices.feature: Touches and keys reach a simulator through the MC
+preview/devices.feature: Touches, keys and buttons reach an emulator through the MC
+preview/devices.feature: Video that arrives in pieces still shows the screen
+preview/devices.feature: Video the desktop cannot decode is an error, not endless reconnecting
+providers/codex.feature: A plan Codex marked finished can still be implemented
+settings/connections.feature: A copy that the clipboard refuses reveals the link instead
+settings/connections.feature: A machine on its own offers no choice of machine for a pairing link
+settings/connections.feature: A machine that does not say where it is reached is paired at the address this desktop reached it at
+settings/connections.feature: A pairing link can be for another machine of the cluster
+settings/connections.feature: A pairing link can be shared as a QR code except on this machine's own address
+settings/connections.feature: A pairing link is for this machine until the user chooses another
+settings/connections.feature: A pairing link made on another machine is revoked there
+settings/connections.feature: A pairing link needs at least one permission
+settings/connections.feature: A pairing link that arrives after the user left the page is revoked, not shown [the MC answers, the user comes back to the Connections page]
+settings/connections.feature: A pairing link that arrives after the user left the page is revoked, not shown [the user comes back to the Connections page, the MC answers]
+settings/connections.feature: A pairing link that cannot be created is reported
+settings/connections.feature: A session without administrative access cannot manage who reaches this machine
+settings/connections.feature: A session without administrative access sees this machine read-only
+settings/connections.feature: Another machine that does not say where it is reached gets no pairing link
+settings/connections.feature: Copying a pairing link or its code
+settings/connections.feature: Creating a pairing link with chosen permissions
+settings/connections.feature: Nothing is paired yet
+settings/connections.feature: Only machines that are online are offered for a pairing link
+settings/connections.feature: Other machines are added from the Cluster settings
+settings/connections.feature: Revoking a connected client signs it out
+settings/connections.feature: Revoking a pairing link stops it from pairing
+settings/connections.feature: Revoking every other client keeps the current one
+settings/connections.feature: Tailscale that cannot publish the machine leaves no pairing link
+settings/connections.feature: The QR code of a pairing link keeps a size a phone can scan [a narrow window, whole, smaller]
+settings/connections.feature: The QR code of a pairing link keeps a size a phone can scan [a wide window, whole, at its full size]
+settings/connections.feature: The QR code of a pairing link keeps a size a phone can scan [a window narrower than a code can be read, no smaller than a phone can scan]
+settings/general.feature: A changed row can be reset to its default
+settings/general.feature: A row at its default offers no reset
+settings/general.feature: Turning inactive settling on starts from the default number of days
+settings/licenses.feature: A search with no match says so
+settings/licenses.feature: Each notice names its version, license and where it is used
+settings/licenses.feature: Notices that fail to load can be retried
+settings/licenses.feature: Opening an entry shows its full notice text
+settings/licenses.feature: Optional device tools are listed though they are not bundled
+settings/licenses.feature: Searching narrows the notices [MIT, license]
+settings/licenses.feature: Searching narrows the notices [effect, package name]
+settings/licenses.feature: Searching narrows the notices [mobile, app component]
+settings/saving-settings.feature: A change before the MC's settings are read is not saved
+settings/saving-settings.feature: A change is saved at the version the desktop read
+settings/saving-settings.feature: A change made over a stale copy keeps the other client's change
+settings/saving-settings.feature: A change that keeps meeting newer settings is reported and not saved
+settings/saving-settings.feature: A change the MC refuses is reported
+settings/saving-settings.feature: A device preference is saved in the desktop's own file
+settings/saving-settings.feature: A device preference that cannot be saved is reported and left as it was
+settings/saving-settings.feature: After a reconnect the desktop saves at the restarted MC's version
+settings/saving-settings.feature: Settings another client saves reach the desktop
+settings/saving-settings.feature: The MC's configuration reaches the desktop and follows its changes
+settings/saving-settings.feature: The desktop reads the MC's settings when it connects
+settings/search-and-navigation.feature: Back with nowhere to return to lands on a new thread
+settings/search-and-navigation.feature: Leaving settings returns to where the user was
+settings/search-and-navigation.feature: Moving between sections is one step back
+source-control/pull-request-actions.feature: Merging from the review
+source-control/pull-request-list.feature: A list the MC cannot read can be retried
+source-control/pull-request-list.feature: A pull request list beside the thread
+source-control/pull-request-list.feature: A pull request no thread works on offers to start one
+source-control/pull-request-list.feature: A workspace without pull requests says so
+source-control/pull-request-list.feature: An environment that cannot be reached is named on the page
+source-control/pull-request-list.feature: Leaving the page stops following changes
+source-control/pull-request-list.feature: Nothing under these filters
+source-control/pull-request-list.feature: Opening a pull request opens the thread working on it
+source-control/pull-request-list.feature: Refreshing the page asks the hosts afresh
+source-control/pull-request-list.feature: The page follows changes made from HAL-C2
+source-control/pull-request-list.feature: The page's filters narrow the list [drafts hidden, non-draft]
+source-control/pull-request-list.feature: The page's filters narrow the list [drafts only, draft]
+source-control/pull-request-list.feature: The page's filters narrow the list [merged ones, merged]
+source-control/pull-request-list.feature: The pull requests page with its filters
+source-control/pull-request-review.feature: A viewed mark the host refuses is taken back
+source-control/pull-request-review.feature: Commenting and reviewing from the review page
+source-control/pull-request-review.feature: Copying the number of the reviewed pull request
+source-control/pull-request-review.feature: Resolving and reopening a thread from the review page
+source-control/pull-request-review.feature: The pull request number cannot be copied
+source-control/pull-request-review.feature: The review page
+source-control/pull-request-review.feature: The review page refuses what cannot be sent
+source-control/pull-request-review.feature: The review page while the environment is unreachable
+source-control/pull-request-review.feature: Unmarking a viewed file on the review page
+source-control/pull-request-threads.feature: A pull request from another repository on a host a project reads
+source-control/pull-request-threads.feature: A pull request on a host no project can read
+source-control/pull-request-threads.feature: A pull request the MC does not link says why
+source-control/pull-request-threads.feature: A thread links several pull requests across repositories
+source-control/pull-request-threads.feature: An Azure DevOps pull request needs a project of its own repository
+source-control/pull-request-threads.feature: Linked pull requests of an unreachable environment stay as last synced
+source-control/pull-request-threads.feature: Linked pull requests stay current
+source-control/pull-request-threads.feature: Linking a pull request to a thread
+source-control/pull-request-threads.feature: Opening the thread's pull request from the composer
+source-control/pull-request-threads.feature: Refreshing the linked pull requests reads them from the host again
+source-control/pull-request-threads.feature: Starting a pull request thread from a pasted link
+source-control/pull-request-threads.feature: Unlinking a pull request from a thread
+source-control/stacked-pull-requests.feature: A stack that could not be refreshed says it may be stale
+source-control/stacked-pull-requests.feature: Confirming a stack merge shows scope and strategy
+source-control/stacked-pull-requests.feature: Confirming a stack rebase warns it rewrites history
+source-control/stacked-pull-requests.feature: The thread's pull request shows its stack
 threads/archive-delete.feature: Archiving asks first when the user wants confirmation
+threads/archive-delete.feature: Archiving the open thread opens a new thread in its project
 threads/archive-delete.feature: Archiving waits for the agent on the desktop and phone
 threads/archive-delete.feature: Deleting from the desktop and phone asks when the user wants confirmation
 threads/archive-delete.feature: Deleting the open thread opens the latest thread left in its project
 threads/archive-delete.feature: Deleting the open thread opens the next thread in the project
+threads/archive-delete.feature: Deleting the open thread, the last in its project, lands on a new thread
+threads/creating.feature: A new thread started while the list is scoped to a project uses that project
+threads/creating.feature: A new thread starts in the project the user is looking at
+threads/creating.feature: A thread cannot start from an empty task
+threads/creating.feature: Starting a thread from another thread's branch
+threads/drafts.feature: A draft whose project the MC removes goes with it
+threads/drafts.feature: A project that is gone starts nothing
+threads/drafts.feature: An empty draft is not listed
+threads/drafts.feature: Starting a new thread again reopens the same draft
+threads/drafts.feature: The draft becomes its thread when the MC creates it
+threads/drafts.feature: The draft's opening line offers every project
+threads/fork-and-lineage.feature: A failed fork is reported
+threads/fork-and-lineage.feature: A fork that has not reached this client yet
+threads/fork-and-lineage.feature: A relative that is no longer available
+threads/fork-and-lineage.feature: Forking from a response in the conversation
+threads/fork-and-lineage.feature: Merging back from the fork opens the parent
+threads/fork-and-lineage.feature: Merging back needs finished work
+threads/fork-and-lineage.feature: Opening the parent of a fork
+threads/fork-and-lineage.feature: Seeing a thread's relatives
+threads/fork-and-lineage.feature: The conversation shows where a fork came from
+threads/menu-actions.feature: A thread on an offline environment offers only what needs no environment
 threads/menu-actions.feature: Moving is offered once another machine of the cluster can take the thread
+threads/menu-actions.feature: The copy shortcut copies the open thread's id
 threads/menu-actions.feature: The header's title opens the open thread's menu without the project filter
+threads/menu-actions.feature: The pin shortcut pins and unpins the open thread
+threads/menu-and-selection.feature: A failed copy is reported
 threads/menu-and-selection.feature: Actions the environment does not support are left out
+threads/menu-and-selection.feature: Copying a path that is missing explains why
 threads/menu-and-selection.feature: Copying a thread reference [has no pull request, the thread id]
 threads/menu-and-selection.feature: Copying a thread reference [is linked to a pull request, the pull request address]
+threads/menu-and-selection.feature: Copying details of a thread confirms what was copied [branch, "chore/logs", Branch copied]
+threads/menu-and-selection.feature: Copying details of a thread confirms what was copied [path, the thread's workspace path, Path copied]
+threads/menu-and-selection.feature: Copying details of a thread confirms what was copied [thread id, the id of "Tidy logs", Thread ID copied]
 threads/menu-and-selection.feature: Filtering the list from a thread's project
 threads/menu-and-selection.feature: Opening a thread's menu
 threads/menu-and-selection.feature: Opening a thread's project settings
 threads/menu-and-selection.feature: The thread menu offers its actions in a fixed order
+threads/migration-and-handoffs.feature: The user is told threads were migrated
 threads/pinning-and-order.feature: Activity does not reorder threads
+threads/pinning-and-order.feature: Dropping files onto a thread attaches them
 threads/pinning-and-order.feature: New threads appear above arranged active threads
+threads/pinning-and-order.feature: Pinned threads are listed above active threads
 threads/pinning-and-order.feature: Pinning a thread
 threads/pinning-and-order.feature: Pinning and snoozing keep an active thread's position for later
 threads/pinning-and-order.feature: The undo offer counts the threads it will restore and names the shortcut [settled, Settled 2 threads]
@@ -60,3 +500,118 @@ threads/pinning-and-order.feature: Undoing a thread change [snoozed]
 threads/pinning-and-order.feature: Undoing a thread change [unpinned]
 threads/pinning-and-order.feature: Unpinning a thread
 threads/pinning-and-order.feature: Unpinning asks first when the user wants confirmation
+threads/pull-request-links.feature: An environment that cannot find pull requests says it needs an update
+threads/pull-request-links.feature: Choosing a different pull request from a pull request link
+threads/pull-request-links.feature: Unlinking returns the thread to its branch pull request
+threads/sidebar-list.feature: Jump hints appear while holding the modifier
+threads/sidebar-list.feature: Projects are ordered by recent use unless arranged by hand
+threads/sidebar-list.feature: Projects with the same name on two environments stay separate
+threads/sidebar-list.feature: Threads on an offline environment are still listed
+threads/sidebar-list.feature: Threads started by other agents are not listed
+threads/thread-list.feature: A project the MC adds is listed
+threads/thread-list.feature: A project the MC removes is no longer listed
+threads/thread-list.feature: Folders of one repository are one project
+threads/thread-list.feature: Folders of one repository stay apart when this device does not group them
+threads/thread-list.feature: Projects are listed by their latest thread
+threads/thread-list.feature: Projects can be ordered by when their threads were started
+threads/worktree-setup.feature: The conversation shows how the setup is going [failed, Worktree setup failed]
+threads/worktree-setup.feature: The conversation shows how the setup is going [finished, Worktree ready]
+threads/worktree-setup.feature: The conversation shows how the setup is going [is still running, Setting up worktree…]
+threads/worktree-setup.feature: The conversation shows how the setup is going [made the worktree but its setup script failed, Worktree ready, setup script failed]
+threads/worktree-setup.feature: The conversation shows how the setup is going [was cancelled, Worktree setup cancelled]
+threads/worktree-setup.feature: The user reads the setup details from the conversation
+timeline/approvals-and-questions.feature: A failed answer is kept or closed depending on why it failed [the connection dropped for a moment, still open so the user can answer again]
+timeline/approvals-and-questions.feature: A failed answer is kept or closed depending on why it failed [the request was already resolved, closed]
+timeline/approvals-and-questions.feature: A failed answer is reported and can be sent again
+timeline/approvals-and-questions.feature: A provider's warning is shown with the option it applies to
+timeline/approvals-and-questions.feature: A question stays answerable after its turn ends
+timeline/approvals-and-questions.feature: A request says what kind of permission it wants [a permission for an app, App permission approval]
+timeline/approvals-and-questions.feature: A request says what kind of permission it wants [access for an app, App access approval]
+timeline/approvals-and-questions.feature: A request says what kind of permission it wants [to change a file, File change approval]
+timeline/approvals-and-questions.feature: A request says what kind of permission it wants [to read a file, File read approval]
+timeline/approvals-and-questions.feature: A request says what kind of permission it wants [to run a command, Command approval]
+timeline/approvals-and-questions.feature: A request whose agent is gone cannot be answered
+timeline/approvals-and-questions.feature: An answer waiting on the MC is not sent twice
+timeline/approvals-and-questions.feature: The user answers an approval request [always allow it this session, the command runs and matching requests stop asking this session]
+timeline/approvals-and-questions.feature: The user answers an approval request [approve it, the command runs and the agent continues]
+timeline/approvals-and-questions.feature: The user answers an approval request [cancel the request, the command is not run and the turn stops waiting]
+timeline/approvals-and-questions.feature: The user answers an approval request [decline it, the command is not run and the agent is told it was declined]
+timeline/approvals-and-questions.feature: The user answers the agent's question [several answers, "Postgres" and "MySQL", "Postgres" and "MySQL"]
+timeline/approvals-and-questions.feature: The user writes their own answer
+timeline/markdown.feature: A GitHub alert shows its kind [CAUTION, Caution]
+timeline/markdown.feature: A GitHub alert shows its kind [IMPORTANT, Important]
+timeline/markdown.feature: A GitHub alert shows its kind [NOTE, Note]
+timeline/markdown.feature: A GitHub alert shows its kind [TIP, Tip]
+timeline/markdown.feature: A GitHub alert shows its kind [WARNING, Warning]
+timeline/markdown.feature: A link to a script is not a link
+timeline/markdown.feature: A reply being written keeps what is already shown
+timeline/markdown.feature: A reply shows its formatting
+timeline/markdown.feature: A user message keeps its line breaks
+timeline/markdown.feature: Markup in a message is shown as it was written
+timeline/plans-and-subagents.feature: A plan card does not repeat its title
+timeline/plans-and-subagents.feature: A proposed plan appears as a card titled by its first heading
+timeline/plans-and-subagents.feature: A subagent's elapsed time moves only while the Agents tab shows
+timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [cancelled, Stopped]
+timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [completed, Completed]
+timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [failed, Failed]
+timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [idle and resumable, Idle · resumable]
+timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [running, Working]
+timeline/plans-and-subagents.feature: A subagent's status is shown in the parent [waiting on a request, Working]
+timeline/plans-and-subagents.feature: A subagent's thread opens from the Agents tab
+timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the agent creates a thread, Created thread]
+timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the context is compacted, Context compacted]
+timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the context is handed to another agent, Context handoff]
+timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the conversation is forked, Conversation fork]
+timeline/plans-and-subagents.feature: No plan is offered while the agent is still working
+timeline/plans-and-subagents.feature: The Agents tab follows a subagent as it finishes
+timeline/plans-and-subagents.feature: The Agents tab keeps its rows as work starts and ends
+timeline/plans-and-subagents.feature: The Agents tab keeps what is running above what has finished
+timeline/plans-and-subagents.feature: The Agents tab lists the commands still running
+timeline/plans-and-subagents.feature: The Agents tab lists the thread's subagents
+timeline/plans-and-subagents.feature: The Agents tab says when each subagent finished, latest first
+timeline/plans-and-subagents.feature: The Agents tab tells the time as the user set it
+timeline/plans-and-subagents.feature: The Agents tab's end times follow the day over midnight
+timeline/plans-and-subagents.feature: The Agents tab's end times follow the day when the desktop wakes after midnight
+timeline/plans-and-subagents.feature: The user implements the proposed plan
+timeline/plans-and-subagents.feature: The user refines the plan with feedback
+timeline/runs-and-queue.feature: A sent attachment of a kind this client does not know is listed by name only
+timeline/runs-and-queue.feature: A sent file shows its name, kind and size
+timeline/runs-and-queue.feature: A sent message says how it reached the agent [queued and later promoted to a steer, Originally queued, then promoted to steer the active turn]
+timeline/runs-and-queue.feature: A sent message says how it reached the agent [queued behind the active turn, Queued behind the active turn]
+timeline/runs-and-queue.feature: A sent message says how it reached the agent [sent as a steer, Steered the active turn]
+timeline/runs-and-queue.feature: A sent message shows its images
+timeline/runs-and-queue.feature: An image is still shown after its address stops working
+timeline/scrolling-and-links.feature: A link in a reply opens only on a Ctrl-click [https://example.com/docs, without holding Ctrl, nothing is opened]
+timeline/scrolling-and-links.feature: A link in a reply opens only on a Ctrl-click [src/cart.ts, without holding Ctrl, nothing is opened]
+timeline/streaming.feature: A catch-up cut off part-way is not applied twice
+timeline/streaming.feature: A finished turn folds its work behind how long it took
+timeline/streaming.feature: A folded turn can be opened and closed again
+timeline/streaming.feature: A message from an earlier day also says which day it was sent [on December 30, 2025, 12/30/2025 9:05 AM, 9:05 AM, 30th December 2025]
+timeline/streaming.feature: A message from an earlier day also says which day it was sent [on September 20, 9/20 9:05 AM, 9:05 AM, 20th September 2026]
+timeline/streaming.feature: A message from an earlier day also says which day it was sent [yesterday, yesterday at 9:05 AM, 9:05 AM, 22nd September 2026]
+timeline/streaming.feature: A message says when it was sent, in the time format the user chose [12-hour, 9:05 AM]
+timeline/streaming.feature: A message says when it was sent, in the time format the user chose [24-hour, 09:05]
+timeline/streaming.feature: A message says when it was sent, in the time format the user chose [locale, 9:05 AM]
+timeline/streaming.feature: A running turn shows how long the agent has been working
+timeline/streaming.feature: A stopped turn says who stopped it [after 40 seconds, You stopped after 40s]
+timeline/streaming.feature: A stopped turn says who stopped it [before it did any work, You stopped this response]
+timeline/streaming.feature: A thread that falls behind is caught up from the MC
+timeline/streaming.feature: A thread whose MC leaves the cluster says so until the MC returns
+timeline/streaming.feature: Finished reasoning is labelled by what was thought
+timeline/streaming.feature: Only a turn's last reply carries its time and actions
+timeline/streaming.feature: Reasoning shows while it is written
+timeline/streaming.feature: Reasoning written in Markdown is labelled by its words alone
+timeline/streaming.feature: Retrying follows the thread again once its MC sends it
+timeline/tool-calls.feature: A tool call shows how it ended [failed, Failed]
+timeline/tool-calls.feature: A tool call shows how it ended [is still running, Running]
+timeline/tool-calls.feature: A tool call shows how it ended [was declined by the user, Declined]
+timeline/tool-calls.feature: A tool call shows how it ended [was interrupted, Stopped]
+timeline/tool-calls.feature: A tool call's icon says what kind of work it was [asked for approval, message-circle]
+timeline/tool-calls.feature: A tool call's icon says what kind of work it was [called an MCP tool, wrench]
+timeline/tool-calls.feature: A tool call's icon says what kind of work it was [changed a file, square-pen]
+timeline/tool-calls.feature: A tool call's icon says what kind of work it was [ran a command, terminal]
+timeline/tool-calls.feature: A tool call's icon says what kind of work it was [searched the files, search]
+timeline/tool-calls.feature: A tool call's icon says what kind of work it was [searched the web, globe]
+timeline/tool-calls.feature: Consecutive tool calls in a running turn show only the latest
+timeline/tool-calls.feature: Files changed by a turn are listed under its reply
+timeline/tool-calls.feature: The previous tool calls can be shown and hidden again
