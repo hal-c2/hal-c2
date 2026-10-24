@@ -120,6 +120,76 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     Map.put(context, :mcp_result, World.mcp_tool(context, caller, "delegate_task", input))
   end
 
+  # --- a Claude subagent's calls ------------------------------------------------------
+
+  # Claude's turn in `thread` stays open ("wait for it"); in it Claude starts a subagent
+  # (tool use agent-1), which calls `delegate_task` (tool use sub-call-1).
+  step "thread {string} on {string} has a subagent running",
+       %{args: [thread, "claudeAgent"]} = context do
+    selection = %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"}
+
+    context =
+      World.launch_titled(context, thread, nil, "wait for it", %{"modelSelection" => selection})
+
+    World.await_runs(context, thread, ["running"])
+
+    claude_says(context, thread, [
+      claude_tool_use(nil, "agent-1", "Agent", %{"prompt" => "Fan out"}),
+      %{
+        "type" => "system",
+        "subtype" => "task_started",
+        "task_id" => "task-agent-1",
+        "tool_use_id" => "agent-1",
+        "prompt" => "Fan out",
+        "task_type" => "local_agent"
+      },
+      claude_tool_use("agent-1", "sub-call-1", "mcp__hal-c2__delegate_task", %{
+        "task" => "wait for it"
+      })
+    ])
+
+    context
+  end
+
+  step "the subagent in {string} delegates a task", %{args: [thread]} = context do
+    Map.put(context, :mcp_result, claude_delegates(context, thread, "sub-call-1"))
+  end
+
+  step "Claude in {string} delegates a task itself", %{args: [thread]} = context do
+    claude_says(context, thread, [
+      claude_tool_use(nil, "own-call-1", "mcp__hal-c2__delegate_task", %{"task" => "wait for it"})
+    ])
+
+    Map.put(context, :mcp_result, claude_delegates(context, thread, "own-call-1"))
+  end
+
+  step "the refusal says a native subagent can't own HAL-C2 workers and to start such work with delegate_task",
+       context do
+    assert {:error, _, message} = context.mcp_result
+    assert message =~ "A native subagent can't own HAL-C2 workers"
+    assert message =~ "nothing can wake it"
+    assert message =~ "must itself be started with delegate_task"
+    context
+  end
+
+  step "{string} has no delegated task", %{args: [caller]} = context do
+    assert [%{"origin" => "provider_native"}] =
+             StreamState.list(World.stream(context, caller), "subagent")
+
+    context
+  end
+
+  step "{string} has a delegated task", %{args: [caller]} = context do
+    assert {:ok, %{"taskId" => task}} = context.mcp_result
+
+    assert task in Enum.map(
+             StreamState.list(World.stream(context, caller), "subagent"),
+             & &1["id"]
+           )
+
+    context
+  end
+
   step "{string} has no subagent task", %{args: [caller]} = context do
     assert StreamState.list(World.stream(context, caller), "subagent") == []
     context
@@ -756,6 +826,44 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   # Calls delegate_task; a waiting call runs in a task (`context.wait`) until the step
   # that ends it. Once the child exists it is the scenario's "subagent" thread.
+  # `delegate_task` as Claude calls it for its tool use `tool_use`.
+  defp claude_delegates(context, thread, tool_use) do
+    params = %{
+      "name" => "delegate_task",
+      "arguments" => %{"task" => "wait for it"},
+      "_meta" => %{"claudecode/toolUseId" => tool_use}
+    }
+
+    case World.mcp(context, thread, "tools/call", params, "claudeAgent") do
+      {200, %{"result" => %{"isError" => true, "content" => [%{"text" => text}]}}} ->
+        %{"code" => code, "message" => message} = JSON.decode!(text)
+        {:error, code, message}
+
+      {200, %{"result" => %{"structuredContent" => result}}} ->
+        {:ok, result}
+    end
+  end
+
+  # Claude's messages to the runtime of `thread`, handled once this returns.
+  defp claude_says(context, thread, messages) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, thread))
+    session = :sys.get_state(pid).session
+    for message <- messages, do: send(pid, {:claude, session, {:message, message}})
+    :sys.get_state(pid)
+  end
+
+  # A tool call of Claude's (`parent` nil) or of its subagent under the tool call `parent`.
+  defp claude_tool_use(parent, id, name, input) do
+    %{
+      "type" => "assistant",
+      "parent_tool_use_id" => parent,
+      "message" => %{
+        "id" => "m-#{id}",
+        "content" => [%{"type" => "tool_use", "id" => id, "name" => name, "input" => input}]
+      }
+    }
+  end
+
   defp delegate(context, caller, input) do
     input =
       %{"task" => "wait for it"}

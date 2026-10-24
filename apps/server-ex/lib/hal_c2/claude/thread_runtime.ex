@@ -101,6 +101,22 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   @doc """
+  Whether `tool_use_id` (an MCP call's `_meta["claudecode/toolUseId"]`) is a tool call
+  of one of the thread's running subagents rather than of Claude itself. A call the
+  runtime has not seen yet counts as Claude's own.
+  """
+  @spec subagent_tool?(String.t(), String.t()) :: boolean
+  def subagent_tool?(thread_id, tool_use_id) do
+    case Registry.lookup(HalC2.Claude.Registry, thread_id) do
+      [{pid, _}] -> GenServer.call(pid, {:subagent_tool?, tool_use_id}, 15_000)
+      [] -> false
+    end
+  catch
+    # A runtime that stopped has no subagents running.
+    :exit, _ -> false
+  end
+
+  @doc """
   Answers a prompt: a permission's `%{"decision" => ProviderApprovalDecision}`,
   AskUserQuestion's `%{"answers" => answers}`, or `%{"dismissed" => true}`.
   """
@@ -371,6 +387,16 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   def handle_call({:steer, _run_id, _message}, _from, state),
     do: {:reply, {:error, "no running turn"}, state}
+
+  def handle_call({:subagent_tool?, tool_use_id}, _from, state) do
+    reply =
+      Enum.any?(state.work, fn
+        {_, %{sub: %{} = sub}} -> is_map_key(Map.get(sub, :tools, %{}), tool_use_id)
+        _ -> false
+      end)
+
+    {:reply, reply, state}
+  end
 
   def handle_call({:respond, request_id, response}, _from, state) do
     case Map.pop(state.requests, request_id) do

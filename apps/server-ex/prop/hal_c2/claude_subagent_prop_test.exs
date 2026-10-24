@@ -9,7 +9,9 @@ defmodule HalC2.ClaudeSubagentPropTest do
 
   The promise: whatever the order, the parent's turn shows exactly the parent's
   messages and commands, each subagent's thread exactly its own followed by its
-  result, and a stray or late subagent message lands nowhere.
+  result, and a stray or late subagent message lands nowhere. An MCP call's tool use
+  is a subagent's (`ThreadRuntime.subagent_tool?/2`, which refuses it `delegate_task`)
+  exactly while the subagent that made it runs, never Claude's own.
 
   The turn runs on the fake CLI in `test/support/fake_claude.py`, which leaves a turn
   saying "wait" open; the test then sends the runtime Claude's messages itself.
@@ -131,10 +133,12 @@ defmodule HalC2.ClaudeSubagentPropTest do
   # parent: the parent's texts, in order; open: the text of the message the parent is
   #   streaming, or nil; commands: how many commands the parent ran;
   # agents: name -> %{done: whether its tool result came, said: its texts in order,
-  #   commands: how many it ran}; n: a counter for unique ids.
-  def initial_state, do: %{parent: [], open: nil, commands: 0, agents: %{}, n: 1}
+  #   commands: how many it ran}; calls: the id of each tool call left waiting -> the
+  #   agent that made it, or :parent; n: a counter for unique ids.
+  def initial_state,
+    do: %{parent: [], open: nil, commands: 0, agents: %{}, calls: %{}, n: 1}
 
-  def command(%{agents: agents, n: n, open: open}) do
+  def command(%{agents: agents, calls: calls, n: n, open: open}) do
     running = for {a, %{done: false}} <- agents, do: a
     done = for {a, %{done: true}} <- agents, do: a
     fresh = @agents -- Map.keys(agents)
@@ -144,6 +148,8 @@ defmodule HalC2.ClaudeSubagentPropTest do
       {3, {:call, __MODULE__, :parent_streams, [n, open != nil]}},
       {1, {:call, __MODULE__, :parent_runs, [n]}},
       {1, {:call, __MODULE__, :stray, [n]}},
+      {1, {:call, __MODULE__, :parent_calls, [n]}},
+      {3, {:call, __MODULE__, :owner, [oneof(["call-unknown" | Map.keys(calls)])]}},
       {2, {:call, __MODULE__, :check, []}}
     ]
     |> Kernel.++(if open, do: [{2, {:call, __MODULE__, :parent_closes, [open]}}], else: [])
@@ -157,6 +163,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
           {4, {:call, __MODULE__, :agent_says, [oneof(running), n]}},
           {3, {:call, __MODULE__, :agent_streams, [oneof(running), n]}},
           {2, {:call, __MODULE__, :agent_runs, [oneof(running), n]}},
+          {2, {:call, __MODULE__, :agent_calls, [oneof(running), n]}},
           {1, {:call, __MODULE__, :finish_agent, [oneof(running)]}}
         ]
     )
@@ -170,7 +177,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
     do: not is_map_key(agents, a)
 
   def precondition(%{agents: agents}, {:call, _, name, [a | _]})
-      when name in [:agent_streams, :agent_runs, :finish_agent],
+      when name in [:agent_streams, :agent_runs, :agent_calls, :finish_agent],
       do: match?(%{done: false}, agents[a])
 
   def precondition(%{agents: agents}, {:call, _, :agent_says, [a, _]}),
@@ -184,7 +191,14 @@ defmodule HalC2.ClaudeSubagentPropTest do
 
   # A parent message goes after the one it is streaming.
   def precondition(%{open: open}, {:call, _, name, _})
-      when name in [:parent_says, :parent_runs, :start_agent, :finish_agent, :check],
+      when name in [
+             :parent_says,
+             :parent_runs,
+             :parent_calls,
+             :start_agent,
+             :finish_agent,
+             :check
+           ],
       do: open == nil
 
   def precondition(_state, _call), do: true
@@ -216,11 +230,17 @@ defmodule HalC2.ClaudeSubagentPropTest do
   defp step(state, {_, _, _, [a, _]}, :agent_runs),
     do: update_in(state.agents[a].commands, &(&1 + 1))
 
+  defp step(state, {_, _, _, [n]}, :parent_calls), do: put_in(state.calls["call-#{n}"], :parent)
+  defp step(state, {_, _, _, [a, n]}, :agent_calls), do: put_in(state.calls["call-#{n}"], a)
+
   # Its result is its answer, after what it said.
   defp step(state, {_, _, _, [a]}, :finish_agent),
     do: update_in(state.agents[a], &%{&1 | done: true, said: &1.said ++ ["R-#{a}"]})
 
   defp step(state, _call, _name), do: state
+
+  def postcondition(%{calls: calls, agents: agents}, {:call, _, :owner, [id]}, subagent?),
+    do: subagent? == match?(%{done: false}, agents[calls[id]])
 
   def postcondition(state, {:call, _, :check, []}, seen),
     do: seen == expected(state)
@@ -308,6 +328,16 @@ defmodule HalC2.ClaudeSubagentPropTest do
         user([%{"type" => "tool_result", "tool_use_id" => "agent-#{a}", "content" => "R-#{a}"}])
       ])
 
+  # An MCP tool call left waiting, as a call to HAL-C2's server is while it runs.
+  def parent_calls(n), do: says([assistant("m-call-#{n}", [mcp_call("call-#{n}")])])
+
+  def agent_calls(a, n), do: says([under(a, assistant("m-call-#{n}", [mcp_call("call-#{n}")]))])
+
+  def owner(id) do
+    sync()
+    HalC2.Claude.ThreadRuntime.subagent_tool?(@tid, id)
+  end
+
   def stray(n), do: says([under("gone", assistant("x#{n}", [text("X#{n}")]))])
 
   # What the parent's turn and each subagent's thread show.
@@ -374,6 +404,8 @@ defmodule HalC2.ClaudeSubagentPropTest do
 
   defp user(content),
     do: %{"type" => "user", "message" => %{"role" => "user", "content" => content}}
+
+  defp mcp_call(id), do: tool_use(id, "mcp__hal-c2__delegate_task", %{"task" => "Fan out"})
 
   defp text(text), do: %{"type" => "text", "text" => text}
 
