@@ -11,7 +11,9 @@ use serde_json::{Map, Value, json};
 
 use super::settings::save_elsewhere;
 use super::stream::iso;
-use super::thread_menu::{answer, id_in, item, items, key_of, pick, project_thread_commands, section_of, update_row};
+use super::thread_menu::{
+    answer, id_in, item, items, key_of, pick, project_thread_commands, section_of, update_row,
+};
 use crate::fake_mc::FakeMc;
 use crate::harness::{Outcome, Q, Steps, show, text};
 use crate::world::World;
@@ -124,7 +126,11 @@ fn select(world: &mut World, titles: &[&str]) -> Outcome {
 
 fn selected_titles(world: &World) -> Outcome<Vec<String>> {
     let mut titles = Vec::new();
-    for key in sidebar(world)["selectedKeys"].as_array().into_iter().flatten() {
+    for key in sidebar(world)["selectedKeys"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
         let key = text(key);
         let row = row_of(world, &key);
         // The row says so too: SidebarThreadRow.qml highlights it.
@@ -168,8 +174,10 @@ fn open_menu(world: &mut World, title: &str) -> Outcome {
 fn expect_counted(world: &World, id: &str, count: usize) -> Outcome {
     let entry = item(world, id);
     expect!(
-        entry.as_ref().is_some_and(|e| e["enabled"] == json!(true)
-            && text(&e["label"]).ends_with(&format!(" ({count})"))),
+        entry
+            .as_ref()
+            .is_some_and(|e| e["enabled"] == json!(true)
+                && text(&e["label"]).ends_with(&format!(" ({count})"))),
         "the menu is {}",
         menu_is(world)
     );
@@ -253,7 +261,11 @@ pub fn register(steps: &mut Steps) {
                 select(world, &names)?;
             }
             let selected = selected_titles(world)?;
-            expect!(selected == titles, "the selection is {}", selected.join(", "));
+            expect!(
+                selected == titles,
+                "the selection is {}",
+                selected.join(", ")
+            );
             Ok(())
         },
     );
@@ -290,8 +302,7 @@ pub fn register(steps: &mut Steps) {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter(|entry| text(&entry["projectId"]) != current)
-                .last()
+                .rfind(|entry| text(&entry["projectId"]) != current)
                 .map(|entry| text(&entry["key"]))
                 .unwrap_or_default();
             expect!(!other.is_empty(), "there is no other project");
@@ -321,9 +332,10 @@ pub fn register(steps: &mut Steps) {
     });
 
     // The selection's menu.
-    steps.step("the user opens the menu for the selection", |world, _, _| {
-        open_menu(world, "")
-    });
+    steps.step(
+        "the user opens the menu for the selection",
+        |world, _, _| open_menu(world, ""),
+    );
     steps.step("unpinning is offered for (\\d+) threads?", |world, c, _| {
         expect_counted(world, "unpin", c[0].parse().unwrap_or(0))
     });
@@ -339,8 +351,9 @@ pub fn register(steps: &mut Steps) {
     steps.step("archiving the selection is unavailable", |world, _, _| {
         let archive = item(world, "archive");
         expect!(
-            archive.as_ref().is_some_and(|a| a["enabled"] != json!(true)
-                && a["label"] == json!("Archive (2)")),
+            archive
+                .as_ref()
+                .is_some_and(|a| a["enabled"] != json!(true) && a["label"] == json!("Archive (2)")),
             "the menu is {}",
             menu_is(world)
         );
@@ -369,7 +382,8 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             for title in [&c[0], &c[1]] {
                 if c[2] == "deleted" {
-                    world.wait_for_with(|w| gone(w, title), |_| format!("{title} to be deleted"))?;
+                    world
+                        .wait_for_with(|w| gone(w, title), |_| format!("{title} to be deleted"))?;
                     continue;
                 }
                 let key = key_of(world, title)?;
@@ -474,7 +488,8 @@ pub fn register(steps: &mut Steps) {
         "the thread and its worktree are deleted without a question",
         |world, _, _| {
             world.wait_for("the worktree to be removed", |w| {
-                w.mc.peek::<Worktrees>().is_some_and(|f| !f.removed.is_empty())
+                w.mc.peek::<Worktrees>()
+                    .is_some_and(|f| !f.removed.is_empty())
             })?;
             let removed = world.mc.part::<Worktrees>().removed[0].clone();
             expect!(

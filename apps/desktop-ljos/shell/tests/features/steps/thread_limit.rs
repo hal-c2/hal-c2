@@ -247,7 +247,12 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the user turned on auto-resume and snoozing for limited threads",
         |world, _, _| {
-            save_elsewhere(&mut world.mc, "autoResumeLimitedThreads", json!(true), false);
+            save_elsewhere(
+                &mut world.mc,
+                "autoResumeLimitedThreads",
+                json!(true),
+                false,
+            );
             save_elsewhere(&mut world.mc, "snoozeLimitedThreads", json!(true), false);
             world.mc.part::<Limits>().automatic = true;
             world.sync()
@@ -293,7 +298,11 @@ pub fn register(steps: &mut Steps) {
             let sidebar = world.state("sidebar");
             for row in sidebar["active"].as_array().into_iter().flatten() {
                 if row["key"] == json!(key) {
-                    expect!(row["status"] == json!("working"), "the row is {}", show(row));
+                    expect!(
+                        row["status"] == json!("working"),
+                        "the row is {}",
+                        show(row)
+                    );
                 }
             }
             let banner = banner(world);
@@ -337,9 +346,7 @@ pub fn register(steps: &mut Steps) {
         "the user can retry by hand or snooze with the usual choices",
         |world, _, _| {
             let key = text(&world.state("route")["threadKey"]);
-            world.wait_for("the limit banner", |w| {
-                text(&banner(w)["threadKey"]) == key
-            })?;
+            world.wait_for("the limit banner", |w| text(&banner(w)["threadKey"]) == key)?;
             let shown = banner(world);
             expect!(
                 shown["description"] == json!("Reset time unavailable; retry manually")
@@ -348,10 +355,7 @@ pub fn register(steps: &mut Steps) {
                 show(&shown)
             );
             // The usual snooze choices.
-            world.dispatch(
-                "thread.snoozeMenu",
-                json!({"key": key, "x": 200, "y": 120}),
-            )?;
+            world.dispatch("thread.snoozeMenu", json!({"key": key, "x": 200, "y": 120}))?;
             let menu = world.state("menu");
             let choices: Vec<String> = at(&menu, "items")
                 .as_array()

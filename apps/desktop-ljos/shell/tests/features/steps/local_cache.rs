@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 
 use super::stream::{
     FakeStreams, THREAD, add_item, answer_to, describe, kept_copy, look, look_at_thread, read,
-    role, row_count, sent_since, seed_turns, settle_run, start_run, status, timeline_object,
+    role, row_count, seed_turns, sent_since, settle_run, start_run, status, timeline_object,
 };
 use super::thread_list::title_id;
 use super::thread_menu::section_of;
@@ -242,11 +242,9 @@ fn expect_every_turn(world: &mut World) -> Outcome {
 
 fn load_earlier(world: &World) -> Outcome {
     let obj = timeline_object(world)?;
-    hal_c2_shell::thread_view::timeline_model::TimelineModel::update(
-        world.engine(),
-        obj,
-        |t| t.load_earlier(),
-    );
+    hal_c2_shell::thread_view::timeline_model::TimelineModel::update(world.engine(), obj, |t| {
+        t.load_earlier()
+    });
     Ok(())
 }
 
@@ -426,7 +424,10 @@ pub fn register(steps: &mut Steps) {
             let origin = hal_c2_shell::store::cache(world.engine())
                 .map(|cache| cache.shell("").origin)
                 .unwrap_or_default();
-            expect!(origin.is_empty(), "the first MC's thread list is still kept");
+            expect!(
+                origin.is_empty(),
+                "the first MC's thread list is still kept"
+            );
             Ok(())
         },
     );
@@ -539,19 +540,16 @@ pub fn register(steps: &mut Steps) {
             })
         },
     );
-    steps.step(
-        "the first-run screen does not cover them",
-        |world, _, _| {
-            // WelcomeWizard covers the window for any gate but "app".
-            let onboarding = world.state("onboarding");
-            expect!(
-                onboarding["gate"] == json!("app") && text(&onboarding["recovery"]).is_empty(),
-                "the first-run gate is \"{}\"",
-                text(&onboarding["gate"])
-            );
-            Ok(())
-        },
-    );
+    steps.step("the first-run screen does not cover them", |world, _, _| {
+        // WelcomeWizard covers the window for any gate but "app".
+        let onboarding = world.state("onboarding");
+        expect!(
+            onboarding["gate"] == json!("app") && text(&onboarding["recovery"]).is_empty(),
+            "the first-run gate is \"{}\"",
+            text(&onboarding["gate"])
+        );
+        Ok(())
+    });
     steps.step("neither is shown as live", |world, _, _| {
         let (online, synchronized) = hal_c2_shell::store::with(world.engine(), |s| {
             let online = s
@@ -640,7 +638,9 @@ pub fn register(steps: &mut Steps) {
         let sub = sub_of(world, asked);
         expect!(
             snapshots.len() == 1
-                && snapshots[0]["rows"].as_array().is_some_and(|r| !r.is_empty())
+                && snapshots[0]["rows"]
+                    .as_array()
+                    .is_some_and(|r| !r.is_empty())
                 && events.is_empty(),
             "the MC sent {} snapshots; it was asked with {}",
             snapshots.len(),
@@ -655,7 +655,8 @@ pub fn register(steps: &mut Steps) {
             world.mc.drop_connection();
             world.wait_for_with(
                 move |w| {
-                    w.mc.peek::<FakeStreams>().is_some_and(|f| f.asked.len() > before)
+                    w.mc.peek::<FakeStreams>()
+                        .is_some_and(|f| f.asked.len() > before)
                         && timeline_object(w).is_ok()
                         && status(w) == "live"
                 },
@@ -734,7 +735,10 @@ pub fn register(steps: &mut Steps) {
                 .rfind(|sub| sub["shape"]["type"] == json!("shell"))
                 .cloned()
                 .unwrap_or(Value::Null);
-            let held = sub["have"][&world.mc.name].as_array().cloned().unwrap_or_default();
+            let held = sub["have"][&world.mc.name]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             expect!(
                 held.len() == 2
                     && held[0] == json!(world.mc.epoch)
@@ -1002,13 +1006,10 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step(
-        "what is loaded leaves room in the view",
-        |world, _, _| {
-            timeline_brick(world, 4000.0)?;
-            Ok(())
-        },
-    );
+    steps.step("what is loaded leaves room in the view", |world, _, _| {
+        timeline_brick(world, 4000.0)?;
+        Ok(())
+    });
     steps.step(
         "the earlier turns are loaded without the user scrolling",
         |world, _, _| {

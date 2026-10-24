@@ -8,9 +8,9 @@ use hal_c2_shell::controllers::settings_scope::SettingsScope;
 use serde_json::{Map, Value, json};
 
 use super::settings::{document_of, fake_config, save_on};
+use crate::expect;
 use crate::harness::{Outcome, Q, Steps, at, show, text};
 use crate::world::World;
-use crate::expect;
 
 const DAYS: &str = "sidebarAutoSettleAfterDays";
 const ON_MERGE: &str = "sidebarAutoSettleOnMerge";
@@ -90,7 +90,12 @@ fn open(world: &mut World, environment: &str, targets: usize) -> Outcome {
         };
         world.wait_for_with(
             |w| find(w).is_some(),
-            |w| format!("{environment} to be offered; the scope is {}", show(&scope(w))),
+            |w| {
+                format!(
+                    "{environment} to be offered; the scope is {}",
+                    show(&scope(w))
+                )
+            },
         )?;
         id = find(world).unwrap_or_default();
     }
@@ -195,7 +200,10 @@ pub fn register(steps: &mut Steps) {
             start(world)?;
             add_environment(world, &c[0]);
             add_environment(world, &c[2]);
-            let (first, second) = (c[1].parse::<i64>().unwrap_or(0), c[3].parse::<i64>().unwrap_or(0));
+            let (first, second) = (
+                c[1].parse::<i64>().unwrap_or(0),
+                c[3].parse::<i64>().unwrap_or(0),
+            );
             document_of(&mut world.mc, &c[0])
                 .settings
                 .insert(DAYS.into(), json!(first));
@@ -270,4 +278,3 @@ pub fn register(steps: &mut Steps) {
         },
     );
 }
-
