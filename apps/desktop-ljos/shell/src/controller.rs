@@ -28,9 +28,8 @@
 //! wide: the hooks of the shared controllers (settings, ...) wake every
 //! window's closures, each as its own window. QML still finds the first
 //! window's singletons (see [`Bridge::singleton`]), so the app shows one
-//! window; the others are built and run headless until Ljós can make a
-//! window's singleton the bridge built for it (TODO(ljos#81),
-//! [`set_window_opener`]).
+//! window; the others are built and run headless until a QML singleton
+//! can be one per window in Ljós (TODO(ljos), [`set_window_opener`]).
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
