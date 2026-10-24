@@ -1215,6 +1215,8 @@ struct Inner {
     lists: RefCell<Lists>,
     search_timer: Cell<Option<ObjectId>>,
     save_timer: Cell<Option<ObjectId>>,
+    /// The pause after a keystroke that saves; a test stretches it.
+    save_delay: Cell<i32>,
     /// The thread's TimelineModel followed, and its connection.
     timeline: Cell<Option<ObjectId>>,
     connections: RefCell<Vec<ConnectionId>>,
@@ -1342,6 +1344,7 @@ impl WorkspaceFiles {
             lists: RefCell::default(),
             search_timer: Cell::new(None),
             save_timer: Cell::new(None),
+            save_delay: Cell::new(SAVE_DELAY_MS),
             timeline: Cell::new(None),
             connections: RefCell::default(),
             hooks: RefCell::default(),
@@ -1511,6 +1514,13 @@ impl WorkspaceFiles {
                 Ok(id) => inner.connections.borrow_mut().push(id),
                 Err(e) => warn(engine, &e),
             }
+        }
+    }
+
+    /// How long an edit waits for the next keystroke before it is saved.
+    pub fn set_save_delay(engine: &Engine, obj: ObjectId, ms: i32) {
+        if let Some(inner) = inner_of(engine, obj) {
+            inner.save_delay.set(ms);
         }
     }
 
@@ -1771,7 +1781,7 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
             engine,
             obj,
             &inner.save_timer,
-            start.then_some(SAVE_DELAY_MS),
+            start.then_some(inner.save_delay.get()),
             |e, obj| {
                 WorkspaceFiles::update(e, obj, Files::save_due);
             },

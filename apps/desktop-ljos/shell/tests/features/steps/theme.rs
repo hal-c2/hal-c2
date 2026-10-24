@@ -479,8 +479,9 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(&format!("{Q} is not offered"), |world, c, _| {
-        // TODO(port): FilesIdentitySteps' checkIconImageOffered, the project
-        // icon picker's images.
+        if super::files_identity::check_icon_image_offered(world, &c[0], false)? {
+            return Ok(());
+        }
         if super::move_::machine_not_offered(world, &c[0])? {
             return Ok(());
         }
@@ -869,8 +870,9 @@ pub fn register(steps: &mut Steps) {
         if remove_saved_environment(world)? {
             return Ok(());
         }
-        // TODO(port): FilesViewerSteps' removeViewedAttachment, the attachment
-        // viewer's remove button.
+        if super::files_viewer::remove_viewed_attachment(world)? {
+            return Ok(());
+        }
         let id = text(&world.theme_draft["id"]);
         let removed = themes(world, |t, e| t.remove_custom(e, &id))?;
         expect!(!removed, "the theme was removed");
