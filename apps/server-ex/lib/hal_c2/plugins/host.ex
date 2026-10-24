@@ -153,6 +153,32 @@ defmodule HalC2.Plugins.Host do
          do: HalC2.Orchestration.organize_plugin_thread(thread_id, id, changes)
   end
 
+  @doc """
+  Calls `function` of the plugin's MC part with `args` on every other machine of
+  the cluster connected now that runs the plugin, all at once:
+  `[%{"machine" => label, "node" => node, "result" => result}]`. A machine that
+  does not answer within `timeout`, does not run the plugin, or runs a version
+  without `function` (or without this call) is left out, as one out of reach is,
+  so a plugin that defers to its peers keeps working alone.
+  """
+  def peers(id, function, args, timeout \\ 5_000) do
+    nodes = Node.list()
+    results = :erpc.multicall(nodes, __MODULE__, :peer, [id, function, args], timeout)
+
+    for {node, {:ok, {:ok, answer}}} <- Enum.zip(nodes, results),
+        do: Map.put(answer, "node", to_string(node))
+  end
+
+  @doc false
+  def peer(id, function, args) do
+    with {:ok, module, _context} <- GenServer.call(Plugins, {:context, id}),
+         true <- function_exported?(module, function, length(args)) do
+      {:ok, %{"machine" => HalC2.Environment.label(), "result" => apply(module, function, args)}}
+    else
+      _ -> :none
+    end
+  end
+
   @doc "Whether plugin `id` was granted `permission`."
   def granted?(id, permission), do: permission in Plugins.granted(id)
 

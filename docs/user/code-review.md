@@ -7,6 +7,11 @@ in HAL-C2.
 
 It runs on an MC, like any [plugin that runs on your MC](plugins.md#plugins-that-run-on-your-mc).
 Each machine reviews the repositories of its own projects, with its own agents.
+When several of your machines are in one cluster and watch the same repository,
+one of them reviews each commit of a pull request; the others show the review
+with the machine it runs on, and take it over if that machine leaves before
+starting it. Machines that cannot reach each other each review on their own, and
+a commit another machine already posted a review of is not posted again.
 
 ## Start
 

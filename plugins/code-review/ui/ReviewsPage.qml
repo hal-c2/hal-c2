@@ -110,8 +110,24 @@ Item {
         return page.muted;
     }
 
+    // Where another of the user's machines has the pull request's head.
+    function elsewhereText(elsewhere) {
+        switch (elsewhere.status) {
+        case "running":
+            return qsTr("Reviewing on %1").arg(elsewhere.machine);
+        case "queued":
+            return qsTr("Queued on %1").arg(elsewhere.machine);
+        case "failed":
+            return qsTr("Failed on %1").arg(elsewhere.machine);
+        default:
+            return qsTr("Reviewed on %1").arg(elsewhere.machine);
+        }
+    }
+
     // Why a review is where it is, in a few words.
     function note(review) {
+        if (review.elsewhere)
+            return page.elsewhereText(review.elsewhere);
         if (review.status === "failed")
             return review.error ?? "";
         if (review.status === "waiting" && review.publishError)
@@ -402,7 +418,7 @@ Item {
                                 Layout.fillWidth: true
                                 visible: text.length > 0
                                 text: page.note(row.modelData)
-                                color: row.modelData.status === "failed" || row.modelData.publishError ? page.errorColor : page.muted
+                                color: !row.modelData.elsewhere && (row.modelData.status === "failed" || row.modelData.publishError) ? page.errorColor : page.muted
                                 elide: Text.ElideRight
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
@@ -529,7 +545,8 @@ Item {
 
                         ShellButton {
                             objectName: "codeReviewRetry"
-                            visible: findings.review !== null && !["running", "queued", "publishing"].includes(findings.status)
+                            // Another machine reviews this head; a review here would be a second one.
+                            visible: findings.review !== null && !findings.review.elsewhere && !["running", "queued", "publishing"].includes(findings.status)
                             primary: findings.status === "ready" || findings.status === "failed"
                             enabled: page.busy === 0
                             text: findings.status === "ready" ? qsTr("Review") : findings.status === "failed" ? qsTr("Try again") : qsTr("Review again")
@@ -565,7 +582,7 @@ Item {
                         Layout.fillWidth: true
                         visible: text.length > 0
                         text: findings.review ? page.note(findings.review) : ""
-                        color: findings.status === "failed" || findings.review?.publishError ? page.errorColor : page.muted
+                        color: !findings.review?.elsewhere && (findings.status === "failed" || findings.review?.publishError) ? page.errorColor : page.muted
                         wrapMode: Text.Wrap
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                     }

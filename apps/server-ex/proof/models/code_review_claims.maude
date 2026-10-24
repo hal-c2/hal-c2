@@ -1,0 +1,712 @@
+sload model-checker
+
+--- Code review across a cluster (HalC2Plugins.CodeReview, plugins/code-review/mc):
+--- machines watching one pull request each look at GitHub, leave the review to a
+--- connected machine that queued or claimed the head, and claim the commit they checked
+--- out under a :global lock across the machines connected then, reading the others'
+--- rows under it. Posts go under a lock of their own. Machines crash, partition, have
+--- their plugin restart, fail a checkout and hit a usage limit; the pull request gets
+--- pushes. A machine paused at its agent's usage limit stops sharing the reviews it
+--- has queued. proof/hal_c2/code_review_claims_proof_test.exs maps it to the code and
+--- checks it.
+
+mod CODE-REVIEW-CLAIMS is
+  protecting NAT .
+
+  sorts Id Ref Seen Sha MSha Status Hold Review Row Ids Phase Cause Look Looks Poll Item Conf Sys .
+  subsort Id < Ref < Seen .
+  subsort Sha < MSha .
+  subsort Id < Ids .
+  subsort Look < Looks .
+  subsort Item < Conf .
+
+  ops a b c : -> Id [ctor] .
+  --- No machine: a review no other machine has.
+  op nobody : -> Ref [ctor] .
+  --- A look that has not read the other machines' rows yet.
+  op unread : -> Seen [ctor] .
+  --- Commits; nosha is a review that reviewed none.
+  ops h1 h2 : -> Sha [ctor] .
+  op nosha : -> MSha [ctor] .
+
+  --- Sets of machines.
+  op noids : -> Ids [ctor] .
+  op _&_ : Ids Ids -> Ids [ctor assoc comm id: noids] .
+
+  --- A review's status. pump/1 starts a queued review in the step that queued it
+  --- unless the machine is paused; one pull request leaves the concurrency limit out.
+  ops ready queued running failed waiting publishing published : -> Status [ctor] .
+  --- held: a commit the review claimed before it was queued for a newer head, and
+  --- what became of it.
+  op nohold : -> Hold [ctor] .
+  op hold : Sha Status -> Hold [ctor] .
+  --- A machine's review of the pull request: status, claimed, reviewedSha, headSha,
+  --- elsewhere, the machine it shows the review on, and held. unknown before its first
+  --- look.
+  op rv : Status Bool MSha MSha Ref Hold -> Review [ctor] .
+  op unknown : -> Review [ctor] .
+
+  --- claim_row/2: what claims/1 gives the other machines, which rows/1 reads as one row
+  --- or two (a held one beside it).
+  op norow : -> Row [ctor] .
+  op hard : Sha Status -> Row [ctor] .
+  op soft : Sha -> Row [ctor] .
+  op _+_ : Row Row -> Row [ctor assoc comm id: norow] .
+
+  --- A machine: whether its plugin runs, whether its node is up, and its review.
+  op mc : Id Bool Bool Review -> Item [ctor] .
+  --- A distribution connection, the lower id first.
+  op link : Id Id -> Item [ctor] .
+  --- The head of the pull request on GitHub.
+  op gh : Sha -> Item [ctor] .
+
+  --- A run (run/2): checking out, checked out a commit, the nodes trans/3 locks, and
+  --- the nodes it holds the lock on.
+  op fetch : -> Phase [ctor] .
+  op out : Sha -> Phase [ctor] .
+  op want : Sha Ids -> Phase [ctor] .
+  op held : Sha Ids -> Phase [ctor] .
+  op run : Id Phase -> Item [ctor] .
+  --- A post (publish/2) of a reviewed commit: the nodes it locks, then holds.
+  op pwant : Ids -> Phase [ctor] .
+  op pheld : Ids -> Phase [ctor] .
+  op pub : Id Sha Phase -> Item [ctor] .
+
+  --- Messages to a machine's plugin: {:elsewhere, ...} naming the other machine,
+  --- {:nodedown, node}, :peer_claims, and {:elsewhere_seen, heads, seen, restarting}.
+  op ew : Id Id -> Item [ctor] .
+  op down : Id Id -> Item [ctor] .
+  op ping : Id -> Item [ctor] .
+  op sn : Id Sha Ref Ids -> Item [ctor] .
+
+  --- Looks in flight, oldest first: the periodic one or one started at once, the head
+  --- GitHub listed and whom the other machines' rows at it named (nosha and unread before
+  --- it did), and whether it began before the machine's run last claimed the commit,
+  --- as claimed_at tells.
+  ops tick again : -> Cause [ctor] .
+  op lk : Cause MSha Seen Bool -> Look [ctor] .
+  op nolook : -> Looks [ctor] .
+  op _;_ : Looks Looks -> Looks [ctor assoc id: nolook] .
+  op looks : Id Looks -> Item [ctor] .
+  --- The :poll timer: armed, a periodic look in flight, or no more looks.
+  ops armed busy spent : -> Poll [ctor] .
+  op poll : Id Poll -> Item [ctor] .
+  --- How many more periodic looks the machines take between them (inf: forever). Each
+  --- machine's first look, and the first after a restart, are not counted.
+  sort Budget .
+  subsort Nat < Budget .
+  op inf : -> Budget [ctor] .
+  op periodic : Budget -> Item [ctor] .
+
+  --- Whose turn it is to look (for fairness), or looks at any time.
+  op turn : Id -> Item [ctor] .
+  op free : -> Item [ctor] .
+
+  --- The machine is paused at its agent's usage limit (paused_until).
+  op paused : Id -> Item [ctor] .
+
+  --- What is left to happen.
+  ops pushes crashes splits bounces fails limits : Nat -> Item [ctor] .
+
+  --- A review's life after its claim (a failed turn, the report, the post) happens; the
+  --- checks that reviews get done leave it out, as nothing in it gives a claim up.
+  op later : -> Item [ctor] .
+
+  --- Ghosts, which the code has no part of: a machine claimed a commit; a claim made
+  --- while a machine it locked and was connected to had a standing claim of the same
+  --- commit, or had ever claimed it; a post, and one made while a machine it locked
+  --- and was connected to had posted the same commit; a machine hurt by a fault.
+  op made : Id Sha -> Item [ctor] .
+  op dup : Id Id Sha -> Item [ctor] .
+  op redo : Id Id Sha -> Item [ctor] .
+  op posted : Id Sha -> Item [ctor] .
+  op repost : Id Id Sha -> Item [ctor] .
+  op hurt : Id -> Item [ctor] .
+
+  op empty : -> Conf [ctor] .
+  op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
+  op {_} : Conf -> Sys [ctor] .
+
+  vars X Y A : Id .
+  vars I J H L M : Ids .
+  vars S S' : Sha .
+  vars Rd Hd : MSha .
+  vars E W : Ref .
+  var St : Status .
+  vars Cl P N B : Bool .
+  vars R R' : Review .
+  var Ho : Hold .
+  var St' : Status .
+  vars Ls L1 L2 : Looks .
+  var K : Cause .
+  var Pl : Poll .
+  var Ph : Phase .
+  var F : Nat .
+  var C : Conf .
+  var It : Item .
+  var Ro : Row .
+  var Ms : MSha .
+  var Se : Seen .
+  var Bu : Budget .
+
+  op _<<_ : Id Id -> Bool .
+  eq a << b = true .
+  eq a << c = true .
+  eq b << c = true .
+  eq X << Y = false [owise] .
+
+  op _in_ : Ref Ids -> Bool .
+  eq X in (X & I) = true .
+  eq X in I = false [owise] .
+  op _^_ : Ids Ids -> Ids .
+  eq noids ^ J = noids .
+  eq (X & I) ^ J = (if X in J then X else noids fi) & (I ^ J) .
+  op _less_ : Ids Id -> Ids .
+  eq (X & I) less X = I .
+  eq I less X = I [owise] .
+
+  --- Adds a ghost or a message once.
+  op once : Item Conf -> Conf .
+  eq once(It, It C) = It C .
+  eq once(It, C) = It C [owise] .
+
+  op linked : Id Id Conf -> Bool .
+  eq linked(X, Y, link(X, Y) C) = true .
+  eq linked(X, Y, link(Y, X) C) = true .
+  eq linked(X, Y, C) = false [owise] .
+
+  --- Node.list() on X.
+  op near : Id Conf -> Ids .
+  eq near(X, link(X, Y) C) = Y & near(X, C) .
+  eq near(X, link(Y, X) C) = Y & near(X, C) .
+  eq near(X, C) = noids [owise] .
+
+  --- Queued or running: the statuses a look leaves alone.
+  op active : Status -> Bool .
+  eq active(queued) = true .
+  eq active(running) = true .
+  eq active(St) = false [owise] .
+
+  op stopped : Id Conf -> Bool .
+  eq stopped(X, paused(X) C) = true .
+  eq stopped(X, C) = false [owise] .
+
+  op st : Review -> Status .
+  eq st(rv(St, Cl, Rd, Hd, E, Ho)) = St .
+  eq st(unknown) = ready .
+
+  --- claim_row/2: a started review claims the commit it checked out, whatever became
+  --- of it; a running one, or a queued one unless the machine is paused, holds its head.
+  --- A held commit is claimed beside that row, unless it is that row, or alone.
+  op rowOf : Review Bool -> Row .
+  eq rowOf(rv(St, true, S, Hd, E, Ho), P) = withHeld(hard(S, St), Ho) .
+  ceq rowOf(rv(St, false, Rd, S, E, Ho), P) = withHeld(soft(S), Ho)
+    if St == running or (St == queued and not P) .
+  eq rowOf(rv(St, Cl, Rd, Hd, E, Ho), P) = withHeld(norow, Ho) [owise] .
+  eq rowOf(unknown, P) = norow .
+  op withHeld : Row Hold -> Row .
+  eq withHeld(Ro, nohold) = Ro .
+  eq withHeld(Ro, hold(S, St)) = if Ro == hard(S, St) then Ro else Ro + hard(S, St) fi .
+
+  --- share_claims/1: what X shares of review R, the rest of the machines being C.
+  op shareOf : Id Review Conf -> Row .
+  eq shareOf(X, R, C) = rowOf(R, stopped(X, C)) .
+
+  --- left?/1
+  op left : Review -> Bool .
+  eq left(rv(St, Cl, Rd, Hd, E, Ho)) = not active(St) and Rd =/= Hd .
+  eq left(unknown) = false .
+
+  --- peer_claims/1 on X: a connected machine whose plugin runs (Host.peer/3 answers
+  --- :none for one that does not) with a hard row at S, a soft one, a published one.
+  op hardBy : Id Sha Conf -> Ref .
+  ceq hardBy(X, S, mc(Y, true, N, R) C) = Y if linked(X, Y, C) /\ hard(S, St) + Ro := shareOf(Y, R, C) .
+  eq hardBy(X, S, C) = nobody [owise] .
+  op softBy : Id Sha Conf -> Ref .
+  ceq softBy(X, S, mc(Y, true, N, R) C) = Y if linked(X, Y, C) /\ soft(S) + Ro := shareOf(Y, R, C) .
+  eq softBy(X, S, C) = nobody [owise] .
+  op publishedBy : Id Sha Conf -> Ref .
+  ceq publishedBy(X, S, mc(Y, true, N, R) C) = Y
+    if linked(X, Y, C) /\ hard(S, published) + Ro := shareOf(Y, R, C) .
+  eq publishedBy(X, S, C) = nobody [owise] .
+  --- claims/1 answers :restarting on a connected machine whose plugin runs without its
+  --- server (the table went with it); claim/3 takes it for a claim at the head. The
+  --- other reads skip it, as a machine with no rows.
+  op restartingBy : Id Conf -> Ref .
+  ceq restartingBy(X, mc(Y, false, true, R) C) = Y if linked(X, Y, C) .
+  eq restartingBy(X, C) = nobody [owise] .
+  --- All of them, which :peer_claims collects.
+  op restarting : Id Conf -> Ids .
+  ceq restarting(X, mc(Y, false, true, R) C) = Y & restarting(X, C) if linked(X, Y, C) .
+  eq restarting(X, C) = noids [owise] .
+  --- What claim/3 steps back for: a claim at the head, or a machine restarting.
+  op heldBy : Id Sha Conf -> Ref .
+  eq heldBy(X, S, C) = if hardBy(X, S, C) =/= nobody then hardBy(X, S, C) else restartingBy(X, C) fi .
+  --- elsewhere/1: a claim wins over a queued one.
+  op seenAt : Id Sha Conf -> Ref .
+  eq seenAt(X, S, C) = if hardBy(X, S, C) =/= nobody then hardBy(X, S, C) else softBy(X, S, C) fi .
+
+  --- share_claims/1: X's row was Ro; a change is cast to the connected machines whose
+  --- plugin runs, as :peer_claims.
+  op note : Id Row Conf -> Conf .
+  eq note(X, Ro, mc(X, P, N, R) C)
+    = if Ro == shareOf(X, R, C) then mc(X, P, N, R) C
+      else pings(near(X, C), mc(X, P, N, R) C) fi .
+  op pings : Ids Conf -> Conf .
+  eq pings(noids, C) = C .
+  eq pings(Y & I, mc(Y, true, N, R) C) = pings(I, once(ping(Y), mc(Y, true, N, R) C)) .
+  eq pings(Y & I, C) = pings(I, C) [owise] .
+
+  --- A machine's review changes, and the other machines hear if its row did.
+  op set : Id Review Review Conf -> Conf .
+  eq set(X, R, R', mc(X, P, N, R) C) = note(X, shareOf(X, R, C), mc(X, P, N, R') C) .
+
+  --- queue/3: claim dropped, reviewedSha kept; a claimed commit other than the head is
+  --- held, with its status, and otherwise the held one stays.
+  op queued : Review -> Review .
+  eq queued(rv(St, Cl, Rd, Hd, E, Ho)) = rv(queued, false, Rd, Hd, nobody, holding(Cl, Rd, Hd, St, Ho)) .
+  op holding : Bool MSha MSha Status Hold -> Hold .
+  ceq holding(true, S, Hd, St, Ho) = hold(S, St) if S =/= Hd .
+  eq holding(Cl, Rd, Hd, St, Ho) = Ho [owise] .
+
+  --- pump/1: a queued review starts a run, unless the machine is paused. Its row stays.
+  op pump : Id Conf -> Conf .
+  ceq pump(X, mc(X, true, N, rv(queued, Cl, Rd, Hd, E, Ho)) C)
+    = mc(X, true, N, rv(running, Cl, Rd, Hd, E, Ho)) run(X, fetch) C
+    if not stopped(X, C) .
+  eq pump(X, C) = C [owise] .
+
+  --- A claim given back at the usage limit, which another machine may make again.
+  op giveBack : Id MSha Conf -> Conf .
+  eq giveBack(X, S, made(X, S) C) = C .
+  eq giveBack(X, Rd, C) = C [owise] .
+
+  --- apply_look/2 for a look that listed the head S and read W at it (cond order).
+  op applied : Review Sha Ref -> Review .
+  eq applied(unknown, S, nobody) = queued(rv(ready, false, nosha, S, nobody, nohold)) .
+  eq applied(unknown, S, Y) = rv(ready, false, nosha, S, Y, nohold) .
+  --- queued or running: the head moves, the run keeps what it checks out.
+  ceq applied(rv(St, Cl, Rd, Hd, E, Ho), S, W) = rv(St, Cl, Rd, S, nobody, Ho) if active(St) .
+  --- another machine has the head and this one has not reviewed it.
+  ceq applied(rv(St, Cl, Rd, Hd, E, Ho), S, Y) = rv(St, Cl, Rd, S, Y, Ho)
+    if not active(St) /\ Rd =/= S .
+  --- a run that could not start waits for a retry or a push.
+  eq applied(rv(failed, Cl, nosha, S, E, Ho), S, nobody) = rv(failed, Cl, nosha, S, nobody, Ho) .
+  --- never reviewed: queued.
+  ceq applied(rv(St, Cl, nosha, Hd, E, Ho), S, nobody) = queued(rv(St, Cl, nosha, S, nobody, Ho))
+    if not active(St) /\ not (St == failed and Hd == S) .
+  --- reviewed the head: nothing changed.
+  ceq applied(rv(St, Cl, S, Hd, E, Ho), S, W) = rv(St, Cl, S, S, nobody, Ho) if not active(St) .
+  --- reviewed an older head: reviewed again (reviewNewPushes).
+  ceq applied(rv(St, Cl, S', Hd, E, Ho), S, nobody) = queued(rv(St, Cl, S', S, nobody, Ho))
+    if not active(St) /\ S' =/= S .
+
+  --- look_again/1: a look started at once. One started before that has not listed the
+  --- pull requests yet reads everything this one would, and stands for it.
+  op relook : Looks -> Looks .
+  eq relook(L1 ; lk(K, nosha, unread, false) ; L2) = L1 ; lk(K, nosha, unread, false) ; L2 .
+  eq relook(Ls) = Ls ; lk(again, nosha, unread, false) [owise] .
+
+  --- handle_call {:started, ...}: the looks in flight began before the claim.
+  op older : Looks -> Looks .
+  eq older(nolook) = nolook .
+  eq older(lk(K, Ms, Se, B) ; Ls) = lk(K, Ms, Se, true) ; older(Ls) .
+
+  --- Some periodic look among those dropped or applied: its DOWN arms the next.
+  op ticks : Looks -> Bool .
+  eq ticks(L1 ; lk(tick, Ms, Se, B) ; L2) = true .
+  eq ticks(Ls) = false [owise] .
+  op rearm : Bool Budget Poll -> Poll .
+  eq rearm(true, 0, Pl) = spent .
+  eq rearm(true, Bu, Pl) = armed [owise] .
+  eq rearm(false, Bu, Pl) = Pl .
+  op spend : Bool Budget -> Budget .
+  eq spend(true, s F) = F .
+  eq spend(B, Bu) = Bu [owise] .
+
+  --- trans/3's set_lock: another holder of the lock (a run of X's, or a post) holds it
+  --- on a node X reaches and asks. Unreachable nodes are skipped.
+  op blocked : Id Ids Conf -> Bool .
+  ceq blocked(X, L, run(Y, held(S, H)) C) = true if (L ^ (X & near(X, C))) ^ H =/= noids .
+  eq blocked(X, L, C) = false [owise] .
+  op pblocked : Id Ids Conf -> Bool .
+  ceq pblocked(X, L, pub(Y, S, pheld(H)) C) = true if (L ^ (X & near(X, C))) ^ H =/= noids .
+  eq pblocked(X, L, C) = false [owise] .
+
+  --- The ghosts of a claim of S by X, over the machines M it locked and reads.
+  op claimed : Id Sha Ids Conf -> Conf .
+  eq claimed(X, S, noids, C) = C .
+  eq claimed(X, S, A & M, C) = claimed(X, S, M, ifRedo(X, A, S, ifDup(X, A, S, C))) .
+  op ifDup : Id Id Sha Conf -> Conf .
+  eq ifDup(X, A, S, mc(A, P, N, rv(St, true, S, Hd, E, Ho)) C)
+    = once(dup(X, A, S), mc(A, P, N, rv(St, true, S, Hd, E, Ho)) C) .
+  eq ifDup(X, A, S, mc(A, P, N, rv(St, Cl, Rd, Hd, E, hold(S, St'))) C)
+    = once(dup(X, A, S), mc(A, P, N, rv(St, Cl, Rd, Hd, E, hold(S, St'))) C) .
+  eq ifDup(X, A, S, C) = C [owise] .
+  op ifRedo : Id Id Sha Conf -> Conf .
+  eq ifRedo(X, A, S, made(A, S) C) = once(redo(X, A, S), made(A, S) C) .
+  eq ifRedo(X, A, S, C) = C [owise] .
+  op reposted : Id Sha Ids Conf -> Conf .
+  eq reposted(X, S, noids, C) = C .
+  eq reposted(X, S, A & M, posted(A, S) C) = reposted(X, S, M, once(repost(X, A, S), posted(A, S) C)) .
+  eq reposted(X, S, A & M, C) = reposted(X, S, M, C) [owise] .
+
+  --- A machine's plugin stops: its runs, posts and looks die with it (linked), and so
+  --- do the locks they held and its mailbox.
+  op lose : Id Conf -> Conf .
+  eq lose(X, run(X, Ph) C) = lose(X, C) .
+  eq lose(X, pub(X, S, Ph) C) = lose(X, C) .
+  eq lose(X, ew(X, Y) C) = lose(X, C) .
+  eq lose(X, down(X, Y) C) = lose(X, C) .
+  eq lose(X, ping(X) C) = lose(X, C) .
+  eq lose(X, sn(X, S, W, I) C) = lose(X, C) .
+  eq lose(X, looks(X, lk(K, Ms, Se, B) ; Ls) C) = lose(X, looks(X, Ls) C) .
+  eq lose(X, C) = C [owise] .
+
+  --- A connection between X and Y drops: each side's global drops the other's locks,
+  --- and each running plugin hears {:nodedown, ...}.
+  op sever : Id Id Conf -> Conf .
+  eq sever(X, Y, C) = hear(X, Y, hear(Y, X, unlock(X, Y, unlock(Y, X, unlink(X, Y, C))))) .
+  op unlink : Id Id Conf -> Conf .
+  eq unlink(X, Y, link(X, Y) C) = C .
+  eq unlink(X, Y, link(Y, X) C) = C .
+  eq unlink(X, Y, C) = C [owise] .
+  op unlock : Id Id Conf -> Conf .
+  eq unlock(X, Y, run(X, held(S, Y & H)) C) = unlock(X, Y, run(X, held(S, H)) C) .
+  eq unlock(X, Y, pub(X, S, pheld(Y & H)) C) = unlock(X, Y, pub(X, S, pheld(H)) C) .
+  eq unlock(X, Y, C) = C [owise] .
+  op hear : Id Id Conf -> Conf .
+  eq hear(X, Y, mc(X, true, N, R) C) = mc(X, true, N, R) down(X, Y) C .
+  eq hear(X, Y, C) = C [owise] .
+  --- Every connection of X drops.
+  op cut : Id Conf -> Conf .
+  eq cut(X, link(X, Y) C) = cut(X, sever(X, Y, link(X, Y) C)) .
+  eq cut(X, link(Y, X) C) = cut(X, sever(X, Y, link(Y, X) C)) .
+  eq cut(X, C) = C [owise] .
+
+  --- load/0: where another machine had the review is read afresh, a post stopped in
+  --- the middle is the user's to try again, and so is a run.
+  op reload : Review -> Review .
+  eq reload(unknown) = unknown .
+  eq reload(rv(St, Cl, Rd, Hd, E, Ho)) = rv(back(St), Cl, Rd, Hd, nobody, Ho) .
+  op back : Status -> Status .
+  eq back(publishing) = waiting .
+  eq back(running) = failed .
+  eq back(St) = St [owise] .
+
+  op flip : Sha -> Sha .
+  eq flip(h1) = h2 .
+  eq flip(h2) = h1 .
+
+  op next : Id -> Id .
+  eq next(a) = b .
+  eq next(b) = a .
+
+  --- code -----------------------------------------------------------------------------
+
+  --- handle_info :poll: a look (look/2) ...
+  rl [look] :
+    { free mc(X, true, N, R) poll(X, armed) looks(X, Ls) C }
+    => { free mc(X, true, N, R) poll(X, busy) looks(X, Ls ; lk(tick, nosha, unread, false)) C } .
+  --- In turn: a machine looks once those in flight are in, or passes the turn.
+  rl [look] :
+    { turn(X) mc(X, true, N, R) poll(X, armed) looks(X, nolook) C }
+    => { turn(next(X)) mc(X, true, N, R) poll(X, busy) looks(X, lk(tick, nosha, unread, false)) C } .
+  crl [look] :
+    { turn(X) mc(X, P, N, R) poll(X, Pl) looks(X, nolook) C }
+    => { turn(next(X)) mc(X, P, N, R) poll(X, Pl) looks(X, nolook) C }
+    if not (P and Pl == armed) .
+
+  --- ... which lists the pull request on GitHub and elsewhere/1 reads the other
+  --- machines' rows at the head it listed, here in one step.
+  rl [peers] :
+    { mc(X, true, N, R) looks(X, L1 ; lk(K, nosha, unread, B) ; L2) gh(S) C }
+    => { mc(X, true, N, R) looks(X, L1 ; lk(K, S, seenAt(X, S, C), B) ; L2) gh(S) C } .
+
+  --- handle_info {:polled, found}: apply_look/2, which drops a look older than the one
+  --- applied last and leaves the review alone if the look began before its claim, and
+  --- pump/1; a periodic look's DOWN arms the next :poll.
+  crl [polled] :
+    { mc(X, true, N, R) looks(X, L1 ; lk(K, S, W, B) ; L2) poll(X, Pl) periodic(Bu) C }
+    => { pump(X, set(X, R, R', mc(X, true, N, R) looks(X, L2)
+           poll(X, rearm(K == tick or ticks(L1), Bu, Pl))
+           periodic(spend(K == tick or ticks(L1), Bu)) C)) }
+    if R' := (if B then R else applied(R, S, W) fi) .
+
+  --- run/2: Checkout.prepare/5 fetches the head there is now.
+  rl [checkout] : run(X, fetch) gh(S) => run(X, out(S)) gh(S) .
+
+  --- handle_cast {:start_failed, ...}: the checkout failed ...
+  rl [start-failed] :
+    { run(X, fetch) mc(X, true, N, rv(running, Cl, Rd, Hd, E, Ho)) fails(s F) C }
+    => { set(X, rv(running, Cl, Rd, Hd, E, Ho), rv(failed, Cl, Rd, Hd, E, Ho),
+           mc(X, true, N, rv(running, Cl, Rd, Hd, E, Ho)) fails(F) hurt(X) C) } .
+  --- ... or at the agent's usage limit: the review waits in the queue, and the machine
+  --- is paused.
+  rl [start-failed] :
+    { run(X, fetch) mc(X, true, N, rv(running, Cl, Rd, Hd, E, Ho)) limits(s F) C }
+    => { note(X, shareOf(X, rv(running, Cl, Rd, Hd, E, Ho), C),
+           mc(X, true, N, queued(rv(running, Cl, Rd, Hd, E, Ho))) once(paused(X), limits(F) C)) } .
+
+  --- claim/3: trans/3 takes [node() | Node.list()] once ...
+  rl [claim] : { run(X, out(S)) C } => { run(X, want(S, X & near(X, C))) C } .
+
+  --- ... and set_lock takes the lock on those it reaches, retrying while another holds it.
+  crl [lock] : { run(X, want(S, L)) C } => { run(X, held(S, L ^ (X & near(X, C)))) C }
+    if not blocked(X, L, C) .
+
+  --- Under the lock, the peers' claims show no machine connected now with a hard row at
+  --- the commit or restarting: handle_call {:started, ...} claims it (claimed_at), and
+  --- the lock is released once the claim is shared.
+  crl [started] :
+    { run(X, held(S, H)) mc(X, true, N, rv(running, false, Rd, Hd, E, Ho)) looks(X, Ls) C }
+    => { once(made(X, S), claimed(X, S, (H less X) ^ near(X, C),
+           set(X, rv(running, false, Rd, Hd, E, Ho), rv(running, true, S, Hd, E, Ho),
+             mc(X, true, N, rv(running, false, Rd, Hd, E, Ho)) looks(X, older(Ls)) C))) }
+    if heldBy(X, S, C) == nobody .
+
+  --- ... or show one: the checkout goes, and {:elsewhere, ...} is cast.
+  crl [defer] : { run(X, held(S, H)) C } => { ew(X, Y) C } if Y := heldBy(X, S, C) .
+
+  --- handle_cast {:elsewhere, ...}: the review is back to not started, shown elsewhere,
+  --- and :peer_claims reads again a release that came first.
+  rl [elsewhere] :
+    { ew(X, Y) mc(X, true, N, rv(running, Cl, Rd, Hd, E, Ho)) C }
+    => { once(ping(X), set(X, rv(running, Cl, Rd, Hd, E, Ho), rv(ready, false, Rd, Hd, Y, Ho),
+           mc(X, true, N, rv(running, Cl, Rd, Hd, E, Ho)) C)) } .
+
+  --- handle_cast {:turn_finished, ...}: the agent's turn ended without findings ...
+  rl [turn-finished] :
+    { later mc(X, true, N, rv(running, true, Rd, Hd, E, Ho)) C }
+    => { later set(X, rv(running, true, Rd, Hd, E, Ho), rv(failed, true, Rd, Hd, E, Ho),
+           mc(X, true, N, rv(running, true, Rd, Hd, E, Ho)) C) } .
+  --- ... or at the agent's usage limit: the review waits in the queue, its claim given
+  --- back, and the machine is paused.
+  rl [turn-finished] :
+    { mc(X, true, N, rv(running, true, Rd, Hd, E, Ho)) limits(s F) C }
+    => { note(X, shareOf(X, rv(running, true, Rd, Hd, E, Ho), C),
+           mc(X, true, N, queued(rv(running, true, Rd, Hd, E, Ho)))
+           once(paused(X), giveBack(X, Rd, limits(F) C))) } .
+
+  --- ... and so does another review's, ahead of this one in the queue: the queue moves
+  --- on (pump/1), or the machine is paused at the usage limit.
+  crl [turn-finished] :
+    { mc(X, true, N, rv(queued, Cl, Rd, Hd, E, Ho)) C }
+    => { pump(X, mc(X, true, N, rv(queued, Cl, Rd, Hd, E, Ho)) C) }
+    if not stopped(X, C) .
+  crl [turn-finished] :
+    { mc(X, true, N, rv(queued, Cl, Rd, Hd, E, Ho)) limits(s F) C }
+    => { note(X, shareOf(X, rv(queued, Cl, Rd, Hd, E, Ho), C),
+           mc(X, true, N, rv(queued, Cl, Rd, Hd, E, Ho)) paused(X) limits(F) C) }
+    if not stopped(X, C) .
+
+  --- handle_info {:resume, until}: the pause is over, the queue is shared again and
+  --- pumped. It may never come: the liveness holds without it.
+  rl [resume] :
+    { paused(X) mc(X, true, N, R) C }
+    => { pump(X, note(X, shareOf(X, R, paused(X) C), mc(X, true, N, R) C)) } .
+
+  --- handle_call {:report, ...}: the agent reported its findings (a review the plugin
+  --- restarted during still takes them).
+  crl [report] :
+    { later mc(X, true, N, rv(St, true, Rd, Hd, E, Ho)) C }
+    => { later set(X, rv(St, true, Rd, Hd, E, Ho), rv(waiting, true, Rd, Hd, E, Ho),
+           mc(X, true, N, rv(St, true, Rd, Hd, E, Ho)) C) }
+    if St == running or St == failed .
+
+  --- handle_call {:publish, key}: the user publishes (or the report did, automatically),
+  --- and the post takes [node() | Node.list()].
+  rl [publish] :
+    { later mc(X, true, N, rv(waiting, true, S, Hd, E, Ho)) C }
+    => { later set(X, rv(waiting, true, S, Hd, E, Ho), rv(publishing, true, S, Hd, E, Ho),
+           mc(X, true, N, rv(waiting, true, S, Hd, E, Ho)) pub(X, S, pwant(X & near(X, C))) C) } .
+
+  crl [post-lock] : { pub(X, S, pwant(L)) C } => { pub(X, S, pheld(L ^ (X & near(X, C)))) C }
+    if not pblocked(X, L, C) .
+
+  --- Under the post lock: a connected machine posted this commit, or is restarting its
+  --- plugin and cannot say whether it did, and the post is refused ...
+  crl [post] :
+    { pub(X, S, pheld(H)) mc(X, true, N, R) C }
+    => { set(X, R, failedPost(R, S), mc(X, true, N, R) C) }
+    if publishedBy(X, S, C) =/= nobody or restartingBy(X, C) =/= nobody .
+  --- ... or it is posted, and handle_call {:published, ...} records it if the review is
+  --- still being published.
+  crl [post] :
+    { pub(X, S, pheld(H)) mc(X, true, N, R) C }
+    => { once(posted(X, S), reposted(X, S, (H less X) ^ near(X, C),
+           set(X, R, didPost(R, S), mc(X, true, N, R) C))) }
+    if publishedBy(X, S, C) == nobody /\ restartingBy(X, C) == nobody .
+  op failedPost : Review Sha -> Review .
+  eq failedPost(rv(publishing, true, S, Hd, E, Ho), S) = rv(waiting, true, S, Hd, E, Ho) .
+  eq failedPost(R, S) = R [owise] .
+  op didPost : Review Sha -> Review .
+  eq didPost(rv(publishing, true, S, Hd, E, Ho), S) = rv(published, true, S, Hd, E, Ho) .
+  eq didPost(R, S) = R [owise] .
+
+  --- handle_info {:nodedown, node}: a review shown on the machine that left is looked
+  --- at again at once.
+  rl [nodedown] :
+    { down(X, Y) mc(X, true, N, rv(St, Cl, Rd, Hd, Y, Ho)) looks(X, Ls) C }
+    => { mc(X, true, N, rv(St, Cl, Rd, Hd, nobody, Ho)) looks(X, relook(Ls)) C } .
+  crl [nodedown] : { down(X, Y) mc(X, true, N, R) C } => { mc(X, true, N, R) C }
+    if not elsewhereIs(R, Y) .
+  op elsewhereIs : Review Id -> Bool .
+  eq elsewhereIs(rv(St, Cl, Rd, Hd, Y, Ho), Y) = true .
+  eq elsewhereIs(R, Y) = false [owise] .
+
+  --- handle_info :peer_claims: a review left to others reads their rows at its head,
+  --- and which of them are restarting ...
+  rl [peer-claims] :
+    { ping(X) mc(X, true, N, R) C }
+    => { mc(X, true, N, R)
+         (if left(R) then sn(X, head(R), seenAt(X, head(R), C), restarting(X, C)) else empty fi) C } .
+  op head : Review -> Sha .
+  eq head(rv(St, Cl, Rd, S, E, Ho)) = S .
+
+  --- ... and handle_info {:elsewhere_seen, ...} shows it where they say, if its head is
+  --- the one read and it is still left to them, unless no machine has it and the one it
+  --- shows is restarting; one no other machine has any more is looked at again at once.
+  rl [elsewhere-seen] :
+    { sn(X, S, W, I) mc(X, true, N, R) looks(X, Ls) C }
+    => { mc(X, true, N, shown(R, S, W, I))
+         looks(X, if shown(R, S, W, I) =/= R and W == nobody then relook(Ls) else Ls fi) C } .
+  op shown : Review Sha Ref Ids -> Review .
+  ceq shown(rv(St, Cl, Rd, S, E, Ho), S, W, I) = rv(St, Cl, Rd, S, W, Ho)
+    if left(rv(St, Cl, Rd, S, E, Ho)) /\ (W =/= nobody or not (E in I)) .
+  eq shown(R, S, W, I) = R [owise] .
+
+  --- environment ----------------------------------------------------------------------
+
+  rl [push] : gh(S) pushes(s F) => gh(flip(S)) pushes(F) .
+
+  --- A machine goes down: its plugin and everything of it, its connections and the
+  --- locks held on it.
+  rl [crash] :
+    { mc(X, P, true, R) crashes(s F) C }
+    => { cut(X, lose(X, mc(X, false, false, R) crashes(F) hurt(X) C)) } .
+
+  --- The plugin's server alone goes down (it crashed, say), its node connected
+  --- throughout. A settings save stops and starts the plugin in one host call, which
+  --- Host.peer/3 waits behind: a bounce and a restart in a row.
+  rl [bounce] :
+    { mc(X, true, true, R) bounces(s F) C }
+    => { lose(X, mc(X, false, true, R) bounces(F) hurt(X) C) } .
+
+  --- The plugin (and its node) come back: init/1, load/0 and its claims in the table,
+  --- then a first :poll, and handle_continue :announce tells the connected machines.
+  rl [restart] :
+    { mc(X, false, N, R) poll(X, Pl) C }
+    => { pings(near(X, C), mc(X, true, true, reload(R)) poll(X, armed) C) } .
+
+  rl [partition] : { link(X, Y) splits(s F) C } => { sever(X, Y, link(X, Y) C) splits(F) } .
+
+  crl [connect] :
+    { mc(X, P, true, R) mc(Y, B, true, R') C }
+    => { link(X, Y) mc(X, P, true, R) mc(Y, B, true, R') C }
+    if X << Y /\ not linked(X, Y, C) .
+
+  --- states -------------------------------------------------------------------------
+
+  --- Two or three machines, plugins running and connected, none has looked yet; then
+  --- periodic looks, pushes, crashes, partitions, plugin restarts, failed checkouts and
+  --- usage limits.
+  ops two three : Nat Nat Nat Nat Nat Nat Nat -> Sys .
+  vars Pe Pu Cr Sp Bo Fa Li : Nat .
+  op budget : Nat Nat Nat Nat Nat Nat -> Conf .
+  eq budget(Pu, Cr, Sp, Bo, Fa, Li) =
+       pushes(Pu) crashes(Cr) splits(Sp) bounces(Bo) fails(Fa) limits(Li) .
+  op fresh : Id -> Conf .
+  eq fresh(X) = mc(X, true, true, unknown) poll(X, armed) looks(X, nolook) .
+  eq two(Pe, Pu, Cr, Sp, Bo, Fa, Li) =
+       { fresh(a) fresh(b) link(a, b) gh(h1) periodic(Pe) free later
+         budget(Pu, Cr, Sp, Bo, Fa, Li) } .
+  eq three(Pe, Pu, Cr, Sp, Bo, Fa, Li) =
+       { fresh(a) fresh(b) fresh(c) link(a, b) link(a, c) link(b, c) gh(h1) periodic(Pe) free later
+         budget(Pu, Cr, Sp, Bo, Fa, Li) } .
+  --- The same two, looking in turn.
+  op live : Nat Nat Nat Nat Nat Nat -> Sys .
+  eq live(Pu, Cr, Sp, Bo, Fa, Li) =
+       { fresh(a) fresh(b) link(a, b) gh(h1) periodic(inf) turn(a) budget(Pu, Cr, Sp, Bo, Fa, Li) } .
+  --- b is starting the review and a shows it there; neither looks again on its own.
+  op left : Nat Nat Nat -> Sys .
+  eq left(Cr, Sp, Li) =
+       { mc(a, true, true, rv(ready, false, nosha, h1, b, nohold)) poll(a, spent) looks(a, nolook)
+         mc(b, true, true, rv(running, false, nosha, h1, nobody, nohold)) poll(b, spent) looks(b, nolook)
+         run(b, fetch) link(a, b) gh(h1) periodic(0) turn(a) budget(0, Cr, Sp, 0, 0, Li) } .
+
+  --- b has the review queued behind another of its reviews, and a shows it there.
+  op behind : Nat Nat Nat -> Sys .
+  eq behind(Cr, Sp, Li) =
+       { mc(a, true, true, rv(ready, false, nosha, h1, b, nohold)) poll(a, spent) looks(a, nolook)
+         mc(b, true, true, rv(queued, false, nosha, h1, nobody, nohold)) poll(b, spent) looks(b, nolook)
+         link(a, b) gh(h1) periodic(0) turn(a) budget(0, Cr, Sp, 0, 0, Li) } .
+
+  --- Both are starting the review, with Pe more periodic looks between them (none: they
+  --- look only when told to), and a plugin may restart.
+  op both : Budget Nat -> Sys .
+  op poll0 : Budget -> Poll .
+  eq poll0(0) = spent .
+  eq poll0(Bu) = armed [owise] .
+  eq both(Bu, Bo) =
+       { mc(a, true, true, rv(running, false, nosha, h1, nobody, nohold)) poll(a, poll0(Bu)) looks(a, nolook)
+         mc(b, true, true, rv(running, false, nosha, h1, nobody, nohold)) poll(b, poll0(Bu)) looks(b, nolook)
+         run(a, fetch) run(b, fetch) link(a, b) gh(h1) periodic(Bu) turn(a)
+         budget(0, 0, 0, Bo, 0, 0) } .
+
+  --- a reviewed and posted the head; b's run checked it out long before and is about to
+  --- lock. The pull request gets two more pushes and a looks twice: a push and a push back.
+  op pushedBack : -> Sys .
+  eq pushedBack =
+       { mc(a, true, true, rv(published, true, h1, h1, nobody, nohold)) poll(a, armed) looks(a, nolook)
+         mc(b, true, true, rv(running, false, nosha, h1, nobody, nohold)) poll(b, spent) looks(b, nolook)
+         run(b, out(h1)) made(a, h1) posted(a, h1) link(a, b) gh(h1) periodic(2) free later
+         budget(2, 0, 0, 0, 0, 0) } .
+
+  --- bad states ------------------------------------------------------------------------
+
+  --- A machine claimed a commit while a machine it locked and was connected to had a
+  --- standing claim of it.
+  op twice : Sys -> Bool .
+  eq twice({ dup(X, Y, S) C }) = true .
+  eq twice({ C }) = false [owise] .
+
+  --- ... or had ever claimed it.
+  op again : Sys -> Bool .
+  eq again({ redo(X, Y, S) C }) = true .
+  eq again({ C }) = false [owise] .
+
+  --- A machine posted a commit that a machine it locked and was connected to had posted.
+  op reposted : Sys -> Bool .
+  eq reposted({ repost(X, Y, S) C }) = true .
+  eq reposted({ C }) = false [owise] .
+
+  --- Any of the three.
+  op unsafe : Sys -> Bool .
+  eq unsafe(Y:Sys) = twice(Y:Sys) or again(Y:Sys) or reposted(Y:Sys) .
+endm
+
+mod CODE-REVIEW-CLAIMS-PROPS is
+  including CODE-REVIEW-CLAIMS .
+  including SATISFACTION .
+  subsort Sys < State .
+
+  vars X Y : Id .
+  vars S : Sha .
+  var Hd : MSha .
+  var E : Ref .
+  var St : Status .
+  vars P N : Bool .
+  var C : Conf .
+  var Ho : Hold .
+
+  --- Some machine claimed the head there is now.
+  op reviewed : -> Prop [ctor] .
+  eq { mc(X, P, N, rv(St, true, S, Hd, E, Ho)) gh(S) C } |= reviewed = true .
+  eq { C } |= reviewed = false [owise] .
+
+  --- No fault hurt X.
+  op steady : Id -> Prop [ctor] .
+  eq { hurt(X) C } |= steady(X) = false .
+  eq { C } |= steady(X) = true [owise] .
+endm
