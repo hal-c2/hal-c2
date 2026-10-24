@@ -45,6 +45,27 @@ fn opening_scans_once_and_the_section_forgets_when_left() {
 }
 
 #[test]
+fn a_signed_out_hosts_summary_sets_the_tool_it_names_in_code() {
+    let hub = opened();
+    answer(
+        &hub,
+        "env-1",
+        DISCOVER,
+        Ok(json!({
+            "versionControlSystems": [],
+            "sourceControlProviders": [{"kind": "github", "label": "GitHub", "status": "available",
+                "executable": "gh", "auth": {"status": "unauthenticated"}}]
+        })),
+    );
+    let github = state(&hub)["discovery"]["providers"][0].clone();
+    assert_eq!(github["authLabel"], "Not authenticated");
+    assert_eq!(github["authWarning"], true);
+    let summary = github["summary"].as_str().unwrap();
+    assert!(summary.starts_with("GitHub is not authenticated on this server. Sign in"));
+    assert!(summary.contains("using the `gh` tool"), "{summary}");
+}
+
+#[test]
 fn a_failed_scan_replaces_what_an_older_one_found() {
     let hub = opened();
     answer(&hub, "env-1", DISCOVER, Ok(found()));
