@@ -53,6 +53,24 @@ Item {
         }
         return null
     }
+    function brickFindVisibleIn(item, name) {
+        if (!item || !item.visible) return null
+        if (item.objectName === name) return item
+        var kids = item.children || []
+        for (var i = 0; i < kids.length; i++) {
+            var found = brickFindVisibleIn(kids[i], name)
+            if (found) return found
+        }
+        return null
+    }
+    function brickFindVisible(name) {
+        var trees = brickTrees()
+        for (var i = 0; i < trees.length; i++) {
+            var found = brickFindVisibleIn(trees[i], name)
+            if (found) return found
+        }
+        return null
+    }
     function brickShowsIn(item, text) {
         if (!item || !item.visible) return false
         if (item.text !== undefined && String(item.text) === text) return true
@@ -195,6 +213,17 @@ impl Brick {
     pub fn find(&self, world: &World, object_name: &str) -> Outcome<Option<ObjectId>> {
         Ok(
             match self.call(world, "brickFind", &[Value::from(object_name)])? {
+                Value::Object(item) => Some(item),
+                _ => None,
+            },
+        )
+    }
+
+    /// The first visible item named `object_name` (several delegates may share
+    /// a name and only some show), popups included.
+    pub fn find_visible(&self, world: &World, object_name: &str) -> Outcome<Option<ObjectId>> {
+        Ok(
+            match self.call(world, "brickFindVisible", &[Value::from(object_name)])? {
                 Value::Object(item) => Some(item),
                 _ => None,
             },
