@@ -308,7 +308,7 @@ pub fn register(steps: &mut Steps) {
             let wanted = notice_text(notice);
             let want = wanted.clone();
             world.wait_for_with(
-                move |w| text(&at(&licenses_state(w), "noticeText")) == want,
+                move |w| text(at(&licenses_state(w), "noticeText")) == want,
                 |w| {
                     format!(
                         "the notice to open; the page is {}",

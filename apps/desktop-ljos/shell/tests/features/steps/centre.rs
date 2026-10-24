@@ -179,7 +179,7 @@ pub fn register(steps: &mut Steps) {
         );
         let restore = c[0] == answers[1];
         update_diff(world, |d| d.confirm_revert(restore))?;
-        world.wait_for("the revert to finish", |w| diff_idle(w))?;
+        world.wait_for("the revert to finish", diff_idle)?;
         world.sync()
     });
     steps.step(

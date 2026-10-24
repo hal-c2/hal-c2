@@ -1228,3 +1228,11 @@ async fn socket(stream: TcpStream, port: u16, io: Arc<Io>) {
         .remove(&id);
     io.tell(Inbound::Closed { socket: id });
 }
+
+impl FakeMc {
+    /// What the scenario's thread waits on: a domain whose own threads
+    /// (a fake device hub's sockets) have something to pump raises it.
+    pub fn signal(&self) -> Arc<Signal> {
+        self.io.signal.clone()
+    }
+}
