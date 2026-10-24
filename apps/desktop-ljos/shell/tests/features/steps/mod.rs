@@ -12,6 +12,7 @@ pub mod mc;
 pub mod navigation;
 pub mod orchestration_view;
 pub mod plan;
+pub mod screenshot;
 pub mod stash;
 pub mod storage_layout;
 pub mod stream;
@@ -35,6 +36,7 @@ pub fn register(steps: &mut Steps) {
     navigation::register(steps);
     orchestration_view::register(steps);
     plan::register(steps);
+    screenshot::register(steps);
     stash::register(steps);
     storage_layout::register(steps);
     stream::register(steps);

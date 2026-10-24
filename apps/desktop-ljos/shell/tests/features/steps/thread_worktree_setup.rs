@@ -81,15 +81,18 @@ fn stages_done(fetch: &str) -> Vec<Value> {
 pub fn register(steps: &mut Steps) {
     steps.extension(extension);
 
-    steps.step(&format!("the project {Q} has a setup script"), |world, c, _| {
-        world.mc.projects.insert(
-            c[0].clone(),
-            json!({"id": c[0], "title": c[0], "workspaceRoot": format!("/work/{}", c[0]),
+    steps.step(
+        &format!("the project {Q} has a setup script"),
+        |world, c, _| {
+            world.mc.projects.insert(
+                c[0].clone(),
+                json!({"id": c[0], "title": c[0], "workspaceRoot": format!("/work/{}", c[0]),
                    "scripts": [{"id": "setup", "name": "Install", "command": "bun install",
                                 "runOnWorktreeCreate": true}]}),
-        );
-        Ok(())
-    });
+            );
+            Ok(())
+        },
+    );
     steps.step(
         &format!("the user started the thread {Q} in a new worktree from {Q}"),
         |world, c, _| {
@@ -262,17 +265,20 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step(&format!("it reads {Q} once the agent starts"), |world, c, _| {
-        publish(world, "done", stages_done("done"), None)?;
-        let Ok(brick) = shown(world) else {
-            fail!("no brick is shown");
-        };
-        let wanted = c[0].clone();
-        world.wait_for_with(
-            move |w| labelled(w, &wanted) && brick.shows(w, &wanted).unwrap_or(false),
-            |w| format!("\"{}\"; the setup shown is {}", c[0], show(&setup(w))),
-        )
-    });
+    steps.step(
+        &format!("it reads {Q} once the agent starts"),
+        |world, c, _| {
+            publish(world, "done", stages_done("done"), None)?;
+            let Ok(brick) = shown(world) else {
+                fail!("no brick is shown");
+            };
+            let wanted = c[0].clone();
+            world.wait_for_with(
+                move |w| labelled(w, &wanted) && brick.shows(w, &wanted).unwrap_or(false),
+                |w| format!("\"{}\"; the setup shown is {}", c[0], show(&setup(w))),
+            )
+        },
+    );
     steps.step(&format!("the conversation says {Q}"), |world, c, _| {
         // WorktreeSetupCard.qml shows the label over the conversation.
         world.wait_for_with(
