@@ -758,8 +758,15 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| search(world, &c[0]),
     );
     steps.step(&format!("only {Q} is listed"), |world, c, _| {
-        // TODO(port): the archive lists the same words (ArchivedThreads'
-        // archiveListsOnly); another worker owns that helper.
+        // The archive page lists the same words as the branch list.
+        if !super::archived_threads::groups_of(world).is_empty() {
+            expect!(
+                super::archived_threads::archive_lists_only(world, &c[0]),
+                "the archive lists {}",
+                show(&world.state("archivedThreads"))
+            );
+            return Ok(());
+        }
         let names = branch_names(world);
         expect!(names == [c[0].clone()], "the list is {}", names.join(", "));
         Ok(())
