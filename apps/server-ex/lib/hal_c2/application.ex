@@ -74,6 +74,7 @@ defmodule HalC2.Application do
       HalC2.PullRequests.Refreshes,
       HalC2.PullRequests.Discovery,
       HalC2.PullRequests.Sync,
+      HalC2.PullRequests.Wakes,
       HalC2.Orchestration.Settlement,
       # Threads stopped on a usage limit resume at the reset, where the user asked.
       HalC2.Orchestration.LimitRecovery,
