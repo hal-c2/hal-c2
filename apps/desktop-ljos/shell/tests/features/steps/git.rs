@@ -1282,7 +1282,9 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the message goes away by itself after a while",
         |world, _, _| {
+            // Toasts expire on the engine's clock, which set_time leaves.
             world.set_time(world.now() + Duration::seconds(11));
+            world.advance(11_000)?;
             world.sync()?;
             expect!(
                 toast_titled(world, "Pushed to origin/feature/tax").is_null(),
@@ -1333,9 +1335,10 @@ pub fn register(steps: &mut Steps) {
 
     // The default branch.
     steps.step(&format!("the user runs {Q}"), |world, c, _| {
-        // TODO(port): PlannerSteps' runPluginAction, an action of the planner
-        // plugin when the MC runs it, is tried first in desktop-qt; another
-        // worker ports it.
+        // An action of the planner plugin when the MC runs it comes first.
+        if super::planner::run_plugin_action(world, &c[0])? {
+            return Ok(());
+        }
         world.sync()?;
         // From an open command palette: its entry of that title.
         let row = world.with::<hal_c2_shell::controllers::palette::Palette, _>(|p, _| {
@@ -1825,8 +1828,10 @@ pub fn register(steps: &mut Steps) {
                 |w| brick.shows(w, &first).unwrap_or(false),
                 |_| format!("the pill to say \"{first}\""),
             )?;
-            // Five seconds on, the message is written and the hook runs.
+            // Five seconds on, the message is written and the hook runs. The
+            // elapsed time is the engine's clock, which set_time leaves.
             world.set_time(world.now() + Duration::seconds(5));
+            world.advance(5000)?;
             let (id, input, hook) = {
                 let checkout = fake(world);
                 let Some(id) = checkout.held else {
@@ -1926,7 +1931,9 @@ pub fn register(steps: &mut Steps) {
                 show(&failure(world))
             );
             // Long after a result would have gone away by itself.
+            // Toasts expire on the engine's clock, which set_time leaves.
             world.set_time(world.now() + Duration::seconds(3600));
+            world.advance(3_600_000)?;
             world.sync()?;
             expect!(!failure(world).is_null(), "the failure went away by itself");
             dispatch(

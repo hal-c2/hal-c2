@@ -14,10 +14,10 @@ use std::io::Write;
 use hal_c2_shell::controllers::composer;
 use serde_json::{Map, Value, json};
 
+use super::settings::publish_providers;
 use super::stream::{THREAD, describe, read, role, set};
 use crate::brick::{Brick, shown};
-use crate::steps::settings::publish_providers;
-use crate::harness::{Outcome, Q, Steps, show};
+use crate::harness::{Failure, Outcome, Q, Steps, show};
 use crate::world::World;
 use crate::{expect, fail};
 
@@ -137,9 +137,9 @@ fn view(world: &mut World) -> Outcome<Brick> {
 ///
 /// The click does not reach `rewind.request` yet: the Timeline's IconButton
 /// calls `button.clicked()` from `TapHandler.onTapped`, and Ljós hands the
-/// handler its `button` parameter in place of the `id: button` (see
-/// issue-handler-param-shadows-id.md in the port's notes). The scenarios that
-/// edit from a message fail here until Ljós resolves the id.
+/// handler its `button` parameter in place of the `id: button`
+/// (TODO(ljos#104)). The scenarios that edit from a message fail here until
+/// Ljós resolves the id.
 fn edit_from_second(world: &mut World) -> Outcome {
     prepare(world)?;
     let brick = view(world)?;
@@ -199,20 +199,21 @@ pub fn cancel_rewind_question(world: &mut World) -> Outcome<bool> {
 }
 
 pub fn register(steps: &mut Steps) {
+    // Why a rewind cannot happen.
     steps.step("the provider cannot rewind its history", |world, _, _| {
-        let thread = THREAD.to_string();
-        let mut row = world.mc.threads.get(&thread).cloned().unwrap_or_default();
+        let row = world
+            .mc
+            .threads
+            .get_mut(THREAD)
+            .ok_or_else(|| Failure(format!("the MC has no thread {THREAD}")))?;
         row["modelSelection"] = json!({"instanceId": "opencode", "model": "big-pickle"});
-        world.mc.threads.insert(thread.clone(), row.clone());
-        world.mc.send_row(&thread, &row);
+        let row = row.clone();
+        world.mc.send_row(THREAD, &row);
         publish_providers(
             &mut world.mc,
             vec![json!({
-                "instanceId": "opencode",
-                "driver": "opencode",
-                "status": "ready",
-                "models": [],
-                "supportsConversationRollback": false,
+                "instanceId": "opencode", "driver": "opencode", "status": "ready",
+                "models": [], "supportsConversationRollback": false,
             })],
         );
         world.sync()
@@ -267,7 +268,7 @@ pub fn register(steps: &mut Steps) {
                 show(&rollback)
             );
             // Turn 1 stays; the second message and what followed are gone.
-            world.wait_for_with(|w| answers(w) == ["Answer 1"], |w| describe(w))?;
+            world.wait_for_with(|w| answers(w) == ["Answer 1"], describe)?;
             let id = second(world)?;
             expect!(
                 read(world, |t| t.index_of(&id))?.is_none(),
