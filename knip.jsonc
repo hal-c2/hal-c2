@@ -4,15 +4,11 @@
   "rules": { "types": "off", "nsTypes": "off" },
   "workspaces": {
     ".": {
-      // Keep vendored reference repositories outside the root project.
       "project": ["*.{js,mjs,cjs,ts,mts,cts}"],
     },
     "scripts": {
       // Knip loads its preprocessor through a CLI option.
       "entry": ["knip-schemas.ts"],
-    },
-    "infra/relay": {
-      "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!"],
     },
     "packages/*": {
       // These workspace packages are private to this monorepo.

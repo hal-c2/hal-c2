@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  canPreloadBrowsePath,
-  createBrowseNavigationCoordinator,
-  filterFilesystemBrowseEntries,
-  getFilesystemBrowsePath,
-} from "./filesystem.ts";
+import { filterFilesystemBrowseEntries, getFilesystemBrowsePath } from "./filesystem.ts";
 
 describe("filesystem browse model", () => {
   it("derives the browse target and navigation state", () => {
@@ -34,37 +29,5 @@ describe("filesystem browse model", () => {
     expect(filterFilesystemBrowseEntries(entries, "").visibleEntries).toEqual(entries.slice(1));
     expect(filterFilesystemBrowseEntries(entries, ".").visibleEntries).toEqual(entries.slice(0, 1));
     expect(filterFilesystemBrowseEntries(entries, "Code").exactEntry).toEqual(entries[1]);
-  });
-});
-
-describe("browse navigation", () => {
-  it("only commits the latest valid navigation", async () => {
-    const navigation = createBrowseNavigationCoordinator();
-    const first = Promise.withResolvers<void>();
-    const second = Promise.withResolvers<void>();
-    const commits: string[] = [];
-    const commit = (name: string) => () => commits.push(name);
-    const firstRun = navigation.run(() => first.promise, commit("first"));
-    const secondRun = navigation.run(() => second.promise, commit("second"));
-
-    second.resolve();
-    await expect(secondRun).resolves.toBe(true);
-    first.resolve();
-    await expect(firstRun).resolves.toBe(false);
-
-    const invalidated = Promise.withResolvers<void>();
-    const invalidatedRun = navigation.run(() => invalidated.promise, commit("stale"));
-    navigation.invalidate();
-    invalidated.resolve();
-
-    await expect(invalidatedRun).resolves.toBe(false);
-    expect(commits).toEqual(["second"]);
-  });
-
-  it("only preloads connected environments", () => {
-    expect(canPreloadBrowsePath("connected")).toBe(true);
-    expect(canPreloadBrowsePath("offline")).toBe(false);
-    expect(canPreloadBrowsePath("reconnecting")).toBe(false);
-    expect(canPreloadBrowsePath(null)).toBe(false);
   });
 });

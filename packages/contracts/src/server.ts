@@ -649,8 +649,7 @@ export type ServerConfig = typeof ServerConfig.Type;
 /**
  * The machine an environment should be drawn as: the user's pick, else what
  * the server detected, else a generic server. Settings only exist once
- * connected; a descriptor alone (relay discovery, before any connection)
- * still yields the detected kind. A null config (nothing known yet, or an
+ * connected; a descriptor alone (before any connection) still yields the detected kind. A null config (nothing known yet, or an
  * older server) resolves to the same generic so rows never flicker between
  * glyphs.
  */

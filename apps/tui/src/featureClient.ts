@@ -7,8 +7,6 @@ import {
   type ProjectId,
   type ProjectScript,
   type ProviderInstanceMutation,
-  type RelayClientInstallProgressStage,
-  type RelayClientStatus,
   type ServerProvider,
   type ServerProviderUpdateInput,
   type ServerSettings,
@@ -22,9 +20,8 @@ import {
   type VcsStatusResult,
 } from "@hal-c2/contracts";
 import { deleteProject, updateProject } from "@hal-c2/client-runtime/operations";
-import { request, runStream } from "@hal-c2/client-runtime/rpc";
+import { request } from "@hal-c2/client-runtime/rpc";
 import * as Effect from "effect/Effect";
-import * as Stream from "effect/Stream";
 
 import type { TuiRuntime } from "./connection.ts";
 
@@ -93,12 +90,6 @@ export interface TuiFeatureClient {
    * changes left out on request (`review.getDiffPreview`, its branch-range source).
    */
   readonly reviewDiff: (cwd: string, baseRef: string, ignoreWhitespace: boolean) => Promise<string>;
-  /** Whether the server has the relay client HAL-C2 Connect needs (`cloud.getRelayClientStatus`). */
-  readonly relayStatus: () => Promise<RelayClientStatus>;
-  /** Install it on the server, stage by stage; resolves with the status it ends in. */
-  readonly installRelay: (
-    onStage: (stage: RelayClientInstallProgressStage) => void,
-  ) => Promise<RelayClientStatus | null>;
 }
 
 const text = (value: string) => TrimmedNonEmptyString.make(value);
@@ -196,21 +187,6 @@ export function makeFeatureClient(runtime: TuiRuntime): TuiFeatureClient {
       ),
     publishRepository: (input) =>
       runtime.runPromise(request(WS_METHODS.sourceControlPublishRepository, input)),
-    relayStatus: () => runtime.runPromise(request(WS_METHODS.cloudGetRelayClientStatus, {})),
-    installRelay: (onStage) => {
-      let status: RelayClientStatus | null = null;
-      return runtime.runPromise(
-        runStream(WS_METHODS.cloudInstallRelayClient, {}).pipe(
-          Stream.runForEach((event) =>
-            Effect.sync(() => {
-              if (event.type === "progress") onStage(event.stage);
-              else status = event.status;
-            }),
-          ),
-          Effect.map(() => status),
-        ),
-      );
-    },
     reviewDiff: (cwd, baseRef, ignoreWhitespace) =>
       runtime.runPromise(
         request(WS_METHODS.reviewGetDiffPreview, {

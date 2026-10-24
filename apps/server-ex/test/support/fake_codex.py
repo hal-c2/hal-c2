@@ -1,7 +1,7 @@
 # Fake `codex app-server` for tests: answers the handshake and plays a scripted turn.
 # A turn whose text contains "wait" stays running until turn/interrupt; "approve" asks
 # to run a command, "ask" asks a question (item/tool/requestUserInput; "ask: Q" asks Q), and "write NAME"
-# creates the file NAME ("edit NAME" reports a change to it; "indent", "fill", "fail" and "say" are below;
+# creates the file NAME ("edit NAME" reports a change to it; "run command", "indent", "fill", "fail" and "say" are below;
 # steering with "say ..." ends a waiting turn with that answer). "where are we" says which native thread
 # the turn ran on and whether handed-off history or merged work came with the message; "exit before
 # starting" makes the process exit on turn/start. With FAKE_CODEX_LOG set, every request the MC sends
@@ -280,6 +280,11 @@ for line in sys.stdin:
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-repeat-{turns}", "text": text}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
+        # 'run command {"command": ..., "output": ...}' reports that command and what it
+        # printed (a commandExecution item) before the usual answer.
+        if text.startswith("run command "):
+            run = json.loads(text[len("run command "):])
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": f"cmd-run-{turns}", "command": run["command"], "status": "completed", "aggregatedOutput": run["output"], "exitCode": 0}}})
         if text.startswith("write "):
             name = text.split()[1]
             os.makedirs(os.path.dirname(name) or ".", exist_ok=True)
