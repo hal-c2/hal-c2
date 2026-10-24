@@ -57,8 +57,11 @@ macro_rules! fail {
 #[macro_export]
 macro_rules! expect {
     ($cond:expr, $($arg:tt)*) => {
-        if !$cond {
-            return Err($crate::harness::Failure(format!($($arg)*)));
+        {
+            let held: bool = $cond;
+            if !held {
+                return Err($crate::harness::Failure(format!($($arg)*)));
+            }
         }
     };
 }
