@@ -98,6 +98,8 @@ fn driver_label(driver: &str) -> Option<&'static str> {
 pub struct Zone {
     id: String,
     offset: Rc<dyn Fn(DateTime<Utc>) -> FixedOffset>,
+    /// The machine's: the platform names it.
+    local: bool,
 }
 
 impl Zone {
@@ -106,6 +108,7 @@ impl Zone {
         Zone {
             id: iana_time_zone::get_timezone().unwrap_or_else(|_| "UTC".into()),
             offset: Rc::new(|at| Local.offset_from_utc_datetime(&at.naive_utc())),
+            local: true,
         }
     }
 
@@ -115,6 +118,7 @@ impl Zone {
         Zone {
             id: id.to_owned(),
             offset: Rc::new(move |_| offset),
+            local: false,
         }
     }
 
@@ -123,7 +127,18 @@ impl Zone {
         Zone {
             id: id.to_owned(),
             offset: Rc::new(offset),
+            local: false,
         }
+    }
+
+    /// QDateTime::timeZoneAbbreviation at `instant`: the machine's zone as
+    /// the zone database names it ("PST", "PDT"), another by its offset.
+    pub fn abbreviation(&self, instant: DateTime<Utc>) -> String {
+        if self.local {
+            let names = ljos::locale::Locale::named("en_US").zone_names(instant.timestamp_millis());
+            return names.abbreviation;
+        }
+        self.at(instant).offset().to_string()
     }
 
     fn at(&self, instant: DateTime<Utc>) -> DateTime<FixedOffset> {
@@ -231,7 +246,7 @@ fn place_of(bucket: &Json, window: &Json, hourly: bool) -> i64 {
 }
 
 /// `2 PM` in `zone`. An hour the clocks repeat when they fall back says its
-/// offset too.
+/// zone too.
 fn hour_name(at: DateTime<Utc>, zone: &Zone) -> String {
     let local = zone.at(at);
     let name = local.format("%-I %p").to_string();
@@ -240,9 +255,7 @@ fn hour_name(at: DateTime<Utc>, zone: &Zone) -> String {
         if other.date_naive() == local.date_naive()
             && other.format("%H").to_string() == local.format("%H").to_string()
         {
-            // TODO(ljos#83): desktop-qt says the zone's abbreviation
-            // ("PST"); there is none to ask for, so the offset says which.
-            return format!("{name} {}", local.offset());
+            return format!("{name} {}", zone.abbreviation(at));
         }
     }
     name
