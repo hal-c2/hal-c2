@@ -619,7 +619,7 @@ pub fn attach_root(engine: &Engine, id: &str, root: ObjectId) {
     };
     let _ = engine.signal_index(app, "reopened").and_then(|reopened| {
         engine.connect_to(app, reopened, root, move |engine, args| {
-            // A shell reloaded since keeps its first root hidden
+            // A reloaded shell's old root lasts until the next frame
             // ([`crate::runtime`]): only the generation shown comes back.
             let shown = crate::runtime::window(engine).is_none_or(|w| w == root);
             if shown && matches!(args.first(), Some(Value::Bool(false))) {

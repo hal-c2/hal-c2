@@ -117,9 +117,6 @@ struct RuntimeState {
     user_shell: RefCell<Option<PathBuf>>,
     /// The window of the generation shown.
     shown: Cell<Option<ObjectId>>,
-    /// The window the host made its root, which stays (hidden) once another
-    /// generation is shown, as a root cannot be replaced (see [`retire`]).
-    root: Cell<Option<ObjectId>>,
     /// The sources as the generation shown was made of them.
     fingerprint: Cell<u64>,
     debounce: Cell<Option<ObjectId>>,
@@ -170,9 +167,7 @@ pub fn open(engine: &Engine, watch: bool) -> Result<ObjectId, String> {
         follow(engine, &state);
     }
     next_generation(engine, &state);
-    let root = state.shown.get().ok_or_else(|| last_error(engine))?;
-    state.root.set(Some(root));
-    Ok(root)
+    state.shown.get().ok_or_else(|| last_error(engine))
 }
 
 /// The window of the generation shown; none before [`open`].
@@ -293,7 +288,7 @@ fn next_generation(engine: &Engine, state: &RuntimeState) {
     };
     controller::attach_root(engine, controller::MAIN, window);
     if let Some(old) = state.shown.replace(Some(window)) {
-        retire(engine, state, old);
+        retire(engine, old, window);
     }
     let generation = cx.get(ShellRuntime::GENERATION).unwrap_or_default() + 1;
     let _ = cx.set(ShellRuntime::USING_USER_SHELL, using_user_shell);
@@ -316,15 +311,11 @@ fn make(engine: &Engine, key: &str, name: &str) -> Result<ObjectId, String> {
     Err(format!("Shell root must be a Window: {name}"))
 }
 
-/// Lets the previous generation's window go. The host's root is hidden and
-/// kept instead: Ljós shows another `Window` in a window of its own, but has
-/// no way for the app to replace its root, which stays the platform's first
-/// window. TODO(ljos#100): replace the root with the new generation's window,
-/// as `QuickScene::replace_root` does for Ljós's own reload.
-fn retire(engine: &Engine, state: &RuntimeState, old: ObjectId) {
-    if state.root.get() == Some(old) {
-        let _ = engine.write_by_name(old, "visible", Value::Bool(false));
-    } else {
+/// Lets the previous generation's window go: `new` takes the platform
+/// window `old` had, which is destroyed before the next frame. A window no
+/// host shows (a headless test's) is destroyed now.
+fn retire(engine: &Engine, old: ObjectId, new: ObjectId) {
+    if ljos::window::replace_root(engine, old, new).is_err() {
         engine.destroy(old);
     }
 }
