@@ -3,11 +3,7 @@
 //! MC's `review.getDiffPreview`, driven through the DiffPanel brick as the
 //! user drives it. The MC's side is faked here: the working tree's patch,
 //! and the branch's against each base.
-//!
-//! Not ported (ReviewDiffSteps.cpp's editor steps): "no editor is available
-//! on this environment", "the user opens {Q} from the diff" and "... from
-//! the commit review". They wait for FakeConfig's `availableEditors` and
-//! FilesWorkspace's `OpenedInEditor`, which other files own.
+//! The user's editor is WorkspaceSteps' ([`super::workspace::have_editor`]).
 
 use std::collections::HashMap;
 
@@ -351,6 +347,22 @@ pub fn register(steps: &mut Steps) {
             world.wait_for("the thread to be in its worktree", |w| {
                 at(&w.state("workspace"), "worktreePath") == WORKTREE
             })
+        },
+    );
+    steps.step(
+        &format!("the user opens {Q} from the diff"),
+        |world, c, _| {
+            super::workspace::have_editor(world, &c[0])?;
+            let view = panel(world)?;
+            let brick = view.brick;
+            let header = brick.item(world, &format!("diffFile-{}", c[0]))?;
+            let button = brick.find_under(world, header, "diffOpenInEditor")?;
+            let Some(button) = button.filter(|b| brick.flag(world, *b, "visible")) else {
+                fail!("{} cannot be opened from the diff", c[0]);
+            };
+            let (x, y) = brick.at(world, button, 0.5, 0.5)?;
+            world.click_at(x, y)?;
+            world.sync()
         },
     );
     steps.step("the user reviews the working tree", |world, _, _| {

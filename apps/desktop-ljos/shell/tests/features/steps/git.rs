@@ -1706,6 +1706,15 @@ pub fn register(steps: &mut Steps) {
         start_commit(world).map(|_| ())
     });
     steps.step(
+        &format!("the user opens {Q} from the commit review"),
+        |world, c, _| {
+            super::workspace::have_editor(world, &c[0])?;
+            start_commit(world)?;
+            shown(world)?.click(world, &format!("fileOpen-{}", c[0]))?;
+            world.sync()
+        },
+    );
+    steps.step(
         "the user leaves every file out of the commit",
         |world, _, _| {
             start_commit(world)?;

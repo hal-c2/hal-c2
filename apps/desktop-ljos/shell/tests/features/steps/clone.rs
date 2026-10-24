@@ -5,11 +5,6 @@
 //! starts clones (adding their project at once, as the MC does) and reports
 //! them on each environment's `projectClones` shape; what git does is the
 //! MC's own scenarios'.
-//!
-//! TODO(port): the local-folder source, the add project base directory and
-//! the registration failure wait for FakeFiles (`fake_files.rs`), FakeConfig
-//! (`settings.rs`) and FakeProjects, which other workers port. Until they
-//! merge their steps stay out and the scenarios that use them stay undefined.
 
 use std::collections::HashMap;
 
@@ -18,6 +13,9 @@ use hal_c2_shell::controllers::drafts;
 use hal_c2_shell::controllers::palette::Palette;
 use serde_json::{Value, json};
 
+use super::fake_files::fake_files;
+use super::project::FakeProjects;
+use super::settings::save_elsewhere;
 use super::source_control_settings::set_source_control_host;
 use crate::fake_mc::FakeMc;
 use crate::harness::{Outcome, Q, Steps, at, show, text};
@@ -25,7 +23,7 @@ use crate::world::World;
 use crate::{expect, fail};
 
 const CLONE_PROJECT: &str = "p-shop";
-/// Where `~` is on the fake MC (FakeFiles' home, once it is ported).
+/// Where `~` is on the fake MC: FakeFiles' home.
 const HOME: &str = "/home/sam";
 /// Another machine of the cluster the scenario's clones run on.
 const MEMBER: &str = "beast";
@@ -282,13 +280,28 @@ fn started(world: &mut World) -> Value {
         .map_or(Value::Null, |(_, payload)| payload.clone())
 }
 
-/// Add project from `source` up to where the MC is asked to clone.
+/// Add project from `source` up to where the MC is asked to clone (or adds
+/// the folder).
 fn add_from(world: &mut World, source: &str) -> Outcome {
     fake(world).source = source.to_owned();
     if source == "a repository on GitLab" {
         set_source_control_host(&mut world.mc, "gitlab", true);
     }
     open_sources(world)?;
+    if source == "a local folder" {
+        let files = fake_files(&mut world.mc);
+        let home = files.home.clone();
+        files.folders.insert(format!("{home}/code"));
+        files.folders.insert(format!("{home}/code/shop"));
+        run_row(world, "Local folder")?;
+        remember(world)?;
+        let engine = world.engine().clone();
+        palette(world, |p, _| p.set_query(&engine, "~/code/shop"))?;
+        row_of(world, "")?;
+        let added = palette(world, |p, _| p.add_browsed_folder(&engine))?;
+        expect!(added, "{}", describe(world));
+        return world.sync();
+    }
     let url = source == "a Git URL";
     run_row(
         world,
@@ -430,14 +443,15 @@ pub fn register(steps: &mut Steps) {
 
     // Adding from a source.
     steps.step(
-        "the user adds a project from (a Git URL|a repository on GitHub|a repository on GitLab)",
+        "the user adds a project from (a local folder|a Git URL|a repository on GitHub|a repository on GitLab)",
         |world, c, _| add_from(world, &c[0]),
     );
     steps.step(
         "the project is added to the chosen environment",
         |world, _, _| {
             let source = fake(world).source.clone();
-            let root = format!("{HOME}/shop");
+            let local = source == "a local folder";
+            let root = format!("{HOME}/{}", if local { "code/shop" } else { "shop" });
             world.wait_for_with(
                 |w| draft_project(w)["workspaceRoot"] == root.as_str(),
                 |w| {
@@ -447,6 +461,9 @@ pub fn register(steps: &mut Steps) {
                     )
                 },
             )?;
+            if local {
+                return Ok(());
+            }
             // Each source clones from its own address: a URL as given, GitHub
             // over HTTPS, GitLab over SSH.
             let start = started(world);
@@ -503,6 +520,45 @@ pub fn register(steps: &mut Steps) {
         },
     );
 
+    // Where browsing starts.
+    steps.step(
+        &format!("the add project base directory is {Q}"),
+        |world, c, _| {
+            save_elsewhere(&mut world.mc, "addProjectBaseDirectory", json!(c[0]), false);
+            Ok(())
+        },
+    );
+    steps.step("the add project base directory is empty", |world, _, _| {
+        save_elsewhere(&mut world.mc, "addProjectBaseDirectory", json!(""), false);
+        Ok(())
+    });
+    steps.step("the user starts adding a project", |world, _, _| {
+        open_sources(world)?;
+        run_row(world, "Local folder")?;
+        remember(world)
+    });
+    steps.step(
+        &format!("(?:the folder browser opens in|browsing starts at) ({Q}|the home folder)"),
+        |world, c, _| {
+            // A folder, as the palette browses one: with its separator.
+            let mut folder = if c[0] == "the home folder" {
+                "~".to_owned()
+            } else {
+                c[0].trim_matches('"').to_owned()
+            };
+            if !folder.ends_with('/') {
+                folder.push('/');
+            }
+            let asked = fake(world).asked.clone();
+            expect!(
+                asked.contains(&format!("browse: {folder}")),
+                "{}",
+                asked.join("; ")
+            );
+            Ok(())
+        },
+    );
+
     // The steps of a clone.
     steps.step(
         "the user is asked for the repository first",
@@ -546,8 +602,14 @@ pub fn register(steps: &mut Steps) {
 
     // Failures.
     steps.step(
-        "adding a project will fail at (the clone|the repository lookup)",
+        "adding a project will fail at (the clone|the repository lookup|registration)",
         |world, c, _| {
+            if c[0] == "registration" {
+                // The MC refuses the project itself.
+                world.mc.part::<FakeProjects>().refusal = "Disk is read-only".into();
+                fake(world).source = "a local folder".into();
+                return Ok(());
+            }
             let fake = fake(world);
             if c[0] == "the clone" {
                 fake.refuse_start = "destination already exists".into();
