@@ -10,6 +10,7 @@ pub mod connection;
 pub mod connection_health;
 pub mod git;
 pub mod mc;
+pub mod review_diff;
 pub mod source_control_settings;
 pub mod stream;
 pub mod thread_menu;
@@ -26,6 +27,7 @@ pub fn register(steps: &mut Steps) {
     connection_health::register(steps);
     git::register(steps);
     mc::register(steps);
+    review_diff::register(steps);
     source_control_settings::register(steps);
     stream::register(steps);
     thread_menu::register(steps);
