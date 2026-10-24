@@ -127,10 +127,14 @@ desktop/native-projects.feature: Adding a project to an MC on this machine picks
 desktop/native-projects.feature: An MC on another machine opens no local folders
 desktop/shell-host.feature: A screenshot of a desktop app that fails to start shows why and quits
 desktop/shell-host.feature: A screenshot taken without a display shows the app's window
+files/adding-projects.feature: A clone on another machine of the cluster shows its progress too
+files/adding-projects.feature: A failed or cancelled clone offers to remove the project it created
+files/adding-projects.feature: A finished clone offers to open its project
 files/adding-projects.feature: A folder the environment refuses to add says why
 files/adding-projects.feature: A user with no projects is invited to add one
 files/adding-projects.feature: Adding a folder from the desktop and mobile apps registers it and starts a thread
 files/adding-projects.feature: Adding an existing project from the desktop and mobile apps opens its latest thread
+files/adding-projects.feature: Clone progress is shown while the user keeps working
 files/adding-projects.feature: Dropping a folder adds it as a project and starts a thread
 files/adding-projects.feature: Dropping a folder while the environment is disconnected reports a failure
 files/files-on-another-machine.feature: A file of a thread on another machine opens in this machine's apps [follows the path "src/cart.ts" in a terminal, the editor]
@@ -156,6 +160,12 @@ mc/platform/storage-layout.feature: The desktop app's control socket lives in th
 mc/platform/websocket-protocol.feature: A client refuses a server speaking an unknown protocol
 mc/platform/websocket-protocol.feature: A client skips an event type it does not know
 navigation/focus.feature: Leaving settings goes back to the thread
+navigation/header.feature: A new thread can run on another machine's checkout of the project
+navigation/header.feature: A thread on another machine of the cluster has its header
+navigation/header.feature: Leaving the thread lands on a new draft in the most recent project
+navigation/header.feature: Renaming from the thread list starts editing the title in the header
+navigation/header.feature: The header of a thread on another machine says so while that machine is offline
+navigation/header.feature: The header opens the checkout's pull request in the browser
 navigation/keybinding-customisation.feature: A condition limits where a rule applies [!terminalFocus, the composer has focus, runs]
 navigation/keybinding-customisation.feature: A condition limits where a rule applies [isDesktop, the user is in the desktop app, runs]
 navigation/keybinding-customisation.feature: A condition limits where a rule applies [somethingUnknown, anything, does not run]
@@ -315,6 +325,8 @@ navigation/keybindings.feature: mod means the platform's primary modifier [Linux
 navigation/keybindings.feature: mod means the platform's primary modifier [Windows, Ctrl]
 navigation/keybindings.feature: mod means the platform's primary modifier [macOS, Command]
 navigation/landing.feature: A new thread that can not be started says so and tries again
+navigation/landing.feature: Leaving the thread lands on the same draft again
+navigation/landing.feature: Opening the app lands on a new thread in the most recent project
 navigation/landing.feature: The first project added lands on its draft
 navigation/landing.feature: The open thread going away lands on a new thread
 navigation/landing.feature: With no projects the window stays home
@@ -322,6 +334,7 @@ navigation/qt-shell-backlog.feature: A device tab streams a device screen
 navigation/qt-shell-backlog.feature: Opening a folder still reaches the running window after a launch without one
 navigation/qt-shell-backlog.feature: Opening a folder that is already a project reuses it
 navigation/qt-shell-backlog.feature: Opening a folder while the app runs adds it to the running window
+navigation/qt-shell-backlog.feature: The previous worktree shortcut works in the native composer
 navigation/qt-shell-backlog.feature: Thread number shortcuts work in the native desktop shell
 navigation/windows.feature: The window title follows the thread's title
 plugins/keymaps.feature: Resetting keybindings removes every override
@@ -400,10 +413,64 @@ settings/saving-settings.feature: The desktop reads the MC's settings when it co
 settings/search-and-navigation.feature: Back with nowhere to return to lands on a new thread
 settings/search-and-navigation.feature: Leaving settings returns to where the user was
 settings/search-and-navigation.feature: Moving between sections is one step back
+settings/source-control.feature: A host that is not supported yet is marked coming soon
+settings/source-control.feature: A missing tool shows how to install it
+settings/source-control.feature: A tool that is not signed in says so
+settings/source-control.feature: Hiding a revealed account again
+settings/source-control.feature: Nothing detected yet
+settings/source-control.feature: Rescanning after installing a tool
+settings/source-control.feature: Revealing a signed-in account
+settings/source-control.feature: The environment could not be scanned
+settings/source-control.feature: The panel lists each tool with its state
+source-control/commit-and-generated-messages.feature: A blank message is written by the writer model
+source-control/commit-and-generated-messages.feature: A commit offers to push it
+source-control/commit-and-generated-messages.feature: A failed action is reported
+source-control/commit-and-generated-messages.feature: A git action on another machine of the cluster runs there
+source-control/commit-and-generated-messages.feature: Committing on a new branch
+source-control/commit-and-generated-messages.feature: Committing only the files the user picked
+source-control/commit-and-generated-messages.feature: Committing with a message the user wrote
+source-control/commit-and-generated-messages.feature: The progress toast names the stage and the hook's last line
+source-control/errors.feature: A failed git action stays on screen until dismissed
+source-control/errors.feature: A failure a command fixes copies the command
+source-control/errors.feature: A failure a settings page fixes links to the page
+source-control/git-actions.feature: A detached checkout only allows committing
+source-control/git-actions.feature: A machine that is offline says why its git actions cannot run
+source-control/git-actions.feature: A menu entry that cannot run says why [has no uncommitted changes, Commit, No uncommitted changes.]
+source-control/git-actions.feature: A menu entry that cannot run says why [has uncommitted changes, Create PR, Commit changes before creating a PR.]
+source-control/git-actions.feature: A menu entry that cannot run says why [is behind its upstream, Create PR, Pull or rebase before creating a PR.]
+source-control/git-actions.feature: A menu entry that cannot run says why [is behind its upstream, Push, Pull or rebase before pushing.]
+source-control/git-actions.feature: A new pull request can be viewed from its result
+source-control/git-actions.feature: A refused initialization is reported
+source-control/git-actions.feature: A refused publish keeps the dialog open with the reason
+source-control/git-actions.feature: A repository name needs its owner
+source-control/git-actions.feature: A repository without a remote recommends publishing it
+source-control/git-actions.feature: An action with nothing to do says why
+source-control/git-actions.feature: Cancelling the dialog publishes nothing
+source-control/git-actions.feature: Initializing Git
+source-control/git-actions.feature: Opening the git menu refreshes status
+source-control/git-actions.feature: Opening the pull request of the branch
+source-control/git-actions.feature: Publishing pushes the branch to the new repository
+source-control/git-actions.feature: The actions use the host's own name for a pull request [GitHub, Create PR]
+source-control/git-actions.feature: The actions use the host's own name for a pull request [GitLab, Create MR]
+source-control/git-actions.feature: The recommended action follows the checkout [has commits on a feature branch with no upstream, Push & create PR]
+source-control/git-actions.feature: The recommended action follows the checkout [has uncommitted changes and no remote, Commit]
+source-control/git-actions.feature: The recommended action follows the checkout [has uncommitted changes on a branch with an open pull request, Commit & push]
+source-control/git-actions.feature: The recommended action follows the checkout [has uncommitted changes on a feature branch with a remote, Commit, push & PR]
+source-control/git-actions.feature: The recommended action follows the checkout [has uncommitted changes on the default branch, Commit & push]
+source-control/git-actions.feature: The recommended action follows the checkout [is ahead of its upstream with an open pull request, Push]
+source-control/git-actions.feature: The recommended action follows the checkout [is behind its upstream, Pull]
+source-control/git-actions.feature: The recommended action follows the checkout [is pushed and ahead of the default branch with no pull request, Create PR]
+source-control/git-actions.feature: The recommended action follows the checkout [is up to date with an open pull request, View PR]
+source-control/git-actions.feature: The recommended action is withheld with a reason [has diverged from its upstream, Branch has diverged from upstream. Rebase/merge first.]
+source-control/git-actions.feature: The recommended action is withheld with a reason [has no status yet, Git status is unavailable.]
+source-control/git-actions.feature: The recommended action is withheld with a reason [has no upstream and no local commits, No local commits to push.]
+source-control/git-actions.feature: The recommended action is withheld with a reason [is running another git action, Git action in progress.]
+source-control/git-actions.feature: The recommended action is withheld with a reason [is up to date with nothing to do, Branch is up to date. No action needed.]
 source-control/pull-request-actions.feature: Merging from the review
 source-control/pull-request-list.feature: A list the MC cannot read can be retried
 source-control/pull-request-list.feature: A pull request list beside the thread
 source-control/pull-request-list.feature: A pull request no thread works on offers to start one
+source-control/pull-request-list.feature: A pull request opens on its host
 source-control/pull-request-list.feature: A workspace without pull requests says so
 source-control/pull-request-list.feature: An environment that cannot be reached is named on the page
 source-control/pull-request-list.feature: Leaving the page stops following changes
@@ -432,14 +499,44 @@ source-control/pull-request-threads.feature: An Azure DevOps pull request needs 
 source-control/pull-request-threads.feature: Linked pull requests of an unreachable environment stay as last synced
 source-control/pull-request-threads.feature: Linked pull requests stay current
 source-control/pull-request-threads.feature: Linking a pull request to a thread
+source-control/pull-request-threads.feature: Opening a linked pull request in the browser
 source-control/pull-request-threads.feature: Opening the thread's pull request from the composer
 source-control/pull-request-threads.feature: Refreshing the linked pull requests reads them from the host again
 source-control/pull-request-threads.feature: Starting a pull request thread from a pasted link
 source-control/pull-request-threads.feature: Unlinking a pull request from a thread
+source-control/push-pull-and-default-branch.feature: A refused pull is reported
+source-control/push-pull-and-default-branch.feature: Aborting on the default branch
+source-control/push-pull-and-default-branch.feature: Actions that would land on the default branch ask first [Commit & push]
+source-control/push-pull-and-default-branch.feature: Actions that would land on the default branch ask first [Create PR]
+source-control/push-pull-and-default-branch.feature: Actions that would land on the default branch ask first [Push]
+source-control/push-pull-and-default-branch.feature: Continuing on the default branch
+source-control/push-pull-and-default-branch.feature: Moving the work onto a new branch instead
+source-control/push-pull-and-default-branch.feature: Pulling fast-forwards the branch
+source-control/push-pull-and-default-branch.feature: Pushing a branch that tracks an upstream
+source-control/refs-and-branches.feature: A long list says how much is hidden
+source-control/refs-and-branches.feature: A switch that fails keeps the branch and says why
+source-control/refs-and-branches.feature: Copying the branch name
+source-control/refs-and-branches.feature: Creating a branch from the search text
+source-control/refs-and-branches.feature: Scrolling to the end loads more branches
+source-control/refs-and-branches.feature: Searching narrows the branch list
+source-control/refs-and-branches.feature: Switching to a local branch
+source-control/refs-and-branches.feature: The current and default branches come first
+source-control/refs-and-branches.feature: The thread list shows each thread's branch
+source-control/refs-and-branches.feature: The thread's branch follows the checkout
+source-control/repository-discovery-clone-publish.feature: A host that is not ready is explained before publishing
+source-control/repository-discovery-clone-publish.feature: Publishing walks through provider, repository and summary
+source-control/repository-discovery-clone-publish.feature: Starting to publish from the git actions
 source-control/stacked-pull-requests.feature: A stack that could not be refreshed says it may be stale
 source-control/stacked-pull-requests.feature: Confirming a stack merge shows scope and strategy
 source-control/stacked-pull-requests.feature: Confirming a stack rebase warns it rewrites history
 source-control/stacked-pull-requests.feature: The thread's pull request shows its stack
+source-control/status-and-changes.feature: Initializing a repository in a plain folder
+source-control/status-and-changes.feature: Status follows the checkout while the thread is open
+source-control/worktrees-and-setup-scripts.feature: Choosing a new worktree for a new thread
+source-control/worktrees-and-setup-scripts.feature: Going back to the project folder
+source-control/worktrees-and-setup-scripts.feature: Picking the base ref for a new worktree
+source-control/worktrees-and-setup-scripts.feature: Returning to the previous worktree
+source-control/worktrees-and-setup-scripts.feature: The setup card shows the base, branch and path
 threads/archive-delete.feature: Archiving asks first when the user wants confirmation
 threads/archive-delete.feature: Archiving the open thread opens a new thread in its project
 threads/archive-delete.feature: Archiving waits for the agent on the desktop and phone
@@ -449,6 +546,7 @@ threads/archive-delete.feature: Deleting the open thread opens the next thread i
 threads/archive-delete.feature: Deleting the open thread, the last in its project, lands on a new thread
 threads/creating.feature: A new thread started while the list is scoped to a project uses that project
 threads/creating.feature: A new thread starts in the project the user is looking at
+threads/creating.feature: A new worktree needs a base branch
 threads/creating.feature: A thread cannot start from an empty task
 threads/creating.feature: Starting a thread from another thread's branch
 threads/drafts.feature: A draft whose project the MC removes goes with it
@@ -514,6 +612,15 @@ threads/thread-list.feature: Folders of one repository are one project
 threads/thread-list.feature: Folders of one repository stay apart when this device does not group them
 threads/thread-list.feature: Projects are listed by their latest thread
 threads/thread-list.feature: Projects can be ordered by when their threads were started
+threads/titles.feature: A rename that the environment rejects keeps the old title
+threads/titles.feature: A thread title cannot be empty
+threads/titles.feature: Renaming a thread from the desktop and phone
+threads/titles.feature: The title cannot be regenerated on an environment that needs an update
+threads/titles.feature: The title cannot be regenerated twice at once
+threads/unread-and-status.feature: A project shows the most urgent state of its threads
+threads/unread-and-status.feature: A working thread shows how long it has been working
+threads/unread-and-status.feature: Pinning a thread does not change its age
+threads/unread-and-status.feature: Pointing at a thread previews it
 threads/worktree-setup.feature: The conversation shows how the setup is going [failed, Worktree setup failed]
 threads/worktree-setup.feature: The conversation shows how the setup is going [finished, Worktree ready]
 threads/worktree-setup.feature: The conversation shows how the setup is going [is still running, Setting up worktree…]
