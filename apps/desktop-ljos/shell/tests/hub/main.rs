@@ -51,6 +51,7 @@ mod pull_request_list;
 mod pull_request_thread;
 mod quit;
 mod rewind;
+mod runtime;
 mod scheduled_tasks;
 mod scripted_run;
 mod settings;

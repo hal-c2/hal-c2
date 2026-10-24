@@ -38,6 +38,10 @@ reconnects to the MC it paired with last, or runs disconnected. `--home-dir DIR`
 client cache under `DIR` instead of the XDG directories. A render waits for the MC's first snapshot, or shows
 what the cache kept; `--action` dispatches shell actions first to show a given place (`usage.open` by default).
 
+The window makes its shell again when a QML file changes: this checkout's (or `--qml-dir`'s, or
+`HAL_C2_QML_DIR`'s) and the config dir's. A `shell.qml` there replaces the built-in shell and `qml/` beside it is
+on the import path; one that does not load falls back to the built-in shell with the error in its overlay.
+
 A scripted run is `--action NAME[=JSON]` and `--key CHORD` steps, replayed in the order given 1.5 s apart once
 the MC's first snapshot is in, and `--screenshot PNG` (no window; exit 0, or 2 when there is no picture) taken
 1.5 s after the last: `hal-c2-ljos --action settings.open --key Ctrl+K --screenshot out.png`. A chord reaches the

@@ -96,8 +96,9 @@ pub struct Launch {
     pub allow_local_folder_import: bool,
     /// The third-party license manifest the Open source licenses page reads.
     pub licenses_manifest: Option<PathBuf>,
-    /// Why the shell could not load what it was asked to, for `Runtime`.
-    pub last_error: String,
+    /// The QML the shell is made of, which `Runtime` compiles again for a
+    /// reload ([`qml::Roots::with_user`]); none: the host makes its own root.
+    pub qml: Option<qml::Roots>,
     /// Where the client cache keeps what the MC last sent
     /// ([`storage::StoragePaths::cache`]); none keeps nothing.
     pub cache_dir: Option<PathBuf>,
@@ -190,7 +191,7 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     platform_window::install(engine);
     file_dialogs::install(engine);
     theme::install(engine, launch.config_dir.clone());
-    runtime::install(engine, launch.config_dir.as_deref(), &launch.last_error);
+    runtime::install(engine, launch.config_dir.as_deref(), launch.qml.clone());
     if let Some(manifest) = &launch.licenses_manifest {
         controllers::licenses::set_manifest_path(engine, manifest);
     }

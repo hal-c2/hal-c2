@@ -32,6 +32,10 @@
 //! before the snapshot wait, for a render of a given place, and settles for
 //! `--settle` ms. `--check` only compiles the QML, and fails when a file
 //! does not compile.
+//!
+//! The QML is read from `--qml-dir` (a release's), else HAL_C2_QML_DIR,
+//! else this checkout, with the user's `<config>/qml` and `<config>/shell.qml`.
+//! The window makes its shell again as they change (src/runtime.rs).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -58,7 +62,7 @@ use ljos::prelude::{Engine, LogLevel};
 use ljos::render::{Fonts, Picture};
 use ljos::{App, ShellConfig};
 
-const ROOT: &str = "Main";
+const ROOT: &str = qml::DEFAULT_SHELL;
 /// How long a render waits for the MC's first snapshot before it shows what
 /// the cache kept.
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -97,17 +101,21 @@ fn licenses_beside(qml_dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn parse() -> Result<Options, String> {
+    // main.cpp: `--qml-dir`, else HAL_C2_QML_DIR, else the source tree.
+    let roots = std::env::var_os("HAL_C2_QML_DIR")
+        .filter(|d| !d.is_empty())
+        .map_or_else(Roots::checkout, |dir| Roots::one(dir.into()));
     let mut o = Options {
         launch: Launch {
             mc_origin: std::env::var("HAL_C2_MC_ORIGIN")
                 .ok()
                 .filter(|s| !s.is_empty()),
             // `vp run licenses` stages it in apps/desktop-qt/licenses.
-            licenses_manifest: Some(licenses_beside(&Roots::checkout().bricks)),
+            licenses_manifest: Some(licenses_beside(&roots.bricks)),
             ..Launch::default()
         },
         mc_token: std::env::var("HAL_C2_MC_TOKEN").unwrap_or_default(),
-        roots: Roots::checkout(),
+        roots,
         steps: Vec::new(),
         check: false,
         render: None,
@@ -288,6 +296,9 @@ fn connect_to(options: &mut Options) -> Result<(), String> {
         .take()
         .unwrap_or_else(|| paths.config.join("shell"));
     let _ = std::fs::create_dir_all(&config_dir);
+    // Its `qml` and `shell.qml` join the QML the shell is made of.
+    options.roots = options.roots.clone().with_user(config_dir.clone());
+    options.launch.qml = Some(options.roots.clone());
     options.launch.config_dir = Some(config_dir);
     if let Some(link) = &options.pair {
         let kept = pair(link, &paths.data)?;
@@ -486,9 +497,7 @@ fn render_to(
                 let _ = woken_by_cache.send(());
             });
             hal_c2_shell::theme::set_application_font(&engine);
-            let root = engine
-                .create_from_url(ROOT, None, Vec::new())
-                .map_err(|e| e.to_string())?;
+            let root = hal_c2_shell::runtime::open(&engine, false)?;
             let deadline = Instant::now() + SNAPSHOT_TIMEOUT;
             // `--screenshot` plays its steps on the picture's clock instead.
             let mut played = capture.play_after_snapshot;
@@ -538,9 +547,7 @@ fn render_to(
                 Bridge::of(&engine).publish(&engine, "backendError", why.clone().into());
             }
             hal_c2_shell::theme::set_application_font(&engine);
-            let root = engine
-                .create_from_url(ROOT, None, Vec::new())
-                .map_err(|e| e.to_string())?;
+            let root = hal_c2_shell::runtime::open(&engine, false)?;
             // Once the bricks are there, as with an MC: what opens on a
             // signal (the palette's popup) misses one sent before.
             if !capture.play_after_snapshot {
@@ -604,6 +611,10 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::theme::set_wake(&engine, move || {
                 let _ = theme_handle.send_coalesced(CoalesceKey(1), Message::Wake);
             });
+            let runtime_handle = handle.clone();
+            hal_c2_shell::runtime::set_wake(&engine, move || {
+                let _ = runtime_handle.send_coalesced(CoalesceKey(1), Message::Wake);
+            });
             // A connection even without an MC to open it at: the welcome
             // wizard or Connections settings may pair with one later
             // (hal_c2_shell::open).
@@ -623,6 +634,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
                     hal_c2_shell::controllers::plugin::deliver(engine);
                     hal_c2_shell::local_transcriber::deliver(engine);
                     hal_c2_shell::theme::deliver(engine);
+                    hal_c2_shell::runtime::deliver(engine);
                     hal_c2_shell::controllers::threads::deliver(engine);
                     hal_c2_shell::controllers::snap_shot::deliver(engine);
                 }
@@ -685,11 +697,9 @@ fn run(app: App, options: Options) -> Result<(), String> {
             hal_c2_shell::when_active(&engine, move |engine| scripted_run::play(engine, steps));
             // The saved theme's interface font, for all the root makes.
             hal_c2_shell::theme::set_application_font(&engine);
-            let root = engine
-                .create_from_url(ROOT, None, Vec::new())
-                .map_err(|e| e.to_string())?;
-            controller::attach_root(&engine, controller::MAIN, root);
-            Ok(root)
+            // The user's shell or the built-in one, made again as their
+            // files change.
+            hal_c2_shell::runtime::open(&engine, true).map_err(Into::into)
         })
         .map_err(|e| e.to_string())
 }
