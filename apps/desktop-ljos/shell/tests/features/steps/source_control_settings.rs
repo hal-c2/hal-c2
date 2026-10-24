@@ -10,7 +10,6 @@ use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use hal_c2_shell::controllers::settings_scope::SettingsScope;
 use serde_json::{Value, json};
 
-use super::settings::fake_config;
 use crate::fake_mc::FakeMc;
 use crate::steps::settings::{document_of, fake_config, publish_providers, save_elsewhere};
 use crate::steps::settings_scoped_rows::held_all;
