@@ -6,19 +6,18 @@
 //! from the message's own button on the ThreadView brick and the "Edit from
 //! here?" dialog.
 //!
-//! TODO(port): "the provider cannot rewind its history" needs FakeConfig's
-//! `publish_providers` (`settings.rs`, ported by another worker), so it
-//! stays out until that merges. The Background step "a thread in ... with
-//! three finished turns" is PanelSteps'.
+//! The Background step "a thread in ... with three finished turns" is
+//! PanelSteps'.
 
 use std::io::Write;
 
 use hal_c2_shell::controllers::composer;
 use serde_json::{Map, Value, json};
 
+use super::settings::publish_providers;
 use super::stream::{THREAD, describe, read, role, set};
 use crate::brick::{Brick, shown};
-use crate::harness::{Outcome, Q, Steps, show};
+use crate::harness::{Failure, Outcome, Q, Steps, show};
 use crate::world::World;
 use crate::{expect, fail};
 
@@ -200,6 +199,25 @@ pub fn cancel_rewind_question(world: &mut World) -> Outcome<bool> {
 }
 
 pub fn register(steps: &mut Steps) {
+    // Why a rewind cannot happen.
+    steps.step("the provider cannot rewind its history", |world, _, _| {
+        let row = world
+            .mc
+            .threads
+            .get_mut(THREAD)
+            .ok_or_else(|| Failure(format!("the MC has no thread {THREAD}")))?;
+        row["modelSelection"] = json!({"instanceId": "opencode", "model": "big-pickle"});
+        let row = row.clone();
+        world.mc.send_row(THREAD, &row);
+        publish_providers(
+            &mut world.mc,
+            vec![json!({
+                "instanceId": "opencode", "driver": "opencode", "status": "ready",
+                "models": [], "supportsConversationRollback": false,
+            })],
+        );
+        world.sync()
+    });
     steps.step(
         &format!("the composer holds the draft {Q}"),
         |world, c, _| {
