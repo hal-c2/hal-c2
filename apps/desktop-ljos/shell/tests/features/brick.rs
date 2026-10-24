@@ -363,3 +363,24 @@ pub fn shown(world: &mut World) -> Outcome<Brick> {
         None => fail!("no brick is shown"),
     }
 }
+
+impl Brick {
+    /// The item named `object_name` in `item`'s tree, `item` included.
+    pub fn find_in(
+        &self,
+        world: &World,
+        item: ObjectId,
+        object_name: &str,
+    ) -> Outcome<Option<ObjectId>> {
+        Ok(
+            match self.call(
+                world,
+                "brickFindIn",
+                &[Value::Object(item), Value::from(object_name)],
+            )? {
+                Value::Object(found) => Some(found),
+                _ => None,
+            },
+        )
+    }
+}
