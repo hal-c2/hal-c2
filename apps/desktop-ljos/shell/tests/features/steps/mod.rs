@@ -11,6 +11,8 @@ pub mod fake_files;
 pub mod files_media;
 pub mod files_workspace;
 pub mod launch;
+pub mod launch_folder;
+pub mod machine_files;
 pub mod mc;
 pub mod other_machine;
 pub mod project;
@@ -28,6 +30,8 @@ pub fn register(steps: &mut Steps) {
     fake_files::register(steps);
     files_media::register(steps);
     launch::register(steps);
+    launch_folder::register(steps);
+    machine_files::register(steps);
     mc::register(steps);
     other_machine::register(steps);
     project::register(steps);
