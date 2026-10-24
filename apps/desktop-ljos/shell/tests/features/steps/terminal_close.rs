@@ -14,6 +14,7 @@ use hal_c2_shell::controllers::terminals::Terminals;
 use serde_json::{Value, json};
 
 use crate::brick::Brick;
+use crate::expect;
 use crate::harness::{Failure, Outcome, Q, Steps, at, show, text};
 use crate::steps::terminal::{
     FakeTerminals, attached, describe_rows, describe_terminal_calls, drawer_available, drawer_open,
@@ -21,7 +22,6 @@ use crate::steps::terminal::{
     terminal_attach, terminal_call, terminal_session, terminal_writes,
 };
 use crate::world::World;
-use crate::expect;
 
 #[derive(Default)]
 struct CloseWorld {
