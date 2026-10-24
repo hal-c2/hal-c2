@@ -533,13 +533,11 @@ pub fn register(steps: &mut Steps) {
         };
         let (x, y) = brick.at(world, node, 0.5, 0.5)?;
         world.click_at(x, y)?;
-        // TODO(ljos#103): positionViewAtIndex to a row not yet laid out is
-        // lost when the list reuses items and its rows differ in height.
         world.wait_for_with(
             |w| view.file_at_top(w).is_ok_and(|top| top == "src/tax.ts"),
             |w| {
                 format!(
-                    "the diff to jump to src/tax.ts (ljos#103); its top is {:?}",
+                    "the diff to jump to src/tax.ts; its top is {:?}",
                     view.file_at_top(w)
                 )
             },
