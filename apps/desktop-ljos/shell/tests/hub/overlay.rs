@@ -159,7 +159,7 @@ Window {
 /// is there when the bindings first run and nothing is logged. Ljós builds
 /// the tree first and adds the window when it shows the root.
 #[test]
-#[ignore = "ljos#? Overlay.overlay is null while a Window's tree is built, which logs a TypeError for each popup centred in it"]
+#[ignore = "TODO(ljos#106): Overlay.overlay is null while a Window's tree is built, which logs a TypeError for each popup centred in it"]
 fn a_popup_centred_in_a_window_logs_nothing_at_start_up() {
     let hub = Hub::new();
     let logs = Rc::new(RefCell::new(Vec::<String>::new()));
