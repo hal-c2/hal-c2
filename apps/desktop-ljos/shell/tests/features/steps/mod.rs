@@ -13,6 +13,7 @@ pub mod files_workspace;
 pub mod launch;
 pub mod launch_folder;
 pub mod machine_files;
+pub mod markdown;
 pub mod mc;
 pub mod other_machine;
 pub mod project;
@@ -32,6 +33,7 @@ pub fn register(steps: &mut Steps) {
     launch::register(steps);
     launch_folder::register(steps);
     machine_files::register(steps);
+    markdown::register(steps);
     mc::register(steps);
     other_machine::register(steps);
     project::register(steps);
