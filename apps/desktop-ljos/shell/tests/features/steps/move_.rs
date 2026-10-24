@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 use super::add_project as palette;
 use super::alert::{await_system_notifications, click_system_notification, system_notifications};
+use super::load_balancing::share_project;
 use super::stream::iso;
 use super::thread_menu::{MoveHook, item, items, pick, view};
 use crate::fake_mc::{FakeMc, Rpc};
@@ -494,9 +495,8 @@ pub fn register(steps: &mut Steps) {
             // Any other project is one a new thread is placed in
             // (LoadBalancing).
             if c[0] != PROJECT {
-                // TODO(port): LoadBalancing's shareProject, a project every
-                // machine has a checkout of, goes here.
-                fail!("TODO(port): LoadBalancing's shareProject is not ported");
+                share_project(&mut world.mc, &c[0]);
+                return Ok(());
             }
             world.mc.projects.insert(PROJECT.to_owned(), project());
             for machine in world.mc.members.clone() {
