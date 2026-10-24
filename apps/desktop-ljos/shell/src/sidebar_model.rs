@@ -16,8 +16,8 @@ const HOUR_MS: i64 = 60 * MINUTE_MS;
 const DAY_MS: i64 = 24 * HOUR_MS;
 const QUEUED_TURN_START_GRACE_MS: i64 = 2 * MINUTE_MS;
 
-/// The settled rows shown; the open thread's is shown past it.
-pub const SETTLED_LIMIT: usize = 50;
+/// The settled rows the shelf lists at a time.
+pub const SETTLED_PAGE: usize = 50;
 
 pub type Nullable = Option<String>;
 
@@ -1105,7 +1105,6 @@ pub fn fallback_after_delete(threads: &[Thread], key: &str, sort_order: &str) ->
 pub type DescribeWake<'a> = Box<dyn Fn(&str) -> String + 'a>;
 
 /// What `build` reads besides the threads.
-#[derive(Default)]
 pub struct Input<'a> {
     pub projects: Vec<ProjectGroup>,
     /// The environment of the MC the shell runs against; its folders are the
@@ -1127,6 +1126,35 @@ pub struct Input<'a> {
     /// A snoozed row's wake time in the user's clock format ("tomorrow
     /// 9:00"); the row has none when unset.
     pub describe_wake: Option<DescribeWake<'a>>,
+    /// How many settled rows are listed, and how many more `sidebar.more`
+    /// lists (`settledPage` in the view); the open thread is listed past them
+    /// besides.
+    pub settled_limit: usize,
+    pub settled_page: usize,
+    /// Whether Settled lists the settled threads a plugin started, such as
+    /// code reviews (`sidebarShowSettledPluginThreads`); the open one is
+    /// listed either way.
+    pub show_settled_plugin_threads: bool,
+}
+
+impl Default for Input<'_> {
+    fn default() -> Self {
+        Input {
+            projects: Vec::new(),
+            local_environment_id: None,
+            offline_environments: HashSet::new(),
+            drafts: Vec::new(),
+            active_thread_key: None,
+            active_draft_id: Value::Null,
+            jump_labels: Vec::new(),
+            show_jump_hints: false,
+            selected_keys: HashSet::new(),
+            describe_wake: None,
+            settled_limit: SETTLED_PAGE,
+            settled_page: SETTLED_PAGE,
+            show_settled_plugin_threads: false,
+        }
+    }
 }
 
 impl Input<'_> {
@@ -1189,7 +1217,15 @@ pub fn build(
     let scoped = scope_project_key.as_deref().and_then(|k| input.group(k));
     let scoped_keys: Option<HashSet<String>> =
         scoped.map(|g| g.member_keys.iter().cloned().collect());
-    let sections = partition(threads, scoped_keys.as_ref(), capabilities_for, now_ms);
+    let mut sections = partition(threads, scoped_keys.as_ref(), capabilities_for, now_ms);
+    // Hidden before the shelf pages and counts; search and the plugin's page
+    // still find them.
+    if !input.show_settled_plugin_threads {
+        let open = input.active_thread_key.clone().unwrap_or_default();
+        sections
+            .settled
+            .retain(|thread| thread.plugin_id.is_empty() || thread.key() == open);
+    }
 
     let project_names: HashMap<&str, &str> = input
         .projects
@@ -1297,7 +1333,7 @@ pub fn build(
     let pinned = convert(&sections.pinned, false, false, usize::MAX);
     let active = convert(&sections.active, false, false, usize::MAX);
     let snoozed = convert(&sections.snoozed, true, true, usize::MAX);
-    let settled = convert(&sections.settled, false, true, SETTLED_LIMIT);
+    let settled = convert(&sections.settled, false, true, input.settled_limit);
 
     let projects: Vec<Value> = input
         .projects
@@ -1358,6 +1394,7 @@ pub fn build(
         "snoozed": snoozed,
         "settled": settled,
         "settledTotal": sections.settled.len(),
+        "settledPage": input.settled_page,
         "drafts": drafts,
         "activeThreadKey": nullable(&input.active_thread_key),
         "activeDraftId": input.active_draft_id,
@@ -1574,10 +1611,26 @@ pub fn resolve_custom_snooze<Tz: TimeZone>(
     (wake > now).then(|| format_iso(&wake))
 }
 
+/// Locale AM/PM separators as plain spaces. Newer CLDR data puts a narrow
+/// no-break space (U+202F) before AM and PM, which all but vanishes in the
+/// monospace meta lines ("8:46AM"), and some locales use a no-break space
+/// (U+00A0) for the same separator. The stamp and the snooze labels built
+/// from it are short, so a break at that space costs nothing. The QML stamps
+/// that cannot call this (ComposerUsageLimits.qml, ConnectionsSettings.qml)
+/// repeat the same character set in a regex; extend both if this set grows.
+pub fn plain_spaces(text: &str) -> String {
+    text.replace(['\u{202F}', '\u{00A0}'], " ")
+}
+
+/// The time of day in the timestampFormat setting, with plain spaces.
+pub fn time_of_day<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> String {
+    plain_spaces(&locale_time(local, timestamp_format))
+}
+
 /// "12-hour", "24-hour" or "locale", the timestampFormat setting.
 // TODO(ljos#76): Settings::locale — "locale" is QLocale's short time
 // format; without the system locale from Rust it reads as 24-hour "H:mm".
-pub fn time_of_day<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> String {
+fn locale_time<Tz: TimeZone>(local: &DateTime<Tz>, timestamp_format: &str) -> String {
     let (hour, minute) = (local.hour(), local.minute());
     match timestamp_format {
         "12-hour" => {
