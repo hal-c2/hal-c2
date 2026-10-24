@@ -401,8 +401,10 @@ fn tells(world: &World, told: &str) -> bool {
             }
         }
     }
-    // TODO(port): OnboardingSteps::onboardingTells, the welcome wizard's
-    // pairing, setup terminal or import error.
+    // The welcome wizard's pairing, setup terminal or import error.
+    if super::onboarding::onboarding_tells(world, told) {
+        return true;
+    }
     if world
         .told_in_place
         .as_ref()

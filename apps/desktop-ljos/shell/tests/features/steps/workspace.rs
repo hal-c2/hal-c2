@@ -113,8 +113,7 @@ fn apply_metadata(mc: &mut FakeMc, command: &Value) {
 }
 
 fn extension(mc: &mut FakeMc) {
-    mc.effects
-        .push(Rc::new(|mc, command| apply_metadata(mc, command)));
+    mc.effects.push(Rc::new(apply_metadata));
     // The checkouts a domain fakes whole (GitSteps) answer first.
     mc.on_shape("vcs", |mc, id, shape| {
         let cwd = text(&shape["cwd"]);
@@ -563,9 +562,12 @@ pub fn register(steps: &mut Steps) {
 
     // Titles.
     steps.step(&format!("the user renames {Q} to {Q}"), |world, c, _| {
-        // TODO(port): a managed folder (FilesFolders' renameManagedFolder) and
-        // a provider instance (ProviderSettings' renameProviderInstance) take
-        // the same words in desktop-qt; other workers own those helpers.
+        // TODO(port): a managed folder (FilesFolders' renameManagedFolder)
+        // takes the same words in desktop-qt; another worker owns that helper.
+        // The same words rename a provider instance in the Providers settings.
+        if world.state("providerSettings")["open"] == json!(true) {
+            return super::provider_settings::rename_provider_instance(world, &c[0], &c[1]);
+        }
         let state = workspace(world);
         expect!(
             state["threadTitle"] == c[0],

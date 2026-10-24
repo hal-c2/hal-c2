@@ -134,7 +134,14 @@ fn describe(world: &World) -> String {
     if let Some(map) = state.as_object_mut() {
         map.remove("files");
     }
-    format!("the plugins are {}", show(&state))
+    // TODO(ljos#105): a plugin file is QML text, which the shell cannot
+    // compile while it runs.
+    let gap = if show(&state).contains("has no compiler") {
+        " (ljos#105)"
+    } else {
+        ""
+    };
+    format!("the plugins are {}{gap}", show(&state))
 }
 
 fn count(value: &Json) -> usize {

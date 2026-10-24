@@ -28,7 +28,7 @@ const REVIEW_TITLE: &str = "Review acme/shop#7";
 const MARKER: &str = "••••••";
 
 /// How a faked plugin answers `plugins.call`.
-pub type PluginCall = Rc<dyn Fn(&mut FakeMc, &Rpc)>;
+pub type PluginCall = Rc<dyn Fn(&mut FakeMc, &Rpc) -> Outcome>;
 
 /// A plugin whose MC part a scenario fakes itself and whose package is a real
 /// one: the package's directory, which `plugins.file` reads, what each of its
@@ -363,7 +363,7 @@ fn extension(mc: &mut FakeMc) {
             }
             "plugins.call" => match &part {
                 Some(part) => match &part.call {
-                    Some(call) => call(mc, rpc),
+                    Some(call) => call(mc, rpc)?,
                     None => mc.refuse(rpc, "no such call"),
                 },
                 None => mc.reply(rpc, json!({"from": format!("Reviews on {environment}")})),
@@ -479,7 +479,7 @@ fn page_on(world: &World, environment: &str) -> Json {
 }
 
 /// Plugin `id` as the client lists it on `environment` ("" for the MC's own).
-fn listed(world: &World, id: &str, environment: &str) -> Json {
+pub fn listed(world: &World, id: &str, environment: &str) -> Json {
     let wanted = if environment.is_empty() {
         world.mc.environment_id.clone()
     } else {
@@ -499,7 +499,7 @@ fn listed(world: &World, id: &str, environment: &str) -> Json {
     Json::Null
 }
 
-fn describe(world: &World) -> String {
+pub fn describe(world: &World) -> String {
     format!(
         "the client has {}; the route is {}",
         show(&published(world)),
@@ -517,7 +517,12 @@ fn wait_status(world: &mut World, id: &str, status: &str) -> Outcome {
 /// The shown item named `name` in the window, else the first hidden one: a
 /// thread can have a row in more than one section, or a page a copy that is
 /// not on screen.
-fn named(world: &World, brick: &Brick, name: &str) -> Option<ObjectId> {
+pub fn named(
+    world: &World,
+    brick: impl std::borrow::Borrow<Brick>,
+    name: &str,
+) -> Option<ObjectId> {
+    let brick = *brick.borrow();
     brick
         .find_visible(world, name)
         .ok()
@@ -533,13 +538,13 @@ fn item(world: &mut World, name: &str) -> Outcome<Option<ObjectId>> {
 fn wait_named_when(
     world: &mut World,
     name: &str,
-    ready: impl Fn(&World, &Brick, ObjectId) -> bool,
+    ready: impl Fn(&World, Brick, ObjectId) -> bool,
 ) -> Outcome<ObjectId> {
     let brick = shell(world)?;
     world.wait_for_with(
         |w| {
             matches!(named(w, &brick, name), Some(found)
-                if brick.flag(w, found, "visible") && ready(w, &brick, found))
+                if brick.flag(w, found, "visible") && ready(w, brick, found))
         },
         |w| {
             let problem = named(w, &brick, name)
@@ -1995,27 +2000,32 @@ pub fn run_fake_plugin_on(world: &mut World, environment: &str, entry: Json) -> 
     )
 }
 
-pub fn fake_plugin_part<'a>(world: &'a mut World, id: &str) -> Outcome<&'a mut FakePluginPart> {
-    if !fake(world).parts.contains_key(id) {
-        fail!("no plugin {} is faked", id);
+/// The faked plugin `id`'s MC part (fails the step when it is not faked).
+pub fn fake_plugin_part<'a>(mc: &'a mut FakeMc, id: &str) -> Outcome<&'a mut FakePluginPart> {
+    match mc.part::<FakeMcPlugins>().parts.get_mut(id) {
+        Some(part) => Ok(part),
+        None => fail!("no plugin {id} is faked"),
     }
-    Ok(fake(world).parts.get_mut(id).expect("faked"))
 }
 
 /// Sends what the plugin's topic holds now to each client watching it.
-pub fn publish_topic(world: &mut World, id: &str, topic: &str) -> Outcome {
-    let part = fake_plugin_part(world, id)?.clone();
-    for subscriber in world.mc.subscribers("plugin") {
-        let shape = world.mc.shape_of(subscriber);
+pub fn publish_topic(mc: &mut FakeMc, id: &str, topic: &str) -> Outcome {
+    let part = fake_plugin_part(mc, id)?.clone();
+    for subscriber in mc.subscribers("plugin") {
+        let shape = mc.shape_of(subscriber);
         if text(&shape["id"]) != id || text(&shape["topic"]) != topic {
             continue;
         }
-        let environment = environment_of(&world.mc, &text(&shape["environment"]));
-        let topics = part.topics_on.get(&environment).unwrap_or(&part.topics);
-        let value = topics.get(topic).cloned().unwrap_or(Json::Null);
-        world
-            .mc
-            .send(&json!({"t": "plugin", "id": subscriber, "topic": topic, "value": value}));
+        let environment =
+            environment_of(mc, at(&shape, "environment").as_str().unwrap_or_default());
+        let value = part
+            .topics_on
+            .get(&environment)
+            .unwrap_or(&part.topics)
+            .get(topic)
+            .cloned()
+            .unwrap_or(Json::Null);
+        mc.send(&json!({"t": "plugin", "id": subscriber, "topic": topic, "value": value}));
     }
     Ok(())
 }
@@ -2024,7 +2034,7 @@ pub fn publish_topic(world: &mut World, id: &str, topic: &str) -> Outcome {
 pub fn wait_shown_named(
     world: &mut World,
     name: &str,
-    ready: impl Fn(&World, &Brick, ObjectId) -> bool,
+    ready: impl Fn(&World, Brick, ObjectId) -> bool,
 ) -> Outcome<ObjectId> {
     wait_named_when(world, name, ready)
 }
@@ -2063,4 +2073,57 @@ pub fn switch_mc_plugin(world: &mut World, id: &str) -> Outcome {
         None => fail!("the card of {} has no switch", id),
     }
     world.sync()
+}
+
+/// An entry as `plugins` lists a real package: its manifest, running with its
+/// permissions granted.
+pub fn entry_of(id: &str, manifest: &Json, settings: &Json) -> Json {
+    let permissions: Vec<Json> = manifest["permissions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|each| {
+            let mut permission = each.clone();
+            permission["label"] = each["id"].clone();
+            permission["granted"] = json!(true);
+            permission
+        })
+        .collect();
+    json!({"id": id,
+           "name": manifest["name"],
+           "version": manifest["version"],
+           "description": manifest["description"],
+           "author": manifest["author"],
+           "status": "running",
+           "error": null,
+           "lastError": null,
+           "revision": "1",
+           "runsCode": true,
+           "permissions": permissions,
+           "settingsSchema": manifest["settings"],
+           "settings": settings,
+           "contributes": manifest["contributes"]})
+}
+
+/// The directory of the real package `name` under plugins/.
+pub fn package(name: &str) -> String {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../plugins");
+    let dir = root.join(name);
+    dir.canonicalize()
+        .unwrap_or(dir)
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// The package's plugin.json.
+pub fn manifest(package: &str) -> Outcome<Json> {
+    let path = std::path::Path::new(package).join("plugin.json");
+    let read = std::fs::read_to_string(&path);
+    expect!(read.is_ok(), "{} cannot be read", path.display());
+    Ok(serde_json::from_str(&read.unwrap_or_default()).unwrap_or(Json::Null))
+}
+
+/// `wait_shown_named` with nothing more to wait for.
+pub fn shown_named(world: &mut World, object_name: &str) -> Outcome<ObjectId> {
+    wait_shown_named(world, object_name, |_, _, _| true)
 }
