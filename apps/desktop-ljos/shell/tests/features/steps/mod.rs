@@ -6,7 +6,9 @@ use crate::harness::Steps;
 
 pub mod connection;
 pub mod connection_health;
+pub mod fake_files;
 pub mod mc;
+pub mod project;
 pub mod stream;
 pub mod thread_menu;
 pub mod thread_snooze;
@@ -17,7 +19,9 @@ pub mod viewing;
 pub fn register(steps: &mut Steps) {
     connection::register(steps);
     connection_health::register(steps);
+    fake_files::register(steps);
     mc::register(steps);
+    project::register(steps);
     stream::register(steps);
     thread_menu::register(steps);
     thread_snooze::register(steps);
