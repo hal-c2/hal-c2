@@ -287,7 +287,9 @@ fn the_interface_font_reaches_what_is_on_screen() {
              Label { id: label; font.pixelSize: 20 }\n\
              Button { id: button }\n\
              Label { id: code; font.family: \"monospace\" }\n\
+             Text { id: plain }\n\
              property string label: label.font.family\n\
+             property string plain: plain.font.family\n\
              property int labelSize: label.font.pixelSize\n\
              property string button: button.font.family\n\
              property string code: code.font.family\n}",
@@ -307,12 +309,15 @@ fn the_interface_font_reaches_what_is_on_screen() {
     assert_eq!(&*ljos::application_font(&hub.engine).family, "Literata");
     assert_eq!(family("label"), "Literata");
     assert_eq!(family("button"), "Literata");
+    // A plain Text made before the change follows it too.
+    assert_eq!(family("plain"), "Literata");
     assert_eq!(family("code"), "monospace");
     assert_eq!(hub.engine.read_by_name(root, "labelSize").to_number(), 20.0);
 
     assert!(settings.write_device(&hub.engine, "fontFamilySans", json!("")));
     hub.advance(0);
     assert_eq!(family("label"), desktop);
+    assert_eq!(family("plain"), desktop);
 }
 
 #[test]
