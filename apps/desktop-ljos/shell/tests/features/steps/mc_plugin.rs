@@ -532,7 +532,7 @@ pub fn named(
 
 fn item(world: &mut World, name: &str) -> Outcome<Option<ObjectId>> {
     let brick = shell(world)?;
-    Ok(named(world, &brick, name))
+    Ok(named(world, brick, name))
 }
 
 fn wait_named_when(
@@ -543,15 +543,15 @@ fn wait_named_when(
     let brick = shell(world)?;
     world.wait_for_with(
         |w| {
-            matches!(named(w, &brick, name), Some(found)
+            matches!(named(w, brick, name), Some(found)
                 if brick.flag(w, found, "visible") && ready(w, brick, found))
         },
         |w| {
-            let problem = named(w, &brick, name)
+            let problem = named(w, brick, name)
                 .map(|found| brick.text_of(w, found, "problem"))
                 .filter(|problem| !problem.is_empty())
                 .or_else(|| {
-                    named(w, &brick, "pluginPageProblem")
+                    named(w, brick, "pluginPageProblem")
                         .map(|found| brick.text_of(w, found, "text"))
                 })
                 .unwrap_or_default();
@@ -563,7 +563,7 @@ fn wait_named_when(
             format!("{name} to be shown{problem}; {}", describe(w))
         },
     )?;
-    match named(world, &brick, name) {
+    match named(world, brick, name) {
         Some(found) => Ok(found),
         None => fail!("{} is not shown", name),
     }
@@ -638,11 +638,11 @@ fn wait_reviews(world: &mut World, wanted: &str) -> Outcome {
     let brick = shell(world)?;
     world.wait_for_with(
         |w| {
-            named(w, &brick, "reviewsList")
+            named(w, brick, "reviewsList")
                 .is_some_and(|list| brick.text_of(w, list, "text") == wanted)
         },
         |w| {
-            named(w, &brick, "reviewsList")
+            named(w, brick, "reviewsList")
                 .map(|list| brick.text_of(w, list, "text"))
                 .unwrap_or_default()
         },
@@ -807,7 +807,7 @@ pub fn register(steps: &mut Steps) {
     steps.step("the shell shows the threads with no tabs", |world, _, _| {
         let brick = shell(world)?;
         world.wait_for_with(
-            |w| named(w, &brick, "shellTabs").is_some_and(|tabs| !brick.flag(w, tabs, "visible")),
+            |w| named(w, brick, "shellTabs").is_some_and(|tabs| !brick.flag(w, tabs, "visible")),
             |w| format!("the tabs to go; {}", describe(w)),
         )?;
         let pages_visible =
@@ -846,7 +846,7 @@ pub fn register(steps: &mut Steps) {
             let brick = shell(world)?;
             world.wait_for_with(
                 |w| {
-                    named(w, &brick, "pluginPages")
+                    named(w, brick, "pluginPages")
                         .is_some_and(|pages| !brick.flag(w, pages, "visible"))
                 },
                 describe,
@@ -973,7 +973,7 @@ pub fn register(steps: &mut Steps) {
                 list_of(&published(w), "pages").is_empty()
                     && list_of(&w.state("route"), "none").is_empty()
                     && count_named(w, &brick, true, "tab:code-review/reviews@") == 0
-                    && named(w, &brick, "tab:code-review/reviews@1")
+                    && named(w, brick, "tab:code-review/reviews@1")
                         .is_none_or(|tab| !brick.flag(w, tab, "visible"))
             },
             describe,
@@ -984,7 +984,7 @@ pub fn register(steps: &mut Steps) {
         world.wait_for_with(
             |w| {
                 route_tab(w) == "threads"
-                    && named(w, &brick, "pluginPages")
+                    && named(w, brick, "pluginPages")
                         .is_some_and(|pages| !brick.flag(w, pages, "visible"))
             },
             describe,
@@ -1216,8 +1216,7 @@ pub fn register(steps: &mut Steps) {
         let brick = shell(world)?;
         world.wait_for_with(
             |w| {
-                named(w, &brick, "pluginPages")
-                    .is_some_and(|pages| !brick.flag(w, pages, "visible"))
+                named(w, brick, "pluginPages").is_some_and(|pages| !brick.flag(w, pages, "visible"))
             },
             describe,
         )
@@ -1560,7 +1559,7 @@ pub fn register(steps: &mut Steps) {
         );
         let brick = shell(world)?;
         world.wait_for("the page to be saved", |w| {
-            named(w, &brick, "pluginSettingsSave")
+            named(w, brick, "pluginSettingsSave")
                 .is_some_and(|save| !brick.flag(w, save, "enabled"))
         })
     });
@@ -1911,12 +1910,12 @@ pub fn register(steps: &mut Steps) {
             let brick = shell(world)?;
             world.wait_for_with(
                 |w| {
-                    named(w, &brick, "reviewsPage")
+                    named(w, brick, "reviewsPage")
                         .is_some_and(|page| brick.text_of(w, page, "version") == "2")
                 },
                 describe,
             )?;
-            let page = named(world, &brick, "reviewsPage").expect("shown");
+            let page = named(world, brick, "reviewsPage").expect("shown");
             expect!(
                 Some(page) != fake(world).page && brick.flag(world, page, "visible"),
                 "the new page is not shown"
