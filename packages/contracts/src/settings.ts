@@ -1070,6 +1070,16 @@ export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph"]);
 export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
 
 /**
+ * Whose subagents agents use when they split work up.
+ * - `provider`: the provider's own built-in subagents (Claude's Agent tool, Codex's spawned agents).
+ * - `hal-c2`: those are turned off where the provider allows it, so agents delegate to
+ *   HAL-C2 workers (`delegate_task`), which have threads the user can open.
+ * Read when an agent's session starts.
+ */
+export const NativeSubagents = Schema.Literals(["provider", "hal-c2"]);
+export type NativeSubagents = typeof NativeSubagents.Type;
+
+/**
  * Server settings a project may override. Every other server setting is
  * environment-wide: providers, keybindings, observability, device hosts,
  * background activity, theme. UI, search and the write planner derive
@@ -1185,6 +1195,9 @@ export const ServerSettings = Schema.Struct({
   ),
   responseStreamingMode: ResponseStreamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
+  ),
+  nativeSubagents: NativeSubagents.pipe(
+    Schema.withDecodingDefault(Effect.succeed("provider" as const)),
   ),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // Retain the update-era key; recovery now needs an environment-owned opt-in.
@@ -1581,6 +1594,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   // Server settings
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
+  nativeSubagents: Schema.optionalKey(NativeSubagents),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),

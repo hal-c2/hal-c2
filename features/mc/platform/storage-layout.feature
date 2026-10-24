@@ -432,7 +432,6 @@ Feature: Where HAL-C2 keeps its files
         | attachments                       | ~/.local/share/hal-c2/attachments             |
         | secrets                           | ~/.local/share/hal-c2/secrets                 |
         | its environment id                | ~/.local/share/hal-c2/environment-id          |
-        | HAL-C2 Connect sign-in            | ~/.local/share/hal-c2/clerk-tokens.json       |
         | saved environments                | ~/.local/share/hal-c2/saved-environments.json |
         | the connection catalog            | ~/.local/share/hal-c2/connection-catalog.json |
         | browser captures                  | ~/.local/share/hal-c2/browser-artifacts       |

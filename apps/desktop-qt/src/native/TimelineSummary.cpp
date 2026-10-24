@@ -427,15 +427,17 @@ QString commandDisplayText(const QString& command) {
   return shown.section(QLatin1Char('\n'), 0, 0).replace(space, QStringLiteral(" ")).trimmed();
 }
 
+static Notice noticeFrom(const QJsonObject& notification) {
+  return Notice{text(notification, QLatin1String("summary")).trimmed(), text(notification, QLatin1String("outcome")),
+                text(notification, QLatin1String("workerThreadId")), text(notification, QLatin1String("workerTitle")).trimmed(),
+                text(notification, QLatin1String("detail"))};
+}
+
 std::optional<Notice> noticeOf(const QJsonObject& item) {
   const QString type = text(item, QLatin1String("type"));
-  if (type == QLatin1String("notification")) {
-    return Notice{text(item, QLatin1String("summary")).trimmed(), text(item, QLatin1String("outcome"))};
-  }
+  if (type == QLatin1String("notification")) return noticeFrom(item);
   const QJsonObject notification = item.value(QLatin1String("notification")).toObject();
-  if (type.isEmpty() && !notification.isEmpty()) {
-    return Notice{text(notification, QLatin1String("summary")).trimmed(), text(notification, QLatin1String("outcome"))};
-  }
+  if (type.isEmpty() && !notification.isEmpty()) return noticeFrom(notification);
   if (!type.isEmpty() && type != QLatin1String("user_message")) return std::nullopt;
   const QString createdBy = text(item, QLatin1String("createdBy"));
   if (createdBy == QLatin1String("agent")) {

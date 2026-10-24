@@ -106,6 +106,10 @@ defmodule HalC2.Mcp.Tools do
   """
   def wait_timeout(requested), do: min(max(parse_number(requested, 600_000), 1), 3_600_000)
 
+  @doc "`wait_timeout/1` cut to what the caller's provider can wait for (`HalC2.Mcp.max_wait_ms/1`)."
+  def wait_limit(requested, instance),
+    do: min(wait_timeout(requested), HalC2.Mcp.max_wait_ms(instance))
+
   @doc false
   def run(name, args, caller)
 
@@ -196,7 +200,7 @@ defmodule HalC2.Mcp.Tools do
   def run("hal_c2_thread_wait", args, %{row: me} = caller) do
     with {:ok, row} <- project_thread(me, args["threadId"]),
          :here <- on_owner(row, "hal_c2_thread_wait", args, caller) do
-      timeout = wait_timeout(args["timeoutMs"])
+      timeout = wait_limit(args["timeoutMs"], caller.instance)
       {run, timed_out} = wait(row["id"], args["runId"], timeout)
 
       {:ok,
@@ -690,6 +694,8 @@ defmodule HalC2.Mcp.Tools do
   # runs on that MC, in the project it moved into. `:here` for a thread that did not move.
   defp on_owner(%{"movedTo" => %{"mc" => mc, "projectId" => project}}, name, args, caller)
        when is_binary(mc) and is_binary(project) do
+    args = owner_args(name, args, caller)
+
     on_mc(
       mc,
       __MODULE__,
@@ -700,6 +706,13 @@ defmodule HalC2.Mcp.Tools do
   end
 
   defp on_owner(_row, _name, _args, _caller), do: :here
+
+  # A wait is cut here to what the caller's provider can wait for: the other MC
+  # may not know the caller's provider instance.
+  defp owner_args("hal_c2_thread_wait", args, caller),
+    do: Map.put(args, "timeoutMs", wait_limit(args["timeoutMs"], caller.instance))
+
+  defp owner_args(_name, args, _caller), do: args
 
   # How long the other MC has to answer: a wait for as long as it may wait, and a
   # little more, so its own timeout answers first.

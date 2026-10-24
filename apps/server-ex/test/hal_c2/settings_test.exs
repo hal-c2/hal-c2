@@ -31,6 +31,16 @@ defmodule HalC2.SettingsTest do
     assert {^doc, 0} = Settings.get()
   end
 
+  test "agents use the provider's own subagents until the setting says HAL-C2 workers" do
+    refute Settings.hal_c2_subagents?()
+
+    {:ok, 1} = Settings.put(%{"nativeSubagents" => "hal-c2"}, 0)
+    assert Settings.hal_c2_subagents?()
+
+    {:ok, 2} = Settings.put(%{"nativeSubagents" => "provider"}, 1)
+    refute Settings.hal_c2_subagents?()
+  end
+
   test "settings stay readable while the settings server cannot answer" do
     doc = %{"enableAssistantStreaming" => false}
     assert {:ok, 1} = Settings.put(doc, 0)

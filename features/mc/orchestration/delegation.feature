@@ -28,8 +28,15 @@ Feature: Delegating tasks to subagents
     When the agent in "parent" delegates "Write the migration\nUse the new schema"
     Then a new thread marked as a subagent of "parent" exists
     And it was created by an agent through MCP
-    And its first message is the task prompt
+    And its first message ends with the task prompt
     And its title is "Write the migration"
+
+  @mc
+  Scenario: The subagent is told whom it works for and that its last message is the report
+    When the agent in "parent" delegates a task
+    Then the subagent's first message names "parent" as the thread that delegated it
+    And it says the final message is the report to that thread
+    And it says to finish its own work, including its own workers, before the last turn
 
   @mc
   Scenario: Task titles are cut to 80 characters
@@ -40,6 +47,77 @@ Feature: Delegating tasks to subagents
   Scenario: The subagent works where the caller works
     When the agent in "parent" delegates a task
     Then the subagent thread works in worktree "/work/p"
+
+  @mc
+  Scenario: A task that asks to inherit works where the caller works
+    When the agent in "parent" delegates a task with workspace "{'type':'inherit'}"
+    Then the subagent thread works in worktree "/work/p"
+
+  @mc
+  Scenario: A task can ask for its own new worktree, cut from the caller's local commits
+    Given "parent" has a commit that is not on any other branch
+    When the agent in "parent" delegates a task with workspace "{'type':'worktree'}"
+    Then the subagent thread works in a new worktree other than "/work/p"
+    And that worktree has the caller's commit
+    And the task's status reports that worktreePath and branch
+    And the subagent's first turn starts in it, after it was prepared
+
+  @mc
+  Scenario: A task's new worktree can name its branch and base
+    When the agent in "parent" delegates a task with workspace "{'type':'worktree','baseRef':'main','branch':'task/a'}"
+    Then the subagent thread works in a new worktree on branch "task/a"
+    # startFromOrigin defaults to false; true fetches and starts from origin's copy of baseRef
+
+  @mc
+  Scenario: A caller that needs approval can ask for the root checkout it already works in
+    Given the task's caller "parent" works in the project root
+    And the task's caller "parent" is approval-required
+    When the agent in "parent" delegates a task with workspace "{'type':'root'}"
+    Then the subagent thread works in the project root
+
+  @mc
+  Scenario: A task can use another worktree of the project
+    Given the project has another worktree "/work/other" on branch "other"
+    When the agent in "parent" delegates a task with workspace "{'type':'existing_worktree','worktreePath':'/work/other'}"
+    Then the subagent thread works in worktree "/work/other" on branch "other"
+
+  @mc
+  Scenario Outline: A workspace that cannot be honoured refuses the task before it starts
+    Given the task asks for the workspace "<workspace>"
+    When the agent in "parent" delegates a task
+    Then the tool fails with code "workspace_invalid"
+    And "parent" has no subagent task
+    And the project has no worktree besides "/work/p"
+
+    Examples:
+      | workspace                                                |
+      | {'type':'existing_worktree','worktreePath':'/nowhere'}   |
+      | {'type':'existing_worktree','worktreePath':'relative'}   |
+      | {'type':'worktree','branch':'main'}                      |
+      | {'type':'worktree','baseRef':'no-such-ref'}              |
+
+  @mc
+  Scenario: A caller that needs approval cannot ask for another workspace
+    Given the task asks for the workspace "{'type':'worktree'}"
+    And the task's caller "parent" is approval-required
+    When the agent in "parent" delegates a task
+    Then the tool fails with code "workspace_escalation_denied"
+    And "parent" has no subagent task
+
+  @mc
+  Scenario: A worktree that cannot be prepared ends the task, not the caller's checkout
+    Given adding the next worktree fails
+    When the agent in "parent" delegates a task with workspace "{'type':'worktree'}"
+    Then the task ends "failed" with the result "Workspace preparation failed"
+    And the subagent never ran
+
+  @mc
+  Scenario: Cancelling a worktree's preparation ends the task
+    Given the next worktree is held while it is prepared
+    And the agent in "parent" delegated a task with workspace "{'type':'worktree'}"
+    When the worktree setup is cancelled
+    Then the task ends "cancelled" with the result "Workspace preparation was cancelled"
+    And the subagent never ran
 
   @mc
   Scenario: The subagent uses the caller's model unless the task names another
@@ -70,6 +148,22 @@ Feature: Delegating tasks to subagents
       | the task asks for full access while "parent" is approval-required | runtime_mode_escalation_denied     |
       | the task asks for default mode while "parent" is in plan mode     | interaction_mode_escalation_denied |
 
+  # A Claude subagent shares its thread's MCP credential; Claude names the tool call
+  # behind each MCP call, which tells the subagent's calls from Claude's own.
+  @mc
+  Scenario: A Claude subagent cannot delegate a task
+    Given thread "lead" on "claudeAgent" has a subagent running
+    When the subagent in "lead" delegates a task
+    Then the tool fails with code "capability_denied"
+    And the refusal says a native subagent can't own HAL-C2 workers and to start such work with delegate_task
+    And "lead" has no delegated task
+
+  @mc
+  Scenario: Claude still delegates while its subagent runs
+    Given thread "lead" on "claudeAgent" has a subagent running
+    When Claude in "lead" delegates a task itself
+    Then "lead" has a delegated task
+
   @mc
   Scenario: A delegation without a task prompt is refused, not started empty
     When the agent in "parent" delegates with its prompt under another name
@@ -86,6 +180,14 @@ Feature: Delegating tasks to subagents
   Scenario: A wait that times out leaves the task running
     When the agent in "parent" delegates a task and waits 1 second
     And the subagent is still working after 1 second
+    Then the wait returns the task as working and says the wait timed out
+
+  @mc
+  Scenario: A wait gives up before the caller's MCP client would
+    Given thread "acp" exists in "demo"
+    And "acp" has a running turn on "grok"
+    And the MCP client of an ACP provider gives up on a tool call after 1 second
+    When the agent in "acp" on "grok" delegates a task to "codex" and waits 2 hours
     Then the wait returns the task as working and says the wait timed out
 
   @mc
@@ -226,6 +328,14 @@ Feature: Delegating tasks to subagents
     And the work state is "working" until the task ends and "result_available" after
 
   @mc
+  Scenario: A task's work state says whether its subagent works, waits on work it left, or has ended
+    Given the agent in "parent" delegated a task whose subagent left a command running in the background
+    When the agent in "parent" asks for the task's status
+    Then the work state is "waiting_for_children"
+    When the command ends and the subagent's turn about it ends
+    Then the work state is "result_available"
+
+  @mc
   Scenario: Checking a task that does not exist
     When the agent in "parent" asks for the status of task "node:subagent:none"
     Then the tool fails with code "task_not_found"
@@ -337,12 +447,15 @@ Feature: Delegating tasks to subagents
     And the task's delivery is still pending
 
   @backlog @mc
-  Scenario: Cancelling a task whose subagent has nothing running to interrupt is refused
-    Given the agent in "parent" delegated a task that is not finished and whose subagent has no running turn
+  Scenario: Cancelling a task whose subagent has nothing running or in the background is refused
+    Given the agent in "parent" delegated a task that is not finished and whose subagent has nothing running or in the background
     When the agent cancels the task
     Then the tool fails with code "task_not_cancellable"
 
-  @backlog @mc
+  # Dropped: the wake carries the worker's whole result in a <delegated_task_result> envelope,
+  # proved by "The parent hears the subagent's result" in timeline/plans-and-subagents.feature. A pointer to task_status would cost the
+  # agent a round trip and lose the result when the task is disposed.
+  @dropped @mc
   Scenario Outline: The message that wakes the caller names the finished tasks and how to read them
     Given the turn of "parent" ended while <tasks> were still working
     When <tasks> finish
@@ -496,13 +609,15 @@ Feature: Delegating tasks to subagents
       | is interrupted without an assistant message               | Child task ended with status interrupted.          |
       | fails with "Rate limit reached" after it already answered | Rate limit reached                                 |
 
-  @backlog @mc
+  @mc
   Scenario: A task whose subagent is waiting on tasks of its own is not finished yet
     Given the agent in "parent" delegated a task
-    And the subagent's turn ended while tasks it delegated itself are still working
+    And the subagent's turn ended while a task it delegated itself is still working
     When the agent in "parent" asks for the task's status
     Then the work state is "waiting_for_children"
-    And it becomes "result_available" once those tasks are done
+    When the subagent's own task is done and the subagent's turn about it ends
+    Then the work state is "result_available"
+    And the task summary is the answer of the subagent's turn about its own task
 
   @backlog @mc
   Scenario: A subagent the provider started without a title or prompt is named after its parent
@@ -510,31 +625,72 @@ Feature: Delegating tasks to subagents
     When the provider of "parent" starts its second subagent with neither a title nor a prompt
     Then the subagent's thread is titled "Fix the parser subagent 2"
 
-  @backlog @mc
+  @mc
   Scenario Outline: A task whose subagent still owes work is not finished yet
     Given the agent in "parent" delegated a task
     And the subagent's turn ended while <owed>
     When the agent in "parent" asks for the task's status
-    Then the work state is "waiting_for_children"
+    Then the task is still running and the work state is "<state>"
 
     Examples:
-      | owed                                                              |
-      | a command it started is still running in the background           |
-      | a task it delegated finished but that result has not reached it   |
+      | owed                                                              | state                |
+      | a command it started is still running in the background           | waiting_for_children |
+      | a task it delegated finished but that result has not reached it   | working              |
 
-  @backlog @mc
+  @mc
   Scenario: A turn that only handled a monitor update is not the task's result
-    Given the agent in "parent" delegated a task and the subagent answered "Done: 3 files"
-    And the subagent later ran a turn only to handle an update from a monitor
-    When the agent in "parent" asks for the task's result
-    Then the result is "Done: 3 files"
+    Given the agent in "parent" delegated a task
+    And the subagent answered "Done: 3 files" with a turn to handle an update from a monitor queued behind it
+    When that turn ends without a word
+    Then the task summary is "Done: 3 files"
 
-  @backlog @mc
+  @mc
   Scenario: A rolled-back turn of the subagent is not the task's result
-    Given the agent in "parent" delegated a task and the subagent answered "First" and then "Second"
-    And the subagent's second turn was rolled back
-    When the agent in "parent" asks for the task's result
-    Then the result is "First"
+    Given the agent in "parent" delegated a task
+    And the subagent answered "First" and then "Second", with a third turn still working
+    And the subagent's second turn was rolled back before the task settled
+    When the third turn ends without a word
+    Then the task summary is "First"
+
+  # hal-c2/hal-c2#508: a turn that leaves work running is not the subagent's end.
+  @mc
+  Scenario: A subagent's own later turn that finishes its background work delivers the task's result
+    Given the agent in "parent" delegated a task whose subagent left a command running in the background
+    When the command ends and the subagent's turn about it ends
+    Then "parent" receives one result message, with the answer of the subagent's turn about the command
+    And no result message to "parent" says "The dev server is running."
+
+  # Codex and Claude end the work's item before the turn it wakes is queued.
+  @mc
+  Scenario: A task is not settled between its subagent's background work ending and the turn that work wakes
+    Given the agent in "parent" delegated a task whose subagent left a command running in the background
+    When the command ends and the subagent's turn about it ends
+    Then the task ended when its child's turn did
+    And the task summary is the answer of the subagent's turn about the command
+
+  @mc
+  Scenario: A Grok subagent's background work ending settles its task with its last answer
+    Given the agent in "parent" delegated a task to Grok whose subagent left work running in the background
+    When the agent in "parent" asks for the task's status
+    Then the work state is "waiting_for_children"
+    When Grok reports the subagent's background work ended
+    Then "parent" receives a system message carrying the delegated task result "Hello from acp"
+
+  # hal-c2/hal-c2#40: the end of the subagent's turn never reached its caller.
+  @mc
+  Scenario: A task whose end report was lost settles without a restart
+    Given the agent in "parent" delegated a task
+    And the subagent completed with "Done", and the report of its end was lost
+    When the subagent's session is released and the MC's periodic check runs
+    Then "parent" receives a system message carrying the delegated task result "Done"
+    And the lost report, arriving after all, does not deliver it again
+
+  @mc
+  Scenario: Cancelling a task that waits on background work stops that work
+    Given the agent in "parent" delegated a task whose subagent left a command running in the background
+    When the agent cancels the task
+    Then the task is cancelled and its delivery disposed
+    And the subagent's command is stopped
 
   @backlog @mc
   Scenario: A subagent the provider started is titled from its prompt, cut to 72 characters

@@ -164,6 +164,24 @@ Feature: Claude
     When a Claude turn starts
     Then Claude can call the HAL-C2 tools for this thread
 
+  Scenario: Claude keeps its own subagent tool unless the subagents setting says otherwise
+    Given the project allows the HAL-C2 tools
+    When a Claude turn starts
+    Then Claude is started with no tools disallowed
+
+  Scenario: Claude's subagent tool is off when agents use HAL-C2 workers
+    Given the project allows the HAL-C2 tools
+    And the subagents setting is HAL-C2 workers
+    When a Claude turn starts
+    Then Claude is started with its "Agent" and "Task" tools disallowed
+    And Claude is told to delegate with "delegate_task"
+
+  Scenario: Claude keeps its own subagent tool when it has no HAL-C2 tools to delegate with
+    Given the project turns the HAL-C2 tools off
+    And the subagents setting is HAL-C2 workers
+    When a Claude turn starts in a thread that already exists
+    Then Claude is started with no tools disallowed
+
   Scenario: Reverting a Claude turn restores the conversation to that point
     Given a Claude thread with three turns
     When the user reverts to the end of the first turn
@@ -562,20 +580,20 @@ Feature: Claude
     Then the earlier list is marked superseded
     And a list that had already completed stays completed
 
-  @backlog @mc
+  @mc
   Scenario: A Claude subagent's task list does not replace the thread's
     Given Claude's task list is shown in the thread
     When a subagent writes a task list of its own
     Then the thread's task list is unchanged
 
-  @backlog @mc
+  @mc
   Scenario: A Claude subagent's thread opens with the task it was given
     When Claude starts a subagent with the task "Check the tests"
     Then the subagent's thread starts with "Check the tests" as its first message
     And the tools the subagent uses appear in the subagent's thread
     And the subagent's own messages do not appear in the parent thread
 
-  @backlog @mc
+  @mc
   Scenario: A Claude subagent's progress is shown in its own thread
     Given Claude has a subagent running
     When Claude reports the subagent's progress

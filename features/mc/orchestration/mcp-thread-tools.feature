@@ -105,6 +105,13 @@ Feature: Agents working with threads through MCP tools
     Then the wait returns the run's current status and that it timed out
 
   @mc
+  Scenario: A wait gives up before the caller's MCP client would
+    Given "t2" has a turn running that does not finish
+    And the MCP client of an ACP provider gives up on a tool call after 1 second
+    When the agent of "caller" on "opencode" waits on "t2" for 2 hours
+    Then the wait returns the run's current status and that it timed out
+
+  @mc
   Scenario Outline: The wait timeout is clamped
     When the agent of "caller" waits on "t2" for <asked>
     Then the wait lasts at most <used>

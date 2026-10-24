@@ -32,6 +32,13 @@ defmodule HalC2.Settings do
   @doc "The settings document (`%{}` when never written; clients fill in defaults)."
   def settings, do: elem(get(), 0)
 
+  @doc """
+  Whether agents must delegate with HAL-C2's workers because their provider's own
+  subagent tool is turned off (`nativeSubagents` is `"hal-c2"`; the default,
+  `"provider"`, leaves the tool on). Read when an agent's session starts.
+  """
+  def hal_c2_subagents?, do: settings()["nativeSubagents"] == "hal-c2"
+
   # The keys a project may override (`ProjectSettingsOverrides`).
   @project_scoped ~w(worktreeCleanup defaultModelSelection defaultRuntimeMode defaultThreadEnvMode
                      newWorktreesStartFromOrigin worktreeSubmodules defaultAutoPull

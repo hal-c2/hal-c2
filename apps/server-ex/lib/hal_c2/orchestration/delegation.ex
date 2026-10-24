@@ -42,9 +42,11 @@ defmodule HalC2.Orchestration.Delegation do
          {:ok, selection} <- target(thread, input["target"]),
          {:ok, runtime} <- mode(thread["runtimeMode"], input["runtimeMode"], :runtime),
          {:ok, interaction} <-
-           mode(thread["interactionMode"], input["interactionMode"], :interaction) do
+           mode(thread["interactionMode"], input["interactionMode"], :interaction),
+         {:ok, workspace} <- resolve_workspace(thread, input["workspace"]) do
       spec = %{
         "task" => input["task"],
+        "workspace" => workspace,
         "title" => input["title"],
         "modelSelection" => selection,
         "runtimeMode" => runtime,
@@ -57,7 +59,12 @@ defmodule HalC2.Orchestration.Delegation do
       case start(thread, run, spec) do
         {:ok, task_id} ->
           if input["mode"] == "wait",
-            do: wait(thread["id"], task_id, wait_budget(input["timeoutMs"])),
+            do:
+              wait(
+                thread["id"],
+                task_id,
+                min(wait_budget(input["timeoutMs"]), HalC2.Mcp.max_wait_ms(instance))
+              ),
             else: {:ok, status(thread["id"], task_id)}
 
         {:error, message} ->
@@ -81,10 +88,12 @@ defmodule HalC2.Orchestration.Delegation do
          :ok <- if(run && run["status"] in @active, do: :ok, else: not_active()),
          {:ok, runtime} <- mode(thread["runtimeMode"], command["runtimeMode"], :runtime),
          {:ok, interaction} <-
-           mode(thread["interactionMode"], command["interactionMode"], :interaction) do
+           mode(thread["interactionMode"], command["interactionMode"], :interaction),
+         {:ok, workspace} <- resolve_workspace(thread, command["workspace"]) do
       with {:ok, _task_id} <-
              start(thread, run, %{
                "task" => command["task"],
+               "workspace" => workspace,
                "title" => command["title"],
                "modelSelection" => command["modelSelection"] || thread["modelSelection"],
                "runtimeMode" => runtime,
@@ -208,8 +217,25 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  @doc "Called when a run of `thread_id` ends: reports a subagent's result to its parent."
-  def finished(thread_id, run_id, status) do
+  @doc "Called when a run of `thread_id` ends: settles a subagent's task once it is quiet (`settle_if_quiet/1`)."
+  def finished(thread_id, _run_id, _status), do: settle_if_quiet(thread_id)
+
+  @doc """
+  Settles the task `thread_id` works on, once the child is quiet: no run active or
+  queued, and no background work it still owes (`BackgroundWork.derive/1`, the
+  sidebar's Waiting pill). Until then the task works on, however many turns the
+  child takes. It ends as the child's last run that was not rolled back did, with
+  the child's last answer in such a run, and wakes the caller once.
+
+  Called at the end of each child run, when a task of the child's settles (it may
+  have been all the child waited on), when background work ends on a provider that
+  does not wake itself for it, and periodically for children with no live provider
+  process (`HalC2.Orchestration.IdleSessions`). Background work ending is not a
+  reason to check on providers that wake themselves: their wake run is queued only
+  after the work's item ended, and the child is not quiet until that run has ended.
+  """
+  def settle_if_quiet(thread_id) do
+    hook(:settling, thread_id)
     child = stream(thread_id)
 
     with %{"lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => parent_id}} <-
@@ -219,31 +245,45 @@ defmodule HalC2.Orchestration.Delegation do
              StreamState.list(stream(parent_id), "subagent"),
              &(&1["childThreadId"] == thread_id)
            ),
-         true <- task["status"] not in @terminal,
-         # A report that comes late (retried) finds the run as it is now: one the
-         # user rolled back meanwhile ends the task as its other runs say.
-         {status, run, ended_at} <- reported(child, run_id, status) do
-      result = run && answer(child, run["id"])
-
-      # A completion reported twice (a provider replaying its turn's end after a
-      # reconnect, or two reports racing) settles and wakes once: only the report
-      # that finds the task unsettled delivers it. Whether it is delivered is decided
-      # with the task's end, so a wait that times out meanwhile (`wait/3`) either
-      # hears of the end or leaves the task to wake the caller. The result message is
-      # recorded in the same transaction, so a crash cannot leave a task delivered
-      # without it.
-      with {:settled, "delivered", {:ok, _} = sent} <-
-             settle(parent_id, task, status, result, &delivery/2, :once, ended_at, true),
-           do: Orchestration.dispatched(parent_id, wake(parent_id, task, status, result), sent)
+         true <- task["status"] in @terminal or settle_quiet(child, parent_id, task) do
+      # The task may have been the last thing its caller, itself a subagent, waited on.
+      # Checked whenever the task has ended, not only by the call that ended it, so a
+      # report retried after this check failed (`report/5`) checks again.
+      settle_if_quiet(parent_id)
     end
 
     :ok
   end
 
+  # Settles `task` if its child is quiet; true once the task has ended.
+  defp settle_quiet(child, parent_id, task) do
+    # A child that has not started its first run yet has not begun the task.
+    with [_ | _] = runs <- StreamState.list(child, "run"),
+         true <- quiet?(child),
+         {status, run, ended_at} <- last_end(runs) do
+      result = answer(child) || preparation_failure(child, run)
+
+      # A child found quiet twice (two runs' ends, a provider replaying its turn's end
+      # after a reconnect, the periodic check racing a report) settles and wakes once:
+      # only the call that finds the task unsettled delivers it. Whether it is delivered
+      # is decided with the task's end, so a wait that times out meanwhile (`wait/3`)
+      # either hears of the end or leaves the task to wake the caller. The result
+      # message is recorded in the same transaction, so a crash cannot leave a task
+      # delivered without it.
+      with {:settled, "delivered", {:ok, _} = sent} <-
+             settle(parent_id, task, status, result, &delivery/2, :once, ended_at, true),
+           do: Orchestration.dispatched(parent_id, wake(parent_id, task, status, result), sent)
+
+      true
+    else
+      _ -> false
+    end
+  end
+
   @doc """
-  `finished/3` from the end of a child's run, tried again while a thread it reads is
-  too busy to answer, or it fails: a report given up on leaves the task running in its
-  caller until the MC next starts (`reconcile/2`). Retries `attempts` times, waiting twice as long each time from `backoff` ms.
+  `finished/3` from the end of a child's run (or of background work no provider wakes
+  itself for), tried again while a thread it reads is too busy to answer, or it fails:
+  a report given up on leaves the task to the periodic check (`settle_if_quiet/1`) or the next boot (`reconcile/2`). Retries `attempts` times, waiting twice as long each time from `backoff` ms.
   """
   def report(thread_id, run_id, status, attempts \\ 6, backoff \\ 2_000) do
     hook(:reporting, thread_id)
@@ -275,7 +315,7 @@ defmodule HalC2.Orchestration.Delegation do
           parent_id,
           task,
           ended,
-          run && answer(child, run["id"]),
+          if(run, do: answer(child)),
           "disposed",
           :once,
           ended_at
@@ -292,7 +332,7 @@ defmodule HalC2.Orchestration.Delegation do
 
     cond do
       boot? and StreamState.get(child, "thread")[child_id] == nil -> {"failed", nil, nil, child}
-      runs == [] or working?(runs) -> nil
+      runs == [] or not quiet?(child) -> nil
       true -> with {ended, run, at} <- last_end(runs), do: {ended, run, at, child}
     end
   end
@@ -312,15 +352,22 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  # How the reported run ended and when, not when its report got through; nil when
-  # it was rolled back and the child is working again, whose next run reports.
-  defp reported(child, run_id, status) do
+  # Quiet: no run active or queued, and no background work owed. Persistent monitors
+  # never finish, so they are not owed (`BackgroundWork`).
+  defp quiet?(child), do: not working?(StreamState.list(child, "run")) and owed(child) == []
+
+  # The child's owed background work, as its sidebar row shows it, read from its stream.
+  defp owed(child) do
     runs = StreamState.list(child, "run")
 
-    case StreamState.get(child, "run")[run_id] do
-      %{"status" => "rolled_back"} -> if not working?(runs), do: last_end(runs)
-      run -> {status, run || %{"id" => run_id}, run && run["completedAt"]}
-    end
+    HalC2.Projection.BackgroundWork.derive(
+      latest_run: HalC2.Projection.Shell.latest_run(runs),
+      provider_threads: StreamState.list(child, "provider-thread"),
+      turn_items: StreamState.list(child, "turn-item"),
+      active_provider_thread_id:
+        (HalC2.Projection.Timeline.thread(child) || %{})["activeProviderThreadId"],
+      runs: runs
+    )
   end
 
   defp working?(runs), do: Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued"))
@@ -344,7 +391,19 @@ defmodule HalC2.Orchestration.Delegation do
     title =
       spec["title"] || spec["task"] |> String.split("\n") |> hd() |> String.slice(0, 80)
 
-    record(thread, run, task_id, child_id, selection, title, spec["task"], spec["completionWake"])
+    workspace = spec["workspace"] || {"inherited", workspace(thread)}
+
+    record(
+      thread,
+      run,
+      task_id,
+      child_id,
+      selection,
+      title,
+      spec["task"],
+      spec["completionWake"],
+      elem(workspace, 0)
+    )
 
     launched =
       Orchestration.launch_thread(%{
@@ -357,7 +416,7 @@ defmodule HalC2.Orchestration.Delegation do
         "interactionMode" => spec["interactionMode"],
         "createdBy" => spec["createdBy"],
         "creationSource" => spec["creationSource"],
-        "workspaceStrategy" => workspace(thread),
+        "workspaceStrategy" => elem(workspace, 1),
         "lineage" => %{
           "parentThreadId" => thread["id"],
           "relationshipToParent" => "subagent",
@@ -365,7 +424,8 @@ defmodule HalC2.Orchestration.Delegation do
         },
         "initialMessage" => %{
           "messageId" => "message:delegate:" <> HalC2.Environment.uuid4(),
-          "text" => spec["task"],
+          "senderThreadId" => thread["id"],
+          "text" => preamble(thread) <> spec["task"],
           "attachments" => []
         }
       })
@@ -379,6 +439,20 @@ defmodule HalC2.Orchestration.Delegation do
         settle(thread["id"], %{"id" => task_id}, "failed", message, "disposed")
         {:error, message}
     end
+  end
+
+  # What a delegated child is told before its task: who it works for and that its last
+  # message is the report, so it finishes its own background work and workers first.
+  @doc false
+  def preamble(thread) do
+    title = thread["title"] |> to_string() |> String.replace(~r/\s+/, " ") |> String.trim()
+    parent = if title == "", do: thread["id"], else: inspect(title)
+
+    """
+    You are a HAL-C2 worker delegated by the thread #{parent}. Your final message is your report to it: lead with the outcome, then evidence (files, commands, test results), then anything left undone. Finish your own work, including waiting on your background work and your own workers, before you end your last turn.
+
+    Task:
+    """
   end
 
   defp update(parent_id, task_id, fields) do
@@ -419,7 +493,7 @@ defmodule HalC2.Orchestration.Delegation do
   defp not_app_owned(parent_id, task_id),
     do: {:error, "Delegated task #{task_id} is not an app-owned task of thread #{parent_id}."}
 
-  defp record(thread, run, task_id, child_id, selection, title, prompt, wake) do
+  defp record(thread, run, task_id, child_id, selection, title, prompt, wake, workspace) do
     at = Entities.now()
     instance = selection["instanceId"]
     driver = Orchestration.driver_for(instance)
@@ -441,6 +515,7 @@ defmodule HalC2.Orchestration.Delegation do
       "title" => title,
       "model" => selection["model"],
       "completionWake" => wake,
+      "workspace" => workspace,
       "completionDelivery" => %{"state" => "pending", "observedByRunId" => nil},
       "status" => "running",
       "result" => nil,
@@ -591,9 +666,12 @@ defmodule HalC2.Orchestration.Delegation do
     label = String.trim(task["title"] || "")
     label = if label == "", do: "Delegated task", else: label
 
+    answer = result || "(no answer)"
+    child = task["childThreadId"]
+
     text = """
-    <delegated_task_result taskId="#{task["id"]}" title="#{task["title"]}" status="#{status}" childThreadId="#{task["childThreadId"]}">
-    #{result || "(no answer)"}
+    <delegated_task_result taskId="#{attr(task["id"])}" title="#{attr(task["title"])}" status="#{attr(status)}" childThreadId="#{attr(child)}">
+    #{close_tag_safe(answer)}
     </delegated_task_result>
     """
 
@@ -610,7 +688,10 @@ defmodule HalC2.Orchestration.Delegation do
       "notification" => %{
         "source" => %{"kind" => "delegated_task", "taskIds" => [task["id"]]},
         "outcome" => outcome,
-        "summary" => "#{label} #{ended}"
+        "summary" => "#{label} #{ended}",
+        "workerThreadId" => child,
+        "workerTitle" => label,
+        "detail" => cap_result(answer)
       },
       "delegatedCompletion" => %{
         "parentRunId" => task["runId"],
@@ -620,11 +701,55 @@ defmodule HalC2.Orchestration.Delegation do
     }
   end
 
+  # The agent reads the whole answer; a closing tag quoted inside it (a previous result,
+  # say) must not end the envelope early.
+  defp close_tag_safe(text),
+    do: Regex.replace(~r{</(?=delegated_task_result)}i, text, "&lt;/")
+
+  # How much of a worker's answer the timeline notification carries, so clients don't
+  # render megabytes; the rest stays readable in the worker's own thread.
+  @result_cap 8_192
+
+  defp cap_result(text) when byte_size(text) > @result_cap do
+    kept = text |> binary_part(0, @result_cap) |> trim_invalid()
+    kept <> "\n\n[result truncated at #{@result_cap} bytes; the rest is in the worker's thread]"
+  end
+
+  defp cap_result(text), do: text
+
+  # A byte cut can split a UTF-8 character; drop the broken tail.
+  defp trim_invalid(text) do
+    if String.valid?(text),
+      do: text,
+      else: trim_invalid(binary_part(text, 0, byte_size(text) - 1))
+  end
+
+  defp attr(value) do
+    value
+    |> to_string()
+    |> String.replace("&", "&amp;")
+    |> String.replace("\"", "&quot;")
+    |> String.replace("<", "&lt;")
+    |> String.replace(">", "&gt;")
+    |> String.replace("\n", "&#10;")
+    |> String.replace("\r", "&#13;")
+  end
+
   defp status(thread_id, task_id) do
     with %{} = task <- subagent(thread_id, task_id) do
       child = stream(task["childThreadId"])
       runs = StreamState.list(child, "run") |> Enum.sort_by(&(&1["ordinal"] || 0))
-      terminal = task["status"] in @terminal
+      # Live, not recorded with the task: the branch is renamed after the worktree exists.
+      thread = StreamState.get(child, "thread")[task["childThreadId"]] || %{}
+      pending = working?(runs)
+
+      work_state =
+        cond do
+          task["status"] in @terminal -> "result_available"
+          pending -> "working"
+          owed(child) != [] -> "waiting_for_children"
+          true -> "working"
+        end
 
       %{
         "taskId" => task["id"],
@@ -634,12 +759,14 @@ defmodule HalC2.Orchestration.Delegation do
         "providerInstanceId" => task["providerInstanceId"],
         "model" => task["model"],
         "status" => task["status"],
-        "workState" => if(terminal, do: "result_available", else: "working"),
+        "workState" => work_state,
         "summary" => task["result"],
-        "hasPendingChildRuns" =>
-          Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued")),
+        "hasPendingChildRuns" => pending,
         "startedAt" => task["startedAt"],
-        "completedAt" => task["completedAt"]
+        "completedAt" => task["completedAt"],
+        "workspace" => task["workspace"],
+        "worktreePath" => thread["worktreePath"],
+        "branch" => thread["branch"]
       }
     end
   end
@@ -703,14 +830,39 @@ defmodule HalC2.Orchestration.Delegation do
     end)
   end
 
-  # The child's last answer in the run that ended.
-  defp answer(child, run_id) do
+  # The child's last answer in a run that was not rolled back: a turn that only handled
+  # a monitor update or a background task's end without a word does not replace it.
+  defp answer(child) do
+    kept =
+      for run <- StreamState.list(child, "run"),
+          run["status"] != "rolled_back",
+          into: MapSet.new(),
+          do: run["id"]
+
     child
     |> StreamState.list("message")
-    |> Enum.filter(&(&1["runId"] == run_id and &1["role"] == "assistant"))
+    |> Enum.filter(
+      &(&1["role"] == "assistant" and MapSet.member?(kept, &1["runId"]) and
+          String.trim(&1["text"] || "") != "")
+    )
     |> List.last(%{})
     |> Map.get("text")
   end
+
+  # Why a child that never started ended: its worktree could not be prepared, or the
+  # preparation was cancelled. Nil for any other run, a queued one cancelled included.
+  defp preparation_failure(child, %{"id" => run_id}) do
+    items = StreamState.get(child, "turn-item")
+
+    case {items["turn-item:workspace-preparation-failure:#{run_id}"],
+          items["turn-item:workspace-preparation:#{run_id}"]} do
+      {%{"failure" => %{"message" => message}}, _} -> "Workspace preparation failed: #{message}"
+      {_, %{"status" => "cancelled"}} -> "Workspace preparation was cancelled."
+      _ -> nil
+    end
+  end
+
+  defp preparation_failure(_child, _run), do: nil
 
   defp idle?(state), do: not Enum.any?(StreamState.list(state, "run"), &(&1["status"] in @active))
 
@@ -761,6 +913,134 @@ defmodule HalC2.Orchestration.Delegation do
         {:error, "interaction_mode_escalation_denied",
          "Child interaction mode #{requested} is broader than parent mode plan."},
       else: {:ok, requested}
+  end
+
+  # What `workspace` asks for, as `{kind, launch strategy}`. Omitted, the child works
+  # where the caller does. Anything else makes or points at a checkout, so it needs
+  # the caller `hal_c2_thread_launch` needs, and is refused here, before anything is
+  # created: a task never falls back to the caller's checkout.
+  defp resolve_workspace(thread, nil), do: {:ok, {"inherited", workspace(thread)}}
+  defp resolve_workspace(thread, %{"type" => "inherit"}), do: resolve_workspace(thread, nil)
+
+  defp resolve_workspace(thread, %{"type" => type} = asked) do
+    root = project_root(thread)
+
+    cond do
+      type == "existing_worktree" and is_binary(asked["worktreePath"]) and
+          asked["worktreePath"] == thread["worktreePath"] ->
+        resolve_workspace(thread, nil)
+
+      # A caller already in the project root is asking for its own checkout.
+      type == "root" and is_nil(thread["worktreePath"]) ->
+        resolve_workspace(thread, nil)
+
+      thread["runtimeMode"] != "full-access" or thread["interactionMode"] != "default" ->
+        {:error, "workspace_escalation_denied",
+         "A task's own workspace needs a full-access/default calling thread."}
+
+      is_nil(root) ->
+        invalid("The project is not on this MC.")
+
+      type == "root" ->
+        {:ok, {"root", %{"type" => "root"}}}
+
+      type == "worktree" ->
+        new_worktree(thread, root, asked)
+
+      type == "existing_worktree" ->
+        existing_worktree(root, asked)
+
+      true ->
+        invalid("Unknown workspace type #{inspect(type)}.")
+    end
+  end
+
+  defp resolve_workspace(_thread, _asked), do: invalid("workspace needs a type.")
+
+  defp invalid(message), do: {:error, "workspace_invalid", message}
+
+  defp project_root(thread) do
+    case HalC2.Shell.row(node(), thread["projectId"]) do
+      {"project", %{"workspaceRoot" => root}} when is_binary(root) -> root
+      _ -> nil
+    end
+  end
+
+  # A new worktree from `baseRef` (default: where the caller is, so its local commits
+  # are in it) on `branch`, which must not exist yet.
+  defp new_worktree(thread, root, asked) do
+    from_origin = asked["startFromOrigin"] == true
+    base = asked["baseRef"] || caller_ref(thread, root)
+    branch = asked["branch"]
+
+    cond do
+      not is_binary(base) or not ref?(root, base, from_origin) ->
+        invalid("The base ref #{inspect(base)} does not exist.")
+
+      is_binary(branch) and not valid_branch?(root, branch) ->
+        invalid("#{inspect(branch)} is not a usable branch name.")
+
+      is_binary(branch) and
+          (ref?(root, "refs/heads/" <> branch, false) or
+             HalC2.Git.branch_path_taken?(root, branch) or
+             File.exists?(HalC2.Vcs.worktree_path(root, branch))) ->
+        invalid("The branch #{branch} already exists.")
+
+      true ->
+        {:ok,
+         {"worktree",
+          %{
+            "type" => "worktree",
+            "baseRef" => base,
+            "branch" => branch,
+            "startFromOrigin" => from_origin
+          }}}
+    end
+  end
+
+  defp existing_worktree(root, %{"worktreePath" => path} = asked) do
+    cond do
+      not is_binary(path) or Path.type(path) != :absolute ->
+        invalid("worktreePath must be an absolute path.")
+
+      not File.dir?(path) or common_dir(path) == nil or common_dir(path) != common_dir(root) ->
+        invalid("#{path} is not a checkout of this project.")
+
+      true ->
+        branch = asked["branch"] || HalC2.Git.current_branch(path)
+
+        {:ok,
+         {"existing_worktree",
+          %{"type" => "existing_worktree", "worktreePath" => path, "branch" => branch}}}
+    end
+  end
+
+  # The caller's branch, or its commit when detached.
+  defp caller_ref(thread, root) do
+    cwd = thread["worktreePath"] || root
+
+    thread["branch"] || HalC2.Git.current_branch(cwd) ||
+      with {:ok, sha} <- HalC2.Git.ok(cwd, ~w(rev-parse HEAD)), do: String.trim(sha)
+  end
+
+  defp ref?(root, ref, from_origin) do
+    Enum.any?(if(from_origin, do: [ref, "origin/" <> ref], else: [ref]), fn candidate ->
+      match?(
+        {:ok, _},
+        HalC2.Git.ok(root, ["rev-parse", "--verify", "--quiet", candidate <> "^{commit}"])
+      )
+    end)
+  end
+
+  defp valid_branch?(root, branch),
+    do: match?({:ok, _}, HalC2.Git.ok(root, ["check-ref-format", "--branch", branch]))
+
+  # Two checkouts of one repository share a common git dir.
+  defp common_dir(cwd) do
+    case HalC2.Git.ok(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) do
+      {:ok, dir} -> String.trim(dir)
+      _ -> nil
+    end
   end
 
   # The child works where the parent does.

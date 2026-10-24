@@ -419,7 +419,8 @@ Feature: Connection health
     And the environment is not listed as saved
     And its credential is not written to disk in the clear
 
-  @backlog @desktop @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @desktop @mobile
   Scenario: Signing out of HAL-C2 Connect keeps directly paired environments
     Given one relayed and one directly paired environment
     When the user signs out of HAL-C2 Connect
@@ -438,7 +439,8 @@ Feature: Connection health
       | an older protocol than the client | update HAL-C2 on that environment    |
 
   # Legacy: packages/client-runtime/src/connection/layer.ts (watchDiscoveredCompatibility)
-  @backlog @desktop @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @desktop @mobile
   Scenario: A relayed environment on another protocol is marked blocked from the relay's health report
     Given HAL-C2 Connect lists an environment whose last health report shows a protocol the client does not speak
     When the client refreshes the relay's environments

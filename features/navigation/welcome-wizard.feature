@@ -129,8 +129,8 @@ Feature: Welcome wizard
       Then "studio" is connected and selected
 
     @desktop
-    Scenario: Saved and discovered computers are selected by default
-      Given a saved computer and a computer discovered through HAL-C2 Connect
+    Scenario: Saved and cluster computers are selected by default
+      Given a saved computer and a computer that joined the cluster
       Then both computers are selected
 
     @desktop
@@ -181,21 +181,24 @@ Feature: Welcome wizard
       Then "studio" reads "Connected"
       And "laptop" reads "Connecting…"
 
-    @backlog @desktop
+    # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+    @dropped @desktop
     Scenario: HAL-C2 Connect asks the user to sign in before listing computers
       Given the user is not signed in to HAL-C2 Connect
       When the user opens HAL-C2 Connect in the wizard
       Then the user is asked to sign in
       And no computers are listed
 
-    @backlog @desktop
+    # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+    @dropped @desktop
     Scenario: A signed-in account with no linked computers says so
       Given the user is signed in to HAL-C2 Connect
       And no computers are linked to the account
       When the user opens HAL-C2 Connect in the wizard
       Then the user sees "No computers linked yet."
 
-    @backlog @desktop
+    # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+    @dropped @desktop
     Scenario: Where HAL-C2 Connect is on, relayed computers are listed under it
       Given HAL-C2 Connect is available
       And a computer is reached through the relay
@@ -204,7 +207,6 @@ Feature: Welcome wizard
     @backlog @desktop
     Scenario: Without a local server the wizard opens the pairing form first
       Given this client cannot reach a local server
-      And HAL-C2 Connect is not available
       When the wizard opens
       Then the pairing link form is expanded and has focus
 
@@ -232,7 +234,8 @@ Feature: Welcome wizard
       Then the wizard names the command to run on the computer with the user's code
       And it says HAL-C2 must be running there and how to share it over a tailnet
 
-    @backlog @desktop
+    # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+    @dropped @desktop
     Scenario: The wizard explains how to link a computer to HAL-C2 Connect
       When the user expands the instructions for HAL-C2 Connect
       Then the wizard names the command to run on each computer to connect

@@ -352,7 +352,7 @@ const Steps steps([] {
       return entry.value(QStringLiteral("connected")).toBool() && entry.value(QStringLiteral("selected")).toBool();
     }, [&] { return QStringLiteral("%1 connected and selected; the wizard is %2").arg(c[0], show(onboarding(world))); });
   });
-  step(QStringLiteral("a saved computer and a computer discovered through HAL-C2 Connect"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("a saved computer and a computer that joined the cluster"), [](World& world, const Captures&, const Table&) {
     world.mc.label = QStringLiteral("studio");
     joinComputer(world, QStringLiteral("laptop"));
     openWizard(world);

@@ -113,7 +113,7 @@ defmodule HalC2.Web.Router do
 
   # Pairing: exchange a one-time pairing token for a bearer access token, or with a
   # `DPoP` proof for a token bound to the client's key. `scope` asks for fewer scopes.
-  # A HAL-C2 Connect credential was minted for one device key and needs its proof.
+  # A credential minted for one device key needs that key's proof.
   post "/oauth/token" do
     params = conn.body_params
 
@@ -646,10 +646,6 @@ defmodule HalC2.Web.Router do
   catch
     _, _ -> {:error, 502, "The MC holding this file is unavailable."}
   end
-
-  # HAL-C2 Connect: a client's link settings, and the relay's signed requests.
-  forward "/api/connect", to: HalC2.Connect.Http
-  forward "/api/hal-c2-connect", to: HalC2.Connect.Http
 
   # Every MC's device hub, relayed to the MC that owns it (`HalC2.Devices.Proxy`).
   match "/api/device-hub/*rest", do: HalC2.Devices.Proxy.serve(conn, rest)

@@ -118,7 +118,7 @@ defmodule HalC2.Steps.Platform.NodeStartup do
     assert Paths.data_dir() == expected
     assert HalC2.Store.home_path() == Path.join(expected, "hal-c2.sqlite")
     assert File.regular?(HalC2.Store.home_path())
-    :ok = HalC2.Connect.Secrets.put("relay-token", "s3cret")
+    :ok = HalC2.Secrets.put("relay-token", "s3cret")
     assert File.regular?(Path.join(expected, "secrets/relay-token.bin"))
     worktree = HalC2.Vcs.worktree_path("/code/app", "feature/login")
     assert String.starts_with?(worktree, Path.join(expected, "worktrees") <> "/")
