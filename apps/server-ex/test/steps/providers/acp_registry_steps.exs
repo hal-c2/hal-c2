@@ -965,6 +965,10 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx
   end
 
+  step "{string} resumes its sessions without the model list", %{args: [_]} = context do
+    Acp.control(context, "acme", %{"resumeWithoutModels" => true})
+  end
+
   step "the agent's session uses the new model through set_model", context do
     Acp.follow_up(context, context.thread, "which model")
     Acp.await_runs(thread(context), 2)
@@ -973,7 +977,6 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     assert %{"params" => %{"modelId" => "acme/smart"}} =
              List.last(Acp.requests(context, "acme", "session/set_model"))
 
-    assert Acp.requests(context, "acme", "session/set_config_option") == []
     context
   end
 

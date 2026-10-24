@@ -863,11 +863,12 @@ defmodule HalC2.Acp.ThreadRuntime do
 
       _ ->
         case result["models"] do
-          %{"currentModelId" => model} ->
-            %{state | model: model, model_method: "session/set_model"}
+          %{} = models ->
+            %{state | model: models["currentModelId"], model_method: "session/set_model"}
 
+          # A session that does not say its model gets the turn's model set again.
           _ ->
-            state
+            %{state | model: nil}
         end
     end
   end
@@ -1074,14 +1075,20 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp set_model_now(state, model)
        when is_binary(model) and model != "" and model != state.model do
-    params =
-      if state.model_method == "session/set_model",
-        do: %{"sessionId" => state.session_id, "modelId" => model},
-        else: %{"sessionId" => state.session_id, "configId" => "model", "value" => model}
-
-    case Connection.call(state.conn, state.model_method, params) do
+    case select_model(state, state.model_method, model) do
       {:ok, result} ->
         remember_config(%{state | model: model}, result || %{})
+
+      # A resumed session may not say which method its agent switches models with.
+      {:error, _} when state.model_method == "session/set_config_option" ->
+        case select_model(state, "session/set_model", model) do
+          {:ok, _} ->
+            %{state | model: model, model_method: "session/set_model"}
+
+          {:error, reason} ->
+            Logger.warning("could not select #{model}: #{inspect(reason)}")
+            state
+        end
 
       {:error, reason} ->
         Logger.warning("could not select #{model}: #{inspect(reason)}")
@@ -1090,6 +1097,18 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp set_model_now(state, _model), do: state
+
+  defp select_model(state, "session/set_model", model),
+    do:
+      Connection.call(state.conn, "session/set_model", %{
+        "sessionId" => state.session_id,
+        "modelId" => model
+      })
+
+  defp select_model(state, method, model) do
+    params = %{"sessionId" => state.session_id, "configId" => "model", "value" => model}
+    Connection.call(state.conn, method, params)
+  end
 
   defp record_session(state, session_id) do
     ids = state.turn.ids

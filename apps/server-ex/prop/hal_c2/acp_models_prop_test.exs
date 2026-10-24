@@ -1,6 +1,6 @@
 defmodule HalC2.AcpModelsPropTest do
   @moduledoc """
-  Model changes across successive turns and session resets. Both ACP model formats
+  Model changes across successive turns, session resets and runtime restarts. Both ACP model formats
   must run each prompt on the requested model, including switching back and keeping
   the current choice. The fake rejects the wrong model selection method.
   """
@@ -46,7 +46,8 @@ defmodule HalC2.AcpModelsPropTest do
   def command(state) do
     frequency([
       {4, {:call, __MODULE__, :turn, [state.turns, oneof(["acme/fast", "acme/smart"])]}},
-      {1, {:call, __MODULE__, :reset, []}}
+      {1, {:call, __MODULE__, :reset, []}},
+      {1, {:call, __MODULE__, :restart, []}}
     ])
   end
 
@@ -59,11 +60,28 @@ defmodule HalC2.AcpModelsPropTest do
   def postcondition(_state, {:call, _, :turn, [_, model]}, result),
     do: result == {"completed", "model: " <> model}
 
-  def postcondition(_state, {:call, _, :reset, []}, result), do: result == :ok
+  def postcondition(_state, {:call, _, cmd, []}, result) when cmd in [:reset, :restart],
+    do: result == :ok
 
   def reset do
     {:ok, _} = HalC2.Acp.ThreadRuntime.rollback(@tid, %{})
     :ok
+  end
+
+  # A new runtime resumes the session, which a legacy agent answers without its models.
+  def restart do
+    case Registry.lookup(HalC2.Acp.Registry, @tid) do
+      [{pid, _}] ->
+        ref = Process.monitor(pid)
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^ref, :process, _, _} -> :ok
+        end
+
+      [] ->
+        :ok
+    end
   end
 
   def turn(n, model) do
@@ -110,7 +128,7 @@ defmodule HalC2.AcpModelsPropTest do
 
     File.write!(
       Path.join(home, "control.json"),
-      JSON.encode!(%{"grok" => %{"legacyModels" => legacy}})
+      JSON.encode!(%{"grok" => %{"legacyModels" => legacy, "resumeWithoutModels" => legacy}})
     )
 
     Application.put_env(:hal_c2, :acp_commands, %{

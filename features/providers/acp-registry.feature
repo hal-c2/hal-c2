@@ -184,6 +184,13 @@ Feature: ACP registry agents
     When the user switches the thread to the other model
     Then the agent's session uses the new model through set_model
 
+  Scenario: Switching models after an agent such as Kimi resumes without its model list
+    Given "acme" offers models through the session model list
+    And "acme" resumes its sessions without the model list
+    And the runtime of "acme" restarted
+    When the user switches the thread to the other model
+    Then the agent's session uses the new model through set_model
+
   Scenario: Agent file and terminal requests are refused
     When "acme" asks the client to read a file or run a terminal
     Then the request is refused rather than left waiting

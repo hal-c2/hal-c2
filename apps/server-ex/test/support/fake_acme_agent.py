@@ -259,7 +259,7 @@ for line in sys.stdin:
         sessions += 1
         sid = params.get("sessionId") or "%s-%d-%d" % (NAME, os.getpid(), sessions)
         result = {"configOptions": config_options()}
-        if CONTROL.get("legacyModels"):
+        if CONTROL.get("legacyModels") and not (method != "session/new" and CONTROL.get("resumeWithoutModels")):
             result["models"] = {"currentModelId": model,
                                 "availableModels": [{"modelId": v, "name": n} for v, n in models]}
         if method == "session/new":
