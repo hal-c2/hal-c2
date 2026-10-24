@@ -103,7 +103,6 @@ fn announce_overrides(world: &mut World) -> Outcome {
 }
 
 /// The page's own words, as the brick draws them.
-
 fn drawn_text(world: &mut World, name: &str) -> Outcome<(bool, String)> {
     let brick = settings_shell(world, 900.0, 2000.0)?;
     let item = brick.item(world, name)?;

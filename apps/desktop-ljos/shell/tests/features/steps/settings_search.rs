@@ -45,21 +45,19 @@ pub fn settings_shell(world: &mut World, width: f64, height: f64) -> Outcome<Bri
         // As DefaultShell lays them out.
         Brick::show(
             world,
-            &format!(
-                "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\n\
+            "import QtQuick\nimport HalC2.Shell\nimport HalC2.Bricks\n\
              import \"HalC2/Bricks/js/settingsPages.js\" as Pages\n\
-             Item {{\n\
+             Item {\n\
                id: shell\n\
                property alias rows: nav.rows\n\
                readonly property var route: Shell.state.route\n\
                readonly property string settingsSection: route && route.kind === \"settings\" ? Pages.resolve(route.section) : \"\"\n\
-               SettingsNav {{ id: nav; objectName: \"nav\"; width: 260; height: parent.height }}\n\
-               SettingsHost {{\n\
+               SettingsNav { id: nav; objectName: \"nav\"; width: 260; height: parent.height }\n\
+               SettingsHost {\n\
                  objectName: \"host\"; x: 260; width: parent.width - 260; height: parent.height\n\
                  section: shell.settingsSection\n\
-               }}\n\
-             }}\n"
-            ),
+               }\n\
+             }\n",
             width,
             height,
         )?;
@@ -588,8 +586,7 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| {
             change_theme_and_time_format(world)?;
             ask_to_restore(world)?;
-            world.answer_question =
-                Some(Rc::new(|world, accepted| answer_restore(world, accepted)));
+            world.answer_question = Some(Rc::new(answer_restore));
             Ok(())
         },
     );

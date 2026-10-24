@@ -161,7 +161,7 @@ fn open_thread(world: &mut World, title: &str) -> Outcome {
 }
 
 fn shown_thread(world: &mut World) -> Outcome<String> {
-    Ok(world.with::<Navigation, _>(|navigation, _| navigation.thread_key().to_owned())?)
+    world.with::<Navigation, _>(|navigation, _| navigation.thread_key().to_owned())
 }
 
 pub fn register(steps: &mut Steps) {
