@@ -619,6 +619,33 @@ defmodule HalC2.Web.SocketTest do
     assert {[{1, "back\r\n"}], _client} = terminal_output(client)
   end
 
+  # The terminal's monitor sits beside those of the socket's streams; ending a
+  # stream subscription finds its own and leaves the terminal followed.
+  test "a stream followed and let go beside a terminal leaves the terminal followed", %{
+    port: port,
+    tmp_dir: dir
+  } do
+    start_terminals()
+    input = %{"threadId" => "th-beside", "terminalId" => "term-1", "cwd" => dir}
+    {:ok, _} = HalC2.Streams.commit("th-beside", :thread, [{"thread", "th-beside", %{}}])
+    stream = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "th-beside"}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+
+    {_snapshot, client} = terminal_snapshot(client, 1)
+
+    {_live, _, client} =
+      client
+      |> WsClient.send_json(%{"t" => "sub", "id" => 2, "shape" => stream})
+      |> WsClient.recv_until(&(&1["t"] == "live"), 30_000)
+
+    client = WsClient.send_json(client, %{"t" => "unsub", "id" => 2})
+    print_terminal(input, "still\r\n")
+    assert {[{1, "still\r\n"}], _client} = terminal_output(client)
+  end
+
   # Output the terminal's timer flushed while the socket waited on the new
   # subscription's attach is in that subscription's snapshot: it is not then sent
   # again under the new id, and what follows still arrives.

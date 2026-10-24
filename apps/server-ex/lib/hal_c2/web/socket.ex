@@ -31,7 +31,7 @@ defmodule HalC2.Web.Socket do
 
   # Sockets are Bandit's processes, so a code upgrade in place (`HalC2.Upgrade`) runs no
   # `code_change/3` for them: each callback first brings an older state up to date.
-  @state_version 8
+  @state_version 9
 
   # The services `watch_spec/1` subscribes to as `{kind, mc}`, by kind.
   @services %{
@@ -86,6 +86,10 @@ defmodule HalC2.Web.Socket do
       # The monitor of each stream subscription's server => {its id, the server}.
       monitors: %{},
       by_terminal: %{},
+      # The monitor of each followed terminal => {its MC, its key, its pid}.
+      terminals: %{},
+      # MC => the keys of its terminals lost with it, attached again when it is back.
+      lost: %{},
       buffers: %{},
       shell: %{},
       flush_scheduled: false
@@ -329,17 +333,16 @@ defmodule HalC2.Web.Socket do
 
   # An MC whose terminals were lost with it is back: they are attached again.
   def handle_info({:nodeup, mc, _info}, state) do
-    case Map.pop(state.by_terminal, {:terminals_lost, mc}) do
+    case Map.pop(state.lost, mc) do
       {nil, _} ->
         {:ok, state}
 
-      {keys, by_terminal} ->
+      {keys, lost} ->
+        # The last lost MC is back: no more cluster news is wanted.
+        if lost == %{}, do: :ok = :net_kernel.monitor_nodes(false, node_type: :all)
+
         {frames, state} =
-          Enum.flat_map_reduce(
-            keys,
-            %{state | by_terminal: by_terminal},
-            &resync_terminal(&2, &1)
-          )
+          Enum.flat_map_reduce(keys, %{state | lost: lost}, &resync_terminal(&2, &1))
 
         if frames == [], do: {:ok, state}, else: {:push, frames, state}
     end
@@ -350,20 +353,15 @@ defmodule HalC2.Web.Socket do
   # it holds: a `resync` without an offset keeps its own. An MC that left the
   # cluster is not asked again until the client sees it back. A followed terminal
   # that stopped is `terminal_down/4`'s.
-  def handle_info({:DOWN, ref, :process, _server, reason}, %{monitors: monitors} = state)
-      when is_map_key(monitors, ref) do
-    case Map.pop(monitors, ref) do
-      {{:terminal, mc, key, _pid}, monitors} ->
-        terminal_down(%{state | monitors: monitors}, mc, key, reason)
-
-      {{id, _server}, _} ->
-        stream_down(state, ref, id, reason)
-    end
+  def handle_info({:DOWN, ref, :process, _server, reason}, %{terminals: terminals} = state)
+      when is_map_key(terminals, ref) do
+    {{mc, key, _pid}, terminals} = Map.pop(terminals, ref)
+    terminal_down(%{state | terminals: terminals}, mc, key, reason)
   end
 
-  def handle_info(_other, state), do: {:ok, state}
-
-  defp stream_down(%{monitors: monitors} = state, ref, id, reason) do
+  def handle_info({:DOWN, ref, :process, _server, reason}, %{monitors: monitors} = state)
+      when is_map_key(monitors, ref) do
+    {id, _server} = monitors[ref]
     {frames, state} = flush(state)
     state = forget_stream(%{state | monitors: Map.delete(monitors, ref)}, id)
 
@@ -374,6 +372,8 @@ defmodule HalC2.Web.Socket do
 
     {:push, frames ++ [Protocol.encode(frame)], state}
   end
+
+  def handle_info(_other, state), do: {:ok, state}
 
   @impl true
   def terminate(_reason, state) do
@@ -989,6 +989,10 @@ defmodule HalC2.Web.Socket do
     %{state | by_terminal: by_terminal, v: 8}
   end
 
+  # Version 9: followed terminals are monitored, and those lost with their MC kept.
+  defp migrate(%{v: 8} = state),
+    do: state |> Map.merge(%{terminals: %{}, lost: %{}, v: 9}) |> migrate()
+
   defp migrate(state), do: state
 
   defp session_scopes(nil), do: :all
@@ -1135,32 +1139,32 @@ defmodule HalC2.Web.Socket do
         {:error, _} -> {:error, :noconnection}
       end
 
-    watching = for {ref, {:terminal, _, ^key, pid}} <- state.monitors, do: {ref, pid}
+    watching = for {ref, {_, ^key, pid}} <- state.terminals, do: {ref, pid}
 
     {kept, stale} =
       Enum.split_with(watching, fn {_ref, pid} -> found == {:ok, pid} end)
 
     for {ref, _} <- stale, do: Process.demonitor(ref, [:flush])
-    monitors = Map.drop(state.monitors, Enum.map(stale, &elem(&1, 0)))
+    terminals = Map.drop(state.terminals, Enum.map(stale, &elem(&1, 0)))
 
     case {found, kept} do
       {{:ok, pid}, []} ->
-        %{state | monitors: Map.put(monitors, Process.monitor(pid), {:terminal, mc, key, pid})}
+        %{state | terminals: Map.put(terminals, Process.monitor(pid), {mc, key, pid})}
 
       {{:ok, _}, _} ->
-        %{state | monitors: monitors}
+        %{state | terminals: terminals}
 
       # Gone again before it could be monitored.
       {{:error, reason}, _} ->
         send(self(), {:hal_c2_terminal_down, mc, key, reason})
-        %{state | monitors: monitors}
+        %{state | terminals: terminals}
     end
   end
 
   defp unwatch_terminal(state, key) do
-    gone = for {ref, {:terminal, _, ^key, _}} <- state.monitors, do: ref
+    gone = for {ref, {_, ^key, _}} <- state.terminals, do: ref
     for ref <- gone, do: Process.demonitor(ref, [:flush])
-    %{state | monitors: Map.drop(state.monitors, gone)}
+    %{state | terminals: Map.drop(state.terminals, gone)}
   end
 
   # A terminal that closed said so first. Any other end is told to its
@@ -1182,13 +1186,9 @@ defmodule HalC2.Web.Socket do
 
   defp lose_terminal(state, mc, key) do
     # The 3-tuple messages of `node_type`, which `follow/4`'s `{:nodedown, mc}` is not.
-    unless Map.has_key?(state.by_terminal, :monitoring_nodes),
-      do: :ok = :net_kernel.monitor_nodes(true, node_type: :all)
-
-    by_terminal =
-      state.by_terminal
-      |> Map.put(:monitoring_nodes, true)
-      |> Map.update({:terminals_lost, mc}, [key], &Enum.uniq([key | &1]))
+    # Turned off by the `nodeup` that empties `lost`.
+    if state.lost == %{}, do: :ok = :net_kernel.monitor_nodes(true, node_type: :all)
+    lost = Map.update(state.lost, mc, [key], &Enum.uniq([key | &1]))
 
     {thread_id, terminal_id} = key
 
@@ -1208,8 +1208,8 @@ defmodule HalC2.Web.Socket do
     if mc in Node.list(), do: send(self(), {:nodeup, mc, []})
 
     if frames == [],
-      do: {:ok, %{state | by_terminal: by_terminal}},
-      else: {:push, frames, %{state | by_terminal: by_terminal}}
+      do: {:ok, %{state | lost: lost}},
+      else: {:push, frames, %{state | lost: lost}}
   end
 
   # Forgets the terminal's subscriptions here and tells each to `resync`.
