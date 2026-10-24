@@ -29,6 +29,7 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Recovery.settle/1" => "recover-settle",
       "HalC2.Orchestration.Recovery.continue/0" => ~w(continue skip-continue reconcile-after),
       "HalC2.Orchestration.Delegation hook(:reporting)" => "report-fail",
+      "HalC2.Orchestration.Delegation hook(:settling)" => "report-fail",
       "HalC2.Orchestration.Delegation hook(:expiring)" => "time-out",
       "HalC2.Orchestration.Delegation hook(:cancelling)" => "cancel"
     },
