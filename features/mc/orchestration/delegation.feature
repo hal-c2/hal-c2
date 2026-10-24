@@ -62,6 +62,13 @@ Feature: Delegating tasks to subagents
     # startFromOrigin defaults to false; true fetches and starts from origin's copy of baseRef
 
   @mc
+  Scenario: A caller that needs approval can ask for the root checkout it already works in
+    Given the task's caller "parent" works in the project root
+    And the task's caller "parent" is approval-required
+    When the agent in "parent" delegates a task with workspace "{'type':'root'}"
+    Then the subagent thread works in the project root
+
+  @mc
   Scenario: A task can use another worktree of the project
     Given the project has another worktree "/work/other" on branch "other"
     When the agent in "parent" delegates a task with workspace "{'type':'existing_worktree','worktreePath':'/work/other'}"

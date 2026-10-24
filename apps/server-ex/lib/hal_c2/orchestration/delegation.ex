@@ -859,6 +859,10 @@ defmodule HalC2.Orchestration.Delegation do
           asked["worktreePath"] == thread["worktreePath"] ->
         resolve_workspace(thread, nil)
 
+      # A caller already in the project root is asking for its own checkout.
+      type == "root" and is_nil(thread["worktreePath"]) ->
+        resolve_workspace(thread, nil)
+
       thread["runtimeMode"] != "full-access" or thread["interactionMode"] != "default" ->
         {:error, "workspace_escalation_denied",
          "A task's own workspace needs a full-access/default calling thread."}
