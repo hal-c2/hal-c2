@@ -116,7 +116,12 @@ fn offer_models(world: &mut World) -> Outcome {
     world.sync()?;
     world.wait_for_with(
         |w| w.state("modelPicker")["instances"].as_array().map(Vec::len) == Some(3),
-        |w| format!("the models; the picker is {}", show(&w.state("modelPicker"))),
+        |w| {
+            format!(
+                "the models; the picker is {}",
+                show(&w.state("modelPicker"))
+            )
+        },
     )
 }
 
@@ -204,16 +209,13 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
-    steps.step(
-        "the draft is set to use a new worktree",
-        |world, _, _| {
-            let project = first_project(world);
-            make_git_project(world, &project)?;
-            start_draft(world, json!({}))?;
-            use_new_worktree(world);
-            Ok(())
-        },
-    );
+    steps.step("the draft is set to use a new worktree", |world, _, _| {
+        let project = first_project(world);
+        make_git_project(world, &project)?;
+        start_draft(world, json!({}))?;
+        use_new_worktree(world);
+        Ok(())
+    });
     steps.step(
         "the user starts two threads in the background",
         |world, _, _| {
@@ -247,7 +249,10 @@ pub fn register(steps: &mut Steps) {
                 );
                 threads.insert(text(&launch["threadId"]));
             }
-            expect!(threads.len() == launches.len(), "two launches share a thread");
+            expect!(
+                threads.len() == launches.len(),
+                "two launches share a thread"
+            );
             Ok(())
         },
     );
@@ -261,8 +266,9 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             start_draft(world, json!({}))?;
             world.wait_for("the draft's checkout to be known", |w| {
-                workspace::git(w.engine())
-                    .is_some_and(|git| git.local.get("isRepo").and_then(Value::as_bool) == Some(true))
+                workspace::git(w.engine()).is_some_and(|git| {
+                    git.local.get("isRepo").and_then(Value::as_bool) == Some(true)
+                })
             })?;
             offer_models(world)?;
             choose(world, "composer.model.select", &c[0])?;
@@ -352,12 +358,14 @@ pub fn register(steps: &mut Steps) {
             let peer = format!("mc-{}", c[1]);
             world.mc.join(&peer, &c[1]);
             let shell = world.mc.subscribers("shell").first().copied().unwrap_or(0);
-            world.mc.send(
-                &json!({"t": "shell.mc", "id": shell, "mc": peer, "online": true}),
-            );
+            world
+                .mc
+                .send(&json!({"t": "shell.mc", "id": shell, "mc": peer, "online": true}));
             let row = json!({"id": c[0], "title": c[0], "workspaceRoot": format!("/srv/{}", c[0]),
                              "scripts": []});
-            world.mc.send_rows(&peer, vec![json!([c[0], "project", row])]);
+            world
+                .mc
+                .send_rows(&peer, vec![json!([c[0], "project", row])]);
             world.sync()?;
             // The draft that is moved (DraftSteps' "the user moves the draft to"):
             // this machine's, with something written.
@@ -388,7 +396,12 @@ pub fn register(steps: &mut Steps) {
             // What was written came along, and the header names the new project.
             world.wait_for_with(
                 |w| w.state("workspace")["projectTitle"] == json!("api"),
-                |w| format!("the header to name api; it shows {}", show(&w.state("workspace"))),
+                |w| {
+                    format!(
+                        "the header to name api; it shows {}",
+                        show(&w.state("workspace"))
+                    )
+                },
             )?;
             let composer = world.state("composer");
             expect!(
@@ -412,20 +425,31 @@ pub fn register(steps: &mut Steps) {
         world.mc.send_row_of(&c[0], &row, "project");
         world.sync()
     });
-    steps.step(&format!("the current thread uses the model {Q}"), |world, c, _| {
-        let key = text(&world.state("route")["threadKey"]);
-        expect!(!key.is_empty(), "no thread is open");
-        let id = key.split_once(':').map_or(key.as_str(), |(_, id)| id).to_owned();
-        let selection = selection_of(&c[0]);
-        update_row(world, &id, |row| {
-            row.insert("modelSelection".into(), selection.clone());
-        })?;
-        let model = text(&selection["model"]);
-        world.wait_for_with(
-            |w| text(&w.state("composer")["selectedModel"]) == model,
-            |w| format!("the thread's model; the composer is {}", show(&w.state("composer"))),
-        )
-    });
+    steps.step(
+        &format!("the current thread uses the model {Q}"),
+        |world, c, _| {
+            let key = text(&world.state("route")["threadKey"]);
+            expect!(!key.is_empty(), "no thread is open");
+            let id = key
+                .split_once(':')
+                .map_or(key.as_str(), |(_, id)| id)
+                .to_owned();
+            let selection = selection_of(&c[0]);
+            update_row(world, &id, |row| {
+                row.insert("modelSelection".into(), selection.clone());
+            })?;
+            let model = text(&selection["model"]);
+            world.wait_for_with(
+                |w| text(&w.state("composer")["selectedModel"]) == model,
+                |w| {
+                    format!(
+                        "the thread's model; the composer is {}",
+                        show(&w.state("composer"))
+                    )
+                },
+            )
+        },
+    );
     steps.step(&format!("the draft uses the model {Q}"), |world, c, _| {
         let model = text(&selection_of(&c[0])["model"]);
         world.wait_for_with(
@@ -435,7 +459,13 @@ pub fn register(steps: &mut Steps) {
                     && text(&composer["target"]) == w.draft_id
                     && text(&composer["selectedModel"]) == model
             },
-            |w| format!("the draft on {}; the composer is {}", c[0], show(&w.state("composer"))),
+            |w| {
+                format!(
+                    "the draft on {}; the composer is {}",
+                    c[0],
+                    show(&w.state("composer"))
+                )
+            },
         )
     });
 }

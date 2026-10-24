@@ -284,7 +284,8 @@ pub fn register(steps: &mut Steps) {
             editable: true,
         };
         let engine = world.engine().clone();
-        let taken = Keymap::of(&engine).press(&engine, &keybindings::sequence(&shortcut, false), focus);
+        let taken =
+            Keymap::of(&engine).press(&engine, &keybindings::sequence(&shortcut, false), focus);
         scene(world).shortcut_taken = taken;
         world.sync()
     });

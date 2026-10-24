@@ -141,7 +141,12 @@ pub fn wait_for_section(world: &mut World, thread: &str, section: &str) -> Outco
     let key = key_of(world, thread)?;
     world.wait_for_with(
         |w| section_of(w, &key) == section,
-        |w| format!("{thread} in {section}; it is in \"{}\"", section_of(w, &key)),
+        |w| {
+            format!(
+                "{thread} in {section}; it is in \"{}\"",
+                section_of(w, &key)
+            )
+        },
     )
 }
 
@@ -485,15 +490,18 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
-    steps.step("the settled section counts (\\d+) threads", |world, c, _| {
-        // What its header counts (tst_Sidebar.qml).
-        let total = sidebar(world)["settledTotal"].as_i64().unwrap_or(0);
-        expect!(
-            total.to_string() == c[0],
-            "the settled section counts {total} threads"
-        );
-        Ok(())
-    });
+    steps.step(
+        "the settled section counts (\\d+) threads",
+        |world, c, _| {
+            // What its header counts (tst_Sidebar.qml).
+            let total = sidebar(world)["settledTotal"].as_i64().unwrap_or(0);
+            expect!(
+                total.to_string() == c[0],
+                "the settled section counts {total} threads"
+            );
+            Ok(())
+        },
+    );
     steps.step(&format!("the section offers {Q}"), |world, c, _| {
         let more = settled_more(world);
         expect!(more == c[0], "the section offers \"{more}\"");
@@ -508,18 +516,21 @@ pub fn register(steps: &mut Steps) {
         world.dispatch("sidebar.more", json!({}))?;
         world.sync()
     });
-    steps.step(&format!("{Q} is among the settled threads"), |world, c, _| {
-        let title = c[0].clone();
-        world.wait_for_with(
-            |w| titles_of(w, "settled").contains(&title),
-            |w| {
-                format!(
-                    "{title} among the {} settled rows",
-                    titles_of(w, "settled").len()
-                )
-            },
-        )
-    });
+    steps.step(
+        &format!("{Q} is among the settled threads"),
+        |world, c, _| {
+            let title = c[0].clone();
+            world.wait_for_with(
+                |w| titles_of(w, "settled").contains(&title),
+                |w| {
+                    format!(
+                        "{title} among the {} settled rows",
+                        titles_of(w, "settled").len()
+                    )
+                },
+            )
+        },
+    );
     steps.step(&format!("{Q} is shown in the main view"), |world, c, _| {
         let key = key_of(world, &c[0])?;
         world.wait_for_with(
@@ -723,12 +734,9 @@ pub fn register(steps: &mut Steps) {
                 }
                 date = date.succ_opt().unwrap_or(date);
             }
-            let time = NaiveTime::from_hms_opt(
-                c[1].parse().unwrap_or(0),
-                c[2].parse().unwrap_or(0),
-                0,
-            )
-            .unwrap_or_default();
+            let time =
+                NaiveTime::from_hms_opt(c[1].parse().unwrap_or(0), c[2].parse().unwrap_or(0), 0)
+                    .unwrap_or_default();
             world.set_time(Utc.from_utc_datetime(&date.and_time(time)));
             Ok(())
         },
@@ -771,10 +779,7 @@ pub fn register(steps: &mut Steps) {
                 "the row is {}",
                 shown_row(world, &key)
             );
-            world.dispatch(
-                "thread.snoozeMenu",
-                json!({"key": key, "x": 200, "y": 120}),
-            )
+            world.dispatch("thread.snoozeMenu", json!({"key": key, "x": 200, "y": 120}))
         },
     );
     steps.step("the user can snooze it from there", |world, _, _| {
@@ -793,7 +798,11 @@ pub fn register(steps: &mut Steps) {
         // Sent without a round trip: a thread the window shows is visited
         // the moment it wakes, and the row is read before the MC says so.
         let id = id_in(&key).to_owned();
-        let row = world.mc.threads.entry(id.clone()).or_insert_with(|| json!({}));
+        let row = world
+            .mc
+            .threads
+            .entry(id.clone())
+            .or_insert_with(|| json!({}));
         row["snoozedAt"] = json!(iso(now - Duration::hours(3)));
         row["snoozedUntil"] = json!(iso(now - Duration::hours(1)));
         row["lastVisitedAt"] = json!(iso(now - Duration::hours(4)));
@@ -816,18 +825,16 @@ pub fn register(steps: &mut Steps) {
         }
         fail!("no row is marked as woke")
     });
-    steps.step(&format!("{Q} is no longer marked as woke"), |world, c, _| {
-        let key = key_of(world, &c[0])?;
-        world.wait_for_with(
-            |w| row_of(w, &key).is_some_and(|r| word_of(&r) != "Woke"),
-            |w| {
-                format!(
-                    "the woke marker to go; the row is {}",
-                    shown_row(w, &key)
-                )
-            },
-        )
-    });
+    steps.step(
+        &format!("{Q} is no longer marked as woke"),
+        |world, c, _| {
+            let key = key_of(world, &c[0])?;
+            world.wait_for_with(
+                |w| row_of(w, &key).is_some_and(|r| word_of(&r) != "Woke"),
+                |w| format!("the woke marker to go; the row is {}", shown_row(w, &key)),
+            )
+        },
+    );
 
     // Settling.
     steps.step(

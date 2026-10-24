@@ -171,13 +171,15 @@ fn act(world: &mut World, action: &str, title: &str) -> Outcome {
 
 fn in_thread_list(world: &World, title: &str) -> bool {
     let sidebar = world.state("sidebar");
-    ["pinned", "active", "settled", "snoozed"].iter().any(|section| {
-        sidebar[*section]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|row| row["title"] == json!(title))
-    })
+    ["pinned", "active", "settled", "snoozed"]
+        .iter()
+        .any(|section| {
+            sidebar[*section]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|row| row["title"] == json!(title))
+        })
 }
 
 /// Whether the archive lists only `title` (workspace.rs' "only {Q} is
@@ -238,7 +240,7 @@ pub fn register(steps: &mut Steps) {
                     .flatten()
                     .filter(|row| row["title"] == json!(c[0]))
                     .map(|row| text(&row["key"]))
-                    .last()
+                    .next_back()
                     .filter(|key| !key.is_empty())
             };
             world.wait_for_with(
@@ -259,7 +261,11 @@ pub fn register(steps: &mut Steps) {
         &format!("the user (restores|deletes) {Q} from the archived threads"),
         |world, c, _| {
             open(world)?;
-            let action = if c[0] == "restores" { "unarchive" } else { "delete" };
+            let action = if c[0] == "restores" {
+                "unarchive"
+            } else {
+                "delete"
+            };
             act(world, action, &c[1])
         },
     );
@@ -357,7 +363,11 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             let id = thread_named(world, &c[0], "")?;
             world.wait_for_with(
-                |w| w.mc.threads.get(&id).is_some_and(|row| row.get("archivedAt").is_none()),
+                |w| {
+                    w.mc.threads
+                        .get(&id)
+                        .is_some_and(|row| row.get("archivedAt").is_none())
+                },
                 |_| format!("the MC to unarchive {}", c[0]),
             )?;
             world.sync()?;
@@ -381,22 +391,19 @@ pub fn register(steps: &mut Steps) {
             },
         )
     });
-    steps.step(
-        &format!("the user is told {Q} and why"),
-        |world, c, _| {
-            let told = |w: &World| {
-                w.state("toasts")["items"].as_array().is_some_and(|items| {
-                    items.iter().any(|item| {
-                        item["title"] == json!(c[0])
-                            && item["description"] == json!("The environment is read-only")
-                    })
+    steps.step(&format!("the user is told {Q} and why"), |world, c, _| {
+        let told = |w: &World| {
+            w.state("toasts")["items"].as_array().is_some_and(|items| {
+                items.iter().any(|item| {
+                    item["title"] == json!(c[0])
+                        && item["description"] == json!("The environment is read-only")
                 })
-            };
-            world.wait_for_with(told, |w| {
-                format!("\"{}\"; the toasts are {}", c[0], show(&w.state("toasts")))
             })
-        },
-    );
+        };
+        world.wait_for_with(told, |w| {
+            format!("\"{}\"; the toasts are {}", c[0], show(&w.state("toasts")))
+        })
+    });
     steps.step(
         &format!("{Q} stays in the archived threads"),
         |world, c, _| {
