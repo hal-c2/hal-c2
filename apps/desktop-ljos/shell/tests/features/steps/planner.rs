@@ -711,10 +711,7 @@ fn show_planner(world: &mut World, name: &str) -> Outcome<ObjectId> {
         |w| format!("the Planner page to load; {}", describe(w)),
     )?;
     if !hidden(world, brick, "pluginPageProblem") {
-        // TODO(ljos#112): the page's QML is fetched from the MC while the
-        // shell runs, and a program built with the facade compiles nothing
-        // then, so `Qt.createComponent` of it finds "No such file".
-        fail!("{} (ljos#112)", text_of(world, "pluginPageProblem")?);
+        fail!("{}", text_of(world, "pluginPageProblem")?);
     }
     let page = shown_named(world, "plannerPage")?;
     if !name.is_empty() && view_name(world, brick, page) != name {
