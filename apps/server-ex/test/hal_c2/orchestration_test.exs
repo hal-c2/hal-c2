@@ -378,6 +378,26 @@ defmodule HalC2.OrchestrationTest do
     assert [%{"status" => "interrupted"}] = StreamState.list(state, "run-attempt")
   end
 
+  # An MC runs its providers as bundled plugins: the run's runtime is then the plugin's
+  # module, not the built-in runtime it delegates to, and the stop still reaches it.
+  test "interrupt ends the running turn of a bundled provider plugin" do
+    Application.put_env(:hal_c2, :bundled_plugins, [HalC2.Plugins.Bundled.Codex])
+    on_exit(fn -> Application.delete_env(:hal_c2, :bundled_plugins) end)
+    start_supervised!(HalC2.Settings)
+    start_supervised!(HalC2.Plugins)
+    # A call behind the host's first scan: the bundled plugins are running.
+    _ = :sys.get_state(HalC2.Plugins)
+    assert {:ok, _, HalC2.Plugins.Bundled.Codex} = HalC2.Plugins.provider("codex")
+
+    thread_id = launch("wait for me")
+    await_provider_turn(thread_id)
+
+    assert {:ok, _} =
+             Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => thread_id})
+
+    _ = await_run(thread_id, "interrupted")
+  end
+
   # A turn on another instance stops the app-server the runtime had; what it had sent
   # by then is still in the runtime's mailbox.
   test "what a Codex app-server the runtime no longer runs sent belongs to no turn" do

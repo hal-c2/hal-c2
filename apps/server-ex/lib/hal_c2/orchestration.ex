@@ -1691,14 +1691,18 @@ defmodule HalC2.Orchestration do
   # started turn nothing drives any more (its runtime stopped without ending it) ends
   # here, and a provider plugin that cannot stop a turn says so.
   defp interrupt_any(thread_id, run_id) do
-    runtimes = runtimes(:interrupt, 2)
-
     # A provider plugin that cannot stop a turn is not asked; `interrupt_undriven/2`
-    # says so.
+    # says so. A bundled provider's runtime is its plugin module, which `runtimes/2`
+    # does not list.
     asked =
       case active_runtime(thread_id, run_id) do
-        nil -> runtimes
-        runtime -> Enum.filter(runtimes, &(&1 == runtime))
+        nil ->
+          runtimes(:interrupt, 2)
+
+        runtime ->
+          if Code.ensure_loaded?(runtime) and function_exported?(runtime, :interrupt, 2),
+            do: [runtime],
+            else: []
       end
 
     stopped = Enum.filter(asked, &interrupted?(&1, thread_id, run_id))
