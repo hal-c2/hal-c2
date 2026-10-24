@@ -16,6 +16,17 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
+  # The session of the subagent the fake Grok spawns in the background (`fake_acp.py`).
+  @grok_child_session "0f8e2a4c-5b6d-4e7f-8a9b-1c2d3e4f5a6b"
+
+  @grok_models %{
+    "id" => "model",
+    "name" => "Model",
+    "type" => "select",
+    "currentValue" => "grok-code-fast-1",
+    "options" => [%{"value" => "grok-code-fast-1", "name" => "Grok Code Fast"}]
+  }
+
   # --- the caller ----------------------------------------------------------------
 
   step "thread {string} has a running turn on {string} in worktree {string}",
@@ -752,6 +763,262 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # --- work the subagent owes (hal-c2/hal-c2#508) ------------------------------------
+
+  step "the agent in {string} delegated a task whose subagent left a command running in the background",
+       %{args: [caller]} = context do
+    context = delegate(context, caller, %{"mode" => "async"})
+    World.await_runs(context, "subagent", ["running"])
+    leave_background(context, "The dev server is running.")
+  end
+
+  step "the subagent's turn ended while a command it started is still running in the background",
+       context do
+    World.await_runs(context, "subagent", ["running"])
+    leave_background(context, "The dev server is running.")
+  end
+
+  # The subagent's own task answers at once, and its result waits behind the subagent's
+  # turn. The task is titled so the subagent's turn about it holds (the fake Codex keeps
+  # a turn whose text says "wait" open).
+  step "the subagent's turn ended while a task it delegated finished but that result has not reached it",
+       context do
+    context = delegate_own(context, %{"task" => "say Found it", "title" => "wait here"})
+    World.await_state(context, "subagent", &own_settled?(&1, context))
+    World.send_turn(context, "subagent", "say Waiting on my task.")
+    World.await_runs(context, "subagent", ["completed", "running"])
+    context
+  end
+
+  # Its turn about its own task answers with where it is ("where are we").
+  step "the subagent's turn ended while a task it delegated itself is still working", context do
+    context = delegate_own(context, %{"task" => "wait for it", "title" => "where are we"})
+
+    World.await_stream(context.own_child, fn state ->
+      Enum.map(StreamState.list(state, "run"), & &1["status"]) == ["running"]
+    end)
+
+    World.send_turn(context, "subagent", "say Waiting on my task.")
+    World.await_row(World.thread_id(context, "subagent"), &(&1["pendingBackgroundTasks"] != []))
+    context
+  end
+
+  step "the subagent's own task is done and the subagent's turn about it ends", context do
+    own = Map.update!(context, :threads, &Map.put(&1, "own", context.own_child))
+    World.send_turn(own, "own", "say Found it")
+    await_task(context, &(&1["status"] == "completed"))
+    context
+  end
+
+  step "the task summary is the answer of the subagent's turn about its own task", context do
+    assert task(context)["result"] =~ ~r/^on native-thread-\d+ history /
+    context
+  end
+
+  step "the agent in {string} asks for the task's status", %{args: [_caller]} = context do
+    Map.put(context, :mcp_result, status(context))
+  end
+
+  step "the work state is {string}", %{args: [state]} = context do
+    if state == "result_available", do: await_task(context, &(&1["status"] == "completed"))
+    assert {:ok, %{"workState" => ^state}} = status(context)
+    context
+  end
+
+  step "the task is still running and the work state is {string}", %{args: [state]} = context do
+    assert {:ok, %{"status" => "running", "workState" => ^state}} = status(context)
+    context
+  end
+
+  # Codex reports the command's exit; between turns the MC wakes Codex with a turn of
+  # its own about it, which the fake answers "Hello from codex".
+  step "the command ends and the subagent's turn about it ends", context do
+    {_pid, runtime} = World.codex_runtime(context, "subagent")
+    ordinal = length(World.runs(context, "subagent")) + 1
+
+    World.codex_notify(context, "subagent", "item/completed", %{
+      "threadId" => runtime.native_thread_id,
+      "turnId" => "native-turn-1",
+      "item" => %{
+        "type" => "commandExecution",
+        "id" => "cmd-bg",
+        "command" => "npm run dev",
+        "status" => "completed",
+        "aggregatedOutput" => "bye",
+        "exitCode" => 0
+      }
+    })
+
+    World.await_state(context, "subagent", fn state ->
+      Enum.any?(
+        StreamState.list(state, "run"),
+        &(&1["ordinal"] == ordinal and &1["status"] == "completed")
+      )
+    end)
+
+    await_task(context, &(&1["status"] == "completed"))
+    context
+  end
+
+  step "{string} receives one result message, with the answer of the subagent's turn about the command",
+       %{args: [parent]} = context do
+    await_result_message(context, parent)
+    assert [message] = result_messages(context, parent)
+    assert message["text"] =~ "\nHello from codex\n"
+    context
+  end
+
+  step "no result message to {string} says {string}", %{args: [parent, text]} = context do
+    refute Enum.any?(result_messages(context, parent), &(&1["text"] =~ text))
+    context
+  end
+
+  step "the task summary is the answer of the subagent's turn about the command", context do
+    assert task(context)["result"] == "Hello from codex"
+    context
+  end
+
+  step "the subagent answered {string} with a turn to handle an update from a monitor queued behind it",
+       %{args: [answer]} = context do
+    World.await_runs(context, "subagent", ["running"])
+    queue(context, "rate limit")
+    end_turn(context, answer)
+    context
+  end
+
+  step "that turn ends without a word", context do
+    await_task(context, &(&1["status"] == "completed"))
+    context
+  end
+
+  step "the subagent answered {string} and then {string}, with a third turn still working",
+       %{args: [first, second]} = context do
+    World.await_runs(context, "subagent", ["running"])
+    queue(context, "say " <> second)
+    queue(context, "wait for it")
+    end_turn(context, first)
+    World.await_runs(context, "subagent", ["completed", "completed", "running"])
+    context
+  end
+
+  step "the subagent's second turn was rolled back before the task settled", context do
+    [_, second, _] = World.runs(context, "subagent")
+    child = World.thread_id(context, "subagent")
+
+    {:ok, _} =
+      HalC2.Streams.commit(child, :thread, [
+        {"run", second["id"], %{"s" => %{"status" => "rolled_back"}}}
+      ])
+
+    assert task(context)["status"] == "running"
+    context
+  end
+
+  step "the third turn ends without a word", context do
+    {_pid, runtime} = World.codex_runtime(context, "subagent")
+
+    World.codex_notify(context, "subagent", "turn/completed", %{
+      "threadId" => runtime.native_thread_id,
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
+
+    await_task(context, &(&1["status"] == "completed"))
+    context
+  end
+
+  step "the agent in {string} delegated a task to Grok whose subagent left work running in the background",
+       %{args: [caller]} = context do
+    context =
+      HalC2.Test.FakeAcp.install(context, "grok", %{"configOptions" => [@grok_models]},
+        enabled: true
+      )
+
+    {_, context} =
+      HalC2.Test.FakeAcp.await_providers(
+        context,
+        &match?(%{"models" => [_ | _]}, HalC2.Test.FakeAcp.find(&1, "grok"))
+      )
+
+    context =
+      delegate(context, caller, %{
+        "mode" => "async",
+        "task" => "Start the dev server in the background",
+        "target" => %{"providerInstanceId" => "grok"}
+      })
+
+    World.await_row(World.thread_id(context, "subagent"), &(&1["pendingBackgroundTasks"] != []))
+    assert task(context)["status"] == "running"
+    context
+  end
+
+  # The fake Grok's background turn left a shell (task-sh) and a subagent (its session)
+  # running; Grok reports both ended.
+  step "Grok reports the subagent's background work ended", context do
+    [{pid, _}] = Registry.lookup(HalC2.Acp.Registry, World.thread_id(context, "subagent"))
+    runtime = :sys.get_state(pid)
+
+    for task <- ["task-sh", @grok_child_session] do
+      send(
+        pid,
+        {:json_rpc, runtime.conn,
+         {:notification, "x.ai/task_completed",
+          %{
+            "sessionId" => runtime.session_id,
+            "update" => %{
+              "sessionUpdate" => "task_completed",
+              "task_snapshot" => %{"task_id" => task}
+            }
+          }}}
+      )
+    end
+
+    context
+  end
+
+  # The report is held at its retry, as one given up on would never come.
+  step "the subagent completed with {string}, and the report of its end was lost",
+       %{args: [answer]} = context do
+    parent = HalC2.Streams.ensure(World.thread_id(context, context.task_parent))
+    World.await_runs(context, "subagent", ["running"])
+    gate = :"delegation_retry_gate_#{System.unique_integer([:positive])}"
+    :ok = :logger.add_handler(gate, __MODULE__.RetryGate, %{config: self()})
+    :sys.suspend(parent)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      :logger.remove_handler(gate)
+      catch_exit(:sys.resume(parent))
+    end)
+
+    World.send_turn(context, "subagent", "say " <> answer)
+    assert_receive {:retrying, reporter}, 15_000
+    :logger.remove_handler(gate)
+    :sys.resume(parent)
+    assert task(context)["status"] == "running"
+    Map.put(context, :reporter, reporter)
+  end
+
+  step "the subagent's session is released and the MC's periodic check runs", context do
+    child = World.thread_id(context, "subagent")
+    World.await_row(child, &(&1["activeRunId"] == nil))
+    assert :ok = HalC2.Orchestration.release_session(child)
+    Mc.ensure(HalC2.Orchestration.IdleSessions)
+    HalC2.Orchestration.IdleSessions.check()
+    context
+  end
+
+  step "the lost report, arriving after all, does not deliver it again", context do
+    ref = Process.monitor(context.reporter)
+    send(context.reporter, :retry)
+    assert_receive {:DOWN, ^ref, _, _, _}, 15_000
+    assert [_one] = result_messages(context, context.task_parent)
+    context
+  end
+
+  step "the subagent's command is stopped", context do
+    World.await_row(World.thread_id(context, "subagent"), &(&1["pendingBackgroundTasks"] == []))
+    context
+  end
+
   # --- helpers -----------------------------------------------------------------------
 
   # Calls delegate_task; a waiting call runs in a task (`context.wait`) until the step
@@ -878,6 +1145,84 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     }
     |> then(&if(action == "acknowledge", do: Map.put(&1, "observedByRunId", observed), else: &1))
   end
+
+  # Ends the subagent's running turn the way Codex ends one that started a dev server
+  # and left it running: the command's item is still in progress at the turn's end.
+  defp leave_background(context, answer) do
+    {_pid, runtime} = World.codex_runtime(context, "subagent")
+    at = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+
+    World.codex_notify(
+      context,
+      "subagent",
+      "item/started",
+      Map.put(at, "item", %{
+        "type" => "commandExecution",
+        "id" => "cmd-bg",
+        "command" => "npm run dev",
+        "processId" => "4275",
+        "source" => "unifiedExecStartup",
+        "status" => "inProgress"
+      })
+    )
+
+    end_turn(context, answer)
+    World.await_row(World.thread_id(context, "subagent"), &(&1["pendingBackgroundTasks"] != []))
+    context
+  end
+
+  # Ends the subagent's running turn with `answer`, as Codex reports it.
+  defp end_turn(context, answer) do
+    {_pid, runtime} = World.codex_runtime(context, "subagent")
+    at = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+    message = %{"type" => "agentMessage", "id" => "msg-end", "text" => answer}
+
+    World.codex_notify(
+      context,
+      "subagent",
+      "item/started",
+      Map.put(at, "item", %{message | "text" => ""})
+    )
+
+    World.codex_notify(context, "subagent", "item/completed", Map.put(at, "item", message))
+
+    World.codex_notify(context, "subagent", "turn/completed", %{
+      "threadId" => runtime.native_thread_id,
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
+  end
+
+  # A message queued behind the subagent's running turn.
+  defp queue(context, text) do
+    count = length(World.runs(context, "subagent"))
+
+    World.send_turn(context, "subagent", text, %{
+      "dispatchMode" => %{"type" => "queue_after_active"}
+    })
+
+    World.await_state(context, "subagent", &(length(StreamState.list(&1, "run")) > count))
+  end
+
+  # The subagent delegates a task of its own, without waiting.
+  defp delegate_own(context, input) do
+    World.await_runs(context, "subagent", ["running"])
+
+    assert {:ok, %{"taskId" => task_id, "childThreadId" => child}} =
+             World.mcp_tool(context, "subagent", "delegate_task", Map.put(input, "mode", "async"))
+
+    World.await_row(child, & &1)
+    Map.merge(context, %{own_task: task_id, own_child: child})
+  end
+
+  defp own_settled?(state, context) do
+    case StreamState.get(state, "subagent")[context.own_task] do
+      %{"status" => "completed"} -> true
+      _ -> false
+    end
+  end
+
+  defp result_messages(context, thread),
+    do: Enum.filter(messages(context, thread), &(&1["text"] =~ "<delegated_task_result"))
 
   defp number(text), do: text |> String.replace(",", "") |> String.to_integer()
 

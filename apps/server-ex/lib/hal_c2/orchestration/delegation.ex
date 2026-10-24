@@ -208,8 +208,25 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  @doc "Called when a run of `thread_id` ends: reports a subagent's result to its parent."
-  def finished(thread_id, run_id, status) do
+  @doc "Called when a run of `thread_id` ends: settles a subagent's task once it is quiet (`settle_if_quiet/1`)."
+  def finished(thread_id, _run_id, _status), do: settle_if_quiet(thread_id)
+
+  @doc """
+  Settles the task `thread_id` works on, once the child is quiet: no run active or
+  queued, and no background work it still owes (`BackgroundWork.derive/1`, the
+  sidebar's Waiting pill). Until then the task works on, however many turns the
+  child takes. It ends as the child's last run that was not rolled back did, with
+  the child's last answer in such a run, and wakes the caller once.
+
+  Called at the end of each child run, when a task of the child's settles (it may
+  have been all the child waited on), when background work ends on a provider that
+  does not wake itself for it, and periodically for children with no live provider
+  process (`HalC2.Orchestration.IdleSessions`). Background work ending is not a
+  reason to check on providers that wake themselves: their wake run is queued only
+  after the work's item ended, and the child is not quiet until that run has ended.
+  """
+  def settle_if_quiet(thread_id) do
+    hook(:settling, thread_id)
     child = stream(thread_id)
 
     with %{"lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => parent_id}} <-
@@ -219,31 +236,45 @@ defmodule HalC2.Orchestration.Delegation do
              StreamState.list(stream(parent_id), "subagent"),
              &(&1["childThreadId"] == thread_id)
            ),
-         true <- task["status"] not in @terminal,
-         # A report that comes late (retried) finds the run as it is now: one the
-         # user rolled back meanwhile ends the task as its other runs say.
-         {status, run, ended_at} <- reported(child, run_id, status) do
-      result = run && answer(child, run["id"])
-
-      # A completion reported twice (a provider replaying its turn's end after a
-      # reconnect, or two reports racing) settles and wakes once: only the report
-      # that finds the task unsettled delivers it. Whether it is delivered is decided
-      # with the task's end, so a wait that times out meanwhile (`wait/3`) either
-      # hears of the end or leaves the task to wake the caller. The result message is
-      # recorded in the same transaction, so a crash cannot leave a task delivered
-      # without it.
-      with {:settled, "delivered", {:ok, _} = sent} <-
-             settle(parent_id, task, status, result, &delivery/2, :once, ended_at, true),
-           do: Orchestration.dispatched(parent_id, wake(parent_id, task, status, result), sent)
+         true <- task["status"] in @terminal or settle_quiet(child, parent_id, task) do
+      # The task may have been the last thing its caller, itself a subagent, waited on.
+      # Checked whenever the task has ended, not only by the call that ended it, so a
+      # report retried after this check failed (`report/5`) checks again.
+      settle_if_quiet(parent_id)
     end
 
     :ok
   end
 
+  # Settles `task` if its child is quiet; true once the task has ended.
+  defp settle_quiet(child, parent_id, task) do
+    # A child that has not started its first run yet has not begun the task.
+    with [_ | _] = runs <- StreamState.list(child, "run"),
+         true <- quiet?(child),
+         {status, _run, ended_at} <- last_end(runs) do
+      result = answer(child)
+
+      # A child found quiet twice (two runs' ends, a provider replaying its turn's end
+      # after a reconnect, the periodic check racing a report) settles and wakes once:
+      # only the call that finds the task unsettled delivers it. Whether it is delivered
+      # is decided with the task's end, so a wait that times out meanwhile (`wait/3`)
+      # either hears of the end or leaves the task to wake the caller. The result
+      # message is recorded in the same transaction, so a crash cannot leave a task
+      # delivered without it.
+      with {:settled, "delivered", {:ok, _} = sent} <-
+             settle(parent_id, task, status, result, &delivery/2, :once, ended_at, true),
+           do: Orchestration.dispatched(parent_id, wake(parent_id, task, status, result), sent)
+
+      true
+    else
+      _ -> false
+    end
+  end
+
   @doc """
-  `finished/3` from the end of a child's run, tried again while a thread it reads is
-  too busy to answer, or it fails: a report given up on leaves the task running in its
-  caller until the MC next starts (`reconcile/2`). Retries `attempts` times, waiting twice as long each time from `backoff` ms.
+  `finished/3` from the end of a child's run (or of background work no provider wakes
+  itself for), tried again while a thread it reads is too busy to answer, or it fails:
+  a report given up on leaves the task to the periodic check (`settle_if_quiet/1`) or the next boot (`reconcile/2`). Retries `attempts` times, waiting twice as long each time from `backoff` ms.
   """
   def report(thread_id, run_id, status, attempts \\ 6, backoff \\ 2_000) do
     hook(:reporting, thread_id)
@@ -275,7 +306,7 @@ defmodule HalC2.Orchestration.Delegation do
           parent_id,
           task,
           ended,
-          run && answer(child, run["id"]),
+          if(run, do: answer(child)),
           "disposed",
           :once,
           ended_at
@@ -292,7 +323,7 @@ defmodule HalC2.Orchestration.Delegation do
 
     cond do
       boot? and StreamState.get(child, "thread")[child_id] == nil -> {"failed", nil, nil, child}
-      runs == [] or working?(runs) -> nil
+      runs == [] or not quiet?(child) -> nil
       true -> with {ended, run, at} <- last_end(runs), do: {ended, run, at, child}
     end
   end
@@ -312,15 +343,22 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  # How the reported run ended and when, not when its report got through; nil when
-  # it was rolled back and the child is working again, whose next run reports.
-  defp reported(child, run_id, status) do
+  # Quiet: no run active or queued, and no background work owed. Persistent monitors
+  # never finish, so they are not owed (`BackgroundWork`).
+  defp quiet?(child), do: not working?(StreamState.list(child, "run")) and owed(child) == []
+
+  # The child's owed background work, as its sidebar row shows it, read from its stream.
+  defp owed(child) do
     runs = StreamState.list(child, "run")
 
-    case StreamState.get(child, "run")[run_id] do
-      %{"status" => "rolled_back"} -> if not working?(runs), do: last_end(runs)
-      run -> {status, run || %{"id" => run_id}, run && run["completedAt"]}
-    end
+    HalC2.Projection.BackgroundWork.derive(
+      latest_run: HalC2.Projection.Shell.latest_run(runs),
+      provider_threads: StreamState.list(child, "provider-thread"),
+      turn_items: StreamState.list(child, "turn-item"),
+      active_provider_thread_id:
+        (HalC2.Projection.Timeline.thread(child) || %{})["activeProviderThreadId"],
+      runs: runs
+    )
   end
 
   defp working?(runs), do: Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued"))
@@ -624,7 +662,15 @@ defmodule HalC2.Orchestration.Delegation do
     with %{} = task <- subagent(thread_id, task_id) do
       child = stream(task["childThreadId"])
       runs = StreamState.list(child, "run") |> Enum.sort_by(&(&1["ordinal"] || 0))
-      terminal = task["status"] in @terminal
+      pending = working?(runs)
+
+      work_state =
+        cond do
+          task["status"] in @terminal -> "result_available"
+          pending -> "working"
+          owed(child) != [] -> "waiting_for_children"
+          true -> "working"
+        end
 
       %{
         "taskId" => task["id"],
@@ -634,10 +680,9 @@ defmodule HalC2.Orchestration.Delegation do
         "providerInstanceId" => task["providerInstanceId"],
         "model" => task["model"],
         "status" => task["status"],
-        "workState" => if(terminal, do: "result_available", else: "working"),
+        "workState" => work_state,
         "summary" => task["result"],
-        "hasPendingChildRuns" =>
-          Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued")),
+        "hasPendingChildRuns" => pending,
         "startedAt" => task["startedAt"],
         "completedAt" => task["completedAt"]
       }
@@ -703,11 +748,21 @@ defmodule HalC2.Orchestration.Delegation do
     end)
   end
 
-  # The child's last answer in the run that ended.
-  defp answer(child, run_id) do
+  # The child's last answer in a run that was not rolled back: a turn that only handled
+  # a monitor update or a background task's end without a word does not replace it.
+  defp answer(child) do
+    kept =
+      for run <- StreamState.list(child, "run"),
+          run["status"] != "rolled_back",
+          into: MapSet.new(),
+          do: run["id"]
+
     child
     |> StreamState.list("message")
-    |> Enum.filter(&(&1["runId"] == run_id and &1["role"] == "assistant"))
+    |> Enum.filter(
+      &(&1["role"] == "assistant" and MapSet.member?(kept, &1["runId"]) and
+          String.trim(&1["text"] || "") != "")
+    )
     |> List.last(%{})
     |> Map.get("text")
   end
