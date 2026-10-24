@@ -645,15 +645,15 @@ fn run(app: App, options: Options) -> Result<(), String> {
                 }
             });
             hal_c2_shell::start(&engine, &options.launch, mc);
-            // TODO(ljos#81): desktop-qt's ShellWindows shows another window
+            // TODO(ljos): desktop-qt's ShellWindows shows another window
             // for `window.new` and the "New window" command, and reopens the
             // saved ones, here:
             // controller::set_window_opener with a native window around a
             // new root, then controller::restore_windows. The controllers
             // keep a set per window already (controller::open_window), but
-            // a window's `Shell` must be the bridge they publish on, which
-            // is made before its root, and Ljós makes a window's singletons
-            // itself (see Bridge::singleton), so the desktop keeps to one.
+            // a window's `Shell` must be the bridge they publish on, and a
+            // `pragma Singleton` QML file such as PluginRegistry reads one
+            // per engine (see Bridge::singleton), so the desktop keeps to one.
             // An in-app pairing names this desktop as `--pair` does.
             controller::with::<ConnectionHealth, _>(&engine, |health, _| {
                 health.set_pairing_client(pairing_client())
