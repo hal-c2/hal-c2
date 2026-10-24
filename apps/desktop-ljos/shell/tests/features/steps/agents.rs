@@ -198,7 +198,12 @@ fn start_subagent(world: &mut World, title: &str, since: i64) -> Outcome {
 
 fn settle_subagent(world: &mut World, id: &str, fields: Value) -> Outcome {
     set(world, "subagent", id, fields.clone())?;
-    set(world, "turn-item", &format!("turn-item:subagent:{id}"), fields)
+    set(
+        world,
+        "turn-item",
+        &format!("turn-item:subagent:{id}"),
+        fields,
+    )
 }
 
 pub fn register(steps: &mut Steps) {
@@ -337,24 +342,27 @@ pub fn register(steps: &mut Steps) {
         expect!(ended == c[1], "{}", describe_agents(world));
         Ok(())
     });
-    steps.step("the Agents tab never started its list over", |world, _, _| {
-        // A reset draws every row anew: a row dropped that the list still
-        // holds. (A row that left, such as a command that finished, is
-        // dropped too.)
-        let dropped = dropped_rows(world)?;
-        let count = core(world, Agents::count)?;
-        let kept: Vec<String> = (0..count)
-            .map(|row| text(&value(world, row, "agentId")))
-            .filter(|id| dropped.contains(id))
-            .collect();
-        expect!(
-            kept.is_empty(),
-            "the list started over, drawing {} anew; {}",
-            kept.join(", "),
-            describe_agents(world)
-        );
-        Ok(())
-    });
+    steps.step(
+        "the Agents tab never started its list over",
+        |world, _, _| {
+            // A reset draws every row anew: a row dropped that the list still
+            // holds. (A row that left, such as a command that finished, is
+            // dropped too.)
+            let dropped = dropped_rows(world)?;
+            let count = core(world, Agents::count)?;
+            let kept: Vec<String> = (0..count)
+                .map(|row| text(&value(world, row, "agentId")))
+                .filter(|id| dropped.contains(id))
+                .collect();
+            expect!(
+                kept.is_empty(),
+                "the list started over, drawing {} anew; {}",
+                kept.join(", "),
+                describe_agents(world)
+            );
+            Ok(())
+        },
+    );
     steps.step(&format!("{Q} is shown to have taken {Q}"), |world, c, _| {
         let row = row_titled(world, &c[0])?;
         expect!(
@@ -366,11 +374,7 @@ pub fn register(steps: &mut Steps) {
     });
     steps.step("a second passes", |world, _, _| {
         // The model's own once-a-second timer, without waiting a second for it.
-        expect!(
-            core(world, Agents::ticking)?,
-            "{}",
-            describe_agents(world)
-        );
+        expect!(core(world, Agents::ticking)?, "{}", describe_agents(world));
         let next = world.now() + Duration::seconds(1);
         world.set_time(next);
         let obj = agents_object(world)?;
@@ -397,20 +401,12 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the Agents tab redraws when each subagent ended",
         |world, _, _| {
-            expect!(
-                counted(world, "redraws")? > 0,
-                "{}",
-                describe_agents(world)
-            );
+            expect!(counted(world, "redraws")? > 0, "{}", describe_agents(world));
             Ok(())
         },
     );
     steps.step("the Agents tab's times stand still", |world, _, _| {
-        expect!(
-            !core(world, Agents::ticking)?,
-            "{}",
-            describe_agents(world)
-        );
+        expect!(!core(world, Agents::ticking)?, "{}", describe_agents(world));
         Ok(())
     });
     steps.step(

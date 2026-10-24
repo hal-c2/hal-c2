@@ -49,8 +49,8 @@ fn listed(world: &World) -> Vec<i64> {
 
 fn describe(world: &World) -> String {
     let numbers: Vec<String> = listed(world).iter().map(i64::to_string).collect();
-    let (problem, notice) = read_tab(world, |t| (t.problem().to_owned(), t.notice().to_owned()))
-        .unwrap_or_default();
+    let (problem, notice) =
+        read_tab(world, |t| (t.problem().to_owned(), t.notice().to_owned())).unwrap_or_default();
     format!(
         "the tab lists [{}] (problem \"{problem}\", notice \"{notice}\")",
         numbers.join(", ")
@@ -74,7 +74,9 @@ fn extension(mc: &mut FakeMc) {
             return;
         };
         let branch = row["branchPullRequest"].clone();
-        let linked = row["pullRequests"].as_array().is_some_and(|l| !l.is_empty());
+        let linked = row["pullRequests"]
+            .as_array()
+            .is_some_and(|l| !l.is_empty());
         if !branch.is_object() || linked {
             return;
         }
@@ -152,10 +154,7 @@ pub fn register(steps: &mut Steps) {
         &format!("{Q} is linked to pull request (\\d+)"),
         |world, c, _| {
             let number: i64 = c[1].parse().unwrap_or(0);
-            world.wait_for_with(
-                move |w| listed(w) == [number],
-                |w| describe(w),
-            )?;
+            world.wait_for_with(move |w| listed(w) == [number], |w| describe(w))?;
             let sent = world.mc.commands.iter().any(|command| {
                 command["type"] == "thread.pull-request.link"
                     && command["threadId"] == ID

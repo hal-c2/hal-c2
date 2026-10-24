@@ -11,6 +11,8 @@ pub mod connection_health;
 pub mod licenses;
 pub mod link;
 pub mod mc;
+pub mod pull_request;
+pub mod pull_request_list;
 pub mod stream;
 pub mod thread_menu;
 pub mod thread_pull_request_link;
@@ -27,6 +29,8 @@ pub fn register(steps: &mut Steps) {
     licenses::register(steps);
     link::register(steps);
     mc::register(steps);
+    pull_request::register(steps);
+    pull_request_list::register(steps);
     stream::register(steps);
     thread_menu::register(steps);
     thread_pull_request_link::register(steps);

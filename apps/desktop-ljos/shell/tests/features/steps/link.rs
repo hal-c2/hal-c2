@@ -85,15 +85,18 @@ pub fn register(steps: &mut Steps) {
             fail!("the menu offers {}", offered.join(", "))
         },
     );
-    steps.step(&format!("{Q} opens in the system browser"), |world, c, _| {
-        let opened = world.opened_urls();
-        expect!(
-            opened == [c[0].clone()],
-            "the browser opened {}",
-            show(&json!(opened))
-        );
-        Ok(())
-    });
+    steps.step(
+        &format!("{Q} opens in the system browser"),
+        |world, c, _| {
+            let opened = world.opened_urls();
+            expect!(
+                opened == [c[0].clone()],
+                "the browser opened {}",
+                show(&json!(opened))
+            );
+            Ok(())
+        },
+    );
     steps.step(
         &format!("the Files tab shows {Q} at line (\\d+)"),
         |world, c, _| {
@@ -128,7 +131,10 @@ pub fn register(steps: &mut Steps) {
         if let Some(brick) = brick(world)
             && let Some(root) = brick.root(world)
         {
-            let links = hal_c2_shell::json::from_value(world.engine(), &brick.read(world, root, "activated"));
+            let links = hal_c2_shell::json::from_value(
+                world.engine(),
+                &brick.read(world, root, "activated"),
+            );
             for link in links.as_array().into_iter().flatten() {
                 opened.push(text(link));
             }
