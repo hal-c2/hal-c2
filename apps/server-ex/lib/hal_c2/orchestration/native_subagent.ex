@@ -360,18 +360,21 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
   @doc """
   Settles the subagent as `status` with its `result` (the answer it streamed when the
-  provider reports none).
+  provider reports none). With `summary: true` the result only sums up its work (a
+  background task's end), so it is the answer only when the subagent said nothing.
   """
-  def finish(sub, status, result) do
+  def finish(sub, status, result, opts \\ []) do
     status = if status in @terminal, do: status, else: "completed"
     said = Map.get(sub, :said)
     result = if result in [nil, ""], do: nilify(said || sub.text), else: result
 
     sub =
       cond do
-        # What the subagent said (`item/5`) is in its thread; a result it did not say
-        # follows as its answer.
-        said != nil and result not in [nil, said] ->
+        # What the subagent said (`item/5`) is in its thread, the latest its answer,
+        # which the provider's result repeats with more around it (Claude adds the
+        # agent's id and usage); a result that does not repeat it follows as its answer.
+        said != nil and result != nil and not Keyword.get(opts, :summary, false) and
+            not String.contains?(result, String.trim(said)) ->
           item(sub, "#{sub.native}:message:result", "assistant_message", "completed", %{
             "text" => result
           })

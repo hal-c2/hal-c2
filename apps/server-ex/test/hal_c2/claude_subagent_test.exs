@@ -104,6 +104,82 @@ defmodule HalC2.ClaudeSubagentTest do
     assert [%{}] = StreamState.list(World.stream(context, @thread), "run")
   end
 
+  test "a subagent's answer shows once though Claude's tool result adds its agent id",
+       %{context: context} do
+    side = &Map.put(&1, "parent_tool_use_id", "agent-1")
+
+    for message <- [
+          assistant("p1", [tool_use("agent-1", "Agent", %{"prompt" => "Check the tests"})]),
+          side.(user("Check the tests")),
+          side.(assistant("s1", [%{"type" => "text", "text" => "The tests pass"}])),
+          user([
+            result("agent-1", [
+              %{"type" => "text", "text" => "The tests pass"},
+              %{"type" => "text", "text" => "agentId: a1b2c3 (for resuming this agent)"},
+              %{"type" => "text", "text" => "<usage>total_tokens: 1200</usage>"}
+            ])
+          ]),
+          %{"type" => "result", "subtype" => "success"}
+        ],
+        do: claude_says(context, message)
+
+    World.await_runs(context, @thread, ["completed"])
+    assert ["The tests pass"] = child_messages(context)
+  end
+
+  # Between turns a background subagent's messages wait with a wake for its run; its
+  # delegate_task is refused there too, and its task's summary is not its answer.
+  test "a background subagent between turns keeps its tool calls and its answer",
+       %{context: context} do
+    side = &Map.put(&1, "parent_tool_use_id", "agent-1")
+    thread_id = World.thread_id(context, @thread)
+
+    for message <- [
+          assistant("p1", [
+            tool_use("agent-1", "Agent", %{"prompt" => "Survey", "run_in_background" => true})
+          ]),
+          task("task_started", %{"prompt" => "Survey", "is_backgrounded" => true}),
+          side.(user("Survey")),
+          user([result("agent-1", "Async agent launched")]),
+          %{"type" => "result", "subtype" => "success"}
+        ],
+        do: claude_says(context, message)
+
+    World.await_runs(context, @thread, ["completed"])
+
+    # The thread's stream held, the wake's run cannot start: its messages wait.
+    stream = HalC2.Streams.ensure(thread_id)
+    :sys.suspend(stream)
+
+    try do
+      claude_says(context, assistant("w1", [%{"type" => "text", "text" => "Checking in"}]))
+
+      claude_says(
+        context,
+        side.(assistant("s1", [tool_use("call-1", "mcp__hal-c2__delegate_task", %{})]))
+      )
+
+      assert %{turn: nil, wake: %{buffer: [_, _]}} = :sys.get_state(runtime(context))
+      assert HalC2.Claude.ThreadRuntime.subagent_tool?(thread_id, "call-1")
+      refute HalC2.Claude.ThreadRuntime.subagent_tool?(thread_id, "call-other")
+    after
+      :sys.resume(stream)
+    end
+
+    for message <- [
+          side.(assistant("s2", [%{"type" => "text", "text" => "Found three files"}])),
+          task("task_notification", %{"status" => "completed", "summary" => "Agent completed"}),
+          %{"type" => "result", "subtype" => "success"}
+        ],
+        do: claude_says(context, message)
+
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert ["Found three files"] = child_messages(context)
+
+    assert [%{"status" => "completed", "result" => "Agent completed"}] =
+             StreamState.list(World.stream(context, @thread), "subagent")
+  end
+
   defp stream(_id, {:start, id}),
     do: event(%{"type" => "message_start", "message" => %{"id" => id}})
 
@@ -148,6 +224,18 @@ defmodule HalC2.ClaudeSubagentTest do
         },
         fields
       )
+
+  defp child_messages(context) do
+    [%{"childThreadId" => child}] = StreamState.list(World.stream(context, @thread), "subagent")
+
+    child
+    |> HalC2.Streams.ensure()
+    |> HalC2.Streams.Server.state()
+    |> StreamState.list("turn-item")
+    |> Enum.filter(&(&1["type"] == "assistant_message"))
+    |> Enum.sort_by(& &1["ordinal"])
+    |> Enum.map(& &1["text"])
+  end
 
   defp runtime(context) do
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))

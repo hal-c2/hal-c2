@@ -9,7 +9,8 @@ defmodule HalC2.ClaudeSubagentPropTest do
 
   The promise: whatever the order, the parent's turn shows exactly the parent's
   messages and commands, each subagent's thread exactly its own followed by its
-  result, and a stray or late subagent message lands nowhere. An MCP call's tool use
+  result (once: a result that repeats its last message with Claude's trailer adds
+  nothing), and a stray or late subagent message lands nowhere. An MCP call's tool use
   is a subagent's (`ThreadRuntime.subagent_tool?/2`, which refuses it `delegate_task`)
   exactly while the subagent that made it runs, never Claude's own.
 
@@ -164,7 +165,12 @@ defmodule HalC2.ClaudeSubagentPropTest do
           {3, {:call, __MODULE__, :agent_streams, [oneof(running), n]}},
           {2, {:call, __MODULE__, :agent_runs, [oneof(running), n]}},
           {2, {:call, __MODULE__, :agent_calls, [oneof(running), n]}},
-          {1, {:call, __MODULE__, :finish_agent, [oneof(running)]}}
+          {1,
+           oneof(
+             for a <- running,
+                 repeat <- [nil | Enum.take(agents[a].said, -1)],
+                 do: {:call, __MODULE__, :finish_agent, [a, repeat]}
+           )}
         ]
     )
     |> Kernel.++(
@@ -176,8 +182,11 @@ defmodule HalC2.ClaudeSubagentPropTest do
   def precondition(%{agents: agents}, {:call, _, :start_agent, [a]}),
     do: not is_map_key(agents, a)
 
+  def precondition(%{agents: agents}, {:call, _, :finish_agent, [a, repeat]}),
+    do: match?(%{done: false}, agents[a]) and repeat in [nil | Enum.take(agents[a].said, -1)]
+
   def precondition(%{agents: agents}, {:call, _, name, [a | _]})
-      when name in [:agent_streams, :agent_runs, :agent_calls, :finish_agent],
+      when name in [:agent_streams, :agent_runs, :agent_calls],
       do: match?(%{done: false}, agents[a])
 
   def precondition(%{agents: agents}, {:call, _, :agent_says, [a, _]}),
@@ -233,9 +242,12 @@ defmodule HalC2.ClaudeSubagentPropTest do
   defp step(state, {_, _, _, [n]}, :parent_calls), do: put_in(state.calls["call-#{n}"], :parent)
   defp step(state, {_, _, _, [a, n]}, :agent_calls), do: put_in(state.calls["call-#{n}"], a)
 
-  # Its result is its answer, after what it said.
-  defp step(state, {_, _, _, [a]}, :finish_agent),
+  # Its result is its answer, after what it said, unless it repeats what it said last.
+  defp step(state, {_, _, _, [a, nil]}, :finish_agent),
     do: update_in(state.agents[a], &%{&1 | done: true, said: &1.said ++ ["R-#{a}"]})
+
+  defp step(state, {_, _, _, [a, _repeat]}, :finish_agent),
+    do: put_in(state.agents[a].done, true)
 
   defp step(state, _call, _name), do: state
 
@@ -322,11 +334,18 @@ defmodule HalC2.ClaudeSubagentPropTest do
 
   def agent_runs(a, n), do: says(Enum.map(run("sub-#{n}", "make #{n}"), &under(a, &1)))
 
-  def finish_agent(a),
-    do:
-      says([
-        user([%{"type" => "tool_result", "tool_use_id" => "agent-#{a}", "content" => "R-#{a}"}])
-      ])
+  # Its own answer, or (Claude's foreground Agent result) the last thing it said with
+  # the agent's id after it.
+  def finish_agent(a, repeat) do
+    content =
+      if repeat,
+        do: [text(repeat), text("agentId: #{a} (for resuming this agent)")],
+        else: "R-#{a}"
+
+    says([
+      user([%{"type" => "tool_result", "tool_use_id" => "agent-#{a}", "content" => content}])
+    ])
+  end
 
   # An MCP tool call left waiting, as a call to HAL-C2's server is while it runs.
   def parent_calls(n), do: says([assistant("m-call-#{n}", [mcp_call("call-#{n}")])])

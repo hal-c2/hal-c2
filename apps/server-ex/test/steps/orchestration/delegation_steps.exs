@@ -483,6 +483,16 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     Map.put(context, :delegate_input, input)
   end
 
+  step "the task's caller {string} works in the project root", %{args: [thread]} = context do
+    World.patch_thread(context, thread, %{"worktreePath" => nil})
+    context
+  end
+
+  step "the subagent thread works in the project root", context do
+    assert World.thread(context, "subagent")["worktreePath"] == nil
+    context
+  end
+
   step "the task's caller {string} is approval-required", %{args: [thread]} = context do
     World.patch_thread(context, thread, %{"runtimeMode" => "approval-required"})
     context
@@ -1295,8 +1305,6 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   # --- helpers -----------------------------------------------------------------------
 
-  # Calls delegate_task; a waiting call runs in a task (`context.wait`) until the step
-  # that ends it. Once the child exists it is the scenario's "subagent" thread.
   # `delegate_task` as Claude calls it for its tool use `tool_use`.
   defp claude_delegates(context, thread, tool_use) do
     params = %{
@@ -1335,6 +1343,8 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     }
   end
 
+  # Calls delegate_task; a waiting call runs in a task (`context.wait`) until the step
+  # that ends it. Once the child exists it is the scenario's "subagent" thread.
   defp delegate(context, caller, input) do
     input =
       %{"task" => "wait for it"}

@@ -614,8 +614,9 @@ defmodule HalC2.Steps.Orchestration.McpServer do
        %{args: [caller, arguments]} = context do
     args =
       for part <- String.split(arguments, " and "), into: %{} do
-        case Regex.run(~r/^(\w+)(?: "(.*)")?$/, part) do
+        case Regex.run(~r/^(\w+)(?: (?:"(.*)"|(\d+)))?$/, part) do
           [_, "includeOptions"] -> {"includeOptions", true}
+          [_, key, "", number] -> {key, String.to_integer(number)}
           [_, key, value] -> {key, value}
         end
       end

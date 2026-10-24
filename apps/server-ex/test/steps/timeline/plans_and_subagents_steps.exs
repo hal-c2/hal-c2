@@ -44,14 +44,17 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     assert %{"relationshipToParent" => "subagent", "parentThreadId" => ^parent_id} =
              StreamState.get(child, "thread")[child_id]["lineage"]
 
-    assert [context.task] ==
+    # The child's one message is the task after the MC's worker preamble.
+    assert [text] =
              for(
                %{"role" => "user", "text" => text} <- StreamState.list(child, "message"),
                do: text
              )
 
-    # The provider was given the task alone, with none of the parent's conversation.
-    assert context.task in World.started_turns(context)
+    assert String.ends_with?(text, "\nTask:\n" <> context.task)
+
+    # The provider was given that message alone, with none of the parent's conversation.
+    assert text in World.started_turns(context)
     context
   end
 
