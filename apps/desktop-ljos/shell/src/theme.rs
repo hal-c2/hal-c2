@@ -11,9 +11,8 @@
 //! ([`set_wake`]), then calls [`deliver`] on the Engine thread, as
 //! `folders/watch.rs` does.
 //!
-//! `fontUi` is the application's font ([`set_application_font`]), set from
-//! the saved theme before the root is made. Ljós cannot change it while the
-//! app runs (TODO(ljos#84)), so a font chosen later shows on the next start.
+//! `fontUi` is the application's font ([`set_application_font`]): set from
+//! the saved theme before the root is made, and followed while the app runs.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -315,19 +314,28 @@ pub fn application_font_family(engine: &Engine) -> String {
     Derived::of(&file, &base).font_ui
 }
 
-/// Makes `fontUi` the application font (desktop-qt's
-/// `ThemeStore::applyInterfaceFont`): the desktop's font in that family.
-/// Process-wide, and only what is made afterwards takes it, so a host calls
-/// it once, after [`crate::start`] and before it makes the root.
-pub fn set_application_font(engine: &Engine) {
+/// The desktop's font in the family `fontUi` names; None before
+/// [`crate::start`].
+fn interface_font(engine: &Engine) -> Option<Font> {
     let family = application_font_family(engine);
-    let Some(mut font) = ThemeState::of(engine).desktop_font.borrow().clone() else {
-        return;
-    };
+    let mut font = ThemeState::of(engine).desktop_font.borrow().clone()?;
     if !family.is_empty() {
         font.family = Atom::from(family.as_str());
     }
+    Some(font)
+}
+
+/// Makes `fontUi` the application font (desktop-qt's
+/// `ThemeStore::applyInterfaceFont`): the desktop's font in that family.
+/// The process's default is what objects are made with, so a host calls this
+/// after [`crate::start`] and before it makes the root; the theme follows
+/// later changes itself.
+pub fn set_application_font(engine: &Engine) {
+    let Some(font) = interface_font(engine) else {
+        return;
+    };
     Font::set_application_font(Some(&font));
+    ljos::set_application_font(engine, Some(&font));
 }
 
 /// The resolved theme the theme controller publishes (`ShellThemeState`).
@@ -740,9 +748,11 @@ fn show(engine: &Engine) {
     );
     let follows_system = file.follows_system_appearance;
     drop((d, base, file));
-    // TODO(ljos#84): the application font follows `fontUi` here
-    // (set_application_font, and what is drawn already takes its family),
-    // once Ljós can change it while the app runs.
+    // The controls, labels and windows that inherit their font take a new
+    // `fontUi` at once. A plain Text made before keeps its family (ljos#94).
+    if let Some(font) = interface_font(engine) {
+        ljos::set_application_font(engine, Some(&font));
+    }
     platform_window::apply_window_theme(
         engine,
         loaded && transparent,
