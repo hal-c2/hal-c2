@@ -641,7 +641,7 @@ defmodule HalC2.Orchestration.Delegation do
 
     text = """
     <delegated_task_result taskId="#{attr(task["id"])}" title="#{attr(task["title"])}" status="#{attr(status)}" childThreadId="#{attr(child)}">
-    #{cap_result(answer, child)}
+    #{close_tag_safe(answer)}
     </delegated_task_result>
     """
 
@@ -661,7 +661,7 @@ defmodule HalC2.Orchestration.Delegation do
         "summary" => "#{label} #{ended}",
         "workerThreadId" => child,
         "workerTitle" => label,
-        "detail" => cap_result(answer, child)
+        "detail" => cap_result(answer)
       },
       "delegatedCompletion" => %{
         "parentRunId" => task["runId"],
@@ -671,18 +671,21 @@ defmodule HalC2.Orchestration.Delegation do
     }
   end
 
-  # How much of a worker's answer the provider prompt and the timeline notification
-  # carry; the rest stays readable in the worker's own thread.
+  # The agent reads the whole answer; a closing tag quoted inside it (a previous result,
+  # say) must not end the envelope early.
+  defp close_tag_safe(text),
+    do: Regex.replace(~r{</(?=delegated_task_result)}i, text, "&lt;/")
+
+  # How much of a worker's answer the timeline notification carries, so clients don't
+  # render megabytes; the rest stays readable in the worker's own thread.
   @result_cap 8_192
 
-  defp cap_result(text, child) when byte_size(text) > @result_cap do
+  defp cap_result(text) when byte_size(text) > @result_cap do
     kept = text |> binary_part(0, @result_cap) |> trim_invalid()
-
-    kept <>
-      "\n\n[result truncated at #{@result_cap} bytes; read the rest with hal_c2_thread_read on thread #{child}]"
+    kept <> "\n\n[result truncated at #{@result_cap} bytes; the rest is in the worker's thread]"
   end
 
-  defp cap_result(text, _child), do: text
+  defp cap_result(text), do: text
 
   # A byte cut can split a UTF-8 character; drop the broken tail.
   defp trim_invalid(text) do

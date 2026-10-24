@@ -414,9 +414,8 @@ Feature: Delegating tasks to subagents
     When the agent cancels the task
     Then the tool fails with code "task_not_cancellable"
 
-  # Dropped: the wake carries the worker's result in a <delegated_task_result> envelope (capped,
-  # with the worker's thread named for the rest), proved by "The parent hears the subagent's
-  # result" in timeline/plans-and-subagents.feature. A pointer to task_status would cost the
+  # Dropped: the wake carries the worker's whole result in a <delegated_task_result> envelope,
+  # proved by "The parent hears the subagent's result" in timeline/plans-and-subagents.feature. A pointer to task_status would cost the
   # agent a round trip and lose the result when the task is disposed.
   @dropped @mc
   Scenario Outline: The message that wakes the caller names the finished tasks and how to read them
