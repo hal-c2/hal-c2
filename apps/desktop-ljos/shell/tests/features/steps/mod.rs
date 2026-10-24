@@ -13,6 +13,7 @@ pub mod thread_menu;
 pub mod thread_snooze;
 pub mod timeline;
 pub mod viewing;
+pub mod workspace;
 
 /// Every domain's steps.
 pub fn register(steps: &mut Steps) {
@@ -25,4 +26,5 @@ pub fn register(steps: &mut Steps) {
     thread_snooze::register(steps);
     timeline::register(steps);
     viewing::register(steps);
+    workspace::register(steps);
 }
