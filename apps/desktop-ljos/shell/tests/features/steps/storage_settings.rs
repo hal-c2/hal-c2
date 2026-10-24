@@ -67,7 +67,7 @@ fn cleanup_of(world: &mut World, environment: &str, key: &str) -> Value {
     } else {
         document_of(&mut world.mc, environment).settings.clone()
     };
-    settings["storageCleanup"][key].clone()
+    settings.get("storageCleanup").map_or(Value::Null, |c| c[key].clone())
 }
 
 fn open_storage(world: &mut World) -> Outcome {
@@ -388,7 +388,7 @@ pub fn register(steps: &mut Steps) {
                                 .and_then(|f| f.documents.get(environment))
                                 .map(|d| d.settings.clone())
                         };
-                        settings.is_some_and(|s| s["storageCleanup"]["worktreeOnMerge"] == json!(true))
+                        settings.is_some_and(|s| s.get("storageCleanup").is_some_and(|c| c["worktreeOnMerge"] == json!(true)))
                     };
                     saved(&c[0]) && saved(&c[1]) && saved(&this)
                 },
