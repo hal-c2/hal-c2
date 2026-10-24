@@ -550,6 +550,45 @@ Feature: Moving a thread and its agent to another machine
       And the agent receives where "Alpha" now lives and whether its session was carried
 
     @mc
+    Scenario: An agent starts and follows a turn on a thread it moved
+      Given the thread "caller" runs in full-access mode
+      And the agent of "caller" moves "Alpha" to "desktop"
+      When the agent of "caller" sends "say done" to "Alpha"
+      Then the turn runs on "desktop"
+      And the agent of "caller" waits for the turn and reads "done" in "Alpha"
+
+    @mc
+    Scenario: An agent's wait on a thread it moved keeps its provider's limit
+      Given the thread "caller" runs in full-access mode
+      And the agent of "caller" runs on a Claude instance "desktop" does not have
+      And "desktop" cuts the waits of agents it does not know to 1 second
+      And the agent of "caller" moves "Alpha" to "desktop"
+      And the agent of "caller" sends "wait for me" to "Alpha"
+      And the turn is running on "desktop"
+      When the agent of "caller" waits 3 seconds on "Alpha"
+      Then it waits the 3 seconds and is told the turn is still running
+
+    @mc
+    Scenario: An agent cannot start a turn a thread it moved no longer allows it
+      Given the thread "caller" runs in full-access mode
+      And "Alpha" is in plan mode
+      And the agent of "caller" moves "Alpha" to "desktop"
+      And "Alpha" leaves plan mode on "desktop"
+      And "planner" runs in plan mode
+      When the agent of "planner" sends "say done" to "Alpha"
+      Then the agent of "planner" is refused with "interaction_mode_escalation_denied"
+      And no turn runs on "desktop"
+
+    @mc
+    Scenario: An agent interrupts a turn on a thread it moved
+      Given the thread "caller" runs in full-access mode
+      And the agent of "caller" moves "Alpha" to "desktop"
+      And the agent of "caller" sends "wait for me" to "Alpha"
+      And the turn is running on "desktop"
+      When the agent of "caller" interrupts "Alpha"
+      Then the turn on "desktop" is interrupted
+
+    @mc
     Scenario: An agent moving its own thread moves once its turn ends
       Given the agent is working in "Alpha"
       When the agent of "Alpha" moves its own thread to "desktop"
