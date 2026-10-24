@@ -33,6 +33,7 @@ use ljos::prelude::{
 
 use crate::attachment_files;
 use crate::json::{self, Json};
+use crate::this_machine;
 
 /// The keys the bricks bind before any controller declares them: main.cpp's
 /// `backendError`, the sidebar's, and the ones the default layout reads.
@@ -773,9 +774,16 @@ impl Bridge {
         }
     }
 
-    /// The MC the shell talks to; local folders are its only on loopback.
+    /// The MC the shell talks to; its origin is one way to tell whether it
+    /// runs here (`this_machine::hosts`).
     pub fn set_mc_origin(self, engine: &Engine, origin: &str) {
         *BridgeState::of(engine).mc_origin.borrow_mut() = origin.to_owned();
+    }
+
+    /// The origin [`Bridge::set_mc_origin`] was given; empty while the shell
+    /// is connected to no MC.
+    pub fn mc_origin(self, engine: &Engine) -> String {
+        BridgeState::of(engine).mc_origin.borrow().clone()
     }
 
     /// Every window's bridge says so.
@@ -795,18 +803,19 @@ impl Bridge {
         }
     }
 
-    /// Whether this machine's folders are the MC's: import is allowed and
-    /// the MC runs here.
-    pub fn local_folders(self, engine: &Engine) -> bool {
-        let enabled = engine
+    /// Whether the user allowed folders of this machine to be imported.
+    pub fn local_folder_import_enabled(self, engine: &Engine) -> bool {
+        engine
             .get(self.0, ShellBridge::LOCAL_FOLDER_IMPORT_ENABLED)
-            .unwrap_or(false);
-        let origin = BridgeState::of(engine).mc_origin.borrow().clone();
-        enabled
-            && matches!(
-                origin_host(&origin).as_str(),
-                "localhost" | "127.0.0.1" | "::1"
-            )
+            .unwrap_or(false)
+    }
+
+    /// Whether this machine's folders are the MC's: import is allowed, the
+    /// shell is connected to an MC, and `this_machine` says it runs here.
+    pub fn local_folders(self, engine: &Engine) -> bool {
+        self.local_folder_import_enabled(engine)
+            && !self.mc_origin(engine).is_empty()
+            && this_machine::mc_here(engine)
     }
 }
 
@@ -842,14 +851,4 @@ impl Drop for Reset<'_> {
     fn drop(&mut self) {
         self.0.set(false);
     }
-}
-
-fn origin_host(origin: &str) -> String {
-    let rest = origin.split_once("://").map_or(origin, |(_, r)| r);
-    let authority = rest.split('/').next().unwrap_or("");
-    let host = match authority.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or(""),
-        None => authority.split(':').next().unwrap_or(""),
-    };
-    host.to_ascii_lowercase()
 }

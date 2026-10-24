@@ -18,7 +18,17 @@
 //! `projects.writeFile` half a second after the last one, and at once when
 //! the file closes or another opens. A write the MC refuses keeps the edit
 //! and says why (`saveProblem`, `saveFailed`). A Markdown task ticked in the
-//! rendered view (`toggleTask`) is written at once.
+//! rendered view (`toggleTask`) is written at once. A file outside the
+//! workspace is written back by its full path; a session paired without
+//! terminal access may not, and once the MC refuses one, that environment's
+//! other outside files open read-only.
+//!
+//! A media file ([`media_kind_of`]) is never read as text: its environment
+//! signs a URL for it with `assets.createUrl` (`mediaUrl`), which the viewer
+//! loads. The URL stops working a minute before the MC says, so the file
+//! signs again when opened or shown after that, and when the viewer says it
+//! failed (`mediaFailed`). `openMedia` hands a working URL to the browser
+//! (`mediaOpened`).
 //!
 //! [`Files`] is the core of the viewer, the search and the save: it takes
 //! MC replies and records the [`Effect`]s (calls, timers, the lines, the
@@ -190,9 +200,12 @@ impl TextLinesModel {
 pub enum Then {
     Search(u32),
     Read(u32),
+    /// A media file's URL, for the file read `request`.
+    Sign(u32),
     Write {
         path: String,
         root: String,
+        environment: String,
         revision: u32,
         request: u32,
         closing: bool,
@@ -230,6 +243,8 @@ pub enum Sig {
         path: String,
         problem: String,
     },
+    /// The browser is to open this URL, the open media file's.
+    MediaOpened(String),
 }
 
 /// The properties, as the core has them. The text and what it renders as
@@ -246,6 +261,8 @@ pub struct Facts {
     pub file_problem: String,
     pub truncated_notice: String,
     pub file_empty: bool,
+    pub media_kind: &'static str,
+    pub media_url: String,
     pub reveal_line: i32,
     pub wrap: bool,
     pub text_version: u32,
@@ -264,6 +281,8 @@ pub struct Facts {
 pub struct Files {
     environment: String,
     root: String,
+    /// The thread the workspace is for, which media URLs are signed for.
+    thread: String,
     active: bool,
     query: String,
     search_request: u32,
@@ -277,6 +296,17 @@ pub struct Files {
     file_problem: String,
     truncated_notice: String,
     reveal_line: i32,
+    media_url: String,
+    /// When the MC stops serving `media_url`, a minute early (epoch ms).
+    media_expires_ms: i64,
+    /// The signing whose URL `open_media` waits for; else 0.
+    open_on_sign: u32,
+    /// The environment that refused a write by full path.
+    host_writes_refused_on: String,
+    /// The MC's http(s) origin, which signed URLs are relative to, and the
+    /// wall clock now (epoch ms); the owner keeps them current.
+    origin: String,
+    now_ms: i64,
     /// The file the tree is to show once its folders are listed.
     revealing: String,
     mutation: String,
@@ -346,6 +376,7 @@ impl Files {
         Files {
             environment: String::new(),
             root: String::new(),
+            thread: String::new(),
             active: false,
             query: String::new(),
             search_request: 0,
@@ -359,6 +390,12 @@ impl Files {
             file_problem: String::new(),
             truncated_notice: String::new(),
             reveal_line: 0,
+            media_url: String::new(),
+            media_expires_ms: 0,
+            open_on_sign: 0,
+            host_writes_refused_on: String::new(),
+            origin: String::new(),
+            now_ms: 0,
             revealing: String::new(),
             mutation: String::new(),
             stale: false,
@@ -423,6 +460,18 @@ impl Files {
         &self.source_kinds
     }
 
+    pub fn truncated_notice(&self) -> &str {
+        &self.truncated_notice
+    }
+
+    /// The MC's http(s) origin and the wall clock now (epoch ms).
+    pub fn set_context(&mut self, origin: &str, now_ms: i64) {
+        if origin != self.origin {
+            self.origin = origin.to_owned();
+        }
+        self.now_ms = now_ms;
+    }
+
     pub fn facts(&self) -> Facts {
         let kind = self.render_kind();
         Facts {
@@ -435,7 +484,11 @@ impl Files {
             file_status: self.file_status,
             file_problem: self.file_problem.clone(),
             truncated_notice: self.truncated_notice.clone(),
-            file_empty: self.file_status == "ready" && self.lines == 0,
+            file_empty: self.file_status == "ready"
+                && self.media_kind().is_empty()
+                && self.lines == 0,
+            media_kind: self.media_kind(),
+            media_url: self.media_url.clone(),
             reveal_line: self.reveal_line,
             wrap: self.wrap(),
             text_version: self.text_version,
@@ -523,7 +576,9 @@ impl Files {
     }
 
     pub fn editable(&self) -> bool {
-        self.read_only_reason().is_empty() && self.file_status == "ready"
+        self.read_only_reason().is_empty()
+            && self.file_status == "ready"
+            && self.media_kind().is_empty()
     }
 
     /// Why the file cannot be edited, or "".
@@ -532,12 +587,96 @@ impl Files {
             ""
         } else if self.truncated {
             "Files larger than 1 MB open read-only."
-        } else if self.open_path.starts_with('/') || self.open_path.contains(":\\") {
-            // Only a path inside the workspace can be written back.
-            "Files outside the project open read-only."
+        } else if self.host_writes_refused() {
+            // A file outside the workspace is written back by its full path,
+            // by the MC that read it. Such a write reaches any file on that
+            // machine, so it needs the terminal access this device may have
+            // been paired without; once refused, the others there open
+            // read-only too.
+            HOST_WRITE_REFUSAL
         } else {
             ""
         }
+    }
+
+    /// The open file is outside the workspace, on an environment that
+    /// refused such a write.
+    fn host_writes_refused(&self) -> bool {
+        !self.host_writes_refused_on.is_empty()
+            && self.host_writes_refused_on == self.environment
+            && host_path(&self.open_path)
+    }
+
+    // --- Media ---
+
+    /// What the open file previews as: image, video, audio, pdf, or "" for
+    /// text.
+    pub fn media_kind(&self) -> &'static str {
+        media_kind_of(&self.open_path)
+    }
+
+    pub fn media_url(&self) -> &str {
+        &self.media_url
+    }
+
+    /// The open media file has no URL that still works.
+    fn media_expired(&self) -> bool {
+        !self.media_kind().is_empty()
+            && (self.media_url.is_empty() || self.now_ms >= self.media_expires_ms)
+    }
+
+    /// Asks the environment for the open media file's URL.
+    fn sign_media(&mut self, request: u32) {
+        // A path in the workspace is the thread's file; a full path is served
+        // only as a media file. With no thread, the workspace folder names
+        // itself. The path is the thread's machine's, so a Windows one counts
+        // here too.
+        let resource = if self.thread.is_empty() {
+            json!({"_tag": "draft-workspace-file", "cwd": self.root, "path": self.open_path})
+        } else {
+            let tag = if full_path(&self.open_path) {
+                "media-file"
+            } else {
+                "workspace-file"
+            };
+            json!({"_tag": tag, "threadId": self.thread, "path": self.open_path})
+        };
+        self.effects.push(Effect::Call {
+            environment: self.environment.clone(),
+            method: "assets.createUrl",
+            payload: json!({"resource": resource}),
+            then: Then::Sign(request),
+        });
+    }
+
+    /// Hands the open media file's URL to the browser (`Sig::MediaOpened`),
+    /// signing a new one first when it ran out.
+    pub fn open_media(&mut self) {
+        if self.media_kind().is_empty() {
+            return;
+        }
+        if self.file_status == "ready" && !self.media_expired() {
+            self.signals.push(Sig::MediaOpened(self.media_url.clone()));
+            return;
+        }
+        self.reload_file();
+        self.open_on_sign = self.file_request;
+    }
+
+    /// The viewer could not load `url`: the file says so until read again.
+    pub fn media_failed(&mut self, url: &str) {
+        if url.is_empty() || url != self.media_url || self.file_status != "ready" {
+            return;
+        }
+        let noun = match self.media_kind() {
+            "pdf" => "document",
+            "" => "file",
+            kind => kind,
+        };
+        self.media_url.clear();
+        self.file_status = "error";
+        self.file_problem = format!("The {noun} could not be loaded.");
+        self.signals.push(Sig::Rendered);
     }
 
     // --- Workspace ---
@@ -545,7 +684,8 @@ impl Files {
     /// The workspace to browse: the environment it is on and its folder
     /// there. A new one forgets the search and the open file (the owner
     /// forgets the tree). False when it is the one already shown.
-    pub fn set_target(&mut self, environment: &str, root: &str) -> bool {
+    pub fn set_target(&mut self, environment: &str, root: &str, thread: &str) -> bool {
+        thread.clone_into(&mut self.thread);
         if environment == self.environment && root == self.root {
             return false;
         }
@@ -567,6 +707,11 @@ impl Files {
 
     pub fn set_active(&mut self, active: bool) {
         self.active = active;
+        // The preview loads again when the tab shows, so needs a URL that
+        // works.
+        if active && self.file_status == "ready" && self.media_expired() {
+            self.reload_file();
+        }
     }
 
     /// Takes the note that the workspace changed while the tab was hidden.
@@ -674,7 +819,7 @@ impl Files {
             }
         }
         self.open_line = line;
-        if path == self.open_path && self.file_status == "ready" {
+        if path == self.open_path && self.file_status == "ready" && !self.media_expired() {
             // Already here: just go to the line.
             self.reveal_line = self.clamped(line);
             self.signals.push(Sig::RevealRequested);
@@ -704,7 +849,12 @@ impl Files {
         self.file_problem.clear();
         self.truncated_notice.clear();
         self.truncated = false;
+        self.media_url.clear();
         self.signals.push(Sig::Rendered);
+        if !self.media_kind().is_empty() {
+            self.sign_media(self.file_request);
+            return;
+        }
         self.effects.push(Effect::Call {
             environment: self.environment.clone(),
             method: "projects.readFile",
@@ -728,6 +878,7 @@ impl Files {
         self.file_problem.clear();
         self.truncated_notice.clear();
         self.truncated = false;
+        self.media_url.clear();
         self.set_text("");
         self.save_problem.clear();
         if had {
@@ -795,6 +946,14 @@ impl Files {
         if !self.pending || self.open_path.is_empty() || self.root.is_empty() {
             return;
         }
+        if self.host_writes_refused() {
+            // Refused already: the edit stays on screen, unsaved, until the
+            // file goes, and is never written to the file opened next.
+            if closing {
+                self.pending = false;
+            }
+            return;
+        }
         // One write at a time: the next goes when this one is answered.
         if self.saving && !closing {
             return;
@@ -814,6 +973,7 @@ impl Files {
             then: Then::Write {
                 path: self.open_path.clone(),
                 root: self.root.clone(),
+                environment: self.environment.clone(),
                 revision: self.revision,
                 request: self.file_request,
                 closing,
@@ -829,8 +989,9 @@ impl Files {
     // --- Replies ---
 
     /// The MC answered a call this asked for (`Err`: its message, which may
-    /// be empty); an answer for something since replaced is dropped.
-    pub fn answer(&mut self, then: Then, result: Result<Json, String>) {
+    /// be empty, and detail); an answer for something since replaced is
+    /// dropped.
+    pub fn answer(&mut self, then: Then, result: Result<Json, McError>) {
         match then {
             Then::Search(request) => {
                 if request != self.search_request {
@@ -847,8 +1008,8 @@ impl Files {
                         self.effects
                             .push(Effect::SetSearch(Some(entries_of(&reply))));
                     }
-                    Err(message) => {
-                        self.search_problem = defaulted(&message, "Unable to search files.");
+                    Err(e) => {
+                        self.search_problem = defaulted(&e.message, "Unable to search files.");
                         self.search_truncated = false;
                         self.effects.push(Effect::SetSearch(Some(Vec::new())));
                     }
@@ -859,9 +1020,9 @@ impl Files {
                     return;
                 }
                 match result {
-                    Err(message) => {
+                    Err(e) => {
                         self.file_status = "error";
-                        self.file_problem = defaulted(&message, "Unable to read this file.");
+                        self.file_problem = defaulted(&e.message, "Unable to read this file.");
                         self.set_text("");
                         self.signals.push(Sig::Rendered);
                     }
@@ -887,17 +1048,64 @@ impl Files {
                     }
                 }
             }
+            Then::Sign(request) => {
+                if request != self.file_request {
+                    return;
+                }
+                let reply = result.as_ref().ok();
+                let relative = reply
+                    .and_then(|r| r.get("relativeUrl"))
+                    .and_then(Json::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                self.set_text("");
+                self.signals.push(Sig::Rendered);
+                if result.is_err() || relative.is_empty() {
+                    self.file_status = "error";
+                    let message = result.err().map(|e| e.message).unwrap_or_default();
+                    self.file_problem = defaulted(&message, "Unable to load this file.");
+                    return;
+                }
+                // The cluster hands the address to the member that signed it.
+                // It stops working a minute before the MC says, so a preview
+                // asked for at the last moment still loads.
+                self.media_url = resolved(&self.origin, &relative);
+                let expires = reply
+                    .and_then(|r| r.get("expiresAt"))
+                    .and_then(Json::as_f64)
+                    .unwrap_or(0.0);
+                self.media_expires_ms = expires as i64 - 60_000;
+                self.file_status = "ready";
+                if std::mem::take(&mut self.open_on_sign) == request {
+                    self.signals.push(Sig::MediaOpened(self.media_url.clone()));
+                }
+            }
             Then::Write {
                 path,
                 root,
+                environment,
                 revision,
                 request,
                 closing,
             } => {
-                let failed = result
-                    .as_ref()
-                    .err()
-                    .map(|m| defaulted(m, "Unable to save this file."));
+                // A session without terminal access may not write outside the
+                // workspace (Rpc.required_scope/2).
+                let host_refused = result.as_ref().err().is_some_and(|e| {
+                    e.detail.get("_tag").and_then(Json::as_str)
+                        == Some("EnvironmentScopeRequiredError")
+                        && e.detail.get("requiredScope").and_then(Json::as_str)
+                            == Some("terminal:operate")
+                });
+                if host_refused {
+                    self.host_writes_refused_on = environment;
+                }
+                let failed = result.as_ref().err().map(|e| {
+                    if host_refused {
+                        HOST_WRITE_REFUSAL.to_owned()
+                    } else {
+                        defaulted(&e.message, "Unable to save this file.")
+                    }
+                });
                 if let Some(problem) = &failed {
                     self.signals.push(Sig::SaveFailed {
                         path: path.clone(),
@@ -914,8 +1122,15 @@ impl Files {
                 }
                 self.saving = false;
                 if let Some(problem) = failed {
-                    // The edit stays, to be written with the next one.
                     self.save_problem = problem;
+                    if host_refused {
+                        // The file is read-only now; the view shows the edit
+                        // that was not saved, to copy.
+                        self.editing = false;
+                        self.effects.push(Effect::Lines(self.text.clone()));
+                        self.signals.push(Sig::Rendered);
+                    }
+                    // Else the edit stays, to be written with the next one.
                     return;
                 }
                 self.save_problem.clear();
@@ -929,6 +1144,45 @@ impl Files {
                 }
             }
         }
+    }
+}
+
+const HOST_WRITE_REFUSAL: &str = "Saving a file outside the project needs terminal access, which this device was not paired with.";
+
+/// A file outside the workspace, opened by its full path (written back by
+/// it).
+fn host_path(path: &str) -> bool {
+    path.starts_with('/') || path.contains(":\\")
+}
+
+/// A full path on the thread's machine, whichever it is: `/…`, `\\share…`
+/// or `C:/…`, `C:\…`.
+fn full_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    path.starts_with('/')
+        || path.starts_with("\\\\")
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'/' | b'\\'))
+}
+
+/// `relative` against the MC's `origin`; as it is when either is not a URL.
+fn resolved(origin: &str, relative: &str) -> String {
+    url::Url::parse(origin)
+        .and_then(|o| o.join(relative))
+        .map_or_else(|_| relative.to_owned(), String::from)
+}
+
+/// What a file previews as, by its extension: image, video, audio, pdf, or
+/// "" for text. The MC's media extensions, less HTML, which renders as text.
+pub fn media_kind_of(path: &str) -> &'static str {
+    match file_render::extension_of(path).as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif" | "ico" => "image",
+        "mp4" | "webm" | "mov" | "m4v" => "video",
+        "mp3" | "wav" | "ogg" | "oga" | "opus" | "m4a" | "aac" | "flac" => "audio",
+        "pdf" => "pdf",
+        _ => "",
     }
 }
 
@@ -1010,6 +1264,12 @@ pub struct WorkspaceFiles {
     truncated_notice: Atom,
     #[qml(readonly, notify)]
     file_empty: bool,
+    /// What the file previews as: image, video, audio, pdf, or "" for text.
+    #[qml(readonly, notify)]
+    media_kind: Atom,
+    /// Where the preview loads a media file from, once signed; else "".
+    #[qml(readonly, notify)]
+    media_url: Atom,
     /// The line the viewer was asked to show (1-based, within the file), or 0.
     #[qml(readonly, notify)]
     reveal_line: i32,
@@ -1100,6 +1360,8 @@ impl WorkspaceFiles {
             file_problem: atom(&facts.file_problem),
             truncated_notice: atom(&facts.truncated_notice),
             file_empty: facts.file_empty,
+            media_kind: atom(facts.media_kind),
+            media_url: atom(&facts.media_url),
             reveal_line: facts.reveal_line,
             wrap: facts.wrap,
             text: atom(""),
@@ -1182,13 +1444,16 @@ impl WorkspaceFiles {
         inner_of(engine, obj)?.lines.get()
     }
 
-    /// The workspace to browse: the environment it is on and its folder
-    /// there. A new one forgets the tree, the search and the open file.
-    pub fn set_target(engine: &Engine, obj: ObjectId, environment: &str, root: &str) {
+    /// The workspace to browse: the environment it is on, its folder there
+    /// and the thread it is for ("" for a draft's), which media URLs are
+    /// signed for. A new workspace forgets the tree, the search and the open
+    /// file.
+    pub fn set_target(engine: &Engine, obj: ObjectId, environment: &str, root: &str, thread: &str) {
         let Some(inner) = inner_of(engine, obj) else {
             return;
         };
-        let changed = WorkspaceFiles::update(engine, obj, |f| f.set_target(environment, root));
+        let changed =
+            WorkspaceFiles::update(engine, obj, |f| f.set_target(environment, root, thread));
         if changed != Some(true) {
             return;
         }
@@ -1318,8 +1583,11 @@ impl WorkspaceFiles {
     /// None when `obj` is not a live WorkspaceFiles.
     pub fn update<R>(engine: &Engine, obj: ObjectId, f: impl FnOnce(&mut Files) -> R) -> Option<R> {
         let inner = inner_of(engine, obj)?;
+        let origin = inner.mc.origin().unwrap_or_default();
+        let now = crate::controllers::sidebar::now_ms(engine);
         let (result, before, after, strings, effects, signals) = {
             let mut core = inner.core.borrow_mut();
+            core.set_context(&origin, now);
             let before = core.facts();
             let result = f(&mut core);
             let after = core.facts();
@@ -1351,6 +1619,12 @@ impl WorkspaceFiles {
         for signal in &signals {
             match signal {
                 Sig::RevealRequested => warned(engine, WorkspaceFiles::emit_reveal_requested(&cx)),
+                Sig::MediaOpened(url) => {
+                    warned(
+                        engine,
+                        WorkspaceFiles::emit_media_opened(&cx, Atom::new(url)),
+                    );
+                }
                 Sig::SourceKinds => {
                     warned(engine, WorkspaceFiles::emit_source_kinds_changed(&cx));
                     hooks.extend(inner.hooks.borrow().source_kinds.iter().cloned());
@@ -1449,6 +1723,8 @@ fn write(
         atom(&after.truncated_notice)
     );
     set!(file_empty, FILE_EMPTY, after.file_empty);
+    set!(media_kind, MEDIA_KIND, atom(after.media_kind));
+    set!(media_url, MEDIA_URL, atom(&after.media_url));
     set!(reveal_line, REVEAL_LINE, after.reveal_line);
     set!(wrap, WRAP, after.wrap);
     set!(render_kind, RENDER_KIND, atom(after.render_kind));
@@ -1479,7 +1755,6 @@ fn run(engine: &Engine, obj: ObjectId, inner: &Inner, effect: Effect) {
             method,
             payload,
             Box::new(move |engine, result: Result<Json, McError>| {
-                let result = result.map_err(|e| e.message);
                 WorkspaceFiles::update(engine, obj, |f| f.answer(then, result));
             }),
         ),
@@ -1723,6 +1998,23 @@ impl WorkspaceFiles {
     /// The MC would not write `path`.
     #[qml(signal)]
     fn save_failed(path: Atom, problem: Atom);
+    /// The browser is to open `url`, the open media file's (`openMedia`).
+    #[qml(signal)]
+    fn media_opened(url: Atom);
+
+    /// The viewer could not load `url`: the file shows why until reloaded,
+    /// which signs a new URL.
+    #[qml(invokable)]
+    fn media_failed(cx: &Cx, url: Atom) {
+        WorkspaceFiles::update(cx.engine, cx.this, |f| f.media_failed(&url));
+    }
+
+    /// Hands the open media file's URL to the browser (`mediaOpened`),
+    /// signing a new one first when it ran out.
+    #[qml(invokable)]
+    fn open_media(cx: &Cx) {
+        WorkspaceFiles::update(cx.engine, cx.this, Files::open_media);
+    }
 
     /// Opens a file in the viewer, at `line` when above 0, and reveals it
     /// in the tree.
