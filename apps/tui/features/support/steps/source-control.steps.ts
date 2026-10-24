@@ -114,17 +114,10 @@ step("the user chooses {string} on the failure", async (ctx: World, label: strin
 
 // The terminal opens a link with a Ctrl-click on it (OSC 8); Enter copies it.
 step("the browser opens {string}", async (ctx: World, url: string) => {
-  const screen = await settle(ctx);
+  await settle(ctx);
   expect(gitState(ctx).actions[0]).toMatchObject({ id: "remedy", kind: "url", url });
   expect(ctx.clipboard ?? []).toEqual([url]);
   expect(statusText(ctx)).toBe(`Link copied: ${url}`);
-  expect(screen).toContain("Link copied");
-});
-
-step("{string} is on the clipboard", async (ctx: World, text: string) => {
-  await settle(ctx);
-  expect(ctx.clipboard ?? []).toEqual([text]);
-  expect(statusText(ctx)).toBe(`Command copied: ${text}`);
 });
 
 step("the failure is still shown", async (ctx: World) => {

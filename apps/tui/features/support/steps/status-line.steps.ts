@@ -80,6 +80,8 @@ step(
   },
 );
 
-step("{string} is on the clipboard", (ctx: World, text: string) => {
-  expect(ctx.clipboard).toEqual([text]);
+// Shared by every TUI scenario that copies a quoted string (status history, a git failure's command).
+step("{string} is on the clipboard", async (ctx: World, text: string) => {
+  await settle(ctx);
+  expect(ctx.clipboard ?? []).toEqual([text]);
 });

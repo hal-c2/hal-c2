@@ -1524,7 +1524,10 @@ defmodule HalC2.Acp do
 
   # "Hugging Face/DeepSeek V3" is the model "DeepSeek V3" of the provider "Hugging Face".
   defp models(session) do
-    option = Enum.find(session["configOptions"] || [], &(&1["id"] == "model")) || %{}
+    option =
+      Enum.find(session["configOptions"] || [], &(&1["id"] == "model")) ||
+        model_option(session["models"] || %{})
+
     current = option["currentValue"]
 
     for %{"value" => slug} = model <- option["options"] || [] do
@@ -1543,5 +1546,16 @@ defmodule HalC2.Acp do
       }
       |> then(&if(sub, do: Map.put(&1, "subProvider", sub), else: &1))
     end
+  end
+
+  # Older ACP agents, including Kimi, advertise models outside configOptions.
+  defp model_option(models) do
+    %{
+      "currentValue" => models["currentModelId"],
+      "options" =>
+        for %{"modelId" => id} = model <- models["availableModels"] || [] do
+          %{"value" => id, "name" => model["name"] || id, "_meta" => model["_meta"]}
+        end
+    }
   end
 end
