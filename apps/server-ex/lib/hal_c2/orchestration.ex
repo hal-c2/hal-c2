@@ -2333,7 +2333,8 @@ defmodule HalC2.Orchestration do
     do: %{"interactionMode" => command["interactionMode"], "updatedAt" => at}
 
   # A thread's pull requests are keyed by host, repository and number. Linking again
-  # changes nothing, except that a user or agent brings back a stack layer they unlinked.
+  # changes nothing, except that a user or agent brings back a stack layer they unlinked;
+  # a link the MC made on its own (`"automatic"`, `HalC2.PullRequests.Opened`) never does.
   # A first manual link keeps the branch's pull request beside it.
   defp thread_fields("thread.pull-request.link", command, thread, at) do
     links = PullRequests.of(thread)
@@ -2342,7 +2343,8 @@ defmodule HalC2.Orchestration do
     source = command["source"]
 
     if existing &&
-         (existing["source"] != "stack-dismissed" or source in ["stack", "stack-dismissed"]) do
+         (existing["source"] != "stack-dismissed" or source in ["stack", "stack-dismissed"] or
+            command["automatic"] == true) do
       %{}
     else
       link =

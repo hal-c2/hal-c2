@@ -387,10 +387,18 @@ Feature: Threads that work on or link pull requests
   @mc
   Scenario: A pull request headed by the worktree's commit under another branch name is linked
     Given "Tax work" works in a worktree of its own on the branch "feature/tax"
-    And its commit was pushed as the open pull request 45 from the branch "fix/tax-rounding"
+    And its own commit was pushed as the open pull request 45 from the branch "fix/tax-rounding"
     When the thread's pull requests are looked for
     Then "Tax work" lists pull request 45
     And "Tax work" shows no pull request as its branch's
+
+  # A stacked worktree starts at its parent's head, which is the parent's pull request.
+  @mc
+  Scenario: A worktree with no commit of its own does not take the pull request it started from
+    Given "Tax work" works in a worktree of its own on the branch "feature/tax"
+    And the commit it started from heads the open pull request 45 from the branch "feature/base"
+    When the thread's pull requests are looked for
+    Then "Tax work" links no pull request and its commit is not asked about
 
   @mc
   Scenario: The branch's pull request is discovered on its own

@@ -36,13 +36,14 @@ defmodule HalC2.PullRequests.Opened do
 
   def urls(_input, _output), do: []
 
-  @doc "Links each of `urls` that thread `thread_id` does not carry yet."
-  def link(thread_id, urls) do
-    known =
-      case StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id] do
-        nil -> nil
-        thread -> MapSet.new(Links.of(thread), &Links.key/1)
-      end
+  @doc """
+  Links each of `urls` that thread `thread_id` does not carry yet. `thread` is the
+  thread's entity or sidebar row when the caller holds one, saving a read of its stream;
+  the engine refuses the link anyway when the thread got it meanwhile, as a tombstone too.
+  """
+  def link(thread_id, urls, thread \\ nil) do
+    thread = thread || StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id]
+    known = thread && MapSet.new(Links.of(thread), &Links.key/1)
 
     for target <- Enum.flat_map(urls, &target/1) |> Enum.uniq_by(&Links.key/1),
         known != nil and not MapSet.member?(known, Links.key(target)) do
@@ -51,7 +52,8 @@ defmodule HalC2.PullRequests.Opened do
           "type" => "thread.pull-request.link",
           "commandId" => "server:pr-opened-link:#{HalC2.Environment.uuid4()}",
           "threadId" => thread_id,
-          "source" => "created"
+          "source" => "created",
+          "automatic" => true
         })
 
       with {:error, reason} <- HalC2.Orchestration.dispatch(command),

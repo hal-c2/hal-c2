@@ -4,8 +4,8 @@ defmodule HalC2.PullRequestLinksPropTest do
   (`features/mc/orchestration/pull-request-links.feature`): links made by the user, an
   agent and a pull request the thread created (`thread.pull-request.link`), unlinks, the
   links the MC makes when it finds a pull request the thread opened
-  (`HalC2.PullRequests.Opened.link/2`, from the turn writer and discovery), and a
-  restart of the streams.
+  (`HalC2.PullRequests.Opened.link/3`, from the turn writer and discovery, and the same
+  link sent on a stale read of the thread), and a restart of the streams.
 
   The model keeps each pull request as shown with the source it was linked by, as a
   tombstone, or absent. A link of one already there changes nothing; unlinking one
@@ -73,6 +73,7 @@ defmodule HalC2.PullRequestLinksPropTest do
       {4, {:call, __MODULE__, :link, [n, oneof(@sources)]}},
       {3, {:call, __MODULE__, :unlink, [n]}},
       {4, {:call, __MODULE__, :found, [n]}},
+      {2, {:call, __MODULE__, :found_late, [n]}},
       {1, {:call, __MODULE__, :restart, []}}
     ])
   end
@@ -95,7 +96,7 @@ defmodule HalC2.PullRequestLinksPropTest do
     end
   end
 
-  def next_state(links, _result, {:call, _, :found, [n]}),
+  def next_state(links, _result, {:call, _, fun, [n]}) when fun in [:found, :found_late],
     do: Map.put_new(links, n, {:shown, "created"})
 
   def next_state(links, _result, {:call, _, :restart, []}), do: links
@@ -129,6 +130,20 @@ defmodule HalC2.PullRequestLinksPropTest do
       end)
 
   def found(n), do: observe(fn -> {HalC2.PullRequests.Opened.link(@thread, [url(n)]), :ok} end)
+
+  # The MC's link sent on a stale read, which missed what the thread carries now.
+  def found_late(n) do
+    observe(fn ->
+      Orchestration.dispatch(
+        Map.merge(key(n), %{
+          "type" => "thread.pull-request.link",
+          "url" => url(n),
+          "source" => "created",
+          "automatic" => true
+        })
+      )
+    end)
+  end
 
   def restart do
     observe(fn ->

@@ -296,6 +296,13 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     seq = World.state(context, thread).seq
     :ok = HalC2.PullRequests.Opened.link(World.thread_id(context, thread), [url(pr)])
     assert World.state(context, thread).seq == seq
+
+    # The same link sent on a read from before the unlink.
+    context
+    |> link(thread, pr, "created", "github.com", %{"automatic" => true})
+    |> ok!()
+
+    assert World.state(context, thread).seq == seq
     refute pr in visible(context, thread)
     context
   end
@@ -398,12 +405,14 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     )
   end
 
-  defp link(context, thread, pr, source, host \\ "github.com") do
+  defp link(context, thread, pr, source, host \\ "github.com", fields \\ %{}) do
     command(
       context,
       thread,
       "thread.pull-request.link",
-      Map.merge(key(pr, host), %{"url" => url(pr, host), "source" => source})
+      key(pr, host)
+      |> Map.merge(%{"url" => url(pr, host), "source" => source})
+      |> Map.merge(fields)
     )
   end
 

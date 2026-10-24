@@ -247,15 +247,19 @@ defmodule HalC2.PullRequests.Discovery do
   defp open?(_found), do: false
 
   # `{:head, sha}` of the thread's own worktree when its branch shows no open pull
-  # request, else nil. Threads in the project folder share its checkout, so its commit
-  # says nothing about them.
+  # request and the worktree has a commit of its own, else nil. Threads in the project
+  # folder share its checkout, so its commit says nothing about them; nor does the
+  # commit a worktree started from, which is another branch's (a stacked worktree's
+  # parent pull request). The oldest entry of HEAD's reflog is where it started.
   defp head(%{group: [%{"worktreePath" => worktree} | _], detected: {:ok, found}} = p)
        when is_binary(worktree) do
     with false <- open?(found),
          true <- p.cwd == worktree and worktree != p.project["workspaceRoot"],
          %{kind: "github"} <- p.remote,
-         {:ok, sha} <- HalC2.Git.ok(worktree, ~w(rev-parse --verify -q HEAD)),
-         do: {:head, String.trim(sha)},
+         {:ok, log} <- HalC2.Git.ok(worktree, ~w(reflog show --format=%H HEAD --)),
+         [sha | _] = moves <- String.split(log, "\n", trim: true),
+         true <- List.last(moves) != sha,
+         do: {:head, sha},
          else: (_ -> nil)
   end
 
@@ -265,7 +269,7 @@ defmodule HalC2.PullRequests.Discovery do
   defp link_heads(state, %{head: {:head, _} = head} = p) do
     with %{answer: [_ | _] = prs} <- state.lookups[{p.cwd, head}],
          [_ | _] = urls <- for(pr <- prs, own?(p, pr["url"]), do: pr["url"]) do
-      Enum.each(p.group, &Opened.link(&1["id"], urls))
+      Enum.each(p.group, &Opened.link(&1["id"], urls, &1))
     end
   end
 

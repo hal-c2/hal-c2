@@ -346,34 +346,28 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     |> Map.put(:branch, branch)
   end
 
-  # `gh pr list --head` finds nothing for the thread's branch; GitHub's pull requests of
-  # the worktree's commit name another.
-  step "its commit was pushed as the open pull request {int} from the branch {string}",
+  step "its own commit was pushed as the open pull request {int} from the branch {string}",
        %{args: [number, head_branch]} = context do
-    sha = World.git!(context.worktree.path, ~w(rev-parse HEAD))
+    World.commit!(context.worktree.path, %{"tax.txt" => "10%\n"}, "Charge tax")
+    head_answer(context, number, head_branch)
+  end
 
-    context
-    |> World.cli_rules([
-      %{"args" => ["pr list", "--head #{context.branch}"], "stdout" => []},
-      %{
-        "args" => ["commits/#{sha}/pulls"],
-        "stdout" => [
-          %{
-            "number" => number,
-            "html_url" => "https://github.com/acme/shop/pull/#{number}",
-            "state" => "open",
-            "head" => %{"sha" => sha, "ref" => head_branch}
-          }
-        ]
-      }
-    ])
-    |> Map.put(:expected_source, "created")
+  step "the commit it started from heads the open pull request {int} from the branch {string}",
+       %{args: [number, head_branch]} = context do
+    head_answer(context, number, head_branch)
   end
 
   step "the thread's pull requests are looked for", context do
     context = discovery(context)
     :ok = HalC2.PullRequests.Discovery.sweep()
-    assert World.cli_calls(context, "/pulls") != []
+    assert World.cli_calls(context, "--head #{context.branch}") != []
+    context
+  end
+
+  step "{string} links no pull request and its commit is not asked about",
+       %{args: [title]} = context do
+    assert (World.thread(context, title)["pullRequests"] || []) == []
+    assert World.cli_calls(context, "/pulls") == []
     context
   end
 
@@ -634,6 +628,29 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
         }
       ]
     })
+  end
+
+  # `gh pr list --head` finds nothing for the thread's branch; GitHub's pull requests of
+  # the worktree's commit name the open pull request `number` from `head_branch`.
+  defp head_answer(context, number, head_branch) do
+    sha = World.git!(context.worktree.path, ~w(rev-parse HEAD))
+
+    context
+    |> World.cli_rules([
+      %{"args" => ["pr list", "--head #{context.branch}"], "stdout" => []},
+      %{
+        "args" => ["commits/#{sha}/pulls"],
+        "stdout" => [
+          %{
+            "number" => number,
+            "html_url" => "https://github.com/acme/shop/pull/#{number}",
+            "state" => "open",
+            "head" => %{"sha" => sha, "ref" => head_branch}
+          }
+        ]
+      }
+    ])
+    |> Map.put(:expected_source, "created")
   end
 
   defp thread(context, title) do
