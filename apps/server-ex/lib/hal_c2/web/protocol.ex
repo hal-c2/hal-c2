@@ -32,8 +32,6 @@ defmodule HalC2.Web.Protocol do
     * `{"type": "serverUpdate", "mc": n, "input": ServerSelfUpdateInput}`: moves
       that MC to another version (`HalC2.Upgrade`), streaming its progress and
       ending after `complete`
-    * `{"type": "relayClientInstall", "mc": n}`: installs that MC's relay client
-      (`cloud.installRelayClient`), streaming its stages and ending after `complete`
     * `{"type": "localServers", "mc": n}`: web servers listening on that MC's
       host (`DiscoveredLocalServerList`), then the list whenever it changes
     * `{"type": "devices", "mc": n}`: that MC's simulators, emulators and
@@ -107,7 +105,6 @@ defmodule HalC2.Web.Protocol do
       {"t": "config.ready", "id", "environment", "updateOutcome"} (the MC moved to
         another version in place: its new descriptor, and how the update went)
       {"t": "serverUpdate", "id", "event"} (ServerSelfUpdateProgressEvent)
-      {"t": "relayClientInstall", "id", "event"} (RelayClientInstallProgressEvent)
       {"t": "config.themes", "id", "themes"} (the EnvironmentTheme[] it publishes; after
         the snapshot, then on every change)
       {"t": "config.usageLimitSources", "id", "sources"} (its UsageLimitSourceSnapshot[];
@@ -183,7 +180,7 @@ defmodule HalC2.Web.Protocol do
 
   # The shapes a client may name by environment. The rest are about the MC a client
   # talks to (shell, authAccess) or administer one MC's host (serverUpdate,
-  # relayClientInstall, resourceTelemetry, localServers, devices, slack, preview,
+  # resourceTelemetry, localServers, devices, slack, preview,
   # previewAutomation, scheduledTasks, backgroundPolicy, providerInstall),
   # and are asked of that MC by name. projectClones is routed because a client
   # starts a clone on any environment with a routed rpc and follows it there. A
@@ -301,10 +298,6 @@ defmodule HalC2.Web.Protocol do
 
   defp decode_shape(%{"type" => "serverUpdate", "mc" => mc, "input" => %{} = input}, mcs) do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:server_update, mc, input}}
-  end
-
-  defp decode_shape(%{"type" => "relayClientInstall", "mc" => mc}, mcs) do
-    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:relay_client_install, mc}}
   end
 
   defp decode_shape(%{"type" => "localServers", "mc" => mc}, mcs) do

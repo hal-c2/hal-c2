@@ -1,6 +1,5 @@
 import {
   ORCHESTRATION_V2_WS_METHODS,
-  type EnvironmentId as EnvironmentIdType,
   type OrchestrationV2ThreadDetailSnapshot,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadStreamItem,
@@ -17,19 +16,14 @@ import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom } from "effect/unstable/reactivity";
 
-import { EnvironmentRegistry } from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
-import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
-import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
-import { followStreamInEnvironment } from "./runtime.ts";
 import {
   ThreadHistoryController,
   type ThreadHistoryLoadEarlierResult,
@@ -40,12 +34,8 @@ import {
   type ThreadHistoryMeta,
 } from "./threadHistoryMerge.ts";
 import { EarlierTurnsUnavailableError } from "../rpc/session.ts";
-import { ThreadSnapshotLoader, type ThreadSnapshotLoadResult } from "./threadSnapshotHttp.ts";
-import {
-  EMPTY_ENVIRONMENT_THREAD_STATE,
-  type EnvironmentThreadState,
-  type EnvironmentThreadStatus,
-} from "./threadState.ts";
+import { ThreadSnapshotLoader, type ThreadSnapshotLoadResult } from "./threadSnapshot.ts";
+import { type EnvironmentThreadState, type EnvironmentThreadStatus } from "./threadState.ts";
 
 function statusWithoutLiveData(
   data: Option.Option<OrchestrationV2ThreadProjection>,
@@ -829,70 +819,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   return state;
 });
 
-function threadStateChanges(
-  environmentId: EnvironmentIdType,
-  threadId: ThreadIdType,
-  resumeCache?: ThreadResumeCache,
-) {
-  return followStreamInEnvironment(
-    environmentId,
-    Stream.unwrap(
-      makeEnvironmentThreadState(threadId, resumeCache).pipe(Effect.map(SubscriptionRef.changes)),
-    ),
-  );
-}
-
-export function createEnvironmentThreadStateAtoms<R, E>(
-  runtime: Atom.AtomRuntime<
-    EnvironmentRegistry | EnvironmentCacheStore | ThreadSnapshotLoader | R,
-    E
-  >,
-) {
-  // Cache definitions must outlive collectible live-atom definitions. The
-  // registry retains these nodes without retaining environment or RPC scopes.
-  const resumeFamily = Atom.family((key: string) =>
-    Atom.make((): ThreadResumeCache => ({
-      snapshot: undefined,
-      owner: undefined,
-    })).pipe(
-      Atom.setIdleTTL(THREAD_SNAPSHOT_IDLE_TTL_MS),
-      Atom.withLabel(`environment-thread-resume:${key}`),
-    ),
-  );
-  const family = Atom.family((key: string) => {
-    const { environmentId, threadId } = parseThreadKey(key);
-    const resumeAtom = resumeFamily(key);
-    return runtime
-      .atom(
-        (get) => {
-          get.mount(resumeAtom);
-          const resume = get.once(resumeAtom);
-          const live = threadStateChanges(environmentId, threadId, resume);
-          return resume.snapshot === undefined
-            ? live
-            : Stream.concat(Stream.succeed(cachedThreadState(resume.snapshot.state)), live);
-        },
-        {
-          initialValue: EMPTY_ENVIRONMENT_THREAD_STATE,
-        },
-      )
-      .pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-state:${key}`));
-  });
-
-  return {
-    stateAtom: (environmentId: EnvironmentIdType, threadId: ThreadIdType) =>
-      family(threadKey({ environmentId, threadId })),
-  };
-}
-
-export * from "./archivedThreads.ts";
-export * from "./checkpointDiff.ts";
-export * from "./threadHistoryController.ts";
-export * from "./threadHistoryMerge.ts";
-export * from "./threadSnapshotHttp.ts";
-export * from "./composerPathSearch.ts";
-export * from "./threadCommands.ts";
-export * from "./threadFeedback.ts";
-export * from "./threadDetail.ts";
-export * from "./threadShell.ts";
-export * from "./threadState.ts";
+export {
+  ThreadHistoryController,
+  threadHistoryControllerLayer,
+} from "./threadHistoryController.ts";
+export type { ThreadHistoryMeta } from "./threadHistoryMerge.ts";
+export { ThreadSnapshotLoader } from "./threadSnapshot.ts";
+export type { EnvironmentThreadState } from "./threadState.ts";

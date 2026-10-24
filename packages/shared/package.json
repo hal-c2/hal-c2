@@ -15,10 +15,6 @@
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"
     },
-    "./agentAwareness": {
-      "types": "./src/agentAwareness.ts",
-      "import": "./src/agentAwareness.ts"
-    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"
@@ -34,10 +30,6 @@
     "./semver": {
       "types": "./src/semver.ts",
       "import": "./src/semver.ts"
-    },
-    "./schemaYaml": {
-      "types": "./src/schemaYaml.ts",
-      "import": "./src/schemaYaml.ts"
     },
     "./serverSettings": {
       "types": "./src/serverSettings.ts",
@@ -63,22 +55,6 @@
       "types": "./src/remote.ts",
       "import": "./src/remote.ts"
     },
-    "./relaySigning": {
-      "types": "./src/relaySigning.ts",
-      "import": "./src/relaySigning.ts"
-    },
-    "./dpop": {
-      "types": "./src/dpop.ts",
-      "import": "./src/dpop.ts"
-    },
-    "./relayUrl": {
-      "types": "./src/relayUrl.ts",
-      "import": "./src/relayUrl.ts"
-    },
-    "./relayJwt": {
-      "types": "./src/relayJwt.ts",
-      "import": "./src/relayJwt.ts"
-    },
     "./oauthScope": {
       "types": "./src/oauthScope.ts",
       "import": "./src/oauthScope.ts"
@@ -95,10 +71,6 @@
       "types": "./src/threadPullRequests.ts",
       "import": "./src/threadPullRequests.ts"
     },
-    "./assistantCitations": {
-      "types": "./src/assistantCitations.ts",
-      "import": "./src/assistantCitations.ts"
-    },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"
@@ -106,10 +78,6 @@
     "./terminalLinks": {
       "types": "./src/terminalLinks.ts",
       "import": "./src/terminalLinks.ts"
-    },
-    "./relayTracing": {
-      "types": "./src/relayTracing.ts",
-      "import": "./src/relayTracing.ts"
     },
     "./preview": {
       "types": "./src/preview.ts",
@@ -154,11 +122,7 @@
   },
   "dependencies": {
     "@hal-c2/contracts": "workspace:*",
-    "@noble/curves": "catalog:",
-    "@noble/hashes": "catalog:",
-    "effect": "catalog:",
-    "jose": "catalog:",
-    "yaml": "catalog:"
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

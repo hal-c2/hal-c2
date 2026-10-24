@@ -83,7 +83,7 @@ started from then on; your own Device panel is unaffected.
 ## Remote connections
 
 The device stream goes through the environment server, so it works over the
-local network, Tailscale, and HAL-C2 Connect. Live video needs a secure connection
+local network and Tailscale. Live video needs a secure connection
 (HTTPS or localhost); on a plain-HTTP remote origin iOS falls back to a slower
 still-image stream and Android cannot show video.
 

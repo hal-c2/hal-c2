@@ -14,7 +14,7 @@
 #   apps/tui/src/components/ThreadTerminalDrawer.tsx (snapshot replay, 128 KiB tail)
 #   apps/tui/src/connection.ts (subscribeTerminal, subscribeTerminalMetadata)
 #   apps/web/src/components/TerminalEventSync.tsx
-#   Cross-domain: connections/ owns relay and tunnel transport; mc/ owns cluster routing.
+#   Cross-domain: connections/ owns remote transport; mc/ owns cluster routing.
 
 Feature: Reattaching to terminals
   A terminal outlives the client that opened it. Any client, on any device, can attach later
