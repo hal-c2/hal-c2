@@ -585,6 +585,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   # Background work stops with the agent process either way (released when idle, or
   # stopped with its thread); when the MC itself stops, its next boot ends what is
   # left (`HalC2.Orchestration.Recovery`).
+  # Ending the turn writes to the thread, which may be what failed (a store that timed
+  # out): a crash here would replace the reason in the crash report, so it is left to
+  # `HalC2.Orchestration.TurnWatch` to end the turn instead.
   @impl true
   def terminate(reason, %{turn: turn} = state) when turn != nil do
     unless reason in [:normal, :shutdown] or match?({:shutdown, _}, reason) do
@@ -595,6 +598,8 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
 
     :ok
+  catch
+    _, _ -> :ok
   end
 
   def terminate(_reason, state) do
