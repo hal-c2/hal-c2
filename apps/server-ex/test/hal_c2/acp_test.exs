@@ -3,6 +3,41 @@ defmodule HalC2.AcpTest do
 
   @moduletag :tmp_dir
 
+  test "Kimi's session model list preserves choices and the current model" do
+    session = %{
+      "models" => %{
+        "currentModelId" => "kimi-code/k3,thinking",
+        "availableModels" => [
+          %{"modelId" => "kimi-code/k3", "name" => "K3"},
+          %{"modelId" => "kimi-code/k3,thinking", "name" => "K3 (thinking)"}
+        ]
+      }
+    }
+
+    assert [
+             %{"slug" => "kimi-code/k3", "name" => "K3", "isDefault" => false},
+             %{"slug" => "kimi-code/k3,thinking", "name" => "K3 (thinking)", "isDefault" => true}
+           ] = HalC2.Acp.session_models(session)
+  end
+
+  test "a model config option takes precedence over the older model list" do
+    session = %{
+      "configOptions" => [
+        %{
+          "id" => "model",
+          "currentValue" => "new",
+          "options" => [%{"value" => "new", "name" => "New"}]
+        }
+      ],
+      "models" => %{
+        "currentModelId" => "old",
+        "availableModels" => [%{"modelId" => "old", "name" => "Old"}]
+      }
+    }
+
+    assert [%{"slug" => "new", "isDefault" => true}] = HalC2.Acp.session_models(session)
+  end
+
   setup %{tmp_dir: dir} do
     Application.put_env(:hal_c2, :home, dir)
     start_supervised!(HalC2.Settings)

@@ -37,7 +37,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
   alias HalC2.Acp.OpenCode
 
-  @state_version 11
+  @state_version 12
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -154,7 +154,8 @@ defmodule HalC2.Acp.ThreadRuntime do
        capabilities: %{},
        session_id: nil,
        model: nil,
-       # The models the session's `model` option lists.
+       model_method: "session/set_config_option",
+       # The models the session advertises, through configOptions or models.
        options: [],
        turn: nil,
        # The run the latest turn ran as, also one that failed to start: the run a
@@ -638,7 +639,11 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp migrate(%{v: 9} = state),
     do: state |> Map.merge(%{v: 10, prompts: :gen_server.reqids_new(), answer: nil}) |> migrate()
 
-  defp migrate(%{v: 10} = state), do: Map.merge(state, %{v: 11, last_run: nil})
+  defp migrate(%{v: 10} = state),
+    do: state |> Map.merge(%{v: 11, last_run: nil}) |> migrate()
+
+  defp migrate(%{v: 11} = state),
+    do: Map.merge(state, %{v: 12, model_method: "session/set_config_option"})
 
   # --- session -------------------------------------------------------------------
 
@@ -791,7 +796,7 @@ defmodule HalC2.Acp.ThreadRuntime do
     cond do
       is_map(get_in(caps, ["sessionCapabilities", "resume"])) ->
         case Connection.call(state.conn, "session/resume", params, 60_000) do
-          {:ok, result} -> {:ok, native, remember_model(state, result)}
+          {:ok, result} -> {:ok, native, opened(state, result)}
           {:error, _} -> new_session(state, turn)
         end
 
@@ -801,7 +806,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         state = %{state | replaying: false}
 
         case result do
-          {:ok, result} -> {:ok, native, remember_model(state, result || %{})}
+          {:ok, result} -> {:ok, native, opened(state, result || %{})}
           {:error, _} -> new_session(state, turn)
         end
 
@@ -819,7 +824,7 @@ defmodule HalC2.Acp.ThreadRuntime do
            %{"cwd" => turn.cwd, "mcpServers" => mcp_servers(state, turn)},
            60_000
          ) do
-      {:ok, %{"sessionId" => id} = result} -> {:ok, id, remember_model(state, result)}
+      {:ok, %{"sessionId" => id} = result} -> {:ok, id, opened(state, result)}
       {:ok, other} -> {:error, {:unexpected, other}, state}
       {:error, reason} -> {:error, reason, state}
     end
@@ -843,6 +848,14 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  # A session that opens without saying its model gets the turn's model set again.
+  defp opened(state, result) do
+    named? =
+      Enum.any?(result["configOptions"] || [], &(&1["id"] == "model")) or is_map(result["models"])
+
+    remember_model(if(named?, do: state, else: %{state | model: nil}), result)
+  end
+
   defp remember_model(state, result) do
     state =
       case HalC2.Acp.session_models(result) do
@@ -853,8 +866,17 @@ defmodule HalC2.Acp.ThreadRuntime do
     state = remember_config(state, result)
 
     case Enum.find(result["configOptions"] || [], &(&1["id"] == "model")) do
-      %{"currentValue" => model} -> %{state | model: model}
-      _ -> state
+      %{"currentValue" => model} ->
+        %{state | model: model, model_method: "session/set_config_option"}
+
+      _ ->
+        case result["models"] do
+          %{} = models ->
+            %{state | model: models["currentModelId"], model_method: "session/set_model"}
+
+          _ ->
+            state
+        end
     end
   end
 
@@ -1060,13 +1082,20 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp set_model_now(state, model)
        when is_binary(model) and model != "" and model != state.model do
-    case Connection.call(state.conn, "session/set_config_option", %{
-           "sessionId" => state.session_id,
-           "configId" => "model",
-           "value" => model
-         }) do
+    case select_model(state, state.model_method, model) do
       {:ok, result} ->
         remember_config(%{state | model: model}, result || %{})
+
+      # A resumed session may not say which method its agent switches models with.
+      {:error, _} when state.model_method == "session/set_config_option" ->
+        case select_model(state, "session/set_model", model) do
+          {:ok, _} ->
+            %{state | model: model, model_method: "session/set_model"}
+
+          {:error, reason} ->
+            Logger.warning("could not select #{model}: #{inspect(reason)}")
+            state
+        end
 
       {:error, reason} ->
         Logger.warning("could not select #{model}: #{inspect(reason)}")
@@ -1075,6 +1104,18 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp set_model_now(state, _model), do: state
+
+  defp select_model(state, "session/set_model", model),
+    do:
+      Connection.call(state.conn, "session/set_model", %{
+        "sessionId" => state.session_id,
+        "modelId" => model
+      })
+
+  defp select_model(state, method, model) do
+    params = %{"sessionId" => state.session_id, "configId" => "model", "value" => model}
+    Connection.call(state.conn, method, params)
+  end
 
   defp record_session(state, session_id) do
     ids = state.turn.ids
