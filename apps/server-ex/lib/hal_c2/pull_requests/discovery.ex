@@ -247,23 +247,32 @@ defmodule HalC2.PullRequests.Discovery do
   defp open?(_found), do: false
 
   # `{:head, sha}` of the thread's own worktree when its branch shows no open pull
-  # request and the worktree has a commit of its own, else nil. Threads in the project
-  # folder share its checkout, so its commit says nothing about them; nor does the
-  # commit a worktree started from, which is another branch's (a stacked worktree's
-  # parent pull request). The oldest entry of HEAD's reflog is where it started.
+  # request and HEAD is a commit made in that worktree, else nil. Threads in the project
+  # folder share its checkout, so its commit says nothing about them; nor does a commit
+  # the worktree only moved onto (where it started, a fast-forward, a reset), which is
+  # someone else's, such as a stacked worktree's parent pull request. HEAD's reflog
+  # tells them apart: a commit made here has an entry that created it.
   defp head(%{group: [%{"worktreePath" => worktree} | _], detected: {:ok, found}} = p)
        when is_binary(worktree) do
     with false <- open?(found),
          true <- p.cwd == worktree and worktree != p.project["workspaceRoot"],
          %{kind: "github"} <- p.remote,
-         {:ok, log} <- HalC2.Git.ok(worktree, ~w(reflog show --format=%H HEAD --)),
-         [sha | _] = moves <- String.split(log, "\n", trim: true),
-         true <- List.last(moves) != sha,
+         {:ok, log} <- HalC2.Git.ok(worktree, ["reflog", "show", "--format=%H %gs", "HEAD", "--"]),
+         [<<sha::binary-size(40), _::binary>> | _] = moves <- String.split(log, "\n", trim: true),
+         true <- Enum.any?(moves, &made?(&1, sha)),
          do: {:head, sha},
          else: (_ -> nil)
   end
 
   defp head(_p), do: nil
+
+  # A reflog entry that created commit `sha`: a commit, a cherry-pick or revert, a
+  # rebase replaying it, or a merge that made a merge commit.
+  @made ~r/^(?:commit|cherry-pick|revert)\b|\((?:pick|reword|edit|squash|fixup|continue)\):|: Merge made by /
+  defp made?(<<sha::binary-size(40), " ", subject::binary>>, sha),
+    do: Regex.match?(@made, subject)
+
+  defp made?(_entry, _sha), do: false
 
   # Links the open pull requests headed by the worktree's commit to each thread in it.
   defp link_heads(state, %{head: {:head, _} = head} = p) do

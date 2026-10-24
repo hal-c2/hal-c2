@@ -357,6 +357,14 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     head_answer(context, number, head_branch)
   end
 
+  step "it fast-forwarded to a newer commit that heads the open pull request {int} from the branch {string}",
+       %{args: [number, head_branch]} = context do
+    path = context.worktree.path
+    newer = World.git!(path, ["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "Parent work"])
+    World.git!(path, ~w(merge --ff-only #{newer}))
+    head_answer(context, number, head_branch)
+  end
+
   step "the thread's pull requests are looked for", context do
     context = discovery(context)
     :ok = HalC2.PullRequests.Discovery.sweep()

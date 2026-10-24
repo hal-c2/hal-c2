@@ -400,6 +400,15 @@ Feature: Threads that work on or link pull requests
     When the thread's pull requests are looked for
     Then "Tax work" links no pull request and its commit is not asked about
 
+  # Catching up with the parent (a fast-forward, a reset, a rebase with nothing to replay)
+  # moves the worktree onto a commit someone else made.
+  @mc
+  Scenario: A worktree that only caught up with its parent does not take the parent's pull request
+    Given "Tax work" works in a worktree of its own on the branch "feature/tax"
+    And it fast-forwarded to a newer commit that heads the open pull request 45 from the branch "feature/base"
+    When the thread's pull requests are looked for
+    Then "Tax work" links no pull request and its commit is not asked about
+
   @mc
   Scenario: The branch's pull request is discovered on its own
     Given "Tax work" is on the branch "feature/tax" with no linked pull request
