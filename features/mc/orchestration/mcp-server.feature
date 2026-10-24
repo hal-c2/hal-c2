@@ -99,6 +99,29 @@ Feature: The HAL-C2 MCP server agents receive
     And it carries code "thread_not_found" with a message
 
   @mc
+  Scenario: The capabilities an agent is told are small enough to read
+    Given provider "codex" offers 600 models, each with its own option descriptors
+    When the agent of "caller" asks for the orchestrator capabilities
+    Then each provider lists at most 25 models, each with an id and a label
+    And "codex" reports 600 models in all and that its list is cut short
+    And no listed model carries option descriptors
+    And the answer is under 20000 characters, where with every option descriptor it is over 100000
+
+  @mc
+  Scenario Outline: The capabilities can be narrowed to what the agent is choosing between
+    Given provider "codex" offers 600 models, each with its own option descriptors
+    When the agent of "caller" asks for the orchestrator capabilities with <arguments>
+    Then <result>
+
+    Examples:
+      | arguments                                    | result                                                           |
+      | providerInstanceId "codex"                   | "codex" is the only provider and lists all 600 models            |
+      | model "bulk-model-7"                         | only "bulk-model-7" is listed, with its option descriptors       |
+      | query "MODEL 12"                             | the listed models are those whose id or label contains the text  |
+      | providerInstanceId "codex" and includeOptions | every listed model carries its option descriptors                |
+      | providerInstanceId "nowhere"                 | it fails with code "invalid_request"                             |
+
+  @mc
   Scenario: A tool the MC does not implement is refused by name
     When the agent of "caller" calls a tool "hal_c2_teleport"
     Then it fails with code "capability_denied" and "hal_c2_teleport is not available on this MC."

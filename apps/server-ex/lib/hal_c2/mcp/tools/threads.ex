@@ -8,6 +8,7 @@ defmodule HalC2.Mcp.Tools.Threads do
 
   # Threads one create_threads call may hold.
   @max_batch_threads 20
+  @capability_models 25
 
   import HalC2.Mcp.Tools,
     only: [
@@ -330,47 +331,45 @@ defmodule HalC2.Mcp.Tools.Threads do
     end
   end
 
-  def run("orchestrator_capabilities", _args, %{row: me}) do
+  # Compact by default: an agent cannot read the full option tree of hundreds of models.
+  def run("orchestrator_capabilities", args, %{row: me}) do
     parent = thread(me["id"]) || me
+    only = args["providerInstanceId"]
+    providers = HalC2.Environment.providers()
 
-    {:ok,
-     %{
-       "parentThreadId" => me["id"],
-       "inheritedProviderInstanceId" => get_in(parent, ["modelSelection", "instanceId"]),
-       "inheritedModel" => get_in(parent, ["modelSelection", "model"]),
-       "runtimeMode" => parent["runtimeMode"],
-       "interactionMode" => parent["interactionMode"],
-       "providers" =>
-         for provider <- HalC2.Environment.providers() do
-           constraints = constraints(provider)
+    if is_binary(only) and not Enum.any?(providers, &(&1["instanceId"] == only)) do
+      {:error, "invalid_request", "Unknown providerInstanceId #{only}."}
+    else
+      narrowed? = is_binary(args["model"]) or is_binary(args["query"])
+      options? = args["includeOptions"] == true or is_binary(args["model"])
 
-           %{
-             "providerInstanceId" => provider["instanceId"],
-             "driverKind" => provider["driver"],
-             "displayName" => provider["displayName"],
-             "models" =>
-               for model <- provider["models"] || [] do
-                 options = get_in(model, ["capabilities", "optionDescriptors"])
+      listed =
+        for provider <- providers,
+            only in [nil, provider["instanceId"]],
+            entry = capabilities_provider(provider, args, options?, is_binary(only)),
+            not (narrowed? and entry["modelCount"] == 0),
+            do: entry
 
-                 %{"id" => model["slug"], "label" => model["name"]}
-                 |> then(&if(options, do: Map.put(&1, "options", options), else: &1))
-               end,
-             "canRunChildTask" => constraints == [],
-             "canRunCrossProviderChildTask" => constraints == [],
-             "constraints" => constraints
-           }
-         end,
-       "features" => %{
-         "appOwnedSubagents" => true,
-         "asyncPolling" => true,
-         "cancellation" => true,
-         "batchThreadCreation" => true,
-         "threadManagement" => true,
-         "incrementalThreadRead" => true,
-         "scheduledTasks" => true,
-         "maxBatchThreads" => @max_batch_threads
-       }
-     }}
+      {:ok,
+       %{
+         "parentThreadId" => me["id"],
+         "inheritedProviderInstanceId" => get_in(parent, ["modelSelection", "instanceId"]),
+         "inheritedModel" => get_in(parent, ["modelSelection", "model"]),
+         "runtimeMode" => parent["runtimeMode"],
+         "interactionMode" => parent["interactionMode"],
+         "providers" => listed,
+         "features" => %{
+           "appOwnedSubagents" => true,
+           "completionNotifications" => true,
+           "cancellation" => true,
+           "batchThreadCreation" => true,
+           "threadManagement" => true,
+           "incrementalThreadRead" => true,
+           "scheduledTasks" => true,
+           "maxBatchThreads" => @max_batch_threads
+         }
+       }}
+    end
   end
 
   # --- helpers ----------------------------------------------------------------------------
@@ -517,6 +516,48 @@ defmodule HalC2.Mcp.Tools.Threads do
   end
 
   # Why a provider cannot run a thread now; empty when it can.
+  defp capabilities_provider(provider, args, options?, all?) do
+    constraints = constraints(provider)
+    models = provider["models"] || []
+    query = args["query"] && String.downcase(args["query"])
+
+    matching =
+      Enum.filter(models, fn model ->
+        (args["model"] == nil or model["slug"] == args["model"]) and
+          (query == nil or
+             String.contains?(String.downcase(model["slug"] || ""), query) or
+             String.contains?(String.downcase(model["name"] || ""), query))
+      end)
+
+    listed =
+      cond do
+        all? or args["model"] ->
+          matching
+
+        true ->
+          matching |> Enum.sort_by(&(&1["isDefault"] != true)) |> Enum.take(@capability_models)
+      end
+
+    %{
+      "providerInstanceId" => provider["instanceId"],
+      "driverKind" => provider["driver"],
+      "displayName" => provider["displayName"],
+      "defaultModel" => Enum.find_value(models, &(&1["isDefault"] && &1["slug"])),
+      "modelCount" => length(matching),
+      "modelsTruncated" => length(listed) < length(matching),
+      "models" =>
+        for model <- listed do
+          options = get_in(model, ["capabilities", "optionDescriptors"])
+
+          %{"id" => model["slug"], "label" => model["name"]}
+          |> then(&if(options? and options, do: Map.put(&1, "options", options), else: &1))
+        end,
+      "canRunChildTask" => constraints == [],
+      "canRunCrossProviderChildTask" => constraints == [],
+      "constraints" => constraints
+    }
+  end
+
   defp constraints(provider) do
     [
       provider["enabled"] == false && "Provider instance is disabled.",
