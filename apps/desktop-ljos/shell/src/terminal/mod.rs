@@ -13,9 +13,10 @@
 //! Cargo would have to build and link, and its grid is read through an FFI
 //! that hands out pointers; `vt100` is plain Rust with the grid, scrollback,
 //! alternate screen, mouse and bracketed-paste modes the item needs, and
-//! it builds with the rest. What it lacks that Ghostty has: the kitty
-//! keyboard protocol and graphics, reflow of wrapped lines on resize, a
-//! mode report for DECRQM, and grapheme-accurate widths for every emoji.
+//! it builds with the rest. What it lacks that Ghostty has: kitty graphics,
+//! most of the kitty keyboard protocol ([`keys`] says what it speaks),
+//! reflow of wrapped lines on resize, a mode report for DECRQM, and
+//! grapheme-accurate widths for every emoji.
 //!
 //! The item draws its cells as filled rectangles and glyph runs in its own
 //! display list ([`paint`]), with no animation: the cursor does not blink.
@@ -548,8 +549,9 @@ fn key_press(e: &Engine, me: ObjectId, ev: &KeyEvent) -> bool {
         scroll(e, me, if ev.key == key::PAGE_UP { -page } else { page });
         return true;
     }
-    let app = vt_mut(e, me, |vt| vt.application_cursor()).unwrap_or(false);
-    match encode_key(ev.key, ev.modifiers, &ev.text, app) {
+    let (app, kitty) =
+        vt_mut(e, me, |vt| (vt.application_cursor(), vt.kitty_keyboard())).unwrap_or((false, 0));
+    match encode_key(ev.key, ev.modifiers, &ev.text, app, kitty) {
         Some(bytes) => {
             send(e, me, &bytes, true);
             true
