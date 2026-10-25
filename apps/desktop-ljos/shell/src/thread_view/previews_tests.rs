@@ -534,12 +534,15 @@ fn forward_port_of(port: u16) -> u16 {
     port + 10000
 }
 
-/// A link the user opened for a thread, not yet in the browser; `away` once
-/// the connected MC was not on this machine meanwhile.
+/// A link the user opened for a thread, not yet in the browser. One that
+/// `forwards` was a loopback address of a thread on another MC while the
+/// connected MC was here: it waits on the MC, and opens as it is only if the
+/// connected MC is no longer here once the last answer comes. Any other
+/// opens as it is at once.
 struct Link {
     thread: String,
     url: String,
-    away: bool,
+    forwards: bool,
 }
 
 const THREADS: &[&str] = &["t1", "t2"];
@@ -712,21 +715,19 @@ impl Sim {
         })
     }
 
-    /// The browser opens `url`: a waiting link it is, as it is or through a
-    /// forward granted for its thread at its port, at 127.0.0.1 for an
-    /// address by number. A link `away` may open either way, so it is taken
-    /// only when no other fits: otherwise a link of a thread on the
-    /// connected MC, opened as it is, would take another thread's away link,
-    /// whose forward then fits none.
+    /// The browser opens `url`: a waiting link it is. One that does not
+    /// forward opens as it is; one that does, through a forward granted for
+    /// its thread at its port (at 127.0.0.1 for an address by number), or as
+    /// it is when the connected MC is not here now, as the controller asks
+    /// again on the answer that opens it. A link opened at once is taken
+    /// first, so a waiting one is not taken for it.
     fn browsed(&mut self, url: &str) {
         let fits = |link: &Link| {
-            let remote = environment_of(&link.thread) != ENVIRONMENT;
-            let parsed = url::Url::parse(&link.url).ok();
-            let loopback = parsed.as_ref().is_some_and(sim_loopback);
-            if url == link.url && (!loopback || !remote || link.away) {
+            if url == link.url && (!link.forwards || !self.here) {
                 return true;
             }
-            let Some(mut forwarded) = parsed.filter(|_| remote && loopback) else {
+            let Some(mut forwarded) = url::Url::parse(&link.url).ok().filter(|_| link.forwards)
+            else {
                 return false;
             };
             let port = sim_port_of(&forwarded);
@@ -741,7 +742,10 @@ impl Sim {
                     .iter()
                     .any(|(thread, at)| *thread == link.thread && *at == port)
         };
-        let settled = self.links.iter().position(|link| !link.away && fits(link));
+        let settled = self
+            .links
+            .iter()
+            .position(|link| !link.forwards && fits(link));
         match settled.or_else(|| self.links.iter().position(fits)) {
             Some(at) => {
                 self.links.remove(at);
@@ -898,10 +902,12 @@ fn step(sim: &mut Sim, action: &Action) -> Result<(), TestCaseError> {
         Action::UserNewTab => sim.previews.new_tab(),
         Action::OpenLink(url) => {
             if !sim.thread.is_empty() {
+                let remote = environment_of(&sim.thread) != ENVIRONMENT;
+                let loopback = url::Url::parse(url).is_ok_and(|at| sim_loopback(&at));
                 sim.links.push(Link {
                     thread: sim.thread.clone(),
                     url: (*url).to_owned(),
-                    away: !sim.here,
+                    forwards: remote && loopback && sim.here,
                 });
                 sim.previews.open_address(url);
             }
@@ -909,11 +915,6 @@ fn step(sim: &mut Sim, action: &Action) -> Result<(), TestCaseError> {
         Action::SetHere(here) => {
             sim.here = *here;
             sim.previews.set_connection(ENVIRONMENT, *here);
-            if !here {
-                for link in &mut sim.links {
-                    link.away = true;
-                }
-            }
         }
         Action::Answer(at, ok, fresh) => {
             if !sim.held.is_empty() {
@@ -1039,6 +1040,10 @@ fn step(sim: &mut Sim, action: &Action) -> Result<(), TestCaseError> {
     prop_assert_eq!(sim.previews.count(), now.len());
     prop_assert!(sim.misrouted.is_empty(), "misrouted {:?}", sim.misrouted);
     prop_assert!(sim.stray.is_empty(), "opened for no link {:?}", sim.stray);
+    prop_assert!(
+        sim.links.iter().all(|link| link.forwards),
+        "a link that does not forward did not open at once"
+    );
     // Once nothing is held, every link opened or said why not.
     if sim.held.is_empty() {
         prop_assert_eq!(sim.links.len(), sim.link_errors);
@@ -1076,6 +1081,30 @@ fn a_link_for_a_thread_left_behind_opens_through_its_forward() {
         Action::SetHere(false),
         Action::SetHere(true),
         Action::OpenLink(link),
+        Action::AnswerAll,
+    ] {
+        step(&mut sim, &action).unwrap();
+    }
+    assert_eq!(sim.granted, vec![("t2".to_owned(), 5173)]);
+}
+
+/// A link asked for a thread on another MC while the connected MC was here
+/// waits on the MC; one opened for a thread on the connected MC opens as it
+/// is at once, even at the same address. The waiting one is decided when its
+/// answer comes, by where the connected MC is then: here again, so through
+/// the forward.
+#[test]
+fn a_link_opened_at_once_does_not_take_one_waiting_on_the_mc() {
+    let link = "http://127.0.0.1:5173/app?q=1#top";
+    let mut sim = Sim::new();
+    for action in [
+        Action::SetThread("t2"),
+        Action::OpenLink(link),
+        Action::SetHere(false),
+        Action::SetThread("t1"),
+        Action::OpenLink(link),
+        Action::SetThread("t1"),
+        Action::SetHere(true),
         Action::AnswerAll,
     ] {
         step(&mut sim, &action).unwrap();
