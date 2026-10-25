@@ -2,7 +2,9 @@
 #   docs/user/composer.md (prompt recall, prompt stash)
 #   docs/internals/composer-editors.md
 #   apps/desktop-qt/qml/HalC2/Bricks/ComposerVimKeys.qml
-#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (editor actions, text insertion)
+#   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (editor actions, text insertion, paste keys)
+#   apps/desktop-qt/qml/HalC2/Bricks/TextEditMenu.qml (the draft's right-click menu)
+#   apps/desktop-qt/tests/tst_TextEditMenu.qml
 #   apps/desktop-qt/src/native/ComposerController.cpp (stash)
 #   apps/desktop-qt/tests/tst_ComposerExtensions.qml
 #   apps/desktop-qt/tests/tst_ComposerActions.qml
@@ -78,6 +80,46 @@ Feature: Editing the draft
     Given the user is writing in thread B
     When text meant for thread A arrives late
     Then thread B's draft is unchanged
+
+  @desktop
+  Scenario Outline: Copied text is pasted where the draft is selected
+    Given the draft reads "fix the old totals" with "old" selected
+    And the user copied "cart"
+    When the user presses <keys> in the composer
+    Then the draft reads "fix the cart totals"
+
+    Examples:
+      | keys         |
+      | mod+v        |
+      | shift+insert |
+
+  # The usual text menu, with the composer's paste. Touch devices have their
+  # own edit menu, so the menu is for the mouse and the keyboard.
+  @desktop
+  Scenario Outline: The draft's right-click menu cuts, copies and pastes
+    Given the draft reads "fix the old totals" with "old" selected
+    And the user copied "cart"
+    When the user chooses "<item>" from the draft's right-click menu
+    Then the draft reads "<draft>"
+    And the clipboard holds "<clipboard>"
+
+    Examples:
+      | item  | draft               | clipboard |
+      | Cut   | fix the  totals     | old       |
+      | Copy  | fix the old totals  | old       |
+      | Paste | fix the cart totals | cart      |
+
+  @desktop
+  Scenario: Select All in the draft's right-click menu selects the whole draft
+    Given the draft reads "fix the old totals" with "old" selected
+    When the user chooses "Select All" from the draft's right-click menu
+    Then "fix the old totals" is selected in the composer
+
+  @desktop
+  Scenario: The Menu key opens the draft's right-click menu
+    Given the draft reads "fix the old totals" with "old" selected
+    When the user presses Menu in the composer
+    Then the draft's right-click menu is open
 
   @tui
   Scenario: The draft can be written in the user's own editor

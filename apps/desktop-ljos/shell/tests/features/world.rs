@@ -92,8 +92,21 @@ pub struct BrickAction {
 struct Recorded {
     brick_actions: RefCell<Vec<BrickAction>>,
     clipboard: RefCell<String>,
+    /// What a copy put on the clipboard beside its text, as a screenshot
+    /// tool or a file manager copies.
+    clipboard_image: RefCell<Option<ClipboardImage>>,
+    clipboard_files: RefCell<Vec<PathBuf>>,
     clipboard_fails: Cell<bool>,
     opened_urls: RefCell<Vec<String>>,
+}
+
+impl Recorded {
+    /// A copy replaces all the clipboard held.
+    fn copy(&self, text: &str, image: Option<ClipboardImage>, files: Vec<PathBuf>) {
+        *self.clipboard.borrow_mut() = text.to_owned();
+        *self.clipboard_image.borrow_mut() = image;
+        *self.clipboard_files.borrow_mut() = files;
+    }
 }
 
 struct Urls(Rc<Recorded>);
@@ -401,7 +414,13 @@ impl World {
     }
 
     pub fn set_clipboard(&self, text: &str) {
-        *self.recorded.clipboard.borrow_mut() = text.to_owned();
+        self.recorded.copy(text, None, Vec::new());
+    }
+
+    /// Puts what one copy does on the clipboard: `files` as a file manager
+    /// copies them, with `text` beside them.
+    pub fn copy_files(&self, files: Vec<PathBuf>, text: &str) {
+        self.recorded.copy(text, None, files);
     }
 
     /// From here on the clipboard refuses what it is given.
@@ -932,7 +951,7 @@ impl ClipboardService for RecordedClipboard {
         if self.0.clipboard_fails.get() {
             return Err(ClipboardError::Denied);
         }
-        *self.0.clipboard.borrow_mut() = text.to_owned();
+        self.0.copy(text, None, Vec::new());
         Ok(())
     }
 
@@ -945,16 +964,26 @@ impl ClipboardService for RecordedClipboard {
     }
 
     fn image(&self) -> Option<ClipboardImage> {
-        None
+        self.0.clipboard_image.borrow().clone()
     }
 
-    fn set_image(&self, _: ClipboardImage) -> Result<(), ClipboardError> {
-        Err(ClipboardError::Unavailable)
+    fn set_image(&self, image: ClipboardImage) -> Result<(), ClipboardError> {
+        self.0.copy("", Some(image), Vec::new());
+        Ok(())
+    }
+
+    fn files(&self) -> Vec<PathBuf> {
+        self.0.clipboard_files.borrow().clone()
+    }
+
+    fn set_files(&self, files: &[PathBuf]) -> Result<(), ClipboardError> {
+        self.0.copy("", None, files.to_vec());
+        Ok(())
     }
 
     fn clear(&self, mode: ClipboardMode) -> Result<(), ClipboardError> {
         if mode == ClipboardMode::Clipboard {
-            self.0.clipboard.borrow_mut().clear();
+            self.0.copy("", None, Vec::new());
         }
         Ok(())
     }

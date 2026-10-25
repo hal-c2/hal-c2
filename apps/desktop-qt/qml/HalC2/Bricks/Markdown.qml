@@ -131,6 +131,27 @@ Item {
             cited(selector);
     }
 
+    // Copy and Select All for `edit`'s text, at `position` in it. Made when
+    // it opens: a menu for every reply would cost a long thread more than
+    // its text.
+    function openTextMenu(edit, position) {
+        const menu = textMenu.createObject(root, {
+            editor: edit
+        });
+        menu.openAt(position.x, position.y);
+    }
+
+    Component {
+        id: textMenu
+
+        TextEditMenu {
+            id: menu
+
+            objectName: "textMenu"
+            onClosed: menu.destroy()
+        }
+    }
+
     // Puts plain text on the clipboard.
     function copyText(value) {
         clipboard.text = value;
@@ -288,19 +309,24 @@ Item {
             acceptedDevices: PointerDevice.TouchScreen
             onTapped: eventPoint => richText.follow(eventPoint)
         }
-        // The secondary button on a link offers what can be done with it
-        // (a finger has no buttons, and would count as it).
+        // The secondary button on a link offers what can be done with it,
+        // and elsewhere copying the text (a finger has no buttons, and
+        // would count as it).
         TapHandler {
             acceptedButtons: Qt.RightButton
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-            onTapped: eventPoint => {
-                const link = parent.linkAt(eventPoint.position.x, eventPoint.position.y);
+            // The handler's point, not the signal's: TODO(ljos#111) Ljós
+            // passes a bare point until the pin moves past the fix.
+            onTapped: {
+                const link = parent.linkAt(point.position.x, point.position.y);
                 if (link.length > 0) {
                     Shell.dispatch("link.menu", {
                         url: link,
-                        x: eventPoint.scenePosition.x,
-                        y: eventPoint.scenePosition.y
+                        x: point.scenePosition.x,
+                        y: point.scenePosition.y
                     });
+                } else {
+                    root.openTextMenu(richText, point.position);
                 }
             }
         }
@@ -555,6 +581,12 @@ Item {
                                 color: Theme.palette.color("codeForeground", "#f5f5f5")
                                 font.family: root.monoFamily
                                 font.pixelSize: root.codeSize
+
+                                TapHandler {
+                                    acceptedButtons: Qt.RightButton
+                                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                    onTapped: root.openTextMenu(codeText, point.position)
+                                }
                             }
                         }
                     }
