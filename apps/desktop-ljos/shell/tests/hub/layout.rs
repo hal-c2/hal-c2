@@ -174,3 +174,60 @@ fn another_windows_zoom_is_followed_but_not_its_sidebar() {
     settings.write_device(&hub.engine, "zoomLevel", Json::Null);
     assert_eq!(layout(&hub)["zoom"], zoom(0.0));
 }
+
+/// The real ShellWindow, which tells the layout the room it has.
+fn shell_window(hub: &Hub) -> ljos::prelude::ObjectId {
+    let dir = tempfile::tempdir().expect("a directory for the probe");
+    std::fs::write(
+        dir.path().join("WindowProbe.qml"),
+        "import HalC2.Bricks\nShellWindow {}\n",
+    )
+    .expect("the probe");
+    let mut dirs = hal_c2_shell::qml::Roots::checkout()
+        .dirs()
+        .expect("the roots are there");
+    dirs.push(dir.path().to_path_buf());
+    let snapshot = ljos::engine();
+    hal_c2_shell::register(&snapshot);
+    let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+    let compiled = ljos::dev::compile_quiet(&paths, Some(&snapshot)).expect("the bricks compile");
+    hub.show(compiled.source, "WindowProbe").0
+}
+
+fn resize(hub: &Hub, window: ljos::prelude::ObjectId, width: i32) {
+    hub.engine
+        .write_by_name(
+            window,
+            "width",
+            ljos::prelude::Value::from(f64::from(width)),
+        )
+        .expect("the window's width");
+    hub.advance(0);
+}
+
+#[test]
+fn the_sidebar_follows_the_window_as_it_is_resized_and_zoomed() {
+    let hub = with_config(&config_dir("window"));
+    let window = shell_window(&hub);
+    hub.advance(0);
+    let overlay = |hub: &Hub| layout(hub)["sidebarOverlay"] == json!(true);
+    assert!(!overlay(&hub), "{}", layout(&hub));
+
+    // Made as small as it goes, and back.
+    resize(&hub, window, 640);
+    assert!(overlay(&hub), "{}", layout(&hub));
+    resize(&hub, window, 1280);
+    assert!(!overlay(&hub), "{}", layout(&hub));
+
+    // Room beside the thread until a zoom takes it.
+    let narrow = SIDEBAR_MIN_WIDTH + CONTENT_MIN_WIDTH + 40;
+    resize(&hub, window, narrow);
+    assert!(!overlay(&hub), "{}", layout(&hub));
+    run(&hub, "view.zoomIn");
+    run(&hub, "view.zoomIn");
+    hub.advance(0);
+    assert!(overlay(&hub), "{}", layout(&hub));
+    run(&hub, "view.resetZoom");
+    hub.advance(0);
+    assert!(!overlay(&hub), "{}", layout(&hub));
+}
