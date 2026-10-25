@@ -552,6 +552,44 @@ impl World {
         self.sync()
     }
 
+    /// Round trips through the MC until `condition` holds: for a state the
+    /// shell reaches only by what it asks of the MC and what the MC answers
+    /// (a settings write, the snapshots of the shapes it follows), so the
+    /// wait ends on those and not on the clock. Gives up once two round
+    /// trips in a row brought the MC no new call or subscription: a call the
+    /// shell makes as it handles a round trip's answers goes out after that
+    /// round's barrier, so it shows only on the next; after two, nothing
+    /// more is on its way. `what` describes the state it gave up on.
+    pub fn sync_until_with(
+        &mut self,
+        mut condition: impl FnMut(&World) -> bool,
+        what: impl Fn(&World) -> String,
+    ) -> Outcome {
+        let mut idle = 0;
+        loop {
+            self.pump()?;
+            if condition(self) {
+                return Ok(());
+            }
+            if idle == 2 {
+                return Err(Failure(format!(
+                    "the MC was asked nothing more while waiting for {}",
+                    what(self)
+                )));
+            }
+            let asked = self.asked();
+            self.sync()?;
+            idle = if self.asked() == asked { idle + 1 } else { 0 };
+        }
+    }
+
+    /// How many calls (less sync's barriers) and subscriptions the MC has
+    /// had.
+    fn asked(&self) -> usize {
+        let calls = self.mc.calls.iter();
+        calls.filter(|c| c.method != "test.barrier").count() + self.mc.subscriptions.len()
+    }
+
     pub fn wait_for(&mut self, what: &str, condition: impl FnMut(&World) -> bool) -> Outcome {
         self.wait_for_with(condition, |_| what.to_owned())
     }
