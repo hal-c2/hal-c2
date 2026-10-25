@@ -301,24 +301,29 @@ struct Sut {
     }
   }
 
-  // The browser opens `url`: the first waiting link it is, as it is or through a
+  // The browser opens `url`: a waiting link it is, as it is or through a
   // forward granted for its thread at its port, at 127.0.0.1 for an address.
+  // A link `away` may open either way, so it is taken only when no other fits:
+  // otherwise a link of a thread on the connected MC, opened as it is, would
+  // take another thread's away link, whose forward then fits none.
   void browsed(const QUrl& url) {
-    for (qsizetype at = 0; at < links.size(); ++at) {
-      const Link& link = links.at(at);
+    const auto fits = [&](const Link& link) {
       const bool remote = environmentOf(link.thread) != kEnvironment;
-      bool fits = url == link.url && (!loopback(link.url) || !remote || link.away);
-      if (!fits && remote && loopback(link.url)) {
-        QUrl forwarded = link.url;
-        forwarded.setPort(forwardPortOf(portOf(link.url)));
-        if (!QHostAddress(forwarded.host()).isNull()) forwarded.setHost(QStringLiteral("127.0.0.1"));
-        fits = url == forwarded && std::any_of(granted.cbegin(), granted.cend(), [&](const Forward& forward) {
-                 return forward.thread == link.thread && forward.port == portOf(link.url);
-               });
-      }
-      if (fits) {
-        links.removeAt(at);
-        return;
+      if (url == link.url && (!loopback(link.url) || !remote || link.away)) return true;
+      if (!remote || !loopback(link.url)) return false;
+      QUrl forwarded = link.url;
+      forwarded.setPort(forwardPortOf(portOf(link.url)));
+      if (!QHostAddress(forwarded.host()).isNull()) forwarded.setHost(QStringLiteral("127.0.0.1"));
+      return url == forwarded && std::any_of(granted.cbegin(), granted.cend(), [&](const Forward& forward) {
+               return forward.thread == link.thread && forward.port == portOf(link.url);
+             });
+    };
+    for (const bool either : {false, true}) {
+      for (qsizetype at = 0; at < links.size(); ++at) {
+        if ((either || !links.at(at).away) && fits(links.at(at))) {
+          links.removeAt(at);
+          return;
+        }
       }
     }
     stray.append(url);
