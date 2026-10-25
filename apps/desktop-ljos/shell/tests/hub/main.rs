@@ -56,6 +56,7 @@ mod runtime;
 mod scheduled_tasks;
 mod scripted_run;
 mod settings;
+mod shell_examples;
 mod sidebar_row;
 mod simple_pages;
 mod slack;
