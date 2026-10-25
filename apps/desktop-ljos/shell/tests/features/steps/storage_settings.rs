@@ -135,12 +135,17 @@ fn rule(world: &World, key: &str) -> Value {
     Value::Null
 }
 
+/// Until the section is ready on `targets` environments and each of them has
+/// sent its settings: "ready" needs only one, and a change counts a target
+/// that has not answered as one that could not save ("Not connected.").
 fn wait_ready(world: &mut World, targets: usize) -> Outcome {
     world.sync_until_with(
         |w| {
+            let scope_of = SettingsScope::of(w.engine());
             storage(w)["status"] == "ready"
                 && scope(w)["editable"] == json!(true)
-                && SettingsScope::of(w.engine()).targets().len() == targets
+                && scope_of.targets().len() == targets
+                && scope_of.read(|_, _| None).known == targets
         },
         |w| {
             format!(
@@ -463,7 +468,8 @@ pub fn register(steps: &mut Steps) {
             )?;
             expect!(
                 cleanup_of(world, "Laptop", "worktreeOnMerge") == json!(true),
-                "Laptop to have saved the change"
+                "Laptop to have saved the change; the shell shows {}",
+                show(&world.state("toasts"))
             );
             Ok(())
         },

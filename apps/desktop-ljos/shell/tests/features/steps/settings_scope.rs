@@ -307,6 +307,21 @@ pub fn register(steps: &mut Steps) {
     );
     steps.step("the user changes the default model", |world, _, _| {
         wait_for_model_row(world, "models to be offered", offers_models)?;
+        // A change counts a target that has not sent its settings as one
+        // that could not save ("Not connected."), and models show once one
+        // has.
+        world.wait_for_with(
+            |w| {
+                let scope = SettingsScope::of(w.engine());
+                scope.read(|_, _| None).known == scope.targets().len()
+            },
+            |w| {
+                format!(
+                    "every environment's settings; the scope is {}",
+                    show(&w.state("settingsScope"))
+                )
+            },
+        )?;
         world.dispatch(
             "projectSettings.model",
             json!({"key": format!("{PROVIDER}:opus")}),
