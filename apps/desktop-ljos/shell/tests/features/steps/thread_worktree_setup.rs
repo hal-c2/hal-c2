@@ -10,6 +10,7 @@ use super::stream::{FakeStreams, look};
 use crate::brick::{Brick, shown};
 use crate::fake_mc::FakeMc;
 use crate::harness::{Outcome, Q, Steps, show, text};
+use crate::steps::composer_attach::conversation_drop_says;
 use crate::world::World;
 use crate::{expect, fail};
 
@@ -280,6 +281,9 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step(&format!("the conversation says {Q}"), |world, c, _| {
+        if conversation_drop_says(world, &c[0])? {
+            return Ok(());
+        }
         // WorktreeSetupCard.qml shows the label over the conversation.
         world.wait_for_with(
             |w| labelled(w, &c[0]),
