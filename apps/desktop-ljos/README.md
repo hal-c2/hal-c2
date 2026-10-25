@@ -32,6 +32,9 @@ mise run desktop-ljos:render                            # .hal-c2/desktop-ljos.p
 mise run desktop-ljos:render -- --action settings.open --action 'theme.mode {"mode":"dark"}'
 ```
 
+On macOS `mise run desktop-ljos` runs the build from `target/release/HAL-C2.app` (`shell/macos/Info.plist`), as
+the Dock and the app switcher name an app by its bundle.
+
 The window takes the MC's origin and a session token (also `HAL_C2_MC_ORIGIN`/`HAL_C2_MC_TOKEN`), or
 `--pair LINK` (from `mise run mc:pair`), which keeps the session for the next start; without either it
 reconnects to the MC it paired with last, or runs disconnected. `--home-dir DIR` keeps the session and the
