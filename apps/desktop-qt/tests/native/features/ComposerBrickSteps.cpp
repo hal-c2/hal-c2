@@ -29,7 +29,9 @@ using namespace stream;
 namespace {
 
 // The composer under the window's shortcuts (ShellWindow's Instantiator), so
-// a key a shortcut takes never reaches the editor here either.
+// a key a shortcut takes never reaches the editor here either. The room above
+// it stands for the timeline, and the conversation's drop covers both, as
+// DefaultLayout lays them out.
 const QByteArray kComposerQml = R"(
 import QtQuick
 import HalC2.Bricks
@@ -41,11 +43,18 @@ Item {
     property int windowShortcuts: 0
 
     Composer {
+        id: composerView
         objectName: "composer"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: implicitHeight
+    }
+
+    ConversationDrop {
+        objectName: "conversationDrop"
+        anchors.fill: parent
+        composer: composerView
     }
 
     Instantiator {

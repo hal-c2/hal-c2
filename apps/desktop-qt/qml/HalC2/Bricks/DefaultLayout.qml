@@ -411,6 +411,18 @@ Item {
         anchors.fill: parent
     }
 
+    // Over the conversation (the route's centre and the composer under it,
+    // not the terminal or the panels) files go to the draft instead: a
+    // single folder there is referenced, not opened as a project.
+    ConversationDrop {
+        x: body.x + centre.x
+        y: body.y + centre.y + centreHost.y
+        width: centre.width
+        height: composerView.y + composerView.height - centreHost.y
+        visible: centre.visible && composerView.visible
+        composer: composerView
+    }
+
     // Toasts stack from the top right, under the header strip (or the band
     // a page without one has): clear of the
     // window controls, the composer and the terminal drawer's toolbar. Over

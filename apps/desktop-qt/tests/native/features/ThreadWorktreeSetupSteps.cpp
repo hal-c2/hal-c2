@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "Brick.h"
+#include "ComposerBrick.h"
 #include "Harness.h"
 #include "Stream.h"
 #include "World.h"
@@ -141,6 +142,7 @@ const Steps steps([] {
                   [&] { return QStringLiteral("\"%1\"; the setup shown is %2").arg(c[0], show(shown(world))); });
   });
   step(QStringLiteral("the conversation says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (conversationDropSays(world, c[0])) return;
     // WorktreeSetupCard.qml shows the label over the conversation.
     world.waitFor([&] { return shown(world).value(QStringLiteral("label")) == c[0]; },
                   [&] { return QStringLiteral("\"%1\"; the setup shown is %2").arg(c[0], show(shown(world))); });
