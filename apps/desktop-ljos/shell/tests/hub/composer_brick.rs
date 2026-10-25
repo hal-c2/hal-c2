@@ -58,6 +58,12 @@ Item {
         anchors.bottom: parent.bottom
         height: implicitHeight
     }
+
+    // Files are dropped over the conversation, as the layouts lay it.
+    ConversationDrop {
+        anchors.fill: parent
+        composer: composer
+    }
 }
 "#;
 
