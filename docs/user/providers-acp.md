@@ -111,6 +111,10 @@ Registry agents can schedule work and use HAL-C2's MCP tools. Child-task present
 the agent exposes: ACP has no portable native subagent-lineage contract, so richer delegation views
 remain agent-specific.
 
+Kimi's own subagents show in **Agents** while they run, with their thinking, commands and answer,
+read from the session records Kimi Code keeps under `~/.kimi-code` (or `KIMI_CODE_HOME`). You can
+watch them but not message or stop them.
+
 ## Checkpoints
 
 Checkpoint rollback restores your files as usual. ACP agents cannot rewind their own conversation,

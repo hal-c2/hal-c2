@@ -21,7 +21,10 @@
 # session, else the prompt's]}, {"request": {method,
 # params}} (waits for the answer), {"permission": toolCall} (session/request_permission
 # with allow_once/allow_always/reject_once), {"waitCancel": true}, {"exit": code},
-# {"error": {code, message}} (ends the prompt with it), {"stop": reason}.
+# {"error": {code, message}} (ends the prompt with it), {"stop": reason},
+# {"kimiWire": {"agent": "main" | subagent id, "records": [record]}} (appends to an
+# agent's record as Kimi Code keeps it:
+# $KIMI_CODE_HOME/sessions/<workspace id>/<session id>/agents/<agent>/wire.jsonl).
 import json, os, sys
 
 DIR = os.environ["FAKE_DIR"]
@@ -58,6 +61,17 @@ log({"start": {"argv": sys.argv, "cwd": os.getcwd(), "pid": os.getpid(),
                "env": {k: v for k, v in os.environ.items() if k.startswith(ENV_PREFIXES)}}})
 
 cancelled = False
+
+
+def kimi_wire(sid, wire):
+    path = os.path.join(os.environ["KIMI_CODE_HOME"], "sessions", "workspace", sid,
+                        "agents", wire["agent"])
+    os.makedirs(path, exist_ok=True)
+    with open(os.path.join(path, "wire.jsonl"), "a") as f:
+        for r in wire["records"]:
+            f.write(json.dumps(r, separators=(",", ":")) + "\n")
+
+
 backlog = []  # messages read while a turn waited on something else
 next_id = [0]
 
@@ -149,6 +163,8 @@ def run_turn(mid, sid, text):
         elif "error" in step:
             send({"id": mid, "error": step["error"]})
             return
+        elif "kimiWire" in step:
+            kimi_wire(sid, step["kimiWire"])
         elif "stop" in step:
             send({"id": mid, "result": {"stopReason": step["stop"]}})
             return
