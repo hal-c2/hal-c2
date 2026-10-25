@@ -23,7 +23,9 @@ use crate::world::World;
 use crate::{expect, fail};
 
 /// The composer under the window's shortcuts (ShellWindow's Instantiator),
-/// so a key a shortcut takes never reaches the editor here either.
+/// so a key a shortcut takes never reaches the editor here either. The room
+/// above it stands for the timeline, and the conversation's drop covers
+/// both, as DefaultLayout lays them out.
 const COMPOSER_QML: &str = r#"import QtQuick
 import HalC2.Bricks
 import HalC2.Shell
@@ -34,11 +36,32 @@ Item {
     property int windowShortcuts: 0
 
     Composer {
+        id: composerView
         objectName: "composer"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: implicitHeight
+    }
+
+    ConversationDrop {
+        objectName: "conversationDrop"
+        anchors.fill: parent
+        composer: composerView
+    }
+
+    // Selected text, which a step drags over the conversation.
+    // TODO(ljos#115): a drag from another application carries only files,
+    // so this one starts inside the window.
+    Item {
+        objectName: "textDrag"
+        property bool dragging: false
+        width: 1
+        height: 1
+        Drag.active: dragging
+        Drag.dragType: Drag.Internal
+        Drag.keys: ["text/plain"]
+        Drag.mimeData: { "text/plain": "the cart totals add up" }
     }
 
     Instantiator {

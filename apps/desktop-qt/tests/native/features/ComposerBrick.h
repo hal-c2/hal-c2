@@ -36,6 +36,10 @@ bool modelPickerLists(World& world, const QString& name, bool listed);
 bool modelPickerShows(World& world, const QString& name, const QString& reason);
 // "the user chooses X": the row named X of the open model picker.
 bool modelPickerChooses(World& world, const QString& name);
+// "the conversation says X" while something is dragged over the composer's
+// conversation: checks that its drop hint says X and returns true. False
+// leaves the step to its own domain (the worktree setup card).
+bool conversationDropSays(World& world, const QString& text);
 // "the user removes X": the attachment X of the draft on screen.
 bool removeComposerAttachment(World& world, const QString& name);
 // "the agent receives X": the message the composer on screen just sent.

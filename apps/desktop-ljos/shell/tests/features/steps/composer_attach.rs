@@ -157,6 +157,69 @@ fn drop_files(world: &mut World, files: Vec<PathBuf>) -> Outcome {
     world.sync()
 }
 
+/// A drag from another application over the conversation, while it lasts:
+/// what it carries and where it is.
+#[derive(Default)]
+struct Dragged {
+    files: Vec<PathBuf>,
+    at: Option<(f64, f64)>,
+}
+
+/// Over the timeline's part of the conversation, above the composer.
+fn over_conversation(world: &mut World) -> Outcome<(f64, f64)> {
+    let brick = composer_brick(world)?;
+    let area = brick.item(world, "conversationDrop")?;
+    brick.at(world, area, 0.5, 0.2)
+}
+
+/// Drags `files` from outside the window to `at`, as the platform delivers
+/// it.
+fn drag_files(world: &mut World, files: Vec<PathBuf>, at: (f64, f64)) -> Outcome {
+    composer_brick(world)?;
+    for drag in [
+        ExternalDrag::Entered {
+            files: files.clone(),
+            at: Some(at),
+        },
+        ExternalDrag::Moved { at },
+    ] {
+        external_drag(world.engine(), &drag);
+    }
+    *world.part::<Dragged>() = Dragged {
+        files,
+        at: Some(at),
+    };
+    world.sync()
+}
+
+/// The drag leaves the window.
+fn drag_leave(world: &mut World) -> Outcome {
+    external_drag(world.engine(), &ExternalDrag::Left);
+    *world.part::<Dragged>() = Dragged::default();
+    world.sync()
+}
+
+fn drop_hint_shown(world: &mut World) -> Outcome<bool> {
+    let brick = composer_brick(world)?;
+    Ok(brick.find_visible(world, "conversationDropHint")?.is_some()
+        && brick.shows(world, "Drop files to attach")?)
+}
+
+/// Drags the composer brick's selected text to `at` in the window.
+fn drag_text(world: &mut World, at: (f64, f64)) -> Outcome {
+    let brick = composer_brick(world)?;
+    let root = brick.item(world, "composerBrick")?;
+    let origin = brick.at(world, root, 0.0, 0.0)?;
+    let item = brick.item(world, "textDrag")?;
+    // Moves are told on a later turn; turning the drag on tells the area
+    // under it at once.
+    brick.write(world, item, "dragging", QmlValue::from(false))?;
+    brick.write(world, item, "x", QmlValue::from(at.0 - origin.0))?;
+    brick.write(world, item, "y", QmlValue::from(at.1 - origin.1))?;
+    brick.write(world, item, "dragging", QmlValue::from(true))?;
+    world.sync()
+}
+
 fn attachment(world: &World, name: &str) -> Value {
     composer_state(world)["attachments"]
         .as_array()
@@ -749,6 +812,114 @@ pub fn register(steps: &mut Steps) {
         "the user drops a folder onto the composer",
         |world, _, _| drop_folder(world, "src/components"),
     );
+    // Dragging over the conversation.
+    steps.step(
+        &format!("the user drags {Q} and the folder {Q} from the desktop over the conversation"),
+        |world, c, _| {
+            let dir = world.home_dir().join("checkout").join(&c[1]);
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| Failure(format!("could not make {}: {e}", dir.display())))?;
+            let files = vec![image_file(world, &c[0])?, dir];
+            let at = over_conversation(world)?;
+            drag_files(world, files, at)
+        },
+    );
+    steps.step(
+        &format!("the user is dragging {Q} over the conversation"),
+        |world, c, _| {
+            let files = vec![image_file(world, &c[0])?];
+            let at = over_conversation(world)?;
+            drag_files(world, files, at)?;
+            expect!(
+                drop_hint_shown(world)?,
+                "the conversation does not offer the drop"
+            );
+            Ok(())
+        },
+    );
+    steps.step("the user drops them there", |world, _, _| {
+        let Dragged { files, at } = std::mem::take(world.part::<Dragged>());
+        expect!(at.is_some(), "nothing is dragged");
+        external_drag(world.engine(), &ExternalDrag::Dropped { files, at });
+        world.sync()?;
+        expect!(
+            !drop_hint_shown(world)?,
+            "the conversation still offers the drop"
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the draft carries {Q} and references the folder {Q}"),
+        |world, c, _| {
+            world.wait_for_with(
+                |w| carried(w) == [c[0].clone()],
+                |w| {
+                    format!(
+                        "the draft to carry {}; it carries {}",
+                        c[0],
+                        carried_text(w)
+                    )
+                },
+            )?;
+            let item = chip(world, &c[0])?;
+            expect!(visible(world, item)?, "{} is not shown", c[0]);
+            settle_composer(world)?;
+            let path = world.home_dir().join("checkout").join(&c[1]);
+            let leaf = c[1].rsplit('/').next().unwrap_or("");
+            let link = format!("[{leaf}]({})", path.display());
+            let (brick, field) = editor(world)?;
+            let typed = brick.text_of(world, field, "text");
+            expect!(
+                draft_text(world).contains(&link) && typed == draft_text(world),
+                "the draft reads \"{}\"",
+                draft_text(world)
+            );
+            Ok(())
+        },
+    );
+    steps.step("the drag leaves the conversation", |world, _, _| {
+        drag_leave(world)
+    });
+    steps.step(
+        &format!("the conversation no longer says {Q}"),
+        |world, c, _| {
+            let brick = composer_brick(world)?;
+            expect!(
+                !drop_hint_shown(world)? && !brick.shows(world, &c[0])?,
+                "the conversation still says \"{}\"",
+                c[0]
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "dragging selected text over the conversation never shows it",
+        |world, _, _| {
+            // Over the timeline, then over the composer.
+            let at = over_conversation(world)?;
+            drag_text(world, at)?;
+            expect!(
+                !drop_hint_shown(world)?,
+                "the conversation offers to attach dragged text"
+            );
+            let (brick, field) = editor(world)?;
+            let at = brick.at(world, field, 0.5, 0.5)?;
+            drag_text(world, at)?;
+            expect!(
+                !drop_hint_shown(world)?,
+                "the composer offers to attach dragged text"
+            );
+            let item = brick.item(world, "textDrag")?;
+            brick.write(world, item, "dragging", QmlValue::from(false))?;
+            world.sync()?;
+            expect!(
+                carried(world).is_empty(),
+                "the draft carries {}",
+                carried_text(world)
+            );
+            Ok(())
+        },
+    );
     steps.step(
         &format!("the draft references the folder {Q}"),
         |world, c, _| {
@@ -1083,6 +1254,25 @@ pub fn register(steps: &mut Steps) {
         );
         Ok(())
     });
+}
+
+/// "the conversation says X" while something is dragged over the
+/// composer's conversation: checks that its drop hint says X and returns
+/// true. False leaves the step to its own domain (the worktree setup card).
+pub fn conversation_drop_says(world: &mut World, text: &str) -> Outcome<bool> {
+    if !composer_brick_shown(world)
+        || world
+            .peek_part::<Dragged>()
+            .is_none_or(|dragged| dragged.at.is_none())
+    {
+        return Ok(false);
+    }
+    let brick = composer_brick(world)?;
+    world.wait_for(&format!("the conversation to say \"{text}\""), move |w| {
+        matches!(brick.find_visible(w, "conversationDropHint"), Ok(Some(_)))
+            && matches!(brick.shows(w, text), Ok(true))
+    })?;
+    Ok(true)
 }
 
 /// Takes `name` off the composer's draft by its chip, remembering the text.

@@ -7,8 +7,10 @@ composer/attachments.feature: A failed upload blocks sending until it is retried
 composer/attachments.feature: A very large paste becomes a text file attachment
 composer/attachments.feature: Dropping a folder into a remote environment is refused
 composer/attachments.feature: Dropping a folder references its path
+composer/attachments.feature: Files dragged anywhere over the conversation can be dropped to attach
 composer/attachments.feature: Paste as Text keeps a very large paste in the draft
 composer/attachments.feature: Removing an attachment takes it out of the draft
+composer/attachments.feature: The drop hint goes when the drag leaves or is not of files
 composer/attachments.feature: The user attaches an image by choosing it
 composer/attachments.feature: The user attaches images by dropping them on the composer
 composer/attachments.feature: The user checks what text a Snap Shot captured [with accessibility elements that have no names, that the elements have no readable names or values]
