@@ -1283,6 +1283,23 @@ pub fn register(steps: &mut Steps) {
             "workspace.runScript",
             json!({"scriptId": action_id(&c[0])}),
         )?;
+        // That run's command reaches the terminal first, so it is not
+        // taken for the next one's.
+        world.wait_for_with(
+            |w| {
+                w.mc.peek::<FakeTerminals>().is_some_and(|fake| {
+                    fake.calls
+                        .iter()
+                        .any(|call| call["method"] == "terminal.write")
+                })
+            },
+            |w| {
+                format!(
+                    "the last run to start; the MC got {}",
+                    describe_terminal_calls(w)
+                )
+            },
+        )?;
         world.mc.part::<FakeTerminals>().calls.clear();
         Ok(())
     });
