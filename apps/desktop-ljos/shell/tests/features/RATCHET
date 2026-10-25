@@ -924,44 +924,18 @@ navigation/windows.feature: Windows share the sign-in but not the navigation
 navigation/windows.feature: Zooming the app [mod++, larger]
 navigation/windows.feature: Zooming the app [mod+-, smaller]
 navigation/windows.feature: Zooming the app [mod+=, larger]
-planning/planner.feature: A group folds and unfolds from the keyboard
 planning/planner.feature: A late answer to an apply stays with the run it applied
-planning/planner.feature: A milestone without a date has no marker
-planning/planner.feature: A proposal of only a status update can be applied
-planning/planner.feature: A proposal shows on the Gantt chart before it is applied
-planning/planner.feature: A run on another MC names that MC's task
 planning/planner.feature: A screen reader names the planner's settings when the board's date fields are <dates> [acme/3, picked from a list]
 planning/planner.feature: A screen reader names the planner's settings when the board's date fields are <dates> [acme/9, typed in]
-planning/planner.feature: A task names a project the MC no longer offers
-planning/planner.feature: A task that ends before its baseline says how many days early
 planning/planner.feature: A task's thread keeps the task mark once its run is discarded
 planning/planner.feature: A task's thread stops following the plan once it no longer shows the task [the user opens the thread of a run of "Reschedule"]
 planning/planner.feature: A task's thread stops following the plan once it no longer shows the task [the work on "API" is discarded]
-planning/planner.feature: An action's thread is marked in the thread list
 planning/planner.feature: An action's thread shows its run above the conversation
-planning/planner.feature: Dragging a bar reschedules the task
-planning/planner.feature: Dragging the end of a bar changes when the task ends
 planning/planner.feature: Starting work is always on one task
-planning/planner.feature: The Gantt chart draws tasks, milestones, dependencies and today
-planning/planner.feature: The board grouped by milestone moves a task to another milestone
-planning/planner.feature: The board grouped by parent moves a subtask to another parent
-planning/planner.feature: The board moves a task between states
-planning/planner.feature: The board not grouped shows every task in one column
-planning/planner.feature: The board shows dropped work
-planning/planner.feature: The chart reaches back to a baseline long before the plan
-planning/planner.feature: The list scrolls sideways to columns wider than it
-planning/planner.feature: The list shows the fields the view picks
 planning/planner.feature: The settings do not save while a count reads what it cannot be
 planning/planner.feature: The settings edit each action's prompt and reset it
 planning/planner.feature: The settings say why the board's date fields could not be read
 planning/planner.feature: The settings take no count the MC refuses
-planning/planner.feature: The user edits a task from any view
-planning/planner.feature: The user edits a view and saves it
-planning/planner.feature: The user filters a view without saving it
-planning/planner.feature: The user opens a task from the keyboard on <view> [All tasks]
-planning/planner.feature: The user opens a task from the keyboard on <view> [Board]
-planning/planner.feature: The user opens a task from the keyboard on <view> [Timeline]
-planning/planner.feature: The user picks a view with the keyboard
 planning/planner.feature: The user picks the board and its date fields from lists in the settings
 planning/planner.feature: The user picks the planner's Slack channel in its settings
 plugins/keymaps.feature: Resetting keybindings removes every override
