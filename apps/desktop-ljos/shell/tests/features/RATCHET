@@ -106,6 +106,7 @@ composer/model-and-mode.feature: The user sets what the agent may do without ask
 composer/model-and-mode.feature: The user sets what the agent may do without asking [Full access]
 composer/model-and-mode.feature: The user sets what the agent may do without asking [Supervised]
 composer/model-and-mode.feature: The user switches the model for the next turn
+composer/model-and-mode.feature: Ultrathink prefixes the prompt
 composer/model-and-mode.feature: Unavailable providers stay listed with the reason
 composer/qt-scenarios.feature: A disabled model shows its reason and cannot be chosen
 composer/qt-scenarios.feature: A jump shortcut chooses the numbered model
@@ -314,6 +315,7 @@ files/adding-projects.feature: Dragging a single local folder over the window of
 files/adding-projects.feature: Dropping a folder adds it as a project and starts a thread
 files/adding-projects.feature: Dropping a folder while the environment is disconnected reports a failure
 files/adding-projects.feature: Drops that are not a single local folder are refused [a file]
+files/adding-projects.feature: Drops that are not a single local folder are refused [a link to a remote location]
 files/adding-projects.feature: Drops that are not a single local folder are refused [two folders]
 files/adding-projects.feature: Folder drops are refused when the app shows a remote environment
 files/file-explorer.feature: A file can be sent to the composer as a mention
@@ -485,6 +487,7 @@ navigation/appearance.feature: Font preferences change their part of the app [te
 navigation/appearance.feature: Font smoothing is offered only on macOS
 navigation/appearance.feature: Holding the appearance shortcut does not spin through modes
 navigation/appearance.feature: Interface sliders change the look [glass opacity, 50, translucent surfaces are more see-through]
+navigation/appearance.feature: Panel animations can be slowed down
 navigation/appearance.feature: Panel animations respect reduced motion
 navigation/appearance.feature: Panels open and close immediately by default
 navigation/appearance.feature: Settings → Appearance marks the theme in use, the standard theme included
@@ -874,6 +877,7 @@ navigation/theme-editor.feature: Importing theme files [one VS Code theme file, 
 navigation/theme-editor.feature: Importing theme files [three theme files at once, the user is told "3 themes added"]
 navigation/theme-editor.feature: Opening the theme editor moves the keyboard into it
 navigation/theme-editor.feature: Pasting theme JSON
+navigation/theme-editor.feature: Picking a color from the app
 navigation/theme-editor.feature: Removing a theme asks first
 navigation/theme-editor.feature: Removing some variants of a theme collection
 navigation/theme-editor.feature: Saving an edited theme applies it
@@ -938,20 +942,51 @@ navigation/windows.feature: Windows share the sign-in but not the navigation
 navigation/windows.feature: Zooming the app [mod++, larger]
 navigation/windows.feature: Zooming the app [mod+-, smaller]
 navigation/windows.feature: Zooming the app [mod+=, larger]
+planning/planner.feature: A group folds and unfolds from the keyboard
 planning/planner.feature: A late answer to an apply stays with the run it applied
+planning/planner.feature: A milestone without a date has no marker
+planning/planner.feature: A proposal of only a status update can be applied
+planning/planner.feature: A proposal shows on the Gantt chart before it is applied
+planning/planner.feature: A run on another MC names that MC's task
+planning/planner.feature: A save whose read-back fails is what the next save starts from
 planning/planner.feature: A screen reader names the planner's settings when the board's date fields are <dates> [acme/3, picked from a list]
 planning/planner.feature: A screen reader names the planner's settings when the board's date fields are <dates> [acme/9, typed in]
+planning/planner.feature: A task names a project the MC no longer offers
+planning/planner.feature: A task that ends before its baseline says how many days early
 planning/planner.feature: A task's thread keeps the task mark once its run is discarded
 planning/planner.feature: A task's thread stops following the plan once it no longer shows the task [the user opens the thread of a run of "Reschedule"]
 planning/planner.feature: A task's thread stops following the plan once it no longer shows the task [the work on "API" is discarded]
+planning/planner.feature: An action's thread is marked in the thread list
 planning/planner.feature: An action's thread shows its run above the conversation
+planning/planner.feature: Dragging a bar reschedules the task
+planning/planner.feature: Dragging the end of a bar changes when the task ends
 planning/planner.feature: Starting work is always on one task
+planning/planner.feature: The Gantt chart draws tasks, milestones, dependencies and today
+planning/planner.feature: The board grouped by milestone moves a task to another milestone
+planning/planner.feature: The board grouped by parent moves a subtask to another parent
+planning/planner.feature: The board moves a task between states
+planning/planner.feature: The board not grouped shows every task in one column
+planning/planner.feature: The board shows dropped work
+planning/planner.feature: The chart reaches back to a baseline long before the plan
+planning/planner.feature: The list scrolls sideways to columns wider than it
+planning/planner.feature: The list shows the fields the view picks
 planning/planner.feature: The settings do not save while a count reads what it cannot be
 planning/planner.feature: The settings edit each action's prompt and reset it
+planning/planner.feature: The settings name a model and project the MC no longer offers
+planning/planner.feature: The settings save again only once the last save is read back
 planning/planner.feature: The settings say why the board's date fields could not be read
 planning/planner.feature: The settings take no count the MC refuses
+planning/planner.feature: The settings unmap a date field of the board
+planning/planner.feature: The user edits a task from any view
+planning/planner.feature: The user edits a view and saves it
+planning/planner.feature: The user filters a view without saving it
+planning/planner.feature: The user opens a task from the keyboard on <view> [All tasks]
+planning/planner.feature: The user opens a task from the keyboard on <view> [Board]
+planning/planner.feature: The user opens a task from the keyboard on <view> [Timeline]
+planning/planner.feature: The user picks a view with the keyboard
 planning/planner.feature: The user picks the board and its date fields from lists in the settings
 planning/planner.feature: The user picks the planner's Slack channel in its settings
+planning/planner.feature: What the user changes while the settings save is kept
 plugins/keymaps.feature: Resetting keybindings removes every override
 plugins/plugin-contributions.feature: A UI part follows the state its MC part publishes
 plugins/plugin-contributions.feature: A failed plugin can be restarted from its settings
@@ -1603,9 +1638,11 @@ source-control/worktrees-and-setup-scripts.feature: Picking the base ref for a n
 source-control/worktrees-and-setup-scripts.feature: Returning to the previous worktree
 source-control/worktrees-and-setup-scripts.feature: The setup card shows the base, branch and path
 terminal/composer-context.feature: A one-line selection names a single line
+terminal/composer-context.feature: Adding to chat is not offered where there is no draft to add to
 terminal/composer-context.feature: An excerpt whose text is gone is dropped when the message is sent
 terminal/composer-context.feature: Selecting only blank lines adds nothing
 terminal/composer-context.feature: The draft lists its terminal excerpts
+terminal/composer-context.feature: The terminal's menu offers selection actions only once something is selected
 terminal/composer-context.feature: The user adds selected terminal output to the draft
 terminal/composer-context.feature: The user removes a terminal excerpt from the draft
 terminal/drawer.feature: A draft thread has a terminal in its project
@@ -1632,10 +1669,14 @@ terminal/io.feature: A terminal that exits on its own closes without asking
 terminal/io.feature: Clearing the web terminal asks the shell to redraw
 terminal/io.feature: Closing a terminal whose server session is gone still ends the shell
 terminal/io.feature: Ctrl+C with nothing selected still interrupts the program
+terminal/io.feature: The user copies, pastes and clears from the terminal's menu [Copy, the selected text is on the clipboard]
+terminal/io.feature: The user copies, pastes and clears from the terminal's menu [Paste, the clipboard text is sent to the shell]
 terminal/io.feature: The usual copy and paste keys work in the terminal [Ctrl+C, the selected text is on the clipboard]
 terminal/io.feature: The usual copy and paste keys work in the terminal [Ctrl+V, the clipboard text is sent to the shell]
 terminal/links-and-graphics.feature: A plain click on a link does not follow it
 terminal/links-and-graphics.feature: Programs that ask for enhanced keyboard reporting receive it
+terminal/links-and-graphics.feature: The terminal's menu opens or copies the link under the pointer [http://localhost:5173, Open link, Copy link, the address opens in the system browser]
+terminal/links-and-graphics.feature: The terminal's menu opens or copies the link under the pointer [src/app.ts:12:4, Open file, Copy path, "src/app.ts" opens in the user's editor at line 12, column 4]
 terminal/links-and-graphics.feature: The web terminal follows the app's theme and font
 terminal/reconnect.feature: The web terminal keeps up to 512 KiB of output per terminal
 terminal/sessions.feature: A new terminal opened from the drawer uses the thread's launch context
@@ -1856,6 +1897,7 @@ threads/sidebar-list.feature: Threads started by other agents are not listed
 threads/sidebar-list.feature: Very long settled shelves are shown a page at a time
 threads/snooze.feature: "This evening" is not offered when the evening is less than an hour away
 threads/snooze.feature: A custom snooze time must be in the future and exist [Tuesday 09:00]
+threads/snooze.feature: A custom snooze time must be in the future and exist [a time skipped by a daylight saving change]
 threads/snooze.feature: A custom snooze time must be in the future and exist [an unreadable date]
 threads/snooze.feature: A failed snooze is reported
 threads/snooze.feature: A snoozable thread offers snoozing from the list
@@ -1980,6 +2022,8 @@ timeline/markdown.feature: Markup in a message is shown as it was written
 timeline/markdown.feature: Select All in a code block's right-click menu selects its code
 timeline/markdown.feature: Table cells can be collapsed and expanded
 timeline/markdown.feature: The user copies a code block
+timeline/markdown.feature: The user copies a table [CSV]
+timeline/markdown.feature: The user copies a table [Markdown]
 timeline/notifications.feature: A newer alert for a thread replaces its older one
 timeline/notifications.feature: A notification's action runs it
 timeline/notifications.feature: A system notification is not shown without permission
@@ -2028,6 +2072,8 @@ timeline/plans-and-subagents.feature: Changes to the thread's context are marked
 timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the context is handed to another agent, Context handoff]
 timeline/plans-and-subagents.feature: Changes to the thread's context are marked in the timeline [the conversation is forked, Conversation fork]
 timeline/plans-and-subagents.feature: No plan is offered while the agent is still working
+timeline/plans-and-subagents.feature: Saving the plan fails when the workspace is unavailable
+timeline/plans-and-subagents.feature: Starting the implementation thread fails
 timeline/plans-and-subagents.feature: The Agents tab follows a subagent as it finishes
 timeline/plans-and-subagents.feature: The Agents tab keeps its rows as work starts and ends
 timeline/plans-and-subagents.feature: The Agents tab keeps what is running above what has finished
@@ -2038,7 +2084,11 @@ timeline/plans-and-subagents.feature: The Agents tab tells the time as the user 
 timeline/plans-and-subagents.feature: The Agents tab's end times follow the day over midnight
 timeline/plans-and-subagents.feature: The Agents tab's end times follow the day when the desktop wakes after midnight
 timeline/plans-and-subagents.feature: The agent's own background wake-up is not a message from another agent
+timeline/plans-and-subagents.feature: The user implements the plan in a new thread
 timeline/plans-and-subagents.feature: The user implements the proposed plan
+timeline/plans-and-subagents.feature: The user keeps a copy of the plan [copies the plan, the plan's markdown is on the clipboard]
+timeline/plans-and-subagents.feature: The user keeps a copy of the plan [downloads the plan, a markdown file of the plan is saved]
+timeline/plans-and-subagents.feature: The user keeps a copy of the plan [saves the plan to "docs/tax-plan.md", "docs/tax-plan.md" holds the plan in the workspace]
 timeline/plans-and-subagents.feature: The user moves between a subagent and its parent
 timeline/plans-and-subagents.feature: The user refines the plan with feedback
 timeline/qt-shell-backlog.feature: A turn that finishes in the background notifies without extensions
