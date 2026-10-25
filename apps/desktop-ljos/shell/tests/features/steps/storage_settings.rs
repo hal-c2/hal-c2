@@ -83,7 +83,7 @@ fn open_storage(world: &mut World) -> Outcome {
             n.open(engine, Route::Settings("/settings/storage".into()))
         });
     }
-    world.wait_for_with(
+    world.sync_until_with(
         |w| !is_empty(&scope(w)) && !is_empty(&storage(w)),
         |w| format!("storage settings to show; they are {}", show(&storage(w))),
     )
@@ -102,7 +102,7 @@ fn offered(world: &World, list: &str, field: &str, value: &str, pick: &str) -> O
 fn choose_environment(world: &mut World, label: &str) -> Outcome {
     let mut id = String::new();
     if !label.is_empty() {
-        world.wait_for_with(
+        world.sync_until_with(
             |w| offered(w, "environments", "label", label, "id").is_some(),
             |w| format!("{label} to be offered; the scope is {}", show(&scope(w))),
         )?;
@@ -114,7 +114,7 @@ fn choose_environment(world: &mut World, label: &str) -> Outcome {
 fn choose_project(world: &mut World, title: &str) -> Outcome {
     let mut key = String::new();
     if !title.is_empty() {
-        world.wait_for_with(
+        world.sync_until_with(
             |w| offered(w, "projects", "title", title, "key").is_some(),
             |w| format!("{title} to be offered; the scope is {}", show(&scope(w))),
         )?;
@@ -136,7 +136,7 @@ fn rule(world: &World, key: &str) -> Value {
 }
 
 fn wait_ready(world: &mut World, targets: usize) -> Outcome {
-    world.wait_for_with(
+    world.sync_until_with(
         |w| {
             storage(w)["status"] == "ready"
                 && scope(w)["editable"] == json!(true)
@@ -187,7 +187,7 @@ pub fn register(steps: &mut Steps) {
         "the user views storage settings for both machines",
         |world, _, _| {
             open_storage(world)?;
-            world.wait_for_with(
+            world.sync_until_with(
                 |w| scope(w)["environments"].as_array().map(Vec::len) == Some(3),
                 |w| format!("three environments; the scope is {}", show(&scope(w))),
             )?;
@@ -195,7 +195,7 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("that rule shows as mixed", |world, _, _| {
-        world.wait_for_with(
+        world.sync_until_with(
             |w| rule(w, "worktreeAfterDays")["mixed"] == json!(true),
             |w| {
                 format!(
@@ -224,7 +224,7 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the user is asked to update that machine first",
         |world, _, _| {
-            world.wait_for_with(
+            world.sync_until_with(
                 |w| storage(w)["status"] == "unsupported",
                 |w| {
                     format!(
@@ -283,7 +283,7 @@ pub fn register(steps: &mut Steps) {
             open_storage(world)?;
             choose_project(world, &c[0])?;
             choose_environment(world, &c[1])?;
-            world.wait_for_with(
+            world.sync_until_with(
                 |w| scope(w)["kind"] == "project",
                 |w| format!("the project scope; it is {}", show(&scope(w))),
             )
@@ -300,7 +300,7 @@ pub fn register(steps: &mut Steps) {
         choose_project(world, "")
     });
     steps.step(&format!("settings apply to {Q} on {Q}"), |world, c, _| {
-        world.wait_for_with(
+        world.sync_until_with(
             |w| {
                 let now = scope(w);
                 now["projectLabel"] == c[0].as_str()
@@ -320,7 +320,7 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         &format!("settings apply to {Q} across all checkouts"),
         |world, c, _| {
-            world.wait_for_with(
+            world.sync_until_with(
                 |w| {
                     let now = scope(w);
                     now["projectLabel"] == c[0].as_str()
@@ -349,7 +349,7 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         &format!("settings apply to every project on {Q}"),
         |world, c, _| {
-            world.wait_for_with(
+            world.sync_until_with(
                 |w| {
                     let now = scope(w);
                     now["kind"] == "environment"
@@ -371,7 +371,7 @@ pub fn register(steps: &mut Steps) {
         |world, _, _| open_storage(world),
     );
     steps.step(&format!("{Q} is listed as offline"), |world, c, _| {
-        world.wait_for_with(
+        world.sync_until_with(
             |w| {
                 scope(w)["environments"]
                     .as_array()
@@ -414,8 +414,8 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         &format!("the change is saved on {Q} and on {Q}"),
         |world, c, _| {
-            world.wait_for(
-                "merged worktree cleanup to be saved on every environment",
+            // Saved once the MC has had each environment's write.
+            world.sync_until_with(
                 |w| {
                     let this = w.mc.environment_id.clone();
                     let saved = |environment: &str| {
@@ -434,6 +434,7 @@ pub fn register(steps: &mut Steps) {
                     };
                     saved(&c[0]) && saved(&c[1]) && saved(&this)
                 },
+                |_| "merged worktree cleanup to be saved on every environment".into(),
             )
         },
     );
@@ -442,7 +443,7 @@ pub fn register(steps: &mut Steps) {
             "the user is told the setting saved on some environments and could not update {Q}"
         ),
         |world, c, _| {
-            world.wait_for_with(
+            world.sync_until_with(
                 |w| {
                     w.state("toasts")["items"].as_array().is_some_and(|items| {
                         items.iter().any(|toast| {
@@ -475,7 +476,7 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("the user looks at an environment setting", |world, _, _| {
-        world.wait_for_with(
+        world.sync_until_with(
             |w| {
                 scope(w)["disabledReason"]
                     .as_str()
