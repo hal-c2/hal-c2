@@ -411,10 +411,16 @@ Rectangle {
                     onShownChanged: if (shown)
                         active = true
                     Component.onCompleted: {
-                        setSource(Qt.resolvedUrl(tab.brick + ".qml"), {
-                            source: Qt.binding(() => nativeBody.tab.source ? Panel[nativeBody.tab.source] : null)
-                        });
+                        source = Qt.resolvedUrl(tab.brick + ".qml");
                         active = shown;
+                    }
+                    // TODO(ljos#128): give it through setSource once a
+                    // Qt.binding among its properties stays a binding.
+                    Binding {
+                        target: nativeBody.item
+                        property: "source"
+                        value: Panel[nativeBody.tab.source]
+                        when: nativeBody.item !== null && nativeBody.tab.source !== ""
                     }
                 }
             }

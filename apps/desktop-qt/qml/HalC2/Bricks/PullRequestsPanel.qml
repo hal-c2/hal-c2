@@ -27,6 +27,9 @@ Rectangle {
 
     onVisibleChanged: if (visible && source && typeof source.loadProject === "function")
         source.loadProject()
+    // The right panel gives the source once the panel is made.
+    onSourceChanged: if (visible && source && typeof source.loadProject === "function")
+        source.loadProject()
     Component.onCompleted: if (visible && source && typeof source.loadProject === "function")
         source.loadProject()
 
