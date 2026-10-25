@@ -310,7 +310,8 @@ fn the_dashboard_drawer_opens_on_its_cards_and_clock() {
         ] {
             let card = example.item(name);
             assert!(example.shown(card), "{name} shows at {width}");
-            // A DashCard's children are what it shows (ljos#132 lost them).
+            // A DashCard's children are what it shows, through its own
+            // `content` over ShellCard's.
             assert!(!example.texts(card).is_empty(), "{name} is empty");
             let left = example.at(card).0 - drawer_x;
             assert!(left >= 10.0, "{name} at {width} starts at {left}");

@@ -173,9 +173,7 @@ ShellWindow {
         id: dash
 
         property int order: 0
-        // TODO(ljos#132): named `content`, like ShellCard's, once Ljós routes
-        // a subtype's same-named default alias the way Qt does.
-        default property alias body: dashInner.data
+        default property alias content: dashInner.data
 
         radius: 18
 
