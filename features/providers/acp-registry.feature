@@ -3,6 +3,8 @@
 #   docs/user/providers-acp.md
 #   apps/server-ex/lib/hal_c2/acp.ex (acpRegistry driver, entries, probes, commandPath override)
 #   apps/server-ex/lib/hal_c2/acp/catalog.ex (search, prepare, uninstall, cache, checksums, runners)
+#   apps/server-ex/lib/hal_c2/acp/kimi.ex (Kimi Code in place of the registry's Kimi CLI)
+#   https://github.com/MoonshotAI/kimi-code/releases/tag/%40moonshot-ai%2Fkimi-code%402.3.1
 #   apps/server-ex/lib/hal_c2/acp/auth.ex (sign-in methods, terminal login, verification)
 #   apps/server-ex/lib/hal_c2/acp/url_auth.ex (agent URL sign-in)
 #   apps/server-ex/lib/hal_c2/acp/sessions.ex (native sessions, model providers, logout)
@@ -46,6 +48,12 @@ Feature: ACP registry agents
     When the user installs the registry agent "acme"
     Then "acme" is installed under the MC's tools folder at the registry's version
     And an instance of "acme" is created and enabled
+
+  # Moonshot archived Kimi CLI for Kimi Code, which the registry does not list yet.
+  Scenario: The registry's Kimi runs Kimi Code
+    Given the registry lists Kimi CLI
+    When the user searches the registry for "kimi"
+    Then Kimi is offered as Kimi Code, checked against its checksum
 
   Scenario: Adding an agent that is already configured is not offered twice
     Given an instance of "acme" exists

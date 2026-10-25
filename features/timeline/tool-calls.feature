@@ -18,7 +18,7 @@
 #   apps/tui/src/diffSplit.ts
 #   apps/tui/src/components/MessagesTimeline.tsx (changed-files tree, open diff per turn and per file)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (command, file, web and tool items)
-#   https://github.com/MoonshotAI/kimi-cli/blob/1.52.0/src/kimi_cli/acp/session.py (Kimi's tool calls)
+#   https://github.com/MoonshotAI/kimi-code/blob/%40moonshot-ai/kimi-code%402.3.1/packages/acp-server/src/events-map.ts (Kimi's tool calls)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
 
 Feature: Tool calls and file changes
@@ -394,8 +394,8 @@ Feature: Tool calls and file changes
       | read          | when it finishes | a file read   |
       | search        | when it finishes | a file search |
 
-  # Kimi CLI sends no kind or raw input: the title names the tool, and the call's text
-  # is its arguments streaming in until the result replaces it.
+  # Kimi Code's text for a running call is its arguments streaming in, and it names a
+  # file only by an absolute path.
   @mc
   Scenario Outline: Kimi's tool calls say what they ran
     Given Kimi streams a "<tool>" call's arguments while it runs
@@ -403,11 +403,11 @@ Feature: Tool calls and file changes
     Then the timeline shows it as <timeline kind>
 
     Examples:
-      | tool      | timeline kind                        |
-      | Shell     | a command                            |
-      | ReadFile  | a file read                          |
-      | Grep      | a file search                        |
-      | WriteFile | a tool call that names only its file |
+      | tool  | timeline kind |
+      | Bash  | a command     |
+      | Read  | a file read   |
+      | Grep  | a file search |
+      | Write | a file change |
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
   @shared @backlog-mobile

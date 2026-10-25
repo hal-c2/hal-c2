@@ -151,7 +151,7 @@ defmodule HalC2.Acp.ThreadRuntime do
        thread_id: thread_id,
        conn: nil,
        agent: nil,
-       # Whether the agent is Kimi CLI, whose tool calls `Kimi.update/1` reshapes.
+       # Whether the agent is Kimi Code, whose tool calls `Kimi.update/1` reshapes.
        kimi: false,
        mode: nil,
        capabilities: %{},
@@ -1398,7 +1398,11 @@ defmodule HalC2.Acp.ThreadRuntime do
         state |> killed(id, call) |> finish_tool(id, call)
 
       true ->
-        state |> running_command(id, call) |> running_search(id, call) |> running_tool(id, call)
+        state
+        |> running_command(id, call)
+        |> running_search(id, call)
+        |> running_file(id, call)
+        |> running_tool(id, call)
     end
   end
 
@@ -1437,6 +1441,22 @@ defmodule HalC2.Acp.ThreadRuntime do
       _ -> state
     end
   end
+
+  # A file change announced before its input names its file once it runs.
+  defp running_file(state, id, %{"locations" => [%{"path" => path} | _]}) when is_binary(path) do
+    with %{kind: :file, id: item_id} = item <- state.items[id],
+         true <- item["fileName"] != path do
+      commit(state, fn stream ->
+        [Orchestration.upsert(stream, "turn-item", item_id, &Map.put(&1, "fileName", path))]
+      end)
+
+      %{state | items: Map.put(state.items, id, Map.put(item, "fileName", path))}
+    else
+      _ -> state
+    end
+  end
+
+  defp running_file(state, _id, _call), do: state
 
   # A tool announced before its input (Kimi streams it in) shows it once it runs.
   defp running_tool(state, id, %{"rawInput" => input}) do
