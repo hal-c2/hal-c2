@@ -13,6 +13,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   import ExUnit.Assertions
 
   alias HalC2.Test.AcpFixtures, as: Acp
+  alias HalC2.Test.FakeAcp
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
@@ -1487,6 +1488,48 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     text = Acp.assistant_text(thread(context))
     assert text == "[ACP image (image/png)]"
     refute text =~ "iVBORw0KGgo"
+    context
+  end
+
+  # --- Kimi and the subagents setting --------------------------------------------------
+
+  step "Kimi CLI is offered HAL-C2's tools", context do
+    Mc.ensure(HalC2.Mcp)
+
+    config = %{
+      "turns" => FakeAcp.turns(),
+      "capabilities" => %{"mcpCapabilities" => %{"http" => true}}
+    }
+
+    context = FakeAcp.install(context, "kimi", config)
+    World.put_app_env(:acp_commands, %{"kimi" => [context.fakes["kimi"].bin]})
+
+    FakeAcp.settings(fn settings ->
+      put_in(settings, [Access.key("providerInstances", %{}), "kimi"], %{
+        "driver" => "acpRegistry",
+        "enabled" => true,
+        "config" => %{"agentId" => "kimi"}
+      })
+    end)
+
+    context
+  end
+
+  step "the user sends a Kimi thread its first message", context do
+    context = context |> FakeAcp.thread("Kimi work") |> FakeAcp.send_message("hello")
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step ~r/^Kimi is (?<told>told|not told) to delegate with "(?<tool>[^"]+)" instead of using its own subagents$/,
+       %{args: [told, tool]} = context do
+    assert [%{"params" => %{"prompt" => [%{"text" => text} | _]}}] =
+             FakeAcp.received(context, "session/prompt", "kimi")
+
+    assert text =~ "<hal_c2_orchestration_instructions>"
+    delegate = ~r/built-in subagents\. Delegate child work with `#{tool}`/
+
+    if told == "told", do: assert(text =~ delegate), else: refute(text =~ delegate)
     context
   end
 end

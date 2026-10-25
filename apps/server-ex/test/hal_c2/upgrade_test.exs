@@ -627,7 +627,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, old)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert state.v == 8
+    assert state.v == 9
     assert state.scopes == :all
     refute Map.has_key?(state, :item_types)
     assert state.by_terminal[{:settings, node()}] == %{1 => nil}
@@ -637,6 +637,8 @@ defmodule HalC2.UpgradeTest do
     assert state.subs[3] == {:terminal, node(), {"th-old", "term-1"}}
     assert state.monitors == %{}
     assert state.shell == %{}
+    assert state.terminals == %{}
+    assert state.lost == %{}
     # A stream followed before sends no tag.
     assert state.by_stream == %{"th-old" => {2, nil}}
 
@@ -678,7 +680,7 @@ defmodule HalC2.UpgradeTest do
              HalC2.Web.Socket.handle_info({:hal_c2_keybindings, node(), []}, state)
 
     assert %{"t" => "config.keybindings", "id" => 1} = JSON.decode!(IO.iodata_to_binary(frame))
-    assert migrated.v == 8
+    assert migrated.v == 9
     assert migrated.subs == state.subs
     # The terminal entry holds both subscriptions `subs` held; the config entry
     # holds its one by id too, with no watch ref of its own (v8).
@@ -769,8 +771,8 @@ defmodule HalC2.UpgradeTest do
     }
 
     # One still on its way from the subscription the upgrade carried over. The
-    # v7 state is first migrated to v8, so the returned state is that migration.
-    migrated = %{state | v: 8}
+    # v7 state is first migrated to v9, so the returned state is that migration.
+    migrated = Map.merge(state, %{v: 9, terminals: %{}, lost: %{}})
     assert {:ok, ^migrated} = HalC2.Web.Socket.handle_info({:hal_c2_stream, "th", :resync}, state)
 
     assert {:push, [{:text, frame}], _} =

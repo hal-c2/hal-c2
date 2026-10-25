@@ -8,7 +8,9 @@
 #   apps/server-ex/lib/hal_c2/acp/auth.ex (sign-in methods, terminal login, verification)
 #   apps/server-ex/lib/hal_c2/acp/url_auth.ex (agent URL sign-in)
 #   apps/server-ex/lib/hal_c2/acp/sessions.ex (native sessions, model providers, logout)
-#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (initialize, session/new, resume, permissions, cancel, rollback)
+#   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (initialize, session/new, resume, permissions, cancel, rollback,
+#     the instructions a session's first prompt carries)
+#   features/settings/subagents.feature (the subagents setting)
 #   apps/web/src/components/settings/AcpRegistrySearchStep.tsx, apps/web/src/components/settings/AcpSessionManagementSection.tsx
 #   apps/web/src/components/settings/ProviderWizardAuthenticationStep.tsx
 #   packages/contracts/src/rpc.ts (server.searchAcpRegistry, server.prepareAcpRegistryAgent, server.uninstallAcpRegistryManagedBinary,
@@ -2041,3 +2043,15 @@ Feature: ACP registry agents
     Given an instance of "acme" with a secret environment variable
     When the user signs in to it from HAL-C2
     Then what the MC keeps on disk about the sign-in does not contain the variable's value
+
+  # Kimi's `kimi acp` has no switch for its Agent tool, so the setting can only tell it.
+  Scenario Outline: Kimi CLI is told to use HAL-C2 workers when agents use them
+    Given the subagents setting is <setting>
+    And Kimi CLI is offered HAL-C2's tools
+    When the user sends a Kimi thread its first message
+    Then Kimi is <told> to delegate with "delegate_task" instead of using its own subagents
+
+    Examples:
+      | setting            | told     |
+      | the provider's own | not told |
+      | HAL-C2 workers     | told     |

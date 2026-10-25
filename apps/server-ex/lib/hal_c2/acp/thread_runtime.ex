@@ -313,7 +313,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   def handle_call({:steer, run_id, message}, _from, %{agent: "opencode", prompt: p} = state)
       when p != nil and not state.interrupted and state.turn.ids.run == run_id do
-    prompt = acp_prompt(Map.put(message, :ids, state.turn.ids), state.capabilities, false)
+    prompt = acp_prompt(Map.put(message, :ids, state.turn.ids), state.capabilities, nil)
     params = %{"sessionId" => state.session_id, "prompt" => prompt}
     prompts = Connection.request(state.conn, "session/prompt", params, :steer, state.prompts)
     {:reply, :ok, %{state | prompts: prompts}}
@@ -2203,7 +2203,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   @skill_mention ~r/(^|\s)\p{Sc}[a-zA-Z0-9]/u
 
   # The message, with where its files are; images inline when the agent takes them.
-  defp acp_prompt(turn, capabilities, announce) do
+  defp acp_prompt(turn, capabilities, instructions) do
     attachments = Map.get(turn, :attachments, [])
     message = HalC2.Attachments.prompt_text(turn.text, attachments)
 
@@ -2214,9 +2214,9 @@ defmodule HalC2.Acp.ThreadRuntime do
         else: message
 
     message =
-      if announce,
+      if instructions,
         do:
-          "<hal_c2_orchestration_instructions>#{HalC2.Mcp.instructions()}</hal_c2_orchestration_instructions>\n\n<user_request>\n#{message}\n</user_request>",
+          "<hal_c2_orchestration_instructions>#{instructions}</hal_c2_orchestration_instructions>\n\n<user_request>\n#{message}\n</user_request>",
         else: message
 
     text = [%{"type" => "text", "text" => message}]
@@ -2242,11 +2242,19 @@ defmodule HalC2.Acp.ThreadRuntime do
   # the same connection later lands behind it, so the agent reads the prompt first.
   defp prompt(state, turn) do
     state = %{state | leaf: leaf(state)}
-    prompt = acp_prompt(turn, state.capabilities, state.announce)
+    prompt = acp_prompt(turn, state.capabilities, instructions(state))
     params = %{"sessionId" => state.session_id, "prompt" => prompt}
     prompts = Connection.request(state.conn, "session/prompt", params, :prompt, state.prompts)
     %{state | announce: false, prompt: true, prompts: prompts}
   end
+
+  # What a session given HAL-C2's tools is told about them with its first prompt. Kimi,
+  # whose Agent tool HAL-C2 cannot take away, is told to delegate when the subagents
+  # setting keeps agents to HAL-C2's workers.
+  defp instructions(%{announce: false}), do: nil
+
+  defp instructions(state),
+    do: HalC2.Mcp.instructions(state.kimi and HalC2.Mcp.workers_only?(%{}))
 
   # The thread no longer holds an agent session (`HalC2.Acp.Antigravity.sessions/1`).
   defp released(state) do
