@@ -440,6 +440,7 @@ mc/platform/storage-layout.feature: The desktop app's control socket lives in th
 mc/platform/websocket-protocol.feature: A client refuses a server speaking an unknown protocol
 mc/platform/websocket-protocol.feature: A client skips an event type it does not know
 navigation/appearance.feature: A font preference can be reset to the system font
+navigation/appearance.feature: A new interface font reaches the text already on screen
 navigation/appearance.feature: A theme choice that cannot be saved is reported
 navigation/appearance.feature: A theme with only one appearance fills only that half
 navigation/appearance.feature: An appearance setting can be put back to its default [composer context]
@@ -921,32 +922,90 @@ navigation/windows.feature: Windows share the sign-in but not the navigation
 navigation/windows.feature: Zooming the app [mod++, larger]
 navigation/windows.feature: Zooming the app [mod+-, smaller]
 navigation/windows.feature: Zooming the app [mod+=, larger]
+planning/planner.feature: A group folds and unfolds from the keyboard
+planning/planner.feature: A late answer to an apply stays with the run it applied
+planning/planner.feature: A milestone without a date has no marker
+planning/planner.feature: A proposal of only a status update can be applied
+planning/planner.feature: A proposal shows on the Gantt chart before it is applied
+planning/planner.feature: A run on another MC names that MC's task
+planning/planner.feature: A screen reader names the planner's settings when the board's date fields are <dates> [acme/3, picked from a list]
+planning/planner.feature: A screen reader names the planner's settings when the board's date fields are <dates> [acme/9, typed in]
+planning/planner.feature: A task names a project the MC no longer offers
+planning/planner.feature: A task that ends before its baseline says how many days early
+planning/planner.feature: A task's thread keeps the task mark once its run is discarded
+planning/planner.feature: A task's thread stops following the plan once it no longer shows the task [the user opens the thread of a run of "Reschedule"]
+planning/planner.feature: A task's thread stops following the plan once it no longer shows the task [the work on "API" is discarded]
+planning/planner.feature: An action's thread is marked in the thread list
+planning/planner.feature: An action's thread shows its run above the conversation
+planning/planner.feature: Dragging a bar reschedules the task
+planning/planner.feature: Dragging the end of a bar changes when the task ends
+planning/planner.feature: Starting work is always on one task
+planning/planner.feature: The Gantt chart draws tasks, milestones, dependencies and today
+planning/planner.feature: The board grouped by milestone moves a task to another milestone
+planning/planner.feature: The board grouped by parent moves a subtask to another parent
+planning/planner.feature: The board moves a task between states
+planning/planner.feature: The board not grouped shows every task in one column
+planning/planner.feature: The board shows dropped work
+planning/planner.feature: The chart reaches back to a baseline long before the plan
+planning/planner.feature: The list scrolls sideways to columns wider than it
+planning/planner.feature: The list shows the fields the view picks
+planning/planner.feature: The settings do not save while a count reads what it cannot be
+planning/planner.feature: The settings edit each action's prompt and reset it
+planning/planner.feature: The settings say why the board's date fields could not be read
+planning/planner.feature: The settings take no count the MC refuses
+planning/planner.feature: The user edits a task from any view
+planning/planner.feature: The user edits a view and saves it
+planning/planner.feature: The user filters a view without saving it
+planning/planner.feature: The user opens a task from the keyboard on <view> [All tasks]
+planning/planner.feature: The user opens a task from the keyboard on <view> [Board]
+planning/planner.feature: The user opens a task from the keyboard on <view> [Timeline]
+planning/planner.feature: The user picks a view with the keyboard
+planning/planner.feature: The user picks the board and its date fields from lists in the settings
+planning/planner.feature: The user picks the planner's Slack channel in its settings
 plugins/keymaps.feature: Resetting keybindings removes every override
+plugins/plugin-contributions.feature: A UI part follows the state its MC part publishes
 plugins/plugin-contributions.feature: A failed plugin can be restarted from its settings
 plugins/plugin-contributions.feature: A page that could not be fetched is asked for again once its environment is back
 plugins/plugin-contributions.feature: A page whose UI part fails to load shows the error in its tab
+plugins/plugin-contributions.feature: A plugin adds a section to the sidebar
 plugins/plugin-contributions.feature: A plugin page can be reached from the command palette
 plugins/plugin-contributions.feature: A plugin page is a tab beside the threads
+plugins/plugin-contributions.feature: A plugin page keeps its state while another tab is shown
 plugins/plugin-contributions.feature: A plugin put in the MC's plugins folder is listed once the user looks for it
 plugins/plugin-contributions.feature: A plugin that did not load says why in the plugin list [error, plugin.json is not valid JSON., Failed]
 plugins/plugin-contributions.feature: A plugin that did not load says why in the plugin list [incompatible, It needs a newer MC., Not made for this MC]
 plugins/plugin-contributions.feature: A plugin thread looks like any other thread when the plugin is not running
+plugins/plugin-contributions.feature: A plugin thread shows the plugin's header above the conversation
+plugins/plugin-contributions.feature: A plugin thread shows the plugin's mark in the thread list
 plugins/plugin-contributions.feature: A plugin without its own settings page gets one from its declared settings
+plugins/plugin-contributions.feature: A plugin's own settings page replaces the generated one
 plugins/plugin-contributions.feature: A setting whose JSON does not parse cannot be saved
 plugins/plugin-contributions.feature: A thread the plugin keeps out of the list is not in the thread list
 plugins/plugin-contributions.feature: A thread the plugin kept out of the list is listed once the plugin is not running
+plugins/plugin-contributions.feature: A version's tab follows its environment to the version it updates to
+plugins/plugin-contributions.feature: A version's tab stays put when the other version goes away
+plugins/plugin-contributions.feature: An updated plugin's UI parts replace the old ones
+plugins/plugin-contributions.feature: An updated plugin's old UI parts are not kept
 plugins/plugin-contributions.feature: Declining the permissions leaves the plugin disabled
+plugins/plugin-contributions.feature: Disabling the plugin removes its tab and returns to the threads
 plugins/plugin-contributions.feature: Enabling a plugin shows the permissions before it runs
+plugins/plugin-contributions.feature: Opening a thread from a plugin page switches to the threads
 plugins/plugin-contributions.feature: Settings the plugin refuses show its message
 plugins/plugin-contributions.feature: Switching to a plugin tab shows its page and switching back keeps the thread
+plugins/plugin-contributions.feature: The UI part of an MC plugin can call its MC part
 plugins/plugin-contributions.feature: The keyboard moves between the tabs [Reviews, the next tab, Threads]
 plugins/plugin-contributions.feature: The keyboard moves between the tabs [Reviews, the previous tab, Threads]
 plugins/plugin-contributions.feature: The keyboard moves between the tabs [Threads, the next tab, Reviews]
 plugins/plugin-contributions.feature: The plugin list shows what each MC plugin is
 plugins/plugin-contributions.feature: The same plugin in two versions is a tab for each version
+plugins/plugin-contributions.feature: The same plugin on two environments is one tab
 plugins/plugin-contributions.feature: The settings of a plugin that did not load say why
 plugins/plugin-contributions.feature: There are no tabs while no plugin adds a page
+plugins/plugin-contributions.feature: UI parts that watch the same topic share it
+plugins/ui-plugins.feature: A disabled plugin stays disabled after a restart
 plugins/ui-plugins.feature: A plugin URL that cannot be reached is reported
+plugins/ui-plugins.feature: A slot a surface does not have is skipped quietly
+plugins/ui-plugins.feature: Plugin errors are visible to the user
 preview/devices.feature: A Device tab in the background streams nothing
 preview/devices.feature: A device an agent opens shows as a side panel tab
 preview/devices.feature: A device powered off from a thread the user left closes that thread's tab
@@ -1397,6 +1456,13 @@ settings/usage.feature: Usage of one environment leaves the others out
 settings/usage.feature: Usage remembers the view the user last chose
 settings/usage.feature: Usage that could not be read can be read again
 settings/usage.feature: Without limits to show the page says so
+source-control/agent-code-review.feature: A review thread is marked as a review in the thread list
+source-control/agent-code-review.feature: A review thread shows the pull request and the verdict above the conversation
+source-control/agent-code-review.feature: Resetting the prompt leaves the user's other changes unsaved
+source-control/agent-code-review.feature: The reviews page lists reviews by state
+source-control/agent-code-review.feature: The reviews page shows a review's findings and publishes them
+source-control/agent-code-review.feature: The settings offer each source control host
+source-control/agent-code-review.feature: The user starts a review from the reviews page
 source-control/checkpoint-diffs.feature: A diff can be shown side by side or as one column
 source-control/checkpoint-diffs.feature: A large file's changes start collapsed and can be expanded
 source-control/checkpoint-diffs.feature: A turn's diff that cannot be loaded can be asked for again
@@ -1514,6 +1580,7 @@ source-control/repository-discovery-clone-publish.feature: A host that is not re
 source-control/repository-discovery-clone-publish.feature: Publishing walks through provider, repository and summary
 source-control/repository-discovery-clone-publish.feature: Starting to publish from the git actions
 source-control/review-diffs.feature: A thread in its own worktree reviews that worktree
+source-control/review-diffs.feature: Browsing the changed files as a tree
 source-control/review-diffs.feature: Choosing what to compare against
 source-control/review-diffs.feature: Collapsing and expanding every file
 source-control/review-diffs.feature: Commenting on lines adds review context to the composer
@@ -1902,6 +1969,10 @@ timeline/checkpoints.feature: Either way in asks first, then keeps or restores t
 timeline/checkpoints.feature: Either way in asks first, then keeps or restores the files [the diff panel, Keep files, the MC is asked to leave the files as they are]
 timeline/checkpoints.feature: Either way in asks first, then keeps or restores the files [the diff panel, Revert files too, the workspace files match the end of turn 1]
 timeline/checkpoints.feature: Rolling back to a checkpoint asks first because it cannot be undone
+timeline/checkpoints.feature: The client explains why it cannot rewind [the composer has no room for the attachments, Make room for this message's attachments in the composer before rewinding.]
+timeline/checkpoints.feature: The client explains why it cannot rewind [the message's attachments are still preparing, Wait for attachments to finish preparing before rewinding.]
+timeline/checkpoints.feature: The client explains why it cannot rewind [the provider cannot rewind its history, This provider does not support reverting conversation history. Start a new thread instead.]
+timeline/checkpoints.feature: The user cancels a rewind
 timeline/markdown.feature: A GitHub alert shows its kind [CAUTION, Caution]
 timeline/markdown.feature: A GitHub alert shows its kind [IMPORTANT, Important]
 timeline/markdown.feature: A GitHub alert shows its kind [NOTE, Note]
@@ -2030,6 +2101,7 @@ timeline/tool-calls.feature: A tool call's icon says what kind of work it was [c
 timeline/tool-calls.feature: A tool call's icon says what kind of work it was [ran a command, terminal]
 timeline/tool-calls.feature: A tool call's icon says what kind of work it was [searched the files, search]
 timeline/tool-calls.feature: A tool call's icon says what kind of work it was [searched the web, globe]
+timeline/tool-calls.feature: A turn's changed files are folded under their folders
 timeline/tool-calls.feature: An ACP agent's read, search and fetch tools keep their meaning [fetch, a web search]
 timeline/tool-calls.feature: An ACP agent's read, search and fetch tools keep their meaning [read, a file read]
 timeline/tool-calls.feature: An ACP agent's read, search and fetch tools keep their meaning [search, a file search]
@@ -2037,4 +2109,5 @@ timeline/tool-calls.feature: Consecutive tool calls in a running turn show only 
 timeline/tool-calls.feature: Failed calls are not counted as work done
 timeline/tool-calls.feature: Files changed by a turn are listed under its reply
 timeline/tool-calls.feature: The previous tool calls can be shown and hidden again
+timeline/tool-calls.feature: The user opens the diff of a single changed file
 timeline/tool-calls.feature: The user opens the diff of one turn
