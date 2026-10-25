@@ -173,7 +173,9 @@ ShellWindow {
         id: dash
 
         property int order: 0
-        default property alias content: dashInner.data
+        // TODO(ljos#132): named `content`, like ShellCard's, once Ljós routes
+        // a subtype's same-named default alias the way Qt does.
+        default property alias body: dashInner.data
 
         radius: 18
 
@@ -752,6 +754,7 @@ ShellWindow {
 
                                     // Today, in the big numerals the rail deserves.
                                     DashCard {
+                                        objectName: "clockCard"
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         order: 1
@@ -978,6 +981,7 @@ ShellWindow {
 
                                             Loader {
                                                 id: cat
+                                                objectName: "mascotCat"
 
                                                 anchors.fill: parent
                                                 active: drawer.visible
@@ -985,6 +989,7 @@ ShellWindow {
                                             }
 
                                             Item {
+                                                objectName: "mascotInitial"
                                                 anchors.centerIn: parent
                                                 width: 84
                                                 height: 84
@@ -1004,7 +1009,7 @@ ShellWindow {
 
                                                     Text {
                                                         anchors.centerIn: parent
-                                                        text: root.instance ? root.initialOf(root.instance.displayName) : "HAL-C2"
+                                                        text: root.initialOf(root.instance ? root.instance.displayName : "HAL-C2")
                                                         color: root.accentDeep
                                                         font.family: Theme.fontUi
                                                         font.pixelSize: 30
