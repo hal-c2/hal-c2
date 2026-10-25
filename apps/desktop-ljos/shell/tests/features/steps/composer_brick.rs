@@ -10,7 +10,7 @@ use hal_c2_shell::controllers::navigation::{Navigation, Route};
 use hal_c2_shell::controllers::palette::Palette;
 use hal_c2_shell::controllers::settings::Settings;
 use hal_c2_shell::json::Json;
-use ljos::item::{KeyEvent, Modifiers, key};
+use ljos::item::{KeyEvent, Modifiers, MouseButtons, key};
 use ljos::prelude::{ObjectId, Value as QmlValue};
 use serde_json::{Value, json};
 
@@ -575,6 +575,39 @@ pub fn register(steps: &mut Steps) {
             Ok(())
         },
     );
+    // Pasting, and the draft's right-click menu (TextEditMenu).
+    steps.step(&format!("the user copied {Q}"), |world, c, _| {
+        world.set_clipboard(&c[0]);
+        Ok(())
+    });
+    steps.step("the user presses (\\S+) in the composer", |world, c, _| {
+        expect!(
+            press_in_composer(world, &c[0])?,
+            "the composer did not take {}",
+            c[0]
+        );
+        Ok(())
+    });
+    steps.step(
+        &format!("the user chooses {Q} from the draft's right-click menu"),
+        |world, c, _| choose_in_draft_menu(world, &c[0]),
+    );
+    steps.step(
+        &format!("{Q} is selected in the composer"),
+        |world, c, _| {
+            let (brick, editor) = editor(world)?;
+            let selected = brick.text_of(world, editor, "selectedText");
+            expect!(selected == c[0], "the selection is \"{selected}\"");
+            Ok(())
+        },
+    );
+    steps.step("the draft's right-click menu is open", |world, _, _| {
+        let brick = composer_brick(world)?;
+        let menu = brick.item(world, "editorMenu")?;
+        world.wait_for("the draft's right-click menu to open", move |w| {
+            brick.flag(w, menu, "visible")
+        })
+    });
     steps.step(
         &format!("text {Q} is inserted into the composer"),
         |world, c, _| {
@@ -857,6 +890,42 @@ pub fn settle_composer(world: &mut World) -> Outcome {
     )
 }
 
+/// The object name of the item a text's right-click menu (TextEditMenu)
+/// calls `said`.
+pub fn text_menu_item(said: &str) -> Outcome<&'static str> {
+    Ok(match said {
+        "Cut" => "cutText",
+        "Copy" => "copyText",
+        "Paste" => "pasteText",
+        "Select All" => "selectAllText",
+        other => fail!("a text's menu has no {other}"),
+    })
+}
+
+/// Right-clicks the middle of the composer's editor and chooses `said` from
+/// the menu that opens.
+pub fn choose_in_draft_menu(world: &mut World, said: &str) -> Outcome {
+    let item = text_menu_item(said)?;
+    let (brick, editor) = editor(world)?;
+    let (x, y) = brick.at(world, editor, 0.5, 0.5)?;
+    world.click_at_with(
+        x.trunc(),
+        y.trunc(),
+        MouseButtons::RIGHT,
+        Modifiers::empty(),
+    )?;
+    let menu = brick.item(world, "editorMenu")?;
+    // An item takes clicks once the menu has finished opening.
+    world.wait_for("the draft's right-click menu to open", move |w| {
+        brick.flag(w, menu, "opened")
+    })?;
+    brick.click(world, item)?;
+    // What it chose is done once the menu has gone.
+    world.wait_for("the draft's right-click menu to close", move |w| {
+        !brick.flag(w, menu, "visible")
+    })
+}
+
 /// Presses and releases `event`'s key in the composer's window.
 fn click(world: &mut World, event: KeyEvent) -> Outcome<bool> {
     let release = KeyEvent::release(event.key).with_modifiers(event.modifiers);
@@ -927,6 +996,7 @@ pub fn press_in_composer(world: &mut World, spelt: &str) -> Outcome<bool> {
         "backspace" => Some(key::BACKSPACE),
         "tab" => Some(key::TAB),
         "insert" => Some(key::INSERT),
+        "menu" => Some(key::MENU),
         _ => None,
     };
     let plain = modifiers.is_empty() || modifiers == Modifiers::SHIFT;
