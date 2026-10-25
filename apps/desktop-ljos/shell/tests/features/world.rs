@@ -250,7 +250,7 @@ impl World {
         hal_c2_shell::controllers::threads::set_wake(&engine, wake(&self.signal));
         hal_c2_shell::controllers::sidebar::set_time_zone(
             &engine,
-            Some(chrono::FixedOffset::east_opt(0).expect("UTC")),
+            hal_c2_shell::time_zone::Zone::named("UTC"),
         );
         let recorded = self.recorded.clone();
         Bridge::of(&engine).set_clipboard_writer(&engine, move |text| {
