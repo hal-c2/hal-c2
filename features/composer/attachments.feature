@@ -2,6 +2,7 @@
 #   docs/user/composer.md (attachments, large pastes, images, prompt stash files)
 #   apps/server-ex/lib/hal_c2/attachments.ex (upload URL, claim, size limits, pending expiry)
 #   apps/desktop-qt/qml/HalC2/Bricks/Composer.qml (image picker, clipboard paste, attachment removal)
+#   apps/desktop-qt/qml/HalC2/Bricks/TextEditMenu.qml (Paste in the draft's right-click menu)
 #   apps/desktop-qt/qml/HalC2/Bricks/ConversationDrop.qml (file drop over the conversation)
 #   apps/tui/src/composerAttachments.ts (image paths in prompts and editor output)
 #   apps/tui/src/components/ChatView.tsx (clipboard image paste, image-only prompts, files browser attach)
@@ -88,6 +89,11 @@ Feature: Attaching images and files to a message
       | keys         |
       | mod+v        |
       | shift+insert |
+
+  @desktop
+  Scenario: Paste in the draft's right-click menu attaches a copied picture
+    When the user pastes a copied picture into the prompt from its right-click menu
+    Then the draft carries "image.png"
 
   @desktop
   Scenario Outline: A file copied in a file manager pasted into the prompt is attached

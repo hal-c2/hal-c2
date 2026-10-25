@@ -3,6 +3,9 @@
 // (features/composer/drafting-and-sending.feature, editors-and-keys.feature,
 // qt-scenarios.feature).
 
+#include <QClipboard>
+#include <QPointer>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQuickItem>
@@ -335,6 +338,26 @@ const Steps steps([] {
     QMetaObject::invokeMethod(composerEditor(world), "select", Q_ARG(int, start), Q_ARG(int, start + int(c[1].size())));
     expect(composerEditor(world)->property("selectedText") == c[1], QStringLiteral("the selection is \"%1\"").arg(composerEditor(world)->property("selectedText").toString()));
   });
+
+  // The draft's right-click menu (TextEditMenu) and the paste keys.
+  step(QStringLiteral("the user copied %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    QGuiApplication::clipboard()->setText(c[0]);
+    world.clipboard = c[0];
+  });
+  step(QStringLiteral("the user presses (\\S+) in the composer"), [](World& world, const Captures& c, const Table&) {
+    expect(pressInComposer(world, c[0]), QStringLiteral("the composer did not take %1").arg(c[0]));
+  });
+  step(QStringLiteral("the user chooses %1 from the draft's right-click menu").arg(q), [](World& world, const Captures& c, const Table&) {
+    chooseInDraftMenu(world, c[0]);
+  });
+  step(QStringLiteral("%1 is selected in the composer").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString selected = composerEditor(world)->property("selectedText").toString();
+    expect(selected == c[0], QStringLiteral("the selection is \"%1\"").arg(selected));
+  });
+  step(QStringLiteral("the draft's right-click menu is open"), [](World& world, const Captures&, const Table&) {
+    QObject* menu = composerItem(world)->findChild<QObject*>(QStringLiteral("editorMenu"));
+    world.waitFor([&] { return menu && menu->property("opened").toBool(); }, QStringLiteral("the draft's menu to open"));
+  });
   const auto insert = [](World& world, const QString& text, const QString& into) {
     QVariant inserted;
     QMetaObject::invokeMethod(composerItem(world), "insertText", Q_RETURN_ARG(QVariant, inserted), Q_ARG(QVariant, text), Q_ARG(QVariant, into));
@@ -482,6 +505,41 @@ void settleComposer(World& world) {
                                  .arg(editorText(world), shown(world).value(QStringLiteral("text")).toString()); });
 }
 
+QString textMenuItem(const QString& said) {
+  static const QHash<QString, QString> names{{QStringLiteral("Cut"), QStringLiteral("cutText")},
+                                             {QStringLiteral("Copy"), QStringLiteral("copyText")},
+                                             {QStringLiteral("Paste"), QStringLiteral("pasteText")},
+                                             {QStringLiteral("Select All"), QStringLiteral("selectAllText")}};
+  if (!names.contains(said)) fail(QStringLiteral("a text's menu has no %1").arg(said));
+  return names.value(said);
+}
+
+void chooseInTextMenu(World& world, Brick& brick, QObject* menu, const QString& said) {
+  const QString name = textMenuItem(said);
+  // An item takes clicks once the menu has finished opening.
+  world.waitFor([&] { return menu->property("opened").toBool(); }, QStringLiteral("the text's menu to open"));
+  QQuickItem* item = nullptr;
+  for (int i = 0; i < menu->property("count").toInt() && !item; ++i) {
+    QQuickItem* entry = nullptr;
+    QMetaObject::invokeMethod(menu, "itemAt", Q_RETURN_ARG(QQuickItem*, entry), Q_ARG(int, i));
+    if (entry && entry->objectName() == name) item = entry;
+  }
+  expect(item && item->isVisible() && item->isEnabled(), QStringLiteral("the text's menu offers no %1 to choose").arg(said));
+  const QPointer<QObject> open = menu;
+  QTest::mouseClick(&brick.window(), Qt::LeftButton, Qt::NoModifier, brick.at(item));
+  // What it chose is done once the menu has gone; a reply's is destroyed.
+  world.waitFor([&] { return !open || !open->property("visible").toBool(); }, QStringLiteral("the text's menu to close"));
+}
+
+void chooseInDraftMenu(World& world, const QString& said) {
+  Brick& brick = composerBrick(world);
+  QQuickItem* editor = composerEditor(world);
+  QTest::mouseClick(&brick.window(), Qt::RightButton, Qt::NoModifier, brick.at(editor, 0.5, 0.5));
+  QObject* menu = composerItem(world)->findChild<QObject*>(QStringLiteral("editorMenu"));
+  expect(menu != nullptr, QStringLiteral("the composer has no editorMenu"));
+  chooseInTextMenu(world, brick, menu, said);
+}
+
 void typeInComposer(World& world, const QString& text) {
   Brick& brick = composerBrick(world);
   for (const QChar ch : text) QTest::keyClick(&brick.window(), ch.toLatin1());
@@ -517,7 +575,8 @@ bool pressInComposer(World& world, const QString& key) {
       {QStringLiteral("enter"), Qt::Key_Return}, {QStringLiteral("return"), Qt::Key_Return}, {QStringLiteral("escape"), Qt::Key_Escape},
       {QStringLiteral("esc"), Qt::Key_Escape},   {QStringLiteral("up"), Qt::Key_Up},         {QStringLiteral("down"), Qt::Key_Down},
       {QStringLiteral("left"), Qt::Key_Left},    {QStringLiteral("right"), Qt::Key_Right},   {QStringLiteral("backspace"), Qt::Key_Backspace},
-      {QStringLiteral("tab"), Qt::Key_Tab},        {QStringLiteral("insert"), Qt::Key_Insert}};
+      {QStringLiteral("tab"), Qt::Key_Tab},        {QStringLiteral("insert"), Qt::Key_Insert},
+      {QStringLiteral("menu"), Qt::Key_Menu}};
   if (lower == QLatin1String("tab") && (modifiers & Qt::ShiftModifier)) {
     QTest::keyClick(&brick.window(), Qt::Key_Backtab, modifiers);
   } else if (named.contains(lower)) {

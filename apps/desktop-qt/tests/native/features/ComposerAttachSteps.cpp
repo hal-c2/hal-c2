@@ -341,12 +341,19 @@ const Steps steps([] {
            QStringLiteral("the draft reads \"%1\" with %2").arg(draftText(world), carried(world).join(u", ")));
   });
 
-  step(QStringLiteral("the user pastes a copied picture into the prompt with (\\S+)"), [](World& world, const Captures& c, const Table&) {
+  const auto copyPicture = [](World& world) {
     composerBrick(world);
     QImage picture(4, 4, QImage::Format_RGB32);
     picture.fill(Qt::red);
     QGuiApplication::clipboard()->setImage(picture);
+  };
+  step(QStringLiteral("the user pastes a copied picture into the prompt with (\\S+)"), [copyPicture](World& world, const Captures& c, const Table&) {
+    copyPicture(world);
     expect(pressInComposer(world, c[0]), QStringLiteral("the composer did not take the paste"));
+  });
+  step(QStringLiteral("the user pastes a copied picture into the prompt from its right-click menu"), [copyPicture](World& world, const Captures&, const Table&) {
+    copyPicture(world);
+    chooseInDraftMenu(world, QStringLiteral("Paste"));
   });
 
   // As a file manager copies a file: its address, and maybe some form of it as text.
