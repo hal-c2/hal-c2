@@ -120,12 +120,15 @@ struct Sut {
     FakeMc::Rpc rpc;
     QJsonObject list;
   };
-  // A link the user opened for a thread, not yet in the browser; `away`
-  // once the connected MC was not on this machine meanwhile.
+  // A link the user opened for a thread, not yet in the browser. One that
+  // `forwards` was a loopback address of a thread on another MC while the
+  // connected MC was here: it waits on the MC, and opens as it is only if the
+  // connected MC is no longer here once the last answer comes. Any other
+  // opens as it is at once.
   struct Link {
     QString thread;
     QUrl url;
-    bool away = false;
+    bool forwards = false;
   };
   struct Forward {
     QString thread;
@@ -301,16 +304,16 @@ struct Sut {
     }
   }
 
-  // The browser opens `url`: a waiting link it is, as it is or through a
-  // forward granted for its thread at its port, at 127.0.0.1 for an address.
-  // A link `away` may open either way, so it is taken only when no other fits:
-  // otherwise a link of a thread on the connected MC, opened as it is, would
-  // take another thread's away link, whose forward then fits none.
+  // The browser opens `url`: a waiting link it is. One that does not forward
+  // opens as it is; one that does, through a forward granted for its thread
+  // at its port (at 127.0.0.1 for an address), or as it is when the connected
+  // MC is not here now, as ThreadPreviews asks again on the answer that opens
+  // it. A link opened at once is taken first, so a waiting one is not taken
+  // for it.
   void browsed(const QUrl& url) {
     const auto fits = [&](const Link& link) {
-      const bool remote = environmentOf(link.thread) != kEnvironment;
-      if (url == link.url && (!loopback(link.url) || !remote || link.away)) return true;
-      if (!remote || !loopback(link.url)) return false;
+      if (url == link.url && (!link.forwards || !here)) return true;
+      if (!link.forwards) return false;
       QUrl forwarded = link.url;
       forwarded.setPort(forwardPortOf(portOf(link.url)));
       if (!QHostAddress(forwarded.host()).isNull()) forwarded.setHost(QStringLiteral("127.0.0.1"));
@@ -318,9 +321,9 @@ struct Sut {
                return forward.thread == link.thread && forward.port == portOf(link.url);
              });
     };
-    for (const bool either : {false, true}) {
+    for (const bool waiting : {false, true}) {
       for (qsizetype at = 0; at < links.size(); ++at) {
-        if ((either || !links.at(at).away) && fits(links.at(at))) {
+        if (links.at(at).forwards == waiting && fits(links.at(at))) {
           links.removeAt(at);
           return;
         }
@@ -335,6 +338,7 @@ struct Sut {
     RC_ASSERT(modelTestFailures == 0);
     RC_ASSERT(misrouted.isEmpty());
     RC_ASSERT(stray.isEmpty());
+    RC_ASSERT(std::all_of(links.cbegin(), links.cend(), [](const Link& link) { return link.forwards; }));
     // Once nothing is held, every link opened or said why not.
     if (held.isEmpty()) {
       RC_ASSERT(int(links.size()) == linkErrors);
@@ -420,7 +424,8 @@ struct OpenLink : Step {
   void apply(Model&) const override {}
   void act(const Model& model, Sut& sut) const override {
     if (model.thread.isEmpty()) return;
-    sut.links.append({model.thread, QUrl(url), !sut.here});
+    const bool remote = environmentOf(model.thread) != kEnvironment;
+    sut.links.append({model.thread, QUrl(url), remote && loopback(QUrl(url)) && sut.here});
     sut.previews->openAddress(url);
   }
   void show(std::ostream& os) const override { os << "OpenLink(" << url.toStdString() << ")"; }
@@ -432,9 +437,6 @@ struct SetHere : Step {
   void apply(Model&) const override {}
   void act(const Model&, Sut& sut) const override {
     sut.here = here;
-    if (!here) {
-      for (Sut::Link& link : sut.links) link.away = true;
-    }
   }
   void show(std::ostream& os) const override { os << "SetHere(" << here << ")"; }
 };
