@@ -17,6 +17,8 @@ pub mod highlighter;
 pub mod json;
 pub mod keybindings;
 pub mod local_transcriber;
+#[cfg(target_os = "macos")]
+pub mod macos_window;
 pub mod mc;
 pub mod project;
 pub mod provider;
@@ -194,6 +196,8 @@ pub fn start(engine: &Engine, launch: &Launch, mc: Rc<dyn mc::Mc>) {
     kept.allow_local_folder_import
         .set(launch.allow_local_folder_import);
     platform_window::install(engine);
+    #[cfg(target_os = "macos")]
+    macos_window::install(engine);
     theme::install(engine, launch.config_dir.clone());
     runtime::install(engine, launch.config_dir.as_deref(), launch.qml.clone());
     if let Some(manifest) = &launch.licenses_manifest {
