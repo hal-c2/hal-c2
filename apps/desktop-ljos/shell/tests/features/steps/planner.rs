@@ -1466,11 +1466,8 @@ fn register_list(steps: &mut Steps) {
             let Some(focused) = focused else {
                 fail!("{} does not have the keyboard", c[1])
             };
-            let border = brick.read(world, focused, "border");
-            let width = match border {
-                Value::Object(border) => real(world, brick, border, "width"),
-                _ => 0.0,
-            };
+            // A grouped property is a property of its own name in Ljós.
+            let width = real(world, brick, focused, "border.width");
             expect!(width > 0.0, "{} has no focus border", c[1]);
             Ok(())
         },
