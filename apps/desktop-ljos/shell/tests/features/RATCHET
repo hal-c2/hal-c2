@@ -3,12 +3,19 @@
 # passing; `-- --raise` adds the ones that newly pass. Never remove a line to
 # make a run pass: fix the regression.
 composer/attachments.feature: A Snap Shot attachment names the window it came from
+composer/attachments.feature: A copied picture pasted into the prompt is attached [mod+v]
+composer/attachments.feature: A copied picture pasted into the prompt is attached [shift+insert]
 composer/attachments.feature: A failed upload blocks sending until it is retried or removed
+composer/attachments.feature: A file copied in a file manager pasted into the prompt is attached [café.sql, its encoded URL as text]
+composer/attachments.feature: A file copied in a file manager pasted into the prompt is attached [schema.sql, its URL as text]
+composer/attachments.feature: A file copied in a file manager pasted into the prompt is attached [schema.sql, its path as text]
+composer/attachments.feature: A file copied in a file manager pasted into the prompt is attached [schema.sql, no text]
 composer/attachments.feature: A very large paste becomes a text file attachment
 composer/attachments.feature: Dropping a folder into a remote environment is refused
 composer/attachments.feature: Dropping a folder references its path
 composer/attachments.feature: Files dragged anywhere over the conversation can be dropped to attach
 composer/attachments.feature: Paste as Text keeps a very large paste in the draft
+composer/attachments.feature: Paste in the draft's right-click menu attaches a copied picture
 composer/attachments.feature: Removing an attachment takes it out of the draft
 composer/attachments.feature: The drop hint goes when the drag leaves or is not of files
 composer/attachments.feature: The user attaches an image by choosing it
@@ -49,6 +56,8 @@ composer/drafting-and-sending.feature: mod+alt+Enter starts a new thread in the 
 composer/editors-and-keys.feature: A prompt cannot be stashed while its files are uploading
 composer/editors-and-keys.feature: A restored prompt joins what the draft already holds
 composer/editors-and-keys.feature: A stashed prompt can be deleted
+composer/editors-and-keys.feature: Copied text is pasted where the draft is selected [mod+v]
+composer/editors-and-keys.feature: Copied text is pasted where the draft is selected [shift+insert]
 composer/editors-and-keys.feature: Earlier prompts are recalled in an empty composer
 composer/editors-and-keys.feature: Enter in normal mode does not send
 composer/editors-and-keys.feature: Escape enters normal mode when Vim keys are on
@@ -57,10 +66,15 @@ composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [$, t
 composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [A, the user inserts at the end of the line]
 composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [w, the cursor moves to "world"]
 composer/editors-and-keys.feature: Normal mode keys edit and move like Vim [x, the draft reads "ello world"]
+composer/editors-and-keys.feature: Select All in the draft's right-click menu selects the whole draft
 composer/editors-and-keys.feature: Stashing a prompt clears the composer and it can be restored
 composer/editors-and-keys.feature: Stashing an empty draft brings back the only stashed prompt
 composer/editors-and-keys.feature: Switching threads returns Vim keys to insert mode
 composer/editors-and-keys.feature: Text meant for another thread is not inserted
+composer/editors-and-keys.feature: The Menu key opens the draft's right-click menu
+composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Copy, fix the old totals, old]
+composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Cut, fix the  totals, old]
+composer/editors-and-keys.feature: The draft's right-click menu cuts, copies and pastes [Paste, fix the cart totals, cart]
 composer/editors-and-keys.feature: The stash keeps the 20 newest prompts
 composer/editors-and-keys.feature: Turning rich text off keeps the draft as plain Markdown
 composer/editors-and-keys.feature: Vim keys can be turned on from settings
@@ -1955,11 +1969,15 @@ timeline/markdown.feature: A GitHub alert shows its kind [NOTE, Note]
 timeline/markdown.feature: A GitHub alert shows its kind [TIP, Tip]
 timeline/markdown.feature: A GitHub alert shows its kind [WARNING, Warning]
 timeline/markdown.feature: A link to a script is not a link
+timeline/markdown.feature: A linked image opens as a preview
 timeline/markdown.feature: A reply being written keeps what is already shown
 timeline/markdown.feature: A reply shows its formatting
+timeline/markdown.feature: A reply's right-click menu cannot change the reply
+timeline/markdown.feature: A reply's selected text is copied from its right-click menu
 timeline/markdown.feature: A user message keeps its line breaks
 timeline/markdown.feature: Line wrap in a code block can be turned off and on
 timeline/markdown.feature: Markup in a message is shown as it was written
+timeline/markdown.feature: Select All in a code block's right-click menu selects its code
 timeline/markdown.feature: Table cells can be collapsed and expanded
 timeline/markdown.feature: The user copies a code block
 timeline/notifications.feature: A newer alert for a thread replaces its older one
@@ -2036,6 +2054,8 @@ timeline/runs-and-queue.feature: A usage limit is one warning line naming when t
 timeline/runs-and-queue.feature: An image is still shown after its address stops working
 timeline/scrolling-and-links.feature: A link in a reply opens only on a Ctrl-click [https://example.com/docs, without holding Ctrl, nothing is opened]
 timeline/scrolling-and-links.feature: A link in a reply opens only on a Ctrl-click [src/cart.ts, without holding Ctrl, nothing is opened]
+timeline/scrolling-and-links.feature: A link's menu in a reply opens or copies it [https://example.com/docs, Open link, Copy link, https://example.com/docs, "https://example.com/docs" opens in the system browser]
+timeline/scrolling-and-links.feature: A link's menu in a reply opens or copies it [src/cart.ts:12:3, Open file, Copy path, src/cart.ts, the Files tab shows "src/cart.ts" at line 12]
 timeline/scrolling-and-links.feature: A long thread opens as its newest turns
 timeline/scrolling-and-links.feature: A thread that does not fill the view loads earlier turns by itself
 timeline/scrolling-and-links.feature: Earlier turns load when the user reaches the top

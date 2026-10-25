@@ -17,8 +17,8 @@ use serde_json::{Value, json};
 use crate::fake_mc::FakeMc;
 use crate::harness::{Failure, Outcome, Q, Steps, show, text};
 use crate::steps::composer_brick::{
-    composer_brick, composer_brick_shown, composer_item, composer_part, editor, press_in_composer,
-    settle_composer, type_in_composer,
+    choose_in_draft_menu, composer_brick, composer_brick_shown, composer_item, composer_part,
+    editor, press_in_composer, settle_composer, type_in_composer,
 };
 use crate::steps::stream;
 use crate::world::{OTHER_MACHINE, World};
@@ -308,6 +308,20 @@ fn log_output() -> String {
     }
     log.truncate(40 * 1024);
     log
+}
+
+/// A 4×4 picture on the clipboard, as a screenshot tool copies one.
+fn copy_picture(world: &mut World) -> Outcome {
+    composer_brick(world)?;
+    let rgba = [255u8, 0, 0, 255].repeat(16);
+    let _ = Platform::of(world.engine())
+        .clipboard()
+        .set_image(ClipboardImage {
+            width: 4,
+            height: 4,
+            rgba,
+        });
+    Ok(())
 }
 
 fn paste(world: &mut World, as_text: bool) -> Outcome {
@@ -679,18 +693,18 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the user pastes a copied picture into the prompt with (\\S+)",
         |world, c, _| {
-            composer_brick(world)?;
-            let rgba = [255u8, 0, 0, 255].repeat(16);
-            let _ = Platform::of(world.engine())
-                .clipboard()
-                .set_image(ClipboardImage {
-                    width: 4,
-                    height: 4,
-                    rgba,
-                });
+            copy_picture(world)?;
             let took = press_in_composer(world, &c[0])?;
             expect!(took, "the composer did not take the paste");
             Ok(())
+        },
+    );
+
+    steps.step(
+        "the user pastes a copied picture into the prompt from its right-click menu",
+        |world, _, _| {
+            copy_picture(world)?;
+            choose_in_draft_menu(world, "Paste")
         },
     );
 
@@ -702,20 +716,13 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             composer_brick(world)?;
             let path = plain_file(world, &c[0])?;
-            let clipboard = Platform::of(world.engine()).clipboard();
-            // Ljós's clipboard holds no URL list: what a file manager adds
-            // beside the address is all that can be put on it.
-            let copied = match c[1].as_str() {
+            let text = match c[1].as_str() {
                 "its path as text" => path.display().to_string(),
                 "its URL as text" => file_url(&path),
                 "its encoded URL as text" => ljos::prelude::encoded_url(&file_url(&path)),
                 _ => String::new(),
             };
-            if copied.is_empty() {
-                let _ = clipboard.clear(ClipboardMode::Clipboard);
-            } else {
-                let _ = clipboard.set_text(ClipboardMode::Clipboard, &copied);
-            }
+            world.copy_files(vec![path], &text);
             let took = press_in_composer(world, "mod+v")?;
             expect!(took, "the composer did not take the paste");
             Ok(())
