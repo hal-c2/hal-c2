@@ -635,6 +635,22 @@ fn click(world: &mut World, target: ObjectId) -> Outcome {
     click_item(world, target)
 }
 
+/// Waits for the menu of `entry` to finish opening: until then its
+/// entries take no click.
+fn wait_menu_open(world: &mut World, entry: ObjectId) -> Outcome {
+    let brick = shell(world)?;
+    let Value::Object(menu) = brick.read(world, entry, "menu") else {
+        fail!(
+            "{} is in no menu",
+            brick.text_of(world, entry, "objectName")
+        )
+    };
+    world.wait_for_with(
+        |w| brick.flag(w, menu, "opened"),
+        |_| "the menu to open".to_owned(),
+    )
+}
+
 fn text_now(w: &World, brick: Brick, object_name: &str) -> Option<String> {
     let found = named(w, brick, object_name)?;
     brick
@@ -2809,6 +2825,7 @@ pub fn run_plugin_action(world: &mut World, label: &str) -> Outcome<bool> {
     let actions = shown_named(world, "plannerActions")?;
     click(world, actions)?;
     let action = shown_named(world, &format!("plannerAction:{id}"))?;
+    wait_menu_open(world, action)?;
     click(world, action)?;
     wait_asked(world, "run", json!({"action": id, "itemIds": []}))?;
     world.wait_for_with(
