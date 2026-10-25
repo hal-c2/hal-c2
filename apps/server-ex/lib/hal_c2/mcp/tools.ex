@@ -715,12 +715,28 @@ defmodule HalC2.Mcp.Tools do
 
   defp owner_timeout(_name, _args, _caller), do: @owner_timeout
 
-  defp on_mc(mc, module, fun, args, timeout) do
+  # A failure on the other MC is answered as an error, not raised: a raise would
+  # fail the whole MCP request with no word of why. An MC that lacks the function
+  # runs older code than this one.
+  @doc false
+  def on_mc(mc, module, fun, args, timeout) do
     :erpc.call(String.to_atom(mc), module, fun, args, timeout)
   catch
     :error, {:erpc, reason} ->
       {:error, "thread_unreachable",
        "The MC the thread moved to is unreachable (#{inspect(reason)})."}
+
+    :error, {:exception, :undef, [{^module, ^fun, _, _} | _]} ->
+      {:error, "thread_owner_outdated",
+       "The MC the thread moved to runs older HAL-C2 code that cannot do this; update it."}
+
+    :error, {:exception, reason, stack} ->
+      {:error, "thread_owner_failed",
+       "The MC the thread moved to failed: " <> Exception.format_banner(:error, reason, stack)}
+
+    kind, reason when kind in [:exit, :throw] ->
+      {:error, "thread_owner_failed",
+       "The MC the thread moved to failed: " <> Exception.format_banner(kind, reason)}
   end
 
   @doc "The run a message of the thread belongs to, or nil."

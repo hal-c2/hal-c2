@@ -91,6 +91,21 @@ defmodule HalC2.McpTest do
     assert text =~ "invalid_request"
   end
 
+  test "a tool that raises answers with why, not a failed request" do
+    {_thread_id, tool} = caller("Break a tool")
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, text} = tool.("hal_c2_project_read", %{})
+        send(self(), {:text, text})
+      end)
+
+    assert_received {:text, text}
+    assert log =~ "MCP tool hal_c2_project_read failed"
+    assert text =~ "internal_error"
+    assert text =~ "FunctionClauseError"
+  end
+
   test "an agent answers a pending question through MCP" do
     {caller, tool} = caller("ask me")
     request = await_request(caller)

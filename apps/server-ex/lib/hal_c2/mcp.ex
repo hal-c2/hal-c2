@@ -19,6 +19,7 @@ defmodule HalC2.Mcp do
   """
 
   use GenServer
+  require Logger
 
   @workers_only "\n\nThe user keeps agents to HAL-C2's workers: do not use this provider's built-in subagents. Delegate child work with `delegate_task`, so the user can see it.\n"
 
@@ -214,20 +215,7 @@ defmodule HalC2.Mcp do
   # A tool's answer as MCP content; a failure is an error result the agent can read.
   # `tool_use` is the provider's id for the call, which Claude sends.
   defp call(name, arguments, caller, tool_use) do
-    answer =
-      cond do
-        name == "delegate_task" and native_subagent?(caller, tool_use) ->
-          {:error, "capability_denied", @subagent_delegation}
-
-        Enum.any?(HalC2.Mcp.Tools.list(), &(&1["name"] == name)) ->
-          HalC2.Mcp.Tools.call(name, arguments, caller)
-
-        true ->
-          HalC2.Plugins.call_tool(name, arguments, caller.thread_id) ||
-            HalC2.Mcp.Tools.call(name, arguments, caller)
-      end
-
-    case answer do
+    case run(name, arguments, caller, tool_use) do
       {:ok, value} ->
         %{
           "content" => [%{"type" => "text", "text" => JSON.encode!(value)}],
@@ -242,6 +230,27 @@ defmodule HalC2.Mcp do
         failure = %{"_tag" => "OrchestratorMcpFailure", "code" => code, "message" => message}
         %{"content" => [%{"type" => "text", "text" => JSON.encode!(failure)}], "isError" => true}
     end
+  end
+
+  # A tool that raises answers with why, rather than failing the whole request with
+  # an empty 500 the agent cannot read.
+  defp run(name, arguments, caller, tool_use) do
+    cond do
+      name == "delegate_task" and native_subagent?(caller, tool_use) ->
+        {:error, "capability_denied", @subagent_delegation}
+
+      Enum.any?(HalC2.Mcp.Tools.list(), &(&1["name"] == name)) ->
+        HalC2.Mcp.Tools.call(name, arguments, caller)
+
+      true ->
+        HalC2.Plugins.call_tool(name, arguments, caller.thread_id) ||
+          HalC2.Mcp.Tools.call(name, arguments, caller)
+    end
+  catch
+    kind, reason ->
+      banner = Exception.format_banner(kind, reason, __STACKTRACE__)
+      Logger.error("MCP tool #{name} failed: " <> Exception.format(kind, reason, __STACKTRACE__))
+      {:error, "internal_error", "The tool #{name} failed: " <> banner}
   end
 
   # A Claude subagent shares its thread's credential, so its calls arrive as the
