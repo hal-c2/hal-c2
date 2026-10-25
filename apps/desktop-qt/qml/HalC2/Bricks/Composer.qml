@@ -932,6 +932,10 @@ Rectangle {
                                 event.accepted = composer.paste(false);
                                 if (event.accepted) return;
                             }
+                            if (editorMenu.keyPressed(event)) {
+                                event.accepted = true;
+                                return;
+                            }
                             if (composer.suggesting && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))) {
                                 if (event.key === Qt.Key_Escape) {
                                     event.accepted = true;
@@ -999,6 +1003,21 @@ Rectangle {
                             }
                             event.accepted = true;
                             composer.submit(intent);
+                        }
+
+                        // Its Paste is the composer's, which attaches copied
+                        // pictures and files. A MouseArea, as it takes the
+                        // press from Qt's own TextArea menu.
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.RightButton
+                            onClicked: mouse => editorMenu.openAt(mouse.x, mouse.y)
+                        }
+                        TextEditMenu {
+                            id: editorMenu
+                            objectName: "editorMenu"
+                            editor: input
+                            paste: () => composer.paste(false)
                         }
                     }
                 }
