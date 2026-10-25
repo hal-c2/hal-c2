@@ -134,12 +134,6 @@ fn view(world: &mut World) -> Outcome<Brick> {
 /// The second message's own "Edit from here".
 /// Hovers the second message, then clicks its "Edit from here" as the user
 /// does (the actions fade in over the message the pointer is on).
-///
-/// The click does not reach `rewind.request` yet: the Timeline's IconButton
-/// calls `button.clicked()` from `TapHandler.onTapped`, and Ljós hands the
-/// handler its `button` parameter in place of the `id: button`
-/// (TODO(ljos#104)). The scenarios that edit from a message fail here until
-/// Ljós resolves the id.
 fn edit_from_second(world: &mut World) -> Outcome {
     prepare(world)?;
     let brick = view(world)?;

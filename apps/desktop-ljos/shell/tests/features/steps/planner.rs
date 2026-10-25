@@ -635,6 +635,22 @@ fn click(world: &mut World, target: ObjectId) -> Outcome {
     click_item(world, target)
 }
 
+/// Waits for the menu of `entry` to finish opening: until then its
+/// entries take no click.
+fn wait_menu_open(world: &mut World, entry: ObjectId) -> Outcome {
+    let brick = shell(world)?;
+    let Value::Object(menu) = brick.read(world, entry, "menu") else {
+        fail!(
+            "{} is in no menu",
+            brick.text_of(world, entry, "objectName")
+        )
+    };
+    world.wait_for_with(
+        |w| brick.flag(w, menu, "opened"),
+        |_| "the menu to open".to_owned(),
+    )
+}
+
 fn text_now(w: &World, brick: Brick, object_name: &str) -> Option<String> {
     let found = named(w, brick, object_name)?;
     brick
@@ -697,6 +713,14 @@ fn invoke(world: &World, target: ObjectId, function: &str, args: &[Value]) -> Ou
         .map_err(|e| crate::harness::Failure(format!("{function}: {e:?}")))
 }
 
+/// Emits `signal` of `target`, as the control does when the user acts.
+fn emit(world: &World, target: ObjectId, signal: &str, args: &[Value]) -> Outcome {
+    world
+        .engine()
+        .emit_by_name(target, signal, args)
+        .map_err(|e| crate::harness::Failure(format!("{signal}: {e:?}")))
+}
+
 fn view_name(world: &World, brick: Brick, page: ObjectId) -> String {
     text(&property_json(world, brick, page, "working")["name"])
 }
@@ -711,10 +735,7 @@ fn show_planner(world: &mut World, name: &str) -> Outcome<ObjectId> {
         |w| format!("the Planner page to load; {}", describe(w)),
     )?;
     if !hidden(world, brick, "pluginPageProblem") {
-        // TODO(ljos#112): the page's QML is fetched from the MC while the
-        // shell runs, and a program built with the facade compiles nothing
-        // then, so `Qt.createComponent` of it finds "No such file".
-        fail!("{} (ljos#112)", text_of(world, "pluginPageProblem")?);
+        fail!("{}", text_of(world, "pluginPageProblem")?);
     }
     let page = shown_named(world, "plannerPage")?;
     if !name.is_empty() && view_name(world, brick, page) != name {
@@ -835,16 +856,17 @@ fn set_text_and(world: &mut World, name: &str, typed: &str, signal: &str) -> Out
     let brick = shell(world)?;
     let edit = shown_named(world, name)?;
     brick.write(world, edit, "text", Value::from(typed))?;
-    expect!(
-        invoke(world, edit, signal, &[]).is_ok(),
-        "{name} cannot be edited"
-    );
+    if let Err(error) = emit(world, edit, signal, &[]) {
+        fail!("{name} cannot be edited: {error:?}");
+    }
     world.sync()
 }
 
 /// Presses the button `target` as a script does.
 fn press_button(world: &mut World, target: ObjectId, what: &str) -> Outcome {
-    expect!(invoke(world, target, "clicked", &[]).is_ok(), "{what}");
+    if let Err(error) = emit(world, target, "clicked", &[]) {
+        fail!("{what}: {error:?}");
+    }
     world.sync()
 }
 
@@ -890,10 +912,9 @@ fn pick(world: &mut World, name: &str, wanted: &str) -> Outcome {
     };
     world.wait_for_with(|w| find(w).is_some(), |_| format!("{wanted} to be offered"))?;
     let index = find(world).unwrap_or(-1);
-    expect!(
-        invoke(world, combo, "activated", &[Value::Int(index)]).is_ok(),
-        "{wanted} cannot be picked"
-    );
+    if let Err(error) = emit(world, combo, "activated", &[Value::Int(index)]) {
+        fail!("{wanted} cannot be picked: {error:?}");
+    }
     world.sync()
 }
 
@@ -1283,7 +1304,7 @@ fn register_list(steps: &mut Steps) {
                 fail!("the view cannot be grouped by project")
             };
             expect!(
-                invoke(world, group_by, "activated", &[Value::Int(project as i32)]).is_ok(),
+                emit(world, group_by, "activated", &[Value::Int(project as i32)]).is_ok(),
                 "the view cannot be grouped by project"
             );
             let month = shown_named(world, "plannerZoom:month")?;
@@ -1461,11 +1482,8 @@ fn register_list(steps: &mut Steps) {
             let Some(focused) = focused else {
                 fail!("{} does not have the keyboard", c[1])
             };
-            let border = brick.read(world, focused, "border");
-            let width = match border {
-                Value::Object(border) => real(world, brick, border, "width"),
-                _ => 0.0,
-            };
+            // A grouped property is a property of its own name in Ljós.
+            let width = real(world, brick, focused, "border.width");
             expect!(width > 0.0, "{} has no focus border", c[1]);
             Ok(())
         },
@@ -2623,7 +2641,7 @@ fn register_slack(steps: &mut Steps) {
                 |_| "the board's date fields to be read".to_owned(),
             )?;
             expect!(
-                invoke(world, combo, "activated", &[Value::Int(0)]).is_ok(),
+                emit(world, combo, "activated", &[Value::Int(0)]).is_ok(),
                 "None cannot be picked"
             );
             world.sync()?;
@@ -2676,12 +2694,18 @@ fn register_slack(steps: &mut Steps) {
         wait_hidden(world, "plannerDateField:startField")?;
         wait_hidden(world, "plannerDateField:targetField")
     });
-    steps.step("a screen reader names the settings:", |world, _, _| {
-        shown_named(world, "plannerSettings")?;
-        // TODO(ljos#108): a test cannot read the accessibility tree (an
-        // item's `Accessible.name`, its children), so the names a screen
-        // reader gives the settings' inputs cannot be collected.
-        fail!("a test cannot read the Accessible.name of the settings' inputs (ljos#108)")
+    steps.step("a screen reader names the settings:", |world, _, table| {
+        let settings = shown_named(world, "plannerSettings")?;
+        let names = world.accessible_input_names(settings)?;
+        for row in table.iter() {
+            expect!(
+                names.iter().filter(|name| **name == row[0]).count() == 1,
+                "no one setting is named {} among {}",
+                row[0],
+                names.join(", ")
+            );
+        }
+        Ok(())
     });
     steps.step(
         &format!("{Q} is saved with no field for its start date"),
@@ -2801,6 +2825,7 @@ pub fn run_plugin_action(world: &mut World, label: &str) -> Outcome<bool> {
     let actions = shown_named(world, "plannerActions")?;
     click(world, actions)?;
     let action = shown_named(world, &format!("plannerAction:{id}"))?;
+    wait_menu_open(world, action)?;
     click(world, action)?;
     wait_asked(world, "run", json!({"action": id, "itemIds": []}))?;
     world.wait_for_with(

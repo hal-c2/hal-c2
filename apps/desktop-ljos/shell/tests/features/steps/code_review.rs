@@ -597,7 +597,7 @@ pub fn register(steps: &mut Steps) {
             |_| "the reset to be enabled".to_owned(),
         )?;
         expect!(
-            world.engine().invoke_by_name(reset, "clicked", &[]).is_ok(),
+            world.engine().emit_by_name(reset, "clicked", &[]).is_ok(),
             "the reset cannot be pressed"
         );
         world.sync()
