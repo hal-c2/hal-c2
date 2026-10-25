@@ -29,7 +29,7 @@
 //! window's closures, each as its own window. QML still finds the first
 //! window's singletons (see [`Bridge::singleton`]), so the app shows one
 //! window; the others are built and run headless until a QML singleton
-//! can be one per window in Ljós (TODO(ljos), [`set_window_opener`]).
+//! can be one per window in Ljós (TODO(ljos#126), [`set_window_opener`]).
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
