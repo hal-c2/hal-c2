@@ -1,5 +1,6 @@
 //! What the shell's window needs from AppKit that Ljós does not give it yet:
-//! a frameless window its user can resize.
+//! a frameless window its user can resize, and the application's icon in
+//! the Dock.
 //!
 //! A frameless window is borderless to winit, and Ljós asks winit whether it
 //! is maximized each time it is resized, which on macOS gives a borderless
@@ -11,6 +12,10 @@
 //! of its own, so that a drag over the shell's header is the header's. The
 //! shell moves the window from its own handles (`startSystemMove`), which
 //! AppKit allows an unmovable window.
+//!
+//! The Dock shows the icon of the executable's bundle, and a binary run
+//! from the checkout has none (TODO(ljos#129)): the shell gives AppKit its
+//! icon, as desktop-qt's `QGuiApplication::setWindowIcon` does.
 
 use std::cell::{Cell, RefCell};
 
@@ -18,14 +23,23 @@ use ljos::prelude::{Engine, ObjectId, Platform, Timer, Value};
 use ljos::window::NativeWindow;
 use ljos::window::raw_window_handle::RawWindowHandle;
 use objc2::rc::{Retained, Weak};
-use objc2_app_kit::{NSView, NSWindow, NSWindowButton, NSWindowStyleMask, NSWindowTitleVisibility};
+use objc2::{AnyThread, MainThreadMarker};
+use objc2_app_kit::{
+    NSApplication, NSImage, NSView, NSWindow, NSWindowButton, NSWindowStyleMask,
+    NSWindowTitleVisibility,
+};
+use objc2_foundation::NSData;
 
-/// The shell's window as AppKit has it, and the window whose flags are
-/// followed.
+/// The icon desktop-qt's window has (`apps/desktop-qt/CMakeLists.txt`).
+const ICON: &[u8] = include_bytes!("../../../../assets/prod/black-universal-1024.png");
+
+/// The shell's window as AppKit has it, the window whose flags are
+/// followed, and whether the Dock has the icon.
 #[derive(Default)]
 struct Shown {
     window: RefCell<Weak<NSWindow>>,
     followed: Cell<Option<ObjectId>>,
+    icon: Cell<bool>,
 }
 
 /// Hears of each window the host opens: the shell's own, which belongs to
@@ -44,6 +58,9 @@ pub fn install(engine: &Engine) {
             return;
         }
         let shown = engine.extension::<Shown>();
+        if !shown.icon.replace(true) {
+            set_application_icon();
+        }
         let Some(ns_window) = ns_window(native) else {
             return;
         };
@@ -126,6 +143,20 @@ fn fit_title_bar(window: &NSWindow) {
     if let Some(content) = window.contentView() {
         window.makeFirstResponder(Some(&content));
     }
+}
+
+/// The Dock's and the app switcher's icon, for a run that has no bundle to
+/// take it from.
+fn set_application_icon() {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let data = NSData::with_bytes(ICON);
+    let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        return;
+    };
+    // SAFETY: on the main thread, with an image AppKit keeps.
+    unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image)) };
 }
 
 #[cfg(test)]
