@@ -593,15 +593,17 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         "the theme and the time format are back to their defaults",
         |world, _, _| {
-            let settings = settings(world);
-            let engine = world.engine();
-            expect!(
-                theme_id(world).is_empty()
-                    && settings.is_default(engine, TIME_FORMAT)
-                    && settings.setting(engine, TIME_FORMAT) == settings.default_of(TIME_FORMAT),
-                "{}",
-                describe_choices(world)
-            );
+            // The time format is the MC's: back once its write is answered.
+            world.sync_until_with(
+                |w| {
+                    let settings = settings(w);
+                    let engine = w.engine();
+                    theme_id(w).is_empty()
+                        && settings.is_default(engine, TIME_FORMAT)
+                        && settings.setting(engine, TIME_FORMAT) == settings.default_of(TIME_FORMAT)
+                },
+                describe_choices,
+            )?;
             let brick = shell(world)?;
             let button = brick.item(world, "restoreDefaults")?;
             expect!(
