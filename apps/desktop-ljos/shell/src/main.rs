@@ -645,7 +645,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
                 }
             });
             hal_c2_shell::start(&engine, &options.launch, mc);
-            // TODO(ljos): desktop-qt's ShellWindows shows another window
+            // TODO(ljos#126): desktop-qt's ShellWindows shows another window
             // for `window.new` and the "New window" command, and reopens the
             // saved ones, here:
             // controller::set_window_opener with a native window around a

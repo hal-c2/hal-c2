@@ -552,7 +552,7 @@ impl Bridge {
     /// This window's `T`: the engine's singleton for the first window, an
     /// object of its own for each other.
     ///
-    /// TODO(ljos): QML still finds the engine's, so another window's
+    /// TODO(ljos#126): QML still finds the engine's, so another window's
     /// bricks cannot see their own. Ljós makes a native singleton one per
     /// window (`scope = "window"`, `Engine::set_singleton_in`), but a
     /// `pragma Singleton` QML file stays one per engine and reads such a
