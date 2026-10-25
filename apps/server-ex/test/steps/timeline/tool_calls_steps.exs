@@ -247,8 +247,10 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
           message.(%{
             "role" => "assistant",
             "content" => [%{"type" => "think", "think" => "Look at lib."}],
+            # A call in a shape the record does not use is passed over.
             "toolCalls" => [
-              %{"id" => "ls", "name" => "Bash", "arguments" => ~s({"command":"ls lib"})}
+              %{"id" => "ls", "name" => "Bash", "arguments" => ~s({"command":"ls lib"})},
+              %{"id" => "odd", "function" => %{"name" => "Bash"}}
             ]
           }),
           %{"type" => "usage.updated"},
@@ -315,6 +317,47 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     }
 
     context |> kimi(turn) |> FakeAcp.thread("Agent work")
+  end
+
+  step "Kimi exits while one of its subagents works", context do
+    input = %{"description" => "Survey lib", "prompt" => @kimi_task}
+
+    spawned = %{
+      "type" => "subagent.spawned",
+      "subagentId" => "sub-a1",
+      "parentToolCallId" => "functions.Agent:0"
+    }
+
+    turn = %{
+      "match" => "survey the code",
+      "steps" => [
+        %{
+          "update" => %{
+            "sessionUpdate" => "tool_call",
+            "toolCallId" => "1:functions.Agent:0",
+            "title" => "Survey lib",
+            "status" => "in_progress",
+            "rawInput" => input
+          }
+        },
+        %{"kimiWire" => %{"agent" => "main", "records" => [spawned]}},
+        %{"exit" => 1}
+      ]
+    }
+
+    context |> kimi(turn) |> FakeAcp.thread("Agent work")
+  end
+
+  step "the turn fails", context do
+    context = FakeAcp.send_message(context, "survey the code")
+    state = FakeAcp.await_run(context, "failed")
+    assert [subagent] = StreamState.list(state, "subagent")
+    Map.put(context, :subagent, subagent)
+  end
+
+  step "the subagent ends with it", context do
+    assert context.subagent["status"] == "failed"
+    context
   end
 
   step "the subagent is still running", context do

@@ -421,6 +421,13 @@ Feature: Tool calls and file changes
     And the subagent's thinking, commands and replies appear in its thread
     And the subagent's result is the summary Kimi recorded
 
+  # Kimi can exit before its subagent's end reaches its record or its call.
+  @mc
+  Scenario: A Kimi subagent ends with its turn
+    Given Kimi exits while one of its subagents works
+    When the turn fails
+    Then the subagent ends with it
+
   # A subagent Kimi runs in the background outlives its call and its turn.
   @mc
   Scenario: A Kimi background subagent runs on after its turn

@@ -218,7 +218,7 @@ defmodule HalC2.Acp.Kimi do
     work = kimi(sub)
 
     parts =
-      for %{"type" => type} = part <- message["content"] || [],
+      for %{"type" => type} = part <- List.wrap(message["content"]),
           type in ["text", "think"],
           is_binary(part[type]) and part[type] != "",
           do: {type, part[type]}
@@ -240,15 +240,14 @@ defmodule HalC2.Acp.Kimi do
         {sub, n + 1}
       end)
 
-    calls =
-      for %{"id" => id, "name" => name} = call <- message["toolCalls"] || [],
-          into: work.calls,
+    called =
+      for %{"id" => id, "name" => name} = call <- List.wrap(message["toolCalls"]),
+          is_binary(id) and is_binary(name),
           do: {id, {name, input(call["arguments"])}}
 
-    sub = put_kimi(sub, %{work | n: n, calls: calls})
+    sub = put_kimi(sub, %{work | n: n, calls: Map.merge(work.calls, Map.new(called))})
 
-    Enum.reduce(message["toolCalls"] || [], sub, fn %{"id" => id}, sub ->
-      {name, input} = calls[id]
+    Enum.reduce(called, sub, fn {id, {name, input}}, sub ->
       {kind, fields} = shape(name, input)
       NativeSubagent.item(sub, tool_key(sub, id), @item_types[kind], "running", fields)
     end)

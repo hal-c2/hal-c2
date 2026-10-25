@@ -1599,7 +1599,13 @@ defmodule HalC2.Acp.ThreadRuntime do
     entry =
       if input["run_in_background"] == true, do: Map.put(entry, :background, true), else: entry
 
-    state = %{state | subagents: Map.put(state.subagents, id, entry)} |> read_wire()
+    state = %{state | subagents: Map.put(state.subagents, id, entry)}
+
+    # Its arguments stream in as many updates; the poll reads its work while it runs,
+    # and its call's end reads the last of it.
+    state =
+      if call["status"] in ["completed", "failed"], do: read_wire(state), else: poll_wire(state)
+
     entry = state.subagents[id]
 
     # A background subagent outlives its call, and ends with its record's end.
@@ -1745,6 +1751,32 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp read_wire(state), do: state
+
+  defp poll_wire(%{wire: %{timer: nil} = wire} = state),
+    do: %{state | wire: %{wire | timer: Process.send_after(self(), :kimi_wire, 1_000)}}
+
+  defp poll_wire(state), do: state
+
+  # A turn's foreground subagents end with it: Kimi may have exited, or the turn been
+  # interrupted, before the subagent's end reached its record or its call.
+  defp end_kimi_subagents(%{kimi: true} = state, status) do
+    state = read_wire(state)
+
+    subagents =
+      Map.new(state.subagents, fn
+        {id, %{done: false} = entry} ->
+          if background?(entry),
+            do: {id, entry},
+            else: {id, %{entry | sub: NativeSubagent.finish(entry.sub, status, nil), done: true}}
+
+        other ->
+          other
+      end)
+
+    %{state | subagents: subagents}
+  end
+
+  defp end_kimi_subagents(state, _status), do: state
 
   @kimi_ends %{
     "subagent.completed" => "completed",
@@ -2361,7 +2393,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         state
       end
 
-    state = state |> close_open_items(status) |> cancel_requests()
+    state = state |> close_open_items(status) |> end_kimi_subagents(status) |> cancel_requests()
     finish(state, status, failure)
     %{state | turn: nil, items: %{}, prompts: :gen_server.reqids_new(), answer: nil}
   end
