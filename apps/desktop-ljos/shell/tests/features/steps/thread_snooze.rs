@@ -5,6 +5,8 @@
 //! ThreadSnoozeSteps.cpp.
 
 use chrono::{DateTime, Datelike, Duration, NaiveTime, SecondsFormat, TimeZone, Utc};
+use hal_c2_shell::controllers::sidebar::set_time_zone;
+use hal_c2_shell::time_zone::Zone;
 use serde_json::{Map, Value, json};
 
 use super::thread_menu::{id_in, key_of, pick, route_thread, section_of, set_device, update_row};
@@ -415,10 +417,13 @@ pub fn register(steps: &mut Steps) {
                 }
                 "an unreadable date" => json!({"mode": "date", "date": "next friday", "time": "09:00"}),
                 // New York's clocks go from 02:00 to 03:00 on 14 March 2027.
-                // TODO(ljos#119): SidebarModel::setTimeZone takes a named zone; the
-                // shell's sidebar::set_time_zone takes a fixed offset, which
-                // has no daylight saving change to skip.
-                _ => fail!("the sidebar's zone is a fixed offset, with no daylight saving change"),
+                _ => {
+                    let Some(zone) = Zone::named("America/New_York") else {
+                        fail!("the platform has no zone database");
+                    };
+                    set_time_zone(world.engine(), Some(zone));
+                    json!({"mode": "date", "date": "2027-03-14", "time": "02:30"})
+                }
             };
             ask_custom(world, &key)?;
             submit_custom(world, input)

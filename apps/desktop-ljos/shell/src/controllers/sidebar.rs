@@ -43,7 +43,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
-use chrono::{DateTime, FixedOffset, Local, TimeZone, Utc};
+use chrono::{DateTime, Local, TimeZone, Utc};
 use ljos::locale::Locale;
 use ljos::prelude::Engine;
 use ljos::prelude::{Time, TimerId};
@@ -66,6 +66,7 @@ use crate::sidebar_model::{
 };
 use crate::store;
 use crate::this_machine;
+use crate::time_zone::Zone;
 
 /// The snooze menus' last item, which asks for a time of the user's own.
 pub const CUSTOM_SNOOZE: &str = "snooze:custom";
@@ -88,7 +89,7 @@ struct Shared {
     selected: RefCell<HashSet<String>>,
     grouped: RefCell<Vec<Hook>>,
     /// Tests pin the zone; the app uses the system's.
-    zone: Cell<Option<FixedOffset>>,
+    zone: RefCell<Option<Zone>>,
     timestamp_format: RefCell<String>,
 }
 
@@ -166,15 +167,15 @@ pub fn now_ms(engine: &Engine) -> i64 {
 }
 
 /// Pins the zone wake times are read in; none is the system's.
-pub fn set_time_zone(engine: &Engine, zone: Option<FixedOffset>) {
-    shared(engine).zone.set(zone);
+pub fn set_time_zone(engine: &Engine, zone: Option<Zone>) {
+    shared(engine).zone.replace(zone);
 }
 
 /// Runs `$body` with `$now`, the wall clock in the sidebar's zone.
 macro_rules! zoned {
     ($engine:expr, $ms:expr, |$now:ident| $body:expr) => {{
         let at = Utc.timestamp_millis_opt($ms).single().unwrap_or_default();
-        match shared($engine).zone.get() {
+        match shared($engine).zone.borrow().clone() {
             Some(zone) => {
                 let $now = at.with_timezone(&zone);
                 $body
@@ -563,13 +564,13 @@ impl Sidebar {
             .collect();
         let selected = shared.selected.borrow().clone();
         let format = timestamp_format(engine);
-        let zone = shared.zone.get();
+        let zone = shared.zone.borrow().clone();
         let locale = Locale::of(engine);
         let describe_wake = move |until: &str| -> String {
             let at = Utc.timestamp_millis_opt(now).single().unwrap_or_default();
-            match zone {
+            match &zone {
                 Some(zone) => {
-                    model::wake_description(until, &at.with_timezone(&zone), &format, &locale)
+                    model::wake_description(until, &at.with_timezone(zone), &format, &locale)
                 }
                 None => model::wake_description(until, &at.with_timezone(&Local), &format, &locale),
             }
@@ -1295,7 +1296,8 @@ impl Sidebar {
             .timestamp_millis_opt(now_ms(engine))
             .single()
             .unwrap_or_default();
-        let until = match shared(engine).zone.get() {
+        let zone = shared(engine).zone.borrow().clone();
+        let until = match zone {
             Some(zone) => model::resolve_custom_snooze(&input, now, &zone),
             None => model::resolve_custom_snooze(&input, now, &Local),
         };

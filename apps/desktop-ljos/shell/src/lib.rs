@@ -42,6 +42,7 @@ pub mod terminal;
 pub mod theme;
 pub mod this_machine;
 pub mod thread_view;
+pub mod time_zone;
 pub mod window_mc;
 
 use std::path::PathBuf;
