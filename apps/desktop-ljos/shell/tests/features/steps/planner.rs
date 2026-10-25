@@ -697,6 +697,14 @@ fn invoke(world: &World, target: ObjectId, function: &str, args: &[Value]) -> Ou
         .map_err(|e| crate::harness::Failure(format!("{function}: {e:?}")))
 }
 
+/// Emits `signal` of `target`, as the control does when the user acts.
+fn emit(world: &World, target: ObjectId, signal: &str, args: &[Value]) -> Outcome {
+    world
+        .engine()
+        .emit_by_name(target, signal, args)
+        .map_err(|e| crate::harness::Failure(format!("{signal}: {e:?}")))
+}
+
 fn view_name(world: &World, brick: Brick, page: ObjectId) -> String {
     text(&property_json(world, brick, page, "working")["name"])
 }
@@ -832,16 +840,17 @@ fn set_text_and(world: &mut World, name: &str, typed: &str, signal: &str) -> Out
     let brick = shell(world)?;
     let edit = shown_named(world, name)?;
     brick.write(world, edit, "text", Value::from(typed))?;
-    expect!(
-        invoke(world, edit, signal, &[]).is_ok(),
-        "{name} cannot be edited"
-    );
+    if let Err(error) = emit(world, edit, signal, &[]) {
+        fail!("{name} cannot be edited: {error:?}");
+    }
     world.sync()
 }
 
 /// Presses the button `target` as a script does.
 fn press_button(world: &mut World, target: ObjectId, what: &str) -> Outcome {
-    expect!(invoke(world, target, "clicked", &[]).is_ok(), "{what}");
+    if let Err(error) = emit(world, target, "clicked", &[]) {
+        fail!("{what}: {error:?}");
+    }
     world.sync()
 }
 
@@ -887,10 +896,9 @@ fn pick(world: &mut World, name: &str, wanted: &str) -> Outcome {
     };
     world.wait_for_with(|w| find(w).is_some(), |_| format!("{wanted} to be offered"))?;
     let index = find(world).unwrap_or(-1);
-    expect!(
-        invoke(world, combo, "activated", &[Value::Int(index)]).is_ok(),
-        "{wanted} cannot be picked"
-    );
+    if let Err(error) = emit(world, combo, "activated", &[Value::Int(index)]) {
+        fail!("{wanted} cannot be picked: {error:?}");
+    }
     world.sync()
 }
 
@@ -1280,7 +1288,7 @@ fn register_list(steps: &mut Steps) {
                 fail!("the view cannot be grouped by project")
             };
             expect!(
-                invoke(world, group_by, "activated", &[Value::Int(project as i32)]).is_ok(),
+                emit(world, group_by, "activated", &[Value::Int(project as i32)]).is_ok(),
                 "the view cannot be grouped by project"
             );
             let month = shown_named(world, "plannerZoom:month")?;
@@ -2620,7 +2628,7 @@ fn register_slack(steps: &mut Steps) {
                 |_| "the board's date fields to be read".to_owned(),
             )?;
             expect!(
-                invoke(world, combo, "activated", &[Value::Int(0)]).is_ok(),
+                emit(world, combo, "activated", &[Value::Int(0)]).is_ok(),
                 "None cannot be picked"
             );
             world.sync()?;
