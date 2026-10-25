@@ -1,0 +1,192 @@
+name: desktop-ljos
+
+# The Ljós desktop (apps/desktop-ljos): a Rust shell that loads desktop-qt's
+# QML bricks unchanged. It builds and tests from its own Cargo workspace; the
+# Qt desktop builds in desktop-qt.yml.
+
+on:
+  push:
+    branches:
+      - main
+      - port-desktop-qt-to-ljos
+    paths: &paths
+      - "apps/desktop-ljos/**"
+      # What the shell loads or embeds at build and test time: the bricks, the
+      # sounds and themes (src/native), the MC's version, the plugins' files,
+      # and the two files the features runner reads to learn desktop-qt's
+      # scenario list (tst_Features.cpp, tst_Scenarios.qml).
+      - "apps/desktop-qt/qml/**"
+      - "apps/desktop-qt/src/native/**"
+      - "apps/desktop-qt/tests/native/tst_Features.cpp"
+      - "apps/desktop-qt/tests/tst_Scenarios.qml"
+      - "apps/server-ex/VERSION"
+      - "features/**"
+      - "plugins/**"
+      - ".github/workflows/desktop-ljos.yml"
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ljos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Debug info in every test binary fills a hosted runner's disk (the shell
+  # links dozens of them, each with the whole toolkit); a panic still names its
+  # file and line without it.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_DEV_STRIP: debuginfo
+  CARGO_TERM_COLOR: always
+  # Ljós reads QML against a table of Qt's types generated from an installed
+  # Qt, which is never committed; `none` says there is none, as Ljós's own CI.
+  LJOS_QT_TYPES: none
+
+defaults:
+  run:
+    working-directory: apps/desktop-ljos
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: apps/desktop-ljos
+          persist-credentials: false
+
+      # The toolchain Ljós needs is pinned in apps/desktop-ljos/mise.toml.
+      - name: Setup Rust
+        run: |
+          version="$(sed -n 's/^rust = .*version = "\([0-9.]*\)".*/\1/p' mise.toml)"
+          rustup toolchain install "$version" --profile minimal --component rustfmt
+          rustup default "$version"
+
+      - run: cargo fmt --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - &checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - &rust
+        name: Setup Rust
+        run: |
+          version="$(sed -n 's/^rust = .*version = "\([0-9.]*\)".*/\1/p' mise.toml)"
+          rustup toolchain install "$version" --profile minimal --component rustfmt,clippy
+          rustup default "$version"
+
+      # Font discovery links fontconfig and the audio sink links ALSA (Ljós's
+      # own CI installs the same two).
+      - &packages
+        name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfontconfig1-dev libasound2-dev
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop-ljos
+          shared-key: clippy
+
+      - run: cargo clippy -q -p hal_c2_shell -p hal_c2_mc --lib --tests --bins -- -D warnings
+
+  check:
+    name: QML compile check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - *checkout
+      - *rust
+      - *packages
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop-ljos
+          shared-key: release
+
+      # Compiles desktop-qt's bricks and the shell's own QML against the
+      # shell's native types; fails when a file does not compile.
+      - run: cargo run --release -q -p hal_c2_shell -- --check
+
+  test:
+    name: Unit and hub tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - *checkout
+      - *rust
+      - *packages
+
+      # dbus-daemon: the notification tests start a session bus of their own.
+      # mesa-vulkan-drivers: a software Vulkan, for the tests that render.
+      # fonts-dejavu-core: the runner's text needs a font to lay out.
+      - name: Install test packages
+        run: |
+          sudo apt-get install -y dbus mesa-vulkan-drivers fonts-dejavu-core
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop-ljos
+          shared-key: test
+
+      # The features suite is opt-in in Cargo.toml (`test = false`), so this
+      # runs everything else. All of it, so one run shows every failure.
+      - run: cargo test --no-fail-fast
+
+  features:
+    name: Features (${{ matrix.shard.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # desktop-qt's scenarios, by domain (features/), about 400 to 550
+        # scenarios a shard. Each shard runs its globs and fails when a
+        # scenario RATCHET holds in them stops passing. A domain in none of
+        # them is never run: add it here when features/ gains one.
+        shard:
+          - name: navigation
+            globs: "navigation/* desktop/*"
+          - name: settings
+            globs: "settings/* connections/*"
+          - name: threads
+            globs: "threads/* preview/* providers/*"
+          - name: composer
+            globs: "composer/* files/* mc/* plugins/*"
+          - name: timeline
+            globs: "timeline/* source-control/* terminal/* planning/*"
+    steps:
+      - *checkout
+      - *rust
+      - *packages
+
+      - name: Install test packages
+        run: |
+          sudo apt-get install -y dbus mesa-vulkan-drivers fonts-dejavu-core
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop-ljos
+          shared-key: test
+
+      # Each scenario runs a shell of its own against a fake MC on loopback;
+      # none needs the real MC.
+      - name: Run scenarios
+        env:
+          HAL_C2_FEATURES: ${{ matrix.shard.globs }}
+        run: cargo test -p hal_c2_shell --test features
