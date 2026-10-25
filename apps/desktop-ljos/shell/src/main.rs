@@ -63,6 +63,9 @@ use ljos::render::{Fonts, Picture};
 use ljos::{App, ShellConfig};
 
 const ROOT: &str = qml::DEFAULT_SHELL;
+/// The desktop entry the release installs (hal-c2.desktop), as desktop-qt
+/// names it.
+const APP_ID: &str = "hal-c2";
 /// How long a render waits for the MC's first snapshot before it shows what
 /// the cache kept.
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -217,6 +220,11 @@ fn main() -> ExitCode {
         // The shell says when closing a window ends the app
         // (controller::attach_root).
         App::new("HAL-C2")
+            // The Wayland app id and X11 class by which docks find the
+            // entry's icon and compositor rules find the window.
+            // TODO(ljos#129): the icon itself, for runs with no entry
+            // installed, and on X11, Windows and macOS's Dock.
+            .desktop_file_name(APP_ID)
             .quit_on_last_window_closed(false)
             .register(hal_c2_shell::register)
             .qml_dirs(dirs, ROOT)
