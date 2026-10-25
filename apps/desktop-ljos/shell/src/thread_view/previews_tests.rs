@@ -712,9 +712,12 @@ impl Sim {
         })
     }
 
-    /// The browser opens `url`: the first waiting link it is, as it is or
-    /// through a forward granted for its thread at its port, at 127.0.0.1
-    /// for an address by number.
+    /// The browser opens `url`: a waiting link it is, as it is or through a
+    /// forward granted for its thread at its port, at 127.0.0.1 for an
+    /// address by number. A link `away` may open either way, so it is taken
+    /// only when no other fits: otherwise a link of a thread on the
+    /// connected MC, opened as it is, would take another thread's away link,
+    /// whose forward then fits none.
     fn browsed(&mut self, url: &str) {
         let fits = |link: &Link| {
             let remote = environment_of(&link.thread) != ENVIRONMENT;
@@ -738,7 +741,8 @@ impl Sim {
                     .iter()
                     .any(|(thread, at)| *thread == link.thread && *at == port)
         };
-        match self.links.iter().position(fits) {
+        let settled = self.links.iter().position(|link| !link.away && fits(link));
+        match settled.or_else(|| self.links.iter().position(fits)) {
             Some(at) => {
                 self.links.remove(at);
             }
@@ -1056,6 +1060,27 @@ fn step(sim: &mut Sim, action: &Action) -> Result<(), TestCaseError> {
         .collect();
     prop_assert_eq!(now, want);
     Ok(())
+}
+
+/// A link asked for a thread on another MC, answered after the user went to
+/// one on the connected MC and back on this machine, opens through the
+/// forward; the next thread's link opens as it is.
+#[test]
+fn a_link_for_a_thread_left_behind_opens_through_its_forward() {
+    let link = "http://127.0.0.1:5173/app?q=1#top";
+    let mut sim = Sim::new();
+    for action in [
+        Action::SetThread("t2"),
+        Action::OpenLink(link),
+        Action::SetThread("t1"),
+        Action::SetHere(false),
+        Action::SetHere(true),
+        Action::OpenLink(link),
+        Action::AnswerAll,
+    ] {
+        step(&mut sim, &action).unwrap();
+    }
+    assert_eq!(sim.granted, vec![("t2".to_owned(), 5173)]);
 }
 
 proptest! {
