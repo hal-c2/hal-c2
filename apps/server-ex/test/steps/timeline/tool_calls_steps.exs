@@ -319,7 +319,7 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     context |> kimi(turn) |> FakeAcp.thread("Agent work")
   end
 
-  step "Kimi exits while one of its subagents works", context do
+  step "Kimi's turn fails while one of its subagents works", context do
     input = %{"description" => "Survey lib", "prompt" => @kimi_task}
 
     spawned = %{
@@ -341,7 +341,8 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
           }
         },
         %{"kimiWire" => %{"agent" => "main", "records" => [spawned]}},
-        %{"exit" => 1}
+        # Kimi answers the prompt with an error and keeps running.
+        %{"error" => %{"code" => -32603, "message" => "The model is overloaded."}}
       ]
     }
 
