@@ -9,8 +9,8 @@ use std::rc::Rc;
 use common::{call, shell};
 use hal_c2_shell::highlighter::spans as highlight;
 use hal_c2_shell::mc::Disconnected;
+use ljos::item::highlights;
 use ljos::prelude::{Color, Engine, ObjectId, Value};
-use ljos::testing::highlights;
 
 const DIM: Color = Color::from_rgba8(0x80, 0x80, 0x80, 0x99);
 
@@ -40,8 +40,9 @@ fn spans(engine: &Engine, root: ObjectId) -> Vec<(std::ops::Range<usize>, Option
         panic!("a text document");
     };
     highlights(engine, document)
-        .into_iter()
-        .map(|s| (s.range, s.color))
+        .expect("an editor's document")
+        .iter()
+        .map(|s| (s.range.clone(), s.color))
         .collect()
 }
 

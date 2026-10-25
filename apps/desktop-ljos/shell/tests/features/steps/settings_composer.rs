@@ -4,8 +4,8 @@
 //! desktop-qt's SettingsComposerSteps.cpp.
 
 use hal_c2_shell::controllers::settings::Settings;
+use ljos::item::highlights;
 use ljos::prelude::{ObjectId, Value as QmlValue};
-use ljos::testing::highlights;
 use serde_json::{Value, json};
 
 use crate::brick::Brick;
@@ -66,7 +66,8 @@ pub fn drawn_bold(world: &World, brick: Brick, input: ObjectId, word: &str) -> b
         return false;
     };
     let wanted = start..start + word.len();
-    let bold: usize = highlights(world.engine(), input)
+    let spans = highlights(world.engine(), input).unwrap_or_default();
+    let bold: usize = spans
         .iter()
         .filter(|span| span.weight.is_some_and(|w| w >= 700))
         .map(|span| {

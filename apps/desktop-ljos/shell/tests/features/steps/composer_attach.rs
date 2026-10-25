@@ -142,15 +142,9 @@ fn drop_files(world: &mut World, files: Vec<PathBuf>) -> Outcome {
     let (brick, field) = editor(world)?;
     let at = brick.at(world, field, 0.5, 0.5)?;
     for drag in [
-        ExternalDrag::Entered {
-            files: files.clone(),
-            at: Some(at),
-        },
+        ExternalDrag::files_entered(files.clone(), Some(at)),
         ExternalDrag::Moved { at },
-        ExternalDrag::Dropped {
-            files,
-            at: Some(at),
-        },
+        ExternalDrag::files_dropped(files, Some(at)),
     ] {
         external_drag(world.engine(), &drag);
     }
@@ -177,10 +171,7 @@ fn over_conversation(world: &mut World) -> Outcome<(f64, f64)> {
 fn drag_files(world: &mut World, files: Vec<PathBuf>, at: (f64, f64)) -> Outcome {
     composer_brick(world)?;
     for drag in [
-        ExternalDrag::Entered {
-            files: files.clone(),
-            at: Some(at),
-        },
+        ExternalDrag::files_entered(files.clone(), Some(at)),
         ExternalDrag::Moved { at },
     ] {
         external_drag(world.engine(), &drag);
@@ -847,7 +838,7 @@ pub fn register(steps: &mut Steps) {
     steps.step("the user drops them there", |world, _, _| {
         let Dragged { files, at } = std::mem::take(world.part::<Dragged>());
         expect!(at.is_some(), "nothing is dragged");
-        external_drag(world.engine(), &ExternalDrag::Dropped { files, at });
+        external_drag(world.engine(), &ExternalDrag::files_dropped(files, at));
         world.sync()?;
         expect!(
             !drop_hint_shown(world)?,
