@@ -4,16 +4,13 @@
 //! bricks as DefaultShell places them, over real folders under the scenario's
 //! home. The paths a scenario names ("/home/sam/code") live under that home;
 //! the system Trash is a folder there.
-//!
-//! A drag of a link to a remote location cannot be made: Ljós hands a drop
-//! only files (`ExternalDrag`), so that one scenario step fails with the gap.
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use hal_c2_shell::bridge::Bridge;
-use ljos::prelude::{ExternalDrag, ObjectId, Value, external_drag};
+use ljos::prelude::{DragData, ExternalDrag, ObjectId, Value, external_drag};
 use serde_json::json;
 
 use super::stream::look_at_thread;
@@ -304,7 +301,7 @@ fn register_project(world: &mut World, path: &Path) -> Outcome {
 
 // --- Dragging over the window ---------------------------------------------------------
 
-fn drag(world: &mut World, files: Vec<PathBuf>) -> Outcome {
+fn drag(world: &mut World, data: DragData) -> Outcome {
     Brick::show(
         world,
         "import QtQuick\nimport HalC2.Bricks\nProjectFolderDrop { objectName: \"folderDrop\" }\n",
@@ -316,7 +313,7 @@ fn drag(world: &mut World, files: Vec<PathBuf>) -> Outcome {
     external_drag(
         world.engine(),
         &ExternalDrag::Entered {
-            files,
+            data,
             at: Some((450.0, 350.0)),
         },
     );
@@ -855,7 +852,7 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             let folder = local(world, &c[0]);
             let _ = std::fs::create_dir_all(&folder);
-            drag(world, vec![folder])
+            drag(world, DragData::files([folder]))
         },
     );
     steps.step(
@@ -866,15 +863,13 @@ pub fn register(steps: &mut Steps) {
             let _ = std::fs::create_dir_all(&one);
             let _ = std::fs::create_dir_all(&two);
             make_file(&one.join("notes.txt"))?;
-            let files = match c[0].as_str() {
-                "a file" => vec![one.join("notes.txt")],
-                "two folders" => vec![one, two],
-                "a link to a remote location" => {
-                    fail!("Ljós hands a drop only files; a dragged link to https://example.com/shop cannot be made")
-                }
-                _ => vec![one],
+            let data = match c[0].as_str() {
+                "a file" => DragData::files([one.join("notes.txt")]),
+                "two folders" => DragData::files([one, two]),
+                "a link to a remote location" => DragData::urls(["https://example.com/shop"]),
+                _ => DragData::files([one]),
             };
-            drag(world, files)
+            drag(world, data)
         },
     );
     steps.step(

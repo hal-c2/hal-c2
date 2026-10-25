@@ -154,10 +154,7 @@ fn a_file_dropped_on_the_card_joins_the_draft() {
     };
     let taken = ljos::prelude::external_drag(
         &hub.engine,
-        &ljos::prelude::ExternalDrag::Dropped {
-            files: vec![file],
-            at: Some(at),
-        },
+        &ljos::prelude::ExternalDrag::files_dropped(vec![file], Some(at)),
     );
     hub.advance(0);
     assert!(taken);
@@ -301,10 +298,7 @@ fn a_recording_dropped_on_the_card_is_uploaded() {
     };
     assert!(ljos::prelude::external_drag(
         &hub.engine,
-        &ljos::prelude::ExternalDrag::Dropped {
-            files: vec![recording],
-            at: Some(at),
-        },
+        &ljos::prelude::ExternalDrag::files_dropped(vec![recording], Some(at)),
     ));
     deliver(&hub);
     uploads_as_a_video(&hub, "rec.mov", 20);
@@ -328,10 +322,7 @@ fn a_dropped_file_with_spaces_and_escapes_in_its_path_joins_the_draft() {
     };
     let taken = ljos::prelude::external_drag(
         &hub.engine,
-        &ljos::prelude::ExternalDrag::Dropped {
-            files: vec![file],
-            at: Some(at),
-        },
+        &ljos::prelude::ExternalDrag::files_dropped(vec![file], Some(at)),
     );
     hub.advance(0);
     assert!(taken);
