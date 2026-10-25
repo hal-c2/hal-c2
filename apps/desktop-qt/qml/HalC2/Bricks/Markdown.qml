@@ -315,18 +315,16 @@ Item {
         TapHandler {
             acceptedButtons: Qt.RightButton
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-            // The handler's point, not the signal's: TODO(ljos#111) Ljós
-            // passes a bare point until the pin moves past the fix.
-            onTapped: {
-                const link = parent.linkAt(point.position.x, point.position.y);
+            onTapped: eventPoint => {
+                const link = richText.linkAt(eventPoint.position.x, eventPoint.position.y);
                 if (link.length > 0) {
                     Shell.dispatch("link.menu", {
                         url: link,
-                        x: point.scenePosition.x,
-                        y: point.scenePosition.y
+                        x: eventPoint.scenePosition.x,
+                        y: eventPoint.scenePosition.y
                     });
                 } else {
-                    root.openTextMenu(richText, point.position);
+                    root.openTextMenu(richText, eventPoint.position);
                 }
             }
         }
