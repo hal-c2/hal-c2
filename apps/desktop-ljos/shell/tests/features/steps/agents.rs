@@ -29,6 +29,8 @@ struct FakeAgents {
     /// tab opened would lose the user's scroll) and counts the redraws of
     /// the end times since the day turned over.
     views: Option<Brick>,
+    /// The right panel as the app lays it, showing the tab.
+    panel: Option<Brick>,
 }
 
 fn agents_object(world: &World) -> Outcome<ObjectId> {
@@ -85,6 +87,24 @@ fn row_titled(world: &World, title: &str) -> Outcome<usize> {
     (0..count)
         .find(|row| text(&value(world, *row, "title")) == title)
         .ok_or_else(|| Failure(describe_agents(world)))
+}
+
+/// The panel's list shows the model's rows: the tab gives its list the
+/// model itself, not a copy of it (ljos#128).
+fn shown_in_the_panel(world: &mut World) -> Outcome {
+    let Some(panel) = world.mc.part::<FakeAgents>().panel else {
+        fail!("the Agents tab has not been opened");
+    };
+    let list = panel.item(world, "agentsList")?;
+    let model = agents_object(world)?;
+    let count = core(world, Agents::count)?;
+    expect!(
+        panel.read(world, list, "model") == ljos::prelude::Value::Object(model)
+            && panel.read(world, list, "count").to_number() as usize == count,
+        "the panel's list shows {} of the model's {count} rows",
+        panel.read(world, list, "count").to_number()
+    );
+    Ok(())
 }
 
 /// The page counting the model's resets and end-time redraws: its list over
@@ -288,6 +308,13 @@ pub fn register(steps: &mut Steps) {
         );
         let views = counting(world)?;
         world.mc.part::<FakeAgents>().views = Some(views);
+        let panel = Brick::new(
+            world,
+            "import QtQuick\nimport HalC2.Bricks\nItem { RightPanel { anchors.fill: parent } }\n",
+            500.0,
+            600.0,
+        )?;
+        world.mc.part::<FakeAgents>().panel = Some(panel);
         world.sync()
     });
     steps.step("the user switches to the Diff tab", |world, _, _| {
@@ -298,6 +325,7 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         &format!("the Agents tab lists {Q} as {Q} and {Q} as {Q}"),
         |world, c, _| {
+            shown_in_the_panel(world)?;
             let first = row_titled(world, &c[0])?;
             let second = row_titled(world, &c[2])?;
             expect!(
@@ -313,6 +341,7 @@ pub fn register(steps: &mut Steps) {
     steps.step(
         &format!("the Agents tab lists {Q} as {Q} with {Q}"),
         |world, c, _| {
+            shown_in_the_panel(world)?;
             let row = row_titled(world, &c[0])?;
             expect!(
                 text(&value(world, row, "statusLabel")) == c[1]
@@ -324,6 +353,7 @@ pub fn register(steps: &mut Steps) {
         },
     );
     steps.step("the Agents tab lists, in order:", |world, _, table| {
+        shown_in_the_panel(world)?;
         let count = core(world, Agents::count)?;
         let mut same = count == table.len();
         for (row, wanted) in table.iter().enumerate() {
