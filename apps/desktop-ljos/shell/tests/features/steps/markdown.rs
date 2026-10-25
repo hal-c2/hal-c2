@@ -635,10 +635,18 @@ pub fn register(steps: &mut Steps) {
                 "copyTableMarkdown"
             };
             let brick = timeline_brick(world)?;
+            // An entry takes clicks once its menu has finished opening.
             let entry = move |w: &World| -> Option<ObjectId> {
                 let mut found = Vec::new();
                 named(w.engine(), brick.root(w)?, name, &mut found);
-                (found.len() == 1 && brick.flag(w, found[0], "visible")).then(|| found[0])
+                let opened = match found[..] {
+                    [item] => match brick.read(w, item, "menu") {
+                        Value::Object(menu) => brick.flag(w, menu, "opened"),
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                opened.then(|| found[0])
             };
             world.wait_for_with(
                 |w| entry(w).is_some(),

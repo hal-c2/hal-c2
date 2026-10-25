@@ -76,7 +76,14 @@ pub fn register(steps: &mut Steps) {
                 for name in TERMINAL_ENTRIES {
                     let item = brick.item(world, name)?;
                     if brick.text_of(world, item, "text") == c[0] {
+                        let menu = brick.read(world, item, "menu");
                         brick.click(world, name)?;
+                        // What it chose is done once the menu has gone.
+                        if let ljos::prelude::Value::Object(menu) = menu {
+                            world.wait_for("the terminal's menu to close", move |w| {
+                                !brick.flag(w, menu, "visible")
+                            })?;
+                        }
                         return world.sync();
                     }
                 }

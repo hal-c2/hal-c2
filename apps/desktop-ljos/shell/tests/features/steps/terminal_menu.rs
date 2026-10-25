@@ -123,12 +123,17 @@ fn select_first_line(world: &mut World, brick: Brick, terminal: ObjectId) -> Out
     Ok(())
 }
 
-/// Right-clicks at (x, y); the terminal's menu's items are then on screen.
+/// Right-clicks at (x, y); the terminal's menu's items then take clicks,
+/// as they do once the menu has finished opening.
 fn open_menu_at(world: &mut World, brick: Brick, x: f64, y: f64) -> Outcome {
     world.click_at_with(x, y, MouseButtons::RIGHT, Modifiers::empty())?;
-    let paste = brick.item(world, "terminalPaste")?;
+    let ljos::prelude::Value::Object(menu) =
+        brick.read(world, brick.item(world, "terminalPaste")?, "menu")
+    else {
+        fail!("the terminal has no menu");
+    };
     world.wait_for("the terminal's menu to open", move |w| {
-        brick.flag(w, paste, "visible")
+        brick.flag(w, menu, "opened")
     })
 }
 

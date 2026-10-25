@@ -52,14 +52,19 @@ fn choose(world: &mut World, entry: &str) -> Outcome {
         brick.shows(w, "Tax line").unwrap_or(false)
     })?;
     brick.click(world, "planMore")?;
-    let name = entry.to_owned();
+    let ljos::prelude::Value::Object(menu) = brick.read(world, brick.item(world, entry)?, "menu")
+    else {
+        fail!("{entry} is not in a menu");
+    };
+    // An item takes clicks once its menu has finished opening.
     world.wait_for("the plan's actions to open", move |w| {
-        brick
-            .item(w, &name)
-            .map(|item| brick.flag(w, item, "visible"))
-            .unwrap_or(false)
+        brick.flag(w, menu, "opened")
     })?;
     brick.click(world, entry)?;
+    // What it chose is done once the menu has gone.
+    world.wait_for("the plan's actions to close", move |w| {
+        !brick.flag(w, menu, "visible")
+    })?;
     world.sync()
 }
 
