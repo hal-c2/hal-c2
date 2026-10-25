@@ -13,6 +13,7 @@ use super::fake_files::fake_files;
 use super::stream::{add_item, change, set, settle_run, start_run};
 use crate::brick::{self, Brick};
 use crate::harness::{Outcome, Q, Steps, at, show, text};
+use crate::steps::composer_brick::text_menu_item;
 use crate::world::World;
 use crate::{expect, fail};
 
@@ -236,6 +237,45 @@ fn click(world: &mut World, item: ObjectId) -> Outcome {
     world.click_at(x, y)
 }
 
+/// Right-clicks `edit`, a reply's text, near its start; the text's menu
+/// (TextEditMenu) is then open.
+fn open_text_menu(world: &mut World, edit: ObjectId) -> Outcome {
+    let brick = timeline_brick(world)?;
+    let (x, y) = brick.at(world, edit, 0.05, 0.5)?;
+    world.click_at_with(
+        x.trunc(),
+        y.trunc(),
+        MouseButtons::RIGHT,
+        Modifiers::empty(),
+    )?;
+    // An item takes clicks once its menu has finished opening.
+    world.wait_for("the text's menu to open", move |w| {
+        let Ok(Some(item)) = brick.find_visible(w, "selectAllText") else {
+            return false;
+        };
+        match brick.read(w, item, "menu") {
+            Value::Object(menu) => brick.flag(w, menu, "opened"),
+            _ => false,
+        }
+    })
+}
+
+/// Chooses `said` from the open text menu.
+fn choose_in_text_menu(world: &mut World, said: &str) -> Outcome {
+    let name = text_menu_item(said)?;
+    let brick = timeline_brick(world)?;
+    let Some(item) = brick.find_visible(world, name)? else {
+        fail!("the text's menu offers no {said}");
+    };
+    expect!(brick.flag(world, item, "enabled"), "{said} is greyed out");
+    let (x, y) = brick.at(world, item, 0.5, 0.5)?;
+    world.click_at(x, y)?;
+    // What it chose is done once the menu has gone.
+    world.wait_for("the text's menu to close", move |w| {
+        matches!(brick.find_visible(w, name), Ok(None))
+    })
+}
+
 /// A finished reply of the current thread.
 fn answer(world: &mut World, text: &str) -> Outcome {
     start_run(world, 30, "running")?;
@@ -427,6 +467,87 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
+
+    // The right-click menu on a reply's text.
+    steps.step(&format!("the agent answers {Q}"), |world, c, _| {
+        answer(world, &c[0])
+    });
+    steps.step(
+        &format!("the user selects {Q} in the reply"),
+        |world, c, _| {
+            let message = reply(world, 1)?;
+            let prose = one(world, message, "markdownProse")?;
+            let all = plain(world, prose)?;
+            let Some(byte) = all.find(c[0].as_str()) else {
+                fail!("\"{}\" is not shown in \"{all}\"", c[0]);
+            };
+            let start = all[..byte].encode_utf16().count() as i32;
+            let end = start + c[0].encode_utf16().count() as i32;
+            if let Err(error) = world.engine().invoke_by_name(
+                prose,
+                "select",
+                &[Value::Int(start), Value::Int(end)],
+            ) {
+                fail!("select: {error}");
+            }
+            world.pump()
+        },
+    );
+    steps.step(
+        &format!("the user chooses {Q} from the reply's right-click menu"),
+        |world, c, _| {
+            let message = reply(world, 1)?;
+            let prose = one(world, message, "markdownProse")?;
+            open_text_menu(world, prose)?;
+            choose_in_text_menu(world, &c[0])
+        },
+    );
+    steps.step("the user right-clicks the reply's text", |world, _, _| {
+        let message = reply(world, 1)?;
+        let prose = one(world, message, "markdownProse")?;
+        open_text_menu(world, prose)
+    });
+    steps.step(
+        &format!("the menu offers {Q} and {Q} only"),
+        |world, c, _| {
+            let brick = timeline_brick(world)?;
+            let mut offered = Vec::new();
+            for said in ["Cut", "Copy", "Paste", "Select All"] {
+                let shown = brick
+                    .find_visible(world, text_menu_item(said)?)?
+                    .is_some_and(|item| int_of(world, item, "height") > 0);
+                if shown {
+                    offered.push(said);
+                }
+            }
+            expect!(
+                offered == [c[0].as_str(), c[1].as_str()],
+                "the menu offers {}",
+                offered.join(", ")
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the user chooses {Q} from the code block's right-click menu"),
+        |world, c, _| {
+            let message = reply(world, 2)?;
+            let code = one(world, message, "codeText")?;
+            open_text_menu(world, code)?;
+            choose_in_text_menu(world, &c[0])
+        },
+    );
+    steps.step("the code block's source is selected", |world, _, _| {
+        let message = reply(world, 2)?;
+        let code = one(world, message, "codeText")?;
+        // Line breaks in a selection are paragraph separators, as in Qt.
+        let selected = str_of(world, code, "selectedText").replace(['\u{2028}', '\u{2029}'], "\n");
+        expect!(
+            selected.trim_end() == SOURCE,
+            "the selection is \"{selected}\""
+        );
+        Ok(())
+    });
 
     // Code blocks.
     steps.step("the agent's reply has a code block", |world, _, _| {

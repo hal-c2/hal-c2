@@ -6,6 +6,7 @@
 #include <QString>
 
 class Brick;
+class QObject;
 class QQuickItem;
 class World;
 
@@ -28,6 +29,14 @@ void typeInComposer(World& world, const QString& text);
 // The item named `objectName` anywhere in the composer's window, popups
 // included; null when there is none.
 QQuickItem* composerPart(World& world, const QString& objectName);
+
+// The item of a text's right-click menu (TextEditMenu) the user calls
+// `said` ("Cut", "Copy", "Paste", "Select All").
+QString textMenuItem(const QString& said);
+// Chooses `said` from `menu`, a TextEditMenu opening in `brick`'s window.
+void chooseInTextMenu(World& world, Brick& brick, QObject* menu, const QString& said);
+// Right-clicks the draft and chooses `said` from its menu.
+void chooseInDraftMenu(World& world, const QString& said);
 
 // "X is listed", "X is not listed" and "X shows Y" are the model picker's
 // while the composer is on screen: they check it and return true. False

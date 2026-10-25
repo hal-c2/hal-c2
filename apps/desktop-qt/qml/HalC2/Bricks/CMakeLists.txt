@@ -104,6 +104,7 @@ qt_add_qml_module(hal_c2_bricks
     RevertDialog.qml
     TerminalSplits.qml
     TerminalMenu.qml
+    TextEditMenu.qml
     Plugin.qml
     Contribution.qml
     PluginSlot.qml

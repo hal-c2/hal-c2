@@ -19,6 +19,7 @@
 #   apps/mobile/src/lib/markdownLinks.ts, nativeMarkdownText.ts (how a link, a file mention, a skill and a path in code are shown in a reply)
 #   apps/mobile/modules/hal-c2-markdown-text (chips in text, copy without inline icons, selection handle colour)
 #   apps/desktop-qt/qml/HalC2/Bricks/Markdown.qml
+#   apps/desktop-qt/qml/HalC2/Bricks/TextEditMenu.qml (the right-click menu on a reply's text)
 #   apps/desktop-qt/qml/HalC2/Bricks/js/markdown.js (escaping, safe links, streaming segments)
 #   apps/desktop-qt/tests/tst_Markdown.qml
 #   apps/desktop-qt/tests/native/features/MarkdownSteps.cpp
@@ -44,6 +45,27 @@ Feature: Formatted messages
     When the user copies the code block
     Then the code block's source is on the clipboard
     And the code block shows it was copied
+
+  # A reply's text that is not a link has the menu of text that cannot be
+  # changed; a link keeps its own.
+  @desktop
+  Scenario: A reply's selected text is copied from its right-click menu
+    Given the agent answers "Refunds reuse the old rate."
+    When the user selects "Refunds" in the reply
+    And the user chooses "Copy" from the reply's right-click menu
+    Then the clipboard holds "Refunds"
+
+  @desktop
+  Scenario: A reply's right-click menu cannot change the reply
+    Given the agent answers "Refunds reuse the old rate."
+    When the user right-clicks the reply's text
+    Then the menu offers "Copy" and "Select All" only
+
+  @desktop
+  Scenario: Select All in a code block's right-click menu selects its code
+    Given the agent's reply has a code block
+    When the user chooses "Select All" from the code block's right-click menu
+    Then the code block's source is selected
 
   @shared @backlog-mobile @backlog-tui
   Scenario: Line wrap in a code block can be turned off and on
