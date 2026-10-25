@@ -725,6 +725,44 @@ fn view_name(world: &World, brick: Brick, page: ObjectId) -> String {
     text(&property_json(world, brick, page, "working")["name"])
 }
 
+/// What the planner page holds, for a step that times out on it.
+fn planner_state(world: &World, brick: Brick, page: ObjectId) -> String {
+    let views: Vec<Json> = property_json(world, brick, page, "views")
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|view| view["name"].clone())
+        .collect();
+    let plans = property_json(world, brick, page, "plans");
+    let arrived: Vec<&String> = plans
+        .as_object()
+        .into_iter()
+        .flat_map(|p| p.keys())
+        .collect();
+    let environments = match brick.read(world, page, "plugin") {
+        Value::Object(plugin) => property_json(world, brick, plugin, "environments"),
+        _ => Json::Null,
+    };
+    let mut warnings: Vec<String> = world
+        .engine()
+        .log_snapshot()
+        .into_iter()
+        .filter(|entry| entry.level >= ljos::prelude::LogLevel::Warning)
+        .map(|entry| entry.message)
+        .collect();
+    warnings.sort();
+    warnings.dedup();
+    format!(
+        "the page has the views {}, the plans of {} and the environments {}; the MC has {} of the {} plan subscriptions made; the engine warned {}",
+        show(&json!(views)),
+        show(&json!(arrived)),
+        show(&environments),
+        plan_watches(&world.mc),
+        plan_subscriptions(&world.mc),
+        show(&json!(warnings))
+    )
+}
+
 /// The Planner tab, on the view `name` when one is given.
 fn show_planner(world: &mut World, name: &str) -> Outcome<ObjectId> {
     let brick = shell(world)?;
@@ -739,7 +777,12 @@ fn show_planner(world: &mut World, name: &str) -> Outcome<ObjectId> {
     }
     let page = shown_named(world, "plannerPage")?;
     if !name.is_empty() && view_name(world, brick, page) != name {
-        let tab = shown_named(world, &format!("plannerView:{name}"))?;
+        let tab_name = format!("plannerView:{name}");
+        world.wait_for_with(
+            |w| !hidden(w, brick, &tab_name),
+            |w| format!("{tab_name} to be shown; {}", planner_state(w, brick, page)),
+        )?;
+        let tab = shown_named(world, &tab_name)?;
         click(world, tab)?;
     }
     if !name.is_empty() {

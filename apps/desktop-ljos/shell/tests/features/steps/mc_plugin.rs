@@ -550,8 +550,11 @@ fn wait_named_when(
             let problem = named(w, brick, name)
                 .map(|found| brick.text_of(w, found, "problem"))
                 .filter(|problem| !problem.is_empty())
+                // The label's text is always "%1 failed: %2"; only a shown
+                // one is a failure.
                 .or_else(|| {
                     named(w, brick, "pluginPageProblem")
+                        .filter(|&found| brick.flag(w, found, "visible"))
                         .map(|found| brick.text_of(w, found, "text"))
                 })
                 .unwrap_or_default();
