@@ -2734,6 +2734,80 @@ defmodule HalC2.OrchestrationTest do
       await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
     end
 
+    # A command that outlasts its timeout is moved to the background, and its tool result
+    # only says so. Claude starts its task as a background one, or, when it ran in the
+    # foreground long enough to have a task, marks that task backgrounded.
+    for {how, moved} <- [
+          started: [{:started, true}],
+          updated: [{:started, false}, :backgrounded]
+        ] do
+      test "a command Claude moves to the background runs on until its task ends (#{how})" do
+        :ok = HalC2.Shell.subscribe(self())
+        thread_id = launch("wait for me", "claudeAgent")
+        _ = await_run(thread_id, "running")
+
+        claude_says(thread_id, %{
+          "type" => "assistant",
+          "message" => %{
+            "id" => "m-slow",
+            "content" => [
+              %{
+                "type" => "tool_use",
+                "id" => "bash-slow",
+                "name" => "Bash",
+                "input" => %{"command" => "cargo clippy", "timeout" => 600_000}
+              }
+            ]
+          }
+        })
+
+        for step <- unquote(moved) do
+          claude_says(
+            thread_id,
+            case step do
+              {:started, background?} ->
+                task_started("task-slow", "bash-slow", "local_bash")
+                |> Map.put("is_backgrounded", background?)
+
+              :backgrounded ->
+                %{
+                  "type" => "system",
+                  "subtype" => "task_updated",
+                  "task_id" => "task-slow",
+                  "patch" => %{"is_backgrounded" => true}
+                }
+            end
+          )
+        end
+
+        claude_says(thread_id, %{
+          "type" => "user",
+          "message" => %{
+            "content" => [
+              %{
+                "type" => "tool_result",
+                "tool_use_id" => "bash-slow",
+                "content" =>
+                  "Command did not complete within its 600s timeout and was moved to the background (ID: task-slow)."
+              }
+            ]
+          }
+        })
+
+        claude_says(thread_id, %{"type" => "result", "subtype" => "success", "is_error" => false})
+        _ = await_run(thread_id, "completed")
+        await_shell_row(thread_id, &(length(&1["pendingBackgroundTasks"] || []) == 1))
+
+        assert [%{"status" => "running"}] =
+                 current(thread_id)
+                 |> StreamState.list("turn-item")
+                 |> Enum.filter(&(&1["input"] == "cargo clippy"))
+
+        claude_says(thread_id, notification("task-slow", "bash-slow", "completed", "ok"))
+        await_shell_row(thread_id, &(&1["pendingBackgroundTasks"] == []))
+      end
+    end
+
     test "a subagent resumed through SendMessage keeps its process until its task ends" do
       :ok = HalC2.Shell.subscribe(self())
       thread_id = launch("wait for me", "claudeAgent")

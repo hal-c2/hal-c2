@@ -10,7 +10,9 @@ defmodule HalC2.ClaudeSubagentPropTest do
   The promise: whatever the order, the parent's turn shows exactly the parent's
   messages and commands, each subagent's thread exactly its own followed by its
   result (once: a result that repeats its last message with Claude's trailer adds
-  nothing), and a stray or late subagent message lands nowhere. An MCP call's tool use
+  nothing), and a stray or late subagent message lands nowhere. A command Claude moves
+  to the background (as it starts, or after running in the foreground) runs on past
+  its tool result until its task ends. An MCP call's tool use
   is a subagent's (`ThreadRuntime.subagent_tool?/2`, which refuses it `delegate_task`)
   exactly while the subagent that made it runs, never Claude's own.
 
@@ -135,12 +137,14 @@ defmodule HalC2.ClaudeSubagentPropTest do
   #   streaming, or nil; commands: how many commands the parent ran;
   # agents: name -> %{done: whether its tool result came, said: its texts in order,
   #   commands: how many it ran}; calls: the id of each tool call left waiting -> the
-  #   agent that made it, or :parent; n: a counter for unique ids.
+  #   agent that made it, or :parent; moved: each command Claude moved to the background
+  #   -> whether its task still runs; n: a counter for unique ids.
   def initial_state,
-    do: %{parent: [], open: nil, commands: 0, agents: %{}, calls: %{}, n: 1}
+    do: %{parent: [], open: nil, commands: 0, agents: %{}, calls: %{}, moved: %{}, n: 1}
 
-  def command(%{agents: agents, calls: calls, n: n, open: open}) do
+  def command(%{agents: agents, calls: calls, moved: moved, n: n, open: open}) do
     running = for {a, %{done: false}} <- agents, do: a
+    backgrounded = for {command, true} <- moved, do: command
     done = for {a, %{done: true}} <- agents, do: a
     fresh = @agents -- Map.keys(agents)
 
@@ -148,6 +152,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
       {3, {:call, __MODULE__, :parent_says, [n]}},
       {3, {:call, __MODULE__, :parent_streams, [n, open != nil]}},
       {1, {:call, __MODULE__, :parent_runs, [n]}},
+      {1, {:call, __MODULE__, :parent_moves, [n, oneof([:started, :updated])]}},
       {1, {:call, __MODULE__, :stray, [n]}},
       {1, {:call, __MODULE__, :parent_calls, [n]}},
       {3, {:call, __MODULE__, :owner, [oneof(["call-unknown" | Map.keys(calls)])]}},
@@ -156,6 +161,11 @@ defmodule HalC2.ClaudeSubagentPropTest do
     |> Kernel.++(if open, do: [{2, {:call, __MODULE__, :parent_closes, [open]}}], else: [])
     |> Kernel.++(
       if fresh == [], do: [], else: [{2, {:call, __MODULE__, :start_agent, [oneof(fresh)]}}]
+    )
+    |> Kernel.++(
+      if backgrounded == [],
+        do: [],
+        else: [{2, {:call, __MODULE__, :moved_ends, [oneof(backgrounded)]}}]
     )
     |> Kernel.++(
       if running == [],
@@ -192,6 +202,9 @@ defmodule HalC2.ClaudeSubagentPropTest do
   def precondition(%{agents: agents}, {:call, _, :agent_says, [a, _]}),
     do: is_map_key(agents, a)
 
+  def precondition(%{moved: moved}, {:call, _, :moved_ends, [command]}),
+    do: moved[command] == true
+
   def precondition(%{open: open}, {:call, _, :parent_closes, [text]}),
     do: open != nil and open == text
 
@@ -203,6 +216,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
       when name in [
              :parent_says,
              :parent_runs,
+             :parent_moves,
              :parent_calls,
              :start_agent,
              :finish_agent,
@@ -225,6 +239,11 @@ defmodule HalC2.ClaudeSubagentPropTest do
     do: %{state | parent: state.parent ++ [state.open], open: nil}
 
   defp step(state, _call, :parent_runs), do: %{state | commands: state.commands + 1}
+
+  defp step(state, {_, _, _, [n, _how]}, :parent_moves),
+    do: %{state | commands: state.commands + 1, moved: Map.put(state.moved, "slow #{n}", true)}
+
+  defp step(state, {_, _, _, [command]}, :moved_ends), do: put_in(state.moved[command], false)
 
   defp step(state, {_, _, _, [a]}, :start_agent),
     do: put_in(state.agents[a], %{done: false, said: [], commands: 0})
@@ -263,6 +282,7 @@ defmodule HalC2.ClaudeSubagentPropTest do
     %{
       parent: state.parent,
       commands: state.commands,
+      running: Enum.sort(for {command, true} <- state.moved, do: command),
       agents:
         Map.new(state.agents, fn {a, agent} ->
           {a, %{prompt: "Do #{a}", said: agent.said, commands: agent.commands}}
@@ -297,6 +317,67 @@ defmodule HalC2.ClaudeSubagentPropTest do
   end
 
   def parent_runs(n), do: says(run("cmd-#{n}", "make #{n}"))
+
+  # A command that outlasts its timeout. Claude starts its task as a background one, or
+  # (`:updated`) starts it in the foreground and marks it backgrounded when it moves it;
+  # either way the tool result only says it moved.
+  def parent_moves(n, how) do
+    started = fn background? ->
+      %{
+        "type" => "system",
+        "subtype" => "task_started",
+        "task_id" => "task-slow-#{n}",
+        "tool_use_id" => "slow-#{n}",
+        "description" => "slow #{n}",
+        "task_type" => "local_bash",
+        "is_backgrounded" => background?
+      }
+    end
+
+    moved =
+      case how do
+        :started ->
+          [started.(true)]
+
+        :updated ->
+          [
+            started.(false),
+            %{
+              "type" => "system",
+              "subtype" => "task_updated",
+              "task_id" => "task-slow-#{n}",
+              "patch" => %{"is_backgrounded" => true}
+            }
+          ]
+      end
+
+    says(
+      [assistant("m-slow-#{n}", [tool_use("slow-#{n}", "Bash", %{"command" => "slow #{n}"})])] ++
+        moved ++
+        [
+          user([
+            %{
+              "type" => "tool_result",
+              "tool_use_id" => "slow-#{n}",
+              "content" => "Command was moved to the background (ID: task-slow-#{n})."
+            }
+          ])
+        ]
+    )
+  end
+
+  def moved_ends("slow " <> n) do
+    says([
+      %{
+        "type" => "system",
+        "subtype" => "task_notification",
+        "task_id" => "task-slow-#{n}",
+        "tool_use_id" => "slow-#{n}",
+        "status" => "completed",
+        "summary" => "done"
+      }
+    ])
+  end
 
   def start_agent(a) do
     says([
@@ -390,6 +471,11 @@ defmodule HalC2.ClaudeSubagentPropTest do
           do: item["text"]
         ),
       commands: Enum.count(items, &(&1["type"] == "command_execution")),
+      running:
+        Enum.sort(
+          for %{"type" => "command_execution", "status" => "running"} = item <- items,
+              do: item["input"]
+        ),
       agents: agents
     }
   end

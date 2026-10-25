@@ -1126,9 +1126,18 @@ defmodule HalC2.Claude.ThreadRuntime do
            task,
          state
        ) do
-    case state.work[state.tasks[task["task_id"]]] do
-      nil -> state
-      work -> put_in(state.work[state.tasks[task["task_id"]]], %{work | background: true})
+    tool = state.tasks[task["task_id"]]
+
+    cond do
+      work = state.work[tool] ->
+        put_in(state.work[tool], %{work | background: true})
+
+      # A command that outlasted its timeout: its tool result only says it moved.
+      match?(%{kind: :command}, state.items[tool]) ->
+        put_in(state.work[tool], %{sub: nil, item: nil, background: true})
+
+      true ->
+        state
     end
   end
 
@@ -1856,8 +1865,10 @@ defmodule HalC2.Claude.ThreadRuntime do
             tasks: Map.put(state.tasks, task_id, tool)
         }
 
+      # A command in the foreground, which Claude may move to the background later
+      # (`task_updated`).
       task["task_type"] == "local_bash" ->
-        %{state | tasks: Map.put(state.tasks, task_id, nil)}
+        %{state | tasks: Map.put(state.tasks, task_id, tool)}
 
       true ->
         subagent_task(with_ids(state), tool, task)
