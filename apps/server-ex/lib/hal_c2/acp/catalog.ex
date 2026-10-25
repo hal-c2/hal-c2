@@ -134,8 +134,17 @@ defmodule HalC2.Acp.Catalog do
     end
   end
 
-  @doc "The registry's agents, from memory, disk, or the network."
+  @doc """
+  The registry's agents, from memory, disk, or the network, as HAL-C2 runs them
+  (`HalC2.Acp.Kimi.registry_entry/1`). Memory keeps the registry's own entries, so an
+  MC that loads new code runs the new entries without waiting out the cache.
+  """
   def index(refresh \\ false) do
+    with {:ok, agents} <- cached_index(refresh),
+         do: {:ok, Enum.map(agents, &HalC2.Acp.Kimi.registry_entry/1)}
+  end
+
+  defp cached_index(refresh) do
     now = System.system_time(:millisecond)
 
     case :persistent_term.get({__MODULE__, :index}, nil) || read_cache() do
@@ -197,8 +206,7 @@ defmodule HalC2.Acp.Catalog do
 
   defp valid?(_), do: false
 
-  defp registry(agents),
-    do: agents |> Enum.map(&HalC2.Acp.Kimi.registry_entry/1) |> Enum.filter(&valid?/1)
+  defp registry(agents), do: Enum.filter(agents, &valid?/1)
 
   # Archives come over HTTPS; plain HTTP only from this machine (a local mirror, tests).
   defp valid_target?(%{"archive" => archive, "cmd" => cmd})
