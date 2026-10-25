@@ -195,6 +195,12 @@ impl World {
             .locale("en_US")
             .register(hal_c2_shell::register)
             .build_engine();
+        // What `App::qml_dirs` gives main.rs: a plugin page is QML text.
+        let dirs = hal_c2_shell::qml::Roots::checkout()
+            .dirs()
+            .expect("the shell's QML");
+        let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+        ljos::dev::install_text_compiler(&engine, &paths);
         // Before the shell starts, for its timers to start on the window's clock.
         let window = TestWindow::new(&engine, WINDOW.0, WINDOW.1);
         let wake = |signal: &Arc<Signal>| {
@@ -635,6 +641,49 @@ impl World {
             }
             self.signal.wait(timeout);
         }
+    }
+
+    /// What a screen reader is told of the inputs (text fields, combo
+    /// boxes) inside `item`: their names, in the tree's order. Turns the
+    /// accessibility tree on, as a screen reader starting up does.
+    pub fn accessible_input_names(&mut self, item: ljos::ObjectId) -> Outcome<Vec<String>> {
+        fn walk(
+            node: &ljos::testing::AccessibleNode,
+            within: &dyn Fn(ljos::testing::NodeKey) -> bool,
+            names: &mut Vec<String>,
+        ) {
+            let input = matches!(
+                node.role.as_str(),
+                "textinput" | "multilinetextinput" | "combobox" | "editablecombobox" | "spinbutton"
+            );
+            if input && node.key.is_some_and(within) {
+                names.push(node.name.clone());
+            }
+            for child in &node.children {
+                walk(child, within, names);
+            }
+        }
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        shell
+            .window
+            .set_accessibility_active(true)
+            .map_err(Failure)?;
+        let (engine, window) = (&shell.engine, &shell.window);
+        let within = |key| {
+            let mut at = window.accessible_item(key);
+            while let Some(each) = at {
+                if each == item {
+                    return true;
+                }
+                at = engine.visual_parent(each);
+            }
+            false
+        };
+        let mut names = Vec::new();
+        walk(&window.accessibility_tree(), &within, &mut names);
+        Ok(names)
     }
 
     /// Lets `ms` pass on the shell's clock, the wall clock staying put.

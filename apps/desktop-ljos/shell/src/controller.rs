@@ -28,9 +28,8 @@
 //! wide: the hooks of the shared controllers (settings, ...) wake every
 //! window's closures, each as its own window. QML still finds the first
 //! window's singletons (see [`Bridge::singleton`]), so the app shows one
-//! window; the others are built and run headless until Ljós can make a
-//! window's singleton the bridge built for it (TODO(ljos#81),
-//! [`set_window_opener`]).
+//! window; the others are built and run headless until a QML singleton
+//! can be one per window in Ljós (TODO(ljos), [`set_window_opener`]).
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
@@ -619,7 +618,7 @@ pub fn attach_root(engine: &Engine, id: &str, root: ObjectId) {
     };
     let _ = engine.signal_index(app, "reopened").and_then(|reopened| {
         engine.connect_to(app, reopened, root, move |engine, args| {
-            // A shell reloaded since keeps its first root hidden
+            // A reloaded shell's old root lasts until the next frame
             // ([`crate::runtime`]): only the generation shown comes back.
             let shown = crate::runtime::window(engine).is_none_or(|w| w == root);
             if shown && matches!(args.first(), Some(Value::Bool(false))) {

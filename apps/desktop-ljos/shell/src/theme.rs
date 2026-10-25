@@ -780,8 +780,6 @@ fn show(engine: &Engine) {
     );
     let follows_system = file.follows_system_appearance;
     drop((d, base, file));
-    // TODO(ljos#94): a plain Text, TextInput or TextEdit already made keeps
-    // the family it was made with; desktop-qt gives it the new one.
     set_application_font(engine);
     platform_window::apply_window_theme(
         engine,

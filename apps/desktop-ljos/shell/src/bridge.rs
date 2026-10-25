@@ -27,8 +27,8 @@ use ljos::ljos_engine::QmlSingleton;
 use ljos::prelude::ClipboardMode;
 use ljos::prelude::QmlValue;
 use ljos::prelude::{
-    Atom, Cx, Engine, EngineError, ObjectId, Platform, PropertyMap, QmlObject, Value, qml_impl,
-    qml_singleton,
+    Atom, Cx, Engine, EngineError, ObjectId, Platform, PropertyMap, QmlObject, Value, encoded_url,
+    file_url, qml_impl, qml_singleton,
 };
 
 use crate::attachment_files;
@@ -200,15 +200,49 @@ impl ShellBridge {
             .collect()
     }
 
-    /// What the composer's own paste attaches: a copied picture as
+    /// What the composer's own paste attaches: the files a file manager
+    /// copied, as readAttachmentFiles has them, else a copied picture as
     /// "image.png". Empty when the paste is text.
-    ///
-    /// TODO(ljos#97): desktop-qt first takes copied files (the clipboard's
-    /// URLs); Ljós's clipboard holds no URL list, so a file copied in a file
-    /// manager pastes as its path's text here.
     #[qml(invokable)]
     fn clipboard_files(cx: &Cx) -> Vec<Value> {
-        let Some(image) = Platform::of(cx.engine).clipboard().image() else {
+        let clipboard = Platform::of(cx.engine).clipboard();
+        let copied = clipboard.files();
+        let files: Vec<Json> = copied
+            .iter()
+            .filter_map(|path| attachment_files::read_attachment(&path.to_string_lossy()))
+            .collect();
+        if !files.is_empty() {
+            let picture = files.iter().any(|f| {
+                f["mimeType"]
+                    .as_str()
+                    .is_some_and(|m| m.starts_with("image/"))
+            });
+            // File managers put the copied files' addresses or paths on the
+            // clipboard as text too; that is no text to paste instead.
+            let names: Vec<String> = copied
+                .iter()
+                .flat_map(|path| {
+                    let url = file_url(path);
+                    [
+                        path.to_string_lossy().into_owned(),
+                        format!("file://{}", path.to_string_lossy()),
+                        encoded_url(&url),
+                        url,
+                    ]
+                })
+                .collect();
+            let text = clipboard.text(ClipboardMode::Clipboard).unwrap_or_default();
+            let only_names = text
+                .split('\n')
+                .map(str::trim)
+                .all(|line| line.is_empty() || names.iter().any(|n| n == line));
+            return if picture || only_names {
+                files.iter().map(|f| f.to_value()).collect()
+            } else {
+                Vec::new()
+            };
+        }
+        let Some(image) = clipboard.image() else {
             return Vec::new();
         };
         attachment_files::pasted_image(image.width, image.height, image.rgba)
@@ -518,13 +552,12 @@ impl Bridge {
     /// This window's `T`: the engine's singleton for the first window, an
     /// object of its own for each other.
     ///
-    /// TODO(ljos#81): QML still finds the engine's, so another window's
-    /// bricks cannot see their own. Ljós's window-scoped singletons are
-    /// made by Ljós when a root's QML first reads them, and a window's
-    /// bridge is built, and its controllers publish on it, before its root
-    /// is made, and with no root at all headless; a host cannot hand a
-    /// window an object it made, as desktop-qt's
-    /// qmlRegisterSingletonInstance does for each window's engine.
+    /// TODO(ljos): QML still finds the engine's, so another window's
+    /// bricks cannot see their own. Ljós makes a native singleton one per
+    /// window (`scope = "window"`, `Engine::set_singleton_in`), but a
+    /// `pragma Singleton` QML file stays one per engine and reads such a
+    /// type as null: PluginRegistry reads `Shell`, and desktop-qt has one
+    /// of it per window, as each window has its own QQmlEngine.
     pub fn singleton<T: QmlSingleton + Default>(
         self,
         engine: &Engine,

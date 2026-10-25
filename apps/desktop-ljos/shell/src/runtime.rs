@@ -17,12 +17,11 @@
 //! engine's clock, the sources' fingerprint says whether a reload is due.
 //!
 //! This is a reload of the whole shell and not Ljós's own hot reload
-//! (ARCHITECTURE.md §12.1, `Setup::watch`), which keeps the state of the
-//! QML across a save. TODO(ljos#98, ljos#99): Ljós's watcher follows one root with a
-//! fixed entry, and the facade offers it only with the `mcp` feature. The
-//! shell has an import path of several roots (the user's, the bricks, its
-//! own), and changes its entry when the user's shell comes or goes or fails.
-//! The state that matters is in the controllers, which a reload keeps.
+//! (`Setup::watch_roots`), which keeps the state of the QML across a save
+//! but comes only with the `dev` feature, for development: a user's
+//! `shell.qml` follows its files in a release too, and says through
+//! `Runtime` which shell it is and why the last one failed. The state that
+//! matters is in the controllers, which a reload keeps.
 
 use std::cell::{Cell, RefCell};
 use std::collections::hash_map::DefaultHasher;
@@ -117,9 +116,6 @@ struct RuntimeState {
     user_shell: RefCell<Option<PathBuf>>,
     /// The window of the generation shown.
     shown: Cell<Option<ObjectId>>,
-    /// The window the host made its root, which stays (hidden) once another
-    /// generation is shown, as a root cannot be replaced (see [`retire`]).
-    root: Cell<Option<ObjectId>>,
     /// The sources as the generation shown was made of them.
     fingerprint: Cell<u64>,
     debounce: Cell<Option<ObjectId>>,
@@ -170,9 +166,7 @@ pub fn open(engine: &Engine, watch: bool) -> Result<ObjectId, String> {
         follow(engine, &state);
     }
     next_generation(engine, &state);
-    let root = state.shown.get().ok_or_else(|| last_error(engine))?;
-    state.root.set(Some(root));
-    Ok(root)
+    state.shown.get().ok_or_else(|| last_error(engine))
 }
 
 /// The window of the generation shown; none before [`open`].
@@ -190,6 +184,12 @@ pub fn reload(engine: &Engine) {
     match qml::compile(&roots) {
         Ok(compiled) => {
             engine.set_component_source(compiled.source);
+            // Plugin pages are QML text; a fresh compiler reads the files
+            // as they are now, as `App::qml_dirs` gave the first one.
+            if let Ok(dirs) = roots.dirs() {
+                let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
+                ljos::dev::install_text_compiler(engine, &paths);
+            }
             next_generation(engine, &state);
         }
         // A root that cannot be read: what is shown stays, and says why.
@@ -287,7 +287,7 @@ fn next_generation(engine: &Engine, state: &RuntimeState) {
     };
     controller::attach_root(engine, controller::MAIN, window);
     if let Some(old) = state.shown.replace(Some(window)) {
-        retire(engine, state, old);
+        retire(engine, old, window);
     }
     let generation = cx.get(ShellRuntime::GENERATION).unwrap_or_default() + 1;
     let _ = cx.set(ShellRuntime::USING_USER_SHELL, using_user_shell);
@@ -310,15 +310,11 @@ fn make(engine: &Engine, key: &str, name: &str) -> Result<ObjectId, String> {
     Err(format!("Shell root must be a Window: {name}"))
 }
 
-/// Lets the previous generation's window go. The host's root is hidden and
-/// kept instead: Ljós shows another `Window` in a window of its own, but has
-/// no way for the app to replace its root, which stays the platform's first
-/// window. TODO(ljos#100): replace the root with the new generation's window,
-/// as `QuickScene::replace_root` does for Ljós's own reload.
-fn retire(engine: &Engine, state: &RuntimeState, old: ObjectId) {
-    if state.root.get() == Some(old) {
-        let _ = engine.write_by_name(old, "visible", Value::Bool(false));
-    } else {
+/// Lets the previous generation's window go: `new` takes the platform
+/// window `old` had, which is destroyed before the next frame. A window no
+/// host shows (a headless test's) is destroyed now.
+fn retire(engine: &Engine, old: ObjectId, new: ObjectId) {
+    if ljos::window::replace_root(engine, old, new).is_err() {
         engine.destroy(old);
     }
 }
