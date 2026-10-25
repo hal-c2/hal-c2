@@ -47,8 +47,8 @@ pub const OTHER_MACHINE: &str = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a
 
 /// The longest a step waits for anything, as desktop-qt's qWaitFor.
 const WAIT: Duration = Duration::from_secs(5);
-/// The test window's size, which it keeps.
-pub const WINDOW: (f64, f64) = (1280.0, 800.0);
+/// The test window's size until a brick gives it its own (Brick::new).
+const WINDOW: (f64, f64) = (1280.0, 800.0);
 
 /// The longest a wait sleeps before it lets the shell's clock catch up.
 const FRAME: Duration = Duration::from_millis(16);
@@ -762,21 +762,20 @@ impl World {
             .map_or(0, |list| list.ops().len())
     }
 
-    /// The window point (x, y) of the shown brick, brought inside the
-    /// window (Brick::reach); any other point is where it is, and a pointer
-    /// outside the window misses as a real one would.
-    fn reach(&mut self, x: f64, y: f64) -> Outcome<(f64, f64)> {
-        match self.part::<crate::brick::Shown>().0 {
-            Some(brick) => brick.reach(self, x, y),
-            None => Ok((x, y)),
-        }
+    /// Makes the window `width` by `height`, as a user dragging its edge
+    /// does.
+    pub fn resize(&mut self, width: f64, height: f64) -> Outcome {
+        let Some(shell) = &mut self.shell else {
+            return Err(Failure("the app is not running".into()));
+        };
+        shell.window.resize(width, height).map_err(Failure)?;
+        self.pump()
     }
 
     /// The user presses and releases the primary button at (x, y) of the
     /// window.
     pub fn click_at(&mut self, x: f64, y: f64) -> Outcome {
         use ljos::item::PointerEvent;
-        let (x, y) = self.reach(x, y)?;
         let Some(shell) = &mut self.shell else {
             return Err(Failure("the app is not running".into()));
         };
@@ -790,7 +789,6 @@ impl World {
     /// shows on hover shows.
     pub fn hover_at(&mut self, x: f64, y: f64) -> Outcome {
         use ljos::item::{MouseButtons, PointerEvent};
-        let (x, y) = self.reach(x, y)?;
         let Some(shell) = &mut self.shell else {
             return Err(Failure("the app is not running".into()));
         };
@@ -881,7 +879,6 @@ impl World {
         modifiers: ljos::item::Modifiers,
     ) -> Outcome {
         use ljos::item::PointerEvent;
-        let (x, y) = self.reach(x, y)?;
         let Some(shell) = &mut self.shell else {
             return Err(Failure("the app is not running".into()));
         };
