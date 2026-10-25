@@ -57,6 +57,11 @@ Feature: ACP registry agents
     When the user searches the registry for "kimi"
     Then Kimi is offered as Kimi Code, checked against its checksum
 
+  Scenario: Once the registry lists Kimi Code, its own release runs
+    Given the registry lists Kimi Code 2.4.0
+    When the user searches the registry for "kimi"
+    Then Kimi is offered as the registry's Kimi Code 2.4.0
+
   Scenario: Adding an agent that is already configured is not offered twice
     Given an instance of "acme" exists
     When the user searches the registry for "acme"

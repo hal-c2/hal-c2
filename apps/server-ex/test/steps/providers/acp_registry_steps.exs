@@ -320,8 +320,29 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx = context |> Acp.serve_registry()
 
     Acp.publish(ctx, [
-      Map.merge(Acp.acme_agent(ctx, id: "kimi"), %{"name" => "Kimi CLI", "version" => "1.52.0"})
+      Map.merge(Acp.acme_agent(ctx, id: "kimi"), %{
+        "name" => "Kimi CLI",
+        "version" => "1.52.0",
+        "repository" => "https://github.com/MoonshotAI/kimi-cli"
+      })
     ])
+  end
+
+  step "the registry lists Kimi Code {word}", %{args: [version]} = context do
+    ctx = context |> Acp.serve_registry()
+
+    Acp.publish(ctx, [
+      Map.merge(Acp.acme_agent(ctx, id: "kimi"), %{
+        "name" => "Kimi Code",
+        "version" => version,
+        "repository" => "https://github.com/MoonshotAI/kimi-code"
+      })
+    ])
+  end
+
+  step "Kimi is offered as the registry's Kimi Code {word}", %{args: [version]} = context do
+    assert {:ok, %{"agents" => [%{"id" => "kimi", "version" => ^version}]}} = context.reply
+    context
   end
 
   step "Kimi is offered as Kimi Code, checked against its checksum", context do

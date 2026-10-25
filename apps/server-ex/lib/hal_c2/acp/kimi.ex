@@ -3,9 +3,10 @@ defmodule HalC2.Acp.Kimi do
   Kimi Code CLI: the build the registry agent "kimi" runs, and its tool calls in the
   shape the other ACP agents send.
 
-  The ACP Registry's "kimi" is Kimi CLI, which Moonshot archived for Kimi Code. Until
-  the registry moves, `registry_entry/1` swaps in a pinned Kimi Code release, checked
-  against its sha256 like any registry archive. Kimi Code keeps its sign-in under
+  The ACP Registry's "kimi" is Kimi CLI, which Moonshot archived for Kimi Code. While
+  the entry is still Kimi CLI, `registry_entry/1` swaps in a pinned Kimi Code release,
+  checked against its sha256 like any registry archive; once the registry moves, its
+  own entry runs. Kimi Code keeps its sign-in under
   `KIMI_CODE_HOME` (`~/.kimi-code`), so moving from Kimi CLI means signing in again.
 
   Kimi Code names a call's kind and input, but while the call runs its content is the
@@ -13,6 +14,7 @@ defmodule HalC2.Acp.Kimi do
   absolute path. See `packages/acp-server/src/events-map.ts` in MoonshotAI/kimi-code.
   """
 
+  @kimi_cli "https://github.com/MoonshotAI/kimi-cli"
   @version "2.3.1"
   @release "https://github.com/MoonshotAI/kimi-code/releases/download/%40moonshot-ai%2Fkimi-code%40#{@version}"
   @builds %{
@@ -37,7 +39,7 @@ defmodule HalC2.Acp.Kimi do
   end
 
   @doc "A registry agent as HAL-C2 runs it: Kimi Code in place of the registry's Kimi CLI."
-  def registry_entry(%{"id" => "kimi"} = agent) do
+  def registry_entry(%{"id" => "kimi", "repository" => @kimi_cli} = agent) do
     binary =
       Map.new(@builds, fn {platform, {asset, sha256}} ->
         cmd = if String.starts_with?(platform, "windows"), do: "./kimi.exe", else: "./kimi"
