@@ -430,20 +430,34 @@ fn announce(world: &mut World) {
     let _ = environments;
 }
 
-/// Changes plugin `id` on every MC that runs it, and tells the client.
+/// Changes plugin `id` on every MC that runs it, and tells the client. A
+/// new revision is waited for: the client keys a plugin's tabs by it, so a
+/// step that read a key before the list arrived would read the old one.
 fn change(world: &mut World, id: &str, edit: impl Fn(&mut Json)) -> Outcome {
     let mut found = false;
-    for plugins in fake(world).plugins.values_mut() {
+    let mut revisions = Vec::new();
+    for (environment, plugins) in fake(world).plugins.iter_mut() {
         for entry in plugins.iter_mut() {
             if entry["id"] == json!(id) {
+                let before = entry["revision"].clone();
                 edit(entry);
                 found = true;
+                if entry["revision"] != before {
+                    revisions.push((environment.clone(), entry["revision"].clone()));
+                }
             }
         }
     }
     expect!(found, "no MC runs {}", id);
     announce(world);
-    Ok(())
+    world.wait_for_with(
+        |w| {
+            revisions
+                .iter()
+                .all(|(environment, revision)| listed(w, id, environment)["revision"] == *revision)
+        },
+        |w| format!("{id} to be at its new revision; {}", describe(w)),
+    )
 }
 
 fn change_contributions(
@@ -587,37 +601,51 @@ fn route_tab(world: &World) -> String {
     text(at(&world.state("route"), "tab"))
 }
 
-/// A tab's key by its title.
-fn tab_key(world: &mut World, title: &str) -> Outcome<String> {
+/// The key of the tab titled `title` as the client has it now, "" while it
+/// has none. A key carries the plugin's revision, so it is read again on
+/// every look rather than once: a list arriving in between changes it.
+fn tab_key(world: &World, title: &str) -> String {
     if title == "Threads" {
-        return Ok("threads".into());
+        return "threads".into();
     }
-    let find = |w: &World| {
-        list_of(&published(w), "pages")
-            .iter()
-            .find(|page| page["title"] == json!(title))
-            .map(|page| text(&page["key"]))
-            .unwrap_or_default()
+    list_of(&published(world), "pages")
+        .iter()
+        .find(|page| page["title"] == json!(title))
+        .map(|page| text(&page["key"]))
+        .unwrap_or_default()
+}
+
+/// The shown tab titled `title` in the window's strip.
+fn wait_tab_item(world: &mut World, title: &str) -> Outcome<ObjectId> {
+    let brick = shell(world)?;
+    let shown = |w: &World| {
+        let key = tab_key(w, title);
+        named(w, brick, &format!("tab:{key}"))
+            .filter(|&tab| !key.is_empty() && brick.flag(w, tab, "visible"))
     };
     world.wait_for_with(
-        |w| !find(w).is_empty(),
-        |w| format!("a page titled {title}; {}", describe(w)),
+        |w| shown(w).is_some(),
+        |w| format!("the {title} tab to be shown; {}", describe(w)),
     )?;
-    Ok(find(world))
+    match shown(world) {
+        Some(tab) => Ok(tab),
+        None => fail!("the {} tab is not shown", title),
+    }
 }
 
 fn wait_tab(world: &mut World, title: &str) -> Outcome {
-    let key = tab_key(world, title)?;
     world.wait_for_with(
-        |w| route_tab(w) == key,
+        |w| {
+            let key = tab_key(w, title);
+            !key.is_empty() && route_tab(w) == key
+        },
         |w| format!("the {title} tab to be selected; {}", describe(w)),
     )
 }
 
 /// The user clicks a tab in the window's strip.
 fn click_tab(world: &mut World, title: &str) -> Outcome {
-    let key = tab_key(world, title)?;
-    let tab = wait_named(world, &format!("tab:{key}"))?;
+    let tab = wait_tab_item(world, title)?;
     click_item(world, tab)?;
     wait_tab(world, title)
 }
@@ -773,8 +801,7 @@ pub fn register(steps: &mut Steps) {
 
     // Pages are tabs.
     steps.step(&format!("{Q} adds the page {Q}"), |world, c, _| {
-        let key = tab_key(world, &c[1])?;
-        wait_named(world, &format!("tab:{key}")).map(|_| ())
+        wait_tab_item(world, &c[1]).map(|_| ())
     });
     steps.step("no running plugin adds a page", |world, _, _| {
         change_contributions(world, CODE_REVIEW, |parts| {
@@ -793,8 +820,7 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             wait_named(world, "shellTabs")?;
             for title in c {
-                let key = tab_key(world, title)?;
-                let tab = wait_named(world, &format!("tab:{key}"))?;
+                let tab = wait_tab_item(world, title)?;
                 expect!(
                     draws_text(world, tab, title)?,
                     "the {} tab does not say so",
@@ -1147,7 +1173,6 @@ pub fn register(steps: &mut Steps) {
         Ok(())
     });
     steps.step(&format!("there is one {Q} tab"), |world, c, _| {
-        let key = tab_key(world, &c[0])?;
         world.wait_for_with(
             |w| {
                 let state = published(w);
@@ -1159,8 +1184,7 @@ pub fn register(steps: &mut Steps) {
             },
             describe,
         )?;
-        wait_named(world, &format!("tab:{key}"))?;
-        Ok(())
+        wait_tab_item(world, &c[0]).map(|_| ())
     });
     steps.step(
         "the page can tell each environment's data apart",
