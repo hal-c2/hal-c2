@@ -229,12 +229,14 @@ defmodule HalC2.Orchestration.NativeSubagent do
 
   @doc """
   Sets the subagent's task after it started: its entity and turn item, and the
-  user message its child thread opened with. For a provider that names the
-  task only after the subagent is already running.
+  user message its child thread opened with, and with `title` the title of all
+  three. For a provider that names the task only after the subagent is already
+  running.
   """
-  def prompt(sub, text) do
+  def prompt(sub, text, title \\ nil) do
     at = Entities.now()
-    put = &Map.merge(&1, %{"prompt" => text, "updatedAt" => at})
+    named = if title, do: %{"title" => title}, else: %{}
+    put = &Map.merge(&1, Map.merge(named, %{"prompt" => text, "updatedAt" => at}))
 
     HalC2.Streams.transact(sub.thread, :thread, fn state ->
       {[
@@ -245,6 +247,11 @@ defmodule HalC2.Orchestration.NativeSubagent do
     end)
 
     HalC2.Streams.transact(sub.child, :thread, fn state ->
+      thread =
+        if title,
+          do: [Orchestration.upsert(state, "thread", sub.child, &Map.merge(&1, named))],
+          else: []
+
       changes =
         Enum.map(conversation(state, sub, :user, text, at), fn {kind, id, entity} ->
           if StreamState.get(state, kind)[id],
@@ -258,7 +265,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
             else: Orchestration.create(kind, id, entity)
         end)
 
-      {Enum.filter(changes, &is_tuple/1), :ok}
+      {Enum.filter(thread ++ changes, &is_tuple/1), :ok}
     end)
 
     sub
