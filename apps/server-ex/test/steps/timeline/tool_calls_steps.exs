@@ -135,49 +135,59 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     |> FakeAcp.thread("Agent work")
   end
 
-  # Kimi CLI's calls as `src/kimi_cli/acp/session.py` sends them: the tool's name as
-  # the title, the arguments' JSON streamed in as the content, the result at the end.
+  # Kimi Code's calls as `packages/acp-server/src/events-map.ts` sends them: created
+  # from the first streamed arguments under the tool's name, the arguments' JSON text
+  # as the content while they stream, then the whole input under the call's
+  # description, and the result at the end.
   @kimi_args %{
-    "Shell" => %{"command" => "ls -la"},
-    "ReadFile" => %{"path" => "src/app.ts"},
-    "Grep" => %{"pattern" => "TODO"},
-    "WriteFile" => %{"path" => "notes.md", "content" => "hi"}
+    "Bash" => %{"command" => "ls -la", "description" => "List the files"},
+    "Read" => %{"path" => "src/app.ts"},
+    "Grep" => %{"pattern" => "TODO", "path" => "src"},
+    "Write" => %{"path" => "notes.md", "content" => "hi"}
   }
 
-  step "Kimi streams a {string} call's arguments while it runs", %{args: [tool]} = context do
-    args = JSON.encode!(Map.fetch!(@kimi_args, tool))
-    [key | _] = Map.values(Map.fetch!(@kimi_args, tool))
+  @kimi_kinds %{"Bash" => "execute", "Read" => "read", "Grep" => "read", "Write" => "edit"}
 
-    running = fn update, title, text ->
-      %{
-        "update" => %{
-          "sessionUpdate" => update,
-          "toolCallId" => "call-1",
-          "title" => title,
-          "status" => "in_progress",
-          "content" => [%{"type" => "content", "content" => %{"type" => "text", "text" => text}}]
-        }
-      }
-    end
+  step "Kimi streams a {string} call's arguments while it runs", %{args: [tool]} = context do
+    input = Map.fetch!(@kimi_args, tool)
+    args = JSON.encode!(input)
+    text = &[%{"type" => "content", "content" => %{"type" => "text", "text" => &1}}]
+    call = %{"toolCallId" => "call-1"}
 
     turn = %{
       "match" => "use the tool",
-      "steps" => [
-        running.("tool_call", tool, ""),
-        running.("tool_call_update", tool, String.slice(args, 0, 8)),
-        running.("tool_call_update", "#{tool}: #{key}", args),
-        %{
-          "update" => %{
-            "sessionUpdate" => "tool_call_update",
-            "toolCallId" => "call-1",
-            "status" => "completed",
-            "content" => [
-              %{"type" => "content", "content" => %{"type" => "text", "text" => "export {}"}}
-            ]
-          }
-        },
-        %{"text" => "Done."}
-      ]
+      "steps" =>
+        Enum.map(
+          [
+            Map.merge(call, %{
+              "sessionUpdate" => "tool_call",
+              "title" => tool,
+              "kind" => @kimi_kinds[tool],
+              "status" => "pending",
+              "content" => text.(String.slice(args, 0, 8))
+            }),
+            Map.merge(call, %{
+              "sessionUpdate" => "tool_call_update",
+              "status" => "in_progress",
+              "content" => text.(args)
+            }),
+            Map.merge(call, %{
+              "sessionUpdate" => "tool_call_update",
+              "title" => input["description"] || tool,
+              "kind" => @kimi_kinds[tool],
+              "status" => "in_progress",
+              "rawInput" => input,
+              "content" => text.(args)
+            }),
+            Map.merge(call, %{
+              "sessionUpdate" => "tool_call_update",
+              "status" => "completed",
+              "content" => text.("export {}"),
+              "rawOutput" => "export {}"
+            })
+          ],
+          &%{"update" => &1}
+        ) ++ [%{"text" => "Done."}]
     }
 
     context = FakeAcp.install(context, "kimi", %{"turns" => [turn | FakeAcp.turns()]})
@@ -209,7 +219,7 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
     Map.put(context, :projected, item)
   end
 
-  step ~r/^the timeline shows it as a (?<kind>file read|file search|web search|command|tool call that names only its file)$/,
+  step ~r/^the timeline shows it as a (?<kind>file read|file search|web search|command|file change)$/,
        %{args: [kind]} = context do
     item = context.projected
     assert item["status"] == "completed"
@@ -230,10 +240,9 @@ defmodule HalC2.Steps.Timeline.ToolCalls do
         assert %{"type" => "command_execution", "input" => "ls -la", "output" => "export {}"} =
                  item
 
-      # The file's text stays out of the timeline, as a read's does.
-      "tool call that names only its file" ->
-        assert %{"type" => "dynamic_tool", "toolName" => "WriteFile"} = item
-        assert item["input"] == %{"path" => "notes.md"}
+      "file change" ->
+        assert item["fileName"] == "notes.md"
+        refute Map.has_key?(item, "input")
     end
 
     context

@@ -316,6 +316,49 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     Map.put(ctx, :reply, reply)
   end
 
+  step "the registry lists Kimi CLI", context do
+    ctx = context |> Acp.serve_registry()
+
+    Acp.publish(ctx, [
+      Map.merge(Acp.acme_agent(ctx, id: "kimi"), %{
+        "name" => "Kimi CLI",
+        "version" => "1.52.0",
+        "repository" => "https://github.com/MoonshotAI/kimi-cli"
+      })
+    ])
+  end
+
+  step "the registry lists Kimi Code {word}", %{args: [version]} = context do
+    ctx = context |> Acp.serve_registry()
+
+    Acp.publish(ctx, [
+      Map.merge(Acp.acme_agent(ctx, id: "kimi"), %{
+        "name" => "Kimi Code",
+        "version" => version,
+        "repository" => "https://github.com/MoonshotAI/kimi-code"
+      })
+    ])
+  end
+
+  step "Kimi is offered as the registry's Kimi Code {word}", %{args: [version]} = context do
+    assert {:ok, %{"agents" => [%{"id" => "kimi", "version" => ^version}]}} = context.reply
+    context
+  end
+
+  step "Kimi is offered as Kimi Code, checked against its checksum", context do
+    assert {:ok, %{"agents" => [kimi]}} = context.reply
+
+    assert %{
+             "id" => "kimi",
+             "name" => "Kimi Code",
+             "version" => "2.3.1",
+             "repository" => "https://github.com/MoonshotAI/kimi-code",
+             "integrity" => "sha256"
+           } = kimi
+
+    context
+  end
+
   # The client marks a result as added when one of its instances runs that agent.
   step "{string} is shown as already added", %{args: [id]} = context do
     assert id in ids(context.reply)

@@ -162,7 +162,7 @@ defmodule HalC2.Acp.Catalog do
     with {:ok, text} <- get(registry_url(), 30_000),
          true <- byte_size(text) <= @max_index_bytes,
          {:ok, %{"agents" => agents}} when is_list(agents) <- JSON.decode(text) do
-      {:ok, text, Enum.filter(agents, &valid?/1)}
+      {:ok, text, registry(agents)}
     else
       _ -> error("registry_unavailable", "The ACP Registry could not be loaded.")
     end
@@ -172,7 +172,7 @@ defmodule HalC2.Acp.Catalog do
     with {:ok, %{mtime: mtime}} <- File.stat(cache_path(), time: :posix),
          {:ok, text} <- File.read(cache_path()),
          {:ok, %{"agents" => agents}} when is_list(agents) <- JSON.decode(text) do
-      cached = {mtime * 1000, Enum.filter(agents, &valid?/1)}
+      cached = {mtime * 1000, registry(agents)}
       :persistent_term.put({__MODULE__, :index}, cached)
       cached
     else
@@ -196,6 +196,9 @@ defmodule HalC2.Acp.Catalog do
   end
 
   defp valid?(_), do: false
+
+  defp registry(agents),
+    do: agents |> Enum.map(&HalC2.Acp.Kimi.registry_entry/1) |> Enum.filter(&valid?/1)
 
   # Archives come over HTTPS; plain HTTP only from this machine (a local mirror, tests).
   defp valid_target?(%{"archive" => archive, "cmd" => cmd})

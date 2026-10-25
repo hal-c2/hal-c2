@@ -8,6 +8,11 @@ delegation.
 Google Antigravity is available through its official `antigravity-acp` Registry entry. Add it like
 any other Registry agent; it does not need an Antigravity-specific HAL-C2 provider.
 
+Kimi runs as Kimi Code. The Registry still lists Moonshot's archived Kimi CLI, so HAL-C2 installs a
+pinned Kimi Code release in its place, checked against its SHA-256. Kimi Code keeps its sign-in in
+`~/.kimi-code` (or `KIMI_CODE_HOME`), not Kimi CLI's `~/.kimi`, so an existing Kimi instance asks
+you to sign in once more.
+
 HAL-C2 prefers the current ACP v2 preview protocol and uses its richer messages, usage, plans,
 configuration, compaction, and agent-terminal updates when the agent supports them. It also
 negotiates ACP v1 for Registry agents that have not migrated yet, so agents such as Pi continue to
