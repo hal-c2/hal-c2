@@ -245,6 +245,9 @@ Item {
     component ActionLink: Text {
         id: action
         signal clicked
+        Accessible.role: Accessible.Button
+        Accessible.name: action.text
+        Accessible.onPressAction: action.clicked()
         color: actionHover.hovered ? root.textColor : root.mutedColor
         font.family: root.uiFamily
         font.pixelSize: Math.round(12 * Theme.fontScale)
@@ -526,6 +529,8 @@ Item {
         // A click in the conversation puts the keyboard on it: Page Up and
         // Page Down page through it, Home and End go to its ends.
         activeFocusOnTab: true
+        Accessible.role: Accessible.List
+        Accessible.name: qsTr("Conversation")
         Keys.onPressed: event => {
             if (event.modifiers & (Qt.AltModifier | Qt.MetaModifier | Qt.ShiftModifier))
                 return;
@@ -698,6 +703,10 @@ Item {
                         id: attribution
                         readonly property string thread: row.model.thread ?? ""
                         objectName: "messageAttribution"
+                        Accessible.role: attribution.thread.length > 0 ? Accessible.Link : Accessible.StaticText
+                        Accessible.name: attribution.text
+                        Accessible.onPressAction: if (attribution.thread.length > 0)
+                            root.threadActivated(attribution.thread)
                         visible: text.length > 0
                         anchors.right: parent.right
                         anchors.rightMargin: 4
@@ -917,6 +926,7 @@ Item {
                         Behavior on opacity {
                             NumberAnimation {
                                 duration: 200
+                                easing.type: Easing.OutCubic
                             }
                         }
                         Stamp {
@@ -1160,6 +1170,7 @@ Item {
                         Behavior on opacity {
                             NumberAnimation {
                                 duration: 200
+                                easing.type: Easing.OutCubic
                             }
                         }
                         IconButton {
@@ -1347,6 +1358,7 @@ Item {
                                 }
                                 Stamp {
                                     anchors.verticalCenter: parent.verticalCenter
+                                    // ljos-allow(focus-hover-only): a call's time is a detail with no action; touch shows it always (alwaysShowMeta), and the timeline's rows take no keyboard focus to show it on
                                     visible: text.length > 0 && (callLine.hovered || root.alwaysShowMeta)
                                     rowId: row.rowId
                                     entryId: call.modelData.id ?? ""
@@ -1429,6 +1441,9 @@ Item {
                     implicitHeight: 36
                     Row {
                         id: foldButton
+                        Accessible.role: Accessible.Button
+                        Accessible.name: row.title ?? ""
+                        Accessible.onPressAction: root.toggle(row.rowId)
                         y: 4
                         height: 23
                         leftPadding: 4
@@ -1815,6 +1830,7 @@ Item {
             }
         }
 
+        // ljos-allow(text-unbounded-dynamic): false positive, ljos#144 (RowText wraps)
         header: RowText {
             width: ListView.view ? ListView.view.width : 0
             visible: root.showStatus && root.model !== null && (root.model.status === "unreachable" || (root.model.status === "loading" && view.count === 0))
