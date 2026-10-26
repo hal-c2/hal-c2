@@ -1,16 +1,14 @@
 //! What the shell's window needs from AppKit that Ljós does not give it yet:
-//! a frameless window its user can resize.
+//! a frameless window its user can resize from its edge.
 //!
-//! A frameless window is borderless to winit, and Ljós asks winit whether it
-//! is maximized each time it is resized, which on macOS gives a borderless
-//! window a title bar for the question and takes it away again. That ends
-//! the user's drag of an edge after its first step, and cuts the window to
-//! the screen's visible frame (TODO(ljos#133)). So the shell's frameless
-//! window is a titled one here, as Electron's and Tauri's are: its title bar
-//! clear, without its title or buttons, under the content, and not a handle
-//! of its own, so that a drag over the shell's header is the header's. The
-//! shell moves the window from its own handles (`startSystemMove`), which
-//! AppKit allows an unmovable window.
+//! A frameless window is borderless to winit, and AppKit takes a borderless
+//! window's resize drag only from just inside its edge, where a titled
+//! window's starts on the edge or just past it (TODO(ljos#140)). So the
+//! shell's frameless window is a titled one here, as Electron's and Tauri's
+//! are: its title bar clear, without its title or buttons, under the
+//! content, and not a handle of its own, so that a drag over the shell's
+//! header is the header's. The shell moves the window from its own handles
+//! (`startSystemMove`), which AppKit allows an unmovable window.
 
 use std::cell::{Cell, RefCell};
 
