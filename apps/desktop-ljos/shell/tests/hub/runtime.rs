@@ -3,13 +3,19 @@
 //! it does not load, `<config>/qml` on the import path, and the shell made
 //! again as its files change.
 
+use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::mpsc;
 
 use hal_c2_shell::Launch;
+use hal_c2_shell::platform_window;
 use hal_c2_shell::qml::{self, Roots};
 use hal_c2_shell::runtime::{self, ShellRuntime};
-use ljos::prelude::{ObjectId, Value};
+use ljos::prelude::{ObjectId, Platform, Value};
+use ljos::window::raw_window_handle::{
+    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
+    RawWindowHandle, WindowHandle, XcbDisplayHandle, XcbWindowHandle,
+};
 use tempfile::TempDir;
 
 use crate::Hub;
@@ -258,6 +264,35 @@ fn editing_a_followed_file_makes_the_next_generation() {
 }
 
 #[test]
+fn a_file_saved_while_a_reload_runs_is_reloaded_after_it() {
+    let (hub, dir) = hub();
+    let (wake, woken) = mpsc::channel();
+    runtime::set_wake(&hub.engine, move || {
+        let _ = wake.send(());
+    });
+    open(&hub, &dir, true);
+    write(
+        &dir.path().join("config/shell.qml"),
+        "import QtQuick\nWindow { Nonsense {} }\n",
+    );
+    // The user saves again while the reload makes its shell: here, once
+    // it has said the one it compiled does not load.
+    let shell = dir.path().join("config/shell.qml");
+    hub.engine.set_log_handler(move |entry| {
+        if entry.message.starts_with("user shell failed") {
+            write(&shell, "import QtQuick\nWindow { objectName: \"mine\" }\n");
+        }
+    });
+    runtime::reload(&hub.engine);
+    hub.engine.clear_log_handler();
+    assert_eq!(shown(&hub), "built-in");
+    woken.recv().expect("the watcher wakes the shell");
+    runtime::deliver(&hub.engine);
+    hub.advance(120);
+    assert_eq!(shown(&hub), "mine");
+}
+
+#[test]
 fn a_shell_opened_without_following_does_not_reload() {
     let (hub, dir) = hub();
     open(&hub, &dir, false);
@@ -307,4 +342,53 @@ fn a_reloaded_shell_is_the_window_that_closes_and_reopens() {
         Value::Bool(true)
     ));
     assert!(!engine.is_alive(first));
+}
+
+/// A window as a host hands it over, of an X server that is not there: the
+/// shell's hooks never use the handles.
+struct Opened;
+
+impl HasWindowHandle for Opened {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+        let id = NonZeroU32::new(7).expect("not zero");
+        let raw = RawWindowHandle::Xcb(XcbWindowHandle::new(id));
+        // SAFETY: the handle names no live window, and nothing uses it.
+        Ok(unsafe { WindowHandle::borrow_raw(raw) })
+    }
+}
+
+impl HasDisplayHandle for Opened {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+        let raw = RawDisplayHandle::Xcb(XcbDisplayHandle::new(None, 0));
+        // SAFETY: as for the window handle.
+        Ok(unsafe { DisplayHandle::borrow_raw(raw) })
+    }
+}
+
+#[test]
+fn a_reloaded_shell_keeps_the_backdrop_of_the_window_it_takes() {
+    let (hub, dir) = hub();
+    let first = open(&hub, &dir, false);
+    let engine = &hub.engine;
+    // A blurred theme, and the host opening the shell's window.
+    platform_window::apply_window_blur(engine, true, false);
+    Platform::of(engine).native_window_opened(engine, Some(first), &Opened);
+    let backdrop = |window| engine.read_by_name(window, "backdrop").to_number();
+    assert_eq!(backdrop(first), 1.0, "Window.BlurBackdrop");
+
+    // The next generation takes that platform window, which the host does
+    // not open again: without the backdrop the host would take it away and
+    // the theme's own window would show nothing behind it.
+    write(
+        &dir.path().join("config/shell.qml"),
+        "import QtQuick\nWindow { objectName: \"mine\" }\n",
+    );
+    runtime::reload(engine);
+    let mine = runtime::window(engine).unwrap();
+    assert_eq!(backdrop(mine), 1.0);
+    hub.advance(1);
+    assert!(!engine.is_alive(first));
+    // And the theme's next backdrop reaches it.
+    platform_window::apply_window_blur(engine, true, true);
+    assert_eq!(backdrop(mine), 2.0, "Window.GlassBackdrop");
 }
