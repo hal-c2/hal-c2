@@ -165,7 +165,8 @@ pub fn open(engine: &Engine, watch: bool) -> Result<ObjectId, String> {
     if watch {
         follow(engine, &state);
     }
-    next_generation(engine, &state);
+    let seen = state.roots.borrow().as_ref().map(fingerprint);
+    next_generation(engine, &state, seen);
     state.shown.get().ok_or_else(|| last_error(engine))
 }
 
@@ -181,6 +182,9 @@ pub fn reload(engine: &Engine) {
     let Some(roots) = state.roots.borrow().clone() else {
         return;
     };
+    // Before the files are read: one saved while this reload runs is a
+    // change the next debounce sees.
+    let seen = fingerprint(&roots);
     match qml::compile(&roots) {
         Ok(compiled) => {
             engine.set_component_source(compiled.source);
@@ -190,13 +194,13 @@ pub fn reload(engine: &Engine) {
                 let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
                 ljos::dev::install_text_compiler(engine, &paths);
             }
-            next_generation(engine, &state);
+            next_generation(engine, &state, Some(seen));
         }
         // A root that cannot be read: what is shown stays, and says why.
         Err(e) => {
             let cx = Cx::new(engine, runtime(engine));
             let _ = cx.set(ShellRuntime::LAST_ERROR, Atom::from(e.as_str()));
-            state.fingerprint.set(fingerprint(&roots));
+            state.fingerprint.set(seen);
             let _ = cx.notify(ShellRuntime::GENERATION.index);
         }
     }
@@ -235,8 +239,9 @@ fn last_error(engine: &Engine) -> String {
 }
 
 /// The user's shell if there is one and it loads, else the built-in one,
-/// in place of the generation shown (ShellRuntime::reload).
-fn next_generation(engine: &Engine, state: &RuntimeState) {
+/// in place of the generation shown (ShellRuntime::reload). `seen` is the
+/// sources' fingerprint from before they were compiled.
+fn next_generation(engine: &Engine, state: &RuntimeState, seen: Option<u64>) {
     let cx = Cx::new(engine, runtime(engine));
     let mut error = String::new();
     let mut made = None;
@@ -275,8 +280,8 @@ fn next_generation(engine: &Engine, state: &RuntimeState) {
             }
         }
     }
-    if let Some(roots) = state.roots.borrow().as_ref() {
-        state.fingerprint.set(fingerprint(roots));
+    if let Some(seen) = seen {
+        state.fingerprint.set(seen);
     }
     let _ = cx.set(ShellRuntime::LAST_ERROR, Atom::from(error.as_str()));
     let Some(window) = made else {
