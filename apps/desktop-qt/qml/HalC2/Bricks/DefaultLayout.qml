@@ -131,12 +131,19 @@ Item {
                     showBrand: true
                     window: layout.framesWindow ? layout.window : null
 
-                    // The right edge: drag to resize, double click for the default width.
+                    // The right edge: drag to resize, double click for the default
+                    // width. From the keyboard it is a Tab stop: the arrows move it,
+                    // Enter puts the default width back.
                     MouseArea {
+                        id: sidebarEdge
                         objectName: "sidebarEdge"
 
                         property real pressX: 0
                         property int pressWidth: 0
+
+                        function step(by: int) {
+                            Shell.dispatch("sidebar.resize", { width: Math.max(208, sidebarView.shownWidth + by) });
+                        }
 
                         anchors.right: parent.right
                         anchors.top: parent.top
@@ -144,6 +151,14 @@ Item {
                         width: 6
                         cursorShape: Qt.SplitHCursor
                         preventStealing: true
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.Splitter
+                        Accessible.name: qsTr("Resize thread list")
+                        Accessible.onPressAction: Shell.dispatch("sidebar.resize", {})
+                        Keys.onLeftPressed: step(-16)
+                        Keys.onRightPressed: step(16)
+                        Keys.onReturnPressed: Shell.dispatch("sidebar.resize", {})
+                        Keys.onEnterPressed: Shell.dispatch("sidebar.resize", {})
                         onPressed: mouse => {
                             pressX = mapToItem(navigation.parent, mouse.x, 0).x;
                             pressWidth = sidebarView.shownWidth;
@@ -160,6 +175,15 @@ Item {
                         }
                         onCanceled: sidebarView.dragWidth = -1
                         onDoubleClicked: Shell.dispatch("sidebar.resize", {})
+
+                        Rectangle {
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            width: 2
+                            visible: sidebarEdge.activeFocus
+                            color: Theme.palette.color("focus", "#3b82f6")
+                        }
                     }
                 }
 
@@ -219,6 +243,7 @@ Item {
                     }
 
                     TapHandler {
+                        // ljos-allow(focus-pointer-only): a double click on the title bar is the pointer's shortcut for the window controls' Maximize button, which the keyboard reaches
                         onDoubleTapped: layout.window.visibility === Window.Maximized ? layout.window.showNormal() : layout.window.showMaximized()
                     }
                 }
@@ -366,6 +391,9 @@ Item {
         width: parent.width - x
         height: navigation.height
         color: Theme.palette.color("scrim", "#52000000")
+        Accessible.role: Accessible.Button
+        Accessible.name: qsTr("Close thread list")
+        Accessible.onPressAction: Shell.dispatch("sidebar.toggle")
 
         MouseArea {
             anchors.fill: parent
@@ -385,6 +413,9 @@ Item {
         width: parent.width - panelView.width - x
         height: panelView.height
         color: Theme.palette.color("scrim", "#52000000")
+        Accessible.role: Accessible.Button
+        Accessible.name: qsTr("Close panel")
+        Accessible.onPressAction: Shell.dispatch("rightPanel.toggle")
 
         MouseArea {
             anchors.fill: parent
