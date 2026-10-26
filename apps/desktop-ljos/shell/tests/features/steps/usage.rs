@@ -1481,6 +1481,9 @@ pub fn register(steps: &mut Steps) {
                 |w| credit(w)["available"].as_i64().unwrap_or(0) > 0,
                 |w| format!("a banked credit to spend; the page is {}", show(&usage(w))),
             )?;
+            // A hub's report follows the snapshot that brought the credit;
+            // it says where the credit is spent.
+            world.sync()?;
             let key = credit(world)["key"].clone();
             world.dispatch("usage.resetCredit", json!({"key": key}))
         },
