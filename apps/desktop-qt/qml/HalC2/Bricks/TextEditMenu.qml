@@ -13,7 +13,8 @@ import HalC2.Shell
 // On a TextArea or TextField, a MouseArea taking the right button instead
 // keeps Qt's own menu from opening too; a TapHandler does not. The secondary
 // button only: a finger has none, and touch platforms have their own menu.
-// TODO(ljos#131): Ljós's editors have no menu of their own; this is theirs.
+// It stands in for an editor's own menu where that menu falls short: a
+// TextEdit has none, and the composer's Paste does more than a TextArea's.
 ShellMenu {
     id: menu
 
