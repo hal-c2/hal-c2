@@ -170,27 +170,18 @@ FocusScope {
                 // copy it never opens it. A drag still selects, and a program
                 // that tracks the mouse keeps its clicks.
                 TapHandler {
-                    id: modifiedTap
                     acceptedButtons: Qt.LeftButton
                     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                     acceptedModifiers: Qt.ControlModifier
                     onTapped: eventPoint => {
-                        // TODO(ljos#134): Ljós ignores acceptedModifiers.
-                        if (!(modifiedTap.point.modifiers & Qt.ControlModifier))
-                            return;
                         const link = terminal.linkUnder(eventPoint.position);
                         if (link !== null)
                             terminal.followLink(link);
                     }
                 }
                 TapHandler {
-                    id: touchTap
                     acceptedDevices: PointerDevice.TouchScreen
                     onTapped: eventPoint => {
-                        // TODO(ljos#134): Ljós ignores acceptedDevices.
-                        const device = touchTap.point.device;
-                        if (!device || device.type !== PointerDevice.TouchScreen)
-                            return;
                         const link = terminal.linkUnder(eventPoint.position);
                         if (link !== null)
                             terminal.followLink(link);
