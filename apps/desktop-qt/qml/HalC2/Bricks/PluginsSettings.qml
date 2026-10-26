@@ -100,6 +100,8 @@ SettingsPage {
                 source: card.plugin.iconUrl
                 sourceSize: Qt.size(64, 64)
                 fillMode: Image.PreserveAspectFit
+                // The plugin's name is beside it.
+                Accessible.ignored: true
             }
 
             ColumnLayout {
