@@ -129,17 +129,22 @@ fn describe(calls: &[Rpc]) -> String {
         .join(", ")
 }
 
-fn toast_titles(world: &World) -> Vec<String> {
-    at(&world.state("toasts"), "items")
-        .as_array()
-        .map(|items| items.iter().map(|item| text(&item["title"])).collect())
-        .unwrap_or_default()
-}
-
+/// A toast that says `told` and nothing under it.
 fn wait_for_toast(world: &mut World, told: String) -> Outcome {
     world.wait_for_with(
-        |w| toast_titles(w).contains(&told),
-        |w| format!("\"{told}\"; the toasts are {}", show(&w.state("toasts"))),
+        |w| {
+            at(&w.state("toasts"), "items")
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|item| text(&item["title"]) == told && text(&item["description"]).is_empty())
+        },
+        |w| {
+            format!(
+                "\"{told}\" alone; the toasts are {}",
+                show(&w.state("toasts"))
+            )
+        },
     )
 }
 

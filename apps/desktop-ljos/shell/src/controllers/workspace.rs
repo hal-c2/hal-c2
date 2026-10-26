@@ -405,9 +405,18 @@ pub fn open_here(
         if local.path.is_empty() {
             match done {
                 Some(done) => done(engine, Some(local.problem)),
+                // The reason is the whole message: no "An error occurred."
+                // under it.
                 None => {
                     controller::with::<Toasts, _>(engine, |t, engine| {
-                        t.error(engine, &local.problem, "")
+                        t.show(
+                            engine,
+                            "error",
+                            &local.problem,
+                            "",
+                            None,
+                            DEFAULT_TIMEOUT_MS,
+                        )
                     });
                 }
             }
