@@ -13,6 +13,29 @@
 use std::cell::Cell;
 
 use ljos::prelude::{Engine, ObjectId, Platform, Value};
+use ljos::window::Icon;
+
+/// desktop-qt's window icon (`HAL_C2_APP_ICON` in its CMakeLists.txt).
+const ICON: &[u8] = include_bytes!("../../../../assets/prod/black-universal-1024.png");
+
+/// Gives the application desktop-qt's icon, as its
+/// `QGuiApplication::setWindowIcon` does: the Dock's on macOS, the title
+/// bar's and task bar's on Windows and X11, and on Wayland the one a
+/// compositor with `xdg-toplevel-icon-v1` shows. Decoded off the UI
+/// thread; until then the desktop shows the desktop entry's or the
+/// bundle's.
+pub fn give_application_icon(engine: &Engine) {
+    let decode = || {
+        let image = image::load_from_memory_with_format(ICON, image::ImageFormat::Png).ok()?;
+        let image = image.into_rgba8();
+        Icon::from_rgba(image.width(), image.height(), image.into_raw()).ok()
+    };
+    let _ = ljos::task::spawn(engine, decode, |engine, icon| {
+        if let Ok(Some(icon)) = icon {
+            Platform::of(engine).set_application_icon(Some(icon));
+        }
+    });
+}
 
 /// Makes the application's colour scheme `dark` or light when `enabled`, and
 /// the system's again when not: native controls follow it, and so does the
@@ -144,6 +167,17 @@ mod tests {
 
     fn engine() -> Engine {
         ljos::engine()
+    }
+
+    #[test]
+    fn the_application_has_desktop_qts_icon_once_it_is_decoded() {
+        let engine = engine();
+        let mut clock = ljos::testing::TestWindow::new(&engine, 100.0, 100.0);
+        give_application_icon(&engine);
+        assert!(Platform::of(&engine).application_icon().is_none());
+        clock.advance(0).unwrap();
+        let icon = Platform::of(&engine).application_icon().expect("the icon");
+        assert_eq!((icon.width(), icon.height()), (1024, 1024));
     }
 
     #[test]
