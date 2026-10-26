@@ -304,10 +304,14 @@ Item {
             acceptedButtons: Qt.LeftButton
             acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
             acceptedModifiers: Qt.ControlModifier
+            // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
             onTapped: eventPoint => richText.follow(eventPoint)
         }
+        // TODO(ljos#145): `ljos check` calls this unnamed (an error no allow
+        // keeps), but the text is its name; the links' keyboard path is hal-c2#574.
         TapHandler {
             acceptedDevices: PointerDevice.TouchScreen
+            // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
             onTapped: eventPoint => richText.follow(eventPoint)
         }
         // The secondary button on a link offers what can be done with it,
@@ -826,11 +830,11 @@ Item {
                         // GitHub's alert kinds: label, icon, and the title and
                         // rule colours (tailwind 600 on light, 400 on dark).
                         readonly property var kinds: ({
-                            note: ["Note", "info", "#3b82f6", "#2563eb", "#60a5fa"],
-                            tip: ["Tip", "lightbulb", "#10b981", "#059669", "#34d399"],
-                            important: ["Important", "message-square-warning", "#a855f7", "#9333ea", "#c084fc"],
-                            warning: ["Warning", "triangle-alert", "#f59e0b", "#d97706", "#f59e0b"],
-                            caution: ["Caution", "octagon-alert", "#ef4444", "#dc2626", "#f87171"]
+                            note: [qsTr("Note"), "info", "#3b82f6", "#2563eb", "#60a5fa"],
+                            tip: [qsTr("Tip"), "lightbulb", "#10b981", "#059669", "#34d399"],
+                            important: [qsTr("Important"), "message-square-warning", "#a855f7", "#9333ea", "#c084fc"],
+                            warning: [qsTr("Warning"), "triangle-alert", "#f59e0b", "#d97706", "#f59e0b"],
+                            caution: [qsTr("Caution"), "octagon-alert", "#ef4444", "#dc2626", "#f87171"]
                         })
                         readonly property var kindOf: kinds[seg.alert] ?? null
                         readonly property color titleColor: kindOf ? (root.light ? kindOf[3] : kindOf[4]) : root.textColor
@@ -862,7 +866,7 @@ Item {
                             Text {
                                 objectName: "alertTitle"
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: quoteBox.kindOf ? qsTr(quoteBox.kindOf[0]) : ""
+                                text: quoteBox.kindOf ? quoteBox.kindOf[0] : ""
                                 color: quoteBox.titleColor
                                 font.family: root.uiFamily
                                 font.pixelSize: Math.round(14 * Theme.fontScale)
