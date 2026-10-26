@@ -392,11 +392,14 @@ fn host_name() -> String {
         .unwrap_or_else(|| "this computer".into())
 }
 
-/// What the QML says that is wrong, on stderr, each message once.
+/// What the QML says that is wrong, on stderr, each message once, and which
+/// window each generation of a reloaded shell took (`hal_c2.shell`).
 fn report_warnings(engine: &Engine) {
     let seen = std::cell::RefCell::new(std::collections::HashSet::new());
     engine.set_log_handler(move |entry| {
-        if matches!(entry.level, LogLevel::Warning | LogLevel::Critical) {
+        if entry.level == LogLevel::Info && entry.category == "hal_c2.shell" {
+            eprintln!("shell: {}", entry.message);
+        } else if matches!(entry.level, LogLevel::Warning | LogLevel::Critical) {
             let first = entry.message.lines().next().unwrap_or("").trim().to_owned();
             if seen.borrow_mut().insert(first.clone()) {
                 eprintln!("qml: {first}");

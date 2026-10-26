@@ -24,6 +24,7 @@ use objc2_app_kit::{NSView, NSWindow, NSWindowButton, NSWindowStyleMask, NSWindo
 struct Shown {
     window: RefCell<Weak<NSWindow>>,
     followed: Cell<Option<ObjectId>>,
+    refit: Cell<Option<ObjectId>>,
 }
 
 /// Hears of each window the host opens: the shell's own, which belongs to
@@ -47,32 +48,50 @@ pub fn install(engine: &Engine) {
         };
         fit_title_bar(&ns_window);
         *shown.window.borrow_mut() = Weak::from_retained(&ns_window);
-        follow_flags(engine, window, |engine| {
-            if let Some(window) = engine.extension::<Shown>().window.borrow().load() {
-                fit_title_bar(&window);
-            }
-        });
+        follow_flags(engine, window, refit);
     });
+}
+
+/// The next generation of the shell (`crate::runtime`) takes the platform
+/// window `old` had, which the host does not open again: its flags are the
+/// ones followed from now on.
+pub fn root_replaced(engine: &Engine, old: ObjectId, new: ObjectId) {
+    if engine.extension::<Shown>().followed.get() == Some(old) {
+        follow_flags(engine, new, refit);
+    }
+}
+
+fn refit(engine: &Engine) {
+    if let Some(window) = engine.extension::<Shown>().window.borrow().load() {
+        fit_title_bar(&window);
+    }
 }
 
 /// Calls `refit` once the host has told the platform of the window's new
 /// flags (the theme's `frameless` changed): a timer's turn comes after the
-/// pass that applies them. Once per window.
+/// pass that applies them. Once per window, with one timer for all of them.
 fn follow_flags(engine: &Engine, window: ObjectId, refit: impl Fn(&Engine) + 'static) {
     let shown = engine.extension::<Shown>();
     if shown.followed.replace(Some(window)) == Some(window) {
         return;
     }
-    let timer = Timer {
-        interval: 0,
-        repeat: false,
-        running: false,
-        ..Timer::default()
+    let timer = match shown.refit.get() {
+        Some(timer) => timer,
+        None => {
+            let timer = Timer {
+                interval: 0,
+                repeat: false,
+                running: false,
+                ..Timer::default()
+            };
+            let Ok(timer) = engine.create_native(timer, None) else {
+                return;
+            };
+            let _ = engine.connect_by_name(timer, "triggered", move |engine, _| refit(engine));
+            shown.refit.set(Some(timer));
+            timer
+        }
     };
-    let Ok(timer) = engine.create_native(timer, None) else {
-        return;
-    };
-    let _ = engine.connect_by_name(timer, "triggered", move |engine, _| refit(engine));
     let _ = engine.connect_by_name(window, "flagsChanged", move |engine, _| {
         let _ = engine.write_by_name(timer, "running", Value::Bool(false));
         let _ = engine.write_by_name(timer, "running", Value::Bool(true));
@@ -157,5 +176,15 @@ mod tests {
         let _ = engine.write_by_name(window, "flags", Value::Int(0x0001));
         clock.advance(1).unwrap();
         assert_eq!(fits.get(), 2);
+        // A reload's next generation takes the platform window: its flags
+        // are the ones followed.
+        let next = engine
+            .create_by_name("QtQuick", "Window", None)
+            .expect("a window");
+        root_replaced(&engine, window, next);
+        engine.destroy(window);
+        let _ = engine.write_by_name(next, "flags", Value::Int(0x0801));
+        clock.advance(1).unwrap();
+        assert_eq!(fits.get(), 3);
     }
 }

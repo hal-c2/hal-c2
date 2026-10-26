@@ -43,9 +43,9 @@ Item {
     readonly property string monoFamily: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
     readonly property bool light: Theme.appearance === "light"
     readonly property int codeSize: Theme.fontSizeCode
-    // The head every rich text segment carries; a theme change restyles the
-    // segments without parsing the reply again.
-    readonly property string styleHead: Md.styleHead({
+    // What the head of every rich text segment styles, by what it styles; a
+    // theme change restyles the segments without parsing the reply again.
+    readonly property var styleRules: Md.styleRules({
         link: css(Theme.link),
         heading: css(headingColor),
         muted: css(mutedColor),
@@ -55,6 +55,7 @@ Item {
         mono: monoFamily,
         rule: css(borderColor)
     })
+    readonly property string styleHead: Md.styleHead(styleRules)
 
     // What opens every rich text, made once per theme and not per segment.
     readonly property string richHead: "<html><head>" + styleHead + "</head><body>"
@@ -80,7 +81,7 @@ Item {
     }
 
     function rich(html) {
-        return richHead + html + "</body></html>";
+        return richHead + Md.inlineStyles(html, styleRules) + "</body></html>";
     }
 
     // A segment's item, whose functions are the delegate's own.
