@@ -264,6 +264,35 @@ fn editing_a_followed_file_makes_the_next_generation() {
 }
 
 #[test]
+fn a_file_saved_while_a_reload_runs_is_reloaded_after_it() {
+    let (hub, dir) = hub();
+    let (wake, woken) = mpsc::channel();
+    runtime::set_wake(&hub.engine, move || {
+        let _ = wake.send(());
+    });
+    open(&hub, &dir, true);
+    write(
+        &dir.path().join("config/shell.qml"),
+        "import QtQuick\nWindow { Nonsense {} }\n",
+    );
+    // The user saves again while the reload makes its shell: here, once
+    // it has said the one it compiled does not load.
+    let shell = dir.path().join("config/shell.qml");
+    hub.engine.set_log_handler(move |entry| {
+        if entry.message.starts_with("user shell failed") {
+            write(&shell, "import QtQuick\nWindow { objectName: \"mine\" }\n");
+        }
+    });
+    runtime::reload(&hub.engine);
+    hub.engine.clear_log_handler();
+    assert_eq!(shown(&hub), "built-in");
+    woken.recv().expect("the watcher wakes the shell");
+    runtime::deliver(&hub.engine);
+    hub.advance(120);
+    assert_eq!(shown(&hub), "mine");
+}
+
+#[test]
 fn a_shell_opened_without_following_does_not_reload() {
     let (hub, dir) = hub();
     open(&hub, &dir, false);
