@@ -213,6 +213,7 @@ Popup {
                 bottomPadding: 4
                 leftPadding: 8
                 text: section
+                elide: Text.ElideRight
                 color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(11 * Theme.fontScale)
                 font.weight: Font.DemiBold
