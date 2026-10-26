@@ -381,6 +381,8 @@ Rectangle {
                             sourceSize: Qt.size(20, 20)
                             fillMode: Image.PreserveAspectFit
                             asynchronous: true
+                            // The agent's name is beside it.
+                            Accessible.ignored: true
                         }
 
                         ColumnLayout {
