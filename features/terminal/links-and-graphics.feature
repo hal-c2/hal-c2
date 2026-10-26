@@ -128,6 +128,13 @@ Feature: Links and rendering inside terminals
       Then "src/app.ts" opens in the user's editor at line 12, column 4
       And the path is resolved against the terminal's folder
 
+    # git status prints a branch and its upstream as "## main...origin/main".
+    @desktop
+    Scenario: A branch range in git's output is not a file path
+      Given the shell prints "## main...origin/main"
+      When the user follows "main...origin/main" in the terminal
+      Then nothing is opened
+
     @desktop
     Scenario Outline: The terminal's menu opens or copies the link under the pointer
       Given the shell prints "<link>"
