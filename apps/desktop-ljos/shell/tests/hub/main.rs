@@ -221,6 +221,22 @@ impl Window {
         window.pointer(&PointerEvent::moved(x, y, MouseButtons::empty(), now))
     }
 
+    /// Gives the window a size.
+    pub fn resize(&self, width: f64, height: f64) {
+        self.0
+            .borrow_mut()
+            .resize(width, height)
+            .expect("the window takes the size");
+    }
+
+    /// Presses and releases the left button at (`x`, `y`) in the window.
+    pub fn click(&self, x: f64, y: f64) {
+        let mut window = self.0.borrow_mut();
+        let now = window.now();
+        window.pointer(&PointerEvent::press(x, y, now));
+        window.pointer(&PointerEvent::release(x, y, now));
+    }
+
     /// Gives the window a wheel or touchpad event; true when something
     /// used it.
     pub fn wheel(&self, ev: &ljos::item::WheelEvent) -> bool {
