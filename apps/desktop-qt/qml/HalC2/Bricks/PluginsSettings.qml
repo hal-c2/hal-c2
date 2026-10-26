@@ -224,6 +224,7 @@ SettingsPage {
                     text: qsTr("On %1").arg(environment.modelData.label)
                     color: page.foreground
                     font.pixelSize: Math.round(13 * Theme.fontScale)
+                    wrapMode: Text.Wrap
                     font.weight: Font.DemiBold
                 }
 

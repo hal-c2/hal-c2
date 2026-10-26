@@ -410,6 +410,7 @@ SettingsPage {
             Label {
                 Layout.fillWidth: true
                 text: halfRow.modelData.label
+                wrapMode: Text.Wrap
                 color: page.foreground
                 font.pixelSize: Math.round(13 * Theme.fontScale)
             }
