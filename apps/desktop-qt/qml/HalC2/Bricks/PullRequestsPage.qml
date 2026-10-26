@@ -248,6 +248,9 @@ Rectangle {
                     anchors.fill: parent
                     radius: Math.min(Theme.radius, 6)
                     color: rowMouse.containsMouse ? Qt.alpha(Theme.palette.color("accentSurface", "#27272a"), 0.6) : "transparent"
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: entry.modelData.title ?? ""
+                    Accessible.onPressAction: Shell.dispatch("pullRequestList.open", { key: entry.modelData.key })
 
                     MouseArea {
                         id: rowMouse
