@@ -286,10 +286,10 @@ fn next_generation(engine: &Engine, state: &RuntimeState) {
         return;
     };
     controller::attach_root(engine, controller::MAIN, window);
-    if let Some(old) = state.shown.replace(Some(window)) {
-        retire(engine, old, window);
-    }
     let generation = cx.get(ShellRuntime::GENERATION).unwrap_or_default() + 1;
+    if let Some(old) = state.shown.replace(Some(window)) {
+        retire(engine, old, window, generation);
+    }
     let _ = cx.set(ShellRuntime::USING_USER_SHELL, using_user_shell);
     let _ = cx.set(ShellRuntime::GENERATION, generation);
 }
@@ -311,11 +311,43 @@ fn make(engine: &Engine, key: &str, name: &str) -> Result<ObjectId, String> {
 }
 
 /// Lets the previous generation's window go: `new` takes the platform
-/// window `old` had, which is destroyed before the next frame. A window no
-/// host shows (a headless test's) is destroyed now.
-fn retire(engine: &Engine, old: ObjectId, new: ObjectId) {
-    if ljos::window::replace_root(engine, old, new).is_err() {
-        engine.destroy(old);
+/// window `old` had, which is destroyed before the next frame, and what the
+/// shell asked of that window. A window no host shows (a headless test's)
+/// is destroyed now, and `new` opens one of its own.
+///
+/// Each swap is logged (`hal_c2.shell`, which the app prints): a window
+/// left empty after a reload says here whether the swap was asked, and the
+/// host's warning that it "cannot be shown" says whether it was made.
+fn retire(engine: &Engine, old: ObjectId, new: ObjectId, generation: i32) {
+    if !engine.is_alive(old) {
+        // The host destroys a root it could not show, and keeps the one
+        // before it (TODO(ljos#141): without drawing it).
+        engine.log(
+            LogLevel::Warning,
+            "hal_c2.shell",
+            format!(
+                "generation {}: the window shown before, {old:?}, was not shown",
+                generation - 1
+            ),
+        );
+    }
+    crate::platform_window::root_replaced(engine, old, new);
+    #[cfg(target_os = "macos")]
+    crate::macos_window::root_replaced(engine, old, new);
+    match ljos::window::replace_root(engine, old, new) {
+        Ok(()) => engine.log(
+            LogLevel::Info,
+            "hal_c2.shell",
+            format!("generation {generation}: {new:?} takes the window of {old:?}"),
+        ),
+        Err(e) => {
+            engine.log(
+                LogLevel::Info,
+                "hal_c2.shell",
+                format!("generation {generation}: {new:?} opens a window of its own ({e})"),
+            );
+            engine.destroy(old);
+        }
     }
 }
 

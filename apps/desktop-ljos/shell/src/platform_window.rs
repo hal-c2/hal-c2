@@ -84,6 +84,19 @@ pub fn install(engine: &Engine) {
     });
 }
 
+/// The next generation of the shell (`crate::runtime`) takes the platform
+/// window `old` had, which the host does not open again: it takes the
+/// backdrop too. Without it the host would take the backdrop away, and the
+/// theme's next one would go to the generation that went.
+pub fn root_replaced(engine: &Engine, old: ObjectId, new: ObjectId) {
+    let state = engine.extension::<Backdrop>();
+    if state.window.get() != Some(old) {
+        return;
+    }
+    state.window.set(Some(new));
+    show_backdrop(engine, new, state.kind.get());
+}
+
 /// The frosted backdrop behind a transparent window, with the theme's
 /// `windowBlur`: `enabled` blurs what is behind the shell's window
 /// (`backdrop: Window.BlurBackdrop`), or, with `liquid_glass`, asks for the
@@ -265,6 +278,20 @@ mod tests {
         apply_window_blur(&engine, true, false);
         assert_eq!(backdrop(&engine, owned), 0.0);
         assert_eq!(backdrop(&engine, window), 1.0);
+
+        // A reload's next generation takes the platform window, which the
+        // host does not open again: it takes the backdrop, and the theme's
+        // next one reaches it.
+        let next = engine
+            .create_by_name("QtQuick", "Window", None)
+            .expect("a window");
+        root_replaced(&engine, owned, next);
+        assert_eq!(backdrop(&engine, next), 0.0, "not the shell's window");
+        root_replaced(&engine, window, next);
+        assert_eq!(backdrop(&engine, next), 1.0);
+        engine.destroy(window);
+        apply_window_blur(&engine, true, true);
+        assert_eq!(backdrop(&engine, next), 2.0);
     }
 
     #[test]
