@@ -261,6 +261,7 @@ Dialog {
                     Layout.fillWidth: true
                     text: dialog.draft.baseRef ?? "main"
                     placeholderText: qsTr("Base branch")
+                    Accessible.name: qsTr("Base branch")
                     onTextEdited: {
                         dialog.set("baseRef", text);
                         branchQuery.restart();
@@ -334,6 +335,7 @@ Dialog {
                 visible: dialog.draft.workspaceMode === "existing_worktree"
                 text: dialog.draft.checkoutPath ?? ""
                 placeholderText: qsTr("Path of the checkout to run in")
+                Accessible.name: qsTr("Path of the checkout to run in")
                 onTextEdited: dialog.set("checkoutPath", text)
             }
 
