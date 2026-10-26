@@ -143,7 +143,7 @@ fn drop_files(world: &mut World, files: Vec<PathBuf>) -> Outcome {
     let at = brick.at(world, field, 0.5, 0.5)?;
     for drag in [
         ExternalDrag::files_entered(files.clone(), Some(at)),
-        ExternalDrag::Moved { at },
+        ExternalDrag::moved(at),
         ExternalDrag::files_dropped(files, Some(at)),
     ] {
         external_drag(world.engine(), &drag);
@@ -172,7 +172,7 @@ fn drag_files(world: &mut World, files: Vec<PathBuf>, at: (f64, f64)) -> Outcome
     composer_brick(world)?;
     for drag in [
         ExternalDrag::files_entered(files.clone(), Some(at)),
-        ExternalDrag::Moved { at },
+        ExternalDrag::moved(at),
     ] {
         external_drag(world.engine(), &drag);
     }
