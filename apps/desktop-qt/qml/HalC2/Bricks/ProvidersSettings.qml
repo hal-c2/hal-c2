@@ -1447,6 +1447,7 @@ Rectangle {
                     text: page.model ? page.model.title : ""
                     color: page.foreground
                     font.pixelSize: Math.round(14 * Theme.fontScale)
+                    wrapMode: Text.Wrap
                     font.weight: Font.DemiBold
                 }
 
