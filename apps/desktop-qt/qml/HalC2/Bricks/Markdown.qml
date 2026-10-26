@@ -81,7 +81,7 @@ Item {
     }
 
     function rich(html) {
-        return richHead + Md.inlineStyles(html, styleRules) + "</body></html>";
+        return richHead + html + "</body></html>";
     }
 
     // A segment's item, whose functions are the delegate's own.

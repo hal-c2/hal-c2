@@ -1382,20 +1382,6 @@ function styleHead(rules) {
     return "<style>" + css + "</style>";
 }
 
-// TODO(ljos#138): Ljós drops a <style> head, so every element the head
-// styles also carries its rule in its own style, ahead of the element's own
-// declarations (which win, as over a head rule). Qt draws the two alike.
-// A family's quotes become single ones, which keep the attribute whole.
-function inlineStyles(html, rules) {
-    var rule = function (name) {
-        return rules[name].replace(/"/g, "'");
-    };
-    return html.replace(/<a href=/g, "<a style=\"" + rule("a") + "\" href=")
-        .replace(/ class="(h[1-6]|c|hr)" style="/g, function (open, name) {
-            return open + rule(name) + ";";
-        });
-}
-
 // A code block's text as rich text: escaped, spaces kept, one line height
 // for every line (leading-snug).
 function codeHtml(code, lineHeight) {
