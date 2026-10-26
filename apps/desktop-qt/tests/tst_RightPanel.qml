@@ -320,6 +320,19 @@ Item {
             verify(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].payload.width === undefined, "a double click resets it");
         }
 
+        function test_theKeyboardMovesTheEdgeWithinTheLayoutsRoom() {
+            Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
+            const panel = createTemporaryObject(panelComponent, root, { x: 450, maximumWidth: 550 });
+            const edge = findChild(panel, "panelEdge");
+            edge.forceActiveFocus();
+            keyClick(Qt.Key_Left);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].payload.width, 550, "Left widens the panel, as far as the thread's room");
+            keyClick(Qt.Key_Right);
+            compare(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].payload.width, 524, "Right narrows it");
+            keyClick(Qt.Key_Return);
+            verify(Shell.dispatchedActions[Shell.dispatchedActions.length - 1].payload.width === undefined, "Enter resets it");
+        }
+
         function test_maximizeIsOfferedOnlyWhereTheLayoutHidesTheThread() {
             Shell.state = Object.assign({}, Shell.state, { panel: panelState("diff") });
             const panel = createTemporaryObject(panelComponent, root);
