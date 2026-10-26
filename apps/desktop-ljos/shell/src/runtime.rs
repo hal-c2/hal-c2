@@ -325,8 +325,8 @@ fn make(engine: &Engine, key: &str, name: &str) -> Result<ObjectId, String> {
 /// host's warning that it "cannot be shown" says whether it was made.
 fn retire(engine: &Engine, old: ObjectId, new: ObjectId, generation: i32) {
     if !engine.is_alive(old) {
-        // The host destroys a root it could not show, and keeps the one
-        // before it (TODO(ljos#141): without drawing it).
+        // The host destroys a root it could not show, and keeps showing
+        // the one before it.
         engine.log(
             LogLevel::Warning,
             "hal_c2.shell",
