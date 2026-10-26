@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointingDevice>
 #include <QTest>
 
 #include "Brick.h"
@@ -253,11 +254,15 @@ const Steps steps([] {
     const QPoint origin = world.brick->at(terminal, 0, 0);
     return QPoint(origin.x() + int(padding + cell * (column + 0.5)), origin.y() + int(padding + height * (row + 0.5)));
   };
-  const auto follow = [pointOn](World& world, const QString& printed, const QString& link, Qt::KeyboardModifiers modifiers) {
+  // The shell prints a line with `link` in it; where the link is drawn.
+  const auto showLink = [pointOn](World& world, const QString& printed, const QString& link) {
     QQuickItem* terminal = drawnTerminal(world);
     print(world.mc, shownThread(world), QStringLiteral("term-1"), printed + QStringLiteral("\r\n"));
     world.waitFor([&] { return call(terminal, "text").contains(link); }, [&] { return QStringLiteral("the terminal to draw \"%1\"").arg(printed); });
-    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, modifiers, pointOn(world, terminal, link));
+    return pointOn(world, terminal, link);
+  };
+  const auto follow = [showLink](World& world, const QString& printed, const QString& link, Qt::KeyboardModifiers modifiers) {
+    QTest::mouseClick(&world.brick->window(), Qt::LeftButton, modifiers, showLink(world, printed, link));
     world.sync();
   };
   step(QStringLiteral("the user's links open in the system browser"), [](World& world, const Captures&, const Table&) {
@@ -272,6 +277,14 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user clicks %1 in the terminal without holding Ctrl").arg(q), [follow](World& world, const Captures& c, const Table&) {
     follow(world, QStringLiteral("Server ready at %1 (press h for help)").arg(c[0]), c[0], Qt::NoModifier);
+  });
+  step(QStringLiteral("the user taps %1 in the terminal on a touch screen").arg(q), [showLink](World& world, const Captures& c, const Table&) {
+    static QPointingDevice* const screen = QTest::createTouchDevice();
+    const QPoint at = showLink(world, QStringLiteral("Server ready at %1 (press h for help)").arg(c[0]), c[0]);
+    QQuickWindow* window = &world.brick->window();
+    QTest::touchEvent(window, screen).press(0, at, window);
+    QTest::touchEvent(window, screen).release(0, at, window);
+    world.sync();
   });
   step(QStringLiteral("the address opens in the system browser"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return world.openedUrls == QList<QUrl>{QUrl(QStringLiteral("http://localhost:5173"))}; },
