@@ -1354,22 +1354,46 @@ function segments(text, options, state) {
 // ---------------------------------------------------------------------------
 // Rendering helpers for the brick
 
-// The stylesheet prose and table cells share, from the theme: link colour,
-// heading colour, muted text for h6, the
-// inline code fill and the rule colour.
-function styleHead(theme) {
+// The look prose and table cells share, from the theme, by what it styles:
+// links, headings by their class (h6 muted), the inline code fill (`c`)
+// and the rule.
+function styleRules(theme) {
     var heading = "font-weight:600;color:" + theme.heading + ";";
-    return "<style>"
-        + "p,li{line-height:23px;-qt-line-height-type:minimum}"
-        + "a{color:" + theme.link + ";text-decoration:none}"
-        + ".h1{" + heading + "font-size:20px;line-height:26px}"
-        + ".h2{" + heading + "font-size:18px;line-height:23.4px}"
-        + ".h3{" + heading + "font-size:16px;line-height:20.8px}"
-        + ".h4,.h5{" + heading + "font-size:14px;line-height:18.2px}"
-        + ".h6{font-weight:600;color:" + theme.muted + ";font-size:14px;line-height:18.2px}"
-        + ".c{background-color:" + theme.codeFill + ";color:" + theme.heading + ";font-size:12px;font-family:" + theme.mono + "}"
-        + ".hr{background-color:" + theme.rule + "}"
-        + "</style>";
+    return {
+        a: "color:" + theme.link + ";text-decoration:none",
+        h1: heading + "font-size:20px;line-height:26px",
+        h2: heading + "font-size:18px;line-height:23.4px",
+        h3: heading + "font-size:16px;line-height:20.8px",
+        h4: heading + "font-size:14px;line-height:18.2px",
+        h5: heading + "font-size:14px;line-height:18.2px",
+        h6: "font-weight:600;color:" + theme.muted + ";font-size:14px;line-height:18.2px",
+        c: "background-color:" + theme.codeFill + ";color:" + theme.heading + ";font-size:12px;font-family:" + theme.mono,
+        hr: "background-color:" + theme.rule
+    };
+}
+
+// The stylesheet every rich text segment carries in its head.
+function styleHead(rules) {
+    var css = "p,li{line-height:23px;-qt-line-height-type:minimum}a{" + rules.a + "}";
+    for (var name in rules) {
+        if (name !== "a")
+            css += "." + name + "{" + rules[name] + "}";
+    }
+    return "<style>" + css + "</style>";
+}
+
+// TODO(ljos#138): Ljós drops a <style> head, so every element the head
+// styles also carries its rule in its own style, ahead of the element's own
+// declarations (which win, as over a head rule). Qt draws the two alike.
+// A family's quotes become single ones, which keep the attribute whole.
+function inlineStyles(html, rules) {
+    var rule = function (name) {
+        return rules[name].replace(/"/g, "'");
+    };
+    return html.replace(/<a href=/g, "<a style=\"" + rule("a") + "\" href=")
+        .replace(/ class="(h[1-6]|c|hr)" style="/g, function (open, name) {
+            return open + rule(name) + ";";
+        });
 }
 
 // A code block's text as rich text: escaped, spaces kept, one line height

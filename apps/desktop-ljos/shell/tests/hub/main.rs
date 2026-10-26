@@ -30,6 +30,7 @@ mod late_store;
 mod layout;
 mod limit_recovery;
 mod lineage;
+mod markdown_brick;
 mod mc_plugin;
 mod menus;
 mod navigation;
