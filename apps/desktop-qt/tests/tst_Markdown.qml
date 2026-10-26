@@ -97,6 +97,31 @@ Item {
             mouseClick(edit, rect.x + 1, rect.y + rect.height / 2, Qt.LeftButton, modifiers);
         }
 
+        // A link is drawn in the theme's link colour, not the platform's blue:
+        // the inkiest pixel of its letters is that colour.
+        function test_linksTakeTheThemesLinkColour() {
+            const md = make("See [the pull request](https://example.com/pull/135) now.");
+            const edit = prose(segmentsOf(md)[0]);
+            verify(waitForRendering(edit));
+            const shot = grabImage(edit);
+            const start = edit.positionToRectangle(plain(edit).indexOf("the pull"));
+            const end = edit.positionToRectangle(plain(edit).indexOf(" now"));
+            const x0 = Math.ceil(start.x);
+            const y0 = Math.ceil(start.y);
+            const rgb = (x, y) => [shot.red(x, y), shot.green(x, y), shot.blue(x, y)];
+            const away = (a, b) => Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
+            const paper = rgb(x0, y0);
+            let ink = paper;
+            for (let y = y0; y < start.y + start.height; ++y) {
+                for (let x = x0; x < end.x; ++x) {
+                    if (away(rgb(x, y), paper) > away(ink, paper))
+                        ink = rgb(x, y);
+                }
+            }
+            const link = [Theme.link.r, Theme.link.g, Theme.link.b].map(c => Math.round(c * 255));
+            verify(away(ink, link) <= 8, "the link is drawn in " + link + ", not " + ink);
+        }
+
         function test_hoveredLinkTipNamesTheLink() {
             const md = make("See the [pricing docs](https://example.com/docs/pricing) now.");
             const edit = prose(segmentsOf(md)[0]);
