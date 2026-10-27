@@ -663,7 +663,9 @@ Rectangle {
             reuseItems: true
             spacing: 1
             boundsBehavior: Flickable.StopAtBounds
-            activeFocusOnTab: true
+            // A Tab stop while it has a row for the cursor: an empty list
+            // would take the keyboard and show nowhere it went.
+            activeFocusOnTab: sidebar.rows.some(r => r.rowKey !== undefined)
             keyNavigationEnabled: false
             Accessible.role: Accessible.List
             Accessible.name: qsTr("Threads")
