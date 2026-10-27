@@ -105,5 +105,5 @@ pub fn compile(roots: &Roots) -> Result<Compiled, String> {
     let snapshot = ljos::engine();
     crate::register(&snapshot);
     let paths: Vec<&Path> = dirs.iter().map(PathBuf::as_path).collect();
-    ljos::dev::compile_quiet(&paths, Some(&snapshot))
+    ljos::dev::compile_quiet(&paths, Some(&snapshot)).map_err(|e| e.to_string())
 }

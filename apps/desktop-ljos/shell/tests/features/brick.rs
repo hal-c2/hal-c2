@@ -268,7 +268,8 @@ fn compile(qml: &str, width: f64, height: f64) -> Outcome<MapSource> {
     let snapshot = ljos::engine();
     hal_c2_shell::register(&snapshot);
     let paths: Vec<&std::path::Path> = dirs.iter().map(|p| p.as_path()).collect();
-    let compiled = ljos::dev::compile_quiet(&paths, Some(&snapshot)).map_err(Failure)?;
+    let compiled =
+        ljos::dev::compile_quiet(&paths, Some(&snapshot)).map_err(|e| Failure(e.to_string()))?;
     let errors: Vec<String> = compiled
         .diagnostics
         .iter()

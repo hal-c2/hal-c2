@@ -226,6 +226,7 @@ fn main() -> ExitCode {
             .quit_on_last_window_closed(false)
             .register(hal_c2_shell::register)
             .qml_dirs(dirs, ROOT)
+            .map_err(|e| e.to_string())
     }) {
         Ok(app) => app,
         Err(e) => {
@@ -465,9 +466,7 @@ fn render_to(
     // The bundled font: the same picture on every machine.
     ljos::render::set_fonts(Fonts::Bundled);
     let engine = app.build_engine();
-    let picture = Picture::new(options.size.0, options.size.1)
-        .settle(capture.settle_ms)
-        .on_scene_message(|message| eprintln!("scene: {message}"));
+    let picture = Picture::new(options.size.0, options.size.1).settle(capture.settle_ms);
     picture.install(&engine);
     report_warnings(&engine);
     let mut launch = options.launch.clone();
@@ -570,7 +569,7 @@ fn render_to(
         // On the picture's virtual clock: they all run while it settles.
         scripted_run::play(&engine, capture.steps.clone());
     }
-    let png = picture.png(&engine, root)?;
+    let png = picture.png(&engine, root).map_err(|e| e.to_string())?;
     store::flush(&engine);
     if let Some(dir) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;

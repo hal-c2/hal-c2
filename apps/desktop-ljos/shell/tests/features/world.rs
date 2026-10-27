@@ -688,7 +688,7 @@ impl World {
         shell
             .window
             .set_accessibility_active(true)
-            .map_err(Failure)?;
+            .map_err(|e| Failure(e.to_string()))?;
         let (engine, window) = (&shell.engine, &shell.window);
         let within = |key| {
             let mut at = window.accessible_item(key);
@@ -711,7 +711,10 @@ impl World {
         let Some(shell) = &mut self.shell else {
             return Ok(());
         };
-        shell.window.advance(ms).map_err(Failure)?;
+        shell
+            .window
+            .advance(ms)
+            .map_err(|e| Failure(e.to_string()))?;
         shell
             .engine
             .set_wall_clock_origin(Some(self.now.timestamp_millis() as f64));
@@ -748,7 +751,10 @@ impl World {
         };
         let item = ljos::create_root(&shell.engine, source, root)
             .map_err(|e| Failure(format!("{root} cannot be made: {e:?}")))?;
-        shell.window.show(item).map_err(Failure)?;
+        shell
+            .window
+            .show(item)
+            .map_err(|e| Failure(e.to_string()))?;
         self.pump()?;
         Ok(item)
     }
@@ -768,7 +774,10 @@ impl World {
         let Some(shell) = &mut self.shell else {
             return Err(Failure("the app is not running".into()));
         };
-        shell.window.resize(width, height).map_err(Failure)?;
+        shell
+            .window
+            .resize(width, height)
+            .map_err(|e| Failure(e.to_string()))?;
         self.pump()
     }
 
@@ -842,7 +851,7 @@ impl World {
                     hal_c2_shell::controllers::snap_shot::deliver(engine);
                 });
                 any |= Platform::of(engine).deliver(engine) > 0;
-                shell.window.settle().map_err(Failure)?;
+                shell.window.settle().map_err(|e| Failure(e.to_string()))?;
             }
             if !any {
                 return Ok(());
