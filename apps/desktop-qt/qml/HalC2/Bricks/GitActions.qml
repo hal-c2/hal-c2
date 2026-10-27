@@ -300,6 +300,7 @@ RowLayout {
                         id: message
 
                         placeholderText: qsTr("Commit message (optional)")
+                        Accessible.name: qsTr("Commit message (optional)")
                         placeholderTextColor: git.muted
                         color: git.foreground
                         wrapMode: TextEdit.Wrap
@@ -486,6 +487,7 @@ RowLayout {
                 objectName: "publishStep"
                 Layout.fillWidth: true
                 text: [qsTr("Step 1 of 3 · Host"), qsTr("Step 2 of 3 · Repository"), qsTr("Step 3 of 3 · Summary")][publishDialog.step]
+                wrapMode: Text.Wrap
                 color: git.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }

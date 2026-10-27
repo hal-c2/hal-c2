@@ -131,6 +131,7 @@ Item {
                     Text {
                         Layout.fillWidth: true
                         text: requests.approval?.title ?? ""
+                        wrapMode: Text.Wrap
                         color: requests.foreground
                         font.family: requests.uiFont
                         font.pixelSize: Math.round(13 * Theme.fontScale)
@@ -306,6 +307,7 @@ Item {
                                 objectName: "questionAnswer-" + questionItem.modelData.id
                                 Layout.fillWidth: true
                                 placeholderText: qsTr("Or type your own answer")
+                                Accessible.name: qsTr("Or type your own answer")
                                 text: requests.typed[questionItem.modelData.id] ?? ""
                                 onTextEdited: requests.type(questionItem.modelData, text)
                             }
@@ -528,6 +530,7 @@ Item {
                         Text {
                             Layout.fillWidth: true
                             text: requests.queueHeld ? qsTr("Queue held") : qsTr("Queued")
+                            elide: Text.ElideRight
                             color: requests.muted
                             font.family: requests.uiFont
                             font.pixelSize: Math.round(12 * Theme.fontScale)
