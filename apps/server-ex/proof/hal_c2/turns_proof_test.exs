@@ -35,6 +35,13 @@ defmodule HalC2.TurnsProofTest do
       # dispatch/1's message path, split around a caller's own transaction (delegation).
       "HalC2.Orchestration.decide_dispatch/3" => "dispatch",
       "HalC2.Orchestration.dispatched/3" => ~w(begin-turn retry start-failed interrupt-any),
+      # The Effects worker's one try of the work dispatch set going: a turn start is
+      # begin-turn (or start-failed, through begin_turn_now's catch), an interrupt or
+      # restart is interrupt-any/undriven, a continue is dispatch again; its steer,
+      # respond, rollback, checkpoint, title and cleanup branches are the runtime and
+      # item steps abstracted below, or change no run.
+      "HalC2.Orchestration.execute_effect/3" =>
+        ~w(begin-turn retry start-failed interrupt-any interrupt-undriven dispatch),
       "HalC2.Orchestration.start_next/1" =>
         ~w(start-next decideNext begin-turn retry start-failed),
       "HalC2.Orchestration.release_session/1" => ~w(release-session release-idle keep-turn),

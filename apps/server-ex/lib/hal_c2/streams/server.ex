@@ -179,8 +179,28 @@ defmodule HalC2.Streams.Server do
   # die over a slow disk.
   @spec commit(GenServer.server(), Store.stream_kind(), [Store.change()]) ::
           {:ok, non_neg_integer}
-  def commit(server, stream_kind, changes),
-    do: GenServer.call(server, {:commit, stream_kind, changes}, :infinity)
+  def commit(server, stream_kind, changes) do
+    case GenServer.call(server, {:commit, stream_kind, changes}, :infinity) do
+      {:ok, _} = ok -> ok
+      # A store that could not record the changes recorded none of them: the
+      # failure is the caller's, and the stream stays as it was.
+      {:error, error} -> raise_commit(error)
+    end
+  end
+
+  defp raise_commit(error) do
+    if is_exception(error),
+      do: raise(error),
+      else: raise("the store could not record the changes: #{inspect(error)}")
+  end
+
+  @doc "The stream's sequence: answering a command reads no history to get it."
+  @spec sequence(GenServer.server()) :: non_neg_integer
+  def sequence(server), do: GenServer.call(server, :sequence)
+
+  @doc "One entity of the stream by kind and id, without copying its state."
+  @spec get(GenServer.server(), String.t(), String.t()) :: map | nil
+  def get(server, kind, id), do: GenServer.call(server, {:get, kind, id})
 
   @doc """
   Runs `fun` against the stream's current state inside the stream process and
@@ -256,7 +276,62 @@ defmodule HalC2.Streams.Server do
   def handle_call({:commit, stream_kind, changes}, _from, state) do
     # One time for the log and this process, so a restart reads back the same `at`.
     at = System.os_time(:millisecond)
-    {:ok, last} = Store.append(Store, [{stream_kind, state.id, changes}], at)
+
+    case Store.append(Store, [{stream_kind, state.id, changes}], at) do
+      {:ok, last} -> commit_events(state, changes, at, last)
+      {:error, error} -> {:reply, {:error, error}, state, timeout(state)}
+    end
+  end
+
+  # A `fun` that fails fails its caller, not the stream and everyone subscribed to it.
+  def handle_call({:transact, stream_kind, fun}, from, state) do
+    case run(fun, state.stream) do
+      {[], reply} ->
+        {:reply, {:transacted, reply}, state, timeout(state)}
+
+      {changes, reply} ->
+        case handle_call({:commit, stream_kind, changes}, from, state) do
+          {:reply, {:ok, _last}, state, _} ->
+            {:reply, {:transacted, reply}, state, timeout(state)}
+
+          {:reply, {:error, error}, state, _} ->
+            {:reply, {:raised, :error, error, []}, state, timeout(state)}
+        end
+
+      {:raised, _kind, _reason, _stack} = raised ->
+        {:reply, raised, state, timeout(state)}
+    end
+  end
+
+  def handle_call({:more, pid, items}, _from, state) do
+    {:noreply, state, _} = handle_cast({:more, pid, items}, state)
+    {:reply, :ok, state, timeout(state)}
+  end
+
+  def handle_call({:more, pid, items, tag}, _from, state) do
+    {:noreply, state, _} = handle_cast({:more, pid, items, tag}, state)
+    {:reply, :ok, state, timeout(state)}
+  end
+
+  def handle_call(:state, _from, state), do: {:reply, state.stream, state, timeout(state)}
+
+  def handle_call(:sequence, _from, state),
+    do: {:reply, state.stream.seq, state, timeout(state)}
+
+  def handle_call({:get, kind, id}, _from, state),
+    do: {:reply, StreamState.get(state.stream, kind)[id], state, timeout(state)}
+
+  def handle_call(:flush_shell, _from, state) do
+    {:noreply, state, _} =
+      if state.shell_scheduled, do: handle_info(:shell, state), else: {:noreply, state, nil}
+
+    # The row went to the shell from this process, so this call is handled after it:
+    # the caller can read the row back.
+    HalC2.Shell.sync()
+    {:reply, :ok, state, timeout(state)}
+  end
+
+  defp commit_events(state, changes, at, last) do
     first = last - length(changes) + 1
 
     events =
@@ -277,45 +352,6 @@ defmodule HalC2.Streams.Server do
     broadcast(state, stream, events)
     state = schedule_shell(%{state | stream: stream})
     {:reply, {:ok, last}, state, timeout(state)}
-  end
-
-  # A `fun` that fails fails its caller, not the stream and everyone subscribed to it.
-  def handle_call({:transact, stream_kind, fun}, from, state) do
-    case run(fun, state.stream) do
-      {[], reply} ->
-        {:reply, {:transacted, reply}, state, timeout(state)}
-
-      {changes, reply} ->
-        {:reply, {:ok, _last}, state, _} =
-          handle_call({:commit, stream_kind, changes}, from, state)
-
-        {:reply, {:transacted, reply}, state, timeout(state)}
-
-      {:raised, _kind, _reason, _stack} = raised ->
-        {:reply, raised, state, timeout(state)}
-    end
-  end
-
-  def handle_call({:more, pid, items}, _from, state) do
-    {:noreply, state, _} = handle_cast({:more, pid, items}, state)
-    {:reply, :ok, state, timeout(state)}
-  end
-
-  def handle_call({:more, pid, items, tag}, _from, state) do
-    {:noreply, state, _} = handle_cast({:more, pid, items, tag}, state)
-    {:reply, :ok, state, timeout(state)}
-  end
-
-  def handle_call(:state, _from, state), do: {:reply, state.stream, state, timeout(state)}
-
-  def handle_call(:flush_shell, _from, state) do
-    {:noreply, state, _} =
-      if state.shell_scheduled, do: handle_info(:shell, state), else: {:noreply, state, nil}
-
-    # The row went to the shell from this process, so this call is handled after it:
-    # the caller can read the row back.
-    HalC2.Shell.sync()
-    {:reply, :ok, state, timeout(state)}
   end
 
   @impl true

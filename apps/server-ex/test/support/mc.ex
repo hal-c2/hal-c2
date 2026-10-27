@@ -2480,7 +2480,8 @@ defmodule HalC2.Test.Mc.World do
             id: HalC2.Codex.Supervisor
           ),
           HalC2.Mcp,
-          HalC2.Orchestration.TurnWatch
+          HalC2.Orchestration.TurnWatch,
+          HalC2.Orchestration.Effects
         ],
         do: Mc.ensure(child)
 
