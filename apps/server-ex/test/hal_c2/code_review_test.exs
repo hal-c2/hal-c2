@@ -305,6 +305,29 @@ defmodule HalC2.CodeReviewTest do
     _ = context
   end
 
+  test "a report whose validation lacks a reason goes back to the agent, and the review runs on",
+       context do
+    review = start_review()
+
+    assert {:error, "plugin_failed", message} =
+             HalC2.Plugins.call_tool(
+               "code_review_report",
+               %{
+                 "verdict" => "approve",
+                 "summary" => "Looks right.",
+                 "validation" => %{"notRun" => [%{"check" => "the full suite", "reason" => " "}]}
+               },
+               review["threadId"]
+             )
+
+    assert message =~ "each validation.notRun entry needs a check and a reason"
+
+    assert %{"status" => "running"} =
+             GenServer.call(HalC2Plugins.CodeReview, :reviews)[review["key"]]
+
+    _ = context
+  end
+
   test "showing reviews on the page only unlists review threads there already are", context do
     review = start_review()
     assert %{"plugin" => %{"listed" => true}} = thread(review["threadId"])
