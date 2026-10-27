@@ -160,6 +160,25 @@ Item {
             tryVerify(inView);
         }
 
+        // A control Tab focuses below the fold is scrolled into view, and
+        // back up when Tab goes back.
+        function test_aControlTabFocusesIsScrolledIntoView() {
+            Shell.state = { route: { kind: "settings", section: "/settings/appearance", target: "", targetSeq: 0 } };
+            const page = createTemporaryObject(appearanceComponent, root, { height: 300 });
+            const last = findChild(findChild(page, "settingsRow:panelAnimationDurationMs"), "control");
+            const inView = item => {
+                const y = item.mapToItem(page, 0, 0).y;
+                return y >= 0 && y + item.height <= page.height;
+            };
+            verify(!inView(last), "the last control starts out of view");
+            last.forceActiveFocus(Qt.TabFocusReason);
+            verify(inView(last));
+            const first = findChild(findChild(page, "settingsRow:diffColorScheme"), "control");
+            verify(!inView(first), "the first rows are scrolled away");
+            first.forceActiveFocus(Qt.BacktabFocusReason);
+            verify(inView(first));
+        }
+
         // A result in another section opens its page at the setting.
         function test_aPageOpenedForASearchResultStartsAtIt() {
             Shell.state = { route: { kind: "settings", section: "/settings/appearance", target: "settingsRow:panelAnimationDurationMs", targetSeq: 1 } };
