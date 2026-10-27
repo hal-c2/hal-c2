@@ -18,6 +18,8 @@
 #   packages/client-runtime/src/v3/session.ts (mcMembers: the sidebar stream says when a machine comes or goes)
 #   apps/desktop-qt/src/ClusterController.cpp, apps/desktop-qt/qml/HalC2/Bricks/ClusterSettings.qml (the desktop's cluster)
 #   apps/server-ex/lib/hal_c2/devices/proxy.ex (device hub of any MC)
+#   apps/server-ex/lib/hal_c2/settings.ex, settings/shared.ex, keybindings.ex (settings that
+#     follow the person: which are shared, stamped records, gossip with the member table)
 #   apps/server-ex/lib/hal_c2/web/protocol.ex, web/socket.ex (streams by MC or by environment)
 #   apps/server-ex/lib/hal_c2/streams/server.ex, streams/relay.ex (a subscriber on another member)
 #   packages/client-runtime/src/v3/clusterSocket.ts (one socket per cluster)
@@ -580,3 +582,93 @@ Feature: Clustering one person's machines
     Given a cluster of two members on one LAN whose addresses changed
     When both are online
     Then each finds the other by announcing itself on the LAN
+
+  # The settings that say how the person works are the same on every member: runtime
+  # and worktree defaults, how responses stream, sidebar settling, limited threads, the
+  # writing style and merge method, price overrides, and the keybindings. Settings that
+  # name this machine's paths, binaries, provider instances, projects, devices or
+  # secrets, and plugin settings, stay on their MC. Each shared change is stamped, and
+  # members keep the newest per setting, whatever order they hear of them in.
+  Rule: Settings that belong to the person follow them to every member
+
+    @mc
+    Scenario: A shared setting changed on one member reaches the others
+      Given a cluster of three members
+      When the user sets the default runtime mode to "full-access" on the first
+      Then every member's default runtime mode is "full-access"
+
+    @mc
+    Scenario: A shared setting reset on one member is reset on the others
+      Given a cluster of two members
+      And the user sets the default runtime mode to "full-access" on the first
+      And every member's default runtime mode is "full-access"
+      When the user resets the default runtime mode on the second
+      Then no member has a default runtime mode
+
+    @mc
+    Scenario: Keybindings follow the person to every member
+      Given a cluster of two members
+      When the user binds "mod+shift+k" to the command palette on the second
+      Then the first has the same keybindings as the second
+
+    @mc
+    Scenario: A setting changed while a member was offline reaches it when it is back
+      Given a cluster of two members
+      And the second is offline
+      When the user sets the default runtime mode to "full-access" on the first
+      And the second starts again
+      Then the second's default runtime mode is "full-access"
+
+    # Settings edited while an MC is down (by hand, or by an MC from before shared
+    # settings) count from when the file changed.
+    @mc
+    Scenario Outline: Changes made apart converge on the newer one
+      Given a cluster of two members
+      And the second is offline
+      When the user sets the default runtime mode to "full-access" on the first
+      And the second's settings file is edited to "approval-required" <when> that
+      And the second starts again
+      Then every member's default runtime mode is "<newer>"
+
+      Examples:
+        | when           | newer             |
+        | an hour after  | approval-required |
+        | an hour before | full-access       |
+
+    @mc
+    Scenario: Settings of a machine stay on it
+      Given a cluster of two members
+      When the user sets the environment icon, a provider's binary path and the default runtime mode to "full-access" on the first
+      Then the second's default runtime mode is "full-access"
+      And the second has neither the first's environment icon nor its provider settings
+
+    @mc
+    Scenario: Secrets never cross to another member
+      Given a cluster of two members
+      When the user saves a provider API key and a usage limit source's management key on the first, with the default runtime mode "full-access"
+      Then the second's default runtime mode is "full-access"
+      And neither key is in what the first shares or anywhere in the second's files
+
+    @mc
+    Scenario: A removed member no longer shares settings
+      Given a cluster of three members
+      And the user removes the third member on the first
+      And no member admits the third any more
+      When the user sets the default runtime mode to "approval-required" on the third
+      And the user sets the default runtime mode to "full-access" on the first
+      Then the second's default runtime mode is "full-access"
+      And the third's default runtime mode is "approval-required"
+
+    @mc
+    Scenario: The MC says which settings follow the person
+      Given a cluster of two members
+      When a client reads the first's settings
+      Then it is told which settings are shared with the other members, keybindings among them
+      And none of them is one whose secrets the MC keeps apart
+
+    @shared @backlog-desktop @backlog-mobile @backlog-tui
+    Scenario: Settings that follow the person are marked in settings
+      Given a client connected to a member of a cluster
+      When the user opens settings
+      Then each setting shared with the other members says so
+      And the settings of this machine do not
