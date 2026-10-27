@@ -10,7 +10,7 @@
 # FAKE_ACP_TRACE, as `fake_acp.py` does. A prompt is answered with what the user said
 # in the session so far, and whether the prompt carried a transcript:
 # "said: a | b history False".
-import glob, hashlib, json, os, sys, time, uuid
+import glob, hashlib, json, os, re, sys, time, uuid
 
 HOME = os.path.join(os.environ["FAKE_GEMINI_HOME"], ".gemini")
 TRACE = os.environ.get("FAKE_ACP_TRACE")
@@ -86,6 +86,10 @@ for line in sys.stdin:
         if INPUTS:
             with open(INPUTS, "a") as f:
                 f.write(json.dumps(text) + "\n")
+        # HAL-C2's instructions ride a session's first prompts in a wrapper; the
+        # chat keeps the user's own request, as a real agent's history would.
+        wrapped = re.search(r"<user_request>\n(.*)\n</user_request>\Z", text, flags=re.S)
+        if wrapped: text = wrapped.group(1)
         chat = json.load(open(files[sid]))
         chat["messages"].append({"type": "user", "content": text})
         said = " | ".join(m["content"] for m in chat["messages"] if m["type"] == "user")

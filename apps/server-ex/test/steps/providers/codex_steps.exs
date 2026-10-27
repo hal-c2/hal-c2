@@ -1607,7 +1607,20 @@ Red"} <- StreamState.get(state, "message")[message],
        _args = context do
     context = World.fake_providers(context)
     Mc.ensure(HalC2.Mcp)
-    Map.put(context, :pending_launch, %{instance: "codex", fields: %{}})
+    id = World.project(context).id
+
+    context =
+      World.update_settings(context, %{
+        "projectSettingsOverrides" => %{
+          id => %{"enableAgentBrowserAccess" => false, "enableAgentDeviceAccess" => false}
+        }
+      })
+
+    context = World.launch_on(context, "Work", "codex", "hello")
+    World.await_runs(context, "Work", ["completed"])
+    # The thread's row names its project now, which the next turn's tools read.
+    World.await_row(World.thread_id(context, "Work"), & &1)
+    context
   end
 
   step "the user sends a message in plan mode and then one in default mode", context do
@@ -1643,7 +1656,8 @@ Red"} <- StreamState.get(state, "message")[message],
   end
 
   step "Codex's instructions do not describe browser or device tools", context do
-    assert [instructions] = turn_instructions(context)
+    # No instructions at all also tells it nothing about them.
+    instructions = List.last(turn_instructions(context)) || ""
     refute instructions =~ "preview_"
     refute instructions =~ "device_"
     refute instructions =~ "HAL-C2 devices"

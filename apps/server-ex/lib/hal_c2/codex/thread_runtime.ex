@@ -1124,8 +1124,16 @@ defmodule HalC2.Codex.ThreadRuntime do
     end)
   end
 
-  defp ensure_native_thread(%{native_thread_id: id} = state, _turn) when is_binary(id),
-    do: {:ok, state}
+  # A live native thread keeps its session while its MCP credential still
+  # matches the access settings; a flip resumes it with fresh config below,
+  # so its tool calls never carry a rotated-away token.
+  defp ensure_native_thread(%{native_thread_id: id} = state, turn) when is_binary(id) do
+    if HalC2.Mcp.prepared?(state.thread_id, Entities.instance(turn.ids)) do
+      {:ok, state}
+    else
+      ensure_native_thread(%{state | native_thread_id: nil}, turn)
+    end
+  end
 
   # A fork's first turn starts from a copy of the source thread, cut after its turn;
   # a session carried from another machine is forked whole from its rollout's path.
@@ -1252,13 +1260,29 @@ defmodule HalC2.Codex.ThreadRuntime do
       # Always explicit: Codex keeps the last collaboration mode on a resumed thread.
       "collaborationMode" => %{
         "mode" => if(Map.get(turn, :interaction_mode) == "plan", do: "plan", else: "default"),
-        # HAL-C2's orchestration instructions steer the agent to work, so a plan
-        # turn — which must not do the work — does not get them.
+        # A read, never a preparation: rotating here would strand the
+        # header this thread's config already carries. HAL-C2's orchestration
+        # instructions steer the agent to work, so a plan turn — which must not
+        # do the work — does not get them.
         "settings" =>
-          if(mcp(state, turn) && Map.get(turn, :interaction_mode) != "plan",
+          if(
+            HalC2.Mcp.current(state.thread_id, Entities.instance(turn.ids)) &&
+              Map.get(turn, :interaction_mode) != "plan",
             do: %{
               "model" => turn.model,
-              "developer_instructions" => HalC2.Mcp.instructions(state.workers_only)
+              "developer_instructions" =>
+                HalC2.Mcp.Instructions.for_session(
+                  # The sections follow what this thread's credential may
+                  # reach, as an ACP session's do, never tools it lacks.
+                  capabilities:
+                    HalC2.Mcp.capabilities(state.thread_id, Entities.instance(turn.ids)) ||
+                      HalC2.Mcp.agent_access(state.thread_id),
+                  runtime: %{
+                    harness: "Codex",
+                    model: turn.model,
+                    effort: Map.get(turn, :options, %{})["reasoningEffort"]
+                  }
+                ) <> if(state.workers_only, do: HalC2.Mcp.workers_only_note(), else: "")
             },
             else: %{"model" => turn.model}
           )
