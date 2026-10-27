@@ -72,6 +72,7 @@ Rectangle {
                     color: page.foreground
                     font.pixelSize: Math.round(14 * Theme.fontScale)
                     font.weight: Font.DemiBold
+                    wrapMode: Text.Wrap
                 }
 
                 Label {

@@ -323,6 +323,8 @@ Rectangle {
 
                             objectName: "fileRenderedPage"
                             text: root.source?.renderedText ?? ""
+                            // TODO(ljos#145): Qt names a Text by its text already; `ljos check` wants it said.
+                            Accessible.name: text
                             textFormat: Text.RichText
                             color: root.foreground
                             font.pixelSize: Math.round(13 * Theme.fontScale)
@@ -332,10 +334,12 @@ Rectangle {
                                 acceptedButtons: Qt.LeftButton
                                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                 acceptedModifiers: Qt.ControlModifier
+                                // ljos-allow(focus-pointer-only): a link in an HTML page's text; Qt's Text has no keyboard path between links, and the Source view shows each link to read and copy
                                 onTapped: eventPoint => renderedPageText.follow(eventPoint)
                             }
                             TapHandler {
                                 acceptedDevices: PointerDevice.TouchScreen
+                                // ljos-allow(focus-pointer-only): a finger's tap on a link in an HTML page's text, as the Ctrl-click above
                                 onTapped: eventPoint => renderedPageText.follow(eventPoint)
                             }
                             // The secondary button offers opening or copying the link.
@@ -405,6 +409,7 @@ Rectangle {
                             id: image
 
                             objectName: "fileImage"
+                            Accessible.name: (root.source?.openPath ?? "").split("/").pop()
                             anchors.centerIn: parent
                             width: Math.min(parent.width, implicitWidth)
                             height: Math.min(parent.height, implicitHeight)
@@ -539,6 +544,7 @@ Rectangle {
                         Text {
                             width: glyph.advanceWidth * 6
                             horizontalAlignment: Text.AlignRight
+                            // ljos-allow(text-unbounded-dynamic): a line number, in a gutter six digits wide
                             text: line.number
                             color: root.muted
                             font.family: root.mono
