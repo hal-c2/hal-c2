@@ -56,13 +56,14 @@ defmodule HalC2.Muse.ThreadRuntime do
   @doc """
   The thread's access changed. A running turn takes Muse's approval mode for it at once,
   and on full access the prompts it has open are accepted. The sandbox is the host's,
-  so it follows with the next turn's host.
+  so it follows with the next turn's host. Sent without waiting: the thread record
+  already holds the change, and a busy Muse must not hold up the user's switch.
   """
-  @spec set_runtime_mode(String.t(), String.t()) :: :ok | {:error, String.t()}
+  @spec set_runtime_mode(String.t(), String.t()) :: :ok
   def set_runtime_mode(thread_id, mode) do
     case lookup(thread_id) do
       nil -> :ok
-      pid -> GenServer.call(pid, {:runtime_mode, mode}, 35_000)
+      pid -> GenServer.cast(pid, {:runtime_mode, mode})
     end
   end
 
@@ -251,22 +252,6 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
 
-  def handle_call({:runtime_mode, mode}, _from, %{turn: turn, session: session} = state)
-      when turn != nil and is_binary(session) do
-    case command(state, "session/setApprovalMode", %{"mode" => Muse.approval_mode(mode)}) do
-      {:ok, _} ->
-        state = %{state | turn: %{turn | runtime_mode: mode}}
-        if mode == "full-access", do: accept_open(state)
-        {:reply, :ok, state}
-
-      {:error, reason} ->
-        {:reply, {:error, format(reason)}, state}
-    end
-  end
-
-  # Between turns the next turn's session takes the mode as it opens.
-  def handle_call({:runtime_mode, _mode}, _from, state), do: {:reply, :ok, state}
-
   def handle_call({:steer, run_id, message}, _from, %{turn: turn, compact: false} = state)
       when turn != nil and not state.interrupted and turn.ids.run == run_id do
     params = %{
@@ -323,6 +308,25 @@ defmodule HalC2.Muse.ThreadRuntime do
         end
     end
   end
+
+  @impl true
+  def handle_cast({:runtime_mode, mode}, %{turn: turn, session: session} = state)
+      when turn != nil and is_binary(session) do
+    case command(state, "session/setApprovalMode", %{"mode" => Muse.approval_mode(mode)}) do
+      {:ok, _} ->
+        state = %{state | turn: %{turn | runtime_mode: mode}}
+        if mode == "full-access", do: accept_open(state)
+        {:noreply, state}
+
+      {:error, reason} ->
+        require Logger
+        Logger.warning("a running Muse turn kept its access mode: #{format(reason)}")
+        {:noreply, state}
+    end
+  end
+
+  # Between turns the next turn's session takes the mode as it opens.
+  def handle_cast({:runtime_mode, _mode}, state), do: {:noreply, state}
 
   @impl true
   # Muse's presentation receipts: the prompt itself arrives as a notification.
@@ -435,8 +439,9 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   defp close_host(%{conn: nil} = state), do: state
 
+  # The connection may already be gone: `command/5` stops it when Muse does not answer.
   defp close_host(state) do
-    Connection.stop(state.conn)
+    close_conn(state.conn)
     flush_exit(state.conn)
     %{state | conn: nil, host: nil, session: nil, model: nil}
   end
@@ -600,7 +605,10 @@ defmodule HalC2.Muse.ThreadRuntime do
       {:error, "Muse Code did not answer #{method}"}
   end
 
-  defp deadline, do: System.monotonic_time(:millisecond) + 30_000
+  defp deadline,
+    do:
+      System.monotonic_time(:millisecond) +
+        Application.get_env(:hal_c2, :muse_command_timeout_ms, 30_000)
 
   defp close_conn(conn) do
     Connection.stop(conn)

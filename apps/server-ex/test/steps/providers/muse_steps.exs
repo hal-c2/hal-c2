@@ -1362,10 +1362,22 @@ defmodule HalC2.Steps.Providers.Muse do
     context
   end
 
-  step "a Muse Code turn is running on a Muse that fails to interrupt", context do
+  step "a Muse Code turn is running on a Muse that refuses its interrupt", context do
+    stop_refused(context, %{"interruptFails" => true})
+  end
+
+  # Muse's silence is waited out for half a second instead of the usual thirty.
+  step "a Muse Code turn is running on a Muse that never answers its interrupt", context do
+    context = stop_refused(context, %{"interruptHangs" => true})
+    Application.put_env(:hal_c2, :muse_command_timeout_ms, 500)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :muse_command_timeout_ms) end)
+    context
+  end
+
+  defp stop_refused(context, config) do
     context =
       context
-      |> install(%{"interruptFails" => true})
+      |> install(config)
       |> FakeAcp.thread()
       |> FakeAcp.send_message("a long task")
 

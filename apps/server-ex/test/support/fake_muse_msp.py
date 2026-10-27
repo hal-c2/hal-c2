@@ -27,7 +27,7 @@
 # with "answer" as its result text, "summary" as its result summary and "status" (default
 # completed); no "answer" leaves it running), {"waitInterrupt": true} (until turn/interrupt, or a
 # turn/steer, which it answers with "steered: <text>"). With "interruptFails" turn/interrupt
-# answers an error. Without a match the reply names the conversation so
+# answers an error, and with "interruptHangs" it is never answered. Without a match the reply names the conversation so
 # far.
 import json, os, queue, sys, threading, uuid
 
@@ -344,6 +344,8 @@ def handle(msg):
         events.put(("steer", text))
     elif method == "turn/interrupt" and config().get("interruptFails"):
         error(-32603, "internal error")
+    elif method == "turn/interrupt" and config().get("interruptHangs"):
+        pass
     elif method == "turn/interrupt":
         reply({})
         if state["turn"] == params.get("turnId"):

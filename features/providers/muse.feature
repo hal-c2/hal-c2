@@ -266,10 +266,15 @@ Feature: Muse Code
     When the user stops the turn
     Then Muse Code stops working and the turn is shown as interrupted
 
-  Scenario: Stopping a Muse Code turn that will not stop closes its host
-    Given a Muse Code turn is running on a Muse that fails to interrupt
+  Scenario Outline: Stopping a Muse Code turn that will not stop closes its host
+    Given a Muse Code turn is running on a Muse that <answers> its interrupt
     When the user stops the turn
     Then the turn is shown as interrupted and its Muse host is closed
+
+    Examples:
+      | answers       |
+      | refuses       |
+      | never answers |
 
   Scenario: /compact compacts the Muse Code conversation
     Given a Muse Code thread with history
