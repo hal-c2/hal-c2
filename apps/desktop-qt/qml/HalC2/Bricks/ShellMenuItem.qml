@@ -107,6 +107,6 @@ MenuItem {
 
     background: Rectangle {
         radius: 6
-        color: control.highlighted || control.hovered ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
+        color: control.highlighted || control.hovered || control.visualFocus ? Theme.palette.color("accentSurface", "#27272a") : "transparent"
     }
 }

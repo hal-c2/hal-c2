@@ -738,6 +738,8 @@ Rectangle {
                         }
                         background: Rectangle {
                             color: entry.selected ? Theme.palette.color("sidebarRowSelected", "#25314d") : entry.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+                            border.width: entry.visualFocus ? 1 : 0
+                            border.color: Theme.palette.color("focus", "#3b82f6")
                         }
                         contentItem: RowLayout {
                             spacing: 6

@@ -100,6 +100,8 @@ Rectangle {
             background: Rectangle {
                 radius: 6
                 color: row.hovered || row.visualFocus ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+                border.width: row.visualFocus ? 1 : 0
+                border.color: Theme.palette.color("focus", "#3b82f6")
             }
 
             Rectangle {
