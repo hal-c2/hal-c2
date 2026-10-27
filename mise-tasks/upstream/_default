@@ -6,7 +6,8 @@
 #USAGE arg "[range]" help="Upstream commit range; default is features/UPSTREAM..upstream/main"
 # Fetches pingdotgg/t3code main into refs/remotes/upstream/main, reads the (#N) of each
 # squash-merged commit in the range, oldest first, and prints each pull request's
-# description through `gh`. The upstream-ledger skill turns the output into scenarios.
+# description through `gh` and who wrote it. The upstream-ledger skill turns the output
+# into scenarios.
 set -euo pipefail
 
 repo=pingdotgg/t3code
@@ -40,6 +41,13 @@ if ((${#commits[@]} == 0)); then
   exit 0
 fi
 through=${commits[${#commits[@]} - 1]%%$'\t'*}
+
+# Who wrote it upstream, for the credit in the ledger's pull request: the squash
+# commit's author, then each Co-authored-by, agents and bots included.
+authors() {
+  git log -1 --format='%an%n%(trailers:key=Co-authored-by,valueonly)' "$1" |
+    sed 's/ *<[^>]*>$//' | awk 'NF && !seen[$0]++' | paste -sd'|' - | sed 's/|/, /g'
+}
 
 # Scenarios already citing this pull request or commit in a # Sources: block.
 cited() {
@@ -79,5 +87,6 @@ for entry in "${commits[@]}"; do
       (.body | gsub(\"<!--[\\\\s\\\\S]*?-->\"; \"\") | gsub(\"<a [\\\\s\\\\S]*?</a>\"; \"\")
         | gsub(\"\\n\\\\s*\\n\"; \"\\n\\n\") | gsub(\"(?m)^(?<h>#{1,4}) \"; \"##\\(.h) \") | gsub(\"\\\\s*(---\\\\s*)?\$\"; \"\") | if length > 4000 then .[:4000] + \" …(truncated)\" else . end)"
   fi
+  echo "By: $(authors "$sha")"
   [[ -z $refs ]] || echo "Already cited in: $refs"
 done
