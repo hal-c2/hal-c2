@@ -78,6 +78,12 @@ defmodule HalC2.Claude.Provider do
           ],
           "skills" => []
         }
+        |> then(fn entry ->
+          case upgrade_message(version(path)) do
+            nil -> entry
+            message -> Map.put(entry, "message", message)
+          end
+        end)
     end
   end
 
@@ -450,6 +456,37 @@ defmodule HalC2.Claude.Provider do
   the manifest does not know, or a CLI whose version cannot be read (which is left to
   refuse the model itself).
   """
+  @doc """
+  The provider list's word on a CLI too old for a manifest model: it names the
+  model needing the lowest newer version and the version to upgrade to. A CLI
+  whose version cannot be read is too old for every gated model (gated models
+  are left out while the version is unknown), and is named without a version.
+  `nil` when the CLI runs every model in the catalog.
+  """
+  @spec upgrade_message(String.t()) :: String.t() | nil
+  def upgrade_message(version) do
+    parsed =
+      case Version.parse(version) do
+        {:ok, parsed} -> parsed
+        :error -> nil
+      end
+
+    gated =
+      for model <- catalog()["models"],
+          min when is_binary(min) <- [get_in(model, ["adapter", "claudeCode", "minVersion"])],
+          parsed == nil or Version.compare(parsed, min) == :lt,
+          do: {min, model["name"]}
+
+    case Enum.sort_by(gated, fn {min, _} -> Version.parse!(min) end, Version) do
+      [{min, name} | _] ->
+        label = if parsed, do: "v#{parsed}", else: "the installed version"
+        "Claude Code #{label} is too old for #{name}. Upgrade to v#{min} or newer to access it."
+
+      [] ->
+        nil
+    end
+  end
+
   @spec too_old(String.t() | nil, String.t()) :: String.t() | nil
   def too_old(model, instance \\ "claudeAgent") do
     with nil <- listed(model, instance),

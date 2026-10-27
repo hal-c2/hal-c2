@@ -101,6 +101,145 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- too old for a model, compatibility, who updates it ----------------------------
+
+  # The gated manifest model needing the lowest version above `version` (every gated
+  # model when the version cannot be read): the one the upgrade message names.
+  defp lowest_gated(version) do
+    gated =
+      for model <- claude_manifest()["models"],
+          min = get_in(model, ["adapter", "claudeCode", "minVersion"]),
+          is_binary(min),
+          version == nil or Version.compare(version, min) == :lt,
+          do: {min, model}
+
+    gated
+    |> Enum.sort_by(fn {min, _} -> Version.parse!(min) end, Version)
+    |> List.first()
+  end
+
+  step ~r/^the installed Claude "(?<version>[^"]+)" is older than the version a model requires$/,
+       %{args: [version]} = context do
+    context = World.fake_providers(context, claude_version: version)
+    assert {min, _model} = lowest_gated(version)
+    Map.merge(context, %{gated_min: min, gated_from: version})
+  end
+
+  step "the installed Claude does not report its version", context do
+    context = World.fake_providers(context, claude_version: "not-a-version")
+    assert {min, _model} = lowest_gated(nil)
+    Map.merge(context, %{gated_min: min, gated_from: nil})
+  end
+
+  step "Claude shows {string} that model", %{args: [prefix]} = context do
+    {_min, model} = lowest_gated(context.gated_from)
+    assert claude(context.providers)["message"] == "#{prefix} #{model["name"]}. " <>
+             "Upgrade to v#{context.gated_min} or newer to access it."
+
+    context
+  end
+
+  step "Claude shows {string} the model needing the lowest version",
+       %{args: [prefix]} = context do
+    {_min, model} = lowest_gated(context.gated_from)
+    assert claude(context.providers)["message"] =~ "#{prefix} #{model["name"]}."
+    context
+  end
+
+  step "is told to upgrade to the version the model requires or newer", context do
+    assert claude(context.providers)["message"] =~
+             "Upgrade to v#{context.gated_min} or newer to access it."
+
+    context
+  end
+
+  step "is told to upgrade to that version or newer", context do
+    assert claude(context.providers)["message"] =~
+             "Upgrade to v#{context.gated_min} or newer to access it."
+
+    context
+  end
+
+  step "Claude Code version {string} is installed", %{args: [version]} = context do
+    World.fake_providers(context, claude_version: version)
+  end
+
+  step "the MC checks Claude Code", context do
+    {providers, context} = World.provider_list(context)
+    Map.put(context, :providers, providers)
+  end
+
+  step "Claude Code is reported as {string} for this HAL-C2 release",
+       %{args: [status]} = context do
+    assert %{"status" => ^status} = claude(context.providers)["compatibilityAdvisory"]
+    context
+  end
+
+  # A fake `claude` where an installer would put it, in a home of its own. It answers
+  # `--version` and treats every other call (including `update`) as done.
+  defp claude_at(context, home, relative) do
+    path = Path.join(home, relative)
+    File.mkdir_p!(Path.dirname(path))
+
+    File.write!(path, """
+    #!/bin/sh
+    if [ "$1" = "--version" ]; then echo "2.1.0 (Claude Code)"; exit 0; fi
+    if [ "$1" = "update" ]; then exit 0; fi
+    exec python3 -u #{Path.expand("../../support/fake_claude.py", __DIR__)} "$@"
+    """)
+
+    File.chmod!(path, 0o755)
+    World.put_os_env("HOME", home)
+    World.put_app_env(:claude_command, [path])
+    World.reset_provider_caches()
+    Map.put(context, :claude_home, home)
+  end
+
+  step "the claude command lives in {string} of the user's home",
+       %{args: [folder]} = context do
+    context = World.fake_providers(context)
+    home = Mc.tmp_dir(context.mc, "claude-home")
+    claude_at(context, home, Path.join(folder, "claude"))
+  end
+
+  step "the claude command lives under {string} of the user's home",
+       %{args: [folder]} = context do
+    context = World.fake_providers(context)
+    home = Mc.tmp_dir(context.mc, "claude-home")
+    claude_at(context, home, Path.join([folder, "versions", "2.1.0", "claude"]))
+  end
+
+  step "the claude command lives in an npm global install", context do
+    context = World.fake_providers(context)
+    home = Mc.tmp_dir(context.mc, "claude-npm-home")
+    prefix = Path.join(home, "npm")
+    # npm itself is a fake in the prefix, so looking at the update runs nothing real.
+    File.mkdir_p!(Path.join(prefix, "bin"))
+    npm = Path.join([prefix, "bin", "npm"])
+    File.write!(npm, "#!/bin/sh\nexit 0\n")
+    File.chmod!(npm, 0o755)
+
+    claude_at(
+      context,
+      home,
+      Path.join(["npm", "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js"])
+    )
+  end
+
+  # "the user opens Claude's update details" is the ProviderSetup steps'; it leaves
+  # the entry at `context.claude`.
+  step "the update command is Claude's own {string}", %{args: [command]} = context do
+    assert context.claude["versionAdvisory"]["updateCommand"] =~ ~r{/claude update$}
+    assert command == "claude update"
+    context
+  end
+
+  step "the update command is npm installing {string}", %{args: [package]} = context do
+    assert context.claude["versionAdvisory"]["updateCommand"] =~ "npm install -g --prefix"
+    assert context.claude["versionAdvisory"]["updateCommand"] =~ package
+    context
+  end
+
   # --- models and account ------------------------------------------------------------
 
   step "the user opens the model picker for Claude", context do

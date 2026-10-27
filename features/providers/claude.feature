@@ -78,14 +78,12 @@ Feature: Claude
     When the user opens the model picker for Claude
     Then that model is not offered
 
-  @backlog
   Scenario: A Claude too old for a model says which version unlocks it
     Given the installed Claude "2.0.10" is older than the version a model requires
     When the user opens the provider list
     Then Claude shows "Claude Code v2.0.10 is too old for" that model
     And is told to upgrade to the version the model requires or newer
 
-  @backlog
   Scenario: A Claude whose version cannot be read still names the version a model needs
     Given the installed Claude does not report its version
     When the user opens the provider list
@@ -858,7 +856,7 @@ Feature: Claude
     Then Claude is not started again to read them
     And refreshing the provider by hand reads them afresh
 
-  @backlog @mc
+  @mc
   Scenario Outline: Claude installed by its own installer updates itself
     Given the claude command lives <location>
     When the user opens Claude's update details
@@ -872,7 +870,6 @@ Feature: Claude
 
   # Statuses are the MC's: broken, unsupported, graceful (shown as limited) or unknown.
   # No range names a version until the policy adds one, so the in-range rows are unknown.
-  @backlog
   Scenario Outline: The version Claude Code runs decides whether this HAL-C2 release supports it
     Given Claude Code version "<version>" is installed
     When the MC checks Claude Code
