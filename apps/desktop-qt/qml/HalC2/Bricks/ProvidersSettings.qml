@@ -866,6 +866,8 @@ Rectangle {
                 visible: card.provider.email.length > 0
                 flat: true
                 padding: 0
+                // Tall enough to hit, though the text is small.
+                implicitHeight: Math.max(24, implicitContentHeight)
                 text: card.revealed ? card.provider.email : page.redacted(card.provider.email)
                 font.pixelSize: Math.round(11 * Theme.fontScale)
                 font.family: "monospace"
@@ -876,6 +878,7 @@ Rectangle {
 
                 contentItem: Label {
                     text: email.text
+                    verticalAlignment: Text.AlignVCenter
                     color: email.hovered ? page.foreground : page.muted
                     font: email.font
                 }
