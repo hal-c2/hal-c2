@@ -73,6 +73,10 @@ defmodule HalC2Plugins.CodeReview do
   @impl HalC2.Plugins.Extension
   def start_link(settings), do: GenServer.start_link(__MODULE__, settings, name: __MODULE__)
 
+  # A save reaches the running server, so the reviews and posts under way keep going.
+  @impl HalC2.Plugins.Extension
+  def settings_changed(pid, settings, _old), do: GenServer.call(pid, {:settings, settings})
+
   @impl HalC2.Plugins.Extension
   def validate_settings(settings) do
     repos = settings["repositories"] || []
@@ -165,10 +169,16 @@ defmodule HalC2Plugins.CodeReview do
     do: server({:dismiss, key, id, input["dismissed"] != false})
 
   def call("discard", %{"key" => key}, _context) do
-    with {:ok, review} <- server({:discard, key}) do
+    with {:ok, review, lister} <- server({:discard, key}) do
       if review["checkout"], do: Checkout.remove(review["root"], review["checkout"])
-      # The review is forgotten; its thread goes with it, out of the thread list.
-      if review["threadId"], do: organize(review["threadId"], %{"settled" => true, "listed" => false})
+
+      # The review is forgotten; its thread goes with it, out of the thread list, once
+      # a listing that still had it is gone.
+      if review["threadId"] do
+        if lister, do: await_down(lister)
+        organize(review["threadId"], %{"settled" => true, "listed" => false})
+      end
+
       {:ok, server(:snapshot)}
     end
   end
@@ -296,7 +306,7 @@ defmodule HalC2Plugins.CodeReview do
     send(self(), :poll)
     loaded = load()
     # A pause there still is time on holds across the restart that loaded it:
-    # a settings save must not send the queue back into the limit it named.
+    # a restart must not send the queue back into the limit it named.
     if loaded.paused_until, do: arm_resume(loaded)
 
     {:ok,
@@ -312,18 +322,42 @@ defmodule HalC2Plugins.CodeReview do
        paused_until: loaded.paused_until,
        paused_reason: loaded.paused_reason,
        failures: 0,
-       poll_backoff: 1
+       poll_backoff: 1,
+       # The next look's timer, armed while none runs.
+       timer: nil,
+       # The process listing the review threads as the display says, while one does.
+       lister: nil
      }, {:continue, :announce}}
   end
 
   @impl GenServer
   def handle_continue(:announce, state) do
-    # The display setting reaches the review threads there already are: toggling
-    # it restarts the plugin, and each known thread is listed as it now says.
-    listed = state.settings["display"] != "page"
+    {:noreply, state |> list_threads() |> announce()}
+  end
+
+  # The display setting reaches the review threads there already are: each known
+  # thread is listed as it now says. A listing still going is called off, and gone,
+  # before this one starts, so the last display saved is the one the threads end with.
+  defp list_threads(state) do
+    listed = listed?(state.settings)
     thread_ids = for {_, %{"threadId" => id}} <- state.reviews, is_binary(id), do: id
-    spawn_link(fn -> Enum.each(thread_ids, &organize(&1, %{"listed" => listed})) end)
-    {:noreply, announce(state)}
+    before = state.lister
+    if before, do: Process.exit(before, :kill)
+
+    lister =
+      spawn_link(fn ->
+        if before, do: await_down(before)
+        Enum.each(thread_ids, &organize(&1, %{"listed" => listed}))
+      end)
+
+    %{state | lister: lister}
+  end
+
+  defp listed?(settings), do: settings["display"] != "page"
+
+  defp await_down(pid) do
+    ref = Process.monitor(pid)
+    receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
   end
 
   # Settles and lists or unlists a review thread of ours in the sidebar, best
@@ -342,7 +376,19 @@ defmodule HalC2Plugins.CodeReview do
     :ok
   end
 
+  # Every setting applies from here on: the next look watches the repositories saved,
+  # a new pace re-arms the wait for it, more room starts queued reviews (less lets the
+  # running ones finish), and a new display lists the threads there are. Runs and posts
+  # under way finish with the settings they started with.
   @impl GenServer
+  def handle_call({:settings, settings}, _from, state) do
+    old = state.settings
+    state = %{state | settings: settings}
+    state = if settings["pollMinutes"] != old["pollMinutes"], do: rearm(state), else: state
+    state = if listed?(settings) != listed?(old), do: list_threads(state), else: state
+    {:reply, :ok, state |> pump() |> changed()}
+  end
+
   def handle_call(:snapshot, _from, state), do: {:reply, snapshot(state), state}
   def handle_call(:reviews, _from, state), do: {:reply, state.reviews, state}
 
@@ -393,13 +439,25 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # A running review has a thread and a checkout on the way, and one being
-  # published a post in flight; it is discarded once that is over.
+  # published a post in flight; it is discarded once that is over. A listing under
+  # way copied its thread: it is called off and goes on without it, and the reply
+  # names it for the caller to wait out before unlisting the thread.
   def handle_call({:discard, key}, _from, state) do
     case Map.pop(state.reviews, key) do
-      {nil, _} -> {:reply, {:error, "There is no review #{key}."}, state}
-      {%{"status" => "running"}, _} -> {:reply, {:error, "The review of #{key} is running."}, state}
-      {%{"status" => "publishing"}, _} -> {:reply, {:error, "The review of #{key} is being published."}, state}
-      {review, reviews} -> {:reply, {:ok, review}, %{state | reviews: reviews} |> pump() |> changed()}
+      {nil, _} ->
+        {:reply, {:error, "There is no review #{key}."}, state}
+
+      {%{"status" => "running"}, _} ->
+        {:reply, {:error, "The review of #{key} is running."}, state}
+
+      {%{"status" => "publishing"}, _} ->
+        {:reply, {:error, "The review of #{key} is being published."}, state}
+
+      {review, reviews} ->
+        lister = review["threadId"] && state.lister
+        state = %{state | reviews: reviews}
+        state = if lister, do: list_threads(state), else: state
+        {:reply, {:ok, review, lister}, state |> pump() |> changed()}
     end
   end
 
@@ -541,6 +599,13 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  # A run launches its thread as the display said when it started; a save since then,
+  # which may have come before the thread was there to list, lists the threads again.
+  def handle_cast({:launched, listed}, state) do
+    state = if listed != listed?(state.settings), do: list_threads(state), else: state
+    {:noreply, state}
+  end
+
   def handle_cast({:started, key, thread_id, checkout}, state) do
     case state.reviews[key] do
       %{"threadId" => ^thread_id} = review ->
@@ -588,7 +653,7 @@ defmodule HalC2Plugins.CodeReview do
     known = state.reviews
     # Linked, so turning code-review off calls off a look still waiting on GitHub.
     {_pid, ref} = Process.spawn(fn -> send(server, {:polled, look(settings, known)}) end, [:link, :monitor])
-    {:noreply, %{state | polling: ref}}
+    {:noreply, %{state | polling: ref, timer: nil}}
   end
 
   def handle_info(:poll, state), do: {:noreply, state}
@@ -613,20 +678,15 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{polling: ref} = state) do
-    Process.send_after(
-      self(),
-      :poll,
-      trunc(state.settings["pollMinutes"] * 60_000 * state.poll_backoff)
-    )
-
     state =
       if reason == :normal,
         do: %{state | polling: nil},
         else: %{state | polling: nil, problem: "Looking for pull requests failed: #{inspect(reason)}"} |> changed()
 
-    {:noreply, state}
+    {:noreply, %{state | timer: arm(state)}}
   end
 
+  def handle_info({:EXIT, pid, _reason}, %{lister: pid} = state), do: {:noreply, %{state | lister: nil}}
   def handle_info(_message, state), do: {:noreply, state}
 
   # --- looking at the watched repositories ----------------------------------------------
@@ -1102,6 +1162,20 @@ defmodule HalC2Plugins.CodeReview do
 
   defp limited?(_failure), do: false
 
+  defp arm(state),
+    do: Process.send_after(self(), :poll, trunc(state.settings["pollMinutes"] * 60_000 * state.poll_backoff))
+
+  # Waits for the next look at the pace saved. A look under way, or a wait already
+  # over (its `:poll` is on its way), arms at that pace when it ends, so only one
+  # wait is ever armed.
+  defp rearm(%{timer: nil} = state), do: state
+
+  defp rearm(state) do
+    if Process.cancel_timer(state.timer),
+      do: %{state | timer: arm(state)},
+      else: %{state | timer: nil}
+  end
+
   defp rate_limited?(problem) when is_binary(problem),
     do: problem =~ ~r/rate.?limit|429|too many requests/i
 
@@ -1199,12 +1273,12 @@ defmodule HalC2Plugins.CodeReview do
               "attachments" => []
             }
           },
-          listed: settings["display"] != "page"
+          listed: listed?(settings)
         )
       end
 
     case result do
-      {:ok, _} -> :ok
+      {:ok, _} -> GenServer.cast(__MODULE__, {:launched, listed?(settings)})
       {:error, error} -> GenServer.cast(__MODULE__, {:start_failed, key, thread_id, message(error)})
     end
   rescue

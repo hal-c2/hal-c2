@@ -138,6 +138,13 @@ Feature: Agent code review
       When four watched pull requests are opened
       Then two reviews run and two wait their turn
 
+    @mc
+    Scenario: Allowing more reviews at once starts ones waiting their turn
+      Given "code-review" runs at most 2 reviews at once
+      When four watched pull requests are opened
+      And "code-review" runs at most 4 reviews at once
+      Then all four reviews run
+
   Rule: The agent and its prompt are the user's to set
 
     @mc
@@ -328,6 +335,12 @@ Feature: Agent code review
       And its agent can still report what it found
 
     @mc
+    Scenario: Saving the settings leaves a review under way running
+      Given a review of #12 is running
+      When the user changes how often "code-review" looks for pull requests
+      Then the review of #12 is still running in the same thread
+
+    @mc
     Scenario: A review whose agent is not on the MC leaves no checkout behind
       Given "code-review" reviews with an agent the MC does not have
       When the user asks for a review of #12
@@ -415,6 +428,14 @@ Feature: Agent code review
       And the user publishes the review of #12 while it is being posted
       Then the user is told the review is already being posted
       And once GitHub has it, #12 has one review and it is marked as published
+
+    @mc
+    Scenario: Saving the settings leaves a post under way to finish
+      Given the publishing mode for "acme/api" is "automatic"
+      And GitHub is slow to take reviews
+      When the review of #12 finishes with two comments
+      And the user changes how often "code-review" looks for pull requests while the review of #12 is being posted
+      Then once GitHub has it, #12 has one review and it is marked as published
 
     @mc
     Scenario: A post that comes back after the review ran again leaves the new run alone
