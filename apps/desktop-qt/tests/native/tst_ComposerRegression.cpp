@@ -409,6 +409,39 @@ private slots:
     QVERIFY(shell.restart(false));
     QTRY_COMPARE(shell.composer()->draft(draftId), QStringLiteral("start here"));
   }
+
+  // A pick back to the thread's access while another change is on its way goes
+  // too: else that change lands after it and the composer shows the pick back.
+  void aPickBackWhileAnAccessChangeIsOnItsWayStillGoes() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    shell.mc.effects.append([&shell](const QJsonObject& command) {
+      if (command.value(QLatin1String("type")) != QLatin1String("thread.runtime-mode.set")) return;
+      QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+      row.insert(QStringLiteral("runtimeMode"), command.value(QLatin1String("runtimeMode")));
+      shell.mc.threads.insert(QStringLiteral("t1"), row);
+      shell.mc.sendRow(QStringLiteral("t1"), row);
+    });
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto pick = [&shell](const QString& mode) {
+      shell.bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), mode}});
+    };
+    const auto shown = [&shell] {
+      return shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("runtimeMode")).toString();
+    };
+    pick(QStringLiteral("approval-required"));
+    QTRY_COMPARE(shell.native->store()->thread(shell.key)->runtimeMode, QStringLiteral("approval-required"));
+
+    shell.mc.hold(QStringLiteral("answers"));
+    pick(QStringLiteral("full-access"));
+    pick(QStringLiteral("approval-required"));
+    QTRY_COMPARE(shell.mc.commands.size(), 3);
+    shell.mc.answerHeld();
+
+    QTRY_COMPARE(shell.native->store()->thread(shell.key)->runtimeMode, QStringLiteral("approval-required"));
+    QCOMPARE(shown(), QStringLiteral("approval-required"));
+  }
 };
 
 int main(int argc, char** argv) {

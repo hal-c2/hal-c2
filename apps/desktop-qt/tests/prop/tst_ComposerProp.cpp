@@ -48,8 +48,7 @@ QString instanceOf(const QString& model) {
 struct Target {
   QString text;
   int images = 0;
-  QString model;    // picked, else the default
-  QString runtime;  // picked, else the thread's
+  QString model;  // picked, else the default
 };
 
 // A send on its way: the first of a thread's is at the MC, the rest wait behind it.
@@ -57,7 +56,6 @@ struct Send {
   QString prompt;
   int images = 0;
   QString model;
-  QString runtime;
   QString delivery;  // auto, steer or queue
   bool switches = false;  // its model is another provider's than the thread's when sent
   bool refusedAtMc = false;  // what the MC holding it will answer
@@ -72,6 +70,13 @@ struct Toast {
   QString prompt;
   int images = 0;
   bool restore = false;  // whether it offers "Restore prompt"
+};
+
+// An access change the MC holds the answer to; whether it will refuse it.
+struct HeldPick {
+  QString thread;
+  QString mode;
+  bool refused = false;
 };
 
 struct Model {
@@ -98,6 +103,14 @@ struct Model {
   bool slow = false;
   QSet<QString> loaded{QStringLiteral("t1")};
   QSet<QString> waiting;
+  // Each thread's access at the MC, none until a change reaches it.
+  QMap<QString, QString> runtimes;
+  // The access picked for a thread, shown until the MC has it or refuses it,
+  // and the change last sent for it.
+  QMap<QString, QString> picked;
+  QMap<QString, QString> setting;
+  // The access changes whose answers the MC holds, in the order they went out.
+  QList<HeldPick> heldPicks;
 
   int total() const {
     int count = 0;
@@ -112,11 +125,15 @@ struct Model {
     if (target == kDraft && !lastModel.isEmpty()) return lastModel;
     return kModels.first();
   }
+  // The access the composer shows for a thread.
+  QString runtime(const QString& thread) const {
+    if (const QString mode = picked.value(thread); !mode.isEmpty()) return mode;
+    return runtimes.value(thread, QStringLiteral("full-access"));
+  }
 };
 
 QStringList commandsOf(const Send& send) {
   QStringList list;
-  if (!send.runtime.isEmpty()) list.append(QStringLiteral("runtime|") + send.runtime);
   if (send.switches) list.append(QStringLiteral("provider|") + instanceOf(send.model));
   list.append(QStringList{QStringLiteral("message"), send.prompt.trimmed(), QString::number(send.images),
                           send.model.isEmpty() ? kModels.first() : send.model, send.delivery}
@@ -125,6 +142,21 @@ QStringList commandsOf(const Send& send) {
 }
 
 void dispatchFirst(Model& m, const QString& thread);
+
+// The MC answers an access change: the thread takes it, and the pick goes once
+// the thread shows it; a refused one goes too, with a toast, unless a newer
+// one is on its way.
+void answerPick(Model& m, const HeldPick& pick) {
+  if (!pick.refused) {
+    m.runtimes[pick.thread] = pick.mode;
+    if (m.setting.value(pick.thread) != pick.mode) return;
+  } else {
+    if (m.setting.value(pick.thread) != pick.mode) return;
+    m.toasts.prepend({pick.thread, QString()});
+  }
+  m.setting.remove(pick.thread);
+  if (m.picked.value(pick.thread) == pick.mode) m.picked.remove(pick.thread);
+}
 
 // The MC carried out `commands` for the thread: a provider change moves it.
 void took(Model& m, const QString& thread, const QStringList& commands) {
@@ -201,7 +233,7 @@ void cutOff(Model& m, bool received) {
   for (const QString& thread : std::exchange(m.held, {})) {
     QList<Send> cut = m.queues.take(thread);
     const Send& first = cut.first();
-    // The held command is the send's message, unless a runtime or provider change goes first.
+    // The held command is the send's message, unless a provider change goes first.
     const bool message = commandsOf(first).size() == 1;
     if (!received) {
       m.commands[thread].removeLast();
@@ -234,6 +266,7 @@ void dispatchFirst(Model& m, const QString& thread) {
 // and their answers come back after every held one.
 void answerHeld(Model& m) {
   m.holding = false;
+  for (const HeldPick& pick : std::exchange(m.heldPicks, {})) answerPick(m, pick);
   QStringList refused;  // whose next command the MC refuses, in the order they went out
   for (const QString& thread : std::exchange(m.held, {})) {
     const Send send = m.queues[thread].first();
@@ -351,6 +384,15 @@ struct Sut {
       const QString thread = command.value(QLatin1String("threadId")).toString();
       QJsonObject row = mc.threads.value(thread);
       row.insert(QStringLiteral("modelSelection"), command.value(QLatin1String("modelSelection")));
+      mc.threads.insert(thread, row);
+      mc.sendRow(thread, row);
+    });
+    // An access change too.
+    mc.effects.append([this](const QJsonObject& command) {
+      if (losing || command.value(QLatin1String("type")) != QLatin1String("thread.runtime-mode.set")) return;
+      const QString thread = command.value(QLatin1String("threadId")).toString();
+      QJsonObject row = mc.threads.value(thread);
+      row.insert(QStringLiteral("runtimeMode"), command.value(QLatin1String("runtimeMode")));
       mc.threads.insert(thread, row);
       mc.sendRow(thread, row);
     });
@@ -567,6 +609,7 @@ void verify(const Model& m, Sut& sut) {
   RC_ASSERT(shown.value(QStringLiteral("target")).toString() == sut.keyFor(m.open));
   RC_ASSERT(shown.value(QStringLiteral("text")).toString() == m.targets.value(m.open).text);
   RC_ASSERT(composer->currentSelection().value(QLatin1String("model")).toString() == m.selected(m.open));
+  if (m.isThread(m.open)) RC_ASSERT(shown.value(QStringLiteral("runtimeMode")).toString() == m.runtime(m.open));
   QList<bool> toasts;
   for (const Toast& toast : m.toasts) toasts.append(toast.restore);
   RC_ASSERT(sut.toasts() == toasts);
@@ -647,13 +690,27 @@ struct PickModel : Command {
   void show(std::ostream& os) const override { os << "PickModel(" << model.toStdString() << ")"; }
 };
 
-// The thread's permissions; one the thread already has changes nothing.
+// The thread's access, which goes to the MC at once; one the composer already
+// shows changes nothing. Its answer can be held only among other access
+// changes: a held send's would race it for the toasts.
 struct PickRuntime : Command {
   QString mode = pick(kRuntimeModes);
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.isThread(m.open)); }
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.isThread(m.open));
+    RC_PRE(!m.holding || m.held.isEmpty());
+  }
   void apply(Model& m) const override {
-    Target& target = m.targets[m.open];
-    if (mode != (target.runtime.isEmpty() ? QStringLiteral("full-access") : target.runtime)) target.runtime = mode;
+    if (mode == m.runtime(m.open)) return;
+    m.picked[m.open] = mode;
+    if (!m.setting.contains(m.open) && m.runtimes.value(m.open) == mode) return;
+    m.commands[m.open].append(QStringLiteral("runtime|") + mode);
+    m.setting[m.open] = mode;
+    const HeldPick sent{m.open, mode, m.refusing};
+    if (m.holding) {
+      m.heldPicks.append(sent);
+    } else {
+      answerPick(m, sent);
+    }
   }
   void run(const Model& m0, Sut& sut) const override {
     sut.bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), mode}});
@@ -666,7 +723,10 @@ struct PickRuntime : Command {
 // behind one the MC still holds waits its turn.
 struct Submit : Command {
   bool alternate = *rc::gen::arbitrary<bool>();
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.isThread(m.open)); }
+  void checkPreconditions(const Model& m) const override {
+    RC_PRE(m.isThread(m.open));
+    RC_PRE(m.heldPicks.isEmpty());
+  }
   void apply(Model& m) const override {
     Target& target = m.targets[m.open];
     if (target.text.trimmed().isEmpty() && target.images == 0) return;
@@ -675,7 +735,7 @@ struct Submit : Command {
                                                           : QStringLiteral("steer");
     QList<Send>& queue = m.queues[m.open];
     const QString model = target.model.isEmpty() ? kModels.first() : target.model;
-    queue.append({target.text, target.images, target.model, target.runtime, delivery, instanceOf(model) != m.provider(m.open)});
+    queue.append({target.text, target.images, target.model, delivery, instanceOf(model) != m.provider(m.open)});
     if (m.loaded.contains(m.open)) measure(m, m.open);
     m.lastModel = target.model.isEmpty() ? kModels.first() : target.model;
     // Newer than what a restart cut off.
@@ -771,9 +831,11 @@ struct SetRunning : Command {
     }
   }
   void run(const Model& m0, Sut& sut) const override {
-    // Only the run changes: the thread keeps the provider it moved to.
+    // Only the run changes: the thread keeps the provider and access it moved to.
     QJsonObject row = Sut::row(thread, on);
-    row.insert(QStringLiteral("modelSelection"), sut.mc.threads.value(thread).value(QLatin1String("modelSelection")));
+    for (const QLatin1String field : {QLatin1String("modelSelection"), QLatin1String("runtimeMode")}) {
+      if (const QJsonValue value = sut.mc.threads.value(thread).value(field); !value.isUndefined()) row.insert(field, value);
+    }
     sut.mc.threads.insert(thread, row);
     sut.mc.sendRow(thread, row);
     RC_ASSERT(prop::until([&] {
@@ -826,6 +888,8 @@ struct AnswerHeld : Command {
 // client connects again. Nothing is sent twice or lost.
 struct Drop : Command {
   bool received = *rc::gen::arbitrary<bool>();
+  // An access change cut off is not modelled yet (hal-c2#609).
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.heldPicks.isEmpty()); }
   void apply(Model& m) const override {
     cutOff(m, received);
     // The threads followed are asked for again, and a slow MC keeps them waiting.
@@ -876,6 +940,7 @@ struct Elsewhere : Command {
 // comes back once the thread is open.
 struct Restart : Command {
   bool received = *rc::gen::arbitrary<bool>();
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.heldPicks.isEmpty()); }
   void apply(Model& m) const override {
     m.toasts.clear();
     if (!m.held.isEmpty()) cutOff(m, received);
@@ -1012,6 +1077,22 @@ private slots:
           0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, PickModel, PickModel, PickModel, Prompt, Prompt, Prompt, SetRunning,
                                                    Hold, AnswerHeld, Refuse, Restart, Drop>()));
+      rc::state::runAll(commands, model, sut);
+    }));
+  }
+
+  // Picking a thread's access often, with the MC holding or refusing the
+  // changes: the composer shows the pick while it is on its way, then what the
+  // thread really has, and a pick back to the thread's access still goes.
+  void accessChanges() {
+    QVERIFY(rc::check("a thread takes the access picked at once, and the composer shows what the thread has", [] {
+      Sut sut;
+      Model model;
+      verify(model, sut);
+      const auto commands = *rc::gen::scale(
+          0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
+                                                   Open, PickRuntime, PickRuntime, PickRuntime, Prompt, SetRunning, Hold, Hold,
+                                                   AnswerHeld, Refuse, Restart>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

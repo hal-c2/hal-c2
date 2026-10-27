@@ -221,6 +221,7 @@ void ComposerController::activate() {
   connect(m_store, &ShellStore::changed, this, [this] {
     carryDrafts();
     reconcileUnsent();
+    settleRuntimeModes();
     publish();
   });
   // The route environment's providers are the picker's catalogue.
@@ -329,6 +330,7 @@ bool ComposerController::handle(const QString& action, const QVariant& payload) 
     m_drafts[target].runtimeMode = mode;
     save();
     publish();
+    setThreadRuntimeMode(target, mode);
     return true;
   }
   if (action == QLatin1String("composer.interactionMode.set")) {
@@ -688,7 +690,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   if (planFollowUp) interactionMode = implement ? QStringLiteral("default") : QStringLiteral("plan");
   if (thread->interactionMode.isEmpty() && interactionMode == QLatin1String("default")) interactionMode.clear();
   QList<QJsonObject> commands;
-  if (!runtimeMode.isEmpty() && runtimeMode != thread->runtimeMode) {
+  if (!runtimeMode.isEmpty() && runtimeMode != thread->runtimeMode && m_settingMode.value(target) != runtimeMode) {
     commands.append({
         {QStringLiteral("type"), QStringLiteral("thread.runtime-mode.set")},
         {QStringLiteral("threadId"), thread->id},
@@ -2577,6 +2579,55 @@ bool ComposerController::slashUsageLimits(const QString& target, const QString& 
   setText(target, QString(), 0);
   publish();
   return true;
+}
+
+// An existing thread takes a new access mode at once, as the TUI's does: a turn
+// waiting on approvals blocks the composer, so the next send may never come, and
+// the provider can apply it to the running turn. The draft shows it meanwhile, and
+// goes once the MC holds it; a refused change goes too, so the picker shows the
+// mode the thread really has. A pick back to the thread's mode still goes while
+// another is on its way, which would otherwise land after it.
+void ComposerController::setThreadRuntimeMode(const QString& target, const QString& mode) {
+  const auto thread = m_store->thread(target);
+  if (!thread || (thread->runtimeMode == mode && !m_settingMode.contains(target))) return;
+  m_settingMode.insert(target, mode);
+  m_client->dispatchCommand(this, thread->environmentId,
+                            {
+                                {QStringLiteral("type"), QStringLiteral("thread.runtime-mode.set")},
+                                {QStringLiteral("threadId"), thread->id},
+                                {QStringLiteral("runtimeMode"), mode},
+                            },
+                            [this, target, mode](const QJsonValue&, const std::optional<QString>& error) {
+                              if (m_settingMode.value(target) != mode) return;
+                              if (!error) return settleRuntimeModes();
+                              m_settingMode.remove(target);
+                              toast(QStringLiteral("Failed to change the thread's access."), *error);
+                              if (m_drafts.value(target).runtimeMode != mode) return;
+                              m_drafts[target].runtimeMode.clear();
+                              save();
+                              publish();
+                            });
+}
+
+// Drops the drafts of access changes the threads now hold. One still on its way
+// stays: the thread's row shows the old mode until the MC has it.
+void ComposerController::settleRuntimeModes() {
+  bool changed = false;
+  for (auto it = m_settingMode.begin(); it != m_settingMode.end();) {
+    const auto thread = m_store->thread(it.key());
+    if (thread && thread->runtimeMode != it.value()) {
+      ++it;
+      continue;
+    }
+    if (m_drafts.contains(it.key()) && m_drafts[it.key()].runtimeMode == it.value()) {
+      m_drafts[it.key()].runtimeMode.clear();
+      changed = true;
+    }
+    it = m_settingMode.erase(it);
+  }
+  if (!changed) return;
+  save();
+  publish();
 }
 
 void ComposerController::setInteractionMode(const QString& target, const QString& mode) {
