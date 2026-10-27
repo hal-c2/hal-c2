@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 
 use crate::brick::{Brick, Shown};
 use crate::harness::{Outcome, Q, Steps, at, show, text};
+use crate::steps::composer_brick::{composer_brick, composer_part_now};
 use crate::steps::keybinding::condition_problem;
 use crate::steps::stream::{self, FakeStreams, PROJECT, THREAD};
 use crate::world::World;
@@ -128,6 +129,22 @@ fn question(
                               "allowCustomAnswer": true}]}),
         capability,
     )
+}
+
+/// Two questions in one request, each long enough to wrap: the shape
+/// Claude's AskUserQuestion arrives in.
+fn long_questions() -> Value {
+    let asked = |id: &str, question: &str, labels: [&str; 3]| {
+        json!({"id": id, "header": id, "question": question, "multiSelect": false,
+               "allowCustomAnswer": true,
+               "options": labels.map(|label| json!({"label": label, "description": ""}))})
+    };
+    json!({"questions": [
+        asked("lint", "Should the lint get a family of rules that flags imperative QML which could be declarative (bindings, States, Transitions, SequentialAnimation)?",
+              ["Yes, start now (Recommended)", "After make-it-right", "Not now"]),
+        asked("direction", "Which direction for the typed scripting language that replaces JavaScript (with JS kept as the compat mode)?",
+              ["Strict TS subset (Recommended)", "ReScript-like language", "Decide later"]),
+    ]})
 }
 
 /// The pending approval or question the composer shows first.
@@ -702,6 +719,55 @@ pub fn register(steps: &mut Steps) {
         |world, c, _| {
             start_working(world)?;
             question(world, &c[0], &c[1..3], false, "live").map(drop)
+        },
+    );
+    steps.step("the composer is on screen", |world, _, _| {
+        composer_brick(world).map(drop)
+    });
+    steps.step(
+        "the agent asks two long questions in place of the first",
+        |world, _, _| {
+            let request_id = text(&first(world, "questions")?["requestId"]);
+            stream::set(
+                world,
+                "runtime-request",
+                &request_id,
+                json!({"status": "resolved"}),
+            )?;
+            request(world, "user_input_request", long_questions(), "live").map(drop)
+        },
+    );
+    steps.step(
+        "the questions, their options and the answer button sit above the composer's editor",
+        |world, _, _| {
+            let brick = composer_brick(world)?;
+            let editor = brick.item(world, "input")?;
+            world.wait_for("the second question to show", |w| {
+                composer_part_now(w, "questionAnswer-direction").is_some()
+            })?;
+            let (_, editor_top) = brick.at(world, editor, 0.0, 0.0)?;
+            let requests = brick.item(world, "turnRequests")?;
+            for part in [
+                "questionOption-Yes, start now (Recommended)",
+                "questionAnswer-lint",
+                "questionOption-Decide later",
+                "questionAnswer-direction",
+                "questionSubmit",
+            ] {
+                let Some(item) = brick.find(world, part)? else {
+                    fail!("the composer has no {part}");
+                };
+                let (_, top) = brick.at(world, item, 0.0, 0.0)?;
+                let (_, bottom) = brick.at(world, item, 0.0, 1.0)?;
+                expect!(
+                    brick.flag(world, item, "visible") && top >= 0.0 && bottom <= editor_top,
+                    "{part} (visible: {}) spans {top}..{bottom}, the editor starts at {editor_top}; the requests are {} high of {}",
+                    brick.flag(world, item, "visible"),
+                    brick.text_of(world, requests, "height"),
+                    brick.text_of(world, requests, "implicitHeight")
+                );
+            }
+            Ok(())
         },
     );
     steps.step(

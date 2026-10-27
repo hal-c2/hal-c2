@@ -137,6 +137,7 @@ composer/question-answers.feature: A proposed plan is implemented from the compo
 composer/question-answers.feature: A question can be dismissed without an answer
 composer/question-answers.feature: A question with only fixed choices takes no attachments
 composer/question-answers.feature: Files can be attached to a typed answer and stay with that question
+composer/question-answers.feature: Questions asked while the composer is open are shown whole above its editor
 composer/queue-and-steer.feature: A held queue is resumed from the composer
 composer/queue-and-steer.feature: A held queue says its messages are safe
 composer/queue-and-steer.feature: A held queue that only waits on the provider can be resumed
