@@ -513,7 +513,7 @@ Item {
         Text {
             Layout.fillWidth: true
             text: row.oneLineTitle
-            color: Qt.alpha(row.secondaryColor, 0.7)
+            color: row.secondaryColor
             font.pixelSize: Math.round(14 * Theme.fontScale)
             elide: Text.ElideRight
         }

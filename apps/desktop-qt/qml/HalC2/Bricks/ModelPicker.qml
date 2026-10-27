@@ -733,7 +733,7 @@ AbstractButton {
                         Text {
                             Layout.fillWidth: true
                             text: row.model && row.instance ? Picker.providerLabel(row.model, row.instance) : ""
-                            color: control.fade(control.muted, 0.7)
+                            color: control.muted
                             font.family: control.fontFamily
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             elide: Text.ElideRight
@@ -880,7 +880,7 @@ AbstractButton {
 
                     Text {
                         text: legacy.entry ? qsTr("%1 models").arg(legacy.entry.count) : ""
-                        color: control.fade(control.muted, 0.7)
+                        color: control.muted
                         font.family: control.fontFamily
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                     }

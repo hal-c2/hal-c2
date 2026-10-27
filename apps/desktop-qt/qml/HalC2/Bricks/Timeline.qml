@@ -718,7 +718,7 @@ Item {
                         anchors.right: parent.right
                         anchors.rightMargin: 4
                         text: row.attribution ?? ""
-                        color: attribution.thread.length > 0 && attributionHover.hovered ? root.textColor : Qt.alpha(root.mutedColor, 0.7)
+                        color: attribution.thread.length > 0 && attributionHover.hovered ? root.textColor : root.mutedColor
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                         HoverHandler {
                             id: attributionHover
@@ -1129,7 +1129,7 @@ Item {
                                                 width: Math.max(0, fileStat.x - x - 8)
                                                 anchors.verticalCenter: parent.verticalCenter
                                                 text: changedFile.modelData.name
-                                                color: changedFile.folder ? (changedFileHover.hovered ? Qt.alpha(root.textColor, 0.9) : Qt.alpha(root.mutedColor, 0.9)) : changedFileHover.hovered ? root.textColor : Qt.alpha(root.textColor, 0.85)
+                                                color: changedFile.folder ? (changedFileHover.hovered ? Qt.alpha(root.textColor, 0.9) : root.mutedColor) : changedFileHover.hovered ? root.textColor : Qt.alpha(root.textColor, 0.85)
                                                 font.family: root.monoFamily
                                                 font.pixelSize: Math.round((changedFile.folder ? 11 : 12) * Theme.fontScale)
                                                 wrapMode: Text.NoWrap
