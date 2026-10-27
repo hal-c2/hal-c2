@@ -11,11 +11,10 @@ defmodule HalC2.Auth do
       scopes.
     * A bearer token buys a WebSocket ticket (5 minutes, single use), which the
       client puts in the socket URL so the long-lived token never appears there.
-    * An exchange proven with a DPoP key (`HalC2.Auth.Dpop`; a HAL-C2 Connect device, or any
-      client that sends a proof) makes a session bound to that key for 1 hour: each
-      request carries `Authorization: DPoP <token>` and a fresh proof
-      (`authenticate/1`); a bound token is never accepted as a bearer. A HAL-C2 Connect
-      device renews through the relay; open sockets are unaffected.
+    * An exchange proven with a DPoP key (`HalC2.Auth.Dpop`, from any client that sends
+      a proof) makes a session bound to that key for 1 hour: each request carries
+      `Authorization: DPoP <token>` and a fresh proof (`authenticate/1`); a bound token
+      is never accepted as a bearer. Open sockets are unaffected when it expires.
     * With a reusable development credential (`HAL_C2_DEV_AUTH_TOKEN`, dev builds
       only), that credential is itself an administrative session in every MC's
       own store, so one browser signs in to every worktree on a host.
@@ -71,7 +70,7 @@ defmodule HalC2.Auth do
     {"auth_pairing", "label", "TEXT"},
     {"auth_pairing", "scopes", "TEXT"},
     {"auth_pairing", "created_at", "INTEGER"},
-    # HAL-C2 Connect credentials: the DPoP key thumbprint that must redeem them.
+    # Credentials bound to a device key: the DPoP key thumbprint that must redeem them.
     {"auth_pairing", "proof_jkt", "TEXT"},
     {"auth_sessions", "id", "TEXT"},
     {"auth_sessions", "last_connected_at", "INTEGER"},
@@ -110,8 +109,8 @@ defmodule HalC2.Auth do
   @doc """
   Exchanges a pairing token for `{:ok, access_token, expires_in_s, scopes}`.
   `client` describes who asked: `label`, `device_type`, `os`, `user_agent`,
-  `proof_jkt`, the DPoP key it proved and the token is bound to (a HAL-C2 Connect
-  credential needs its own), and `scopes` to ask for fewer than the credential grants
+  `proof_jkt`, the DPoP key it proved and the token is bound to (a credential
+  minted for a key needs that one), and `scopes` to ask for fewer than the credential grants
   (`{:error, :scope_not_granted}` when it asks for more).
   """
   @spec exchange(String.t(), map) ::

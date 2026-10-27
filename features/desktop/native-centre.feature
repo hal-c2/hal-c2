@@ -20,3 +20,11 @@ Feature: The desktop shell offers no rewind without a checkpoint
     Scenario: A reply whose turn left no checkpoint cannot be reverted to
       Given a thread in "shop" whose first turn left no checkpoint
       Then the first turn's reply offers no rewind
+
+    # A ready checkpoint on a run that never completed is no diff turn, so
+    # its reply offers neither Revert nor a turn to open (its callers would
+    # otherwise act on the shown or latest turn).
+    @desktop
+    Scenario: A reply whose turn failed but left a ready checkpoint cannot be reverted to
+      Given a thread in "shop" whose first turn failed but left a ready checkpoint
+      Then the first turn's reply offers no rewind

@@ -19,12 +19,13 @@
 #     password retries; target resolution; error redaction)
 #   Shared domain: mc/platform/mc-startup.feature holds the MC's own listening address;
 #   connections/cluster.feature holds MCs reaching each other over the tailnet;
-#   connections/hal-c2-connect.feature holds the relay;
+#   connections/hal-c2-connect.feature holds the dropped HAL-C2 Connect relay;
 #   settings/connections.feature holds the desktop network access, Tailscale HTTPS and add-over-SSH controls.
 
 Feature: How clients reach an environment
   An MC listens on loopback unless told otherwise. Clients reach it directly on a LAN or
-  tailnet, over Tailscale HTTPS, through a desktop-managed SSH forward, or through HAL-C2 Connect.
+  tailnet, over Tailscale HTTPS, through a desktop-managed SSH forward, or through another MC of
+  theirs in the same cluster.
 
   Background:
     Given a running MC
@@ -77,18 +78,27 @@ Feature: How clients reach an environment
       | unknown                | offers it without a promise                               |
 
   @backlog @desktop
-  Scenario: Turning off network access keeps tunnels working
+  Scenario: Turning off network access keeps Tailscale HTTPS working
     Given network access is on
-    And the environment is also reachable through HAL-C2 Connect and Tailscale HTTPS
+    And the environment is also reachable through Tailscale HTTPS
     When the user turns network access off
     Then devices on the local network disconnect
-    And the tunnels keep working
+    And Tailscale HTTPS keeps working
 
   @backlog @desktop
   Scenario: Tailscale HTTPS without Tailscale explains itself
     Given Tailscale is not running on this machine
     When the user turns on Tailscale HTTPS
     Then the client says to start Tailscale to set up HTTPS through MagicDNS
+
+  # Replaces the hosted HAL-C2 Connect relay: the rendezvous is a member the user runs.
+  @backlog @mc
+  Scenario: A machine behind NAT is reached through the user's MC with a public address
+    Given the user runs an MC on a machine with a public address
+    And another of the user's MCs is behind NAT with no address the user's devices can reach
+    When the MC behind NAT joins the public MC's cluster
+    Then the user's devices and other MCs reach the MC behind NAT through the public MC
+    And no HAL-C2-hosted service carries the traffic
 
   @mc
   Scenario: An operator pairs over Tailscale HTTPS from the command line

@@ -13,6 +13,7 @@ import { sourceControlSection } from "./sourceControl.ts";
 
 /** The settings pages the terminal has, in the order the palette lists them. */
 import { storageSection } from "./storage.ts";
+import { subagentsSection } from "./subagents.ts";
 import { updatesSection } from "./updates.ts";
 import { usageSection } from "./usage.ts";
 import { usageHubsSection } from "./usageHubs.ts";
@@ -51,6 +52,7 @@ export function registerSettingsSections(
   sections.register("storage", storageSection);
   sections.register("sourceControl", sourceControlSection);
   sections.register("backgroundActivity", backgroundActivitySection);
+  sections.register("subagents", subagentsSection);
   sections.register("diagnostics", diagnosticsSection);
   sections.register("resourceMonitor", resourceMonitorSection);
   sections.register("plugins", (host) => pluginsSection(host, options.plugins));

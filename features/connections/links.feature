@@ -8,8 +8,8 @@
 # Dropped, every scenario: two MCs connect only by clustering (Erlang distribution over
 # mutual TLS, cluster.feature). A websocket is how a client talks to its MC, never how one
 # MC talks to another, so an MC no longer pairs with an environment outside its cluster and
-# relays its clients to it. A machine joins the cluster to be reached; one that only a
-# HAL-C2 Connect tunnel reaches is paired by each client directly.
+# relays its clients to it. A machine joins the cluster to be reached; one it cannot join is
+# paired by each client directly.
 
 Feature: Linking an MC to environments outside its cluster
   An MC can pair with another MC it is not clustered with and keep that link. Its

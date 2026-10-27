@@ -177,6 +177,50 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     context
   end
 
+  # The MC's leaving is told to the sockets as their monitor of the terminal
+  # would tell it: this MC never leaves its own cluster.
+  step "the terminal's MC leaves the cluster for a moment", context do
+    input = Terminal.input(context)
+    key = {input["threadId"], input["terminalId"]}
+    [{pid, _}] = Registry.lookup(HalC2.Terminal.Registry, key)
+    sockets = Map.keys(:sys.get_state(pid).subscribers)
+    away = :"hal-c2@away"
+    for socket <- sockets, do: send(socket, {:hal_c2_terminal_down, away, key, :noconnection})
+    Map.merge(context, %{lost_sockets: sockets, lost_mc: away})
+  end
+
+  step "the client is told in the terminal that the connection was lost", context do
+    {_event, context} =
+      Terminal.await_event(
+        context,
+        "viewer",
+        &(&1["type"] == "error" and &1["message"] =~ "lost the connection")
+      )
+
+    context
+  end
+
+  step "the terminal's MC is back", context do
+    for socket <- context.lost_sockets, do: send(socket, {:nodeup, context.lost_mc, []})
+    context
+  end
+
+  step "the client is asked to attach again", context do
+    id = Map.fetch!(context.terminal_subs, "viewer")
+
+    {_frame, client} =
+      Mc.await(World.client(context, "viewer"), &(&1["t"] == "resync" and &1["id"] == id), 5_000)
+
+    World.put_client(context, "viewer", client)
+  end
+
+  step "attaching again follows the terminal's output", context do
+    {_snapshot, context} = Terminal.attach!(context, "viewer", attach_input(context))
+    context = Terminal.write(context, "default", "echo b''ack-again\n")
+    {_, _, context} = Terminal.await_output(context, "viewer", line("back-again"))
+    context
+  end
+
   # --- history on disk and its limits -----------------------------------------------
 
   step "a terminal that has printed {string}", %{args: [text]} = context do

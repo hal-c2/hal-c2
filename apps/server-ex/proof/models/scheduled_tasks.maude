@@ -210,6 +210,12 @@ mod SCHEDULED-TASKS is
   rl [run-down] :
     { up now(N) died(P) run(P, I, J, T, S, Fm) C }
     => { up now(N) armed complete(I, J, bad, T, N, Fm, C) } .
+  --- A run that outlives its hour is stopped by the scheduler's own timer and
+  --- recorded as failed, whether or not its prompt was ever sent. The model
+  --- lets the timer fire at any tick, which only adds interleavings.
+  rl [run-timeout] :
+    { up now(N) run(P, I, J, T, S, Fm) C }
+    => { up now(N) armed complete(I, J, bad, T, N, Fm, kill(P, C)) } .
   --- A message about a run the table does not hold is ignored.
   crl [stale] : { up finished(P) C } => { up C } if not entry(P, C) .
   crl [stale] : { up died(P) C } => { up C } if not entry(P, C) .

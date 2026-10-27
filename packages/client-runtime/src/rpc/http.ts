@@ -94,11 +94,6 @@ const remoteApiBaseUrl = (httpBaseUrl: string): string => {
   return url.toString();
 };
 
-export const makeEnvironmentHttpApiClient = (httpBaseUrl: string) =>
-  HttpApiClient.make(EnvironmentHttpApi, {
-    baseUrl: remoteApiBaseUrl(httpBaseUrl),
-  });
-
 export const makeEnvironmentHttpApiGroupClient = <
   Group extends keyof typeof EnvironmentHttpApi.groups,
 >(

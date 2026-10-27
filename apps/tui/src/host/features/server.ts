@@ -44,8 +44,8 @@ const updatable = (provider: ServerProvider) =>
 
 /**
  * The server from the terminal: its providers (refresh, update, add an
- * instance with its key), the defaults new threads start with, and the relay
- * client. Everything lists in settings; changes run from the palette.
+ * instance with its key) and the defaults new threads start with. Everything
+ * lists in settings; changes run from the palette.
  */
 export function createServerFeature(kit: FeatureKit): Feature {
   const { client } = kit;
@@ -258,60 +258,6 @@ export function createServerFeature(kit: FeatureKit): Feature {
     );
   };
 
-  /** The relay client HAL-C2 Connect uses: whether the server has it, and installing it there. */
-  const checkRelay = () => {
-    kit.status("Checking the relay client…", "busy");
-    void kit.track(
-      client.relayStatus().then(
-        (relay) => {
-          if (relay.status === "available") {
-            kit.status(`The relay client ${relay.version} is installed.`, "success");
-            return;
-          }
-          if (relay.status === "unsupported") {
-            kit.status(
-              `The relay client does not run on ${relay.platform} ${relay.arch}.`,
-              "error",
-            );
-            return;
-          }
-          kit.status(`The relay client is missing (${relay.version}).`, "error");
-          kit.menu({
-            title: "relay client is missing",
-            options: [
-              {
-                label: `Install the relay client ${relay.version}`,
-                description: "Downloads it on the server; remote access needs it.",
-                value: "install",
-              },
-              { label: "Not now", description: "Remote access stays unavailable.", value: "skip" },
-            ],
-            onChoose: (choice) => {
-              if (choice === "install") installRelay();
-            },
-          });
-        },
-        (error: unknown) => kit.status(`Could not check the relay: ${errorText(error)}`, "error"),
-      ),
-    );
-  };
-  const installRelay = () => {
-    kit.status("Installing the relay client…", "busy");
-    void kit.track(
-      client
-        .installRelay((stage) =>
-          kit.status(`Installing the relay client: ${stage.replaceAll("_", " ")}…`, "busy"),
-        )
-        .then(
-          (relay) =>
-            relay?.status === "available"
-              ? kit.status(`The relay client ${relay.version} is installed.`, "success")
-              : kit.status("The relay client did not install.", "error"),
-          (error: unknown) => kit.status(`Relay install failed: ${errorText(error)}`, "error"),
-        ),
-    );
-  };
-
   const settingsGroups = (): TuiSettingsExtraGroup[] => {
     const current = settings();
     if (!config || !current) return [];
@@ -391,12 +337,6 @@ export function createServerFeature(kit: FeatureKit): Feature {
         keywords: "settings sidebar settled plugin code review threads",
         action: "settings.settledPluginThreads",
       },
-      {
-        id: "relay.check",
-        title: "Relay client",
-        keywords: "remote access connect cloudflared install tunnel",
-        action: "relay.check",
-      },
     ],
     dispatch: (action, payload) => {
       switch (action) {
@@ -416,9 +356,6 @@ export function createServerFeature(kit: FeatureKit): Feature {
           return true;
         case "settings.settledPluginThreads":
           toggleSettledPluginThreads();
-          return true;
-        case "relay.check":
-          checkRelay();
           return true;
         default:
           return false;

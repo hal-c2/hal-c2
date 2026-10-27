@@ -580,6 +580,72 @@ defmodule HalC2.Web.SocketTest do
     assert output == [{2, "for-second\r\n"}]
   end
 
+  # A terminal whose MC left the cluster for a moment dropped the socket as it
+  # went: what was typed still reached the shell, but nothing came back. The
+  # socket says so in the terminal and has the client attach again once the MC
+  # is back.
+  test "a terminal lost with its MC is attached again when the MC is back", %{
+    port: port,
+    tmp_dir: dir
+  } do
+    start_terminals()
+    input = %{"threadId" => "th-lost", "terminalId" => "term-1", "cwd" => dir}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+
+    {_snapshot, client} = terminal_snapshot(client, 1)
+    [socket] = Map.keys(:sys.get_state(await_terminal(input)).subscribers)
+    away = :"hal-c2@away"
+    send(socket, {:hal_c2_terminal_down, away, {"th-lost", "term-1"}, :noconnection})
+
+    {%{"id" => 1, "event" => %{"type" => "error", "message" => message}}, _, client} =
+      WsClient.recv_until(client, &(&1["t"] == "terminal"))
+
+    assert message =~ "lost the connection to hal-c2@away"
+
+    send(socket, {:nodeup, away, []})
+
+    assert {%{"t" => "resync", "id" => 1}, _, client} =
+             WsClient.recv_until(client, &(&1["t"] == "resync"))
+
+    # Attaching again follows the terminal as before.
+    client =
+      WsClient.send_json(client, %{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+
+    {%{"status" => "running"}, client} = terminal_snapshot(client, 1)
+    print_terminal(input, "back\r\n")
+    assert {[{1, "back\r\n"}], _client} = terminal_output(client)
+  end
+
+  # The terminal's monitor sits beside those of the socket's streams; ending a
+  # stream subscription finds its own and leaves the terminal followed.
+  test "a stream followed and let go beside a terminal leaves the terminal followed", %{
+    port: port,
+    tmp_dir: dir
+  } do
+    start_terminals()
+    input = %{"threadId" => "th-beside", "terminalId" => "term-1", "cwd" => dir}
+    {:ok, _} = HalC2.Streams.commit("th-beside", :thread, [{"thread", "th-beside", %{}}])
+    stream = %{"type" => "stream", "mc" => Atom.to_string(node()), "stream" => "th-beside"}
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{"t" => "sub", "id" => 1, "shape" => terminal_shape(input)})
+
+    {_snapshot, client} = terminal_snapshot(client, 1)
+
+    {_live, _, client} =
+      client
+      |> WsClient.send_json(%{"t" => "sub", "id" => 2, "shape" => stream})
+      |> WsClient.recv_until(&(&1["t"] == "live"), 30_000)
+
+    client = WsClient.send_json(client, %{"t" => "unsub", "id" => 2})
+    print_terminal(input, "still\r\n")
+    assert {[{1, "still\r\n"}], _client} = terminal_output(client)
+  end
+
   # Output the terminal's timer flushed while the socket waited on the new
   # subscription's attach is in that subscription's snapshot: it is not then sent
   # again under the new id, and what follows still arrives.
@@ -773,6 +839,61 @@ defmodule HalC2.Web.SocketTest do
           5 -> await_true(fun, describe, attempts - 1)
         end
     end
+  end
+
+  # A wedged manual run answers at its run cap with the timed-out task, so
+  # its RPC gets that budget: even with a tiny general RPC timeout, the
+  # client sees the failed task, not "scheduledTasks.runNow timed out".
+  test "a wedged scheduledTasks.runNow answers its client with the timed-out task",
+       %{port: port} do
+    start_supervised!(HalC2.ScheduledTasks)
+    Application.put_env(:hal_c2, :rpc_timeout, 10)
+    Application.put_env(:hal_c2, :scheduled_tasks_run_timeout_ms, 200)
+
+    Application.put_env(:hal_c2, :scheduled_tasks_fire, fn _, _ ->
+      receive do
+        :never -> {:ok, %{}}
+      end
+    end)
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :rpc_timeout)
+      Application.delete_env(:hal_c2, :scheduled_tasks_run_timeout_ms)
+      Application.delete_env(:hal_c2, :scheduled_tasks_fire)
+    end)
+
+    {:ok, %{"task" => %{"id" => id}}} =
+      HalC2.ScheduledTasks.upsert(%{
+        "title" => "Wedged",
+        "prompt" => "go",
+        "enabled" => false,
+        "schedule" => %{"type" => "interval", "everyMs" => 60_000},
+        "projectId" => "p1"
+      })
+
+    [{_mc, %{"environmentId" => environment}}] = HalC2.Shell.environments()
+
+    client =
+      connect(port)
+      |> WsClient.send_json(%{
+        "t" => "rpc",
+        "id" => 9,
+        "environment" => environment,
+        "method" => "scheduledTasks.runNow",
+        "payload" => %{"id" => id}
+      })
+
+    {reply, _, _client} = WsClient.recv_until(client, &(&1["t"] == "rpc.result"))
+
+    assert %{
+             "id" => 9,
+             "result" => %{
+               "task" => %{
+                 "lastRunStatus" => "failed",
+                 "lastRunError" => "The run timed out."
+               }
+             }
+           } = reply
   end
 
   test "a request that raises is logged and still answered", %{port: port} do

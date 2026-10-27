@@ -86,7 +86,7 @@ if CONTROL.get("keepMode") and os.path.exists(MODE_FILE):
 
 def config_options():
     options = []
-    if models:
+    if models and not CONTROL.get("legacyModels"):
         options.append({"id": "model", "name": "Model", "type": "select", "currentValue": model,
                         "options": [{"value": v, "name": n} for v, n in models]})
     if modes:
@@ -259,10 +259,16 @@ for line in sys.stdin:
         sessions += 1
         sid = params.get("sessionId") or "%s-%d-%d" % (NAME, os.getpid(), sessions)
         result = {"configOptions": config_options()}
+        if CONTROL.get("legacyModels") and not (method != "session/new" and CONTROL.get("resumeWithoutModels")):
+            result["models"] = {"currentModelId": model,
+                                "availableModels": [{"modelId": v, "name": n} for v, n in models]}
         if method == "session/new":
             result["sessionId"] = sid
         send({"id": mid, "result": result})
     elif method == "session/set_config_option":
+        if CONTROL.get("legacyModels") and params.get("configId") == "model":
+            send({"id": mid, "error": {"code": -32601, "message": "Use session/set_model"}})
+            continue
         if params.get("configId") == "model":
             model = params["value"]
         if params.get("configId") == "mode":
@@ -270,6 +276,9 @@ for line in sys.stdin:
             if CONTROL.get("keepMode"):
                 open(MODE_FILE, "w").write(mode)
         send({"id": mid, "result": {"configOptions": config_options()}})
+    elif method == "session/set_model" and CONTROL.get("legacyModels"):
+        model = params["modelId"]
+        send({"id": mid, "result": {}})
     elif method == "session/prompt":
         prompt(mid, params["sessionId"], "\n".join(b.get("text", "") for b in params["prompt"]))
     elif method == "session/cancel":

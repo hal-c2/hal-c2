@@ -87,7 +87,7 @@ defmodule HalC2.Test.Mc do
   @doc """
   Stops the MC's services (if `stop/1` has not) and starts them again on the
   same state, as a restart does, on the same port. Services a step started with
-  `ensure/1` (settings, plugins, HAL-C2 Connect, diagnostics, scheduled tasks) come
+  `ensure/1` (settings, plugins, diagnostics, scheduled tasks) come
   back after the core, so in-memory state (clones, setups) is lost as in a real
   restart. Turns the stop cut off are settled and, where the project asks for
   it, continued (`HalC2.Orchestration.Recovery`), as `HalC2.Application` boots.
@@ -112,7 +112,7 @@ defmodule HalC2.Test.Mc do
       )
 
     # In the application's order: cut-off turns settle before the optional
-    # services (HAL-C2 Connect among them) are back, then the boot tasks run.
+    # services are back, then the boot tasks run.
     HalC2.Orchestration.Recovery.run()
     Enum.each(ensured, &ensure/1)
     :ok = HalC2.Orchestration.Recovery.continue()
@@ -2480,7 +2480,8 @@ defmodule HalC2.Test.Mc.World do
             id: HalC2.Codex.Supervisor
           ),
           HalC2.Mcp,
-          HalC2.Orchestration.TurnWatch
+          HalC2.Orchestration.TurnWatch,
+          HalC2.Orchestration.Effects
         ],
         do: Mc.ensure(child)
 

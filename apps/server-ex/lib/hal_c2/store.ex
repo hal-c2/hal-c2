@@ -598,6 +598,7 @@ defmodule HalC2.Store do
 
           last =
             Enum.reduce(changes, last, fn change, _ ->
+              hook(:append_change, stream_id)
               {kind, entity, patch, change_at} = with_time(change, at)
 
               [[seq]] =
@@ -671,6 +672,15 @@ defmodule HalC2.Store do
       )
 
     {:reply, :ok, state}
+  end
+
+  # Tests break a recording at a stage: `{module, function, args}`, called with
+  # the stage and the stream id, inside the append transaction.
+  defp hook(stage, stream_id) do
+    case Application.get_env(:hal_c2, :store_hook) do
+      {m, f, a} -> apply(m, f, a ++ [stage, stream_id])
+      nil -> :ok
+    end
   end
 
   @impl true

@@ -10,15 +10,27 @@ defmodule HalC2.ScheduledTasks do
   automatic actions (`HAL_C2_MC_NO_AUTO_ACTIONS`), where a task only runs when asked
   (`scheduledTasks.runNow`). Watchers (client sockets) get
   `{:hal_c2_scheduled_tasks, mc, tasks}` whenever a task changes.
+
+  A run gets an hour to send its prompt. One that has not finished by then is
+  stopped, the run its own prompt started (or queued) in its thread is
+  interrupted (or cancelled while queued) — never another turn in that thread —
+  and the run is recorded as failed ("The run timed out."), so a prompt that
+  never comes back cannot keep its task `running` for good. A task that starts
+  a new thread per run is given that thread's id up front, so the same cleanup
+  finds its thread too.
   """
 
   use GenServer
+
+  require Logger
 
   alias HalC2.Orchestration
 
   @min_interval 60_000
   @missed_grace 10 * 60_000
   @max_sleep 60_000
+  @run_timeout_ms 60 * 60_000
+  @cleanup_timeout_ms 5 * 60_000
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -30,7 +42,13 @@ defmodule HalC2.ScheduledTasks do
     do: GenServer.call(__MODULE__, {:set_enabled, id, enabled})
 
   @doc "Runs a task now and replies once its message is sent."
-  def run_now(%{"id" => id}), do: GenServer.call(__MODULE__, {:run_now, id}, 120_000)
+  # The call waits as long as a run may take (the cap below, plus slack for the
+  # scheduler to record the timeout and answer), so a caller whose run wedges
+  # is answered with the timed-out task instead of a call timeout long before.
+  # The websocket RPC serving it gives this method the same budget
+  # (`HalC2.Web.Socket.rpc_timeout/1`), so the answer reaches clients too.
+  def run_now(%{"id" => id}),
+    do: GenServer.call(__MODULE__, {:run_now, id}, run_timeout_ms() + 5_000)
 
   def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
   def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
@@ -172,6 +190,19 @@ defmodule HalC2.ScheduledTasks do
     {:noreply, changed(state)}
   end
 
+  # A run outlived its hour: stop it, interrupt the turn it was starting, and
+  # record it like any other failed run (which also answers a waiting "run now").
+  # A timeout for a run the table no longer holds falls through to the ignore
+  # below, as a timer can fire as its run finishes.
+  def handle_info({:run_timeout, pid}, %{runs: runs} = state) when is_map_key(runs, pid) do
+    run = runs[pid]
+    Process.demonitor(run.ref, [:flush])
+    Process.exit(pid, :kill)
+    interrupt_turn(pid, run)
+    {state, _task} = complete(state, pid, {:error, "The run timed out."})
+    {:noreply, changed(state)}
+  end
+
   def handle_info({:DOWN, _ref, :process, pid, _}, state),
     do: {:noreply, %{state | watchers: Map.delete(state.watchers, pid)}}
 
@@ -183,8 +214,32 @@ defmodule HalC2.ScheduledTasks do
   @impl true
   def code_change(_old, state, _extra) do
     Process.flag(:trap_exit, true)
-    for pid <- Map.keys(state.runs), do: Process.link(pid)
-    {:ok, state}
+
+    # Runs from before runs were linked are linked now, and ones from before the
+    # run cap get a timer of their own for the time they have left, so none is
+    # left running for good nor given a fresh hour on top of the time it has
+    # already had. They also gain the thread and message their cleanup needs:
+    # the thread their task names, and the deterministic message id `fire/3`
+    # built from their start. One limit: a pre-upgrade run of a task that
+    # starts a new thread each run launched under an id nothing recorded, so
+    # its thread cannot be recovered here — the run still times out, fails
+    # its task and frees it to run again; only the orphan-thread interrupt
+    # is skipped.
+    runs =
+      Map.new(state.runs, fn {pid, run} ->
+        Process.link(pid)
+
+        run =
+          if run[:timer],
+            do: run,
+            else: Map.put(run, :timer, arm_timeout(pid, remaining_ms(run)))
+
+        run = Map.put_new_lazy(run, :thread_id, fn -> state.tasks[run.id]["threadId"] end)
+        run = Map.put_new_lazy(run, :message_id, fn -> message_id(run) end)
+        {pid, run}
+      end)
+
+    {:ok, %{state | runs: runs}}
   end
 
   # --- runs --------------------------------------------------------------------
@@ -193,33 +248,216 @@ defmodule HalC2.ScheduledTasks do
     at = now()
     fire_key = "#{task["id"]}:#{DateTime.to_unix(at, :millisecond)}:#{trigger}"
     running = Map.merge(task, %{"lastRunStatus" => "running", "updatedAt" => iso(at)})
+    # The thread this run's prompt lands in: the task's own, or — for a task
+    # that starts a new thread each run — one minted now and handed to the
+    # launch, so a run that times out mid-launch still has a thread to clean up.
+    thread_id = task["threadId"] || HalC2.Environment.uuid4()
     # Linked, so a scheduler that dies takes its runs with it, and monitored, so a run
     # that exits fails its task.
     parent = self()
 
     {pid, ref} =
       :erlang.spawn_opt(
-        fn -> send(parent, {:run_done, self(), fire(running, fire_key)}) end,
+        fn -> send(parent, {:run_done, self(), fire(running, fire_key, thread_id)}) end,
         [:link, :monitor]
       )
 
+    run = %{
+      ref: ref,
+      id: task["id"],
+      started: at,
+      from: from,
+      trigger: trigger,
+      thread_id: thread_id,
+      message_id: message_id(fire_key),
+      timer: arm_timeout(pid)
+    }
+
     state
     |> put(running)
-    |> Map.update!(
-      :runs,
-      &Map.put(&1, pid, %{ref: ref, id: task["id"], started: at, from: from, trigger: trigger})
-    )
+    |> Map.update!(:runs, &Map.put(&1, pid, run))
     |> changed()
   end
 
+  defp arm_timeout(pid, delay \\ nil),
+    do: Process.send_after(self(), {:run_timeout, pid}, delay || run_timeout_ms())
+
+  # The deterministic id of the message a run sends, from its fire key. A run
+  # from before runs carried it rebuilds its key from its start.
+  defp message_id(fire_key) when is_binary(fire_key), do: "scheduled-task-message:#{fire_key}"
+
+  defp message_id(%{id: id, started: started} = run),
+    do:
+      message_id(
+        "#{id}:#{DateTime.to_unix(started, :millisecond)}:#{run[:trigger] || "scheduled"}"
+      )
+
+  defp message_id(_run), do: nil
+
+  # How much of its hour a run started at `run.started` has left. The cap
+  # above means a host clock that moved backwards never extends a run past
+  # its hour, matching the monotonic timer the normal path arms.
+  defp remaining_ms(%{started: %DateTime{} = started}),
+    do:
+      (run_timeout_ms() - DateTime.diff(now(), started, :millisecond))
+      |> max(0)
+      |> min(run_timeout_ms())
+
+  defp remaining_ms(_run), do: run_timeout_ms()
+
+  @doc """
+  How long a run gets to send its prompt; `:scheduled_tasks_run_timeout_ms`
+  lets tests shorten the hour. The transports that wait on a manual run size
+  their own deadlines from this.
+  """
+  def run_timeout_ms do
+    case Application.get_env(:hal_c2, :scheduled_tasks_run_timeout_ms) do
+      ms when is_integer(ms) and ms > 0 -> ms
+      _ -> @run_timeout_ms
+    end
+  end
+
+  @active_statuses ~w(preparing starting running waiting)
+
+  # Cleans up exactly the run a timed-out run's own prompt started, in its
+  # thread: interrupted while active, cancelled while queued, left alone when
+  # the prompt never landed — never another turn in that thread. The cleanup
+  # runs in a process of its own (one per timed-out run): the wedged thread
+  # that stalled the run must not wedge the scheduler too, and waiting on that
+  # thread's stream is what lets the lookup run after a dispatch that was
+  # still in the stream's mailbox when its sender was killed commits, so the
+  # late prompt is cleaned up instead of running unattended. It is bounded:
+  # a stream that never answers gives the cleanup up after
+  # `@cleanup_timeout_ms`, so one wedged stream leaks at most one cleanup for
+  # that long, and a cleanup that fails or gives up is logged — a prompt
+  # left running unattended leaves a trace.
+  defp interrupt_turn(pid, run) do
+    with thread_id when is_binary(thread_id) <- run[:thread_id],
+         message_id when is_binary(message_id) <- run[:message_id] || message_id(run) do
+      spawn(fn ->
+        # The run process is dead before anyone decides its prompt's run is
+        # undriven: while it lived, it alone would have begun that turn.
+        ref = Process.monitor(pid)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _} -> :ok
+        end
+
+        cleanup =
+          Task.async(fn ->
+            try do
+              clean_up_prompt(thread_id, message_id)
+              :ok
+            catch
+              kind, reason when kind in [:exit, :throw, :error] ->
+                {:error, Exception.format(kind, reason, __STACKTRACE__)}
+            end
+          end)
+
+        outcome =
+          Task.yield(cleanup, @cleanup_timeout_ms) || Task.shutdown(cleanup, :brutal_kill)
+
+        case outcome do
+          {:ok, :ok} ->
+            :ok
+
+          {:ok, {:error, reason}} ->
+            Logger.warning(
+              "scheduled run cleanup failed for thread #{thread_id} message #{message_id}: #{reason}"
+            )
+
+          {:exit, reason} ->
+            Logger.warning(
+              "scheduled run cleanup exited for thread #{thread_id} message #{message_id}: #{inspect(reason)}"
+            )
+
+          nil ->
+            Logger.warning(
+              "scheduled run cleanup gave up after #{@cleanup_timeout_ms} ms for thread #{thread_id} message #{message_id}"
+            )
+        end
+      end)
+    else
+      _ -> :ok
+    end
+  end
+
+  defp clean_up_prompt(thread_id, message_id) do
+    case prompt_run(thread_id, message_id) do
+      %{"id" => run_id, "status" => "queued"} ->
+        _ =
+          Orchestration.dispatch(%{
+            "type" => "queued-run.cancel",
+            "threadId" => thread_id,
+            "runId" => run_id
+          })
+
+        # The cancel only takes a run that is still queued; one promoted
+        # between the read above and the cancel is handled as active now.
+        case prompt_run(thread_id, message_id) do
+          %{"status" => status} when status in @active_statuses ->
+            clean_up_prompt(thread_id, message_id)
+
+          _ ->
+            :ok
+        end
+
+      %{"id" => run_id, "status" => status} when status in @active_statuses ->
+        _ =
+          Orchestration.dispatch(%{
+            "type" => "run.interrupt",
+            "threadId" => thread_id,
+            "runId" => run_id
+          })
+
+        # A run still only starting (or preparing) after that, with nothing
+        # driving it, is one whose dispatch committed after its sender was
+        # killed: `begin_turn` will never run for it, so end it here.
+        case prompt_run(thread_id, message_id) do
+          %{"id" => ^run_id, "status" => left} when left in ~w(starting preparing) ->
+            unless HalC2.Orchestration.TurnWatch.driven?(run_id),
+              do: HalC2.Orchestration.TurnWriter.abandon(thread_id, run_id, "interrupted", nil)
+
+          _ ->
+            :ok
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  # The run whose user message is `message_id`, read inside the thread's
+  # stream so the read is ordered after the (possibly wedged) dispatch that
+  # created it, however long that stream takes to answer.
+  defp prompt_run(thread_id, message_id) do
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      run =
+        state
+        |> HalC2.StreamState.list("run")
+        |> Enum.find(&(&1["userMessageId"] == message_id))
+
+      {[], run}
+    end)
+  end
+
   # A deleted task's runs end with it, so a task created later under the same id does
-  # not take the result of a run that was not its own.
+  # not take the result of a run that was not its own. Killing a run mid-dispatch
+  # has the timeout's late-commit hazard, so a deleted run's own prompt is
+  # cleaned up the same way (`interrupt_turn/2`): a prompt that lands after
+  # its sender was killed does not run, or sit undriven, for a deleted task.
+  # That cleanup cannot tell landed-before from landed-after the kill, and
+  # does not try: deleting a task during its run ends that run's turn too,
+  # even one already running in its thread (pinned in
+  # `features/settings/scheduled-tasks.feature`).
   defp stop_runs(state, id) do
     {gone, runs} = Enum.split_with(state.runs, fn {_, run} -> run.id == id end)
 
-    for {pid, %{ref: ref, from: from}} <- gone do
+    for {pid, %{ref: ref, from: from} = run} <- gone do
+      if run[:timer], do: Process.cancel_timer(run.timer)
       Process.demonitor(ref, [:flush])
       Process.exit(pid, :kill)
+      interrupt_turn(pid, run)
       if from, do: GenServer.reply(from, error("Schedule task not found.", id))
     end
 
@@ -228,6 +466,7 @@ defmodule HalC2.ScheduledTasks do
 
   defp complete(state, pid, result) do
     {%{id: id, started: started, from: from} = run, runs} = Map.pop(state.runs, pid)
+    if run[:timer], do: Process.cancel_timer(run.timer)
     state = %{state | runs: runs}
 
     case state.tasks[id] do
@@ -269,10 +508,11 @@ defmodule HalC2.ScheduledTasks do
     })
   end
 
-  # Sends the prompt: into the task's thread, or as the first message of a new one.
-  defp fire(task, fire_key) do
+  # Sends the prompt: into the task's thread, or as the first message of a new
+  # one (`thread_id`, minted in `start_run/4` for such a task).
+  defp fire(task, fire_key, thread_id) do
     command_id = "scheduled-task:#{fire_key}"
-    message_id = "scheduled-task-message:#{fire_key}"
+    message_id = message_id(fire_key)
 
     result =
       cond do
@@ -298,6 +538,7 @@ defmodule HalC2.ScheduledTasks do
         true ->
           Orchestration.launch_thread(%{
             "commandId" => command_id,
+            "threadId" => thread_id,
             "projectId" => task["projectId"],
             "title" => task["title"],
             "modelSelection" => task["modelSelection"],

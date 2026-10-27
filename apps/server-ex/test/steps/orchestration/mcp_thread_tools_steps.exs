@@ -364,6 +364,39 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     |> Map.put(:waited, System.monotonic_time(:millisecond) - started)
   end
 
+  # Waits by agents on ACP providers are capped under their client's limit; this
+  # shortens the cap (restored afterwards).
+  step "the MCP client of an ACP provider gives up on a tool call after 1 second", context do
+    previous = Application.get_env(:hal_c2, :acp_max_wait_ms)
+    Application.put_env(:hal_c2, :acp_max_wait_ms, 1_000)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if previous,
+        do: Application.put_env(:hal_c2, :acp_max_wait_ms, previous),
+        else: Application.delete_env(:hal_c2, :acp_max_wait_ms)
+    end)
+
+    context
+  end
+
+  step "the agent of {string} on {string} waits on {string} for 2 hours",
+       %{args: [caller, instance, thread]} = context do
+    started = System.monotonic_time(:millisecond)
+
+    result =
+      World.mcp_tool(
+        context,
+        caller,
+        "hal_c2_thread_wait",
+        %{"threadId" => World.thread_id(context, thread), "timeoutMs" => 2 * 60 * 60 * 1_000},
+        instance
+      )
+
+    context
+    |> Map.put(:mcp_result, result)
+    |> Map.put(:waited, System.monotonic_time(:millisecond) - started)
+  end
+
   step "the wait returns the run's current status and that it timed out", context do
     assert {:ok, result} = context.mcp_result
     assert result["status"] == "running"
@@ -763,12 +796,24 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
   end
 
   step "it repeats the request with request key {string}", %{args: [key]} = context do
-    create_threads(
-      context,
-      context.batch_caller,
-      [%{"prompt" => "say one"}, %{"prompt" => "say two"}],
-      key
-    )
+    # A thread batch here, a delegated task in the delegation scenarios.
+    if context[:batch_caller] do
+      create_threads(
+        context,
+        context.batch_caller,
+        [%{"prompt" => "say one"}, %{"prompt" => "say two"}],
+        key
+      )
+    else
+      result =
+        World.mcp_tool(context, context.task_parent, "delegate_task", %{
+          "task" => "wait for it",
+          "mode" => "async",
+          "clientRequestId" => key
+        })
+
+      Map.put(context, :mcp_result, result)
+    end
   end
 
   step "it fails because the threads already exist", context do
