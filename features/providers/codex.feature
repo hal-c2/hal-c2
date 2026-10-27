@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/13328 (compatibility ranges, Codex 0.129 floor)
 #   docs/user/providers-codex.md
 #   docs/internals/providers.md (Codex async questions, shadow homes, update ownership)
 #   apps/server-ex/lib/hal_c2/codex/provider.ex, apps/server-ex/lib/hal_c2/codex/thread_runtime.ex
@@ -46,6 +47,17 @@ Feature: Codex
     Given the MC has just started and has not read the Codex model list yet
     When the user opens the model picker for Codex
     Then a single default Codex model is offered
+
+  @backlog
+  Scenario Outline: A Codex version is judged against this HAL-C2 release
+    Given Codex <version> is installed
+    When the MC checks its providers
+    Then <expectation>
+
+    Examples:
+      | version | expectation                                                          |
+      | 0.128.0 | Codex is reported as a known broken version for this HAL-C2 release |
+      | 0.129.0 | Codex carries no compatibility warning                              |
 
   Scenario: Updating Codex uses the installer that owns it
     Given Codex was installed with npm and is outdated

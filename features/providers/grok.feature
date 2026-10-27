@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/13328 (Grok 1.0.13 floor)
 #   apps/server-ex/lib/hal_c2/acp.ex (grok agent, permission-mode args, supportsTextGeneration)
 #   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (permission requests, session/cancel, background tasks and subagents)
 #   apps/server-ex/lib/hal_c2/usage/transcripts.ex (Grok transcripts)
@@ -22,6 +23,12 @@ Feature: Grok
     Given Grok is installed but not enabled
     When the MC starts
     Then no Grok process is started
+
+  @backlog
+  Scenario: Grok 1.0.13 or newer carries no compatibility warning
+    Given Grok 1.0.13 is installed
+    When the MC checks its providers
+    Then Grok carries no compatibility warning
 
   Scenario: Grok is only offered when the grok command is installed
     Given the grok command is not installed on the MC

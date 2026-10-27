@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13340 (restart replay of old alerts; relay dropped below)
 #   docs/user/mobile-notifications.md (publishing must be on, HAL-C2 Connect required, 15-minute results)
 #   packages/contracts/src/relay.ts (RelayAgentAwarenessPhase, RelayAgentActivityState,
 #     RelayAgentActivityPublishRequest, RelayAgentActivityPublishProofInvalidReason,
@@ -114,6 +115,14 @@ Feature: Publishing agent activity
     Given publishing is on
     When threads are imported from another install
     Then the MC publishes nothing for them
+
+  # Upstream (#13340) stopped a restarted desktop server from replaying old "Done" alerts.
+  # The alerts went through HAL-C2 Connect, which was removed, so there is nothing to replay.
+  @dropped @mc
+  Scenario: Restarting the MC does not alert about work that finished before it
+    Given a thread finished its turn before the MC restarted
+    When the MC restarts
+    Then the MC publishes no alert for that finished turn
 
   @dropped @mc
   Scenario: A burst of changes to one thread is published once

@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/13328 (compatibility ranges, Claude 2.1.280 and 2.1.111 boundaries)
 #   docs/user/providers-claude.md
 #   docs/internals/providers.md (Claude homes, update ownership)
 #   apps/server-ex/lib/hal_c2/claude/provider.ex, apps/server-ex/lib/hal_c2/claude/thread_runtime.ex, apps/server-ex/lib/hal_c2/claude/session.ex
@@ -33,6 +34,18 @@ Feature: Claude
     Given the claude command is not installed on the MC
     When the user opens the provider list
     Then Claude is not offered as a provider
+
+  @backlog
+  Scenario Outline: A Claude version is judged against this HAL-C2 release
+    Given Claude <version> is installed
+    When the MC checks its providers
+    Then <expectation>
+
+    Examples:
+      | version | expectation                                                              |
+      | 2.1.110 | Claude is reported as an unsupported version for this HAL-C2 release    |
+      | 2.1.279 | Claude is reported as of limited support for this HAL-C2 release        |
+      | 2.1.280 | Claude carries no compatibility warning                                 |
 
   Scenario: An outdated Claude shows that an update is available
     Given the installed Claude is older than the latest published version

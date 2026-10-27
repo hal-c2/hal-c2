@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/13064 (browser host choice by displayed tab, snapshot-only hosts)
 #   apps/server-ex/lib/hal_c2/preview_automation.ex (host registration, routing, timeouts, current tab, error messages)
 #   apps/server-ex/lib/hal_c2/mcp/preview.ex (preview_* MCP tools, timed tools, snapshot bounds, screenshots, recordings, tool icon)
 #   apps/server-ex/lib/hal_c2/mcp/tools.ex (hal_c2_preview_list, hal_c2_preview_close)
@@ -46,6 +47,19 @@ Feature: Agents drive the preview browser
       And only one of them has its window focused
       When an agent takes its first browser action
       Then the action goes to the desktop that can do the most, preferring the focused one
+
+    @mc @backlog
+    Scenario: A new agent session goes to the browser that is showing its tab
+      Given two desktops offer their browsers
+      And only one of them is showing the tab the agent was asked to use
+      When an agent takes its first browser action on that tab
+      Then the action goes to the desktop showing the tab, even if the other is focused
+
+    @mc @backlog
+    Scenario: A desktop holding only a snapshot of a tab is not reported as an available browser
+      Given a desktop offers its browser but only has a server snapshot of the tab
+      When an agent checks whether a browser is available for that tab
+      Then that desktop's browser is reported as not available
 
     @mc
     Scenario: An action nobody can host fails with guidance

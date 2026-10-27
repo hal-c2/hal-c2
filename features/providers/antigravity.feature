@@ -1,6 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/9514 (the sign-in link on stderr)
+#   https://github.com/pingdotgg/t3code/pull/13328 (the pinned 1.1.1 runtime's compatibility)
 #   docs/user/providers-antigravity.md
 #   docs/internals/providers.md (isolated profiles, installer leases, sign-in owned by the initiating session, reject revert before touching files)
 #   apps/server/src/provider/Layers/AntigravityProvider.ts, apps/server/src/provider/AntigravityAuth.ts
@@ -37,6 +38,12 @@ Feature: Antigravity
     Given the Antigravity runtime is downloading
     When the client disconnects and reconnects
     Then the download progress is still shown
+
+  @backlog
+  Scenario: The pinned Antigravity runtime carries no compatibility warning
+    Given the MC runs the pinned Antigravity 1.1.1 runtime
+    When the MC checks its providers
+    Then Antigravity carries no compatibility warning
 
   Scenario: Cancelling an installation keeps the previous runtime
     Given an older Antigravity runtime is installed and a new one is downloading
