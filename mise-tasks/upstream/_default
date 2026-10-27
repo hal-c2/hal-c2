@@ -74,6 +74,7 @@ login() {
 # Someone is known by their login, so a shared or changed name neither hides a newcomer
 # nor thanks anyone twice; by name only when no login is found for them. Someone listed
 # by name alone whose login turns up later was thanked already: their line gets the link.
+# Names are all a name-only line has, so a newcomer sharing one is taken for that person.
 declare -A credited=() logins=() bare=()
 while IFS=$'\t' read -r name handle; do
   credited[$name]=1
