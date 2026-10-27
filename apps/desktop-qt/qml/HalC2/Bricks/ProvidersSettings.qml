@@ -879,7 +879,12 @@ Rectangle {
                     color: email.hovered ? page.foreground : page.muted
                     font: email.font
                 }
-                background: null
+                background: Rectangle {
+                    color: "transparent"
+                    radius: 4
+                    border.width: email.visualFocus ? 1 : 0
+                    border.color: Theme.palette.color("focus", "#3b82f6")
+                }
             }
 
             // The runtime the environment installs itself (Antigravity).

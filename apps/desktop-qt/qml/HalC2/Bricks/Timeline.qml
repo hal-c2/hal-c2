@@ -547,8 +547,15 @@ Item {
                 return;
             event.accepted = true;
         }
+        // Set when a click put the keyboard here, so only Tab draws the ring.
+        property bool tapped: false
+        onActiveFocusChanged: if (!activeFocus)
+            tapped = false
         TapHandler {
-            onTapped: view.forceActiveFocus()
+            onTapped: {
+                view.tapped = true;
+                view.forceActiveFocus();
+            }
         }
         topMargin: 12
         bottomMargin: 12
@@ -1763,6 +1770,17 @@ Item {
                 return qsTr("Loading…");
             }
         }
+    }
+
+    // The conversation has the keyboard (Tab to it): Page Up/Down page it.
+    Rectangle {
+        objectName: "timelineFocus"
+        anchors.fill: view
+        visible: view.activeFocus && !view.tapped
+        color: "transparent"
+        radius: 6
+        border.width: 1
+        border.color: Theme.palette.color("focus", "#3b82f6")
     }
 
     // "Working for 12s" under the rows, a static
