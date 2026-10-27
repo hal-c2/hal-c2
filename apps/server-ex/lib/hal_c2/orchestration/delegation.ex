@@ -60,7 +60,7 @@ defmodule HalC2.Orchestration.Delegation do
       }
 
       case start(thread, run, spec) do
-        {:ok, task_id} ->
+        {tag, task_id} when tag in [:ok, :existing] ->
           if input["mode"] == "wait",
             do:
               wait(
@@ -435,17 +435,28 @@ defmodule HalC2.Orchestration.Delegation do
 
     workspace = spec["workspace"] || {"inherited", workspace(thread)}
 
-    record(
-      thread,
-      run,
-      task_id,
-      child_id,
-      selection,
-      title,
-      spec["task"],
-      spec["completionWake"],
-      elem(workspace, 0)
-    )
+    claimed =
+      record(
+        thread,
+        run,
+        task_id,
+        child_id,
+        selection,
+        title,
+        spec["task"],
+        spec["completionWake"],
+        elem(workspace, 0)
+      )
+
+    if claimed == :exists do
+      {:existing, task_id}
+    else
+      launch(thread, spec, task_id, child_id, title, workspace)
+    end
+  end
+
+  defp launch(thread, spec, task_id, child_id, title, workspace) do
+    selection = spec["modelSelection"]
 
     launched =
       Orchestration.launch_thread(%{
@@ -705,39 +716,56 @@ defmodule HalC2.Orchestration.Delegation do
     }
 
     HalC2.Streams.transact(thread["id"], :thread, fn state ->
-      item =
-        Entities.turn_item(
-          %{
-            thread: thread["id"],
-            run: run["id"],
-            root_node: run["rootNodeId"],
-            node: task_id,
-            provider_thread: nil,
-            driver: driver
-          },
-          item_id,
-          "subagent",
-          Orchestration.next_ordinal(state),
-          "running",
-          at,
-          %{
-            "nodeId" => task_id,
-            "subagentId" => task_id,
-            "origin" => "app_owned",
-            "driver" => driver,
-            "providerInstanceId" => instance,
-            "childThreadId" => child_id,
-            "prompt" => prompt,
-            "result" => nil
-          }
-        )
-
-      {[
-         Orchestration.create("subagent", task_id, task),
-         Orchestration.create("node", task_id, node),
-         Orchestration.create("turn-item", item_id, item)
-       ], :ok}
+      # The claim is the transaction: a repeated request (a deterministic task id
+      # from a clientRequestId) that races the first finds the task recorded here
+      # and starts no second child.
+      if StreamState.get(state, "subagent")[task_id] do
+        {[], :exists}
+      else
+        record_changes(state, thread, run, task, node, item_id, at)
+      end
     end)
+  end
+
+  defp record_changes(state, thread, run, task, node, item_id, at) do
+    task_id = task["id"]
+    driver = task["driver"]
+    instance = task["providerInstanceId"]
+    child_id = task["childThreadId"]
+    prompt = task["prompt"]
+
+    item =
+      Entities.turn_item(
+        %{
+          thread: thread["id"],
+          run: run["id"],
+          root_node: run["rootNodeId"],
+          node: task_id,
+          provider_thread: nil,
+          driver: driver
+        },
+        item_id,
+        "subagent",
+        Orchestration.next_ordinal(state),
+        "running",
+        at,
+        %{
+          "nodeId" => task_id,
+          "subagentId" => task_id,
+          "origin" => "app_owned",
+          "driver" => driver,
+          "providerInstanceId" => instance,
+          "childThreadId" => child_id,
+          "prompt" => prompt,
+          "result" => nil
+        }
+      )
+
+    {[
+       Orchestration.create("subagent", task_id, task),
+       Orchestration.create("node", task_id, node),
+       Orchestration.create("turn-item", item_id, item)
+     ], :ok}
   end
 
   # Ends the task in its parent, at `at` or now, and returns `{:settled, delivery, sent}`.
@@ -944,13 +972,14 @@ defmodule HalC2.Orchestration.Delegation do
   defp queued_wake(_state, _parent_run_id), do: nil
 
   # Wakes for a run that have run their course, and whether one is with the
-  # caller now. Cancelled wakes never woke it, so they count for neither.
+  # caller now. Cancelled wakes never woke it, so they count for neither:
+  # only wakes that actually ran count as settled.
   defp settled_wake_count(state, parent_run_id) when is_binary(parent_run_id) do
     runs = StreamState.get(state, "run")
 
     Enum.count(StreamState.list(state, "message"), fn message ->
       get_in(message, ["delegatedCompletion", "parentRunId"]) == parent_run_id and
-        (runs[message["runId"]] || %{})["status"] in @terminal
+        (runs[message["runId"]] || %{})["status"] in ~w(completed failed interrupted)
     end)
   end
 

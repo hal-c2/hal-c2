@@ -1993,6 +1993,12 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     complete_named(context, "three")
   end
 
+  step "a wake for task {string} is queued", %{args: [name]} = context do
+    {_run, message} = queued_wake!(context, context.task_parent)
+    assert message["delegatedCompletion"]["taskIds"] == [context.named_tasks[name]]
+    context
+  end
+
   step "{string} is not woken a third time", %{args: [parent]} = context do
     assert length(wake_messages(context, parent)) == 2
     context

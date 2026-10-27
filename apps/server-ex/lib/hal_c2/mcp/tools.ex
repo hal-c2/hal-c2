@@ -181,8 +181,28 @@ defmodule HalC2.Mcp.Tools do
 
       # Reading a finished direct child's answer in full is the caller taking
       # its result: its automatic delivery is acknowledged, so no wake follows.
-      if (args["textOffset"] || 0) == 0 and
-           Enum.any?(read, &(&1["type"] == "assistant_message" and not &1["truncated"])) do
+      # The answer is the child's last assistant message, so only a page that
+      # contains it untruncated counts, not an early progress message or the
+      # first page of a long child.
+      last_answer =
+        items
+        |> Enum.filter(fn {item, _} -> item["type"] == "assistant_message" end)
+        |> List.last()
+
+      answer_read? =
+        case last_answer do
+          {_item, position} ->
+            Enum.any?(
+              read,
+              &(&1["position"] == position and &1["type"] == "assistant_message" and
+                  not &1["truncated"])
+            )
+
+          nil ->
+            false
+        end
+
+      if (args["textOffset"] || 0) == 0 and answer_read? do
         observed =
           me["id"]
           |> stream()

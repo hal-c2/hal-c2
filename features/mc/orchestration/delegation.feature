@@ -525,6 +525,16 @@ Feature: Delegating tasks to subagents
     And the task's result stays readable from its status
 
   @mc
+  Scenario: Wakes cancelled before they ran do not count toward the wake limit
+    Given the agent in "parent" delegated tasks "one", "two" and "three" without waiting
+    When task "one" of the same turn finishes
+    And the agent acknowledges the result of "one"
+    And task "two" of the same turn finishes
+    And the agent acknowledges the result of "two"
+    And task "three" of the same turn finishes
+    Then a wake for task "three" is queued
+
+  @mc
   Scenario Outline: A task result is not delivered into a caller that is gone
     Given the agent in "parent" delegated a task without waiting
     And "parent" was <gone> while the task was still working
