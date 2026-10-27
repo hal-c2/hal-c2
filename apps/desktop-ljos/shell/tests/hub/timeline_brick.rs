@@ -811,7 +811,6 @@ fn tapping_a_subagent_opens_its_thread_alone() {
 }
 
 #[test]
-#[ignore = "ljos#142: a model swap that resizes the view keeps the old delegates"]
 fn tapping_a_subagent_opens_its_open_thread_alone() {
     tap_to_switch(2, true, false);
 }
@@ -822,13 +821,11 @@ fn tapping_a_running_subagent_opens_its_thread_alone() {
 }
 
 #[test]
-#[ignore = "ljos#142: a model swap that resizes the view keeps the old delegates"]
 fn tapping_a_running_subagent_opens_its_open_thread_alone() {
     tap_to_switch(2, true, true);
 }
 
 #[test]
-#[ignore = "ljos#142: a model swap that resizes the view keeps the old delegates"]
 fn tapping_a_subagent_of_a_long_thread_opens_its_open_thread_alone() {
     tap_to_switch(12, true, true);
 }
