@@ -87,6 +87,7 @@ import {
   ServerSelfUpdateProgressEvent,
   ProviderUploadFeedbackError,
   type PreviewAutomationHost,
+  type McSettingsDocument,
 } from "@hal-c2/contracts";
 import {
   compileResolvedKeybindingsConfig,
@@ -1157,10 +1158,7 @@ export function makeV3Session(input: {
       readonly providerInstanceMutation?: ProviderInstanceMutation;
     }) =>
       Effect.gen(function* () {
-        const current = (yield* mcCall("hal-c2.readSettings", {})) as {
-          readonly settings: unknown;
-          readonly version: number;
-        };
+        const current = (yield* mcCall("hal-c2.readSettings", {})) as McSettingsDocument;
         const settings = yield* decodeSettings(current.settings);
         const mutation = request.providerInstanceMutation;
         if (

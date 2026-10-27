@@ -361,6 +361,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "all four reviews run", context do
+    {{:ok, snapshot}, context} = plugin(context, "reviews", %{})
+    assert Enum.map(snapshot["reviews"], & &1["status"]) == List.duplicate("running", 4)
+    context
+  end
+
   # --- the agent and its prompt ----------------------------------------------------------------
 
   step "{string} reviews with Claude on {string} in the {string} mode",
@@ -630,6 +636,54 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     await_review!(context, number, &(&1["status"] == "published"))
   end
 
+  step "the agent reports the verdict {string} with only a summary",
+       %{args: [verdict]} = context do
+    report(context, %{
+      "verdict" => @verdicts[verdict],
+      "summary" => "Reads well.",
+      "comments" => []
+    })
+  end
+
+  step "the agent reports that it ran {string}, left out the full suite and was blocked by a missing credential",
+       %{args: [command]} = context do
+    report(context, %{
+      "verdict" => "comment",
+      "summary" => "Bumps the HTTP client.",
+      "validation" => %{
+        "ran" => [%{"command" => command, "result" => "412 passed"}],
+        "notRun" => [%{"check" => "the full suite", "reason" => "it needs the staging database"}],
+        "blocked" => [%{"check" => "the e2e tests", "error" => "STRIPE_KEY is not set"}]
+      }
+    })
+  end
+
+  step "the review posted to \#{int} opens with {string}", %{args: [number, first]} = context do
+    [_, body | _] = posted_review(context, number)
+    assert String.starts_with?(body, first <> "\n\n"), body
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
+  step "the review posted to \#{int} lists the check left out and the blocked one in plain view",
+       %{args: [number]} = context do
+    [_, body | _] = posted_review(context, number)
+    [visible | _] = String.split(body, "<details>")
+    assert visible =~ "**Not run**\n\n- the full suite: it needs the staging database"
+    assert visible =~ ~r/\*\*Blocked[^\n]*\n\n- the e2e tests: STRIPE_KEY is not set/
+    assert String.starts_with?(body, "No findings.\n\nBumps the HTTP client.\n\n"), body
+    context
+  end
+
+  step "the review posted to \#{int} folds away the commands that ran",
+       %{args: [number]} = context do
+    [_, body | _] = posted_review(context, number)
+
+    assert body =~
+             "<details><summary>Ran 1 check</summary>\n\n- `mix test`: 412 passed\n\n</details>"
+
+    await_review!(context, number, &(&1["status"] == "published"))
+  end
+
   step "the agent reports a low finding starting with bold text on {string}",
        %{args: [path]} = context do
     context =
@@ -723,6 +777,10 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   step "{string} is restarted", %{args: [id]} = context do
     {_, context} = World.call!(context, "plugins.restart", %{"id" => id})
     context
+  end
+
+  step "the user changes how often {string} looks for pull requests", %{args: [@id]} = context do
+    save(context, %{"pollMinutes" => 15})
   end
 
   step "the review of \#{int} is failed saying the plugin stopped while it ran",
@@ -1053,6 +1111,12 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     {_, context} = World.call!(context, "plugins.disable", %{"id" => @id})
     context
+  end
+
+  step "the user changes how often {string} looks for pull requests while the review of \#{int} is being posted",
+       %{args: [@id, number]} = context do
+    context = await_review!(context, number, &(&1["status"] == "publishing"))
+    save(context, %{"pollMinutes" => 15})
   end
 
   step "the post to GitHub is called off", context do
@@ -1387,7 +1451,7 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
-  # Saves `patch` over the plugin's settings, which restarts it.
+  # Saves `patch` over the plugin's settings; the running plugin takes them.
   defp save(context, patch) do
     {_, context} =
       World.call!(context, "plugins.saveSettings", %{"id" => @id, "settings" => patch})
@@ -1669,6 +1733,19 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
           %{"path" => "src/limits.ts", "line" => i, "body" => "Finding #{i}."}
         end
     }
+  end
+
+  # The review posted to `number`: its event and its body, without a verdict line a
+  # verdict posted as a comment opens with.
+  defp posted_review(context, number) do
+    assert {:ok, _} = context.reply
+    assert [call] = World.cli_calls(context, "pulls/#{number}/reviews")
+    review = JSON.decode!(call["stdin"])
+
+    [
+      review["event"],
+      String.replace(review["body"], ~r/\A\*\*(Approved|Changes requested)\*\*\n\n/, "")
+    ]
   end
 
   defp publish(context, number) do

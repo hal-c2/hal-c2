@@ -53,8 +53,9 @@ defmodule HalC2Plugins.CodeReview do
   report counts, not your messages. Report once, with:
 
   - verdict: approve, comment or request-changes
-  - summary: one or two lines on what the change does, then what you found and \
-  the biggest risk in it, written for its author
+  - summary: one or two lines on what the change does, then the biggest risk in \
+  it, written for its author. The review opens with the count of findings on its \
+  own, so do not count them, and what you checked goes in validation, not here.
   - comments: one per finding on a line of the change, each with path (from the \
   repository root), line (in the new file, or for a removed line in the old file with \
   side "old"), body, and severity: high (a bug, data loss, a security problem or a \
@@ -62,6 +63,12 @@ defmodule HalC2Plugins.CodeReview do
   missing test, or a cost every caller pays: should be fixed), or low (a nit: worth \
   fixing, never blocking). Where the fix is a mechanical replacement of the line, \
   add suggestion with the replacement text.
+  - validation: what you checked of this change. ran: each command you ran and \
+  its result. notRun: each check the change calls for that you did not run, and \
+  why. blocked: each check this machine kept you from running, such as a missing \
+  tool or credential or a 401, and the error: the user fixes those on the machine. \
+  Leave out the standing rules you followed, such as what REVIEW.md tells you not \
+  to run or that you touched no shared environment.
 
   One comment per root cause, not per line it touches. Do not repeat a finding \
   already raised in the existing comments or your previous review unless it is \
@@ -74,6 +81,10 @@ defmodule HalC2Plugins.CodeReview do
 
   @impl HalC2.Plugins.Extension
   def start_link(settings), do: GenServer.start_link(__MODULE__, settings, name: __MODULE__)
+
+  # A save reaches the running server, so the reviews and posts under way keep going.
+  @impl HalC2.Plugins.Extension
+  def settings_changed(pid, settings, _old), do: GenServer.call(pid, {:settings, settings})
 
   @impl HalC2.Plugins.Extension
   def validate_settings(settings) do
@@ -167,10 +178,16 @@ defmodule HalC2Plugins.CodeReview do
     do: server({:dismiss, key, id, input["dismissed"] != false})
 
   def call("discard", %{"key" => key}, _context) do
-    with {:ok, review} <- server({:discard, key}) do
+    with {:ok, review, lister} <- server({:discard, key}) do
       if review["checkout"], do: Checkout.remove(review["root"], review["checkout"])
-      # The review is forgotten; its thread goes with it, out of the thread list.
-      if review["threadId"], do: organize(review["threadId"], %{"settled" => true, "listed" => false})
+
+      # The review is forgotten; its thread goes with it, out of the thread list, once
+      # a listing that still had it is gone.
+      if review["threadId"] do
+        if lister, do: await_down(lister)
+        organize(review["threadId"], %{"settled" => true, "listed" => false})
+      end
+
       {:ok, server(:snapshot)}
     end
   end
@@ -205,7 +222,7 @@ defmodule HalC2Plugins.CodeReview do
           %{
             "name" => @tool,
             "description" =>
-              "Report your code review of the pull request this thread reviews: a verdict, a summary, and comments on lines of the change. Nobody sees the review until you report it.",
+              "Report your code review of the pull request this thread reviews: a verdict, a summary, comments on lines of the change, and what you checked. Nobody sees the review until you report it.",
             "inputSchema" => %{
               "type" => "object",
               "required" => ["verdict", "summary"],
@@ -229,6 +246,14 @@ defmodule HalC2Plugins.CodeReview do
                       "suggestion" => %{"type" => "string"}
                     }
                   }
+                },
+                "validation" => %{
+                  "type" => "object",
+                  "properties" => %{
+                    "ran" => entries_schema("command", "result"),
+                    "notRun" => entries_schema("check", "reason"),
+                    "blocked" => entries_schema("check", "error")
+                  }
                 }
               }
             }
@@ -241,6 +266,17 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   def agent_tools(_context), do: []
+
+  defp entries_schema(name, value) do
+    %{
+      "type" => "array",
+      "items" => %{
+        "type" => "object",
+        "required" => [name, value],
+        "properties" => %{name => %{"type" => "string"}, value => %{"type" => "string"}}
+      }
+    }
+  end
 
   @impl HalC2.Plugins.Extension
   def call_agent_tool(@tool, arguments, %{thread_id: thread_id}) do
@@ -282,7 +318,7 @@ defmodule HalC2Plugins.CodeReview do
     send(self(), :poll)
     loaded = load()
     # A pause there still is time on holds across the restart that loaded it:
-    # a settings save must not send the queue back into the limit it named.
+    # a restart must not send the queue back into the limit it named.
     if loaded.paused_until, do: arm_resume(loaded)
 
     state = %{
@@ -298,7 +334,11 @@ defmodule HalC2Plugins.CodeReview do
       paused_reason: loaded.paused_reason,
       failures: 0,
       poll_backoff: 1,
-      claimed_at: %{}
+      claimed_at: %{},
+      # The next look's timer, armed while none runs.
+      timer: nil,
+      # The process listing the review threads as the display says, while one does.
+      lister: nil
     }
 
     # What this machine holds is back before a peer can read the table empty.
@@ -308,14 +348,34 @@ defmodule HalC2Plugins.CodeReview do
 
   @impl GenServer
   def handle_continue(:announce, state) do
-    # The display setting reaches the review threads there already are: toggling
-    # it restarts the plugin, and each known thread is listed as it now says.
-    listed = state.settings["display"] != "page"
-    thread_ids = for {_, %{"threadId" => id}} <- state.reviews, is_binary(id), do: id
-    spawn_link(fn -> Enum.each(thread_ids, &organize(&1, %{"listed" => listed})) end)
     # The peers that stepped back while this plugin restarted look again.
     if Node.list() != [], do: tell_peers()
-    {:noreply, announce(state)}
+    {:noreply, state |> list_threads() |> announce()}
+  end
+
+  # The display setting reaches the review threads there already are: each known
+  # thread is listed as it now says. A listing still going is called off, and gone,
+  # before this one starts, so the last display saved is the one the threads end with.
+  defp list_threads(state) do
+    listed = listed?(state.settings)
+    thread_ids = for {_, %{"threadId" => id}} <- state.reviews, is_binary(id), do: id
+    before = state.lister
+    if before, do: Process.exit(before, :kill)
+
+    lister =
+      spawn_link(fn ->
+        if before, do: await_down(before)
+        Enum.each(thread_ids, &organize(&1, %{"listed" => listed}))
+      end)
+
+    %{state | lister: lister}
+  end
+
+  defp listed?(settings), do: settings["display"] != "page"
+
+  defp await_down(pid) do
+    ref = Process.monitor(pid)
+    receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
   end
 
   # Settles and lists or unlists a review thread of ours in the sidebar, best
@@ -336,7 +396,19 @@ defmodule HalC2Plugins.CodeReview do
 
   defp unpause(state), do: %{state | paused_until: nil, paused_reason: nil}
 
+  # Every setting applies from here on: the next look watches the repositories saved,
+  # a new pace re-arms the wait for it, more room starts queued reviews (less lets the
+  # running ones finish), and a new display lists the threads there are. Runs and posts
+  # under way finish with the settings they started with.
   @impl GenServer
+  def handle_call({:settings, settings}, _from, state) do
+    old = state.settings
+    state = %{state | settings: settings}
+    state = if settings["pollMinutes"] != old["pollMinutes"], do: rearm(state), else: state
+    state = if listed?(settings) != listed?(old), do: list_threads(state), else: state
+    {:reply, :ok, state |> pump() |> changed()}
+  end
+
   def handle_call(:snapshot, _from, state), do: {:reply, snapshot(state), state}
   def handle_call(:reviews, _from, state), do: {:reply, state.reviews, state}
 
@@ -385,13 +457,25 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # A running review has a thread and a checkout on the way, and one being
-  # published a post in flight; it is discarded once that is over.
+  # published a post in flight; it is discarded once that is over. A listing under
+  # way copied its thread: it is called off and goes on without it, and the reply
+  # names it for the caller to wait out before unlisting the thread.
   def handle_call({:discard, key}, _from, state) do
     case Map.pop(state.reviews, key) do
-      {nil, _} -> {:reply, {:error, "There is no review #{key}."}, state}
-      {%{"status" => "running"}, _} -> {:reply, {:error, "The review of #{key} is running."}, state}
-      {%{"status" => "publishing"}, _} -> {:reply, {:error, "The review of #{key} is being published."}, state}
-      {review, reviews} -> {:reply, {:ok, review}, %{state | reviews: reviews} |> pump() |> changed()}
+      {nil, _} ->
+        {:reply, {:error, "There is no review #{key}."}, state}
+
+      {%{"status" => "running"}, _} ->
+        {:reply, {:error, "The review of #{key} is running."}, state}
+
+      {%{"status" => "publishing"}, _} ->
+        {:reply, {:error, "The review of #{key} is being published."}, state}
+
+      {review, reviews} ->
+        lister = review["threadId"] && state.lister
+        state = %{state | reviews: reviews}
+        state = if lister, do: list_threads(state), else: state
+        {:reply, {:ok, review, lister}, state |> pump() |> changed()}
     end
   end
 
@@ -471,6 +555,8 @@ defmodule HalC2Plugins.CodeReview do
             "verdict" => findings.verdict,
             "summary" => findings.summary,
             "comments" => findings.comments,
+            "general" => findings.general,
+            "validation" => findings.validation,
             "finishedAt" => now(),
             "error" => nil,
             "publishError" => nil
@@ -552,6 +638,13 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  # A run launches its thread as the display said when it started; a save since then,
+  # which may have come before the thread was there to list, lists the threads again.
+  def handle_cast({:launched, listed}, state) do
+    state = if listed != listed?(state.settings), do: list_threads(state), else: state
+    {:noreply, state}
+  end
+
   # Another machine claimed the commit first: the review is back to not started,
   # and shows where it runs.
   def handle_cast({:elsewhere, key, thread_id, other}, state) do
@@ -607,7 +700,7 @@ defmodule HalC2Plugins.CodeReview do
     known = state.reviews
     # Linked, so turning code-review off calls off a look still waiting on GitHub.
     {_pid, ref} = Process.spawn(fn -> send(server, {:polled, look(settings, known)}) end, [:link, :monitor])
-    {:noreply, %{state | polling: ref}}
+    {:noreply, %{state | polling: ref, timer: nil}}
   end
 
   def handle_info(:poll, state), do: {:noreply, state}
@@ -632,18 +725,12 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{polling: ref} = state) do
-    Process.send_after(
-      self(),
-      :poll,
-      trunc(state.settings["pollMinutes"] * 60_000 * state.poll_backoff)
-    )
-
     state =
       if reason == :normal,
         do: %{state | polling: nil},
         else: %{state | polling: nil, problem: "Looking for pull requests failed: #{inspect(reason)}"} |> changed()
 
-    {:noreply, state}
+    {:noreply, %{state | timer: arm(state)}}
   end
 
   # What a machine that left had of the reviews is no longer anyone's: they are
@@ -700,6 +787,7 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  def handle_info({:EXIT, pid, _reason}, %{lister: pid} = state), do: {:noreply, %{state | lister: nil}}
   def handle_info(_message, state), do: {:noreply, state}
 
   # Looks at the pull requests now, for reviews another machine let go of.
@@ -1151,6 +1239,8 @@ defmodule HalC2Plugins.CodeReview do
         "verdict" => nil,
         "summary" => nil,
         "comments" => [],
+        "general" => [],
+        "validation" => nil,
         "error" => nil,
         "publishError" => nil,
         "changed" => false,
@@ -1227,6 +1317,20 @@ defmodule HalC2Plugins.CodeReview do
     do: message =~ ~r/usage.?limit|rate.?limit|quota|429|limit reached|too many requests/i
 
   defp limited?(_failure), do: false
+
+  defp arm(state),
+    do: Process.send_after(self(), :poll, trunc(state.settings["pollMinutes"] * 60_000 * state.poll_backoff))
+
+  # Waits for the next look at the pace saved. A look under way, or a wait already
+  # over (its `:poll` is on its way), arms at that pace when it ends, so only one
+  # wait is ever armed.
+  defp rearm(%{timer: nil} = state), do: state
+
+  defp rearm(state) do
+    if Process.cancel_timer(state.timer),
+      do: %{state | timer: arm(state)},
+      else: %{state | timer: nil}
+  end
 
   defp rate_limited?(problem) when is_binary(problem),
     do: problem =~ ~r/rate.?limit|429|too many requests/i
@@ -1320,13 +1424,13 @@ defmodule HalC2Plugins.CodeReview do
               "attachments" => []
             }
           },
-          listed: settings["display"] != "page"
+          listed: listed?(settings)
         )
       end
 
     case result do
       {:ok, _} ->
-        :ok
+        GenServer.cast(__MODULE__, {:launched, listed?(settings)})
 
       {:elsewhere, other, started} ->
         Checkout.remove(started["root"], started["checkout"])
@@ -1562,6 +1666,7 @@ defmodule HalC2Plugins.CodeReview do
     verdict = arguments["verdict"]
     summary = String.trim(arguments["summary"] || "")
     comments = arguments["comments"] || []
+    validation = validation(arguments["validation"])
 
     cond do
       verdict not in @verdicts ->
@@ -1569,6 +1674,9 @@ defmodule HalC2Plugins.CodeReview do
 
       not is_list(comments) or not Enum.all?(comments, &comment?/1) ->
         {:error, "each comment needs a path, a line number and a body."}
+
+      match?({:error, _}, validation) ->
+        validation
 
       true ->
         lines =
@@ -1609,7 +1717,15 @@ defmodule HalC2Plugins.CodeReview do
         # The pull request takes a review that says nothing only as an approval.
         if verdict != "approve" and summary == "" and placed == [],
           do: {:error, "summary must say what the review found when no comment is on a line of the change."},
-          else: {:ok, %{verdict: verdict, summary: summary, comments: placed, general: general}}
+          else:
+            {:ok,
+             %{
+               verdict: verdict,
+               summary: summary,
+               comments: placed,
+               general: Enum.map(general, &Map.take(&1, ~w(path line severity))),
+               validation: validation
+             }}
     end
   end
 
@@ -1617,6 +1733,35 @@ defmodule HalC2Plugins.CodeReview do
     do: is_binary(path) and is_integer(line) and line > 0 and is_binary(body) and String.trim(body) != ""
 
   defp comment?(_), do: false
+
+  @validation [{"ran", "command", "result"}, {"notRun", "check", "reason"}, {"blocked", "check", "error"}]
+
+  # What the agent checked, each entry on one line, or nil when it says nothing.
+  defp validation(nil), do: nil
+
+  defp validation(given) when is_map(given) do
+    Enum.reduce_while(@validation, %{}, fn {list, name, value}, acc ->
+      entries = given[list] || []
+
+      if is_list(entries) and Enum.all?(entries, &entry?(&1, name, value)) do
+        lines = Enum.map(entries, &%{name => one_line(&1[name]), value => one_line(&1[value])})
+        {:cont, Map.put(acc, list, lines)}
+      else
+        {:halt, {:error, "each validation.#{list} entry needs a #{name} and a #{value}."}}
+      end
+    end)
+    |> case do
+      {:error, _} = error -> error
+      lists -> if Enum.all?(Map.values(lists), &(&1 == [])), do: nil, else: lists
+    end
+  end
+
+  defp validation(_), do: {:error, "validation must be an object with ran, notRun and blocked."}
+
+  defp one_line(text), do: text |> String.split() |> Enum.join(" ")
+
+  defp entry?(entry, name, value),
+    do: is_map(entry) and Enum.all?([name, value], &(is_binary(entry[&1]) and String.trim(entry[&1]) != ""))
 
   # A suggested replacement rides in the comment as a suggestion block, which
   # the host only accepts for a line of the new file; on an old line it is
@@ -1649,15 +1794,15 @@ defmodule HalC2Plugins.CodeReview do
       review["verdict"] != "comment" and (settings["verdictAsComment"] == true or not may_give?(review))
 
     body =
-      if as_comment,
-        do: String.trim("#{verdict_line(review["verdict"])}\n\n#{review["summary"]}"),
-        else: review["summary"]
-
-    body =
-      case findings_index(review["comments"] || []) do
-        nil -> body
-        index -> String.trim("#{body}\n\n#{index}")
-      end
+      [
+        as_comment && verdict_line(review["verdict"]),
+        headline(review),
+        review["summary"],
+        validation_text(review["validation"]),
+        findings_index(review["comments"] || [])
+      ]
+      |> Enum.reject(&(&1 in [nil, false, ""]))
+      |> Enum.join("\n\n")
 
     body = String.trim("#{body}\n\n#{marker(review)}")
 
@@ -1785,6 +1930,67 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  # The review's first line, from its findings as they stand: the comments the
+  # user kept and those kept in the summary. Reviews saved before `general` was
+  # kept count only their line comments.
+  defp headline(review) do
+    findings =
+      Enum.reject(review["comments"] || [], & &1["dismissed"]) ++ (review["general"] || [])
+
+    case length(findings) do
+      0 ->
+        "No findings."
+
+      count ->
+        severities = Enum.map(findings, &severity(&1["severity"]))
+
+        by_severity =
+          severities
+          |> Enum.frequencies()
+          |> Enum.sort_by(fn {severity, _} -> Enum.find_index(@severities, &(&1 == severity)) || 3 end)
+          |> Enum.map(fn {severity, n} -> "#{n} #{severity || "unrated"}" end)
+
+        noun = if count == 1, do: "finding", else: "findings"
+
+        if Enum.all?(severities, &is_nil/1),
+          do: "#{count} #{noun}.",
+          else: "#{count} #{noun}: #{Enum.join(by_severity, ", ")}."
+    end
+  end
+
+  # What the agent checked: what it did not run and what the machine kept it from
+  # running in plain view, what it ran folded away.
+  defp validation_text(nil), do: nil
+
+  defp validation_text(validation) do
+    not_run = for e <- validation["notRun"] || [], do: "- #{e["check"]}: #{e["reason"]}"
+    blocked = for e <- validation["blocked"] || [], do: "- #{e["check"]}: #{e["error"]}"
+    ran = for e <- validation["ran"] || [], do: "- #{code(e["command"])}: #{e["result"]}"
+
+    [
+      not_run != [] && "**Not run**\n\n" <> Enum.join(not_run, "\n"),
+      blocked != [] &&
+        "**Blocked on the reviewing machine** (a setup problem there, not in this change)\n\n" <>
+          Enum.join(blocked, "\n"),
+      ran != [] &&
+        "<details><summary>Ran #{length(ran)} #{if length(ran) == 1, do: "check", else: "checks"}</summary>\n\n" <>
+          Enum.join(ran, "\n") <> "\n\n</details>"
+    ]
+    |> Enum.reject(&(&1 == false))
+    |> case do
+      [] -> nil
+      parts -> Enum.join(parts, "\n\n")
+    end
+  end
+
+  # A command as inline code, fenced past any backticks in it.
+  defp code(text) do
+    longest = ~r/`+/ |> Regex.scan(text) |> Enum.map(&String.length(hd(&1))) |> Enum.max(fn -> 0 end)
+    fence = String.duplicate("`", longest + 1)
+    pad = if String.contains?(text, "`"), do: " ", else: ""
+    "#{fence}#{pad}#{text}#{pad}#{fence}"
+  end
+
   defp verdict_line("approve"), do: "**Approved**"
   defp verdict_line("request-changes"), do: "**Changes requested**"
   defp verdict_line(_), do: ""
@@ -1909,7 +2115,10 @@ defmodule HalC2Plugins.CodeReview do
         state.reviews
         |> Map.values()
         |> Enum.sort_by(&{Enum.find_index(@order, fn s -> s == &1["status"] end), &1["repository"], -&1["number"]})
-        |> Enum.map(&Map.drop(&1, ["root"])),
+        |> Enum.map(fn review ->
+          review = Map.drop(review, ["root"])
+          if review["verdict"], do: Map.put(review, "headline", headline(review)), else: review
+        end),
       "problem" =>
         case Enum.reject(
                [state.problem, paused?(state) && state.paused_reason],

@@ -593,10 +593,10 @@ defmodule HalC2.Orchestration do
       # The archived threads are read from the sidebar rows, which a stream writes a
       # moment after its events: this one is in place before the reply, so a client
       # that lists them next sees the change.
-      if type in ~w(thread.archive thread.unarchive thread.delete),
+      if type in ~w(thread.archive thread.unarchive thread.delete thread.runtime-mode.set),
         do: HalC2.Streams.flush_shell(thread_id)
 
-      {:ok, %{"sequence" => sequence(thread_id)}}
+      {:ok, Map.merge(%{"sequence" => sequence(thread_id)}, shell_version(type))}
     end
   end
 
@@ -2167,6 +2167,20 @@ defmodule HalC2.Orchestration do
 
   defp sequence(thread_id), do: HalC2.Streams.sequence(thread_id)
 
+  # An access change names the version of this MC's rows that holds it, so a client
+  # shows the pick until its rows reach it, whichever arrives first.
+  defp shell_version("thread.runtime-mode.set") do
+    case HalC2.Shell.version() do
+      {epoch, rev} when is_binary(epoch) ->
+        %{"shell" => %{"mc" => to_string(node()), "epoch" => epoch, "rev" => rev}}
+
+      _ ->
+        %{}
+    end
+  end
+
+  defp shell_version(_type), do: %{}
+
   defp interrupt_request(state, command) do
     runs = StreamState.get(state, "run")
 
@@ -2461,16 +2475,20 @@ defmodule HalC2.Orchestration do
     }
   end
 
-  # The files providers read, from this MC's attachment store.
+  # The files providers read, from this MC's attachment store. One whose
+  # upload is gone keeps its id and no path, so a provider that checks its
+  # attachments itself (Antigravity) can say what is wrong with it.
   defp provider_attachments(attachments) do
-    for attachment <- attachments || [],
-        path = HalC2.Attachments.path(attachment),
-        do: %{
-          type: attachment["type"],
-          name: attachment["name"],
-          mime_type: attachment["mimeType"],
-          path: path
-        }
+    for attachment <- attachments || [] do
+      %{
+        type: attachment["type"],
+        id: attachment["id"],
+        name: attachment["name"],
+        mime_type: attachment["mimeType"],
+        source: attachment["source"],
+        path: HalC2.Attachments.path(attachment)
+      }
+    end
   end
 
   # The steered message's place in the transcript, inside the run it joined.

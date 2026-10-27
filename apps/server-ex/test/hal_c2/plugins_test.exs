@@ -89,6 +89,76 @@ defmodule HalC2.PluginsTest do
     assert stored("notes") == %{"count" => 2}
   end
 
+  test "a plugin that takes settings live keeps its process, and work in it, through a save" do
+    pid = enable_worker("live", :live)
+
+    assert {:ok, _} = save("live", %{"token" => "s3cret"})
+
+    # As `start_link/1` takes them: the defaults filled in and the secret revealed.
+    assert_receive {:changed, ^pid, %{"count" => 1, "token" => "s3cret"}, %{"count" => 1}}
+    assert GenServer.call(pid, :settings) == %{"count" => 1, "token" => "s3cret"}
+    assert Process.alive?(pid)
+    refute_received {:started, _, _}
+  end
+
+  test "a plugin without live settings is restarted with the ones saved" do
+    old = enable_worker("restarting", :restart)
+    ref = Process.monitor(old)
+
+    assert {:ok, _} = save("restarting", %{"count" => 5})
+
+    assert_receive {:DOWN, ^ref, _, _, _}
+    assert_receive {:started, new, %{"count" => 5}}
+    assert GenServer.call(new, :settings) == %{"count" => 5}
+  end
+
+  test "a plugin that refuses settings live is restarted with them" do
+    old = enable_worker("refusing", :refuse)
+    ref = Process.monitor(old)
+
+    assert {:ok, _} = save("refusing", %{"count" => 5})
+
+    assert_receive {:changed, ^old, %{"count" => 5}, _}
+    assert_receive {:DOWN, ^ref, _, _, _}
+    assert_receive {:started, _new, %{"count" => 5}}
+  end
+
+  test "a save the plugin refuses leaves the running plugin as it was" do
+    pid = enable_worker("live", :live)
+    assert {:ok, _} = save("live", %{"count" => 5})
+    assert_receive {:changed, ^pid, _, _}
+
+    assert {:error, %{"_tag" => "PluginSettingsInvalid", "message" => "count: too many"}} =
+             save("live", %{"count" => 500})
+
+    assert stored("live") == %{"count" => 5}
+    assert GenServer.call(pid, :settings) == %{"count" => 5}
+    refute_received {:changed, _, _, _}
+    refute_received {:started, _, _}
+  end
+
+  test "a plugin restarted after a crash runs with the settings saved last" do
+    pid = enable_worker("live", :live)
+    assert {:ok, _} = save("live", %{"count" => 7})
+
+    Process.exit(pid, :kill)
+
+    assert_receive {:started, new, %{"count" => 7}}, 1_000
+    refute new == pid
+  end
+
+  test "a plugin without a process of its own keeps running through a save" do
+    package("notes", "1")
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "notes", "acceptPermissions" => []})
+    %{sup: sup} = plugin("notes")
+
+    assert {:ok, _} = save("notes", %{"count" => 3})
+
+    assert %{sup: ^sup} = plugin("notes")
+    assert Process.alive?(sup)
+  end
+
   test "a package of UI parts only keeps serving the version that loaded when an update is refused" do
     package("notes", "1")
     Plugins.handle("rescan", %{})
@@ -346,7 +416,7 @@ defmodule HalC2.PluginsTest do
   end
 
   # A package with MC sources `[{name, source}]`, replacing what the directory held.
-  defp code_package(id, version, sources) do
+  defp code_package(id, version, sources, settings \\ []) do
     dir = Path.join(plugins_dir(), id)
     File.rm_rf!(dir)
     File.mkdir_p!(Path.join(dir, "mc"))
@@ -358,11 +428,74 @@ defmodule HalC2.PluginsTest do
         "name" => id,
         "version" => version,
         "description" => "A package with code.",
-        "apiVersion" => 1
+        "apiVersion" => 1,
+        "settings" => settings
       })
     )
 
     for {name, source} <- sources, do: File.write!(Path.join([dir, "mc", name]), source)
+  end
+
+  # Enables the plugin `id`, whose process tells the test when it starts and, `live`,
+  # when it takes settings (`:live`), or refuses them (`:refuse`), or cannot (`:restart`).
+  defp enable_worker(id, live) do
+    Process.register(self(), :plugins_test)
+
+    code_package("#{id}", "1", [{"worker.ex", worker_source(id, live)}], [
+      %{"key" => "count", "label" => "Count", "type" => "number", "default" => 1},
+      %{"key" => "token", "label" => "Token", "type" => "secret"}
+    ])
+
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => id, "acceptPermissions" => []})
+    assert_receive {:started, pid, %{"count" => 1}}
+    pid
+  end
+
+  defp worker_source(id, live) do
+    module = "HalC2PluginsTest.Worker#{Macro.camelize(id)}"
+
+    changed =
+      case live do
+        :restart ->
+          ""
+
+        :live ->
+          "def settings_changed(pid, settings, old), do: GenServer.call(pid, {:set, settings, old})"
+
+        :refuse ->
+          "def settings_changed(pid, settings, old), do: GenServer.call(pid, {:refuse, settings, old})"
+      end
+
+    """
+    defmodule #{module} do
+      @behaviour HalC2.Plugins.Extension
+      use GenServer
+
+      def start_link(settings), do: GenServer.start_link(__MODULE__, settings)
+      def validate_settings(%{"count" => count}) when count > 100, do: {:error, "count: too many"}
+      def validate_settings(_settings), do: :ok
+      #{changed}
+      def call(method, _input, _context), do: {:error, "no method " <> method}
+
+      def init(settings) do
+        send(:plugins_test, {:started, self(), settings})
+        {:ok, settings}
+      end
+
+      def handle_call(:settings, _from, settings), do: {:reply, settings, settings}
+
+      def handle_call({:set, settings, old}, _from, _settings) do
+        send(:plugins_test, {:changed, self(), settings, old})
+        {:reply, :ok, settings}
+      end
+
+      def handle_call({:refuse, settings, old}, _from, state) do
+        send(:plugins_test, {:changed, self(), settings, old})
+        {:reply, {:error, "not now"}, state}
+      end
+    end
+    """
   end
 
   # Calls the package's module, which only exists once the test has loaded it.

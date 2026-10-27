@@ -888,6 +888,36 @@ defmodule HalC2.OrchestrationTest do
       assert is_binary(pinned) and is_binary(archived)
     end
 
+    test "an access change names the version of the rows that holds it" do
+      thread_id = launch("list the files")
+      _ = await_run(thread_id, "completed")
+
+      assert {:ok, %{"shell" => %{"mc" => mc, "epoch" => epoch, "rev" => rev}}} =
+               Orchestration.dispatch(%{
+                 "type" => "thread.runtime-mode.set",
+                 "threadId" => thread_id,
+                 "runtimeMode" => "approval-required"
+               })
+
+      # The row is in the shell by the answer, so a client at that version has it.
+      assert mc == to_string(node())
+
+      assert {"thread", %{"runtimeMode" => "approval-required"}} =
+               HalC2.Shell.row(node(), thread_id)
+
+      assert {^epoch, now} = HalC2.Shell.version()
+      assert now >= rev
+
+      assert {:ok, answer} =
+               Orchestration.dispatch(%{
+                 "type" => "thread.interaction-mode.set",
+                 "threadId" => thread_id,
+                 "interactionMode" => "plan"
+               })
+
+      refute Map.has_key?(answer, "shell")
+    end
+
     test "regenerating a title marks it in flight until the attempt ends" do
       thread_id = launch("list the files")
       _ = await_run(thread_id, "completed")

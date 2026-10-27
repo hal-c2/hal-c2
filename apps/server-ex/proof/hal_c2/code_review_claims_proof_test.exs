@@ -68,6 +68,10 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview handle_call {:start, _, _}" => @user,
       "HalC2Plugins.CodeReview handle_call {:dismiss, _, _, _}" => @user,
       "HalC2Plugins.CodeReview handle_call {:discard, _}" => @user,
+      "HalC2Plugins.CodeReview handle_call {:settings, _}" =>
+        "a save applies from the next step: the model looks at any time, starts a queued review in the step that queues it and has no display",
+      "HalC2Plugins.CodeReview handle_cast {:launched, _}" => @shown,
+      "HalC2Plugins.CodeReview handle_info {:EXIT, _, _}" => @shown,
       "HalC2Plugins.CodeReview handle_info _" =>
         "nodeup and the rest change nothing; connect stands for a nodeup",
       "HalC2Plugins.CodeReview state :settings" => @look,
@@ -79,6 +83,9 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview state :failures" => @pause,
       "HalC2Plugins.CodeReview state :poll_backoff" =>
         "how long until the next look; the model looks at any time",
+      "HalC2Plugins.CodeReview state :timer" =>
+        "when the next look is; the model looks at any time",
+      "HalC2Plugins.CodeReview state :lister" => @shown,
       "HalC2Plugins.CodeReview.Checkout.read/4" => @agent,
       "HalC2Plugins.CodeReview.Checkout.diff_lines/3" => @agent,
       "HalC2Plugins.CodeReview.Checkout.position/4" => @agent,
@@ -96,8 +103,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
     environment: %{
       "push" => "a commit is pushed to the pull request",
       "crash" => "a machine goes down, and its connections and the locks held on it",
-      "bounce" =>
-        "the plugin's server alone goes down, its node connected throughout; a settings save is a bounce and a restart in a row",
+      "bounce" => "the plugin's server alone goes down, its node connected throughout",
       "restart" => "the plugin, and its machine if down, come back: init/1 and load/0",
       "partition" => "a connection drops",
       "connect" => "Discovery connects two machines that are up"

@@ -161,8 +161,7 @@ defmodule HalC2.CodeReviewTest do
 
     send(@server, :poll)
     await_file(Path.join(context.dir, "list.held"))
-    {:monitors, [{:process, look} | _]} = Process.info(Process.whereis(@server), :monitors)
-    ref = Process.monitor(look)
+    ref = Process.monitor(look(Process.whereis(@server)))
 
     {:ok, _} = HalC2.Plugins.handle("disable", %{"id" => @id})
 
@@ -305,6 +304,29 @@ defmodule HalC2.CodeReviewTest do
     _ = context
   end
 
+  test "a report whose validation lacks a reason goes back to the agent, and the review runs on",
+       context do
+    review = start_review()
+
+    assert {:error, "plugin_failed", message} =
+             HalC2.Plugins.call_tool(
+               "code_review_report",
+               %{
+                 "verdict" => "approve",
+                 "summary" => "Looks right.",
+                 "validation" => %{"notRun" => [%{"check" => "the full suite", "reason" => " "}]}
+               },
+               review["threadId"]
+             )
+
+    assert message =~ "each validation.notRun entry needs a check and a reason"
+
+    assert %{"status" => "running"} =
+             GenServer.call(HalC2Plugins.CodeReview, :reviews)[review["key"]]
+
+    _ = context
+  end
+
   test "showing reviews on the page only unlists review threads there already are", context do
     review = start_review()
     assert %{"plugin" => %{"listed" => true}} = thread(review["threadId"])
@@ -317,6 +339,74 @@ defmodule HalC2.CodeReviewTest do
     settle()
     assert %{"plugin" => %{"listed" => true}} = thread(review["threadId"])
     _ = context
+  end
+
+  test "the last display saved is the one review threads end with", context do
+    review = start_review()
+    thread_id = review["threadId"]
+    hook = {__MODULE__, :hold, [thread_id, Process.whereis(@server), self()]}
+    Application.put_env(:hal_c2, :streams_hook, hook)
+    on_exit(fn -> Application.delete_env(:hal_c2, :streams_hook) end)
+
+    # The listing for the page is held on its way to the thread...
+    put_settings(%{"display" => "page"})
+    assert_receive {:held, unlisting}, 5_000
+    Application.delete_env(:hal_c2, :streams_hook)
+
+    # ...while the threads are shown again, and lands after it.
+    put_settings(%{"display" => "threads"})
+    settle([unlisting])
+    send(unlisting, :go)
+    settle()
+
+    assert %{"plugin" => %{"listed" => true}} = thread(thread_id)
+    _ = context
+  end
+
+  test "a review discarded while the threads are listed again stays out of the list", context do
+    review = start_review()
+    thread_id = review["threadId"]
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        thread_id
+      )
+
+    save_settings(%{"display" => "page"})
+    hook = {__MODULE__, :hold, [thread_id, Process.whereis(@server), self()]}
+    Application.put_env(:hal_c2, :streams_hook, hook)
+    on_exit(fn -> Application.delete_env(:hal_c2, :streams_hook) end)
+
+    # The listing for the threads is held on its way to the thread...
+    put_settings(%{"display" => "threads"})
+    assert_receive {:held, listing}, 5_000
+    Application.delete_env(:hal_c2, :streams_hook)
+
+    # ...while the review is discarded, and must not list it after it is gone.
+    {:ok, _} = call("discard", %{"key" => @key})
+    send(listing, :go)
+    settle()
+
+    assert %{"plugin" => %{"listed" => false}} = thread(thread_id)
+    _ = context
+  end
+
+  test "a display saved while the checkout of a review is fetched lists its thread as it now says",
+       context do
+    hold = Path.join(context.dir, "fetch.hold")
+    File.write!(hold, "")
+    on_exit(fn -> File.rm(hold) end)
+    {:ok, _} = call("start", %{"repository" => "acme/api", "number" => 1})
+    await_file(Path.join(context.dir, "fetch.held"))
+
+    put_settings(%{"display" => "page"})
+    File.rm!(hold)
+    settle()
+
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    assert %{"plugin" => %{"listed" => false}} = thread(thread_id)
   end
 
   test "a review runs with the model options picked in the settings", context do
@@ -358,11 +448,41 @@ defmodule HalC2.CodeReviewTest do
     settle()
     assert %{"status" => "queued"} = review()
 
-    # A settings save restarts the plugin; the queue must not start into the limit.
-    save_settings(%{})
+    # Neither a save, which starts queued reviews when it makes room, nor a restart
+    # starts the queue into the limit.
+    save_settings(%{"concurrency" => 2})
+    assert %{"status" => "queued"} = review()
+    {:ok, _} = HalC2.Plugins.handle("restart", %{"id" => @id})
+    settle()
     refresh()
     assert %{"status" => "queued"} = review()
     assert GenServer.call(@server, :snapshot)["problem"] =~ "usage limit"
+    _ = context
+  end
+
+  test "a review under way keeps running through a settings save", context do
+    review = start_review()
+    pid = Process.whereis(@server)
+
+    save_settings(%{"concurrency" => 2, "display" => "both", "repositories" => []})
+
+    assert Process.whereis(@server) == pid
+    assert %{"status" => "running", "threadId" => thread_id} = review()
+    assert thread_id == review["threadId"]
+    assert GenServer.call(@server, :snapshot)["watching"] == []
+    _ = context
+  end
+
+  test "a new pace re-arms the wait for the next look, and only once", context do
+    pid = Process.whereis(@server)
+    %{timer: armed} = await_look()
+    assert Process.read_timer(armed) > 59 * 60_000
+
+    save_settings(%{"pollMinutes" => 5})
+
+    %{timer: timer} = :sys.get_state(pid)
+    refute Process.read_timer(armed)
+    assert Process.read_timer(timer) in 1..(5 * 60_000)
     _ = context
   end
 
@@ -559,11 +679,32 @@ defmodule HalC2.CodeReviewTest do
     |> Enum.filter(&(&1 =~ "pulls/1/reviews"))
   end
 
+  # A `:streams_hook`: holds the first of the plugin's processes on its way to
+  # `thread_id`'s stream until it is sent `:go`, and tells `test` it is held.
+  def hold(thread_id, server, test, :ensured, thread_id) do
+    {:links, links} = Process.info(self(), :links)
+
+    if server in links do
+      send(test, {:held, self()})
+      receive do: (:go -> :ok)
+    end
+
+    :ok
+  end
+
+  def hold(_thread_id, _server, _test, _stage, _stream_id), do: :ok
+
   defp thread(thread_id) do
     HalC2.StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id]
   end
 
   defp save_settings(overrides) do
+    put_settings(overrides)
+    settle()
+  end
+
+  # Saves the settings without waiting for what the plugin does with them.
+  defp put_settings(overrides) do
     settings =
       Map.merge(
         %{
@@ -581,7 +722,6 @@ defmodule HalC2.CodeReviewTest do
       )
 
     {:ok, _} = HalC2.Plugins.handle("saveSettings", %{"id" => @id, "settings" => settings})
-    settle()
   end
 
   defp start_review do
@@ -606,20 +746,16 @@ defmodule HalC2.CodeReviewTest do
     GenServer.call(@server, :snapshot)["reviews"] |> Enum.find(&(&1["key"] == @key))
   end
 
-  # Returns once the plugin has nothing in flight and has heard from what ended.
-  defp settle do
+  # Returns once the plugin has nothing in flight but the processes `held`, and has
+  # heard from what ended.
+  defp settle(held \\ []) do
     pid = Process.whereis(@server)
-    state = :sys.get_state(pid)
     {:parent, parent} = Process.info(pid, :parent)
+    # Runs, posts and the look are all linked; what the plugin monitors besides
+    # them includes whatever it is calling, such as the file server.
     {:links, links} = Process.info(pid, :links)
 
-    poller =
-      case Process.info(pid, :monitors) do
-        {:monitors, [{:process, poller} | _]} when state.polling != nil -> [poller]
-        _ -> []
-      end
-
-    case Enum.filter(links, &(is_pid(&1) and &1 != parent)) ++ poller do
+    case Enum.filter(links, &(is_pid(&1) and &1 != parent and &1 not in held)) do
       [] ->
         :sys.get_state(pid)
         :ok
@@ -628,7 +764,7 @@ defmodule HalC2.CodeReviewTest do
         refs = Enum.map(kids, &Process.monitor/1)
         assert_receive {:DOWN, ref, :process, _, _} when is_reference(ref), 15_000
         Enum.each(refs, &Process.demonitor(&1, [:flush]))
-        settle()
+        settle(held)
     end
   end
 
@@ -637,12 +773,19 @@ defmodule HalC2.CodeReviewTest do
     pid = Process.whereis(@server)
 
     with %{polling: polling} when polling != nil <- :sys.get_state(pid),
-         {:monitors, [{:process, look} | _]} <- Process.info(pid, :monitors) do
+         look when is_pid(look) <- look(pid) do
       ref = Process.monitor(look)
       assert_receive {:DOWN, ^ref, :process, _, _}, 15_000
     end
 
     :sys.get_state(pid)
+  end
+
+  # The look under way: the one process the plugin both links and monitors.
+  defp look(pid) do
+    {:links, links} = Process.info(pid, :links)
+    {:monitors, monitors} = Process.info(pid, :monitors)
+    Enum.find_value(monitors, fn {:process, p} -> p in links and p end)
   end
 
   defp await_file(path) do

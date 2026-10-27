@@ -9,7 +9,9 @@ defmodule HalC2.PluginsPropTest do
   whose code does not compile, updates that ask for more or fewer permissions), rescan,
   install one while a process is parked in the code now loaded (an update the host
   refuses must leave that version loaded), enable with whatever a client sends as accepted permissions, disable, restart, save
-  settings, call the running plugin, read its files, follow, publish and drop topics,
+  settings (version 2 of a package takes them live, so its process stays; version 1
+  is restarted with them), call the running plugin (whose process must run with the
+  settings saved last, after a crash too), read its files, follow, publish and drop topics,
   kill a client, crash a plugin's process once or until its supervisor gives up, crash
   a worker announced the way a host from before an update in place heard of them,
   install and turn on a package that hears Slack, hand the running plugins Slack events (`slack_event/2`, in one series, as the Slack
@@ -162,9 +164,13 @@ defmodule HalC2.PluginsPropTest do
         if workers == [] do
           []
         else
+          # A save to a running process, then a crash, then a call: it must run with
+          # what was saved.
           [
             {2, {:call, __MODULE__, :crash, [oneof(workers)]}},
-            {1, {:call, __MODULE__, :crash_hard, [oneof(workers)]}}
+            {1, {:call, __MODULE__, :crash_hard, [oneof(workers)]}},
+            {3, {:call, __MODULE__, :save_settings, [oneof(workers), accepted_settings()]}},
+            {3, {:call, __MODULE__, :call_plugin, [oneof(workers)]}}
           ]
         end
     )
@@ -232,6 +238,13 @@ defmodule HalC2.PluginsPropTest do
         [1]
       ])
 
+  # Settings every plugin takes.
+  defp accepted_settings do
+    let [count <- oneof([2, 5, 7]), mode <- oneof(["a", "b"]), token <- oneof(["s1", "s2"])] do
+      %{"count" => count, "mode" => mode, "token" => token}
+    end
+  end
+
   defp settings_input do
     let pairs <-
           resize(
@@ -285,7 +298,10 @@ defmodule HalC2.PluginsPropTest do
   # afterwards the model's next state.
   def postcondition(state, call, {reply, observed}) do
     {next, expect} = step(state, call)
-    problems = reply_problems(expect, reply) ++ problems(next, observed)
+
+    problems =
+      reply_problems(expect, reply) ++
+        problems(next, observed) ++ worker_problems(state, next, call, expect, observed)
 
     if problems != [], do: Process.put({__MODULE__, :problems}, problems)
     problems == []
@@ -303,6 +319,36 @@ defmodule HalC2.PluginsPropTest do
       |> Map.reject(fn {_id, queued} -> queued == [] end)
 
     {%{next | queue: queue}, expect}
+  end
+
+  # A save a running plugin takes live keeps its process, and one it cannot take
+  # replaces it; either way, as after a crash, the process runs with what was saved.
+  defp worker_problems(s, next, {:call, _, :save_settings, [id, _]}, :ok, observed) do
+    %{worker: {before, now}, worker_settings: settings} = observed
+
+    case s.held[id] do
+      %{running: true, st: :compiled, desc: {:ok, "2", _}} when before == nil or before != now ->
+        [{:worker_replaced, id, before, now}]
+
+      %{running: true, st: :compiled, desc: {:ok, "1", _}} when now == nil or before == now ->
+        [{:worker_not_restarted, id, before, now}]
+
+      _ ->
+        []
+    end ++ worker_settings(next, id, settings)
+  end
+
+  defp worker_problems(_s, next, {:call, _, :crash, [id]}, _expect, observed),
+    do: worker_settings(next, id, observed.worker_settings)
+
+  defp worker_problems(_s, _next, _call, _expect, _observed), do: []
+
+  defp worker_settings(s, id, settings) do
+    expected =
+      if match?(%{running: true, st: :compiled, desc: {:ok, _, _}}, s.held[id]),
+        do: effective(conf(s, id))
+
+    if settings == expected, do: [], else: [{:worker_settings, id, settings, expected}]
   end
 
   defp current_run?(s, id, run), do: match?(%{running: true, run: ^run}, s.held[id])
@@ -625,8 +671,10 @@ defmodule HalC2.PluginsPropTest do
 
         s = put_conf(s, id, &%{&1 | stored: stored, secret: secret})
 
+        # Version 2 takes them live, and a package of UI parts only reads them per call:
+        # neither stops. Version 1 starts again with them.
         s =
-          if e.running,
+          if e.running and match?({:ok, "1", _}, e.desc),
             do: s |> put_in([:held, id], %{e | running: false, crashes: 0}) |> reconcile(),
             else: s
 
@@ -851,8 +899,23 @@ defmodule HalC2.PluginsPropTest do
   def disable(id), do: {Plugins.handle("disable", %{"id" => id}), observe()}
   def restart(id), do: {Plugins.handle("restart", %{"id" => id}), observe()}
 
-  def save_settings(id, input),
-    do: {Plugins.handle("saveSettings", %{"id" => id, "settings" => input}), observe()}
+  def save_settings(id, input) do
+    before = Process.whereis(plugin_module(id))
+    reply = Plugins.handle("saveSettings", %{"id" => id, "settings" => input})
+    now = Process.whereis(plugin_module(id))
+
+    observed =
+      Map.merge(observe(), %{worker: {before, now}, worker_settings: running_settings(id)})
+
+    {reply, observed}
+  end
+
+  # What the plugin's process runs with, if one runs.
+  defp running_settings(id) do
+    GenServer.call(plugin_module(id), :settings)
+  catch
+    :exit, _ -> nil
+  end
 
   def call_plugin(id),
     do: {Plugins.handle("call", %{"id" => id, "method" => "about"}), observe()}
@@ -898,7 +961,7 @@ defmodule HalC2.PluginsPropTest do
     end
 
     :sys.get_state(sup)
-    {:ok, observe()}
+    {:ok, Map.put(observe(), :worker_settings, running_settings(id))}
   end
 
   # A worker announced in the form a host from before an update in place took, queued
@@ -1301,6 +1364,9 @@ defmodule HalC2.PluginsPropTest do
         def init(settings), do: {:ok, settings}
 
         def handle_call(:settings, _from, settings), do: {:reply, settings, settings}
+        def handle_call({:settings, settings}, _from, _old), do: {:reply, :ok, settings}
+
+        #{if version == "2", do: "def settings_changed(pid, settings, _old), do: GenServer.call(pid, {:settings, settings})"}
 
         def validate_settings(%{"count" => count}) when is_number(count) and count > 100,
           do: {:error, "count is at most 100"}

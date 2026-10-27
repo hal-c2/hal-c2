@@ -2788,6 +2788,10 @@ export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaun
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
+  // For an access change: the version of the MC's shell rows that holds it.
+  shell: Schema.optional(
+    Schema.Struct({ mc: Schema.String, epoch: Schema.String, rev: NonNegativeInt }),
+  ),
 });
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
 

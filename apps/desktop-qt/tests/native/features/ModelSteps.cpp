@@ -217,6 +217,26 @@ const Steps steps([] {
     fail(QStringLiteral("the composer does not offer auto-accept edits: %1").arg(show(composer(world).value(QStringLiteral("runtimeModes")))));
   });
 
+  // The MC is told before any message, and the picker keeps the mode once the
+  // thread's row carries it.
+  step(QStringLiteral("the thread is in (.+) at once"), [](World& world, const Captures& c, const Table&) {
+    QString mode;
+    for (const QVariant& entry : composer(world).value(QStringLiteral("runtimeModes")).toList()) {
+      if (entry.toMap().value(QStringLiteral("label")).toString().compare(c[0], Qt::CaseInsensitive) == 0) mode = entry.toMap().value(QStringLiteral("value")).toString();
+    }
+    world.waitFor([&] {
+      return std::any_of(world.mc.commands.cbegin(), world.mc.commands.cend(), [&](const QJsonObject& command) {
+        return command.value(QLatin1String("type")) == QLatin1String("thread.runtime-mode.set") && command.value(QLatin1String("runtimeMode")) == mode;
+      });
+    }, [&] { return QStringLiteral("the access change for %1; the MC has %2").arg(mode, world.describeCommands()); });
+    for (const QJsonObject& command : std::as_const(world.mc.commands)) {
+      expect(command.value(QLatin1String("type")) != QLatin1String("message.dispatch"), QStringLiteral("a message was sent with the access change"));
+    }
+    updateThread(world, {{QStringLiteral("runtimeMode"), mode}});
+    world.waitFor([&] { return composer(world).value(QStringLiteral("runtimeMode")) == mode; },
+                  [&] { return QStringLiteral("the composer in %1; it shows %2").arg(mode, show(composer(world))); });
+  });
+
   // What the user does.
   step(QStringLiteral("the user looks through the models"), [](World& world, const Captures&, const Table&) { world.sync(); });
   step(QStringLiteral("the user chooses the model %1").arg(q), [](World& world, const Captures& c, const Table&) {

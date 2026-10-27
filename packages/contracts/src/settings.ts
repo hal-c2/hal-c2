@@ -1693,6 +1693,19 @@ export const ServerSettingsPatch = Schema.Struct({
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
+/**
+ * The MC's `hal-c2.readSettings` reply: its settings document as stored, and the
+ * version a `hal-c2.writeSettings` must name. `shared` lists the settings that follow
+ * the person to every cluster member (document keys, and `"keybindings"`); an MC from
+ * before shared settings leaves it out.
+ */
+export const McSettingsDocument = Schema.Struct({
+  settings: Schema.Record(Schema.String, Schema.Unknown),
+  version: Schema.Int,
+  shared: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export type McSettingsDocument = typeof McSettingsDocument.Type;
+
 export const ClientSettingsPatch = Schema.Struct({
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),

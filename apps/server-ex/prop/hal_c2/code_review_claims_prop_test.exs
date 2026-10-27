@@ -1314,6 +1314,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       })
 
     HalC2.PullRequests.invalidate(%{})
+    # The look the plugin started with is over, and one sees the repository saved.
+    drain()
+    {:ok, _} = HalC2.Plugins.handle("call", %{"id" => @id, "method" => "refresh", "input" => %{}})
     drain()
     :sys.get_state(HalC2.Plugins)
     take_messages()

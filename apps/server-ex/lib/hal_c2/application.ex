@@ -104,6 +104,8 @@ defmodule HalC2.Application do
       {Registry, keys: :unique, name: HalC2.Muse.Registry},
       HalC2.Acp.UrlAuth,
       HalC2.Acp.Antigravity.Installation,
+      # Owns the table of live Antigravity runtime temp directories.
+      HalC2.Acp.Antigravity.SessionFiles,
       Supervisor.child_spec({Task, &HalC2.Acp.load/0}, id: :acp_models),
       HalC2.Web,
       # server-runtime.json, once the listener is bound; removed first on the way down.

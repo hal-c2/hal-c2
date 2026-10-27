@@ -257,6 +257,25 @@ const Steps steps([] {
       expect(drawsText(waitShownNamed(world, QStringLiteral("codeReviewComment:") + id), where), QStringLiteral("comment %1 is not on %2").arg(id, where));
     }
   });
+  step(QStringLiteral("the review of #(\\d+) is waiting with a check its machine blocked"), [](World& world, const Captures& c, const Table&) {
+    QJsonObject& review = add(world, c[0].toInt(), QStringLiteral("waiting"));
+    finish(review, QStringLiteral("waiting"), QStringLiteral("comment"));
+    review.insert(QStringLiteral("headline"), QStringLiteral("2 findings."));
+    review.insert(QStringLiteral("validation"),
+                  QJsonObject{{QStringLiteral("ran"), QJsonArray{QJsonObject{{QStringLiteral("command"), QStringLiteral("mix test")}, {QStringLiteral("result"), QStringLiteral("412 passed")}}}},
+                              {QStringLiteral("notRun"), QJsonArray()},
+                              {QStringLiteral("blocked"), QJsonArray{QJsonObject{{QStringLiteral("check"), QStringLiteral("the e2e tests")}, {QStringLiteral("error"), QStringLiteral("STRIPE_KEY is not set")}}}}});
+    publish(world);
+  });
+  step(QStringLiteral("the blocked check is shown as something to fix on the MC's machine, apart from the verdict"), [](World& world, const Captures&, const Table&) {
+    const QString blocked = textOf(world, QStringLiteral("codeReviewBlockedText"));
+    expect(blocked.contains(QLatin1String("the e2e tests: STRIPE_KEY is not set")) && blocked.contains(QLatin1String("on the MC's machine")),
+           QStringLiteral("the blocked check reads %1").arg(blocked));
+    expect(textOf(world, QStringLiteral("codeReviewVerdict")) == QLatin1String("Comment"), QStringLiteral("the verdict reads %1").arg(textOf(world, QStringLiteral("codeReviewVerdict"))));
+    expect(textOf(world, QStringLiteral("codeReviewHeadline")) == QLatin1String("2 findings."), QStringLiteral("the headline reads %1").arg(textOf(world, QStringLiteral("codeReviewHeadline"))));
+    const QString ran = textOf(world, QStringLiteral("codeReviewValidationLines:ran"));
+    expect(ran.contains(QLatin1String("mix test: 412 passed")), QStringLiteral("what ran reads %1").arg(ran));
+  });
   step(QStringLiteral("the user can publish it or dismiss comments"), [](World& world, const Captures&, const Table&) {
     // A changed review draws its comments again.
     const auto dismiss = [&] { return findNamed(waitShownNamed(world, QStringLiteral("codeReviewComment:c1")), QStringLiteral("codeReviewDismiss")); };
