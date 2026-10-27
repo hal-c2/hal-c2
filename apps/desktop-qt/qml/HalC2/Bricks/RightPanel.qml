@@ -170,8 +170,10 @@ Rectangle {
                     Keys.onEnterPressed: clicked()
                     onClicked: Shell.dispatch("rightPanel.activate", { id: tab.modelData.id })
                     background: Rectangle {
-                        color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered || tab.visualFocus ? Theme.palette.color("surface", "#141416") : "transparent"
+                        color: tab.active ? Theme.palette.color("surfaceRaised", "#1f1f24") : tab.hovered ? Theme.palette.color("surface", "#141416") : "transparent"
                         radius: 6
+                        border.width: tab.visualFocus ? 1 : 0
+                        border.color: Theme.palette.color("focus", "#3b82f6")
                     }
 
                     Row {

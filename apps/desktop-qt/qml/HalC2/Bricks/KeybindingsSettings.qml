@@ -51,7 +51,7 @@ Rectangle {
         radius: Math.min(Theme.radius, 8)
         color: Theme.palette.color("input", "#18181b")
         border.width: 1
-        border.color: recording ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("border", "#27272a")
+        border.color: recording || activeFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("border", "#27272a")
         activeFocusOnTab: true
         Accessible.role: Accessible.Button
         Accessible.name: qsTr("Shortcut")

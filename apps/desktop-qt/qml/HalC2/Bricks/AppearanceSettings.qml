@@ -95,7 +95,7 @@ SettingsPage {
         background: Rectangle {
             radius: Math.min(Theme.radius, 8)
             color: choice.checked || choice.hovered || choice.down ? choice.accentSurface : Qt.alpha(choice.accentSurface, 0)
-            border.width: choice.checked || choice.visualFocus ? 1 : 0
+            border.width: choice.visualFocus ? 2 : choice.checked ? 1 : 0
             border.color: choice.visualFocus ? Theme.palette.color("focus", "#3b82f6") : Theme.palette.color("accent", "#2563eb")
         }
 
