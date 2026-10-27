@@ -82,8 +82,21 @@ defmodule HalC2.Mcp.Tools do
   def call("task_cancel", %{"taskId" => id}, caller),
     do: HalC2.Orchestration.Delegation.cancel(caller.thread_id, id)
 
-  def call(name, args, caller) when name in @preview,
-    do: HalC2.Mcp.Preview.call(name, args, caller)
+  # The browser tools are the credential's preview capability to give: a
+  # credential minted while the user withheld agent browser access (or while
+  # the settings granting it could not be read) is refused here, everywhere
+  # the token is honoured. A caller minted before capabilities existed has
+  # none recorded and keeps the access its session was given.
+  def call(name, args, caller) when name in @preview do
+    capabilities = Map.get(caller, :capabilities)
+
+    if capabilities == nil or MapSet.member?(capabilities, "preview") do
+      HalC2.Mcp.Preview.call(name, args, caller)
+    else
+      {:error, "capability_denied",
+       "Agent browser access is turned off for this thread's project, so #{name} is not available to its agent."}
+    end
+  end
 
   def call(name, args, caller) when name in @devices,
     do: HalC2.Mcp.Devices.call(name, args, caller)
