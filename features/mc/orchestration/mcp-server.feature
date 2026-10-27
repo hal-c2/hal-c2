@@ -32,6 +32,21 @@ Feature: The HAL-C2 MCP server agents receive
     Then the agent is given the "hal-c2" server with a bearer credential for "caller" on "codex"
     And asking again for "caller" on "codex" gives the same credential
 
+  @mc
+  Scenario: A Codex agent's server allows a tool call longer than the longest wait
+    When a run of "caller" starts on "codex"
+    Then the agent's "hal-c2" server allows a tool call to run longer than an hour
+
+  @mc
+  Scenario: A Claude agent's tool timeout allows a tool call longer than the longest wait
+    Then a Claude agent's tool timeout is longer than an hour
+
+  @mc
+  Scenario: A wait is cut short of the limit of a provider that cannot raise it
+    Then a wait by an agent on "codex" may last an hour
+    And a wait by an agent on "claudeAgent" may last an hour
+    And a wait by an agent on an ACP provider may not reach a minute
+
   @mc @plugin-claude
   Scenario: A renewed credential replaces the old one in a running Claude thread
     Given the agent of a running Claude thread uses the "hal-c2" server
@@ -97,6 +112,30 @@ Feature: The HAL-C2 MCP server agents receive
     When the agent of "caller" reads a thread that does not exist
     Then the tool result is marked as an error
     And it carries code "thread_not_found" with a message
+
+  @mc
+  Scenario: The capabilities an agent is told are small enough to read
+    Given provider "codex" offers 600 models, each with its own option descriptors
+    When the agent of "caller" asks for the orchestrator capabilities
+    Then each provider lists at most 25 models, each with an id and a label
+    And "codex" reports 600 models in all and that its list is cut short
+    And no listed model carries option descriptors
+    And the answer is under 20000 characters, where with every option descriptor it is over 100000
+
+  @mc
+  Scenario Outline: The capabilities can be narrowed to what the agent is choosing between
+    Given provider "codex" offers 600 models, each with its own option descriptors
+    When the agent of "caller" asks for the orchestrator capabilities with <arguments>
+    Then <result>
+
+    Examples:
+      | arguments                                    | result                                                           |
+      | providerInstanceId "codex"                   | "codex" is the only provider and lists all 600 models            |
+      | model "bulk-model-7"                         | only "bulk-model-7" is listed, with its option descriptors       |
+      | query "MODEL 12"                             | the listed models are those whose id or label contains the text  |
+      | providerInstanceId "codex" and includeOptions | every listed model carries its option descriptors                |
+      | providerInstanceId "nowhere"                 | it fails with code "invalid_request"                             |
+      | model 7                                      | each provider lists at most 25 models, each with an id and a label |
 
   @mc
   Scenario: A tool the MC does not implement is refused by name

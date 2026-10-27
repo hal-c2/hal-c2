@@ -48,9 +48,38 @@ defmodule HalC2.Orchestration do
   @doc "Handles one client RPC by method name; see `packages/contracts/src/orchestrationV2.ts`."
   @spec handle(String.t(), map) :: {:ok, term} | {:error, String.t()}
   def handle("orchestration.dispatchCommand", command) do
-    HalC2.Traces.span("orchestration.dispatchCommand", %{"command.type" => command["type"]}, fn ->
-      dispatch_once(command)
-    end)
+    result =
+      HalC2.Traces.span(
+        "orchestration.dispatchCommand",
+        %{"command.type" => command["type"]},
+        fn ->
+          try do
+            dispatch_once(command)
+          catch
+            # A provider that fails inside the dispatch reaches the client with its
+            # own reason, not the engine's wrapper around it.
+            kind, reason ->
+              require Logger
+              Logger.error(Exception.format(kind, reason, __STACKTRACE__))
+
+              cause =
+                if is_exception(reason),
+                  do: Exception.message(reason),
+                  else: Exception.format(kind, reason)
+
+              {:error,
+               %{
+                 "message" => "Failed to dispatch orchestration command",
+                 "cause" => %{"message" => cause}
+               }}
+          end
+        end
+      )
+
+    case result do
+      {:error, error} -> {:error, HalC2.Orchestration.UserFacingErrors.message(error)}
+      other -> other
+    end
   end
 
   def handle("orchestration.launchThread", input), do: launch_thread(input)
@@ -289,23 +318,50 @@ defmodule HalC2.Orchestration do
       end)
 
     with :ok <- detached do
-      stop_session(thread_id)
+      HalC2.Orchestration.Effects.run_now(thread_id, "provider-session.detach", %{}, nil)
       {:ok, %{"sequence" => sequence(thread_id)}}
     end
   end
 
   def dispatch(%{"type" => "checkpoint.rollback", "threadId" => thread_id} = command) do
-    with :ok <- HalC2.Orchestration.Rollback.run(command),
+    with :ok <-
+           HalC2.Orchestration.Effects.run_now(
+             thread_id,
+             "provider-thread.rollback",
+             %{"command" => command},
+             nil
+           ),
          do: {:ok, %{"sequence" => sequence(thread_id)}}
+  end
+
+  # A provider's own diff for a turn, ingested when no checkpoint was found
+  # for it. It must never replace a checkpoint that was already captured:
+  # ingestion checks before dispatching, but the run's own capture can land
+  # in between, so the command is refused here, under the stream's lock,
+  # closing that window.
+  def dispatch(%{"type" => "thread.turn.diff.complete", "threadId" => thread_id} = command) do
+    result =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        case turn_diff_complete(state, thread_id, command) do
+          {:ok, changes} -> {changes, :ok}
+          {:error, _} = error -> {[], error}
+        end
+      end)
+
+    with :ok <- result, do: {:ok, %{"sequence" => sequence(thread_id)}}
   end
 
   # The user's stop shows in the transcript as a request, paired with the run's
   # "Run interrupted" result once the provider stops (`TurnWriter.finish/3`).
   def dispatch(%{"type" => "run.interrupt", "threadId" => thread_id} = command) do
-    HalC2.Streams.transact(thread_id, :thread, &{interrupt_request(&1, command), :ok})
+    with :ok <- interrupt_policy(thread_id, command["runId"]) do
+      HalC2.Streams.transact(thread_id, :thread, &{interrupt_request(&1, command), :ok})
+      # Stopping a turn also stops its delegated tasks from waking it later.
+      HalC2.Orchestration.Delegation.stop_wakes(thread_id, command["runId"])
 
-    with :ok <- interrupt_any(thread_id, command["runId"]),
-         do: {:ok, %{"sequence" => sequence(thread_id)}}
+      with :ok <- interrupt_any(thread_id, command["runId"]),
+           do: {:ok, %{"sequence" => sequence(thread_id)}}
+    end
   end
 
   def dispatch(%{"type" => "queued-run.cancel", "threadId" => thread_id, "runId" => run_id}) do
@@ -520,7 +576,19 @@ defmodule HalC2.Orchestration do
       if type == "thread.metadata.update" and command["regenerateTitle"] == true,
         do: regenerate_title(thread_id)
 
-      if type == "thread.delete", do: stop_runtimes(thread_id)
+      if type == "thread.delete" do
+        stop_runtimes(thread_id)
+        # Work the thread still had waiting dies with it; cleaning up its
+        # terminals and attached files is recorded work that outlives a
+        # restart (`HalC2.Orchestration.Effects`).
+        HalC2.Orchestration.Effects.cancel_thread(thread_id)
+        HalC2.Orchestration.Effects.drop_thread(thread_id)
+        HalC2.Orchestration.Effects.enqueue(thread_id, "terminal.cleanup", %{})
+        HalC2.Orchestration.Effects.enqueue(thread_id, "attachment.cleanup", %{})
+      end
+
+      if type == "thread.runtime-mode.set",
+        do: runtime_mode_changed(thread_id, command["runtimeMode"])
 
       # The archived threads are read from the sidebar rows, which a stream writes a
       # moment after its events: this one is in place before the reply, so a client
@@ -805,10 +873,7 @@ defmodule HalC2.Orchestration do
   defp queue_waits(_thread), do: :queued
 
   defp message_request(thread_id, request_id) do
-    request =
-      HalC2.Streams.state(thread_id)
-      |> StreamState.get("runtime-request")
-      |> Map.get(request_id)
+    request = HalC2.Streams.get(thread_id, "runtime-request", request_id)
 
     if request && HalC2.Orchestration.TurnWriter.message_request?(request), do: request
   end
@@ -1100,17 +1165,26 @@ defmodule HalC2.Orchestration do
 
   defp respond(thread_id, request_id, response) do
     result =
-      Enum.find_value(
-        runtimes(:respond, 3),
-        {:error, "no pending request"},
-        fn runtime ->
-          if session_call(fn -> runtime.respond(thread_id, request_id, response) end, :gone) ==
-               :ok,
-             do: :ok
-        end
+      HalC2.Orchestration.Effects.run_now(
+        thread_id,
+        "runtime-request.respond",
+        %{"requestId" => request_id},
+        {thread_id, request_id, response}
       )
 
     with :ok <- result, do: {:ok, %{"sequence" => sequence(thread_id)}}
+  end
+
+  defp respond_now(thread_id, request_id, response) do
+    Enum.find_value(
+      runtimes(:respond, 3),
+      {:error, "no pending request"},
+      fn runtime ->
+        if session_call(fn -> runtime.respond(thread_id, request_id, response) end, :gone) ==
+             :ok,
+           do: :ok
+      end
+    )
   end
 
   # The checkout is ready and its baseline taken before the runtime starts the turn.
@@ -1119,7 +1193,21 @@ defmodule HalC2.Orchestration do
   # run fails and the thread can take the next message. Once the turn was claimed,
   # `HalC2.Orchestration.TurnWatch` may be ending it too; only the first to abandon
   # it does.
+  # Starting a turn is the provider work an accepted message set going: it is
+  # recorded and run as an effect (`HalC2.Orchestration.Effects`), so a stop
+  # that arrives before it can cancel it and a restart knows it was in flight.
   defp begin_turn(thread_id, turn) do
+    HalC2.Orchestration.Effects.run_now(
+      thread_id,
+      "provider-turn.start",
+      %{"runId" => turn.ids.run},
+      turn
+    )
+
+    :ok
+  end
+
+  defp begin_turn_now(thread_id, turn) do
     restore_worktree(thread_id)
     :ok = HalC2.Checkpoint.baseline(turn.cwd, turn.scope_id, turn.run_ordinal - 1)
     :ok = start_turn(thread_id, turn)
@@ -1401,59 +1489,63 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # Titles a thread in the background: from its first
-  # message's `text` and `attachments` (tried three times), or, regenerating, from
-  # its user and assistant messages and its `previous` title. The thread keeps its
-  # title until a new one arrives; generation that fails or keeps the title clears
-  # the thread's in-flight mark (`titleRegeneration`).
+  # Titles a thread in the background: from its first message's `text` and
+  # `attachments`, or, regenerating, from its user and assistant messages and
+  # its `previous` title. The thread keeps its title until a new one arrives;
+  # generation that fails or keeps the title clears the thread's in-flight
+  # mark (`titleRegeneration`). It is an effect on its own lane, so it neither
+  # waits for nor delays the thread's provider work; a first title that fails
+  # is retried by the effect worker, a regeneration is tried once.
   defp generate_title(thread_id, text, attachments, previous \\ nil) do
-    Task.start(fn ->
-      root =
-        case HalC2.Shell.row(node(), thread_id) do
-          {"thread", row} -> row["worktreePath"] || project_root(row["projectId"])
-          _ -> nil
+    HalC2.Orchestration.Effects.enqueue(
+      thread_id,
+      "thread-title.generate",
+      %{"text" => text, "attachments" => attachments, "previous" => previous},
+      "title"
+    )
+  end
+
+  defp title_effect(%{"threadId" => thread_id, "args" => args}, will_retry) do
+    previous = args["previous"]
+
+    root =
+      case HalC2.Shell.row(node(), thread_id) do
+        {"thread", row} -> row["worktreePath"] || project_root(row["projectId"])
+        _ -> nil
+      end
+
+    opts = [attachments: args["attachments"] || [], previous_title: previous]
+
+    case HalC2.TextGeneration.thread_title(root || System.tmp_dir!(), args["text"] || "", opts) do
+      {:ok, %{"title" => title}} when title != "New thread" ->
+        if previous != nil and String.trim(title) == String.trim(previous) do
+          title_settled(thread_id)
+        else
+          dispatch(%{
+            "type" => "thread.metadata.update",
+            "threadId" => thread_id,
+            "title" => title
+          })
         end
 
-      opts = [attachments: attachments, previous_title: previous]
-      attempts = if previous, do: 1, else: 3
+        :ok
 
-      result =
-        Enum.reduce_while(1..attempts, nil, fn attempt, _ ->
-          case HalC2.TextGeneration.thread_title(root || System.tmp_dir!(), text, opts) do
-            {:ok, _} = ok ->
-              {:halt, ok}
+      {:ok, _} ->
+        title_settled(thread_id)
+        :ok
 
-            error ->
-              if attempt < attempts,
-                do:
-                  Process.sleep(
-                    Application.get_env(:hal_c2, :title_retry_ms, 2_000) * 2 ** (attempt - 1)
-                  )
+      failure ->
+        message = "thread title not generated: #{inspect(failure)}"
 
-              {:cont, error}
-          end
-        end)
-
-      case result do
-        {:ok, %{"title" => title}} when title != "New thread" ->
-          if previous != nil and String.trim(title) == String.trim(previous),
-            do: title_settled(thread_id),
-            else:
-              dispatch(%{
-                "type" => "thread.metadata.update",
-                "threadId" => thread_id,
-                "title" => title
-              })
-
-        failure ->
+        if will_retry and previous == nil do
+          {:retry, message}
+        else
           require Logger
-
-          unless match?({:ok, _}, failure),
-            do: Logger.warning("thread title not generated: #{inspect(failure)}")
-
+          Logger.warning(message)
           title_settled(thread_id)
-      end
-    end)
+          {:error, message}
+        end
+    end
   end
 
   defp title_settled(thread_id),
@@ -1612,6 +1704,14 @@ defmodule HalC2.Orchestration do
       end)
 
     start_next(thread_id)
+
+    # A child that never starts has no turn to report; a task waiting on it ends here.
+    if result == :ok,
+      do:
+        Task.start(fn ->
+          HalC2.Orchestration.Delegation.report(thread_id, run_id, status)
+        end)
+
     result
   end
 
@@ -1690,15 +1790,62 @@ defmodule HalC2.Orchestration do
   # runtime is asked and each stops the work of its own that the pin covers (#474). A
   # started turn nothing drives any more (its runtime stopped without ending it) ends
   # here, and a provider plugin that cannot stop a turn says so.
-  defp interrupt_any(thread_id, run_id) do
-    runtimes = runtimes(:interrupt, 2)
+  # A provider that cannot be interrupted refuses the stop in its name, before
+  # anything is recorded. Between turns there is no provider to ask, and
+  # `interrupt_undriven/2` decides.
+  defp interrupt_policy(thread_id, run_id) do
+    runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
 
+    run =
+      Enum.find(runs, &(&1["id"] == run_id)) ||
+        Enum.find(runs, &(&1["status"] in @active_statuses))
+
+    instance =
+      run && run["status"] in @active_statuses &&
+        (run["providerInstanceId"] || get_in(run, ["modelSelection", "instanceId"]))
+
+    if instance,
+      do: HalC2.Orchestration.CommandPolicy.ensure(instance, :interrupt),
+      else: :ok
+  end
+
+  # Asking a provider to stop is its own recorded effect. Work for the run
+  # that has not reached the provider yet is cancelled with it.
+  defp interrupt_any(thread_id, run_id) do
+    pending =
+      run_id ||
+        thread_id
+        |> HalC2.Streams.state()
+        |> StreamState.list("run")
+        |> Enum.find_value(&(&1["status"] in @active_statuses && &1["id"]))
+
+    if pending,
+      do: HalC2.Orchestration.Effects.cancel_pending(thread_id, "provider-turn.start", pending)
+
+    case HalC2.Orchestration.Effects.run_now(
+           thread_id,
+           "provider-turn.interrupt",
+           %{"runId" => run_id},
+           {thread_id, run_id}
+         ) do
+      {:ok, :ok} -> :ok
+      other -> other
+    end
+  end
+
+  defp interrupt_provider(thread_id, run_id) do
     # A provider plugin that cannot stop a turn is not asked; `interrupt_undriven/2`
-    # says so.
+    # says so. A bundled provider's runtime is its plugin module, which `runtimes/2`
+    # does not list.
     asked =
       case active_runtime(thread_id, run_id) do
-        nil -> runtimes
-        runtime -> Enum.filter(runtimes, &(&1 == runtime))
+        nil ->
+          runtimes(:interrupt, 2)
+
+        runtime ->
+          if Code.ensure_loaded?(runtime) and function_exported?(runtime, :interrupt, 2),
+            do: [runtime],
+            else: []
       end
 
     stopped = Enum.filter(asked, &interrupted?(&1, thread_id, run_id))
@@ -1717,6 +1864,17 @@ defmodule HalC2.Orchestration do
 
     instance = run && (run["providerInstanceId"] || run["modelSelection"]["instanceId"])
     if run["status"] in @active_statuses and is_binary(instance), do: runtime(instance)
+  end
+
+  # The thread's access changed. The next turn starts with it from the thread record; a
+  # runtime that can change a running turn's access (`set_runtime_mode/2`, which must
+  # not block) is told now, so the user's switch is not ignored until the turn ends.
+  defp runtime_mode_changed(thread_id, mode) do
+    runtime = active_runtime(thread_id, nil)
+
+    if runtime && Code.ensure_loaded?(runtime) &&
+         function_exported?(runtime, :set_runtime_mode, 2),
+       do: runtime.set_runtime_mode(thread_id, mode)
   end
 
   @doc """
@@ -1807,22 +1965,46 @@ defmodule HalC2.Orchestration do
       Enum.find(runs, &(&1["id"] == run_id)) ||
         Enum.find(runs, &(&1["status"] in @active_statuses))
 
-    if run != nil and run["status"] in ~w(running waiting) and
-         not HalC2.Orchestration.TurnWatch.driven?(run["id"]),
-       do: HalC2.Orchestration.TurnWriter.abandon(thread_id, run["id"], "interrupted", nil),
-       else: interrupt_refusal(run)
+    latest = Enum.max_by(runs, &(&1["ordinal"] || 0), fn -> nil end)
+
+    cond do
+      # A turn still being handed to its provider, or one nothing drives any
+      # more, is ended here: the provider never starts it, or has nothing to
+      # stop. Pending work for it is cancelled first (`interrupt_any/2`).
+      run != nil and run["status"] in ~w(starting running waiting) and
+          not HalC2.Orchestration.TurnWatch.driven?(run["id"]) ->
+        HalC2.Orchestration.TurnWriter.abandon(thread_id, run["id"], "interrupted", nil)
+
+      # The turn ended as the stop arrived: the provider says it is not active,
+      # and the stop counts as done rather than an error to retry. A run that
+      # failed or was cancelled is a different answer: nothing was stopped.
+      run != nil and latest != nil and run["id"] == latest["id"] and
+          run["status"] == "completed" ->
+        :ok
+
+      true ->
+        interrupt_refusal(run)
+    end
   end
 
   defp interrupt_refusal(run) do
     instance = run && run["providerInstanceId"]
 
-    with instance when is_binary(instance) <- instance,
-         {:ok, driver, module} <- HalC2.Plugins.provider(instance),
-         false <- function_exported?(module, :interrupt, 2) do
-      {:error, "The provider \"#{driver}\" cannot stop a running turn."}
-    else
-      _ -> {:error, "no running turn"}
-    end
+    cannot =
+      with instance when is_binary(instance) <- instance,
+           {:ok, _driver, module} <- HalC2.Plugins.provider(instance),
+           false <- function_exported?(module, :interrupt, 2) do
+        instance
+      else
+        _ ->
+          if is_binary(instance) and
+               not HalC2.Orchestration.CommandPolicy.instance_supports?(instance, :interrupt),
+             do: instance
+      end
+
+    if cannot,
+      do: {:error, HalC2.Orchestration.UserFacingErrors.capability_message(cannot, :interrupt)},
+      else: {:error, "no running turn"}
   end
 
   defp dispatch_message(thread_id, command) do
@@ -1831,6 +2013,86 @@ defmodule HalC2.Orchestration do
     case HalC2.Streams.transact(thread_id, :thread, decide) do
       {:ok, _} = decided -> dispatched(thread_id, command, decided)
       {:error, _} = error -> error
+    end
+  end
+
+  @doc false
+  # One try of a recorded effect (`HalC2.Orchestration.Effects`); `payload` is
+  # what only this process can carry (a decided turn), `args` what a replay
+  # after a restart rebuilds from.
+  def execute_effect(%{"type" => type} = effect, payload, will_retry) do
+    thread_id = effect["threadId"]
+    args = effect["args"] || %{}
+
+    case type do
+      "provider-turn.start" ->
+        # Work cancelled (or settled by a restart) before it started never
+        # reaches the provider.
+        run = StreamState.get(HalC2.Streams.state(thread_id), "run")[args["runId"]]
+
+        if payload != nil and run != nil and run["status"] in @active_statuses do
+          begin_turn_now(thread_id, payload)
+          :ok
+        else
+          :ok
+        end
+
+      "provider-turn.interrupt" ->
+        {^thread_id, run_id} = payload || {thread_id, args["runId"]}
+        interrupt_provider(thread_id, run_id)
+
+      "provider-turn.restart" ->
+        {^thread_id, run_id} = payload || {thread_id, args["runId"]}
+        _ = interrupt_provider(thread_id, run_id)
+        :ok
+
+      "provider-turn.steer" ->
+        {instance, ^thread_id, run_id, input} = payload
+        ask_steer_now(instance, thread_id, run_id, input)
+
+      "runtime-request.respond" ->
+        {^thread_id, request_id, response} = payload
+        respond_now(thread_id, request_id, response)
+
+      "provider-session.detach" ->
+        _ = stop_session(thread_id)
+        :ok
+
+      "provider-thread.rollback" ->
+        HalC2.Orchestration.Rollback.run(args["command"])
+
+      "provider-runtime.continue" ->
+        case dispatch(args["command"]) do
+          {:ok, _} -> :ok
+          {:error, message} -> {:error, message}
+        end
+
+      "checkpoint.capture" ->
+        {:ok,
+         HalC2.Checkpoint.capture_run(
+           args["cwd"],
+           args["scopeId"],
+           args["runOrdinal"],
+           args["runId"],
+           args["rootNodeId"],
+           thread_id,
+           args["at"]
+         )}
+
+      "terminal.cleanup" ->
+        if Process.whereis(HalC2.Terminal.Registry),
+          do: HalC2.Terminal.close(%{"threadId" => thread_id})
+
+        :ok
+
+      "attachment.cleanup" ->
+        HalC2.Attachments.delete_thread(thread_id)
+
+      "thread-title.generate" ->
+        title_effect(effect, will_retry)
+
+      other ->
+        {:error, "unknown effect #{other}"}
     end
   end
 
@@ -1863,7 +2125,14 @@ defmodule HalC2.Orchestration do
 
       {:restart, active_run_id} ->
         # The queued message goes first; the interrupted run's end starts it.
-        _ = interrupt_any(thread_id, active_run_id)
+        _ =
+          HalC2.Orchestration.Effects.run_now(
+            thread_id,
+            "provider-turn.restart",
+            %{"runId" => active_run_id},
+            {thread_id, active_run_id}
+          )
+
         {:ok, %{"sequence" => sequence(thread_id)}}
 
       turn ->
@@ -1896,7 +2165,7 @@ defmodule HalC2.Orchestration do
     upsert(state, "thread", thread_id, &(&1 |> Map.merge(unsettled) |> Map.merge(unsnoozed)))
   end
 
-  defp sequence(thread_id), do: HalC2.Streams.state(thread_id).seq
+  defp sequence(thread_id), do: HalC2.Streams.sequence(thread_id)
 
   defp interrupt_request(state, command) do
     runs = StreamState.get(state, "run")
@@ -2119,6 +2388,18 @@ defmodule HalC2.Orchestration do
   # see into, where it need not mean the request reached the provider at all, so it
   # counts as a refusal like any other exit.
   defp ask_steer(instance, thread_id, run_id, input) do
+    case HalC2.Orchestration.Effects.run_now(
+           thread_id,
+           "provider-turn.steer",
+           %{"runId" => run_id},
+           {instance, thread_id, run_id, input}
+         ) do
+      {:ok, :ok} -> :ok
+      other -> other
+    end
+  end
+
+  defp ask_steer_now(instance, thread_id, run_id, input) do
     case runtime(instance).steer(thread_id, run_id, input) do
       :ok -> :ok
       {:error, reason} when is_binary(reason) -> {:error, String.slice(reason, 0, 200)}
@@ -2217,7 +2498,7 @@ defmodule HalC2.Orchestration do
       ordinal,
       "completed",
       at,
-      Map.take(notification, ~w(source outcome summary detail))
+      Map.take(notification, ~w(source outcome summary detail workerThreadId workerTitle))
     )
   end
 
@@ -2333,7 +2614,8 @@ defmodule HalC2.Orchestration do
     do: %{"interactionMode" => command["interactionMode"], "updatedAt" => at}
 
   # A thread's pull requests are keyed by host, repository and number. Linking again
-  # changes nothing, except that a user or agent brings back a stack layer they unlinked.
+  # changes nothing, except that a user or agent brings back a stack layer they unlinked;
+  # a link the MC made on its own (`"automatic"`, `HalC2.PullRequests.Opened`) never does.
   # A first manual link keeps the branch's pull request beside it.
   defp thread_fields("thread.pull-request.link", command, thread, at) do
     links = PullRequests.of(thread)
@@ -2342,7 +2624,8 @@ defmodule HalC2.Orchestration do
     source = command["source"]
 
     if existing &&
-         (existing["source"] != "stack-dismissed" or source in ["stack", "stack-dismissed"]) do
+         (existing["source"] != "stack-dismissed" or source in ["stack", "stack-dismissed"] or
+            command["automatic"] == true) do
       %{}
     else
       link =
@@ -2367,27 +2650,34 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # A layer of a native stack stays as a tombstone, so the sync does not link it again.
+  # A layer of a native stack, or a pull request the thread created, stays as a
+  # tombstone, so the sync or discovery (`HalC2.PullRequests.Opened`) does not link it
+  # again. It forgets what the thread heard of it, so a link back starts from a new
+  # baseline.
   defp thread_fields("thread.pull-request.unlink", command, thread, at) do
     links = PullRequests.of(thread)
     key = PullRequests.normalize(command)
     existing = Enum.find(links, &(PullRequests.normalize(&1) == key))
 
-    stacked? =
+    tombstone? =
       existing != nil and
-        (existing["source"] == "stack" or existing["stack"] != nil or
+        (existing["source"] in ["stack", "created"] or existing["stack"] != nil or
            Enum.any?(links, fn link ->
              Map.delete(PullRequests.normalize(link), "number") == Map.delete(key, "number") and
                Enum.any?((link["stack"] || %{})["layers"] || [], &(&1["number"] == key["number"]))
            end))
 
     cond do
-      existing == nil ->
+      existing == nil or existing["source"] == "stack-dismissed" ->
         %{}
 
-      stacked? ->
+      tombstone? ->
         links
-        |> Enum.map(&if(&1 == existing, do: %{&1 | "source" => "stack-dismissed"}, else: &1))
+        |> Enum.map(fn link ->
+          if link == existing,
+            do: link |> Map.put("source", "stack-dismissed") |> Map.delete("heard"),
+            else: link
+        end)
         |> then(&Map.put(pull_request_fields(thread, &1), "updatedAt", at))
 
       true ->
@@ -2599,6 +2889,26 @@ defmodule HalC2.Orchestration do
 
       true ->
         nil
+    end
+  end
+
+  # Switching a thread with a conversation to another provider hands the
+  # conversation over as context; a provider that cannot receive one refuses
+  # the switch in its name.
+  defp refusal(type, command, thread, state)
+       when type in ["provider.switch", "thread.model-selection.set"] do
+    target = get_in(command, ["modelSelection", "instanceId"])
+    current = thread["providerInstanceId"] || get_in(thread, ["modelSelection", "instanceId"])
+
+    conversation? =
+      thread["activeProviderThreadId"] != nil or
+        StreamState.get(state, "provider-thread") != %{}
+
+    if is_binary(target) and target != current and conversation? do
+      case HalC2.Orchestration.CommandPolicy.ensure(target, :context_handoff) do
+        :ok -> nil
+        {:error, message} -> {:error, message}
+      end
     end
   end
 
@@ -2914,13 +3224,23 @@ defmodule HalC2.Orchestration do
       reason = model_locked(thread, command) ->
         {[], {:error, reason}}
 
+      reason = handoff_refusal(state, thread, command) ->
+        {[], {:error, reason}}
+
       get_in(command, ["dispatchMode", "type"]) == "defer_start" ->
         prepare_run(state, thread, runs, command)
+
+      # A steer or restart aimed at a run that is not the active one is a
+      # delivery no provider can make as asked.
+      untargeted = untargeted_delivery(runs, command) ->
+        {[], {:error, untargeted}}
 
       active = Enum.find(runs, &(&1["status"] in @active_statuses)) ->
         intent = command["deliveryIntent"]
         mode = get_in(command, ["dispatchMode", "type"])
         steer = intent == "steer" or mode == "steer_active"
+        instance = message_instance(thread, command)
+        active_instance = active["providerInstanceId"] || instance
 
         # Steer a running turn that can take it,
         # else queue; a restart (or a steer that cannot be) interrupts and goes first.
@@ -2930,20 +3250,68 @@ defmodule HalC2.Orchestration do
 
         cond do
           intent == "restart" or mode == "restart_active" ->
-            queue_run(state, thread, runs, command, active["id"])
+            case HalC2.Orchestration.CommandPolicy.decide_steering(active_instance, true) do
+              {:ok, _} -> queue_run(state, thread, runs, command, active["id"])
+              {:error, message} -> {[], {:error, message}}
+            end
 
-          (steer or auto_steer) and steerable?(active, message_instance(thread, command)) ->
+          (steer or auto_steer) and steerable?(active, instance) ->
             reserve_steer(state, active, command)
 
           steer ->
-            queue_run(state, thread, runs, command, active["id"])
+            case HalC2.Orchestration.CommandPolicy.decide_steering(active_instance, false) do
+              {:ok, _} -> queue_run(state, thread, runs, command, active["id"])
+              {:error, message} -> {[], {:error, message}}
+            end
 
           true ->
-            queue_run(state, thread, runs, command, nil)
+            with :ok <-
+                   HalC2.Orchestration.CommandPolicy.ensure(instance, :queued_messages),
+                 :ok <-
+                   HalC2.Orchestration.CommandPolicy.ensure(
+                     instance,
+                     :strong_terminal_status
+                   ) do
+              queue_run(state, thread, runs, command, nil)
+            else
+              {:error, message} -> {[], {:error, message}}
+            end
         end
 
       true ->
         new_run(state, thread, runs, command)
+    end
+  end
+
+  # A steer or restart naming a run other than the active one (or naming one
+  # when nothing runs) cannot be delivered as asked, whatever the provider.
+  defp untargeted_delivery(runs, command) do
+    mode = get_in(command, ["dispatchMode", "type"])
+    target = get_in(command, ["dispatchMode", "targetRunId"])
+    active = Enum.find(runs, &(&1["status"] in @active_statuses))
+
+    if mode in ["steer_active", "restart_active"] and is_binary(target) and
+         (active == nil or active["id"] != target) do
+      instance =
+        get_in(command, ["modelSelection", "instanceId"]) ||
+          (active && active["providerInstanceId"]) || "codex"
+
+      HalC2.Orchestration.UserFacingErrors.unsupported_delivery_message(instance)
+    end
+  end
+
+  # A message naming another provider instance hands the conversation over as
+  # context at its turn; one that cannot receive a handoff refuses the message.
+  defp handoff_refusal(state, thread, command) do
+    target = get_in(command, ["modelSelection", "instanceId"])
+    current = thread["providerInstanceId"] || get_in(thread, ["modelSelection", "instanceId"])
+
+    if is_binary(target) and target != current and
+         StreamState.get(state, "provider-thread") != %{} do
+      case HalC2.Orchestration.CommandPolicy.ensure(target, :context_handoff) do
+        :ok -> nil
+        {:error, message} -> message
+      end
     end
   end
 
@@ -3552,6 +3920,71 @@ defmodule HalC2.Orchestration do
     |> Enum.max(fn -> -1 end)
     |> Kernel.+(1)
   end
+
+  # The changes recording a provider's own diff for a turn, or the refusal
+  # when its placeholder would replace a captured checkpoint (the
+  # `thread.turn.diff.complete` clause of `dispatch/1`).
+  defp turn_diff_complete(state, thread_id, command) do
+    run = StreamState.get(state, "run")[command["turnId"]]
+
+    existing =
+      run &&
+        Enum.find(StreamState.list(state, "checkpoint"), &(&1["runId"] == run["id"]))
+
+    cond do
+      StreamState.get(state, "thread")[thread_id] == nil ->
+        {:error, "Thread #{thread_id} was not found."}
+
+      run == nil ->
+        {:error, "turn #{command["turnId"]} was not found"}
+
+      # The ref of a ready checkpoint is later spliced into git arguments, so
+      # only checkpoint refs are accepted for one. A placeholder's provider
+      # ref never reaches git (every use requires a ready checkpoint), but
+      # must not look like a git option either.
+      not checkpoint_ref?(command["checkpointRef"], command["status"]) ->
+        {:error,
+         "checkpoint ref #{command["checkpointRef"]} is not under refs/hal-c2/ or refs/t3/"}
+
+      existing != nil and existing["status"] != "missing" ->
+        {:error, "turn #{command["turnId"]} already has a captured checkpoint"}
+
+      true ->
+        scope_id = HalC2.Checkpoint.scope_id(thread_id)
+        ordinal = run["ordinal"]
+
+        checkpoint = %{
+          "id" => HalC2.Checkpoint.checkpoint_id(scope_id, ordinal),
+          "threadId" => thread_id,
+          "scopeId" => scope_id,
+          "runId" => run["id"],
+          "nodeId" => run["rootNodeId"],
+          "parentCheckpointId" =>
+            if(ordinal > 0, do: HalC2.Checkpoint.checkpoint_id(scope_id, ordinal - 1)),
+          "ordinalWithinScope" => ordinal,
+          "appRunOrdinal" => ordinal,
+          "ref" => command["checkpointRef"],
+          "status" => command["status"],
+          "files" => command["files"] || [],
+          "capturedAt" => command["completedAt"] || Entities.now()
+        }
+
+        changes = [
+          create("checkpoint", checkpoint["id"], checkpoint),
+          upsert(state, "run", run["id"], &Map.put(&1, "checkpointId", checkpoint["id"]))
+        ]
+
+        {:ok, Enum.filter(changes, &is_tuple/1)}
+    end
+  end
+
+  defp checkpoint_ref?("refs/hal-c2/" <> _rest, _status), do: true
+  defp checkpoint_ref?("refs/t3/" <> _rest, _status), do: true
+
+  defp checkpoint_ref?(ref, "missing") when is_binary(ref),
+    do: not String.starts_with?(ref, "-")
+
+  defp checkpoint_ref?(_ref, _status), do: false
 
   @doc "A change creating `entity`."
   def create(kind, id, entity), do: {kind, id, Patch.diff(nil, entity)}

@@ -6,7 +6,12 @@ defmodule HalC2.WebSocketTerminalPropTest do
   then every output event after it, under its own id, until its own unsub, and an
   unsub ends the socket's attach only with its last subscription. Output the
   terminal flushed while a subscription's attach was still in flight is in its
-  snapshot and is not sent to it again.
+  snapshot and is not sent to it again. A terminal that stops without closing
+  (stopped here, as one whose MC left the cluster is lost) tells every
+  subscription to `resync`, and the next attach opens it again from its saved
+  scrollback. One lost with its MC (`lose/0`, as the socket hears it) tells
+  every subscription so in the terminal, and when the MC is back (`back/0`),
+  every subscription it then has is told to `resync`.
 
   The shell is `cat` on a PTY and output is handed to the terminal as erlexec
   sends it, flushed on the test's word, so attaches race the pending batch
@@ -21,9 +26,12 @@ defmodule HalC2.WebSocketTerminalPropTest do
   alias HalC2.Test.WsClient
 
   @moduletag timeout: :infinity
+  # The terminals `kill/0` stops log their crash.
+  @moduletag :capture_log
 
   @ids [1, 2, 3]
   @key {"th-1", "term-1"}
+  @away :"hal-c2@away"
 
   setup do
     saved = for key <- [:port, :home], do: {key, Application.fetch_env(:hal_c2, key)}
@@ -75,6 +83,7 @@ defmodule HalC2.WebSocketTerminalPropTest do
     [port] =
       for {HalC2.Web, pid, _, _} <- Supervisor.which_children(sup) do
         {:ok, {_ip, port}} = ThousandIsland.listener_info(pid)
+        Process.put({__MODULE__, :web}, pid)
         port
       end
 
@@ -85,6 +94,7 @@ defmodule HalC2.WebSocketTerminalPropTest do
 
   defp stop do
     Process.delete({__MODULE__, :client})
+    Process.delete({__MODULE__, :web})
     HalC2.Prop.stop_services()
 
     case Process.delete({__MODULE__, :shell}) do
@@ -96,7 +106,8 @@ defmodule HalC2.WebSocketTerminalPropTest do
   # --- model ------------------------------------------------------------------------
 
   # subs: the ids subscribed to the terminal. text: everything it has printed.
-  def initial_state, do: %{subs: [], text: "", n: 0, started: false}
+  # lost: the socket holds it lost with its MC.
+  def initial_state, do: %{subs: [], text: "", n: 0, started: false, lost: false}
 
   def command(state) do
     free = @ids -- state.subs
@@ -118,12 +129,19 @@ defmodule HalC2.WebSocketTerminalPropTest do
             {2, {:call, __MODULE__, :race_sub_attach, [oneof(free), token]}}
           ],
           else: []
-        )
+        ) ++
+        if(state.started, do: [{1, {:call, __MODULE__, :kill, []}}], else: []) ++
+        if(state.started, do: [{1, {:call, __MODULE__, :lose, []}}], else: []) ++
+        [{1, {:call, __MODULE__, :back, []}}]
     )
   end
 
   def precondition(state, {:call, _, :sub, [id]}), do: id not in state.subs
   def precondition(state, {:call, _, :unsub, [id]}), do: id in state.subs
+
+  def precondition(state, {:call, _, :kill, []}), do: state.started
+  def precondition(state, {:call, _, :lose, []}), do: state.started
+  def precondition(_state, {:call, _, :back, []}), do: true
 
   def precondition(state, {:call, _, :output, [token]}),
     do: state.started and token == "t#{state.n}"
@@ -134,8 +152,23 @@ defmodule HalC2.WebSocketTerminalPropTest do
   def next_state(state, _result, {:call, _, :sub, [id]}),
     do: %{state | subs: [id | state.subs], started: true}
 
-  def next_state(state, _result, {:call, _, :unsub, [id]}),
-    do: %{state | subs: List.delete(state.subs, id)}
+  # With its last subscription the terminal is no longer awaited.
+  def next_state(state, _result, {:call, _, :unsub, [id]}) do
+    subs = List.delete(state.subs, id)
+    %{state | subs: subs, lost: state.lost and subs != []}
+  end
+
+  # The subscriptions were forgotten; the next one starts the terminal again.
+  def next_state(state, _result, {:call, _, :kill, []}),
+    do: %{state | subs: [], started: false, lost: false}
+
+  def next_state(state, _result, {:call, _, :lose, []}),
+    do: %{state | lost: state.lost or state.subs != []}
+
+  def next_state(%{lost: true} = state, _result, {:call, _, :back, []}),
+    do: %{state | subs: [], lost: false}
+
+  def next_state(state, _result, {:call, _, :back, []}), do: state
 
   def next_state(state, _result, {:call, _, :output, [token]}),
     do: %{state | text: state.text <> token <> "\r\n", n: state.n + 1}
@@ -148,6 +181,17 @@ defmodule HalC2.WebSocketTerminalPropTest do
     do: frames == [{id, :snapshot, state.text}]
 
   def postcondition(_state, {:call, _, :unsub, _}, frames), do: frames == []
+
+  def postcondition(state, {:call, _, :kill, []}, frames),
+    do: frames == Enum.sort(for id <- state.subs, do: {id, :resync})
+
+  def postcondition(state, {:call, _, :lose, []}, frames),
+    do: frames == Enum.sort(for id <- state.subs, do: {id, :lost})
+
+  def postcondition(%{lost: true} = state, {:call, _, :back, []}, frames),
+    do: frames == Enum.sort(for id <- state.subs, do: {id, :resync})
+
+  def postcondition(_state, {:call, _, :back, []}, frames), do: frames == []
 
   def postcondition(state, {:call, _, :output, [token]}, frames),
     do: frames == Enum.sort(for id <- state.subs, do: {id, :output, token <> "\r\n"})
@@ -164,6 +208,34 @@ defmodule HalC2.WebSocketTerminalPropTest do
 
   def sub(id), do: send_frame(%{"t" => "sub", "id" => id, "shape" => shape()})
   def unsub(id), do: send_frame(%{"t" => "unsub", "id" => id})
+
+  # Stops the terminal abnormally with its scrollback saved, as a terminal that
+  # lived past its last quiet moment has it on disk. Its `terminate/2` unregisters
+  # it before this returns, so the next attach starts it again.
+  def kill do
+    pid = terminal_pid()
+    :ok = HalC2.Terminal.save(elem(@key, 0))
+    :ok = GenServer.stop(pid, :lost)
+    terminal_frames()
+  end
+
+  # The socket hears the terminal went with an MC no longer in the cluster.
+  def lose do
+    send(socket(), {:hal_c2_terminal_down, @away, @key, :noconnection})
+    terminal_frames()
+  end
+
+  # And that the MC is back.
+  def back do
+    send(socket(), {:nodeup, @away, []})
+    terminal_frames()
+  end
+
+  # The client's socket: the one connection to the endpoint.
+  defp socket do
+    {:ok, [pid]} = ThousandIsland.connection_pids(Process.get({__MODULE__, :web}))
+    pid
+  end
 
   def output(token) do
     pid = terminal_pid()
@@ -227,7 +299,8 @@ defmodule HalC2.WebSocketTerminalPropTest do
   end
 
   # The snapshot and output frames sent before the pong answering a ping sent
-  # now, sorted, as `{id, :snapshot, history}` and `{id, :output, text}`. The
+  # now, sorted, as `{id, :snapshot, history}`, `{id, :output, text}` and
+  # `{id, :resync}`. The
   # terminal is made to flush and read back first, so everything a step caused
   # is already on its way to the socket before the ping's frame.
   defp terminal_frames do
@@ -245,9 +318,11 @@ defmodule HalC2.WebSocketTerminalPropTest do
     Process.put({__MODULE__, :client}, client)
 
     Enum.sort(
-      for %{"t" => "terminal", "id" => id, "event" => event} <- frames,
-          frame <- List.wrap(frame(id, event)),
-          do: frame
+      for(
+        %{"t" => "terminal", "id" => id, "event" => event} <- frames,
+        frame <- List.wrap(frame(id, event)),
+        do: frame
+      ) ++ for(%{"t" => "resync", "id" => id} <- frames, do: {id, :resync})
     )
   end
 
@@ -255,5 +330,6 @@ defmodule HalC2.WebSocketTerminalPropTest do
     do: {id, :snapshot, snapshot["history"]}
 
   defp frame(id, %{"type" => "output", "data" => data}), do: {id, :output, data}
+  defp frame(id, %{"type" => "error"}), do: {id, :lost}
   defp frame(_id, _event), do: nil
 end

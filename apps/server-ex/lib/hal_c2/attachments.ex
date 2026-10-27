@@ -105,6 +105,16 @@ defmodule HalC2.Attachments do
 
   def delete(_input), do: {:ok, nil}
 
+  @doc "Removes every file a thread claimed or stored, when the thread is deleted."
+  def delete_thread(thread_id) do
+    dir()
+    |> Path.join(thread_segment(thread_id) <> "-*")
+    |> Path.wildcard()
+    |> Enum.each(&File.rm/1)
+
+    :ok
+  end
+
   @doc """
   Moves a message's pending uploads into its thread: each is copied under a
   thread-scoped id, which the message then names. Attachments the thread already

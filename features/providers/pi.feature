@@ -10,6 +10,7 @@
 #   apps/server/src/provider/Layers/piThinkingCapabilities.ts, apps/server/src/textGeneration/PiTextGeneration.ts
 
 @plugin-pi @mc
+# Pi has no built-in subagents, so the subagents setting (features/settings/subagents.feature) has nothing to turn off here.
 Feature: Pi
   Pi uses the user's existing Pi installation with its own models, logins, extensions,
   skills and session files. Pi is early access.

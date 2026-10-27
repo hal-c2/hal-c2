@@ -6,7 +6,7 @@
 
 ## What works in the container
 
-- Focused `vp test run <files>`, `vp lint <files>`, package typechecks, the TUI and relay checks, and the resource-monitor cargo build and tests (`vp run build:resource-monitor`, `vp run test:resource-monitor`). (`vpr` is not on PATH here; the curl installer only shims `vp`. Use `vp run <script>` or `node_modules/.bin/vpr` after install.)
+- Focused `vp test run <files>`, `vp lint <files>`, package typechecks, the TUI checks, and the resource-monitor cargo build and tests (`vp run build:resource-monitor`, `vp run test:resource-monitor`). (`vpr` is not on PATH here; the curl installer only shims `vp`. Use `vp run <script>` or `node_modules/.bin/vpr` after install.)
 - `mise run mc`, the dev MC on port 3780, which is forwarded. mise's shims are on PATH (`remoteEnv`), so bare `mix test` and `mix hal_c2.server` work in a terminal too.
 
 ## State and safety

@@ -244,6 +244,15 @@ Feature: Forking threads and merging work back
     When the user points at it
     Then its model, provider, status, latest word or result and project are shown
 
+  # The branch is the child thread's own, read live: a task's new worktree is made on a
+  # temporary branch that is renamed once the task is known.
+  @desktop @mobile @tui @backlog-desktop @backlog-mobile @backlog-tui
+  Scenario: A subagent that works in a worktree of its own shows its branch
+    Given "Plan billing" delegated "Tax tests" into a new worktree on branch "task/tax-tests"
+    When the user looks at the relatives of "Plan billing"
+    Then "Tax tests" is listed with the branch "task/tax-tests"
+    # a subagent on its parent's branch shows no branch of its own
+
   @backlog @desktop
   Scenario: A fork can be merged back while its latest turn waits for its checkpoint
     Given "Try Stripe" is a fork whose latest turn has finished and is capturing its checkpoint

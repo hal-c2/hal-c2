@@ -5,11 +5,12 @@
 #   apps/server-ex/lib/hal_c2/rpc.ex, apps/server-ex/lib/hal_c2/orchestration.ex, apps/server-ex/lib/hal_c2/pull_requests.ex
 #   apps/server-ex/lib/hal_c2/web/protocol.ex (shapes)
 #   packages/client-runtime/src/v3/clusterSocket.ts (protocol 3 client adapter)
-#   apps/server-ex/lib/hal_c2/acp/antigravity/installation.ex (provider.install.*), apps/server-ex/lib/hal_c2/connect/relay_client.ex (cloud.*)
+#   apps/server-ex/lib/hal_c2/acp/antigravity/installation.ex (provider.install.*)
 #   apps/server-ex/lib/hal_c2/machine_files.ex (files.localPath)
 #   apps/server-ex/lib/hal_c2/cluster.ex (cluster.*; the TypeScript server answers them as unsupported)
 #   packages/contracts/src/environmentHttp.ts, apps/server-ex/lib/hal_c2/web/router.ex (/api/auth/*, twinned by hal-c2.* access methods)
-#   Counts: 173 contract methods; 170 aligned, 3 dropped.
+#   Counts: 171 contract methods; 168 aligned, 3 dropped. cloud.getRelayClientStatus and
+#   cloud.installRelayClient left the contract with HAL-C2 Connect (connections/hal-c2-connect.feature).
 #   WS_METHODS also names projects.add, projects.list and projects.remove with no Rpc.make
 #   behind them; neither server routes them, so they are recorded as dropped names.
 #   "via" says how a protocol 3 client reaches the method: an rpc frame (under the MC's
@@ -29,7 +30,7 @@ Feature: RPC parity with the TypeScript server
     When the client calls <method> through its <via>
     Then the MC answers with the contract's response shape for <method>
 
-    Examples: 170 aligned methods
+    Examples: 168 aligned methods
       | method                                   | domain            | via                                                                       |
       | server.upsertKeybinding                  | server            | rpc as hal-c2.upsertKeybinding                                                |
       | server.removeKeybinding                  | server            | rpc as hal-c2.removeKeybinding                                                |
@@ -196,8 +197,6 @@ Feature: RPC parity with the TypeScript server
       | subscribeAuthAccess                      | auth              | shape authAccess                                                          |
       | subscribeBackgroundPolicy                | server            | client adapter: reads server.getBackgroundPolicy once, then holds         |
       | subscribeResourceTelemetry               | server            | shape resourceTelemetry                                                   |
-      | cloud.getRelayClientStatus               | cloud             | rpc                                                                       |
-      | cloud.installRelayClient                 | cloud             | shape relayClientInstall                                                  |
       | cluster.status                           | cluster           | rpc                                                                       |
       | cluster.invite                           | cluster           | rpc                                                                       |
       | cluster.join                             | cluster           | rpc                                                                       |

@@ -110,7 +110,7 @@ Feature: Managing environments on a client
   @backlog @tui
   Scenario: The user sees every saved environment and how it is reached
     When the user opens the list of environments
-    Then each environment shows its label, its icon and whether it is this machine, a remote link, SSH or HAL-C2 Connect
+    Then each environment shows its label, its icon and whether it is this machine, a remote link or SSH
     And each shows whether it is connected
 
   @backlog @desktop @mobile

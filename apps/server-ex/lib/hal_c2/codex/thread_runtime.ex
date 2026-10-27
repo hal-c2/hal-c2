@@ -190,6 +190,9 @@ defmodule HalC2.Codex.ThreadRuntime do
        # Apart from `instance`, which is the resolved one a turn's quota belongs to.
        conn_instance: nil,
        native_thread_id: nil,
+       # Whether the native thread was started kept to HAL-C2's workers
+       # (`HalC2.Mcp.workers_only?/1`): its features and every turn's instructions follow it.
+       workers_only: false,
        turn: nil,
        # The instance the latest turn runs as: a turn's quota belongs to it.
        instance: nil,
@@ -558,6 +561,7 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:running, %{})
      |> Map.put_new(:background, %{})
      |> Map.put_new(:last_run, nil)
+     |> Map.put_new(:workers_only, false)
      |> Map.put(:instance, instance)
      |> Map.put_new(:conn_instance, :unknown)
      |> Map.put(:v, @state_version)}
@@ -845,6 +849,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   # A fork's first turn starts from a copy of the source thread, cut after its turn;
   # a session carried from another machine is forked whole from its rollout's path.
   defp ensure_native_thread(state, %{fork: %{thread: source, turn: last} = fork} = turn) do
+    state = workers_only(state, turn)
+
     params =
       thread_params(state, turn)
       |> Map.put("threadId", source)
@@ -858,6 +864,7 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   defp ensure_native_thread(state, turn) do
+    state = workers_only(state, turn)
     params = thread_params(state, turn)
 
     result =
@@ -880,21 +887,41 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp thread_params(state, turn) do
     params = %{"cwd" => turn.cwd, "model" => turn.model}
 
-    case mcp(state, turn) do
-      nil ->
-        params
-
-      mcp ->
-        Map.put(params, "config", %{
-          "mcp_servers" => %{
-            "hal-c2" => %{
-              "url" => mcp.url,
-              "http_headers" => %{"Authorization" => mcp.authorization}
-            }
-          }
-        })
+    case config(state, turn) do
+      config when config == %{} -> params
+      config -> Map.put(params, "config", config)
     end
   end
+
+  # Codex's own config for the thread: HAL-C2's MCP server when allowed, and its
+  # subagent tools off when the user keeps agents to HAL-C2's workers (`nativeSubagents`).
+  defp config(state, turn) do
+    mcp =
+      case mcp(state, turn) do
+        nil ->
+          %{}
+
+        mcp ->
+          %{
+            "mcp_servers" => %{
+              "hal-c2" => %{
+                "url" => mcp.url,
+                "tool_timeout_sec" => div(HalC2.Mcp.tool_timeout_ms(), 1000),
+                "http_headers" => %{"Authorization" => mcp.authorization}
+              }
+            }
+          }
+      end
+
+    if state.workers_only,
+      do: Map.put(mcp, "features", %{"multi_agent" => false, "multi_agent_v2" => false}),
+      else: mcp
+  end
+
+  # Codex takes `features` only when a native thread starts, so the choice is read then
+  # and kept for the thread's turns.
+  defp workers_only(state, turn),
+    do: %{state | workers_only: HalC2.Mcp.workers_only?(mcp(state, turn))}
 
   defp mcp(state, turn), do: HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids))
 
@@ -916,7 +943,10 @@ defmodule HalC2.Codex.ThreadRuntime do
         "mode" => if(Map.get(turn, :interaction_mode) == "plan", do: "plan", else: "default"),
         "settings" =>
           if(mcp(state, turn),
-            do: %{"model" => turn.model, "developer_instructions" => HalC2.Mcp.instructions()},
+            do: %{
+              "model" => turn.model,
+              "developer_instructions" => HalC2.Mcp.instructions(state.workers_only)
+            },
             else: %{"model" => turn.model}
           )
       }

@@ -467,6 +467,24 @@ function itemPayload(
           multiSelect: question.multiSelect === true,
         })),
       };
+    case "notification":
+      // A delegated task's report names its worker: the row links to the worker's
+      // thread and previews the result, as the subagent row does. Older ones, and
+      // other notifications, keep the plain row.
+      return item.workerThreadId
+        ? {
+            title: itemSummary(item),
+            detail: item.detail,
+            icon: "subagent",
+            status:
+              item.outcome === "failed"
+                ? "failed"
+                : item.outcome === "cancelled"
+                  ? "stopped"
+                  : status,
+            childThreadId: item.workerThreadId,
+          }
+        : { title: itemSummary(item), status, data: item };
     case "error":
       if (item.retry) {
         return {

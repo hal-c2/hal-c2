@@ -11,10 +11,6 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
-    "./relay": {
-      "types": "./src/relay.ts",
-      "import": "./src/relay.ts"
-    },
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13314
 #   docs/user/source-control.md
 #   packages/contracts/src/vcs.ts (VcsCreateWorktreeInput, VcsRemoveWorktreeInput)
 #   packages/contracts/src/worktreeSetup.ts (WorktreeSetupSnapshot, stages, phases)

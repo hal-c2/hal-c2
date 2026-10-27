@@ -31,6 +31,15 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     |> ok!()
   end
 
+  step ~r/^pull request "(?<pr>[^"]+)" was linked to "(?<thread>[^"]+)" as one the thread created(?<unlinked> and then unlinked)?$/,
+       %{args: [pr, thread | unlinked]} = context do
+    context = context |> link(thread, pr, "created") |> ok!()
+
+    if List.first(unlinked) in [nil, ""],
+      do: context,
+      else: context |> command(thread, "thread.pull-request.unlink", key(pr)) |> ok!()
+  end
+
   step ~r/^pull request "(?<pr>[^"]+)" is (?:the thread's legacy linked pull request|linked to "(?<thread>[^"]+)" through metadata)$/,
        %{args: args} = context do
     [pr | rest] = args
@@ -281,6 +290,23 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     context
   end
 
+  # What the turn writer and discovery do when they find a pull request the thread made.
+  step "the MC finding {string} for {string} again does not link it",
+       %{args: [pr, thread]} = context do
+    seq = World.state(context, thread).seq
+    :ok = HalC2.PullRequests.Opened.link(World.thread_id(context, thread), [url(pr)])
+    assert World.state(context, thread).seq == seq
+
+    # The same link sent on a read from before the unlink.
+    context
+    |> link(thread, pr, "created", "github.com", %{"automatic" => true})
+    |> ok!()
+
+    assert World.state(context, thread).seq == seq
+    refute pr in visible(context, thread)
+    context
+  end
+
   step "thread {string} has no legacy linked pull request", %{args: [thread]} = context do
     assert {:ok, _} = context.reply
     assert World.thread(context, thread)["linkedPullRequest"] == nil
@@ -379,12 +405,14 @@ defmodule HalC2.Steps.Orchestration.PullRequestLinks do
     )
   end
 
-  defp link(context, thread, pr, source, host \\ "github.com") do
+  defp link(context, thread, pr, source, host \\ "github.com", fields \\ %{}) do
     command(
       context,
       thread,
       "thread.pull-request.link",
-      Map.merge(key(pr, host), %{"url" => url(pr, host), "source" => source})
+      key(pr, host)
+      |> Map.merge(%{"url" => url(pr, host), "source" => source})
+      |> Map.merge(fields)
     )
   end
 

@@ -683,7 +683,8 @@ Item {
                     case "error":
                         return error;
                     default:
-                        return marker;
+                        // A finished worker's notification names its thread: a card.
+                        return (row.model.thread ?? "").length > 0 ? workerResult : marker;
                     }
                 }
             }
@@ -1670,6 +1671,87 @@ Item {
                         textFormat: Text.PlainText
                         color: Qt.alpha(root.textColor, 0.8)
                         font.pixelSize: Math.round(14 * Theme.fontScale)
+                    }
+                }
+            }
+
+            Component {
+                id: workerResult
+                // A delegated worker's report (the worker's title opens its thread, the result
+                // opens on demand), set apart from the agent's own replies by a rule at its edge.
+                Item {
+                    id: workerCard
+                    readonly property string thread: row.model.thread ?? ""
+                    readonly property bool failed: row.icon === "circle-alert"
+                    property bool open: false
+                    objectName: "workerResultCard"
+                    implicitHeight: workerColumn.height + 16
+                    Rectangle {
+                        width: 2
+                        height: parent.height - 16
+                        y: 8
+                        radius: 1
+                        color: workerCard.failed ? root.errorColor : Qt.alpha(root.mutedColor, 0.6)
+                    }
+                    Column {
+                        id: workerColumn
+                        x: 14
+                        y: 8
+                        width: parent.width - 14
+                        spacing: 4
+                        Row {
+                            spacing: 6
+                            height: 18
+                            ShellIcon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                name: row.icon ?? "zap"
+                                size: 12
+                                color: root.mutedColor
+                            }
+                            RowText {
+                                id: workerTitle
+                                objectName: "workerResultTitle"
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Math.min(implicitWidth, Math.max(0, root.columnWidth - 100))
+                                text: row.title ?? ""
+                                color: workerLink.hovered ? root.textColor : root.mutedColor
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                                font.weight: Font.Medium
+                                font.underline: workerLink.hovered
+                                wrapMode: Text.NoWrap
+                                elide: Text.ElideRight
+                                Accessible.role: Accessible.Link
+                                HoverHandler {
+                                    id: workerLink
+                                    cursorShape: Qt.PointingHandCursor
+                                }
+                                TapHandler {
+                                    onTapped: root.threadActivated(workerCard.thread)
+                                }
+                            }
+                            RowText {
+                                objectName: "workerResultToggle"
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: (row.text ?? "").length > 0
+                                text: workerCard.open ? qsTr("Hide result") : qsTr("Show result")
+                                color: root.mutedColor
+                                opacity: 0.8
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                Accessible.role: Accessible.Button
+                                TapHandler {
+                                    onTapped: workerCard.open = !workerCard.open
+                                }
+                            }
+                        }
+                        RowText {
+                            objectName: "workerResultText"
+                            visible: workerCard.open && (row.text ?? "").length > 0
+                            width: parent.width
+                            text: row.text ?? ""
+                            textFormat: Text.PlainText
+                            color: Qt.alpha(root.textColor, 0.8)
+                            font.pixelSize: Math.round(13 * Theme.fontScale)
+                        }
                     }
                 }
             }

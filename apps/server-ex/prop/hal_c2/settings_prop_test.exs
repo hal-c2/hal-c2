@@ -98,7 +98,12 @@ defmodule HalC2.SettingsPropTest do
   defp stale_version(%{version: version}),
     do: oneof([-1, version + 1, version + 7] ++ if(version > 0, do: [version - 1], else: []))
 
-  defp doc, do: resize(4, entity())
+  # Documents sometimes carry the subagents choice, which `Settings.hal_c2_subagents?/0` reads.
+  defp doc do
+    let {entity, choice} <- {resize(4, entity()), oneof([:unset, "provider", "hal-c2"])} do
+      if choice == :unset, do: entity, else: Map.put(entity, "nativeSubagents", choice)
+    end
+  end
 
   def precondition(_state, _call), do: true
 
@@ -163,8 +168,14 @@ defmodule HalC2.SettingsPropTest do
   def postcondition(_state, {:call, _, :update_raises, _}, result),
     do: match?({:error, _}, result)
 
-  def postcondition(state, {:call, _, :read, _}, {{doc, version}, via_settings, alive?}),
-    do: alive? and doc == state.doc and via_settings == state.doc and version == state.version
+  def postcondition(
+        state,
+        {:call, _, :read, _},
+        {{doc, version}, via_settings, alive?, hal_c2_subagents?}
+      ) do
+    alive? and doc == state.doc and via_settings == state.doc and version == state.version and
+      hal_c2_subagents? == (state.doc["nativeSubagents"] == "hal-c2")
+  end
 
   def postcondition(state, {:call, _, :saved, _}, result) do
     case state.file do
@@ -227,7 +238,9 @@ defmodule HalC2.SettingsPropTest do
 
   def read do
     server = Process.whereis(Settings)
-    {Settings.get(), Settings.settings(), is_pid(server) and Process.alive?(server)}
+
+    {Settings.get(), Settings.settings(), is_pid(server) and Process.alive?(server),
+     Settings.hal_c2_subagents?()}
   end
 
   def saved, do: Settings.saved()

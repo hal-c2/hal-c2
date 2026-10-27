@@ -97,7 +97,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
 
   step "HAL-C2 stores a secret for the first time", context do
     context = Storage.start(context)
-    :ok = HalC2.Connect.Secrets.put("relay-token", "s3cret")
+    :ok = HalC2.Secrets.put("relay-token", "s3cret")
     context
   end
 
@@ -334,7 +334,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     credentials = HalC2.Acp.cursor_credentials("cursor")
     File.mkdir_p!(Path.dirname(credentials))
     File.write!(credentials, ~s({"accessToken":"cursor-sign-in"}))
-    :ok = HalC2.Connect.Secrets.put("relay-token", "s3cret")
+    :ok = HalC2.Secrets.put("relay-token", "s3cret")
 
     # A downloaded tool: the registry agent "acme", installed into the cache.
     context = context |> HalC2.Test.AcpFixtures.publish() |> prepare_acme()
@@ -352,7 +352,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
     assert World.thread(context, "Kept")["title"] == "Kept"
     assert get_in(HalC2.Settings.settings(), ["providers", "grok", "enabled"]) == false
     assert File.read!(HalC2.Acp.cursor_credentials("cursor")) =~ "cursor-sign-in"
-    assert HalC2.Connect.Secrets.get("relay-token") == "s3cret"
+    assert HalC2.Secrets.get("relay-token") == "s3cret"
     context
   end
 
@@ -431,7 +431,7 @@ defmodule HalC2.Steps.Platform.StorageLayout do
         assert :sys.get_state(HalC2.Plugins).dir == expected
 
       "secrets" ->
-        :ok = HalC2.Connect.Secrets.put("relay-token", "s3cret")
+        :ok = HalC2.Secrets.put("relay-token", "s3cret")
         assert File.regular?(Path.join(expected, "relay-token.bin"))
 
       "provider sign-ins" ->

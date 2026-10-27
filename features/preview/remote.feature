@@ -14,7 +14,7 @@
 #   apps/desktop-qt/qml/HalC2/Bricks/ThreadView.qml (web links in a reply)
 #   apps/web/src/browser/browserTargetResolver.ts (upstream rewrote localhost to the environment's host,
 #     on private networks only; a forward replaces that)
-#   Cross-domain: connections/ owns pairing and relay setup; mc/ owns cluster membership.
+#   Cross-domain: connections/ owns pairing and remote access; mc/ owns cluster membership.
 
 Feature: Preview across MCs and devices
   Browser tabs, local server suggestions and agent browser hosts belong to the MC that runs

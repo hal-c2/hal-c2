@@ -87,6 +87,15 @@ Item {
             compare(Pages.searchRows("sign out", { providerSettings: {} })[0].label, "Providers");
         }
 
+        // features/settings/general.feature: the subagents setting is a General row that is
+        // found by search and offers the provider's own subagents or HAL-C2's workers.
+        function test_subagentsRowOffersProviderOrHalC2Workers() {
+            compare(Pages.searchRows("subagents", {})[0].targetId, "settingsRow:nativeSubagents");
+            const row = Rows.general.find(candidate => candidate.key === "nativeSubagents");
+            compare(row.options.map(option => option.value), ["provider", "hal-c2"]);
+            compare(row.options.map(option => option.label), ["Provider's own", "HAL-C2 workers"]);
+        }
+
         function test_projectGroupingRestoresTheModeUsedBefore() {
             verify(!Rows.groupingOn("separate"));
             verify(Rows.groupingOn("repository_path"));

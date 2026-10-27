@@ -11,6 +11,7 @@ defmodule HalC2.Orchestration.TurnWriter do
 
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, TurnWatch}
+  alias HalC2.PullRequests.Opened
   alias HalC2.StreamState
 
   @flush_ms 50
@@ -245,35 +246,50 @@ defmodule HalC2.Orchestration.TurnWriter do
     state
   end
 
-  @doc "Finishes an item with `status`, applying `fun` to its turn item (and message)."
+  @doc """
+  Finishes an item with `status`, applying `fun` to its turn item (and message). A
+  command that printed the pull request it created links it to the thread
+  (`HalC2.PullRequests.Opened`).
+  """
   def finish_item(state, native, status, fun) do
-    %{id: item_id, node: node_id, message: message_id} = Map.fetch!(state.items, native)
+    %{id: item_id, node: node_id, message: message_id} = item = Map.fetch!(state.items, native)
     at = Entities.now()
 
-    commit(state, fn stream ->
-      [
-        Orchestration.upsert(
-          stream,
-          "turn-item",
-          item_id,
-          &(fun.(&1) |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at}))
-        ),
-        Orchestration.upsert(
-          stream,
-          "node",
-          node_id,
-          &Map.merge(&1, %{"status" => status, "completedAt" => at})
-        ),
-        message_id &&
+    opened =
+      HalC2.Streams.transact(state.thread_id, :thread, fn stream ->
+        changes = [
           Orchestration.upsert(
             stream,
-            "message",
-            message_id,
-            &(fun.(&1) |> Map.put("updatedAt", at))
-          )
-      ]
-    end)
+            "turn-item",
+            item_id,
+            &(fun.(&1)
+              |> Map.merge(%{"status" => status, "completedAt" => at, "updatedAt" => at}))
+          ),
+          Orchestration.upsert(
+            stream,
+            "node",
+            node_id,
+            &Map.merge(&1, %{"status" => status, "completedAt" => at})
+          ),
+          message_id &&
+            Orchestration.upsert(
+              stream,
+              "message",
+              message_id,
+              &(fun.(&1) |> Map.put("updatedAt", at))
+            )
+        ]
 
+        opened =
+          case item[:kind] == :command && StreamState.get(stream, "turn-item")[item_id] do
+            %{} = current -> current |> fun.() |> then(&Opened.urls(&1["input"], &1["output"]))
+            _ -> []
+          end
+
+        {Enum.filter(changes, &is_tuple/1), opened}
+      end)
+
+    if opened != [], do: Opened.link(state.thread_id, opened)
     state
   end
 
@@ -544,6 +560,20 @@ defmodule HalC2.Orchestration.TurnWriter do
   def finish(state, status, failure) do
     at = Entities.now()
 
+    # Ending a run is at-least-once (a restart can ask again): a run that has
+    # already ended keeps the checkpoint its first ending captured, so the
+    # repeat must not capture over it.
+    run_id = state.turn && get_in(state.turn, [Access.key(:ids), Access.key(:run)])
+
+    if run_id && not active?(HalC2.Streams.state(state.thread_id), run_id) do
+      TurnWatch.release(run_id)
+      :ok
+    else
+      finish_active(state, status, failure, at)
+    end
+  end
+
+  defp finish_active(state, status, failure, at) do
     checkpoint =
       if status == "completed",
         do:
@@ -691,8 +721,14 @@ defmodule HalC2.Orchestration.TurnWriter do
       end)
 
     case abandoned do
-      {state, queue?} -> finished(state, status, failure, queue?)
-      nil -> :ok
+      {state, queue?} ->
+        # A start still in flight for the run (its runtime stopped answering)
+        # must not hold the thread's work behind it.
+        HalC2.Orchestration.Effects.cancel_pending(thread_id, "provider-turn.start", run_id)
+        finished(state, status, failure, queue?)
+
+      nil ->
+        :ok
     end
   end
 
@@ -840,15 +876,25 @@ defmodule HalC2.Orchestration.TurnWriter do
   end
 
   defp capture_checkpoint(%{scope_id: scope_id} = turn, at) do
-    HalC2.Checkpoint.capture_run(
-      turn.cwd,
-      scope_id,
-      turn.run_ordinal,
-      turn.ids.run,
-      turn.ids.root_node,
-      turn.ids.thread,
-      at
-    )
+    # Its own lane: a finish can run inside the turn's own start (a wake
+    # replayed to its end), where the provider lane is the start itself.
+    case HalC2.Orchestration.Effects.run_now(
+           turn.ids.thread,
+           "checkpoint.capture",
+           %{
+             "cwd" => turn.cwd,
+             "scopeId" => scope_id,
+             "runOrdinal" => turn.run_ordinal,
+             "runId" => turn.ids.run,
+             "rootNodeId" => turn.ids.root_node,
+             "at" => at
+           },
+           nil,
+           "checkpoint"
+         ) do
+      {:ok, checkpoint} -> checkpoint
+      _ -> nil
+    end
   end
 
   defp capture_checkpoint(_turn, _at), do: nil

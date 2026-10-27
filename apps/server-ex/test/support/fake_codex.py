@@ -1,7 +1,7 @@
 # Fake `codex app-server` for tests: answers the handshake and plays a scripted turn.
 # A turn whose text contains "wait" stays running until turn/interrupt; "approve" asks
 # to run a command, "ask" asks a question (item/tool/requestUserInput; "ask: Q" asks Q), and "write NAME"
-# creates the file NAME ("edit NAME" reports a change to it; "indent", "fill", "fail" and "say" are below;
+# creates the file NAME ("edit NAME" reports a change to it; "run command", "indent", "fill", "fail" and "say" are below;
 # steering with "say ..." ends a waiting turn with that answer). "where are we" says which native thread
 # the turn ran on and whether handed-off history or merged work came with the message; "exit before
 # starting" makes the process exit on turn/start. With FAKE_CODEX_LOG set, every request the MC sends
@@ -227,6 +227,8 @@ for line in sys.stdin:
         # The script plays from the user's message, not from the context the MC hands
         # off ahead of it (`<conversation_history>`, `<imported_history>`, ...).
         text = re.sub(r"\A(?:<(\w+)>\n.*?\n</\1>\n\n)+", "", prompt, flags=re.S)
+        # A delegated subagent's task follows the MC's worker preamble.
+        text = re.sub(r"\AYou are a HAL-C2 worker delegated by .*?\nTask:\n", "", text, flags=re.S)
         rollout_append({"type": "turn_context", "payload": {"cwd": params.get("cwd"), "model": params.get("model")}})
         rollout_append({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": prompt}]}})
         if "exit before starting" in text:
@@ -256,6 +258,14 @@ for line in sys.stdin:
                 send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-bg", "text": "The dev server is running."}}})
                 send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
                 continue
+        # "say and wait TEXT" writes partial.txt, answers TEXT, then stays running
+        # like "wait", so a test can stop a turn that already said something.
+        if text.startswith("say and wait "):
+            open("partial.txt", "w").write("partial\n")
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-partial-{turn_id}", "text": ""}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-partial-{turn_id}", "text": text[len("say and wait "):]}}})
+            waiting_ctx = ctx
+            continue
         if "wait" in text or "finishing" in text or "closing" in text:
             waiting_ctx = ctx
             finishing = "finishing" in text
@@ -278,6 +288,11 @@ for line in sys.stdin:
             send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-repeat-{turns}", "text": text}}})
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
             continue
+        # 'run command {"command": ..., "output": ...}' reports that command and what it
+        # printed (a commandExecution item) before the usual answer.
+        if text.startswith("run command "):
+            run = json.loads(text[len("run command "):])
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "commandExecution", "id": f"cmd-run-{turns}", "command": run["command"], "status": "completed", "aggregatedOutput": run["output"], "exitCode": 0}}})
         if text.startswith("write "):
             name = text.split()[1]
             os.makedirs(os.path.dirname(name) or ".", exist_ok=True)
@@ -294,6 +309,21 @@ for line in sys.stdin:
             open(name, "w").write("".join("  " + line for line in lines))
         if text.startswith("fill "):
             open(text.split()[1], "w").write(("x" * 99 + "\n") * 110_000)
+        # Checkpoint file-list shapes: renames, binaries, empty files, names the
+        # plain "write NAME" split cannot carry, and several files in one turn.
+        if text.startswith("rename "):
+            _, old, new = text.split()
+            os.makedirs(os.path.dirname(new) or ".", exist_ok=True)
+            os.rename(old, new)
+        if text.startswith("write-image "):
+            open(text.split()[1], "wb").write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        if text.startswith("write-empty "):
+            open(text.split()[1], "w").close()
+        if text.startswith("write-named "):
+            open(text[len("write-named "):], "w").write("edited content\n")
+        if text.startswith("write-all "):
+            for name in text.split()[1:]:
+                open(name, "w").write(text + "\n")
         # "fail" ends the turn as failed.
         if text.startswith("fail"):
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "failed", "error": {"message": "the turn failed"}}}})

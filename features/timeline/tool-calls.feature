@@ -18,6 +18,9 @@
 #   apps/tui/src/diffSplit.ts
 #   apps/tui/src/components/MessagesTimeline.tsx (changed-files tree, open diff per turn and per file)
 #   apps/server-ex/lib/hal_c2/orchestration/turn_writer.ex (command, file, web and tool items)
+#   https://github.com/MoonshotAI/kimi-code/blob/%40moonshot-ai/kimi-code%402.3.1/packages/acp-server/src/events-map.ts (Kimi's tool calls)
+#   https://github.com/MoonshotAI/kimi-code/blob/%40moonshot-ai/kimi-code%402.3.1/packages/agent-core-v2/docs/wire-manifest.d.ts (Kimi's session records)
+#   apps/server-ex/lib/hal_c2/acp/kimi.ex (Kimi's subagents, read from those records)
 #   packages/contracts/src/rpc.ts (orchestration.getTurnDiff, orchestration.getFullThreadDiff)
 
 Feature: Tool calls and file changes
@@ -392,6 +395,48 @@ Feature: Tool calls and file changes
       | search        | while it runs    | a file search |
       | read          | when it finishes | a file read   |
       | search        | when it finishes | a file search |
+
+  # Kimi Code's text for a running call is its arguments streaming in, and it names a
+  # file only by an absolute path.
+  @mc
+  Scenario Outline: Kimi's tool calls say what they ran
+    Given Kimi streams a "<tool>" call's arguments while it runs
+    When the MC projects the call
+    Then the timeline shows it as <timeline kind>
+
+    Examples:
+      | tool  | timeline kind |
+      | Bash  | a command     |
+      | Read  | a file read   |
+      | Grep  | a file search |
+      | Write | a file change |
+
+  # Kimi's Agent tool runs a subagent whose work ACP never carries: Kimi writes it only
+  # to the session's own records on the MC's machine, which the MC reads while it runs.
+  @mc
+  Scenario: A Kimi subagent's work shows in its own thread
+    Given Kimi hands a task to one of its subagents
+    When the MC projects the subagent
+    Then the subagent's thread opens with its task
+    And the subagent's thinking, commands and replies appear in its thread
+    And the subagent's result is the summary Kimi recorded
+
+  # A turn can end, with Kimi still running, before its subagent's end reaches the
+  # record or its call.
+  @mc
+  Scenario: A Kimi subagent ends with its turn
+    Given Kimi's turn fails while one of its subagents works
+    When the turn fails
+    Then the subagent ends with it
+
+  # A subagent Kimi runs in the background outlives its call and its turn.
+  @mc
+  Scenario: A Kimi background subagent runs on after its turn
+    Given Kimi hands a task to a subagent in the background
+    When the MC projects the subagent
+    Then the subagent is still running
+    When Kimi records that the subagent finished
+    Then the subagent's result is the summary Kimi recorded
 
   # TUI: implemented in apps/tui/src/components/MessagesTimeline.tsx
   @shared @backlog-mobile

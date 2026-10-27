@@ -214,6 +214,12 @@ Feature: Muse Code
       | supervised  | asked for approval     |
       | full access | allowed without asking |
 
+  Scenario: Switching a running Muse Code turn to full access stops it asking
+    Given Muse Code asked to run the first of two commands
+    When the user switches the Muse Code thread to full access
+    Then the waiting command is approved without the user
+    And Muse Code runs the second command without asking
+
   Scenario: A Muse Code workflow's request with a second requirement is approved for it too
     Given the thread runs Muse Code in full access
     When a Muse Code workflow asks twice to run a command it can be approved for
@@ -260,6 +266,16 @@ Feature: Muse Code
     When the user stops the turn
     Then Muse Code stops working and the turn is shown as interrupted
 
+  Scenario Outline: Stopping a Muse Code turn that will not stop closes its host
+    Given a Muse Code turn is running on a Muse that <answers> its interrupt
+    When the user stops the turn
+    Then the turn is shown as interrupted and its Muse host is closed
+
+    Examples:
+      | answers       |
+      | refuses       |
+      | never answers |
+
   Scenario: /compact compacts the Muse Code conversation
     Given a Muse Code thread with history
     When the user sends "/compact" to Muse Code
@@ -280,3 +296,10 @@ Feature: Muse Code
     Given Muse Code is installed and enabled
     When the user opens the model choices for generated text
     Then no Muse Code model is offered
+
+  # features/settings/subagents.feature: the setting is not wired for Muse yet.
+  @backlog @mc
+  Scenario: Muse Code's own subagents are turned off when agents use HAL-C2 workers
+    Given the subagents setting is HAL-C2 workers
+    When a Muse Code session is started
+    Then it has no built-in subagent tool, if Muse Code can turn it off

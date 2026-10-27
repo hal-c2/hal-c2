@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13302 (phone maintenance of environments and providers)
 #   docs/user/updating.md
 #   docs/internals/server-updates.md
 #   apps/server-ex/lib/hal_c2/upgrade.ex (server.updateServer, server.updateServerWithProgress)
@@ -764,3 +765,43 @@ Feature: Updating the server, the desktop app and providers
       And "WSL · Ubuntu" is not connected
       When the user starts the update of "WSL · Ubuntu"
       Then the row of "WSL · Ubuntu" says "This environment isn’t connected — try again once it reconnects."
+
+  Rule: Maintaining an environment from a phone
+
+    @mobile @backlog
+    Scenario: The phone checks an environment's release on the channel the host follows
+      Given "server" is connected to the phone
+      When the user checks "server" for updates
+      Then the phone says whether a newer HAL-C2 release is available on "server"'s channel
+
+    @mobile @backlog
+    Scenario: The phone lists only the enabled providers of an environment for update
+      Given Codex is enabled on "server" and Claude is not
+      When the user opens the maintenance of "server" on the phone
+      Then only Codex is offered for update on "server"
+
+    @mobile @backlog
+    Scenario: The phone shows a provider update until it ends
+      Given Codex is enabled on "server" and behind its latest release
+      When the user updates Codex on "server" from the phone
+      Then the phone shows the update's progress until it ends
+      And it says whether the update succeeded and, if it failed, why
+
+    @mobile @backlog
+    Scenario Outline: Maintenance of an environment needs a live connection and the operate scope
+      Given "server" <state>
+      When the user opens the maintenance of "server" on the phone
+      Then its updates cannot be started and the user is told why
+
+      Examples:
+        | state                                       |
+        | is not connected                            |
+        | is connected without the operate scope      |
+
+    # HAL-C2 Connect was removed (connections/agent-activity-publishing.feature), so environments
+    # reached through it are not maintained from a phone; direct connections are.
+    @dropped @mobile
+    Scenario: Environment updates over HAL-C2 Connect
+      Given "server" is reached through HAL-C2 Connect
+      When the user opens the maintenance of "server" on the phone
+      Then its updates are not offered
