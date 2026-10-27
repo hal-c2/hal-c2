@@ -3525,6 +3525,30 @@ defmodule HalC2.OrchestrationTest do
                StreamState.list(current(thread_id), "provider-thread")
     end
 
+    # Picking another provider in the composer moves the selection, not the
+    # conversation: a rewind asked for after the pick still rewinds the
+    # conversation that is active, in either selection shape.
+    test "a provider picked before the rewind was asked for does not block it", %{work: work} do
+      for selection <- [
+            %{"instanceId" => "opencode", "model" => "sonnet"},
+            %{"model" => "sonnet"}
+          ] do
+        thread_id = launch_in(work, "write a.txt", "codex")
+        await_statuses(thread_id, ["completed"])
+        {:ok, _} = send_message(thread_id, "msg-user-2", "write b.txt")
+        await_statuses(thread_id, ["completed", "completed"])
+
+        {:ok, _} =
+          HalC2.Streams.commit(thread_id, :thread, [
+            {"thread", thread_id, %{"s" => %{"modelSelection" => selection}}}
+          ])
+
+        # Both iterations share `work`, so only the conversation rewinds.
+        assert {:ok, _} = rollback(thread_id, 1, %{"restoreFiles" => false})
+        assert ["completed", "rolled_back"] = Enum.map(runs(current(thread_id)), & &1["status"])
+      end
+    end
+
     # The session stops as it is asked to drop the turns: a Codex rewind fails and
     # changes nothing; a Claude one needs no session, as when none was running.
     test "a rewind whose Codex session stops as it is asked fails", %{work: work} do
@@ -4083,6 +4107,50 @@ defmodule HalC2.OrchestrationTest do
           )
       end
     end
+  end
+
+  test "a provider diff never replaces a captured checkpoint and must name a checkpoint ref" do
+    {thread_id, run_id} = recorded_run("completed")
+    scope = HalC2.Checkpoint.scope_id(thread_id)
+    checkpoint_id = HalC2.Checkpoint.checkpoint_id(scope, 1)
+
+    command = fn ref, status ->
+      %{
+        "type" => "thread.turn.diff.complete",
+        "threadId" => thread_id,
+        "turnId" => run_id,
+        "completedAt" => HalC2.Orchestration.Entities.now(),
+        "checkpointRef" => ref,
+        "status" => status,
+        "files" => [],
+        "checkpointTurnCount" => 1
+      }
+    end
+
+    # A placeholder for a run with no checkpoint is recorded; a captured
+    # checkpoint may then replace the placeholder.
+    assert {:ok, _} = Orchestration.dispatch(command.("provider-diff:event-1", "missing"))
+
+    assert {:ok, _} =
+             Orchestration.dispatch(command.(HalC2.Checkpoint.ref(scope, 1), "ready"))
+
+    checkpoint = current(thread_id) |> StreamState.get("checkpoint") |> Map.fetch!(checkpoint_id)
+    assert checkpoint["status"] == "ready"
+
+    # Nothing replaces what was captured, in either direction.
+    assert {:error, already} =
+             Orchestration.dispatch(command.(HalC2.Checkpoint.ref(scope, 1), "ready"))
+
+    assert already =~ "already has a captured checkpoint"
+
+    assert {:error, _} = Orchestration.dispatch(command.("provider-diff:event-2", "missing"))
+
+    # A ready checkpoint's ref reaches git, so only checkpoint refs are accepted.
+    assert {:error, not_ref} = Orchestration.dispatch(command.("config", "ready"))
+    assert not_ref =~ "is not under refs/hal-c2/ or refs/t3/"
+
+    assert current(thread_id) |> StreamState.get("checkpoint") |> Map.fetch!(checkpoint_id) ==
+             checkpoint
   end
 
   defp await_request(thread_id) do

@@ -356,11 +356,17 @@ export function diffStat(files: OrchestrationCheckpointSummary["files"]): DiffSt
   return { additions, deletions };
 }
 
-/** Checkpoints ordered newest-first, for the revert picker. */
+/**
+ * Checkpoints ordered newest-first, for the revert picker. Only ones that
+ * count as diff turns are revertable by turn count; a checkpoint with no
+ * diff turn carries count 0, which would name the baseline instead.
+ */
 export function revertableCheckpoints(
   checkpoints: OrchestrationThread["checkpoints"],
 ): OrchestrationCheckpointSummary[] {
-  return [...checkpoints].sort((a, b) => b.completedAt.localeCompare(a.completedAt));
+  return checkpoints
+    .filter((checkpoint) => checkpoint.checkpointTurnCount > 0)
+    .sort((a, b) => b.completedAt.localeCompare(a.completedAt));
 }
 
 /**

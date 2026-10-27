@@ -16,8 +16,9 @@ class McClient;
 class TimelineModel;
 
 // The Diff tab: what a thread's turns changed, from the checkpoint each
-// finished turn leaves (the stream's `checkpoint` entities, turn N being the
-// ready one with appRunOrdinal N). One turn's diff is
+// finished turn leaves (the stream's `checkpoint` entities, turn N being
+// the Nth ready checkpoint of a completed run in run order — the MC's
+// count, so rewound and unfinished runs leave no gaps). One turn's diff is
 // `orchestration.getTurnDiff` from N-1 to N, all changes
 // `orchestration.getFullThreadDiff` up to the latest turn; either lands in
 // `model` as rows.
