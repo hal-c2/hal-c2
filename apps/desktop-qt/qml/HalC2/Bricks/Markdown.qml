@@ -572,6 +572,7 @@ Item {
                             TextEdit {
                                 id: codeText
                                 objectName: "codeText"
+                                Accessible.name: seg.language.length > 0 ? qsTr("%1 code").arg(seg.language) : qsTr("Code")
                                 x: 14.4
                                 y: 12.8
                                 width: block.wrapped ? body.width - 28.8 : Math.max(implicitWidth, body.width - 28.8)
