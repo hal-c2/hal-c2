@@ -299,7 +299,7 @@ Feature: Claude
     When the user sends a message to Claude
     Then the turn fails saying to run the Claude sign-in command on that machine
 
-  @mc @backlog
+  @mc
   Scenario Outline: An API error Claude reports as a finished turn fails the run
     Given Claude ends a turn reporting the API error <status> as its result
     Then the run fails instead of completing
@@ -311,7 +311,7 @@ Feature: Claude
       | 401    |
       | 529    |
 
-  @mc @backlog
+  @mc
   Scenario: A turn that failed with an API error does not poison the Claude session
     Given the last Claude turn of a thread failed with an API error
     When the user sends the next message
@@ -459,7 +459,7 @@ Feature: Claude
     When Claude reads the image "docs/mock.png" in the workspace
     Then the tool call carries the image's path so the client can show it
 
-  @backlog @mc
+  @mc
   Scenario Outline: A Claude turn that gives up says why
     When Claude ends a turn because <reason>
     Then the run fails with "<message>"
@@ -480,38 +480,38 @@ Feature: Claude
       | the API was overloaded                         | Claude API is overloaded (529). Try again shortly.                             |
       | the API rate limit was reached                 | Claude API rate limit reached. Try again later.                                |
 
-  @backlog @mc
+  @mc
   Scenario: A failed Claude turn does not show Claude's internal diagnostics
     When Claude ends a turn with an error and a diagnostic record of its own
     Then the failure shows the error
     And the diagnostic record is not shown
 
-  @backlog @mc
+  @mc
   Scenario: A Claude turn aborted mid-tool is interrupted even when Claude calls it a success
     Given the user stopped a Claude turn while a tool was running
     When Claude reports the turn as finished successfully but aborted
     Then the run is interrupted, not completed
 
-  @backlog @mc
+  @mc
   Scenario: A Claude API retry shows its attempt and its wait
     Given a Claude turn is running
     When Claude retries a failed API request
     Then the turn's work log shows the retry with its attempt, the most attempts allowed and the wait before it
     And each later retry of that request updates the same entry
 
-  @backlog @mc
+  @mc
   Scenario: A Claude turn with no answer of its own shows Claude's result as the answer
     When Claude ends a turn with a result but without writing an answer
     Then the result's text is shown as Claude's answer
 
-  @backlog @mc
+  @mc
   Scenario: Claude switching model after a refusal is noted without failing the turn
     Given a Claude turn is running
     When Claude says it fell back to another model after a refusal
     Then the thread shows Claude's notice
     And the turn carries on
 
-  @backlog @mc
+  @mc
   Scenario Outline: A Claude turn paused on a usage limit says which limit and how long
     Given a Claude turn is running
     When Claude is refused by its <window> limit, which resets in <wait>
@@ -525,7 +525,7 @@ Feature: Claude
       | weekly Sonnet   | 26 hours           | 7-day Sonnet | 26h    |
       | overage         | 90 seconds         | overage      | 2m     |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A usage limit pause leaves out a wait it cannot trust
     Given a Claude turn is running
     When Claude is refused by its weekly limit, which <reset>
@@ -537,20 +537,20 @@ Feature: Claude
       | should already have reset          |
       | resets more than 30 days from now  |
 
-  @backlog @mc
+  @mc
   Scenario: A usage limit pause is announced once for each limit in a turn
     Given a Claude turn is paused on its five hour limit
     When Claude reports the same refusal again and a warning about its weekly limit
     Then the thread still shows one pause notice
     And the warning adds no notice
 
-  @backlog @mc
+  @mc
   Scenario: A Claude turn ended by several usage limits resumes after the last of them
     When Claude ends a turn refused by a limit that resets at 14:00 and another that resets at 18:00
     Then the run fails with "Claude usage limit reached. Send the message again once the limit resets."
     And the thread's reset time is 18:00
 
-  @backlog @mc
+  @mc
   Scenario: A Claude usage limit with an unknown reset records no reset time
     When Claude ends a turn refused by a limit that resets at 14:00 and another with no reset time
     Then the thread is marked as limited without a reset time
@@ -641,14 +641,14 @@ Feature: Claude
     And Claude wrote nothing for it
     Then the run completes without asking Claude anything
 
-  @backlog @mc
+  @mc
   Scenario: A Claude turn that does not stop within 10 seconds is settled as interrupted
     Given the user stopped a running Claude turn
     When Claude has not ended the turn after 10 seconds
     Then the run is interrupted anyway
     And the thread can take its next message
 
-  @backlog @mc
+  @mc
   Scenario: Claude's stream ending after a stop is an interruption, not a failure
     Given the user stopped a running Claude turn
     When Claude's process ends without reporting the turn

@@ -450,13 +450,6 @@ defmodule HalC2.Claude.Provider do
   def prompt(text, _effort), do: text
 
   @doc """
-  Why instance `instance`'s CLI cannot run `model`, when the manifest gates the model
-  on a newer Claude Code than this one: the message names the version to upgrade to.
-  `nil` for a model the CLI listed (it runs it, by definition), one it can run, one
-  the manifest does not know, or a CLI whose version cannot be read (which is left to
-  refuse the model itself).
-  """
-  @doc """
   The provider list's word on a CLI too old for a manifest model: it names the
   model needing the lowest newer version and the version to upgrade to. A CLI
   whose version cannot be read is too old for every gated model (gated models
@@ -487,6 +480,13 @@ defmodule HalC2.Claude.Provider do
     end
   end
 
+  @doc """
+  Why instance `instance`'s CLI cannot run `model`, when the manifest gates the model
+  on a newer Claude Code than this one: the message names the version to upgrade to.
+  `nil` for a model the CLI listed (it runs it, by definition), one it can run, one
+  the manifest does not know, or a CLI whose version cannot be read (which is left to
+  refuse the model itself).
+  """
   @spec too_old(String.t() | nil, String.t()) :: String.t() | nil
   def too_old(model, instance \\ "claudeAgent") do
     with nil <- listed(model, instance),

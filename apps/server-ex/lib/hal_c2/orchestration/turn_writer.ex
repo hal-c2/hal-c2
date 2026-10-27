@@ -36,7 +36,8 @@ defmodule HalC2.Orchestration.TurnWriter do
   @doc """
   Creates the turn item (and its node) for a native item the first time it is seen.
   `kind` is `:assistant`, `:reasoning`, `:command`, `:file`, `:search`, `:web`, `:tool`,
-  `:compaction`, or `:error` (a provider failure, such as a retry);
+  `:compaction`, `:notice` (a message the provider itself announced), or `:error`
+  (a provider failure, such as a retry);
   `fields` are the item type's own fields.
   """
   def ensure_item(state, native, kind, fields \\ %{}) do
@@ -115,6 +116,7 @@ defmodule HalC2.Orchestration.TurnWriter do
   defp shape(:subagent, _, fields), do: {"subagent", "subagent", fields}
   defp shape(:plan, _, _), do: {"plan", "proposed_plan", %{"markdown" => "", "streaming" => true}}
   defp shape(:compaction, _, fields), do: {"system", "compaction", fields}
+  defp shape(:notice, _, fields), do: {"system", "system_notice", fields}
   defp shape(:error, _, fields), do: {"system", "error", fields}
 
   defp plan(ids, plan_id, node_id, kind, status, fields) do

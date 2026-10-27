@@ -157,7 +157,9 @@ for line in sys.stdin:
         if sub == "initialize" and os.environ.get("FAKE_CLAUDE_MODELS"):
             reply["models"] = json.loads(os.environ["FAKE_CLAUDE_MODELS"])
         send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": reply}})
-        if sub == "interrupt":
+        # FAKE_CLAUDE_HOLD_INTERRUPT: an interrupt the CLI never answers, so the
+        # host has to settle the turn itself.
+        if sub == "interrupt" and not os.environ.get("FAKE_CLAUDE_HOLD_INTERRUPT"):
             send({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": session})
         continue
     if msg.get("type") != "user":

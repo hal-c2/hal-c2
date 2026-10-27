@@ -133,8 +133,10 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "Claude shows {string} that model", %{args: [prefix]} = context do
     {_min, model} = lowest_gated(context.gated_from)
-    assert claude(context.providers)["message"] == "#{prefix} #{model["name"]}. " <>
-             "Upgrade to v#{context.gated_min} or newer to access it."
+
+    assert claude(context.providers)["message"] ==
+             "#{prefix} #{model["name"]}. " <>
+               "Upgrade to v#{context.gated_min} or newer to access it."
 
     context
   end
@@ -1204,7 +1206,12 @@ defmodule HalC2.Steps.Providers.Claude do
 
   step "the user sends the next message", context do
     context = World.post_message(context, @thread, "hello")
-    World.await_runs(context, @thread, ["completed", "completed"])
+
+    World.await_value(context, @thread, fn state ->
+      runs = StreamState.list(state, "run")
+      length(runs) == 2 and Enum.all?(runs, &(&1["status"] in ["completed", "failed"]))
+    end)
+
     context
   end
 
@@ -1874,6 +1881,527 @@ defmodule HalC2.Steps.Providers.Claude do
     |> Enum.filter(&(&1["type"] in ["user_message", "assistant_message"]))
     |> Enum.sort_by(& &1["ordinal"])
     |> Enum.map(&{&1["type"], &1["text"]})
+  end
+
+  # --- turn endings --------------------------------------------------------------------
+
+  # A turn the fake holds open ("wait"), which the steps then end by having Claude
+  # say the `result` (or other frames) the scenario is about.
+  defp running_turn(context) do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "wait for me")
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "claude", &(get_in(&1, ["in", "type"]) == "user"))
+    Map.put(context, :thread, @thread)
+  end
+
+  defp api_error_turn(context, status) do
+    context = running_turn(context)
+    text = "API Error: #{status} from the provider"
+
+    message = %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-api-error",
+        "content" => [%{"type" => "text", "text" => text}]
+      }
+    }
+
+    message =
+      if status == 401, do: Map.put(message, "error", "authentication_failed"), else: message
+
+    claude_says(context, message)
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => true,
+      "api_error_status" => status,
+      "terminal_reason" => "completed",
+      "result" => text
+    })
+
+    Map.put(context, :error_text, text)
+  end
+
+  step ~r/^Claude ends a turn reporting the API error (?<status>\d+) as its result$/,
+       %{args: [status]} = context do
+    api_error_turn(context, String.to_integer(status))
+  end
+
+  step "the last Claude turn of a thread failed with an API error", context do
+    context = api_error_turn(context, 529)
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the run fails instead of completing", context do
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the failure carries the code {string} and is a provider error",
+       %{args: [code]} = context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+
+    assert %{"failure" => %{"class" => "provider_error", "code" => ^code}} =
+             Enum.find(items, &(&1["type"] == "error"))
+
+    context
+  end
+
+  step "the error text appears once in the thread", context do
+    messages = StreamState.list(World.stream(context, @thread), "message")
+
+    assert 1 ==
+             Enum.count(
+               messages,
+               &(&1["role"] == "assistant" and (&1["text"] || "") =~ context.error_text)
+             )
+
+    context
+  end
+
+  step "Claude answers it in the same session", context do
+    assert "Hello from claude" in World.replies(context, @thread)
+    # The same CLI process took the message: it was started once.
+    assert [_] = for(%{"argv" => argv} <- World.provider_log(context, "claude"), do: argv)
+    context
+  end
+
+  step "the new run completes", context do
+    assert ["failed", "completed"] =
+             context |> World.runs(@thread) |> Enum.map(& &1["status"])
+
+    context
+  end
+
+  @give_up %{
+    "it kept getting API errors" => %{"terminal_reason" => "api_error"},
+    "its tool calls kept coming out malformed" => %{
+      "terminal_reason" => "malformed_tool_use_exhausted"
+    },
+    "the turn's token budget ran out" => %{"terminal_reason" => "budget_exhausted"},
+    "it could not produce the structured output" => %{
+      "terminal_reason" => "structured_output_retry_exhausted"
+    },
+    "a deferred tool is no longer available" => %{
+      "terminal_reason" => "tool_deferred_unavailable"
+    },
+    "the turn could not be set up" => %{"terminal_reason" => "turn_setup_failed"},
+    "a usage limit blocked the request" => %{"terminal_reason" => "blocking_limit"},
+    "the context refilled straight after compaction" => %{
+      "terminal_reason" => "rapid_refill_breaker"
+    },
+    "the prompt is larger than the context window" => %{"terminal_reason" => "prompt_too_long"},
+    "an image could not be processed" => %{"terminal_reason" => "image_error"},
+    "the model returned an error" => %{"terminal_reason" => "model_error"},
+    "the API was overloaded" => %{"api_error_status" => 529},
+    "the API rate limit was reached" => %{"api_error_status" => 429}
+  }
+
+  step ~r/^Claude ends a turn because (?<reason>.+)$/, %{args: [reason]} = context do
+    context = running_turn(context)
+
+    result =
+      Map.merge(
+        %{"type" => "result", "subtype" => "success", "is_error" => false},
+        @give_up[reason]
+      )
+
+    claude_says(context, result)
+    context
+  end
+
+  step "Claude ends a turn with an error and a diagnostic record of its own", context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "error_during_execution",
+      "is_error" => true,
+      "errors" => ["[ede_diagnostic] heap=42 frames=17", "The model exploded"]
+    })
+
+    World.await_runs(context, @thread, ["failed"])
+    context
+  end
+
+  step "the failure shows the error", context do
+    items = StreamState.list(World.stream(context, @thread), "turn-item")
+
+    assert %{"failure" => %{"message" => "The model exploded"}} =
+             Enum.find(items, &(&1["type"] == "error"))
+
+    context
+  end
+
+  step "the diagnostic record is not shown", context do
+    state = World.stream(context, @thread)
+
+    for kind <- ["turn-item", "message"] do
+      refute inspect(StreamState.list(state, kind), limit: :infinity) =~ "ede_diagnostic"
+    end
+
+    context
+  end
+
+  step "Claude ends a turn with a result but without writing an answer", context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => false,
+      "result" => "The answer is 42"
+    })
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the result's text is shown as Claude's answer", context do
+    assert "The answer is 42" in World.replies(context, @thread)
+    context
+  end
+
+  step "Claude says it fell back to another model after a refusal", context do
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "model_refusal_fallback",
+      "uuid" => "fallback-1",
+      "trigger" => "refusal",
+      "direction" => "retry",
+      "original_model" => "claude-fable-5",
+      "fallback_model" => "claude-opus-4-8",
+      "content" => "Safeguards flagged this message. Switched to Opus 4.8."
+    })
+
+    context
+  end
+
+  step "the thread shows Claude's notice", context do
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(&1["type"] == "system_notice" and
+            &1["message"] == "Safeguards flagged this message. Switched to Opus 4.8.")
+      )
+    end)
+
+    context
+  end
+
+  step "the turn carries on", context do
+    assert [%{"status" => "running"}] = World.runs(context, @thread)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-after-fallback",
+        "content" => [%{"type" => "text", "text" => "Carrying on"}]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed"])
+    assert "Carrying on" in World.replies(context, @thread)
+    context
+  end
+
+  step "Claude retries a failed API request", context do
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "api_retry",
+      "uuid" => "retry-1",
+      "attempt" => 1,
+      "max_retries" => 5,
+      "retry_delay_ms" => 2000,
+      "error_status" => 529,
+      "error" => "overloaded"
+    })
+
+    context
+  end
+
+  defp retry_items(state),
+    do: for(%{"retry" => %{}} = item <- StreamState.list(state, "turn-item"), do: item)
+
+  step "the turn's work log shows the retry with its attempt, the most attempts allowed and the wait before it",
+       context do
+    World.await_value(context, @thread, fn state ->
+      match?(
+        [
+          %{
+            "type" => "error",
+            "title" => "Provider retry",
+            "retry" => %{"attempt" => 1, "maxAttempts" => 5, "retryDelayMs" => 2000}
+          }
+        ],
+        retry_items(state)
+      )
+    end)
+
+    context
+  end
+
+  step "each later retry of that request updates the same entry", context do
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "api_retry",
+      "uuid" => "retry-2",
+      "attempt" => 2,
+      "max_retries" => 5,
+      "retry_delay_ms" => 4000,
+      "error_status" => 529,
+      "error" => "overloaded"
+    })
+
+    World.await_value(context, @thread, fn state ->
+      match?([%{"retry" => %{"attempt" => 2, "retryDelayMs" => 4000}}], retry_items(state))
+    end)
+
+    assert length(retry_items(World.stream(context, @thread))) == 1
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  # --- usage-limit pauses ------------------------------------------------------------------
+
+  @windows %{
+    "five hour" => "five_hour",
+    "weekly" => "seven_day",
+    "weekly Opus" => "seven_day_opus",
+    "weekly Sonnet" => "seven_day_sonnet",
+    "overage" => "overage"
+  }
+
+  defp refuse(context, type, resets_at) do
+    info = %{"status" => "rejected", "rateLimitType" => type}
+    info = if resets_at, do: Map.put(info, "resetsAt", resets_at), else: info
+    claude_says(context, %{"type" => "rate_limit_event", "rate_limit_info" => info})
+    context
+  end
+
+  defp wait_seconds(text) do
+    parts = Regex.scan(~r/(\d+) (hours?|minutes?|seconds?)/, text)
+
+    Enum.reduce(parts, 0, fn [_, n, unit], total ->
+      factor =
+        if(String.starts_with?(unit, "hour"),
+          do: 3600,
+          else: if(String.starts_with?(unit, "minute"), do: 60, else: 1)
+        )
+
+      total + String.to_integer(n) * factor
+    end)
+  end
+
+  defp pause_notices(state) do
+    for item <- StreamState.list(state, "turn-item"),
+        item["type"] == "system_notice" and
+          String.starts_with?(item["message"] || "", "Claude usage limit reached."),
+        do: item
+  end
+
+  step ~r/^Claude is refused by its (?<window>.+) limit, which resets in (?<wait>.+)$/,
+       %{args: [window, wait]} = context do
+    refuse(context, @windows[window], System.system_time(:second) + wait_seconds(wait))
+  end
+
+  step ~r/^Claude is refused by its weekly limit, which (?<reset>has no reset time|should already have reset|resets more than 30 days from now)$/,
+       %{args: [reset]} = context do
+    resets_at =
+      case reset do
+        "has no reset time" -> nil
+        "should already have reset" -> System.system_time(:second) - 3600
+        "resets more than 30 days from now" -> System.system_time(:second) + 31 * 86_400
+      end
+
+    refuse(context, "seven_day", resets_at)
+  end
+
+  step "the thread says {string}", %{args: [text]} = context do
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(pause_notices(state), &(&1["message"] == text))
+    end)
+
+    context
+  end
+
+  step "a Claude turn is paused on its five hour limit", context do
+    context = running_turn(context)
+    resets_at = System.system_time(:second) + 2400
+    refuse(context, "five_hour", resets_at)
+
+    World.await_value(context, @thread, fn state -> pause_notices(state) != [] end)
+    Map.put(context, :five_hour_reset, resets_at)
+  end
+
+  step "Claude reports the same refusal again and a warning about its weekly limit",
+       context do
+    refuse(context, "five_hour", context.five_hour_reset)
+
+    claude_says(context, %{
+      "type" => "rate_limit_event",
+      "rate_limit_info" => %{
+        "status" => "allowed_warning",
+        "rateLimitType" => "seven_day",
+        "utilization" => 0.9
+      }
+    })
+
+    # Both frames are in once the runtime has taken the next one.
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the thread still shows one pause notice", context do
+    assert length(pause_notices(World.stream(context, @thread))) == 1
+    context
+  end
+
+  step "the warning adds no notice", context do
+    assert [] ==
+             for(
+               item <- pause_notices(World.stream(context, @thread)),
+               item["message"] =~ "7-day",
+               do: item
+             )
+
+    context
+  end
+
+  # 14:00 and 18:00 on a fixed day, as the epochs Claude reports.
+  defp at_o_clock(hour),
+    do:
+      DateTime.to_unix(%DateTime{
+        year: 2026,
+        month: 9,
+        day: 24,
+        hour: hour,
+        minute: 0,
+        second: 0,
+        time_zone: "Etc/UTC",
+        zone_abbr: "UTC",
+        utc_offset: 0,
+        std_offset: 0
+      })
+
+  step "Claude ends a turn refused by a limit that resets at 14:00 and another that resets at 18:00",
+       context do
+    context = running_turn(context)
+    refuse(context, "five_hour", at_o_clock(14))
+    refuse(context, "seven_day", at_o_clock(18))
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => true})
+    context
+  end
+
+  step "Claude ends a turn refused by a limit that resets at 14:00 and another with no reset time",
+       context do
+    context = running_turn(context)
+    refuse(context, "five_hour", at_o_clock(14))
+    refuse(context, "seven_day", nil)
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => true})
+    context
+  end
+
+  step "the thread's reset time is 18:00", context do
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(&1["usageLimitResetAt"] == "2026-09-24T18:00:00.000Z")
+    )
+
+    context
+  end
+
+  step "the thread is marked as limited without a reset time", context do
+    World.await_runs(context, @thread, ["failed"])
+
+    World.await_row(
+      World.thread_id(context, @thread),
+      &(&1["lastErrorClass"] == "usage_limit" and &1["usageLimitResetAt"] == nil)
+    )
+
+    context
+  end
+
+  # --- stopping a turn -----------------------------------------------------------------------
+
+  defp stop_turn(context) do
+    System.put_env("FAKE_CLAUDE_HOLD_INTERRUPT", "1")
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_HOLD_INTERRUPT") end)
+    context = running_turn(context)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, @thread)
+      })
+
+    context
+  end
+
+  step "the user stopped a Claude turn while a tool was running", context do
+    stop_turn(context)
+  end
+
+  step "Claude reports the turn as finished successfully but aborted", context do
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => false,
+      "terminal_reason" => "aborted_tools"
+    })
+
+    context
+  end
+
+  step "the run is interrupted, not completed", context do
+    World.await_runs(context, @thread, ["interrupted"])
+    context
+  end
+
+  step "the user stopped a running Claude turn", context do
+    World.put_app_env(:claude_interrupt_timeout_ms, 300)
+    stop_turn(context)
+  end
+
+  step "Claude has not ended the turn after 10 seconds", context do
+    # The settle deadline is shortened for the scenario; Claude never answers.
+    assert [%{"status" => active}] = World.runs(context, @thread)
+    assert active in ["running", "interrupted"]
+    context
+  end
+
+  step "the run is interrupted anyway", context do
+    World.await_runs(context, @thread, ["interrupted"], 10_000)
+    context
+  end
+
+  step "Claude's process ends without reporting the turn", context do
+    [{runtime, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    session = :sys.get_state(runtime).session
+    ref = Process.monitor(session)
+    Process.exit(session, :kill)
+    assert_receive {:DOWN, ^ref, :process, _, _}, 5_000
+    context
+  end
+
+  step "it is not reported as a failed turn", context do
+    state = World.stream(context, @thread)
+
+    assert [] ==
+             for(item <- StreamState.list(state, "turn-item"), item["type"] == "error", do: item)
+
+    assert [%{"status" => "interrupted"}] = StreamState.list(state, "run")
+    context
   end
 
   defp claude_says(context, message) do

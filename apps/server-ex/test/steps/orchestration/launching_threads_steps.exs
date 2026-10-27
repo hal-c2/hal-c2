@@ -297,9 +297,21 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
   end
 
   step "the thread can take its next message", context do
-    assert World.thread(context, "new")["worktreePath"] == nil
-    assert %{"status" => "completed", "ordinal" => 2} = World.finish_turn(context, "new", "Next")
-    context
+    if Map.has_key?(context[:threads] || %{}, "new") do
+      assert World.thread(context, "new")["worktreePath"] == nil
+
+      assert %{"status" => "completed", "ordinal" => 2} =
+               World.finish_turn(context, "new", "Next")
+
+      context
+    else
+      # A thread whose interrupted run was settled answers its next message.
+      title = World.current(context)
+      context = World.post_message(context, title, "hello")
+      World.await_runs(context, title, ["interrupted", "completed"], 10_000)
+      assert "Hello from claude" in World.replies(context, title)
+      context
+    end
   end
 
   step "the user cancels the setup before the agent starts", context do
