@@ -388,7 +388,9 @@ defmodule HalC2.Checkpoint do
 
   # One budget covers discovery, the probes of each candidate, and the retry.
   defp recover_stage(cwd, env, sparse, error) do
-    case within(@recovery_timeout_ms, fn -> stage_without_unborn(cwd, env, sparse, error) end) do
+    case HalC2.Git.within(@recovery_timeout_ms, fn ->
+           stage_without_unborn(cwd, env, sparse, error)
+         end) do
       {:ok, result} -> result
       _ -> error
     end
@@ -424,29 +426,6 @@ defmodule HalC2.Checkpoint do
       end
     else
       _ -> error
-    end
-  end
-
-  # Runs `fun` in a task given `ms` to finish; killing the task takes the git
-  # processes it started with it. `{:ok, result}` or `:timeout`/exit.
-  defp within(ms, fun) do
-    trap = Process.flag(:trap_exit, true)
-    task = Task.async(fun)
-
-    try do
-      case Task.yield(task, ms) || Task.shutdown(task, :brutal_kill) do
-        {:ok, result} -> {:ok, result}
-        {:exit, reason} -> {:exit, reason}
-        nil -> :timeout
-      end
-    after
-      receive do
-        {:EXIT, pid, _reason} when pid == task.pid -> :ok
-      after
-        0 -> :ok
-      end
-
-      Process.flag(:trap_exit, trap)
     end
   end
 

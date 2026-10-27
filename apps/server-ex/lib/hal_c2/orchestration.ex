@@ -300,10 +300,10 @@ defmodule HalC2.Orchestration do
   end
 
   # A provider's own diff for a turn, ingested when no checkpoint was found
-  # for it. A placeholder (`missing`) must never replace a checkpoint that
-  # was already captured with a real git ref: ingestion checks before
-  # dispatching, but the run's own capture can land in between, so the
-  # command is refused here, under the stream's lock, closing that window.
+  # for it. It must never replace a checkpoint that was already captured:
+  # ingestion checks before dispatching, but the run's own capture can land
+  # in between, so the command is refused here, under the stream's lock,
+  # closing that window.
   def dispatch(%{"type" => "thread.turn.diff.complete", "threadId" => thread_id} = command) do
     result =
       HalC2.Streams.transact(thread_id, :thread, fn state ->
@@ -3608,7 +3608,15 @@ defmodule HalC2.Orchestration do
       run == nil ->
         {:error, "turn #{command["turnId"]} was not found"}
 
-      command["status"] == "missing" and existing != nil and existing["status"] != "missing" ->
+      # The ref of a ready checkpoint is later spliced into git arguments, so
+      # only checkpoint refs are accepted for one. A placeholder's provider
+      # ref never reaches git (every use requires a ready checkpoint), but
+      # must not look like a git option either.
+      not checkpoint_ref?(command["checkpointRef"], command["status"]) ->
+        {:error,
+         "checkpoint ref #{command["checkpointRef"]} is not under refs/hal-c2/ or refs/t3/"}
+
+      existing != nil and existing["status"] != "missing" ->
         {:error, "turn #{command["turnId"]} already has a captured checkpoint"}
 
       true ->
@@ -3639,6 +3647,14 @@ defmodule HalC2.Orchestration do
         {:ok, Enum.filter(changes, &is_tuple/1)}
     end
   end
+
+  defp checkpoint_ref?("refs/hal-c2/" <> _rest, _status), do: true
+  defp checkpoint_ref?("refs/t3/" <> _rest, _status), do: true
+
+  defp checkpoint_ref?(ref, "missing") when is_binary(ref),
+    do: not String.starts_with?(ref, "-")
+
+  defp checkpoint_ref?(_ref, _status), do: false
 
   @doc "A change creating `entity`."
   def create(kind, id, entity), do: {kind, id, Patch.diff(nil, entity)}

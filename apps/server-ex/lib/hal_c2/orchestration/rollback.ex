@@ -119,6 +119,7 @@ defmodule HalC2.Orchestration.Rollback do
            native_thread_id: get_in(provider_thread, ["nativeThreadRef", "nativeId"]),
            fork: carried(provider_thread),
            model: get_in(thread, ["modelSelection", "model"]),
+           selection_instance: get_in(thread, ["modelSelection", "instanceId"]),
            cwd: scope["cwd"],
            worktree: thread["worktreePath"],
            target: target,
@@ -162,9 +163,12 @@ defmodule HalC2.Orchestration.Rollback do
       |> StreamState.get("thread")
       |> Map.get(plan.thread_id, %{})
 
-    # A provider thread from before instances were recorded is its driver's own.
+    # Compared with what the plan recorded, not with the provider thread's
+    # instance: picking another provider in the composer changes the
+    # selection without moving the conversation, and a selection that names
+    # no instance compares equal to itself.
     if thread["activeProviderThreadId"] == plan.provider_thread["id"] and
-         get_in(thread, ["modelSelection", "instanceId"]) == (plan.instance || plan.driver) do
+         get_in(thread, ["modelSelection", "instanceId"]) == plan.selection_instance do
       rewind(plan)
     else
       {:error,
@@ -311,12 +315,31 @@ defmodule HalC2.Orchestration.Rollback do
         do: {id, row}
   end
 
-  # Read from the log, as search does: a rollback must not start every other
-  # thread's stream server just to see where its checkpoints were taken.
+  # Folds only the thread's checkpoint-scope events from the log: a rollback
+  # must not rebuild every other thread's whole stream state (messages
+  # included) just to see where its checkpoints were taken. The log is
+  # append-only, so nothing a snapshot holds is missing here.
   defp scope_cwds(thread_id) do
     HalC2.Store.path()
-    |> StreamState.load(thread_id)
-    |> StreamState.list("checkpoint-scope")
+    |> HalC2.Store.reduce_stream(
+      thread_id,
+      0,
+      %{},
+      fn event, scopes ->
+        cond do
+          StreamState.void?(event) ->
+            scopes
+
+          scope = HalC2.Patch.apply(scopes[event.entity], event.patch) ->
+            Map.put(scopes, event.entity, scope)
+
+          true ->
+            Map.delete(scopes, event.entity)
+        end
+      end,
+      kinds: ["checkpoint-scope"]
+    )
+    |> Map.values()
     |> Enum.map(& &1["cwd"])
     |> Enum.uniq()
   end
