@@ -49,38 +49,53 @@ authors() {
     sed 's/ *<[^>]*>$//' | awk 'NF && !seen[$0]++' | paste -sd'|' - | sed 's/|/, /g'
 }
 
-# The people among them, "Name<TAB>email": no agents, bots or made-up addresses.
+# The people among them, "Name<TAB>email": no agents, bots or made-up addresses. The
+# agents are those that sign upstream's commits with an address of their own.
+agents='<(noreply@(anthropic|openai)\.com|codex@openai\.com|cursoragent@cursor\.com|([0-9]+\+)?(codex|copilot)@users\.noreply\.github\.com)>'
 people() {
   git log -1 --format='%an <%ae>%n%(trailers:key=Co-authored-by,valueonly)' "$1" |
-    grep -viE '\[bot\]|<(noreply@anthropic\.com|cursoragent@cursor\.com)>|\.(test|example|invalid|localhost)>$' |
+    grep -viE "\\[bot\\]|$agents|\\.(test|example|invalid|localhost)>\$" |
     sed -nE 's/^ *(.*[^ ]) *<([^>]*)>$/\1\t\2/p' | awk -F'\t' '!seen[$1]++'
 }
 
-# The GitHub login behind an email, or nothing: from a noreply address, else from a
-# commit of theirs upstream.
+# The GitHub login behind an email, or nothing when it has none: from a noreply
+# address, else from a commit of theirs upstream. Fails when GitHub cannot be asked.
 login() {
   if [[ $1 =~ ^([0-9]+\+)?([^@]+)@users\.noreply\.github\.com$ ]]; then
     echo "${BASH_REMATCH[2]}"
   else
     gh api "repos/$repo/commits?per_page=1&author=$(jq -rn --arg e "$1" '$e|@uri')" \
-      --jq '.[0].author.login // empty' 2>/dev/null || true
+      --jq '.[0].author.login // empty' 2>/dev/null
   fi
 }
 
 # Each person is thanked by mention once, in the ledger pull request that first carries
 # their work, which adds them to CREDITS.md ("- Name" or "- [Name](profile)" lines).
-declare -A credited=()
-while IFS= read -r name; do credited[$name]=1; done < <(
-  sed -nE '/^- \[/{s/^- \[(.*)\]\([^)]*\)$/\1/p;b};s/^- (.+)$/\1/p' CREDITS.md
-)
+# Someone is known by their login, so a shared or changed name neither hides a newcomer
+# nor thanks anyone twice; by name only when they have no login.
+declare -A credited=() logins=()
+while IFS=$'\t' read -r name handle; do
+  if [[ -n $handle ]]; then logins[${handle,,}]=1; else credited[$name]=1; fi
+done < <(sed -nE 's/^- \[(.*)\]\(https:\/\/github\.com\/([^)]*)\)$/\1\t\2/p;t;s/^- (.+)$/\1\t/p' CREDITS.md)
+declare -A looked=()
 newcomers() {
-  local name email who=()
+  local name email handle who=()
   while IFS=$'\t' read -r name email; do
-    [[ -z ${credited[$name]:-} ]] || continue
-    credited[$name]=1
-    local handle
-    handle=$(login "$email")
-    if [[ -n $handle ]]; then who+=("$name @$handle"); else who+=("$name (no GitHub account found)"); fi
+    if [[ -z ${looked[$email]+set} ]]; then
+      looked[$email]=$(login "$email") || looked[$email]="?"
+    fi
+    handle=${looked[$email]}
+    if [[ $handle == "?" ]]; then
+      who+=("$name (GitHub could not be asked; run the digest again before crediting)")
+    elif [[ -n $handle ]]; then
+      [[ -z ${logins[${handle,,}]:-} ]] || continue
+      logins[${handle,,}]=1
+      who+=("$name @$handle")
+    else
+      [[ -z ${credited[$name]:-} ]] || continue
+      credited[$name]=1
+      who+=("$name (no GitHub account found)")
+    fi
   done < <(people "$1")
   if ((${#who[@]})); then
     local IFS=$'\x1f'
