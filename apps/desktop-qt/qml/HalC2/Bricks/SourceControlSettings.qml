@@ -338,6 +338,7 @@ SettingsPage {
                     return ((page.discovery.versionControl ?? []).length > 0 ? qsTr("Version Control") : qsTr("Source Control Providers"))
                            + (page.discovery.suffix ?? "");
                 }
+                wrapMode: Text.Wrap
             }
 
             // The button itself is disabled while it scans (focus, dimming and
