@@ -72,10 +72,11 @@ login() {
 # Each person is thanked by mention once, in the ledger pull request that first carries
 # their work, which adds them to CREDITS.md ("- Name" or "- [Name](profile)" lines).
 # Someone is known by their login, so a shared or changed name neither hides a newcomer
-# nor thanks anyone twice; by name only when they have no login.
+# nor thanks anyone twice; by name only when no login is found for them.
 declare -A credited=() logins=()
 while IFS=$'\t' read -r name handle; do
-  if [[ -n $handle ]]; then logins[${handle,,}]=1; else credited[$name]=1; fi
+  credited[$name]=1
+  [[ -z $handle ]] || logins[${handle,,}]=1
 done < <(sed -nE 's/^- \[(.*)\]\(https:\/\/github\.com\/([^)]*)\)$/\1\t\2/p;t;s/^- (.+)$/\1\t/p' CREDITS.md)
 declare -A looked=()
 newcomers() {
