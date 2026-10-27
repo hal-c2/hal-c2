@@ -36,7 +36,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   alias HalC2.Orchestration.{Entities, NativeSubagent}
   alias HalC2.StreamState
 
-  @state_version 10
+  @state_version 11
 
   @signed_out "Claude could not authenticate. For subscription login, run `claude auth login` " <>
                 "on this environment's machine, then start a new thread. For API-key " <>
@@ -193,6 +193,8 @@ defmodule HalC2.Claude.ThreadRuntime do
        # Streamed content blocks of the message in flight: index -> native item key.
        blocks: %{},
        message_id: nil,
+       # The complete message in flight and how many of its blocks arrived (`placed/3`).
+       placed: nil,
        interrupted: false,
        # Open prompts: request id -> `{:permission, control id, tool, suggested rules}`
        # or `{:question, control id, input}`.
@@ -572,6 +574,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        |> Map.put_new(:permission_mode, nil)
        |> Map.put_new(:steered, false)
        |> Map.put_new(:launch, nil)
+       |> Map.put_new(:placed, nil)
        |> Map.update!(:launch, &upgrade_launch(&1, state))
        |> Map.update!(:requests, &upgrade_requests/1)
        |> Map.put(:v, @state_version)}
@@ -1208,9 +1211,9 @@ defmodule HalC2.Claude.ThreadRuntime do
          do: put_in(state.turn[:auth_failure], @signed_out),
          else: state
 
-    content
-    |> Enum.with_index()
-    |> Enum.reduce(flush(state), fn {block, index}, state ->
+    {blocks, placed} = placed(state.placed, id, content)
+
+    Enum.reduce(blocks, flush(%{state | placed: placed}), fn {block, index}, state ->
       assistant_block(block, id, index, state)
     end)
     |> Map.put(:blocks, %{})
@@ -1541,15 +1544,16 @@ defmodule HalC2.Claude.ThreadRuntime do
          state
        )
        when is_list(content) do
-    {own, theirs} =
-      content |> Enum.with_index() |> Enum.split_with(fn {block, _} -> parent_work?(block) end)
-
     state
-    |> parent_work(Enum.map(own, &elem(&1, 0)))
+    |> parent_work(Enum.filter(content, &parent_work?/1))
     |> to_subagent(parent, fn sub ->
-      Enum.reduce(theirs, sub, fn {block, index}, sub ->
-        subagent_block(sub, block, block_key(message["id"], index))
-      end)
+      {blocks, placed} = placed(sub[:placed], message["id"], content)
+
+      for {block, index} <- blocks,
+          not parent_work?(block),
+          reduce: Map.put(sub, :placed, placed) do
+        sub -> subagent_block(sub, block, block_key(message["id"], index))
+      end
     end)
   end
 
@@ -1824,6 +1828,19 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   defp block_key(message_id, index), do: "#{message_id}:#{index}"
+
+  # Claude sends a complete message one block per event, each under the message's id, so
+  # a block's index in the message counts the blocks that came before it under that id
+  # (`last`, `{id, count}`). Returns the blocks with their indexes, and the new `last`.
+  defp placed(last, id, content) do
+    from =
+      case last do
+        {^id, count} when is_binary(id) -> count
+        _ -> 0
+      end
+
+    {Enum.with_index(content, from), {id, from + length(content)}}
+  end
 
   # Claude registered a task for a tool call: a subagent's or a command's, which says
   # whether it runs in the background. Other tasks (a workflow, say) show as subagents.
