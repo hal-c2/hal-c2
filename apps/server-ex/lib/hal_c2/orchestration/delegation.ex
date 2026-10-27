@@ -426,6 +426,7 @@ defmodule HalC2.Orchestration.Delegation do
   # that ends at once reports to it. A launch the MC stopped in the middle of is
   # settled at the next boot (`reconcile/2`).
   defp start(thread, run, spec) do
+    hook(:starting, thread["id"])
     child_id = HalC2.Environment.uuid4()
     task_id = spec["taskId"] || "node:subagent:" <> HalC2.Environment.uuid4()
     selection = spec["modelSelection"]

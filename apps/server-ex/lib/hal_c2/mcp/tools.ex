@@ -183,24 +183,24 @@ defmodule HalC2.Mcp.Tools do
       # its result: its automatic delivery is acknowledged, so no wake follows.
       # The answer is the child's last assistant message, so only a page that
       # contains it untruncated counts, not an early progress message or the
-      # first page of a long child.
-      last_answer =
-        items
-        |> Enum.filter(fn {item, _} -> item["type"] == "assistant_message" end)
-        |> List.last()
+      # first page of a long child. It is picked from the unfiltered turn items:
+      # `items` may already be narrowed to one earlier item by `itemId`.
+      last_answer_id =
+        state
+        |> StreamState.list("turn-item")
+        |> Enum.filter(&(&1["type"] == "assistant_message"))
+        |> List.last(%{})
+        |> Map.get("id")
 
       answer_read? =
-        case last_answer do
-          {_item, position} ->
+        Enum.any?(page, fn {item, position} ->
+          item["id"] == last_answer_id and
             Enum.any?(
               read,
               &(&1["position"] == position and &1["type"] == "assistant_message" and
                   not &1["truncated"])
             )
-
-          nil ->
-            false
-        end
+        end)
 
       if (args["textOffset"] || 0) == 0 and answer_read? do
         observed =
