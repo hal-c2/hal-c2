@@ -233,6 +233,7 @@ Rectangle {
                     Layout.fillWidth: true
                     enabled: !page.needsAdmin
                     placeholderText: qsTr("Invite link from the other machine…")
+                    Accessible.name: qsTr("Invite link from the other machine")
                     onAccepted: join.clicked()
                 }
 

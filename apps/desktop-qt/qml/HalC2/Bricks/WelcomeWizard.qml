@@ -328,6 +328,7 @@ Item {
                             objectName: "onboardingPairingUrl"
                             Layout.fillWidth: true
                             placeholderText: "https://your-server:5230/pair#token=…"
+                            Accessible.name: qsTr("Invite link")
                             readOnly: !!(wizard.onboarding && wizard.onboarding.pairing)
                             inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText | Qt.ImhUrlCharactersOnly
                             onAccepted: pairButton.clicked()

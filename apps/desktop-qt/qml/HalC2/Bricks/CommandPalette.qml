@@ -16,6 +16,7 @@ Popup {
 
     objectName: "commandPalette"
     parent: Overlay.overlay
+    Accessible.name: qsTr("Command palette")
     // Not modal, so the window's shortcuts (mod+k among them) still reach it.
     modal: false
     scale: Shell.state.layout?.zoom ?? 1
@@ -79,6 +80,8 @@ Popup {
             Layout.fillWidth: true
             implicitHeight: 36
             placeholderText: PaletteModel.placeholder
+            Accessible.name: qsTr("Search the command palette")
+            Accessible.description: PaletteModel.placeholder
             rightPadding: submit.visible ? submit.width + 12 : 8
             onTextEdited: PaletteModel.query = text
 
