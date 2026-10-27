@@ -15,6 +15,8 @@ I just ended up make a bit too many modifications and they are too big to make s
 
 This is still a work in progress you should still use T3 Code unless you are fine with things breaking and want to help.
 
+[CREDITS.md](CREDITS.md) names the T3 Code contributors whose work HAL-C2 carries.
+
 ## What is different
 
 Customisation is the heart of the changes I'm making. Your setup is not going to be the same as my setup and that is great. So plugins and extending
