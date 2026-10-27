@@ -340,6 +340,36 @@ defmodule HalC2.CodeReviewTest do
     _ = context
   end
 
+  test "a review discarded while the threads are listed again stays out of the list", context do
+    review = start_review()
+    thread_id = review["threadId"]
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        thread_id
+      )
+
+    save_settings(%{"display" => "page"})
+    hook = {__MODULE__, :hold, [thread_id, Process.whereis(@server), self()]}
+    Application.put_env(:hal_c2, :streams_hook, hook)
+    on_exit(fn -> Application.delete_env(:hal_c2, :streams_hook) end)
+
+    # The listing for the threads is held on its way to the thread...
+    put_settings(%{"display" => "threads"})
+    assert_receive {:held, listing}, 5_000
+    Application.delete_env(:hal_c2, :streams_hook)
+
+    # ...while the review is discarded, and must not list it after it is gone.
+    {:ok, _} = call("discard", %{"key" => @key})
+    send(listing, :go)
+    settle()
+
+    assert %{"plugin" => %{"listed" => false}} = thread(thread_id)
+    _ = context
+  end
+
   test "a display saved while the checkout of a review is fetched lists its thread as it now says",
        context do
     hold = Path.join(context.dir, "fetch.hold")

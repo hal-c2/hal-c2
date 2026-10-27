@@ -162,10 +162,16 @@ defmodule HalC2Plugins.CodeReview do
     do: server({:dismiss, key, id, input["dismissed"] != false})
 
   def call("discard", %{"key" => key}, _context) do
-    with {:ok, review} <- server({:discard, key}) do
+    with {:ok, review, lister} <- server({:discard, key}) do
       if review["checkout"], do: Checkout.remove(review["root"], review["checkout"])
-      # The review is forgotten; its thread goes with it, out of the thread list.
-      if review["threadId"], do: organize(review["threadId"], %{"settled" => true, "listed" => false})
+
+      # The review is forgotten; its thread goes with it, out of the thread list, once
+      # a listing that still had it is gone.
+      if review["threadId"] do
+        if lister, do: await_down(lister)
+        organize(review["threadId"], %{"settled" => true, "listed" => false})
+      end
+
       {:ok, server(:snapshot)}
     end
   end
@@ -314,11 +320,7 @@ defmodule HalC2Plugins.CodeReview do
 
     lister =
       spawn_link(fn ->
-        if before do
-          ref = Process.monitor(before)
-          receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
-        end
-
+        if before, do: await_down(before)
         Enum.each(thread_ids, &organize(&1, %{"listed" => listed}))
       end)
 
@@ -326,6 +328,11 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   defp listed?(settings), do: settings["display"] != "page"
+
+  defp await_down(pid) do
+    ref = Process.monitor(pid)
+    receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+  end
 
   # Settles and lists or unlists a review thread of ours in the sidebar, best
   # effort: an MC whose user has not granted it yet, or a thread already gone,
@@ -406,13 +413,25 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   # A running review has a thread and a checkout on the way, and one being
-  # published a post in flight; it is discarded once that is over.
+  # published a post in flight; it is discarded once that is over. A listing under
+  # way copied its thread: it is called off and goes on without it, and the reply
+  # names it for the caller to wait out before unlisting the thread.
   def handle_call({:discard, key}, _from, state) do
     case Map.pop(state.reviews, key) do
-      {nil, _} -> {:reply, {:error, "There is no review #{key}."}, state}
-      {%{"status" => "running"}, _} -> {:reply, {:error, "The review of #{key} is running."}, state}
-      {%{"status" => "publishing"}, _} -> {:reply, {:error, "The review of #{key} is being published."}, state}
-      {review, reviews} -> {:reply, {:ok, review}, %{state | reviews: reviews} |> pump() |> changed()}
+      {nil, _} ->
+        {:reply, {:error, "There is no review #{key}."}, state}
+
+      {%{"status" => "running"}, _} ->
+        {:reply, {:error, "The review of #{key} is running."}, state}
+
+      {%{"status" => "publishing"}, _} ->
+        {:reply, {:error, "The review of #{key} is being published."}, state}
+
+      {review, reviews} ->
+        lister = review["threadId"] && state.lister
+        state = %{state | reviews: reviews}
+        state = if lister, do: list_threads(state), else: state
+        {:reply, {:ok, review, lister}, state |> pump() |> changed()}
     end
   end
 
