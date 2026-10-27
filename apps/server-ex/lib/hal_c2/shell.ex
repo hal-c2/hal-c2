@@ -507,9 +507,13 @@ defmodule HalC2.Shell do
   defp notify(message),
     do: for({pid, _} <- :ets.tab2list(@subscribers), do: send(pid, {:hal_c2_shell, message}))
 
-  @doc false
-  # The version this MC's rows are at, for tests.
-  def version, do: GenServer.call(__MODULE__, :version)
+  @doc "The version this MC's rows are at, or nil where no shell runs."
+  @spec version() :: version | nil
+  def version do
+    if Process.whereis(__MODULE__), do: GenServer.call(__MODULE__, :version)
+  catch
+    :exit, _ -> nil
+  end
 
   # Streams without a stored row (a store from before rows were kept) get one in the
   # background; boot does not wait for it.

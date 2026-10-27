@@ -1,7 +1,9 @@
 # Permission modes
 
 Permission modes control when an agent needs your approval to act. Choose a mode in the message
-composer; it applies to that thread.
+composer; it applies to that thread at once. Muse Code also applies it to a turn already running,
+including approvals it is waiting on; other providers use it from the next turn, so answer any
+approvals still showing.
 
 Set the default for new threads in **Settings → General → New threads → Permissions**.
 Projects can override the environment default. New threads use this setting rather than the

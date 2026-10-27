@@ -414,6 +414,8 @@ private:
   QJsonObject selection(const QString& target) const;
   // Plan mode needs the setting and a provider that has it.
   bool planModeOn(const composer::Instance* instance) const;
+  void setThreadRuntimeMode(const QString& target, const QString& mode);
+  void settleRuntimeModes();
   QString runtimeModeOf(const QString& target) const;
   QString interactionModeOf(const QString& target) const;
   QVariant setting(const QString& key) const;
@@ -480,6 +482,17 @@ private:
   // Requests answered and waiting for the MC, and ones it said are gone.
   QSet<QString> m_responding;
   QSet<QString> m_closed;
+  // An access change sent to the MC, until the thread's row holds it: once the
+  // MC took it, the version of its rows that does.
+  struct SettingMode {
+    QString mode;
+    bool accepted = false;
+    QString mc;
+    QString epoch;  // none from an MC that names no version
+    qint64 rev = 0;
+  };
+  // By draft target.
+  QHash<QString, SettingMode> m_settingMode;
   // Drafts whose first send is on the way.
   QSet<QString> m_launching;
   // The thumbnails of the draft images the composer has shown, by attachment id.
