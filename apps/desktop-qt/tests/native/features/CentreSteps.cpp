@@ -61,6 +61,16 @@ const Steps steps([] {
         addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Turn 1 is done.")}}));
     settleRun(world, QStringLiteral("completed"), 30);
   });
+  step(QStringLiteral("a thread in %1 whose first turn failed but left a ready checkpoint").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtThread(world, c[0]);
+    const QString run = startRun(world, 60);
+    world.mc.part<FakeTurns>().replies.append(
+        addItem(world, QStringLiteral("assistant_message"), {{QStringLiteral("text"), QStringLiteral("Turn 1 is done.")}}));
+    settleRun(world, QStringLiteral("failed"), 30);
+    set(world, QStringLiteral("checkpoint"), QStringLiteral("cp-1"),
+        {{QStringLiteral("id"), QStringLiteral("cp-1")}, {QStringLiteral("scopeId"), QStringLiteral("scope-1")},
+         {QStringLiteral("runId"), run}, {QStringLiteral("appRunOrdinal"), 1}, {QStringLiteral("status"), QStringLiteral("ready")}});
+  });
 
   // Copying.
   step(QStringLiteral("the agent has answered"), [](World& world, const Captures&, const Table&) {
