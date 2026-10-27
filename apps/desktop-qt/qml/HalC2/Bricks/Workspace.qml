@@ -58,6 +58,8 @@ Rectangle {
     color: Theme.palette.color("canvas", "#0f0f12")
     // Never over the panel beside it.
     clip: true
+    Accessible.role: Accessible.ToolBar
+    Accessible.name: qsTr("Thread header")
 
     DragHandler {
         enabled: strip.framelessChrome
@@ -119,9 +121,16 @@ Rectangle {
                 font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.weight: Font.Medium
                 elide: Text.ElideRight
+                activeFocusOnTab: true
                 Accessible.role: Accessible.Button
                 Accessible.name: qsTr("New thread in project")
                 Accessible.onPressAction: Shell.dispatch("workspace.newThread")
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                        Shell.dispatch("workspace.newThread");
+                        event.accepted = true;
+                    }
+                }
                 // The whole name of a project cut short.
                 ToolTip.visible: projectHover.hovered && truncated
                 ToolTip.delay: 500
@@ -137,6 +146,17 @@ Rectangle {
                     id: projectHover
 
                     cursorShape: Qt.PointingHandCursor
+                }
+
+                // Tab's focus; a click does not take it.
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.margins: -3
+                    visible: projectLabel.activeFocus
+                    color: "transparent"
+                    radius: 4
+                    border.width: 1
+                    border.color: Theme.palette.color("focus", "#3b82f6")
                 }
 
                 TapHandler {
@@ -185,9 +205,18 @@ Rectangle {
                 Layout.minimumWidth: Math.min(Math.ceil(titleRow.implicitWidth), 40 + titleRow.spacing + 14)
                 implicitHeight: 28
                 implicitWidth: titleRow.implicitWidth
+                activeFocusOnTab: !editing && strip.ready && !strip.model.isDraft
                 Accessible.role: Accessible.Button
                 Accessible.name: threadLabel.text
+                // A draft's title opens nothing.
+                Accessible.focusable: activeFocusOnTab
                 Accessible.onPressAction: openMenu()
+                Keys.onPressed: event => {
+                    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                        openMenu();
+                        event.accepted = true;
+                    }
+                }
                 // The whole title, which a narrow header cuts short.
                 ToolTip.visible: titleHover.hovered && threadLabel.truncated
                 ToolTip.delay: 500
@@ -222,6 +251,17 @@ Rectangle {
                             titleSlot.startEditing();
                         }
                     }
+                }
+
+                Rectangle {
+                    x: -4
+                    width: titleRow.width + 8
+                    height: parent.height
+                    visible: titleSlot.activeFocus
+                    color: "transparent"
+                    radius: 4
+                    border.width: 1
+                    border.color: Theme.palette.color("focus", "#3b82f6")
                 }
 
                 RowLayout {

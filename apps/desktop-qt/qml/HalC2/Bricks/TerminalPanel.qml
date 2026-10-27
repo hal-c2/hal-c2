@@ -52,6 +52,8 @@ Rectangle {
 
         ShellButton {
             objectName: "terminalPanelSplit"
+            // Keeps the terminal's focus; the keyboard splits with mod+d / mod+shift+d.
+            Accessible.focusable: false
             subtle: true
             implicitWidth: 24
             implicitHeight: 24
@@ -66,6 +68,8 @@ Rectangle {
 
         ShellButton {
             objectName: "terminalPanelSplitVertical"
+            // Keeps the terminal's focus; the keyboard splits with mod+d / mod+shift+d.
+            Accessible.focusable: false
             subtle: true
             implicitWidth: 24
             implicitHeight: 24
