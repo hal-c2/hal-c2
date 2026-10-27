@@ -665,7 +665,869 @@ defmodule HalC2.Steps.Orchestration.CheckpointsAndRollback do
     context
   end
 
+  # --- capture corners -----------------------------------------------------------
+
+  step "the worktree of {string} is a sparse checkout that leaves out the folder {string}",
+       %{args: [thread, folder]} = context do
+    cwd = sparse_fixture(context, thread, folder)
+    World.git!(cwd, ["sparse-checkout", "set", "--cone", "src"])
+    refute File.exists?(Path.join(cwd, "#{folder}/guide.md"))
+    context |> Map.put(:sparse_folder, folder) |> Map.put(:run_title, thread)
+  end
+
+  step "the checkpoint still holds {string}", %{args: [folder]} = context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+
+    assert git(cwd(context, context.run_title), [
+             "show",
+             "#{checkpoint["ref"]}:#{folder}/guide.md"
+           ]) == "guide\n"
+
+    context
+  end
+
+  step "the turn's diff does not list the files of {string} as removed",
+       %{args: [folder]} = context do
+    files = last_checkpoint(context)["files"]
+    refute Enum.any?(files, &String.starts_with?(&1["path"], folder <> "/"))
+    context = diff(context, context.run_title, 0, 1)
+    refute patch(context) =~ "guide.md"
+    context
+  end
+
+  step "the worktree of {string} holds a folder {string} that is its own repository with no commits",
+       %{args: [thread, folder]} = context do
+    nested = Path.join(cwd(context, thread), folder)
+    File.mkdir_p!(nested)
+    World.git!(nested, ~w(init -q -b main))
+    File.write!(Path.join(nested, "lib.txt"), "lib\n")
+    Map.put(context, :run_title, thread)
+  end
+
+  step "the checkpoint is captured without {string}", %{args: [folder]} = context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+
+    tree =
+      git(cwd(context, context.run_title), ["ls-tree", "-r", "--name-only", checkpoint["ref"]])
+
+    assert tree =~ "README.md"
+    refute tree =~ folder
+    context
+  end
+
+  step "the worktree of {string} holds more than {int} untracked folders that need checking for their own repositories",
+       %{args: [thread, count]} = context do
+    cwd = cwd(context, thread)
+
+    for i <- 1..(count + 1) do
+      nested = Path.join(cwd, "nested-#{i}")
+      File.mkdir_p!(nested)
+      World.git!(nested, ~w(init -q -b main))
+      File.write!(Path.join(nested, "lib.txt"), "lib\n")
+    end
+
+    Map.put(context, :run_title, thread)
+  end
+
+  # One run is already captured, so only the next run's capture pays the slow
+  # probing (its baseline is the checkpoint that already exists).
+  step "the worktree of {string} holds untracked folders that take longer than 5 seconds to check",
+       %{args: [thread]} = context do
+    context = complete_through(context, thread, 1)
+    cwd = cwd(context, thread)
+    nested = Path.join(cwd, "slow-lib")
+    File.mkdir_p!(nested)
+    World.git!(nested, ~w(init -q -b main))
+    File.write!(Path.join(nested, "lib.txt"), "lib\n")
+
+    dir = HalC2.Test.Mc.tmp_dir(context.mc, "slow-git")
+    script = Path.join(dir, "git")
+
+    File.write!(script, """
+    #!/bin/sh
+    case "$PWD" in */slow-lib) case "$*" in *rev-parse*) exec sleep 10;; esac;; esac
+    exec '#{System.find_executable("git")}' "$@"
+    """)
+
+    File.chmod!(script, 0o755)
+    World.put_app_env(:git_command, script)
+    Map.put(context, :run_title, thread)
+  end
+
+  step "the checkpoint is marked as an error", context do
+    assert %{"status" => "error", "files" => []} = last_checkpoint(context)
+    context
+  end
+
+  step "a checkpoint of {string} exists only under the old hidden namespace",
+       %{args: [thread]} = context do
+    context = complete(context, thread, "write a.txt")
+    cwd = cwd(context, thread)
+    checkpoint = checkpoint(context, thread, 1)
+    legacy = String.replace_prefix(checkpoint["ref"], "refs/hal-c2/", "refs/t3/")
+    oid = String.trim(git(cwd, ["rev-parse", checkpoint["ref"]]))
+    World.git!(cwd, ["update-ref", legacy, oid])
+    World.git!(cwd, ["update-ref", "-d", checkpoint["ref"]])
+    Map.merge(context, %{legacy_ref: legacy, legacy_checkpoint: checkpoint})
+  end
+
+  step "the user views that turn's diff or rewinds to it", context do
+    thread = context.run_title
+
+    {diff_reply, context} =
+      World.call(context, "orchestration.getTurnDiff", %{
+        "threadId" => World.thread_id(context, thread),
+        "fromTurnCount" => 0,
+        "toTurnCount" => 1
+      })
+
+    cwd = cwd(context, thread)
+    File.write!(Path.join(cwd, "a.txt"), "changed after\n")
+    File.write!(Path.join(cwd, "extra.txt"), "extra\n")
+    context |> rewind(thread, 1) |> Map.put(:diff_reply, diff_reply)
+  end
+
+  step "the old checkpoint is used", context do
+    assert {:ok, %{"diff" => diff}} = context.diff_reply
+    assert diff =~ "+++ b/a.txt"
+    assert {:ok, _} = context.reply
+    cwd = cwd(context, context.run_title)
+    assert File.read!(Path.join(cwd, "a.txt")) == "write a.txt\n"
+    refute File.exists?(Path.join(cwd, "extra.txt"))
+    context
+  end
+
+  step "the thread's checkpoints are deleted", context do
+    cwd = cwd(context, context.run_title)
+
+    for checkpoint <-
+          StreamState.list(World.state(context, context.run_title), "checkpoint"),
+        do: Checkpoint.delete_ref(cwd, checkpoint["ref"])
+
+    context
+  end
+
+  step "the old checkpoint is deleted along with the new ones", context do
+    cwd = cwd(context, context.run_title)
+    refute Checkpoint.exists?(cwd, context.legacy_checkpoint["ref"])
+
+    {:ok, %{status: status}} =
+      HalC2.Git.run(cwd, ["rev-parse", "--verify", "--quiet", context.legacy_ref <> "^{commit}"])
+
+    assert status != 0
+    context
+  end
+
+  step "the user has no git name or email configured", context do
+    cwd = cwd(context, "t1")
+
+    for key <- ~w(user.name user.email),
+        do: HalC2.Git.run(cwd, ["config", "--unset", key])
+
+    context
+  end
+
+  step "the checkpoint is captured", context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+    cwd = cwd(context, context.run_title)
+    assert Checkpoint.exists?(cwd, checkpoint["ref"])
+
+    assert git(cwd, ["log", "-1", "--format=%an <%ae>", checkpoint["ref"]]) ==
+             "HAL-C2 <hal-c2@users.noreply.github.com>\n"
+
+    context
+  end
+
+  step "a checkpoint of {string} was captured a moment ago", %{args: [thread]} = context do
+    cwd = cwd(context, thread)
+    File.mkdir_p!(Path.join(cwd, "src"))
+    File.write!(Path.join(cwd, "src/a.ts"), "one\n")
+    World.git!(cwd, ["add", "src/a.ts"])
+    World.git!(cwd, ~w(commit -q -m a))
+    complete(context, thread, "hello")
+  end
+
+  step "{string} was edited again within the same second without its size or modification time changing",
+       %{args: [file]} = context do
+    path = Path.join(cwd(context, context.run_title), file)
+    %{mtime: mtime} = File.stat!(path, time: :posix)
+    File.write!(path, "two\n")
+    File.touch!(path, mtime)
+    context
+  end
+
+  step "the checkpoint holds the new content of {string}", %{args: [file]} = context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+
+    assert git(cwd(context, context.run_title), ["show", "#{checkpoint["ref"]}:#{file}"]) ==
+             "two\n"
+
+    context
+  end
+
+  step ~r/^the index of the worktree of "(?<thread>[^"]+)" is (?<state>missing|not a valid index file)$/,
+       %{args: [thread, state]} = context do
+    cwd = cwd(context, thread)
+    path = String.trim(git(cwd, ~w(rev-parse --path-format=absolute --git-path index)))
+
+    bytes =
+      case state do
+        "missing" ->
+          File.rm!(path)
+          nil
+
+        "not a valid index file" ->
+          File.write!(path, "not an index")
+          "not an index"
+      end
+
+    context
+    |> Map.put(:index_state, {state, path, bytes})
+    |> Map.put(:run_title, thread)
+  end
+
+  step "the checkpoint holds the files as they are on disk", context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+    cwd = cwd(context, context.run_title)
+
+    assert git(cwd, ["show", "#{checkpoint["ref"]}:README.md"]) ==
+             File.read!(Path.join(cwd, "README.md"))
+
+    context
+  end
+
+  step ~r/^the index is still (?<state>missing|not a valid index file)$/,
+       %{args: [state]} = context do
+    assert {^state, path, bytes} = context.index_state
+
+    case state do
+      "missing" -> refute File.exists?(path)
+      "not a valid index file" -> assert File.read!(path) == bytes
+    end
+
+    context
+  end
+
+  step "the worktree of {string} has a content filter configured and one file changed since the last commit",
+       %{args: [thread]} = context do
+    cwd = cwd(context, thread)
+    log = Path.join(context.mc.home, "filter.log")
+    File.write!(log, "")
+
+    # The files are older than the index that adds them, so a capture that
+    # keeps the index's stat data can tell they have not changed without
+    # hashing them (a file stamped in the index's own second is "racily
+    # clean" and git must check its content, filters and all).
+    old = System.system_time(:second) - 120
+
+    for name <- ~w(one.txt two.txt three.txt) do
+      File.write!(Path.join(cwd, name), "#{name}\n")
+      File.touch!(Path.join(cwd, name), old)
+    end
+
+    File.write!(Path.join(cwd, ".gitattributes"), "*.txt filter=logged\n")
+    World.git!(cwd, ["config", "filter.logged.clean", "sh -c 'echo %f >> #{log}; cat'"])
+    World.git!(cwd, ["add", ".gitattributes", "one.txt", "two.txt", "three.txt"])
+    World.git!(cwd, ~w(commit -q -m filtered))
+    File.write!(log, "")
+    File.write!(Path.join(cwd, "two.txt"), "two changed\n")
+
+    context
+    |> Map.put(:filter_log, log)
+    |> Map.put(:run_title, thread)
+  end
+
+  step "the filter ran only for the changed file", context do
+    ran =
+      context.filter_log
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.uniq()
+
+    assert ran == ["two.txt"]
+    context
+  end
+
+  step "the repository's metadata folder holds no leftover checkpoint files", context do
+    common =
+      String.trim(
+        git(
+          cwd(context, context.run_title),
+          ~w(rev-parse --path-format=absolute --git-common-dir)
+        )
+      )
+
+    leftovers =
+      Enum.filter(File.ls!(common), &String.starts_with?(&1, "hal-c2-checkpoint-index-"))
+
+    assert leftovers == []
+    context
+  end
+
+  step "the worktree of {string} is a sparse checkout that is not folder-based",
+       %{args: [thread]} = context do
+    cwd = sparse_fixture(context, thread, "docs")
+    World.git!(cwd, ["sparse-checkout", "set", "--no-cone", "/*", "!/docs/"])
+    Map.put(context, :run_title, thread)
+  end
+
+  step "the checkpoint cannot reuse the worktree's index", context do
+    World.git!(cwd(context, context.run_title), [
+      "update-index",
+      "--assume-unchanged",
+      "README.md"
+    ])
+
+    context
+  end
+
+  step "the error says the checkpoint index cannot be rebuilt for a non-cone sparse checkout",
+       context do
+    assert {:error, reason} =
+             Checkpoint.capture(cwd(context, context.run_title), "refs/hal-c2/test/non-cone")
+
+    assert reason == "Cannot rebuild a checkpoint index for non-cone sparse checkout."
+    context
+  end
+
+  step "the checkpoint of run {int} holds no files", %{args: [n]} = context do
+    context = complete_through(context, "t1", 2)
+    cwd = cwd(context, "t1")
+    checkpoint = checkpoint(context, "t1", n)
+    empty = Path.join(context.mc.home, "empty")
+    File.write!(empty, "")
+    tree = String.trim(git(cwd, ["hash-object", "-t", "tree", empty]))
+    commit = String.trim(git(cwd, ["commit-tree", tree, "-m", "empty"]))
+    World.git!(cwd, ["update-ref", checkpoint["ref"], commit])
+    context
+  end
+
+  step "the user rewinds {string} to before run {int}", %{args: [thread, n]} = context do
+    rewind(context, thread, n - 1)
+  end
+
+  step "the workspace folder still exists and is empty", context do
+    assert {:ok, _} = context.reply
+    cwd = cwd(context, context.run_title)
+    assert File.dir?(cwd)
+    # The worktree's own `.git` link file is git's, not the workspace's.
+    assert File.ls!(cwd) -- [".git"] == []
+    context
+  end
+
+  # --- diffs and file lists ------------------------------------------------------
+
+  step "runs 1, 2 and 3 of {string} completed and the thread was rewound to run 1",
+       %{args: [thread]} = context do
+    context = context |> complete_through(thread, 3) |> rewind(thread, 1)
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "a new run of {string} completed afterwards", %{args: [thread]} = context do
+    complete_through(context, thread, 4)
+  end
+
+  step "the patch shows what the new run changed", context do
+    patch = patch(context)
+    assert patch =~ "+++ b/run-4.txt"
+    refute patch =~ "run-2.txt"
+    refute patch =~ "run-3.txt"
+    context
+  end
+
+  step "the repository of {string} is configured to show diffs without path prefixes",
+       %{args: [_project]} = context do
+    World.git!(cwd(context, "t1"), ["config", "diff.noprefix", "true"])
+    complete_through(context, "t1", 1)
+  end
+
+  step "every file in the patch is still named with its {string} and {string} prefixes",
+       %{args: [from_prefix, to_prefix]} = context do
+    assert {from_prefix, to_prefix} == {"a/", "b/"}
+    patch = patch(context)
+
+    # `/dev/null` names the empty side of an added or deleted file, not a file.
+    headers =
+      for line <- String.split(patch, "\n"),
+          String.starts_with?(line, ["--- ", "+++ "]),
+          not String.ends_with?(line, "/dev/null"),
+          do: line
+
+    assert headers != []
+    assert Enum.all?(headers, &Regex.match?(~r/^(--- a\/|\+\+\+ b\/)/, &1)), inspect(headers)
+    assert patch =~ "diff --git a/run-1.txt b/run-1.txt"
+    context
+  end
+
+  step "a run of {string} completes after renaming {string} to {string}",
+       %{args: [thread, old, new]} = context do
+    File.write!(Path.join(cwd(context, thread), old), "one\ntwo\n")
+    complete(context, thread, "rename #{old} #{new}")
+  end
+
+  step "a run of {string} completes after adding an image", %{args: [thread]} = context do
+    complete(context, thread, "write-image image.png")
+  end
+
+  step "a run of {string} completes after adding an empty file", %{args: [thread]} = context do
+    complete(context, thread, "write-empty empty.txt")
+  end
+
+  step "a run of {string} completes after editing a file whose name has spaces and non-Latin letters",
+       %{args: [thread]} = context do
+    name = "my файл.ts"
+    File.write!(Path.join(cwd(context, thread), name), "before\n")
+
+    context
+    |> complete(thread, "write-named #{name}")
+    |> Map.put(:exact_name, name)
+  end
+
+  step "a run of {string} completes after editing {string} and then {string}",
+       %{args: [thread, first, second]} = context do
+    for name <- [first, second],
+        do: File.write!(Path.join(cwd(context, thread), name), "before\n")
+
+    complete(context, thread, "write-all #{first} #{second}")
+  end
+
+  step "the checkpoint lists {string} and not {string}", %{args: [kept, gone]} = context do
+    paths = Enum.map(last_checkpoint(context)["files"], & &1["path"])
+    assert kept in paths
+    refute gone in paths
+    context
+  end
+
+  step "the checkpoint lists the image with no added or removed lines", context do
+    assert [%{"path" => "image.png", "additions" => 0, "deletions" => 0}] =
+             last_checkpoint(context)["files"]
+
+    context
+  end
+
+  step "the checkpoint lists the file with no added or removed lines", context do
+    assert [%{"path" => "empty.txt", "additions" => 0, "deletions" => 0}] =
+             last_checkpoint(context)["files"]
+
+    context
+  end
+
+  step "the checkpoint lists the file under its exact name", context do
+    assert [%{"path" => path}] = last_checkpoint(context)["files"]
+    assert path == context.exact_name
+    context
+  end
+
+  step "the checkpoint lists {string} before {string}", %{args: [first, second]} = context do
+    assert Enum.map(last_checkpoint(context)["files"], & &1["path"]) == [first, second]
+    context
+  end
+
+  step "a run of {string} completes after writing a file of tens of megabytes",
+       %{args: [thread]} = context do
+    complete(context, thread, "fill big.txt", 60_000)
+  end
+
+  step "the checkpoint still lists that file with its line counts", context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+
+    assert Enum.any?(
+             checkpoint["files"],
+             &(&1["path"] == "big.txt" and &1["additions"] == 110_000 and &1["deletions"] == 0)
+           )
+
+    context
+  end
+
+  step "listing the files a run of {string} changed fails", %{args: [thread]} = context do
+    dir = HalC2.Test.Mc.tmp_dir(context.mc, "numstat-git")
+    script = Path.join(dir, "git")
+
+    File.write!(script, """
+    #!/bin/sh
+    case "$*" in *--numstat*) echo "numstat unavailable" >&2; exit 1;; esac
+    exec '#{System.find_executable("git")}' "$@"
+    """)
+
+    File.chmod!(script, 0o755)
+    World.put_app_env(:git_command, script)
+    Map.put(context, :run_title, thread)
+  end
+
+  step "the run completes", context do
+    complete(context, context.run_title, "write changed.txt")
+  end
+
+  step "a ready checkpoint for that run exists with no files listed", context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+    assert checkpoint["files"] == []
+    assert Checkpoint.exists?(cwd(context, context.run_title), checkpoint["ref"])
+    context
+  end
+
+  step "thread {string} works in a subfolder of a repository, with no git folder of its own",
+       %{args: [thread]} = context do
+    sub = Path.join(World.project(context, "demo").root, "sub-#{thread}")
+    File.mkdir_p!(sub)
+    refute File.exists?(Path.join(sub, ".git"))
+    assert Checkpoint.repo?(sub)
+
+    context
+    |> World.create_thread(thread, "demo", %{"worktreePath" => sub})
+    |> Map.put(:run_title, thread)
+  end
+
+  step "a run of {string} completes after changing a file", %{args: [thread]} = context do
+    complete(context, thread, "write changed.txt")
+  end
+
+  step "a client asks for the diff of turn {int} of {string}",
+       %{args: [n, thread]} = context do
+    diff(context, thread, n - 1, n)
+  end
+
+  step "a ready checkpoint for that run exists", context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint["status"] == "ready"
+    cwd = cwd(context, context.run_title)
+    assert Checkpoint.exists?(cwd, checkpoint["ref"])
+    tree = git(cwd, ["ls-tree", "-r", "--name-only", checkpoint["ref"]])
+    assert tree =~ "changed.txt"
+    context
+  end
+
+  step "a run of {string} completed with a checkpoint", %{args: [thread]} = context do
+    context = complete(context, thread, "write a.txt")
+    checkpoint = last_checkpoint(context)
+    assert %{"status" => "ready"} = checkpoint
+
+    Map.merge(context, %{
+      first_checkpoint: checkpoint,
+      first_checkpoint_oid:
+        String.trim(git(cwd(context, thread), ["rev-parse", checkpoint["ref"]]))
+    })
+  end
+
+  step "the capture for that run is asked for again after a restart", context do
+    thread = context.run_title
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    cwd = cwd(context, thread)
+    # The workspace moves on, so a repeat capture would record something else.
+    File.write!(Path.join(cwd, "a.txt"), "changed since\n")
+
+    state = World.state(context, thread)
+    run = context |> World.runs(thread) |> List.last()
+    scope = state |> StreamState.list("checkpoint-scope") |> hd()
+
+    ids = %{
+      thread: World.thread_id(context, thread),
+      run: run["id"],
+      attempt: run["activeAttemptId"],
+      root_node: run["rootNodeId"],
+      provider_thread: run["providerThreadId"],
+      driver: "codex",
+      instance: run["providerInstanceId"]
+    }
+
+    turn = %{ids: ids, cwd: cwd, scope_id: scope["id"], run_ordinal: run["ordinal"]}
+
+    assert :ok =
+             HalC2.Orchestration.TurnWriter.finish(
+               %{thread_id: World.thread_id(context, thread), turn: turn},
+               "completed",
+               nil
+             )
+
+    context
+  end
+
+  step "the run keeps the checkpoint it had", context do
+    checkpoint = last_checkpoint(context)
+    assert checkpoint == context.first_checkpoint
+
+    assert String.trim(git(cwd(context, context.run_title), ["rev-parse", checkpoint["ref"]])) ==
+             context.first_checkpoint_oid
+
+    context
+  end
+
+  step "no second checkpoint item is added to the run", context do
+    state = World.state(context, context.run_title)
+    run = context |> World.runs(context.run_title) |> List.last()
+
+    items =
+      Enum.filter(
+        StreamState.list(state, "turn-item"),
+        &(&1["runId"] == run["id"] and &1["type"] == "checkpoint")
+      )
+
+    checkpoints =
+      Enum.filter(StreamState.list(state, "checkpoint"), &(&1["runId"] == run["id"]))
+
+    assert length(items) == 1
+    assert length(checkpoints) == 1
+    context
+  end
+
+  step "a run of {string} completed with a captured checkpoint", %{args: [thread]} = context do
+    context = complete(context, thread, "write a.txt")
+    checkpoint = last_checkpoint(context)
+    assert %{"status" => "ready"} = checkpoint
+
+    Map.merge(context, %{
+      first_checkpoint: checkpoint,
+      first_checkpoint_oid:
+        String.trim(git(cwd(context, thread), ["rev-parse", checkpoint["ref"]]))
+    })
+  end
+
+  step "the provider's own diff for that run arrives as a placeholder because no checkpoint was found",
+       context do
+    thread = context.run_title
+    run = context |> World.runs(thread) |> List.last()
+
+    {reply, context} =
+      World.dispatch(context, %{
+        "type" => "thread.turn.diff.complete",
+        "threadId" => World.thread_id(context, thread),
+        "turnId" => run["id"],
+        "completedAt" => HalC2.Orchestration.Entities.now(),
+        "checkpointRef" => "provider-diff:event-1",
+        "status" => "missing",
+        "files" => [],
+        "checkpointTurnCount" => 2
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the command fails saying the turn already has a captured checkpoint", context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "already has a captured checkpoint"
+    context
+  end
+
+  # --- rollback safety -------------------------------------------------------------
+
+  step "an archived thread {string} also points at the worktree of {string}",
+       %{args: [other, thread]} = context do
+    path = World.thread(context, thread)["worktreePath"]
+    context = World.create_thread(context, other, "demo", %{"worktreePath" => path})
+
+    {{:ok, _}, context} =
+      World.dispatch(context, %{
+        "type" => "thread.archive",
+        "threadId" => World.thread_id(context, other)
+      })
+
+    World.await_thread(
+      context,
+      other,
+      &(StreamState.get(&1, "thread")[World.thread_id(context, other)]["archivedAt"] != nil)
+    )
+
+    Map.put(context, :run_title, thread)
+  end
+
+  step "thread {string} points at the worktree of {string} through a symbolic link",
+       %{args: [other, thread]} = context do
+    target = World.thread(context, thread)["worktreePath"]
+    link = Path.join(context.mc.home, "link-#{other}")
+    File.ln_s!(target, link)
+
+    context
+    |> World.create_thread(other, "demo", %{"worktreePath" => link})
+    |> Map.put(:run_title, thread)
+  end
+
+  step "thread {string} ran turns in the worktree of {string} before moving elsewhere",
+       %{args: [other, thread]} = context do
+    path = World.thread(context, thread)["worktreePath"]
+    context = World.create_thread(context, other, "demo", %{"worktreePath" => path})
+    context = complete(context, other, "write other.txt")
+    {own, branch} = worktree(context, "demo", "#{other}-own")
+
+    context
+    |> World.patch_thread(other, %{"worktreePath" => own, "branch" => branch})
+    |> Map.put(:run_title, thread)
+  end
+
+  step "the user rewinds {string} to run {int} and the thread's active provider changes before the rewind runs",
+       %{args: [thread, n]} = context do
+    dir = HalC2.Test.Mc.tmp_dir(context.mc, "rewind-gate")
+    gate = Path.join(dir, "gate")
+    {_, 0} = System.cmd("mkfifo", [gate])
+    script = Path.join(dir, "git")
+
+    File.write!(script, """
+    #!/bin/sh
+    if [ "$1" = "restore" ] && mkdir '#{dir}/held' 2>/dev/null; then read _ < '#{gate}'; fi
+    exec '#{System.find_executable("git")}' "$@"
+    """)
+
+    File.chmod!(script, 0o755)
+    World.put_app_env(:git_command, script)
+
+    id = World.thread_id(context, thread)
+    scope = Checkpoint.scope_id(id)
+
+    command = %{
+      "type" => "checkpoint.rollback",
+      "threadId" => id,
+      "scopeId" => scope,
+      "checkpointId" => Checkpoint.checkpoint_id(scope, n)
+    }
+
+    task = Task.async(fn -> HalC2.Orchestration.dispatch(command) end)
+    await_file(Path.join(dir, "held"))
+
+    context =
+      World.patch_thread(context, thread, %{
+        "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "haiku"}
+      })
+
+    File.write!(gate, "go\n")
+    reply = Task.await(task, 15_000)
+
+    context
+    |> Map.put(:reply, reply)
+    |> Map.put(:run_title, thread)
+  end
+
+  step "the rewind fails saying the active provider changed before the rewind could run",
+       context do
+    assert {:error, message} = context.reply
+    assert message =~ "Active provider changed before rollback"
+    thread = context.run_title
+    assert Enum.map(World.runs(context, thread), & &1["status"]) == ["completed", "completed"]
+    assert File.exists?(Path.join(cwd(context, thread), "run-2.txt"))
+    context
+  end
+
+  step "run {int} of {string} was stopped by the user after an assistant message",
+       %{args: [n, thread]} = context do
+    context = complete_through(context, thread, n - 1)
+    context = World.send_turn(context, thread, "say and wait a partial answer")
+    statuses = List.duplicate("completed", n - 1) ++ ["running"]
+    World.await_runs(context, thread, statuses, 10_000)
+
+    World.await_thread(context, thread, fn state ->
+      Enum.any?(StreamState.list(state, "message"), &(&1["role"] == "assistant"))
+    end)
+
+    run = context |> World.runs(thread) |> List.last()
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, thread),
+        "runId" => run["id"]
+      })
+
+    World.await_runs(
+      context,
+      thread,
+      List.duplicate("completed", n - 1) ++ ["interrupted"],
+      10_000
+    )
+
+    context
+    |> Map.put(:stopped_run, run["id"])
+    |> Map.put(:run_title, thread)
+  end
+
+  step "the user edits from that message", context do
+    thread = context.run_title
+    context = rewind(context, thread, 1)
+    assert {:ok, _} = context.reply
+    complete(context, thread, "write edited.txt")
+  end
+
+  step "the new turn starts from the checkpoint before that message", context do
+    thread = context.run_title
+    cwd = cwd(context, thread)
+    refute File.exists?(Path.join(cwd, "partial.txt"))
+    assert File.exists?(Path.join(cwd, "run-1.txt"))
+    assert File.exists?(Path.join(cwd, "edited.txt"))
+    assert [%{"beforeTurnId" => "native-turn-2"}] = World.codex_requests(context, "thread/revert")
+    checkpoint = last_checkpoint(context)
+    assert Enum.map(checkpoint["files"], & &1["path"]) == ["edited.txt"]
+    context
+  end
+
+  step "the stopped run stays in the history", context do
+    state = World.state(context, context.run_title)
+    assert StreamState.get(state, "run")[context.stopped_run]
+    assert Enum.any?(StreamState.list(state, "turn-item"), &(&1["runId"] == context.stopped_run))
+    context
+  end
+
+  step "a Codex thread whose run 1 has no turn in the history the MC recorded for Codex",
+       context do
+    context = complete_through(context, "t1", 2)
+
+    turn =
+      context
+      |> World.state("t1")
+      |> StreamState.list("provider-turn")
+      |> Enum.find(&(&1["ordinal"] == 1))
+
+    assert turn
+
+    put(context, "t1", "provider-turn", turn["id"], %{
+      "providerThreadId" => "provider-thread:gone"
+    })
+  end
+
+  step "the command fails saying the target turn was not found in the provider's turn history",
+       context do
+    assert {:error, message, _} = context.reply
+    assert message =~ "target turn was not found in the provider's turn history"
+    context
+  end
+
+  step "Codex is not asked to drop any turns", context do
+    assert rewind_requests(context) == []
+    context
+  end
+
   # --- helpers -------------------------------------------------------------------
+
+  # Waits for a gate file a held git command leaves when it reaches the gate.
+  defp await_file(path, tries \\ 1_000) do
+    cond do
+      File.exists?(path) ->
+        :ok
+
+      tries > 0 ->
+        Process.sleep(10)
+        await_file(path, tries - 1)
+
+      true ->
+        flunk("the held git command never reached its gate")
+    end
+  end
+
+  # Commits `src/a.ts` and `<folder>/guide.md` in the thread's worktree, ready
+  # for a sparse checkout that leaves the folder out. Returns the worktree.
+  defp sparse_fixture(context, thread, folder) do
+    cwd = cwd(context, thread)
+    File.mkdir_p!(Path.join(cwd, "src"))
+    File.mkdir_p!(Path.join(cwd, folder))
+    File.write!(Path.join(cwd, "src/a.ts"), "a\n")
+    File.write!(Path.join(cwd, "#{folder}/guide.md"), "guide\n")
+    World.git!(cwd, ["add", "src", folder])
+    World.git!(cwd, ~w(commit -q -m sparse))
+    cwd
+  end
 
   # A git worktree of the project's repository on a branch named after the thread.
   defp worktree(context, project, thread) do

@@ -299,6 +299,23 @@ defmodule HalC2.Orchestration do
          do: {:ok, %{"sequence" => sequence(thread_id)}}
   end
 
+  # A provider's own diff for a turn, ingested when no checkpoint was found
+  # for it. It must never replace a checkpoint that was already captured:
+  # ingestion checks before dispatching, but the run's own capture can land
+  # in between, so the command is refused here, under the stream's lock,
+  # closing that window.
+  def dispatch(%{"type" => "thread.turn.diff.complete", "threadId" => thread_id} = command) do
+    result =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        case turn_diff_complete(state, thread_id, command) do
+          {:ok, changes} -> {changes, :ok}
+          {:error, _} = error -> {[], error}
+        end
+      end)
+
+    with :ok <- result, do: {:ok, %{"sequence" => sequence(thread_id)}}
+  end
+
   # The user's stop shows in the transcript as a request, paired with the run's
   # "Run interrupted" result once the provider stops (`TurnWriter.finish/3`).
   def dispatch(%{"type" => "run.interrupt", "threadId" => thread_id} = command) do
@@ -3589,6 +3606,71 @@ defmodule HalC2.Orchestration do
     |> Enum.max(fn -> -1 end)
     |> Kernel.+(1)
   end
+
+  # The changes recording a provider's own diff for a turn, or the refusal
+  # when its placeholder would replace a captured checkpoint (the
+  # `thread.turn.diff.complete` clause of `dispatch/1`).
+  defp turn_diff_complete(state, thread_id, command) do
+    run = StreamState.get(state, "run")[command["turnId"]]
+
+    existing =
+      run &&
+        Enum.find(StreamState.list(state, "checkpoint"), &(&1["runId"] == run["id"]))
+
+    cond do
+      StreamState.get(state, "thread")[thread_id] == nil ->
+        {:error, "Thread #{thread_id} was not found."}
+
+      run == nil ->
+        {:error, "turn #{command["turnId"]} was not found"}
+
+      # The ref of a ready checkpoint is later spliced into git arguments, so
+      # only checkpoint refs are accepted for one. A placeholder's provider
+      # ref never reaches git (every use requires a ready checkpoint), but
+      # must not look like a git option either.
+      not checkpoint_ref?(command["checkpointRef"], command["status"]) ->
+        {:error,
+         "checkpoint ref #{command["checkpointRef"]} is not under refs/hal-c2/ or refs/t3/"}
+
+      existing != nil and existing["status"] != "missing" ->
+        {:error, "turn #{command["turnId"]} already has a captured checkpoint"}
+
+      true ->
+        scope_id = HalC2.Checkpoint.scope_id(thread_id)
+        ordinal = run["ordinal"]
+
+        checkpoint = %{
+          "id" => HalC2.Checkpoint.checkpoint_id(scope_id, ordinal),
+          "threadId" => thread_id,
+          "scopeId" => scope_id,
+          "runId" => run["id"],
+          "nodeId" => run["rootNodeId"],
+          "parentCheckpointId" =>
+            if(ordinal > 0, do: HalC2.Checkpoint.checkpoint_id(scope_id, ordinal - 1)),
+          "ordinalWithinScope" => ordinal,
+          "appRunOrdinal" => ordinal,
+          "ref" => command["checkpointRef"],
+          "status" => command["status"],
+          "files" => command["files"] || [],
+          "capturedAt" => command["completedAt"] || Entities.now()
+        }
+
+        changes = [
+          create("checkpoint", checkpoint["id"], checkpoint),
+          upsert(state, "run", run["id"], &Map.put(&1, "checkpointId", checkpoint["id"]))
+        ]
+
+        {:ok, Enum.filter(changes, &is_tuple/1)}
+    end
+  end
+
+  defp checkpoint_ref?("refs/hal-c2/" <> _rest, _status), do: true
+  defp checkpoint_ref?("refs/t3/" <> _rest, _status), do: true
+
+  defp checkpoint_ref?(ref, "missing") when is_binary(ref),
+    do: not String.starts_with?(ref, "-")
+
+  defp checkpoint_ref?(_ref, _status), do: false
 
   @doc "A change creating `entity`."
   def create(kind, id, entity), do: {kind, id, Patch.diff(nil, entity)}

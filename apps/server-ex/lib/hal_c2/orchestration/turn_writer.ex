@@ -560,6 +560,20 @@ defmodule HalC2.Orchestration.TurnWriter do
   def finish(state, status, failure) do
     at = Entities.now()
 
+    # Ending a run is at-least-once (a restart can ask again): a run that has
+    # already ended keeps the checkpoint its first ending captured, so the
+    # repeat must not capture over it.
+    run_id = state.turn && get_in(state.turn, [Access.key(:ids), Access.key(:run)])
+
+    if run_id && not active?(HalC2.Streams.state(state.thread_id), run_id) do
+      TurnWatch.release(run_id)
+      :ok
+    else
+      finish_active(state, status, failure, at)
+    end
+  end
+
+  defp finish_active(state, status, failure, at) do
     checkpoint =
       if status == "completed",
         do:
