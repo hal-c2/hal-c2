@@ -14,10 +14,12 @@ class TimelineModel;
 
 // The Agents tab: a thread's work in two sections, as the sidebar keeps its
 // threads. Active on top: the subagents working, in the order they started,
-// then the commands still running. Finished below: the settled subagents, the
-// latest to end first. Read from the thread's timeline (its `subagent`
-// entities and `command_execution` turn items) and updated in place as they
-// change, rows moving between sections, so the list keeps its scroll.
+// then the commands still running, then background work (a `dynamic_tool`
+// still working after its turn settled, such as a Claude monitor). Finished
+// below: the settled subagents, the latest to end first. Read from the
+// thread's timeline (its `subagent` entities and turn items) and updated in
+// place as they change, rows moving between sections, so the list keeps its
+// scroll.
 //
 // A running row's elapsed time moves once a second, and only while the tab
 // shows (setActive) and something is running; a settled one stays at the
@@ -31,7 +33,7 @@ class AgentsModel : public QAbstractListModel {
 public:
   enum Role {
     IdRole = Qt::UserRole + 1,
-    // subagent or command
+    // subagent, command or background
     KindRole,
     // A subagent's title (its prompt's first line without one), a command's text.
     TitleRole,

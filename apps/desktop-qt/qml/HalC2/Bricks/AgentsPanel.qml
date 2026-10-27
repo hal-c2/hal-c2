@@ -4,7 +4,8 @@ import QtQuick.Controls.Basic
 import HalC2.Shell
 
 // The right panel's Agents tab, from an AgentsModel (Panel.agents): what is
-// active (working subagents, running commands) on top, finished subagents
+// active (working subagents, running commands, background work such as a
+// Claude monitor) on top, finished subagents
 // below with when they ended. Rows update and move in place, so the list
 // keeps its scroll. A subagent opens its own thread. Status dots are static;
 // the elapsed times move once a second, and only while the tab shows (the
@@ -41,7 +42,7 @@ Rectangle {
         visible: list.count === 0
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
-        text: qsTr("No subagents or running commands in this thread.")
+        text: qsTr("No subagents, running commands or background work in this thread.")
         color: root.muted
         font.pixelSize: Math.round(12 * Theme.fontScale)
     }
@@ -88,7 +89,7 @@ Rectangle {
 
             objectName: "agentRow-" + agentId
             width: ListView.view.width
-            height: kind === "command" ? 30 : 58
+            height: kind === "command" ? 30 : kind === "background" ? 44 : 58
             enabled: opens
             hoverEnabled: opens
             Accessible.role: opens ? Accessible.Button : Accessible.StaticText
@@ -146,7 +147,7 @@ Rectangle {
                 anchors.right: parent.right
                 anchors.rightMargin: 8
                 y: 26
-                visible: row.kind === "subagent"
+                visible: row.kind === "subagent" || row.kind === "background"
                 text: row.detail.split("\n")[0]
                 elide: Text.ElideRight
                 maximumLineCount: 1

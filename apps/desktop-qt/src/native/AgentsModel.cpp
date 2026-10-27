@@ -10,6 +10,8 @@
 namespace {
 
 const QSet<QString> kLive{QStringLiteral("pending"), QStringLiteral("running"), QStringLiteral("waiting")};
+// A run still working: its tools are foreground work, not background.
+const QSet<QString> kRunActive{QStringLiteral("preparing"), QStringLiteral("starting"), QStringLiteral("running")};
 
 QString text(const QJsonObject& object, QLatin1StringView field) {
   return object.value(field).toString();
@@ -82,6 +84,7 @@ void AgentsModel::setActive(bool active) {
 void AgentsModel::read() {
   QList<Row> working;
   QList<Row> commands;
+  QList<Row> background;
   QList<Row> settled;
   if (m_timeline) {
     const QHash<QString, QJsonObject> agents = m_timeline->entities(QStringLiteral("subagent"));
@@ -101,25 +104,35 @@ void AgentsModel::read() {
       return left != right ? left > right : a.id < b.id;
     });
     QSet<QString> rolledBack;
+    bool runActive = false;
     const QHash<QString, QJsonObject> runs = m_timeline->entities(QStringLiteral("run"));
     for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
-      if (text(it.value(), QLatin1String("status")) == QLatin1String("rolled_back")) rolledBack.insert(it.key());
+      const QString status = text(it.value(), QLatin1String("status"));
+      if (status == QLatin1String("rolled_back")) rolledBack.insert(it.key());
+      if (kRunActive.contains(status)) runActive = true;
     }
     const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));
     for (auto it = items.cbegin(); it != items.cend(); ++it) {
       const QJsonObject& item = it.value();
-      if (text(item, QLatin1String("type")) != QLatin1String("command_execution")) continue;
       if (!kLive.contains(text(item, QLatin1String("status")))) continue;
       if (rolledBack.contains(text(item, QLatin1String("runId")))) continue;
-      commands.append({it.key(), QStringLiteral("command"), item});
+      if (text(item, QLatin1String("type")) == QLatin1String("command_execution")) {
+        commands.append({it.key(), QStringLiteral("command"), item});
+      } else if (text(item, QLatin1String("type")) == QLatin1String("dynamic_tool") && !runActive) {
+        // A tool still working after its turn settled (a Claude monitor) is
+        // background work of its own kind, never a command.
+        background.append({it.key(), QStringLiteral("background"), item});
+      }
     }
-    std::sort(commands.begin(), commands.end(), [](const Row& a, const Row& b) {
+    const auto byOrdinal = [](const Row& a, const Row& b) {
       const double left = a.entity.value(QLatin1String("ordinal")).toDouble();
       const double right = b.entity.value(QLatin1String("ordinal")).toDouble();
       return left != right ? left < right : a.id < b.id;
-    });
+    };
+    std::sort(commands.begin(), commands.end(), byOrdinal);
+    std::sort(background.begin(), background.end(), byOrdinal);
   }
-  apply(working + commands + settled);
+  apply(working + commands + background + settled);
   updateTimer();
 }
 
@@ -230,6 +243,10 @@ QVariant AgentsModel::data(const QModelIndex& index, int role) const {
     case KindRole:
       return row.kind;
     case TitleRole: {
+      if (row.kind == QLatin1String("background")) {
+        const QString tool = text(entity, QLatin1String("toolName")).trimmed();
+        return tool.isEmpty() ? QStringLiteral("Background work") : tool;
+      }
       if (!agent) return text(entity, QLatin1String("input")).trimmed();
       const QString title = text(entity, QLatin1String("title")).trimmed();
       if (!title.isEmpty()) return title;
@@ -250,6 +267,11 @@ QVariant AgentsModel::data(const QModelIndex& index, int role) const {
       return ended.isValid() ? formatElapsed(started.secsTo(ended)) : QString();
     }
     case DetailRole: {
+      if (row.kind == QLatin1String("background")) {
+        const QJsonObject input = entity.value(QLatin1String("input")).toObject();
+        const QString description = text(input, QLatin1String("description")).trimmed();
+        return description.isEmpty() ? text(input, QLatin1String("command")).trimmed() : description;
+      }
       if (!agent) return QString();
       return timeline::subagentDetail(!live, text(entity, QLatin1String("progress")), text(entity, QLatin1String("result")));
     }
