@@ -73,6 +73,13 @@ const Steps steps([] {
     world.sync();
   });
 
+  step(S("the user sends another message and its turn is running"), [](World& world, const Captures&, const Table&) {
+    FakeStreams& fake = world.mc.part<FakeStreams>();
+    setEntity(world.mc, world.thread, S("run"), S("run-next"),
+              {{S("id"), S("run-next")}, {S("ordinal"), ++fake.ordinal}, {S("status"), S("running")}, {S("requestedAt"), kNow}, {S("startedAt"), kNow}});
+    world.sync();
+  });
+
   step(S("the thread lists the monitor as background work"), [](World& world, const Captures&, const Table&) {
     world.waitFor(
         [&] {

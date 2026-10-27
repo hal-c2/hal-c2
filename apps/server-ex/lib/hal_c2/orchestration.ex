@@ -3259,6 +3259,8 @@ defmodule HalC2.Orchestration do
     |> StreamState.list("provider-thread")
     |> Enum.find_value(fn other ->
       if other["nativeThreadRef"] != nil and
+           (other["driver"] || driver_for(other["providerInstanceId"] || "claudeAgent")) ==
+             "claudeAgent" and
            (other["providerInstanceId"] || "claudeAgent") != instance and
            HalC2.Claude.Provider.config_dir(other["providerInstanceId"] || "claudeAgent", cwd) ==
              home,

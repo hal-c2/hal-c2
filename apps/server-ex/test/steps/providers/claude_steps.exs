@@ -844,6 +844,21 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "the user sends another message and its turn is running", context do
+    # The monitor is background work before the next message lands.
+    World.await_row(
+      World.thread_id(context, @thread),
+      &match?(
+        [%{"taskId" => "mon-1", "taskType" => "dynamic_tool", "description" => "Monitor"}],
+        &1["pendingBackgroundTasks"]
+      )
+    )
+
+    context = World.send_turn(context, @thread, "wait for me")
+    World.await_running(context, @thread)
+    context
+  end
+
   step "the monitor is not shown as a command", context do
     items = World.entities(context, @thread, "turn-item")
     assert [] = Enum.filter(items, &(&1["type"] == "command_execution"))
@@ -2743,6 +2758,22 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  step "Claude writes its task list twice in one turn", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "todo twice")
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the thread shows one task list with the latest steps", context do
+    assert [%{"status" => "active", "steps" => steps}] = todo_plans(context)
+    assert Enum.map(steps, & &1["status"]) == ["completed", "completed", "running"]
+    context
+  end
+
   step "the task list shows the three steps as completed, running and pending", context do
     assert [%{"status" => "active", "steps" => steps}] = todo_plans(context)
     assert Enum.map(steps, & &1["status"]) == ["completed", "running", "pending"]
@@ -3176,15 +3207,44 @@ defmodule HalC2.Steps.Providers.Claude do
 
     World.await_running(context, @thread)
 
+    # Two requests in one turn: the meter reads the last request's usage, not
+    # the result's, which totals every request of the turn.
+    for {id, usage} <- [
+          {"usage-first",
+           %{
+             "input_tokens" => 9000,
+             "cache_creation_input_tokens" => 0,
+             "cache_read_input_tokens" => 80_000,
+             "output_tokens" => 400
+           }},
+          {"usage-last",
+           %{
+             "input_tokens" => 1000,
+             "cache_creation_input_tokens" => 200,
+             "cache_read_input_tokens" => 300,
+             "output_tokens" => 50
+           }}
+        ] do
+      claude_says(context, %{
+        "type" => "assistant",
+        "message" => %{
+          "id" => id,
+          "role" => "assistant",
+          "content" => [%{"type" => "text", "text" => "working"}],
+          "usage" => usage
+        }
+      })
+    end
+
     claude_says(context, %{
       "type" => "result",
       "subtype" => "success",
       "is_error" => false,
       "usage" => %{
-        "input_tokens" => 1000,
+        "input_tokens" => 10_000,
         "cache_creation_input_tokens" => 200,
-        "cache_read_input_tokens" => 300,
-        "output_tokens" => 50
+        "cache_read_input_tokens" => 80_300,
+        "output_tokens" => 450
       }
     })
 
@@ -3668,6 +3728,39 @@ defmodule HalC2.Steps.Providers.Claude do
       |> Enum.find_value(&get_in(&1, ["nativeThreadRef", "nativeId"]))
 
     assert ["--resume", native] in pairs(List.last(starts))
+    context
+  end
+
+  step "a thread that ran on Codex", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "codex", "hello from codex")
+
+    World.await_runs(context, @thread, ["completed"])
+
+    assert World.stream(context, @thread)
+           |> StreamState.list("provider-thread")
+           |> Enum.any?(& &1["nativeThreadRef"])
+
+    context
+  end
+
+  step "the user sends the next message to Claude", context do
+    context =
+      World.send_turn(context, @thread, "hello from claude", %{
+        "modelSelection" => %{"instanceId" => "claudeAgent", "model" => "sonnet"}
+      })
+
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "Claude starts a new conversation and the turn completes", context do
+    starts = for %{"argv" => argv} <- World.provider_log(context, "claude"), do: argv
+    assert starts != []
+    refute "--resume" in List.last(starts)
+    assert "Hello from claude" in World.replies(context, @thread)
     context
   end
 

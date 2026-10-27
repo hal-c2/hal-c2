@@ -1425,6 +1425,16 @@ defmodule HalC2.Claude.ThreadRuntime do
     # The last assistant message is where a rollback to this turn resumes.
     state = if message["uuid"], do: put_in(state.turn[:head], message["uuid"]), else: state
 
+    # The context meter reads the last request's usage, not the turn's total.
+    state =
+      with nil <- message["parent_tool_use_id"],
+           %{} = usage <- get_in(message, ["message", "usage"]) do
+        state = put_in(state.turn[:last_usage], usage)
+        put_in(state.turn[:compacted], false)
+      else
+        _ -> state
+      end
+
     # A signed-out CLI answers with an auth error; the turn fails with how to sign in.
     state =
       if message["error"] == "authentication_failed" and message["parent_tool_use_id"] == nil and
@@ -1504,7 +1514,9 @@ defmodule HalC2.Claude.ThreadRuntime do
       end)
     end
 
-    state
+    # The usage above stands until a post-compaction request reports its own.
+    state = put_in(state.turn[:last_usage], nil)
+    put_in(state.turn[:compacted], true)
   end
 
   defp message(%{"type" => "result", "terminal_reason" => reason}, %{steered: true} = state)
@@ -1690,9 +1702,20 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   defp recover_retry(state), do: state
 
-  # The context meter: what the turn used is its input, cached and output tokens,
-  # out of the model's context window (`Provider.launch/3`).
-  defp record_usage(state, %{"usage" => %{} = usage}) do
+  # The context meter: what the last request used is its input, cached and output
+  # tokens, out of the model's context window (`Provider.launch/3`). The result's
+  # own usage totals every request of the turn, so it only stands in when no
+  # assistant message reported per-request usage — and never over the usage a
+  # compaction in this turn already wrote.
+  defp record_usage(state, result) do
+    usage =
+      state.turn[:last_usage] ||
+        if state.turn[:compacted], do: nil, else: result["usage"]
+
+    if is_map(usage), do: write_usage(state, usage), else: state
+  end
+
+  defp write_usage(state, usage) do
     count = fn key -> trunc(usage[key] || 0) end
 
     input =
@@ -1722,8 +1745,6 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     state
   end
-
-  defp record_usage(state, _result), do: state
 
   defp result_answer(state, result) do
     text = non_empty(result["result"], "")
@@ -2056,7 +2077,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         %{"id" => "step-#{index}", "text" => text, "status" => status}
       end
 
-    write_todo(state, "todos:#{block["id"] || state.turn.ids.run}", steps)
+    write_todo(state, "todos:#{state.turn.ids.run}", steps)
   end
 
   # Shown as their question card and plan instead.

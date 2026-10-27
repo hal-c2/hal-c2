@@ -338,6 +338,13 @@ for line in sys.stdin:
     if "plan" in text:
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "ExitPlanMode", "input": {"plan": "# Plan\n- do it"}}})
         continue
+    if "todo twice" in text:
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}ta", "role": "assistant", "content": [{"type": "tool_use", "id": f"todo-a-{turn}", "name": "TodoWrite", "input": {"todos": [
+            {"content": "Read the code", "status": "in_progress", "activeForm": "Reading"}, {"content": "Fix it", "status": "pending", "activeForm": "Fixing"}, {"content": "Ship it", "status": "pending", "activeForm": "Shipping"}]}}]}})
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}tb", "role": "assistant", "content": [{"type": "tool_use", "id": f"todo-b-{turn}", "name": "TodoWrite", "input": {"todos": [
+            {"content": "Read the code", "status": "completed", "activeForm": "Reading"}, {"content": "Fix it", "status": "completed", "activeForm": "Fixing"}, {"content": "Ship it", "status": "in_progress", "activeForm": "Shipping"}]}}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
     if "todo three" in text:
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}t", "role": "assistant", "content": [{"type": "tool_use", "id": f"todo-{turn}", "name": "TodoWrite", "input": {"todos": [
             {"content": "Read the code", "status": "completed", "activeForm": "Reading"}, {"content": "Fix it", "status": "in_progress", "activeForm": "Fixing"}, {"content": "Ship it", "status": "pending", "activeForm": "Shipping"}]}}]}})

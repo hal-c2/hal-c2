@@ -140,6 +140,10 @@ const Steps steps([] {
          {QStringLiteral("startedAt"), iso(now())}});
     settleRun(world, QStringLiteral("completed"), 5);
   });
+  step(QStringLiteral("the user sends another message and its turn is running"), [](World& world, const Captures&, const Table&) {
+    startRun(world);
+    world.sync();
+  });
   step(QStringLiteral("the thread lists the monitor as background work"), [](World& world, const Captures&, const Table&) {
     AgentsModel& model = agents(world);
     for (int row = 0; row < model.rowCount(); ++row) {

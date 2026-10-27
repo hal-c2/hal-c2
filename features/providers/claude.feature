@@ -271,6 +271,12 @@ Feature: Claude
     Then the thread lists the monitor as background work
     And the monitor is not shown as a command
 
+  @shared
+  Scenario: A Claude monitor stays listed while the next turn runs
+    Given Claude starts a monitor in the thread
+    When the user sends another message and its turn is running
+    Then the thread lists the monitor as background work
+
   Scenario: Claude continues from the compacted conversation after compaction
     Given Claude compacted the conversation of a thread
     When the user sends the next message
@@ -572,6 +578,11 @@ Feature: Claude
     And the list is completed once every step is completed
 
   @mc
+  Scenario: Claude updating its task list in one turn keeps one list
+    When Claude writes its task list twice in one turn
+    Then the thread shows one task list with the latest steps
+
+  @mc
   Scenario: A newer Claude task list replaces the unfinished one before it
     Given Claude's task list still has unfinished steps
     When Claude writes a new task list
@@ -685,6 +696,12 @@ Feature: Claude
     Given one Claude instance has no config directory set and another is set to "~/.claude"
     When a thread started on the first is moved to the second
     Then Claude continues the same conversation
+
+  @mc
+  Scenario: A thread switched from another provider does not resume that provider's session on Claude
+    Given a thread that ran on Codex
+    When the user sends the next message to Claude
+    Then Claude starts a new conversation and the turn completes
 
   @mc
   Scenario: A Claude instance with its own config directory still finds its saved login on macOS

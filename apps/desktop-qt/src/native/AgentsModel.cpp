@@ -104,12 +104,12 @@ void AgentsModel::read() {
       return left != right ? left > right : a.id < b.id;
     });
     QSet<QString> rolledBack;
-    bool runActive = false;
+    QSet<QString> activeRuns;
     const QHash<QString, QJsonObject> runs = m_timeline->entities(QStringLiteral("run"));
     for (auto it = runs.cbegin(); it != runs.cend(); ++it) {
       const QString status = text(it.value(), QLatin1String("status"));
       if (status == QLatin1String("rolled_back")) rolledBack.insert(it.key());
-      if (kRunActive.contains(status)) runActive = true;
+      if (kRunActive.contains(status)) activeRuns.insert(it.key());
     }
     const QHash<QString, QJsonObject> items = m_timeline->entities(QStringLiteral("turn-item"));
     for (auto it = items.cbegin(); it != items.cend(); ++it) {
@@ -118,7 +118,7 @@ void AgentsModel::read() {
       if (rolledBack.contains(text(item, QLatin1String("runId")))) continue;
       if (text(item, QLatin1String("type")) == QLatin1String("command_execution")) {
         commands.append({it.key(), QStringLiteral("command"), item});
-      } else if (text(item, QLatin1String("type")) == QLatin1String("dynamic_tool") && !runActive) {
+      } else if (text(item, QLatin1String("type")) == QLatin1String("dynamic_tool") && !activeRuns.contains(text(item, QLatin1String("runId")))) {
         // A tool still working after its turn settled (a Claude monitor) is
         // background work of its own kind, never a command.
         background.append({it.key(), QStringLiteral("background"), item});
