@@ -82,7 +82,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
       %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
       %{"args" => ["pr list"], "stdout" => []},
       Shared.permissions_rule("WRITE"),
-      %{"args" => ["--method POST", "pulls/"], "stdout" => "{}"}
+      %{"args" => ["--method POST", "pulls/"], "stdout" => "{}"},
+      # The pull request's reviews, read before a post: none yet.
+      activity_rule([])
     ])
     |> Map.merge(%{
       repository: repository,
@@ -1270,36 +1272,41 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   # what that machine saved of it.
   step "both machines reviewed \#{int} and {string} posted its review",
        %{args: [number, _label]} = context do
-    context =
-      context
-      |> started(number)
-      |> report(findings("approve", 1))
-      |> await_review!(number, &(&1["status"] == "waiting"))
+    {review, context} = reviewed_apart(context, number)
 
-    {review, context} = await_review(context, number, &(&1["status"] == "waiting"))
+    peer_saved(context, review, %{
+      "status" => "published",
+      "publishedAt" => DateTime.utc_now() |> DateTime.to_iso8601()
+    })
+  end
 
-    posted =
-      Map.merge(review, %{
-        "status" => "published",
-        "projectId" => "#{context.peer}-api",
-        "threadId" => nil,
-        "checkout" => nil,
-        "publishedAt" => DateTime.utc_now() |> DateTime.to_iso8601()
-      })
-
-    File.write!(
-      Path.join(context.peer_data, "reviews.json"),
-      JSON.encode!(%{"reviews" => %{review["key"] => posted}})
-    )
+  # The other machine stopped mid-post: it saved the review as being published, and
+  # GitHub has it, marked as the plugin marks its posts.
+  step "both machines reviewed \#{int} and {string} posted its review but restarted before saving so",
+       %{args: [number, _label]} = context do
+    {review, context} = reviewed_apart(context, number)
 
     context
+    |> World.cli_rules([
+      activity_rule([
+        %{
+          "id" => "PRR_1",
+          "author" => %{"login" => "monalisa"},
+          "state" => "APPROVED",
+          "body" =>
+            "Looks good.\n\n<!-- hal-c2-code-review:#{review["key"]}@#{review["reviewedSha"]} -->",
+          "submittedAt" => "2026-09-01T00:00:00Z"
+        }
+      ])
+    ])
+    |> peer_saved(review, %{"status" => "publishing"})
   end
 
   step "{string} is back in the cluster", %{args: [label]} = context do
     home = Machines.home(context, label)
     context = put_in(context, [:machines, label], Machines.start(context, label, :cluster, home))
     context = peer_ready(context, label)
-    {_, context} = await_peer(context, 12, &(&1["status"] == "published"))
+    {_, context} = await_peer(context, 12, &(&1["status"] in ~w(published waiting)))
     context
   end
 
@@ -1323,6 +1330,13 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "it is not posted, as the pull request already has the review of this commit", context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "The review of this commit is already on the pull request."
+    assert World.cli_calls(context, "pulls/12/reviews") == []
+    context
+  end
+
   step "it is not posted, as {string} is restarting code review", %{args: [label]} = context do
     assert {:error, _, _} = context.reply
     assert inspect(context.reply) =~ "#{label} is restarting code review; try again."
@@ -1331,6 +1345,47 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   # --- helpers ---------------------------------------------------------------------------------
+
+  # The reviews `gh pr view` gives #12's activity.
+  defp activity_rule(reviews) do
+    %{
+      "args" => ["pr view", "author,comments,reviews,commits"],
+      "stdout" => %{
+        "author" => %{"login" => "octocat"},
+        "comments" => [],
+        "reviews" => reviews,
+        "commits" => []
+      }
+    }
+  end
+
+  # This machine's review of #12, made while the other machine was apart.
+  defp reviewed_apart(context, number) do
+    context
+    |> started(number)
+    |> report(findings("approve", 1))
+    |> await_review!(number, &(&1["status"] == "waiting"))
+    |> await_review(number, &(&1["status"] == "waiting"))
+  end
+
+  # Saves `review` with `fields` as the other machine's own.
+  defp peer_saved(context, review, fields) do
+    saved =
+      review
+      |> Map.merge(%{
+        "projectId" => "#{context.peer}-api",
+        "threadId" => nil,
+        "checkout" => nil
+      })
+      |> Map.merge(fields)
+
+    File.write!(
+      Path.join(context.peer_data, "reviews.json"),
+      JSON.encode!(%{"reviews" => %{review["key"] => saved}})
+    )
+
+    context
+  end
 
   # Saves `patch` over the plugin's settings, which restarts it.
   defp save(context, patch) do

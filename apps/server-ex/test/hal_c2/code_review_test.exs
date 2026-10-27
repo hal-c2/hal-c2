@@ -514,7 +514,50 @@ defmodule HalC2.CodeReviewTest do
              apply(@server, :claims, [[@key]])
   end
 
+  # From the Maude model of claims between machines: a machine that posted a review
+  # and stopped before it saved so loaded it as waiting, and nothing it or another
+  # machine had kept said it was posted, so a publish posted the commit again.
+  test "a review GitHub already has under the login gh uses is not posted again", context do
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    settle()
+    %{"status" => "waiting", "reviewedSha" => reviewed} = review()
+
+    posted =
+      &%{
+        "author" => %{"login" => &1},
+        "body" => "Looks right.\n\n<!-- hal-c2-code-review:#{@key}@#{reviewed} -->"
+      }
+
+    rules!(context, head: 1, reviews: [posted.("monalisa")])
+    assert {:error, %{"message" => error}} = call("publish", %{"key" => @key})
+    assert error =~ "already on the pull request"
+    assert %{"status" => "waiting"} = review()
+    assert posts(context) == []
+
+    # Another user's HAL-C2 marks its review of the commit the same way.
+    rules!(context, head: 1, reviews: [posted.("octocat")])
+    assert {:ok, _} = call("publish", %{"key" => @key})
+    assert %{"status" => "published"} = review()
+    assert [_] = posts(context)
+  end
+
   # --- helpers ----------------------------------------------------------------------------
+
+  # The reviews posted to pull request #1.
+  defp posts(context) do
+    context.dir
+    |> Path.join("gh.log")
+    |> File.stream!()
+    |> Enum.filter(&(&1 =~ "pulls/1/reviews"))
+  end
 
   defp thread(thread_id) do
     HalC2.StreamState.get(HalC2.Streams.state(thread_id), "thread")[thread_id]
@@ -634,9 +677,28 @@ defmodule HalC2.CodeReviewTest do
     list = %{"args" => ["pr list", "--repo github.com/acme/api"], "stdout" => listing}
     list = if opts[:list], do: Map.put(list, "run", opts[:list]), else: list
 
+    reviews =
+      for r <- opts[:reviews] || [],
+          do:
+            Map.merge(
+              %{"id" => "PRR_1", "state" => "APPROVED", "submittedAt" => "2026-09-01T00:00:00Z"},
+              r
+            )
+
     rules = [
       %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
       list,
+      # The pull request's reviews, read before a post, and the post.
+      %{
+        "args" => ["pr view", "author,comments,reviews,commits"],
+        "stdout" => %{
+          "author" => %{"login" => "octocat"},
+          "comments" => [],
+          "reviews" => reviews,
+          "commits" => []
+        }
+      },
+      %{"args" => ["--method POST", "pulls/1/reviews"], "stdout" => "{}"},
       # Pull request #1 read on its own, as asking for its review reads it.
       %{
         "args" => ["api graphql"],

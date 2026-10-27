@@ -18,8 +18,10 @@ defmodule HalC2Plugins.CodeReview do
   request. A machine shares what it has queued and claimed (`claims/1`); a look
   leaves a pull request another machine has to it (`elsewhere` on the review), and
   a run claims its commit under a lock across the machines connected now, so of two
-  that start at once one reviews and the other steps back. A machine on its own
-  reviews as if there were no other.
+  that start at once one reviews and the other steps back. A post is under a lock
+  too, and is not made when another machine says it posted that commit or the pull
+  request already has the review of it. A machine on its own reviews as if there
+  were no other.
   """
   @behaviour HalC2.Plugins.Extension
   use GenServer
@@ -332,6 +334,8 @@ defmodule HalC2Plugins.CodeReview do
     :ok
   end
 
+  defp unpause(state), do: %{state | paused_until: nil, paused_reason: nil}
+
   @impl GenServer
   def handle_call(:snapshot, _from, state), do: {:reply, snapshot(state), state}
   def handle_call(:reviews, _from, state), do: {:reply, state.reviews, state}
@@ -366,8 +370,6 @@ defmodule HalC2Plugins.CodeReview do
       |> reply_snapshot()
     end
   end
-
-  defp unpause(state), do: %{state | paused_until: nil, paused_reason: nil}
 
   def handle_call({:dismiss, key, id, dismissed}, _from, state) do
     with %{} = review <- state.reviews[key],
@@ -1657,12 +1659,7 @@ defmodule HalC2Plugins.CodeReview do
         index -> String.trim("#{body}\n\n#{index}")
       end
 
-    # The marker says which reviews under the user's own login are this
-    # plugin's, and of which commit.
-    body =
-      String.trim(
-        "#{body}\n\n<!-- hal-c2-code-review:#{review["key"]}@#{review["reviewedSha"]} -->"
-      )
+    body = String.trim("#{body}\n\n#{marker(review)}")
 
     input = %{
       "projectId" => review["projectId"],
@@ -1681,7 +1678,8 @@ defmodule HalC2Plugins.CodeReview do
     # Two machines that reviewed the same commit while apart post it once: the
     # post and its outcome are under one lock across the machines connected now.
     # A machine whose plugin is restarting cannot say whether it posted, so the
-    # post waits for it.
+    # post waits for it. One that stopped between its post and saving so forgot
+    # it, so the pull request itself is read for the review last.
     :global.trans(
       {{__MODULE__, {:post, review["key"]}}, self()},
       fn ->
@@ -1698,7 +1696,7 @@ defmodule HalC2Plugins.CodeReview do
           cond do
             posted -> {:error, "#{posted["machine"]} already posted its review of this commit."}
             restarting -> {:error, "#{restarting["machine"]} is restarting code review; try again."}
-            true -> Host.pull_requests(@id, "submitReview", input)
+            true -> post_unless_on_github(review, input)
           end
 
         case result do
@@ -1713,6 +1711,38 @@ defmodule HalC2Plugins.CodeReview do
       end,
       [node() | Node.list()]
     )
+  end
+
+  defp post_unless_on_github(review, input) do
+    case on_github(review) do
+      {:ok, false} ->
+        Host.pull_requests(@id, "submitReview", input)
+
+      {:ok, true} ->
+        {:error, "The review of this commit is already on the pull request."}
+
+      {:error, error} ->
+        {:error, "Could not read whether the review of this commit is on the pull request: #{message(error)}"}
+    end
+  end
+
+  # The marker says which reviews under the user's own login are this plugin's,
+  # and of which commit. Older MCs post it too.
+  defp marker(review), do: "<!-- hal-c2-code-review:#{review["key"]}@#{review["reviewedSha"]} -->"
+
+  # Whether the pull request has a review carrying the marker under the login gh is
+  # signed in as: another user's HAL-C2 reviewing the same commit posts the same one.
+  defp on_github(review) do
+    ref = Map.take(review, ~w(projectId repository number))
+
+    with {:ok, %{"viewer" => viewer}} <- Host.pull_requests(@id, "routing", ref),
+         {:ok, activity} <- Host.pull_requests(@id, "activity", ref) do
+      {:ok,
+       Enum.any?(activity["comments"] || [], fn c ->
+         c["kind"] == "review" and get_in(c, ["author", "login"]) == viewer and
+           String.contains?(c["body"] || "", marker(review))
+       end)}
+    end
   end
 
   defp may_give?(review) do

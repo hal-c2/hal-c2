@@ -13,8 +13,10 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   a peer whose claims the test controls. The commands set and clear those rows,
   restart the laptop's plugin, cut the laptop off and connect it again, push, look,
   ask for reviews, hold checkouts at the fetch, report, stop a run at the agent's usage
-  limit, publish and crash the plugin. A change of the laptop's rows while it is
-  connected, and its plugin coming back, reach the plugin as a real peer's would, by
+  limit, publish, crash the plugin, and put a review on GitHub as the laptop or this
+  machine would have just before its plugin stopped, before it saved that it posted
+  (or as another user's HAL-C2 would, under their own login). A change of the
+  laptop's rows while it is connected, and its plugin coming back, reach the plugin as a real peer's would, by
   `Host.peer/3` calling `claims_changed/0` here. After every step:
 
   - a run launches its thread only when the connected laptop neither claims the commit
@@ -25,7 +27,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   - the `reviews` snapshot, `elsewhere` included, and the topic clients follow, match
     the model;
   - a publish is refused, and nothing posted, exactly when the connected laptop has
-    published the reviewed commit or is restarting its plugin;
+    published the reviewed commit or is restarting its plugin, or GitHub already has
+    a review of that commit under the user's login;
   - when the laptop leaves, or tells it no longer has a review this machine left to
     it, that review is looked at again at once; one it still has, or may have while
     its plugin restarts, shows where it is now;
@@ -157,8 +160,10 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   # publish_error, seq (order queued), held (`{reviewed, status}` of the commit it
   # still claims since it was queued again for another head)}. `runs`: key → whether
   # each run so far launched its thread. `posts`: every post that reached GitHub,
-  # `{key, reviewed}`. `laptop`: whether it is connected; `restarting`: whether its
-  # plugin is restarting, so it cannot say what it has; `rows`: key → `{head, status,
+  # `{key, reviewed}`. `github`: the reviews on GitHub no post of this run made,
+  # `{key, head, whether under the user's login}`. `laptop`: whether it is
+  # connected; `restarting`: whether its plugin is restarting, so it cannot say what
+  # it has; `rows`: key → `{head, status,
   # claimed, held}` it shares, `held` the status of a claim of the other head or nil.
   # `held` (of the model): runs held at the fetch. `paused`: stopped at the agent's
   # usage limit, until the user asks for a review.
@@ -171,6 +176,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       reviews: %{},
       runs: %{},
       posts: [],
+      github: [],
       laptop: true,
       restarting: false,
       rows: %{},
@@ -233,6 +239,13 @@ defmodule HalC2.CodeReviewClaimsPropTest do
                  oneof([{r, {"published", true}, nil}, {3 - r, {"running", true}, "published"}])
                ]}
 
+    # A review put on GitHub, mostly of the commit a review waiting to be published
+    # reviewed.
+    landed =
+      [{1, {:call, __MODULE__, :on_github, [key, oneof([1, 2]), boolean()]}}] ++
+        for {key, %{status: :waiting, reviewed: r}} <- m.reviews,
+            do: {6, {:call, __MODULE__, :on_github, [key, r, boolean()]}}
+
     # The laptop letting go of, or moving on from, a review this machine left to it.
     released =
       for {key, %{elsewhere: e, seen: seen}} when e != nil <- m.reviews,
@@ -264,6 +277,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         )
       ] ++
         peer ++
+        landed ++
         if(launched != [], do: [{6, {:call, __MODULE__, :report, [run]}}], else: []) ++
         if(running != [],
           do: [{2, {:call, __MODULE__, :limited, [elements(running)]}}],
@@ -393,6 +407,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
           m.laptop and m.restarting ->
             {put_review(m, key, %{r | publish_error: true}), :restarting}
 
+          {key, reviewed} in m.posts or {key, reviewed, true} in m.github ->
+            {put_review(m, key, %{r | publish_error: true}), :on_github}
+
           true ->
             m = put_review(m, key, %{r | status: :published, publish_error: false})
             {%{m | posts: m.posts ++ [{key, reviewed}]}, :ok}
@@ -402,6 +419,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         {m, :error}
     end
   end
+
+  defp step(m, {:call, _, :on_github, [key, head, mine]}),
+    do: {%{m | github: m.github ++ [{key, head, mine}]}, :ok}
 
   # The plugin starts again from what it saved, a run it had in hand failed, and looks.
   defp step(m, {:call, _, :crash, []}) do
@@ -781,7 +801,17 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     observe(nil)
   end
 
+  # A review of `key` at `head` posted with the plugin's marker, under the user's login
+  # when `mine` and another user's otherwise.
+  def on_github(key, head, mine) do
+    Process.put(:cr_github, Process.get(:cr_github) ++ [{key, head, mine}])
+    observe(:ok)
+  end
+
   def publish(key) do
+    # GitHub answers with what has been posted by now.
+    put_world(Process.get(:cr_world))
+
     case call("publish", %{"key" => key}) do
       {:ok, _} ->
         observe(:ok)
@@ -791,6 +821,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
           cond do
             message =~ "laptop already posted its review of this commit." -> :refused
             message =~ "laptop is restarting code review; try again." -> :restarting
+            message =~ "The review of this commit is already on the pull request." -> :on_github
             true -> :error
           end
         )
@@ -947,6 +978,20 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         nil -> []
       end
     end)
+  end
+
+  # The body of every review posted to the fake GitHub: `{key, body}`.
+  defp posted_bodies do
+    for line <- fx_path("calls.jsonl") |> File.read!() |> String.split("\n", trim: true),
+        call = JSON.decode!(line),
+        [_, number] <-
+          [
+            Regex.run(
+              ~r{--method POST .*repos/acme/api/pulls/(\d+)/reviews},
+              Enum.join(call["args"] || [], " ")
+            )
+          ],
+        do: {"acme/api##{number}", JSON.decode!(call["stdin"])["body"]}
   end
 
   defp take_messages do
@@ -1204,6 +1249,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
     Process.put(:cr_tids, %{})
     Process.put(:cr_problems, [])
+    Process.put(:cr_github, [])
     put_world(Map.new(@keys, &{&1, 1}))
 
     HalC2.Prop.start_services([
@@ -1331,6 +1377,38 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       }
     }
 
+    # Each pull request's reviews: the posts so far, and the reviews put on GitHub.
+    posted = posted_bodies()
+
+    activity =
+      for key <- @keys do
+        reviews =
+          for({^key, body} <- posted, do: {"monalisa", body}) ++
+            for {^key, head, mine} <- Process.get(:cr_github, []),
+                do:
+                  {if(mine, do: "monalisa", else: "octocat"),
+                   "Looks good.\n\n<!-- hal-c2-code-review:#{key}@#{sha(key, head)} -->"}
+
+        %{
+          "args" => ["pr view #{@numbers[key]} ", "author,comments,reviews,commits"],
+          "stdout" => %{
+            "author" => %{"login" => "octocat"},
+            "comments" => [],
+            "commits" => [],
+            "reviews" =>
+              for {{login, body}, i} <- Enum.with_index(reviews) do
+                %{
+                  "id" => "PRR_#{i}",
+                  "author" => %{"login" => login},
+                  "state" => "COMMENTED",
+                  "body" => body,
+                  "submittedAt" => "2026-09-04T00:00:00Z"
+                }
+              end
+          }
+        }
+      end
+
     rules =
       [
         %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
@@ -1340,6 +1418,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
         }
       ] ++
         details ++
+        activity ++
         [permissions, %{"args" => ["--method POST", "pulls/"], "stdout" => "{}"}]
 
     path = fx_path("rules.json")

@@ -6,14 +6,15 @@ sload model-checker
 --- out under a :global lock across the machines connected then, reading the others'
 --- rows under it. Posts go under a lock of their own. Machines crash, partition, have
 --- their plugin restart, fail a checkout and hit a usage limit; the pull request gets
---- pushes. A machine paused at its agent's usage limit stops sharing the reviews it
---- has queued. proof/hal_c2/code_review_claims_proof_test.exs maps it to the code and
---- checks it.
+--- pushes. A post first reads the pull request for the plugin's own marker of the
+--- commit, so a machine that restarted before it saved its post does not post again.
+--- A machine paused at its agent's usage limit stops sharing the reviews it has queued.
+--- proof/hal_c2/code_review_claims_proof_test.exs maps it to the code and checks it.
 
 mod CODE-REVIEW-CLAIMS is
   protecting NAT .
 
-  sorts Id Ref Seen Sha MSha Status Hold Review Row Ids Phase Cause Look Looks Poll Item Conf Sys .
+  sorts Id Ref Seen Sha MSha Status Hold Review Row Ids Phase Stage Cause Look Looks Poll Item Conf Sys .
   subsort Id < Ref < Seen .
   subsort Sha < MSha .
   subsort Id < Ids .
@@ -59,6 +60,8 @@ mod CODE-REVIEW-CLAIMS is
   op link : Id Id -> Item [ctor] .
   --- The head of the pull request on GitHub.
   op gh : Sha -> Item [ctor] .
+  --- A review of the commit on the pull request, with the plugin's marker of it.
+  op ghp : Sha -> Item [ctor] .
 
   --- A run (run/2): checking out, checked out a commit, the nodes trans/3 locks, and
   --- the nodes it holds the lock on.
@@ -67,9 +70,11 @@ mod CODE-REVIEW-CLAIMS is
   op want : Sha Ids -> Phase [ctor] .
   op held : Sha Ids -> Phase [ctor] .
   op run : Id Phase -> Item [ctor] .
-  --- A post (publish/2) of a reviewed commit: the nodes it locks, then holds.
+  --- A post (publish/2) of a reviewed commit: the nodes it locks, then holds while it
+  --- checks, and once it has posted without recording it yet.
   op pwant : Ids -> Phase [ctor] .
-  op pheld : Ids -> Phase [ctor] .
+  op pheld : Ids Stage -> Phase [ctor] .
+  ops check sent : -> Stage [ctor] .
   op pub : Id Sha Phase -> Item [ctor] .
 
   --- Messages to a machine's plugin: {:elsewhere, ...} naming the other machine,
@@ -122,6 +127,9 @@ mod CODE-REVIEW-CLAIMS is
   op posted : Id Sha -> Item [ctor] .
   op repost : Id Id Sha -> Item [ctor] .
   op hurt : Id -> Item [ctor] .
+  --- A machine read that the pull request has the review of a commit: a post of it again
+  --- would be refused the same, as GitHub keeps the review, so the model makes none.
+  op onGithub : Id Sha -> Item [ctor] .
 
   op empty : -> Conf [ctor] .
   op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
@@ -148,6 +156,7 @@ mod CODE-REVIEW-CLAIMS is
   var Ms : MSha .
   var Se : Seen .
   var Bu : Budget .
+  var Sg : Stage .
 
   op _<<_ : Id Id -> Bool .
   eq a << b = true .
@@ -330,7 +339,7 @@ mod CODE-REVIEW-CLAIMS is
   ceq blocked(X, L, run(Y, held(S, H)) C) = true if (L ^ (X & near(X, C))) ^ H =/= noids .
   eq blocked(X, L, C) = false [owise] .
   op pblocked : Id Ids Conf -> Bool .
-  ceq pblocked(X, L, pub(Y, S, pheld(H)) C) = true if (L ^ (X & near(X, C))) ^ H =/= noids .
+  ceq pblocked(X, L, pub(Y, S, pheld(H, Sg)) C) = true if (L ^ (X & near(X, C))) ^ H =/= noids .
   eq pblocked(X, L, C) = false [owise] .
 
   --- The ghosts of a claim of S by X, over the machines M it locked and reads.
@@ -373,7 +382,7 @@ mod CODE-REVIEW-CLAIMS is
   eq unlink(X, Y, C) = C [owise] .
   op unlock : Id Id Conf -> Conf .
   eq unlock(X, Y, run(X, held(S, Y & H)) C) = unlock(X, Y, run(X, held(S, H)) C) .
-  eq unlock(X, Y, pub(X, S, pheld(Y & H)) C) = unlock(X, Y, pub(X, S, pheld(H)) C) .
+  eq unlock(X, Y, pub(X, S, pheld(Y & H, Sg)) C) = unlock(X, Y, pub(X, S, pheld(H, Sg)) C) .
   eq unlock(X, Y, C) = C [owise] .
   op hear : Id Id Conf -> Conf .
   eq hear(X, Y, mc(X, true, N, R) C) = mc(X, true, N, R) down(X, Y) C .
@@ -516,27 +525,44 @@ mod CODE-REVIEW-CLAIMS is
 
   --- handle_call {:publish, key}: the user publishes (or the report did, automatically),
   --- and the post takes [node() | Node.list()].
-  rl [publish] :
+  crl [publish] :
     { later mc(X, true, N, rv(waiting, true, S, Hd, E, Ho)) C }
     => { later set(X, rv(waiting, true, S, Hd, E, Ho), rv(publishing, true, S, Hd, E, Ho),
-           mc(X, true, N, rv(waiting, true, S, Hd, E, Ho)) pub(X, S, pwant(X & near(X, C))) C) } .
+           mc(X, true, N, rv(waiting, true, S, Hd, E, Ho)) pub(X, S, pwant(X & near(X, C))) C) }
+    if not seenOnGithub(X, S, C) .
+  op seenOnGithub : Id Sha Conf -> Bool .
+  eq seenOnGithub(X, S, onGithub(X, S) C) = true .
+  eq seenOnGithub(X, S, C) = false [owise] .
 
-  crl [post-lock] : { pub(X, S, pwant(L)) C } => { pub(X, S, pheld(L ^ (X & near(X, C)))) C }
+  crl [post-lock] : { pub(X, S, pwant(L)) C } => { pub(X, S, pheld(L ^ (X & near(X, C)), check)) C }
     if not pblocked(X, L, C) .
 
   --- Under the post lock: a connected machine posted this commit, or is restarting its
-  --- plugin and cannot say whether it did, and the post is refused ...
+  --- plugin and cannot say whether it did, or the pull request has the plugin's review
+  --- of it already (posted by a machine that stopped before it saved so), and the post
+  --- is refused ...
   crl [post] :
-    { pub(X, S, pheld(H)) mc(X, true, N, R) C }
-    => { set(X, R, failedPost(R, S), mc(X, true, N, R) C) }
-    if publishedBy(X, S, C) =/= nobody or restartingBy(X, C) =/= nobody .
-  --- ... or it is posted, and handle_call {:published, ...} records it if the review is
-  --- still being published.
+    { pub(X, S, pheld(H, check)) mc(X, true, N, R) C }
+    => { set(X, R, failedPost(R, S), mc(X, true, N, R) seen(X, S, C)) }
+    if refused(X, S, C) .
+  op seen : Id Sha Conf -> Conf .
+  eq seen(X, S, ghp(S) C) = once(onGithub(X, S), ghp(S) C) .
+  eq seen(X, S, C) = C [owise] .
+  --- ... or it is posted through the host, which GitHub takes. The read of the pull
+  --- request and the post are one step: under the lock no connected machine posts
+  --- between them, and a machine that stops between them has not posted ...
   crl [post] :
-    { pub(X, S, pheld(H)) mc(X, true, N, R) C }
-    => { once(posted(X, S), reposted(X, S, (H less X) ^ near(X, C),
-           set(X, R, didPost(R, S), mc(X, true, N, R) C))) }
-    if publishedBy(X, S, C) == nobody /\ restartingBy(X, C) == nobody .
+    { pub(X, S, pheld(H, check)) C }
+    => { once(ghp(S), once(posted(X, S), reposted(X, S, X & ((H less X) ^ near(X, C)),
+           pub(X, S, pheld(H, sent)) C))) }
+    if not refused(X, S, C) .
+  op refused : Id Sha Conf -> Bool .
+  eq refused(X, S, ghp(S) C) = true .
+  eq refused(X, S, C) = publishedBy(X, S, C) =/= nobody or restartingBy(X, C) =/= nobody [owise] .
+  --- ... and handle_call {:published, ...} records it if the review is still being
+  --- published. A plugin that stops before then has posted all the same.
+  rl [published] :
+    { pub(X, S, pheld(H, sent)) mc(X, true, N, R) C } => { set(X, R, didPost(R, S), mc(X, true, N, R) C) } .
   op failedPost : Review Sha -> Review .
   eq failedPost(rv(publishing, true, S, Hd, E, Ho), S) = rv(waiting, true, S, Hd, E, Ho) .
   eq failedPost(R, S) = R [owise] .
@@ -660,8 +686,17 @@ mod CODE-REVIEW-CLAIMS is
   eq pushedBack =
        { mc(a, true, true, rv(published, true, h1, h1, nobody, nohold)) poll(a, armed) looks(a, nolook)
          mc(b, true, true, rv(running, false, nosha, h1, nobody, nohold)) poll(b, spent) looks(b, nolook)
-         run(b, out(h1)) made(a, h1) posted(a, h1) link(a, b) gh(h1) periodic(2) free later
+         run(b, out(h1)) made(a, h1) posted(a, h1) ghp(h1) link(a, b) gh(h1) periodic(2) free later
          budget(2, 0, 0, 0, 0, 0) } .
+
+  --- Both reviewed the head while apart and are back together, neither has posted it,
+  --- and a's plugin may restart, or its machine go down, at any step of a post.
+  op apart : Nat Nat -> Sys .
+  eq apart(Cr, Bo) =
+       { mc(a, true, true, rv(waiting, true, h1, h1, nobody, nohold)) poll(a, spent) looks(a, nolook)
+         mc(b, true, true, rv(waiting, true, h1, h1, nobody, nohold)) poll(b, spent) looks(b, nolook)
+         made(a, h1) made(b, h1) link(a, b) gh(h1) periodic(0) free later
+         budget(0, Cr, 0, Bo, 0, 0) } .
 
   --- bad states ------------------------------------------------------------------------
 
@@ -676,7 +711,8 @@ mod CODE-REVIEW-CLAIMS is
   eq again({ redo(X, Y, S) C }) = true .
   eq again({ C }) = false [owise] .
 
-  --- A machine posted a commit that a machine it locked and was connected to had posted.
+  --- A machine posted a commit that it, or a machine it locked and was connected to, had
+  --- posted.
   op reposted : Sys -> Bool .
   eq reposted({ repost(X, Y, S) C }) = true .
   eq reposted({ C }) = false [owise] .

@@ -33,8 +33,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.claims/1" => ~w(peers started defer post peer-claims restartingBy),
       "HalC2Plugins.CodeReview.claims_changed/0" => ~w(note peer-claims),
       "HalC2Plugins.CodeReview handle_call {:looked, _}" => ~w(polled pump),
-      "HalC2Plugins.CodeReview handle_call {:publish, _}" => ~w(publish post-lock post),
-      "HalC2Plugins.CodeReview handle_call {:published, _, _, _}" => "post",
+      "HalC2Plugins.CodeReview handle_call {:publish, _}" => ~w(publish post-lock post refused),
+      "HalC2Plugins.CodeReview handle_call {:published, _, _, _}" => "published",
       "HalC2Plugins.CodeReview handle_call {:report, _, _}" => "report",
       "HalC2Plugins.CodeReview handle_call {:started, _, _, _}" => "started",
       "HalC2Plugins.CodeReview handle_cast {:turn_finished, _, _, _}" => "turn-finished",
@@ -58,7 +58,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2.Plugins.Host.peers/4" =>
         ~w(peers started defer post peer-claims note heldBy restart),
       "HalC2.Plugins.Host.peer/3" => ~w(hardBy softBy publishedBy),
-      "HalC2.Plugins.Host.pull_requests/3" => "peers"
+      "HalC2.Plugins.Host.pull_requests/3" => ~w(peers post)
     },
     abstracts: %{
       "HalC2Plugins.CodeReview.prompt/3" => @agent,
@@ -108,7 +108,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
         "A machine on its own reviews",
         "The review moves to another machine when its machine leaves before starting it",
         "The review moves to another machine when its machine's agent reaches its usage limit",
-        "A commit two machines reviewed while apart is posted once"
+        "A commit two machines reviewed while apart is posted once",
+        "A commit a machine posted just before it restarted is not posted again"
       ]
     }
 
@@ -156,6 +157,11 @@ defmodule HalC2.CodeReviewClaimsProofTest do
 
   test "a push and a push back do not start or post a commit twice", %{proof: proof} do
     refute_reachable(proof, "pushedBack", "unsafe", [])
+  end
+
+  test "a machine that stops before it saves its post does not post the commit again, nor does another",
+       %{proof: proof} do
+    for init <- ~w[apart(0,1) apart(1,0)], do: refute_reachable(proof, init, "unsafe", [])
   end
 
   test "a machine that stepped back for a restarting plugin looks again once it is back",

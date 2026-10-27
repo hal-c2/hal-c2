@@ -12,6 +12,11 @@
 # A rule with "summaries" ({"owner/name#number": pullRequest node}, and "viewer", a
 # login) answers a batched GraphQL summary read alias by alias, whichever pull requests
 # it asks for and in whatever order; one it does not know is null.
+# A rule with "record" (a path) appends the call's stdin to it once answered with exit 0,
+# so a post a caller called off before it was answered is not recorded.
+# A rule with "reviews" ({"path", "match", "login"}) answers `gh pr view --json` with its
+# "stdout" whose "reviews" are the bodies recorded at "path" by calls whose argv had
+# "match", each under "login": what GitHub has of the reviews posted to a pull request.
 # Every call is appended to $FAKE_GH_LOG as a JSON line {"cmd", "args", "stdin", "cwd"}.
 import json, os, re, subprocess, sys, time
 from datetime import datetime
@@ -34,6 +39,19 @@ def summaries(rule, stdin):
         data[alias] = {"pullRequest": rule["summaries"].get(f"{owner}/{name}#{number}")}
     return {"data": data}
 
+def reviews(out, spec):
+    try:
+        with open(spec["path"]) as f:
+            lines = [json.loads(line) for line in f if line.strip()]
+    except FileNotFoundError:
+        lines = []
+    posted = [
+        {"id": "PRR_%d" % i, "author": {"login": spec["login"]}, "state": "COMMENTED",
+         "body": json.loads(line["stdin"]).get("body", ""), "submittedAt": "2026-09-04T00:00:00Z"}
+        for i, line in enumerate(lines) if spec["match"] in line["args"]
+    ]
+    return {**out, "reviews": out.get("reviews", []) + posted}
+
 cmd = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 stdin = sys.stdin.read() if "-" in args else ""
@@ -54,12 +72,17 @@ for rule in rules:
             out = since(out, stdin)
         if "summaries" in rule:
             out = summaries(rule, stdin)
+        if "reviews" in rule:
+            out = reviews(out, rule["reviews"])
         try:
             sys.stdout.write(out if isinstance(out, str) else json.dumps(out))
             sys.stderr.write(rule.get("stderr", ""))
             sys.stdout.flush()
         except BrokenPipeError:
             os._exit(1)  # the caller stopped waiting (a sleeping rule)
+        if "record" in rule and rule.get("exit", 0) == 0:
+            with open(rule["record"], "a") as f:
+                f.write(json.dumps({"args": joined, "stdin": stdin}) + "\n")
         sys.exit(rule.get("exit", 0))
 
 sys.stderr.write("fake " + cmd + ": no rule for " + joined + "\n")
