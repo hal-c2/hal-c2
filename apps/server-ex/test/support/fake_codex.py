@@ -258,6 +258,14 @@ for line in sys.stdin:
                 send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-bg", "text": "The dev server is running."}}})
                 send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "completed"}}})
                 continue
+        # "say and wait TEXT" writes partial.txt, answers TEXT, then stays running
+        # like "wait", so a test can stop a turn that already said something.
+        if text.startswith("say and wait "):
+            open("partial.txt", "w").write("partial\n")
+            send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-partial-{turn_id}", "text": ""}}})
+            send({"method": "item/completed", "params": {**ctx, "item": {"type": "agentMessage", "id": f"msg-partial-{turn_id}", "text": text[len("say and wait "):]}}})
+            waiting_ctx = ctx
+            continue
         if "wait" in text or "finishing" in text or "closing" in text:
             waiting_ctx = ctx
             finishing = "finishing" in text
@@ -301,6 +309,21 @@ for line in sys.stdin:
             open(name, "w").write("".join("  " + line for line in lines))
         if text.startswith("fill "):
             open(text.split()[1], "w").write(("x" * 99 + "\n") * 110_000)
+        # Checkpoint file-list shapes: renames, binaries, empty files, names the
+        # plain "write NAME" split cannot carry, and several files in one turn.
+        if text.startswith("rename "):
+            _, old, new = text.split()
+            os.makedirs(os.path.dirname(new) or ".", exist_ok=True)
+            os.rename(old, new)
+        if text.startswith("write-image "):
+            open(text.split()[1], "wb").write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        if text.startswith("write-empty "):
+            open(text.split()[1], "w").close()
+        if text.startswith("write-named "):
+            open(text[len("write-named "):], "w").write("edited content\n")
+        if text.startswith("write-all "):
+            for name in text.split()[1:]:
+                open(name, "w").write(text + "\n")
         # "fail" ends the turn as failed.
         if text.startswith("fail"):
             send({"method": "turn/completed", "params": {**ctx, "turn": {"id": turn_id, "status": "failed", "error": {"message": "the turn failed"}}}})

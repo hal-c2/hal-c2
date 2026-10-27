@@ -24,8 +24,9 @@ defmodule HalC2.Orchestration.Rollback do
     # conversation as it was, still matching what the thread shows. The provider drops
     # its turns second, and if it cannot, the files return to where they were.
     with {:ok, plan} <- HalC2.Streams.transact(thread_id, :thread, &{[], plan(&1, command)}),
+         :ok <- check_isolated(plan),
          {:ok, undo} <- restore(plan),
-         {:ok, patch} <- rewind(plan) |> or_undo(plan, undo),
+         {:ok, patch} <- rewind_checked(plan) |> or_undo(plan, undo),
          :ok <- HalC2.Streams.transact(thread_id, :thread, &{settle(&1, plan, patch), :ok}) do
       for checkpoint <- plan.stale, do: HalC2.Checkpoint.delete_ref(plan.cwd, checkpoint["ref"])
       if undo, do: HalC2.Checkpoint.delete_ref(plan.cwd, undo)
@@ -90,9 +91,6 @@ defmodule HalC2.Orchestration.Rollback do
         {:error,
          "Antigravity cannot rewind its conversation, so this checkpoint cannot be restored on this thread."}
 
-      restore and not isolated?(thread, scope) ->
-        {:error, @shared_workspace}
-
       true ->
         target = checkpoint["appRunOrdinal"] || 0
         later = Enum.filter(runs, &(&1["ordinal"] > target and &1["status"] in @finished))
@@ -122,7 +120,9 @@ defmodule HalC2.Orchestration.Rollback do
            fork: carried(provider_thread),
            model: get_in(thread, ["modelSelection", "model"]),
            cwd: scope["cwd"],
+           worktree: thread["worktreePath"],
            target: target,
+           target_turn: Enum.any?(turns, &(&1["ordinal"] == target)),
            runs: later,
            drop: Enum.count(dropped),
            first_dropped:
@@ -151,6 +151,34 @@ defmodule HalC2.Orchestration.Rollback do
   end
 
   defp carried(_provider_thread), do: nil
+
+  # The provider the plan was made against must still be the thread's active
+  # one when the rewind runs: rewinding another provider's conversation would
+  # drop turns from the wrong history.
+  defp rewind_checked(plan) do
+    thread =
+      plan.thread_id
+      |> HalC2.Streams.state()
+      |> StreamState.get("thread")
+      |> Map.get(plan.thread_id, %{})
+
+    # A provider thread from before instances were recorded is its driver's own.
+    if thread["activeProviderThreadId"] == plan.provider_thread["id"] and
+         get_in(thread, ["modelSelection", "instanceId"]) == (plan.instance || plan.driver) do
+      rewind(plan)
+    else
+      {:error,
+       "Active provider changed before rollback target #{plan.checkpoint["id"]} could execute on thread #{plan.thread_id}."}
+    end
+  end
+
+  # Codex is asked to drop the turns after the target turn; without that turn
+  # in the history the MC recorded for it, the count cannot be worked out.
+  defp rewind(%{driver: "codex", target: target, target_turn: false} = plan)
+       when target > 0,
+       do:
+         {:error,
+          "Cannot roll back Codex thread #{plan.provider_thread["id"]}: target turn was not found in the provider's turn history."}
 
   # Nothing to drop from the conversation when every later run is already gone.
   defp rewind(%{drop: 0}), do: {:ok, %{}}
@@ -255,19 +283,42 @@ defmodule HalC2.Orchestration.Rollback do
     Enum.reject([provider_thread | stale ++ turns ++ runs], &is_nil/1)
   end
 
-  # The thread's own worktree, which no other thread on this MC points at.
-  defp isolated?(thread, scope) do
-    worktree = thread["worktreePath"]
+  defp check_isolated(%{restore: false}), do: :ok
 
-    worktree != nil and real(scope["cwd"]) == real(worktree) and
-      not Enum.any?(HalC2.Shell.rows(), fn
-        {{mc, id}, {"thread", row}} ->
-          mc == node() and id != thread["id"] and row["deletedAt"] == nil and
-            row["worktreePath"] != nil and real(row["worktreePath"]) == real(worktree)
+  defp check_isolated(plan),
+    do: if(isolated?(plan), do: :ok, else: {:error, @shared_workspace})
 
-        _ ->
-          false
+  # The thread's own worktree, which no other thread on this MC uses or has
+  # used: a thread still pointing at it (archived ones included, through a
+  # symbolic link or directly), or one whose checkpoints were taken in it
+  # before it moved elsewhere, makes the workspace shared, since restoring
+  # would reset the whole checkout under both.
+  defp isolated?(plan) do
+    cwd = real(plan.cwd)
+
+    plan.worktree != nil and cwd == real(plan.worktree) and
+      not Enum.any?(other_threads(plan.thread_id), fn {id, row} ->
+        (row["worktreePath"] != nil and real(row["worktreePath"]) == cwd) or
+          Enum.any?(scope_cwds(id), &(&1 != nil and real(&1) == cwd))
       end)
+  end
+
+  defp other_threads(thread_id) do
+    for {{mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
+        mc == node(),
+        id != thread_id,
+        row["deletedAt"] == nil,
+        do: {id, row}
+  end
+
+  # Read from the log, as search does: a rollback must not start every other
+  # thread's stream server just to see where its checkpoints were taken.
+  defp scope_cwds(thread_id) do
+    HalC2.Store.path()
+    |> StreamState.load(thread_id)
+    |> StreamState.list("checkpoint-scope")
+    |> Enum.map(& &1["cwd"])
+    |> Enum.uniq()
   end
 
   # The path with its symlinks resolved (macOS temp paths go through /var -> /private/var).
