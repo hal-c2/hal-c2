@@ -371,10 +371,12 @@ Rectangle {
                     iconName: "folder"
                     iconSize: 16
                     iconTint: Qt.alpha(sidebar.muted, 0.8)
-                    tint: Qt.alpha(sidebar.muted, 0.8)
+                    // Muted at full strength: dimmer, it falls below 4.5:1 on the sidebar.
+                    tint: sidebar.muted
                     text: sidebar.scopeLabel
                     font.pixelSize: Math.round(14 * Theme.fontScale)
-                    Accessible.name: qsTr("Project scope")
+                    // Begins with what it shows, so speech control reaches it by that.
+                    Accessible.name: qsTr("%1, project scope").arg(sidebar.scopeLabel)
                     onClicked: scopeMenu.open()
 
                     ShellMenu {
