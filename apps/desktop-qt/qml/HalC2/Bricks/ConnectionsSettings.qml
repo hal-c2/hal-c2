@@ -215,6 +215,7 @@ SettingsPage {
                 id: linkLabel
                 Layout.fillWidth: true
                 placeholderText: qsTr("Label, e.g. Phone")
+                Accessible.name: qsTr("Label for the paired device")
             }
 
             Flow {
