@@ -38,7 +38,9 @@ jobs:
   mc:
     name: MC (server-ex)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # The property tests alone run a quarter of an hour; the old cap left
+    # this job seconds of headroom.
+    timeout-minutes: 25
     env:
       MIX_ENV: test
     defaults:
