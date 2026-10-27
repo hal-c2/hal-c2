@@ -174,6 +174,46 @@ defmodule HalC2.Mcp.Tools do
         |> Enum.filter(fn {_, position} -> position > after_position end)
         |> Enum.take(limit)
 
+      read =
+        Enum.map(page, fn {item, position} ->
+          timeline_item(item, position, messages, max_chars, args["textOffset"] || 0)
+        end)
+
+      # Reading a finished direct child's answer in full is the caller taking
+      # its result: its automatic delivery is acknowledged, so no wake follows.
+      # The answer is the child's last assistant message, so only a page that
+      # contains it untruncated counts, not an early progress message or the
+      # first page of a long child. It is picked from the unfiltered turn items:
+      # `items` may already be narrowed to one earlier item by `itemId`.
+      last_answer_id =
+        state
+        |> StreamState.list("turn-item")
+        |> Enum.filter(&(&1["type"] == "assistant_message"))
+        |> List.last(%{})
+        |> Map.get("id")
+
+      answer_read? =
+        Enum.any?(page, fn {item, position} ->
+          item["id"] == last_answer_id and
+            Enum.any?(
+              read,
+              &(&1["position"] == position and &1["type"] == "assistant_message" and
+                  not &1["truncated"])
+            )
+        end)
+
+      if (args["textOffset"] || 0) == 0 and answer_read? do
+        observed =
+          me["id"]
+          |> stream()
+          |> StreamState.list("run")
+          |> Enum.filter(&(&1["status"] in ~w(preparing starting running waiting)))
+          |> Enum.max_by(&(&1["ordinal"] || 0), fn -> %{} end)
+          |> Map.get("id")
+
+        HalC2.Orchestration.Delegation.acknowledge_child_read(me["id"], row["id"], observed)
+      end
+
       {:ok,
        %{
          "thread" => Map.put(list_item(row), "totalItems", length(items)),
@@ -183,10 +223,7 @@ defmodule HalC2.Mcp.Tools do
            |> Enum.sort_by(&(&1["ordinal"] || 0), :desc)
            |> Enum.take(args["runLimit"] || 10)
            |> Enum.map(&run_summary/1),
-         "items" =>
-           Enum.map(page, fn {item, position} ->
-             timeline_item(item, position, messages, max_chars, args["textOffset"] || 0)
-           end),
+         "items" => read,
          "nextPosition" =>
            case List.last(page) do
              {_, position} -> position

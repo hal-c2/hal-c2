@@ -377,7 +377,7 @@ Feature: Delegating tasks to subagents
     When a client requests a delegated task for the active run of "parent"
     Then a subagent thread starts as if the agent had delegated it
 
-  @backlog @mc
+  @mc
   Scenario Outline: A task's role frames the subagent's prompt
     When the agent in "parent" delegates the task "Check the schema" with <role>
     Then the subagent's first message is <prompt>
@@ -388,7 +388,7 @@ Feature: Delegating tasks to subagents
       | role "general" | the task unchanged                                               |
       | no role     | the task unchanged                                                  |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A task can name a provider by its kind instead of a configured instance
     Given "parent" runs on a "codex" instance that is <parent_instance>
     And another healthy "codex" instance exists
@@ -400,7 +400,7 @@ Feature: Delegating tasks to subagents
       | healthy         | the instance "parent" runs on   |
       | disabled        | the other healthy instance      |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A task naming a provider that cannot run is refused with the reason
     When the agent in "parent" delegates a task and <naming>
     Then the tool fails with code "<code>"
@@ -413,7 +413,7 @@ Feature: Delegating tasks to subagents
       | names an instance of a different kind than the kind given  | invalid_request      | Provider instance claude uses driver claudeAgent, not codex. |
       | names a model the provider does not advertise              | model_unavailable    | Model nope is not advertised by provider codex. |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A task's model options are checked against the model
     When the agent in "parent" delegates a task with <options>
     Then the tool fails with code "invalid_request"
@@ -426,27 +426,33 @@ Feature: Delegating tasks to subagents
       | a true or false option given a word               | a boolean is expected                         |
       | a choice option given a value outside its choices | the value must be one of the choices          |
 
-  @backlog @mc
+  @mc
   Scenario: Repeating a delegation with the same request key starts one subagent
     Given the agent in "parent" delegated a task with request key "k1"
     When it repeats the request with request key "k1"
     Then no second subagent thread is started
     And it receives the same task id
 
-  @backlog @mc
+  @mc
   Scenario: Reading a finished subagent's answer acknowledges its delivery
     Given a delegated task of "parent" finished with an answer that fits one read
     When the agent in "parent" reads the subagent's thread from the start
     Then the task's delivery is "acknowledged" and "parent" is not woken for it
 
-  @backlog @mc
+  @mc
+  Scenario: Reading one earlier message of a finished subagent does not acknowledge its result
+    Given a delegated task of "parent" finished after a progress message
+    When the agent in "parent" reads just the progress message of the subagent's thread
+    Then the task's delivery is still pending
+
+  @mc
   Scenario: Waiting on a subagent's thread does not acknowledge its delivery
     Given a delegated task of "parent" finished
     When the agent in "parent" waits on the subagent's thread
     Then the wait reports only the status
     And the task's delivery is still pending
 
-  @backlog @mc
+  @mc
   Scenario: Cancelling a task whose subagent has nothing running or in the background is refused
     Given the agent in "parent" delegated a task that is not finished and whose subagent has nothing running or in the background
     When the agent cancels the task
@@ -466,7 +472,7 @@ Feature: Delegating tasks to subagents
       | task "task-1"                 | Delegated task task-1 reached a terminal state. Use task_status with taskId task-1 to read the result.             |
       | tasks "task-1" and "task-2"   | Delegated tasks task-1, task-2 reached terminal states. Use task_status with each taskId to read the results.      |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A delivered task result shows in the caller's timeline as a notification
     Given the turn of "parent" ended while <tasks> were still working
     When <ending> and "parent" is woken for it
@@ -483,14 +489,14 @@ Feature: Delegating tasks to subagents
       | three tasks                 | two complete and one is cancelled     | 3 delegated tasks stopped  | cancelled |
       | three tasks                 | one fails and one is cancelled        | 3 delegated tasks failed   | failed    |
 
-  @backlog @mc
+  @mc
   Scenario: A task set to wake only an idle caller does not interrupt a caller that is still working
     Given the agent in "parent" delegated a task that wakes it only once it is idle
     When the subagent completes while the turn of "parent" is still running
     Then "parent" is not woken and nothing is queued for it
     And the result can be read from the task's status
 
-  @backlog @mc
+  @mc
   Scenario Outline: A task set to always wake the caller reaches a caller that is still working
     Given "parent" runs on a provider that <steering>
     And the agent in "parent" delegated a task that always wakes it
@@ -503,28 +509,38 @@ Feature: Delegating tasks to subagents
       | can take messages mid-turn     | joins the running turn                    |
       | cannot take messages mid-turn  | waits in the queue behind the running turn |
 
-  @backlog @mc
+  @mc
   Scenario: A task that finishes while a wake is still queued joins that wake
     Given a wake for the finished task "one" of "parent" is queued behind a running turn
     When task "two" of the same turn finishes
     Then no second wake is queued
     And the queued wake now names "one" and "two"
 
-  @backlog @mc
+  @mc
   Scenario: A task that finishes while the wake turn runs is delivered in one follow-up wake
     Given "parent" is running the turn that woke it for task "one"
     When tasks "two" and "three" of the same original turn finish
     Then they are not added to the running wake
     And when that turn ends "parent" is woken once more, for "two" and "three" together
 
-  @backlog @mc
+  @mc
   Scenario: A caller's turn is woken at most twice for the tasks it started
     Given the tasks of one turn of "parent" already woke it twice
     When another task of that turn finishes
     Then "parent" is not woken a third time
     And the task's result stays readable from its status
 
-  @backlog @mc
+  @mc
+  Scenario: Wakes cancelled before they ran do not count toward the wake limit
+    Given the agent in "parent" delegated tasks "one", "two" and "three" without waiting
+    When task "one" of the same turn finishes
+    And the agent acknowledges the result of "one"
+    And task "two" of the same turn finishes
+    And the agent acknowledges the result of "two"
+    And task "three" of the same turn finishes
+    Then a wake for task "three" is queued
+
+  @mc
   Scenario Outline: A task result is not delivered into a caller that is gone
     Given the agent in "parent" delegated a task without waiting
     And "parent" was <gone> while the task was still working
@@ -538,7 +554,7 @@ Feature: Delegating tasks to subagents
       | archived |
       | deleted  |
 
-  @backlog @mc
+  @mc
   Scenario: Stopping the caller's turn stops its tasks from waking it later
     Given the agent in "parent" delegated tasks "one" and "two" without waiting
     When the user interrupts the turn of "parent"
@@ -546,7 +562,7 @@ Feature: Delegating tasks to subagents
     Then "parent" is not woken for either
     And a wake already queued for that turn is cancelled
 
-  @backlog @mc
+  @mc
   Scenario Outline: Acknowledging tasks of a queued wake trims or cancels the wake
     Given a wake for the finished tasks "one" and "two" of "parent" is queued
     When the agent <reads>
@@ -558,7 +574,7 @@ Feature: Delegating tasks to subagents
       | acknowledges the results of both tasks  | is cancelled and never runs |
       | disposes the delivery of both tasks     | is cancelled and never runs |
 
-  @backlog @mc
+  @mc
   Scenario Outline: Delivery commands only apply to tasks the MC started for that thread
     Given a subagent that the provider of "parent" started by itself
     When a client tries to <action> for that subagent
@@ -570,13 +586,13 @@ Feature: Delegating tasks to subagents
       | dispose its completion delivery     |
       | change its wake policy              |
 
-  @backlog @mc
+  @mc
   Scenario: Setting the wake policy a task already has is refused
     Given the agent in "parent" delegated task "task-1" that always wakes it
     When the wake policy of "task-1" is set to always again
     Then the command fails with "Delegated task task-1 already wakes the parent with completionWake always."
 
-  @backlog @mc
+  @mc
   Scenario Outline: Switching a finished task to always wake the caller
     Given a task of "parent" that wakes it only once idle finished while its turn was running
     And the turn of "parent" <state>
@@ -588,7 +604,7 @@ Feature: Delegating tasks to subagents
       | is still running | the result is delivered to "parent" now                              |
       | has ended        | no wake is sent and the result stays readable from the task's status |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A delegated task needs a turn of the caller that is still active
     When a client requests a delegated task for <target> of "parent"
     Then the command fails saying <reason>
@@ -598,7 +614,7 @@ Feature: Delegating tasks to subagents
       | a run that already ended                           | the parent run is not active                   |
       | the active run and a node that is not part of it   | the parent node is not part of the active run  |
 
-  @backlog @mc
+  @mc
   Scenario Outline: What a task's result says when the subagent left no answer
     When the subagent's turn <ending>
     Then the task's result reads "<result>"
@@ -619,9 +635,9 @@ Feature: Delegating tasks to subagents
     Then the work state is "result_available"
     And the task summary is the answer of the subagent's turn about its own task
 
-  @backlog @mc
+  @mc
   Scenario: A subagent the provider started without a title or prompt is named after its parent
-    Given thread "parent" is titled "Fix the parser"
+    Given "parent" is titled "Fix the parser"
     When the provider of "parent" starts its second subagent with neither a title nor a prompt
     Then the subagent's thread is titled "Fix the parser subagent 2"
 
@@ -692,19 +708,19 @@ Feature: Delegating tasks to subagents
     Then the task is cancelled and its delivery disposed
     And the subagent's command is stopped
 
-  @backlog @mc
+  @mc
   Scenario: A subagent the provider started is titled from its prompt, cut to 72 characters
     When the provider of "parent" starts a subagent with no title and a prompt of 100 characters
     Then the subagent's thread is titled with the prompt's first 69 characters followed by "..."
 
-  @backlog @mc
+  @mc
   Scenario: A subagent starts awake whatever state its parent is in
     Given thread "parent" is snoozed
     When the provider of "parent" starts a subagent
     Then the subagent's thread is not snoozed, settled or archived
     And it has never been visited
 
-  @backlog @mc
+  @mc
   Scenario: A provider-started subagent's prompt is shown as sent by its parent thread
     When the provider of "parent" starts a subagent with the prompt "Check the tests"
     Then the subagent's thread opens with the message "Check the tests" written by the agent

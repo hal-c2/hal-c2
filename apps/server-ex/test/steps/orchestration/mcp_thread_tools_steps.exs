@@ -796,12 +796,24 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
   end
 
   step "it repeats the request with request key {string}", %{args: [key]} = context do
-    create_threads(
-      context,
-      context.batch_caller,
-      [%{"prompt" => "say one"}, %{"prompt" => "say two"}],
-      key
-    )
+    # A thread batch here, a delegated task in the delegation scenarios.
+    if context[:batch_caller] do
+      create_threads(
+        context,
+        context.batch_caller,
+        [%{"prompt" => "say one"}, %{"prompt" => "say two"}],
+        key
+      )
+    else
+      result =
+        World.mcp_tool(context, context.task_parent, "delegate_task", %{
+          "task" => "wait for it",
+          "mode" => "async",
+          "clientRequestId" => key
+        })
+
+      Map.put(context, :mcp_result, result)
+    end
   end
 
   step "it fails because the threads already exist", context do

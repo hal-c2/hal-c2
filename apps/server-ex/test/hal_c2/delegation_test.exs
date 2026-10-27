@@ -605,8 +605,11 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       assert message["text"] =~ ~s(title="Say &quot;hi&quot;&#10;now")
 
-      assert %{"workerThreadId" => "c", "workerTitle" => _, "detail" => "(no answer)"} =
-               message["notification"]
+      assert %{
+               "workerThreadId" => "c",
+               "workerTitle" => _,
+               "detail" => "Child task completed without an assistant result."
+             } = message["notification"]
     end
   end
 

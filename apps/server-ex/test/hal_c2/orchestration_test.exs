@@ -1590,10 +1590,23 @@ defmodule HalC2.OrchestrationTest do
            } =
              call.("task_status", %{"taskId" => task_id})
 
-    # Once the parent is free the result starts a run. The transcript says the task
+    # Once the parent's turn ends the result starts a run. (Interrupting it would
+    # instead stop the task from waking it.) The transcript says the task
     # finished; the envelope is the agent's to read, not a message from the user.
-    {:ok, _} = Orchestration.dispatch(%{"type" => "run.interrupt", "threadId" => parent_id})
-    state = await_statuses(parent_id, ["interrupted", "running"])
+    [parent_run | _] = runs(state)
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => parent_id,
+        "messageId" => "msg-carry-on",
+        "text" => "say Carrying on",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "steer_active", "targetRunId" => parent_run["id"]}
+      })
+
+    state = await_statuses(parent_id, ["completed", "running"])
     [_, woken] = runs(state)
     item = StreamState.get(state, "turn-item")["turn-item:user:#{woken["userMessageId"]}"]
 

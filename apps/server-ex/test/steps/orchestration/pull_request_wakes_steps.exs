@@ -134,7 +134,13 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
   end
 
   step "the message says {string}", %{args: [text]} = context do
-    assert context.wake["text"] =~ text, "the message was:\n#{context.wake["text"]}"
+    # A wake's text, or (in the delegation scenarios) a tool refusal's message.
+    case {context[:wake], context[:mcp_result]} do
+      {%{"text" => wake}, _} -> assert wake =~ text, "the message was:\n#{wake}"
+      {_, {:error, _code, message}} -> assert message == text
+      _ -> assert context.wake["text"] =~ text
+    end
+
     context
   end
 
