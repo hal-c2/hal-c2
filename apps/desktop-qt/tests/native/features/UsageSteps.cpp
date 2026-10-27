@@ -762,6 +762,9 @@ const Steps steps([] {
     showUsage(world, QStringLiteral("limits"));
     world.waitFor([&] { return credit(world).value(QStringLiteral("available")).toInt() > 0; },
                   [&] { return QStringLiteral("a banked credit to spend; the page is %1").arg(show(usage(world))); });
+    // A hub's report follows the snapshot that brought the credit; it says
+    // where the credit is spent.
+    world.sync();
     world.bridge().dispatch(QStringLiteral("usage.resetCredit"), QVariantMap{{QStringLiteral("key"), credit(world).value(QStringLiteral("key"))}});
   });
   step(QStringLiteral("the credit is spent on the Codex instance"), [](World& world, const Captures&, const Table&) {

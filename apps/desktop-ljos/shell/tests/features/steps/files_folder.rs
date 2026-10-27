@@ -308,19 +308,16 @@ fn drag(world: &mut World, data: DragData) -> Outcome {
         900.0,
         700.0,
     )?;
-    // Ljós answers an Entered drag with false whichever way the area votes;
-    // the area holding the drag (`containsDrag`) is what says it was taken.
-    external_drag(
+    let taken = external_drag(
         world.engine(),
         &ExternalDrag::Entered {
             data,
             at: Some((450.0, 350.0)),
+            actions: Default::default(),
         },
-    );
+    )
+    .is_some();
     world.pump()?;
-    let shown = brick::shown(world)?;
-    let area = shown.item(world, "folderDrop")?;
-    let taken = shown.flag(world, area, "containsDrag");
     folders(world).drag_accepted = taken;
     Ok(())
 }

@@ -870,7 +870,8 @@ void WorkspaceController::openHere(const QString& environmentId, const QString& 
       if (done) {
         done(local.problem);
       } else {
-        toasts->error(local.problem);
+        // The reason is the whole message: no "An error occurred." under it.
+        toasts->show(QStringLiteral("error"), local.problem);
       }
       return;
     }

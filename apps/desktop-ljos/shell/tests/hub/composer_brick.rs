@@ -157,7 +157,7 @@ fn a_file_dropped_on_the_card_joins_the_draft() {
         &ljos::prelude::ExternalDrag::files_dropped(vec![file], Some(at)),
     );
     hub.advance(0);
-    assert!(taken);
+    assert!(taken.is_some());
     let attachments = hub.published("composer")["attachments"].clone();
     assert_eq!(
         attachments.as_array().map(Vec::len),
@@ -296,10 +296,13 @@ fn a_recording_dropped_on_the_card_is_uploaded() {
         Value::Point(p) => (p.x, p.y),
         other => panic!("a point: {other:?}"),
     };
-    assert!(ljos::prelude::external_drag(
-        &hub.engine,
-        &ljos::prelude::ExternalDrag::files_dropped(vec![recording], Some(at)),
-    ));
+    assert!(
+        ljos::prelude::external_drag(
+            &hub.engine,
+            &ljos::prelude::ExternalDrag::files_dropped(vec![recording], Some(at)),
+        )
+        .is_some()
+    );
     deliver(&hub);
     uploads_as_a_video(&hub, "rec.mov", 20);
 }
@@ -325,7 +328,7 @@ fn a_dropped_file_with_spaces_and_escapes_in_its_path_joins_the_draft() {
         &ljos::prelude::ExternalDrag::files_dropped(vec![file], Some(at)),
     );
     hub.advance(0);
-    assert!(taken);
+    assert!(taken.is_some());
     let attachments = hub.published("composer")["attachments"].clone();
     // readAttachmentFiles passes on only the files it found on disk.
     assert_eq!(
