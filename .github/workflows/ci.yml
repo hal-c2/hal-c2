@@ -38,7 +38,9 @@ jobs:
   mc:
     name: MC (server-ex)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # The property tests alone run a quarter of an hour; the old cap left
+    # this job seconds of headroom.
+    timeout-minutes: 25
     env:
       MIX_ENV: test
     defaults:
@@ -153,7 +155,9 @@ jobs:
   mc_scenarios:
     name: MC scenarios (${{ matrix.dir }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # The mc/orchestration shard runs its thousand scenarios at the old
+    # 15-minute cap now that the MCP server scenarios are no longer @backlog.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

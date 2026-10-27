@@ -157,11 +157,11 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
     context
   end
 
-  # The retry waits 2s and then 4s between attempts.
+  # The effect's retry waits 100ms and then 200ms between attempts.
   step "the thread is retitled after the third attempt", context do
     World.await_row(World.thread_id(context, "new"), &(&1["title"] == "Parser cleanup"), 15_000)
     assert length(text_calls(context)) == 3
-    assert System.monotonic_time(:millisecond) - context.launched_at >= 6_000
+    assert System.monotonic_time(:millisecond) - context.launched_at >= 300
     context
   end
 
@@ -686,26 +686,25 @@ defmodule HalC2.Steps.Orchestration.LaunchingThreads do
         "generateTitle" => true
       })
 
-    Map.merge(context, %{thread: "new", launched_at: started, title_tasks: title_tasks()})
+    Map.merge(context, %{thread: "new", launched_at: started, title_tasks: title_tasks(context)})
   end
 
-  # The title generation tasks this process started (`$callers`).
-  defp title_tasks do
-    me = self()
+  # The title effects recorded for the launched thread, once there are any.
+  defp title_tasks(context) do
+    case context.threads["new"] do
+      nil ->
+        []
 
-    for pid <- Process.list(),
-        {:dictionary, dict} <- [Process.info(pid, :dictionary)],
-        me in (dict[:"$callers"] || []),
-        {HalC2.Orchestration, name, _} <- [dict[:"$initial_call"]],
-        String.contains?(Atom.to_string(name), "generate_title"),
-        do: pid
+      id ->
+        id
+        |> HalC2.Orchestration.Effects.effects()
+        |> Enum.filter(&(&1["type"] == "thread-title.generate"))
+    end
   end
 
   defp await_title_tasks(context) do
-    for pid <- context.title_tasks do
-      ref = Process.monitor(pid)
-      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 10_000
-    end
+    assert :ok =
+             HalC2.Orchestration.Effects.drain(World.thread_id(context, "new"), 10_000)
   end
 
   # Puts an app env key back as it was; one that was unset stays unset (a nil value

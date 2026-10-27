@@ -309,8 +309,8 @@ defmodule HalC2.Orchestration.TurnWriter do
   "file-read", "permission"). Returns `{state, request_id}`; the runtime keeps what
   it needs to answer the provider under that id.
   """
-  def open_request(state, native, request_kind, prompt),
-    do: open(state, native, {:approval, request_kind, prompt})
+  def open_request(state, native, request_kind, prompt, options \\ nil),
+    do: open(state, native, {:approval, request_kind, prompt, options})
 
   @doc """
   Opens questions for the user (`OrchestrationV2UserInputQuestion`s): a pending
@@ -342,14 +342,17 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     {node_kind, request_kind, item_fields} =
       case what do
-        {:approval, kind, prompt} ->
+        {:approval, kind, prompt, options} ->
           fields = %{"requestId" => request_id, "requestKind" => kind}
 
+          fields =
+            if(is_binary(prompt) and prompt != "",
+              do: Map.put(fields, "prompt", prompt),
+              else: fields
+            )
+
           {"approval_request", kind,
-           if(is_binary(prompt) and prompt != "",
-             do: Map.put(fields, "prompt", prompt),
-             else: fields
-           )}
+           if(is_list(options), do: Map.put(fields, "options", options), else: fields)}
 
         {tag, questions} when tag in [:questions, :async_questions] ->
           {"user_input_request", "user_input",
@@ -731,8 +734,14 @@ defmodule HalC2.Orchestration.TurnWriter do
       end)
 
     case abandoned do
-      {state, queue?} -> finished(state, status, failure, queue?)
-      nil -> :ok
+      {state, queue?} ->
+        # A start still in flight for the run (its runtime stopped answering)
+        # must not hold the thread's work behind it.
+        HalC2.Orchestration.Effects.cancel_pending(thread_id, "provider-turn.start", run_id)
+        finished(state, status, failure, queue?)
+
+      nil ->
+        :ok
     end
   end
 
@@ -880,15 +889,25 @@ defmodule HalC2.Orchestration.TurnWriter do
   end
 
   defp capture_checkpoint(%{scope_id: scope_id} = turn, at) do
-    HalC2.Checkpoint.capture_run(
-      turn.cwd,
-      scope_id,
-      turn.run_ordinal,
-      turn.ids.run,
-      turn.ids.root_node,
-      turn.ids.thread,
-      at
-    )
+    # Its own lane: a finish can run inside the turn's own start (a wake
+    # replayed to its end), where the provider lane is the start itself.
+    case HalC2.Orchestration.Effects.run_now(
+           turn.ids.thread,
+           "checkpoint.capture",
+           %{
+             "cwd" => turn.cwd,
+             "scopeId" => scope_id,
+             "runOrdinal" => turn.run_ordinal,
+             "runId" => turn.ids.run,
+             "rootNodeId" => turn.ids.root_node,
+             "at" => at
+           },
+           nil,
+           "checkpoint"
+         ) do
+      {:ok, checkpoint} -> checkpoint
+      _ -> nil
+    end
   end
 
   defp capture_checkpoint(_turn, _at), do: nil

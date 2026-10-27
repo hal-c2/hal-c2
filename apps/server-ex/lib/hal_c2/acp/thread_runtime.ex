@@ -38,7 +38,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 14
+  @state_version 16
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -188,6 +188,10 @@ defmodule HalC2.Acp.ThreadRuntime do
        # ACP has no system prompt: a session given HAL-C2's tools hears about them in
        # its first prompt.
        announce: false,
+       # The instruction state (`HalC2.Mcp.Instructions.acp_prompt/3`) the last
+       # prompt announced, and the MCP-over-ACP bridge when the agent opened one.
+       announced: nil,
+       mcp_bridge: nil,
        # Subagents the agent started this turn, or in the background before it (Grok's
        # `task` tool): tool call id -> %{sub: NativeSubagent handle, session: child
        # session id, done: bool, background: bool}.
@@ -206,7 +210,9 @@ defmodule HalC2.Acp.ThreadRuntime do
        # OpenCode's HTTP server (`HalC2.Acp.OpenCode`), and its session's newest
        # message when the turn began: `{:ok, id | nil}`, or `:unknown`.
        server: nil,
-       leaf: :unknown
+       leaf: :unknown,
+       # An Antigravity process's runtime temp directory, removed with it.
+       temp_dir: nil
      }}
   end
 
@@ -296,6 +302,16 @@ defmodule HalC2.Acp.ThreadRuntime do
     Connection.notify(state.conn, "session/cancel", %{"sessionId" => state.session_id})
     state = %{cancel_requests(state) | interrupted: true}
 
+    # Antigravity gets fifteen seconds to confirm the stop; after that its
+    # process is stopped (`:antigravity_cancel_timeout`).
+    if Antigravity.antigravity?(state.agent) and state.answer == nil do
+      Process.send_after(
+        self(),
+        {:antigravity_cancel_timeout, state.turn.ids.run},
+        HalC2.Acp.Antigravity.cancel_timeout()
+      )
+    end
+
     # The turn's prompt already answered and only steers are still out: their
     # answers are discarded for an interrupted turn (`answered/2`), so end it
     # now instead of waiting on an agent that may never answer after a cancel.
@@ -316,7 +332,7 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   def handle_call({:steer, run_id, message}, _from, %{agent: "opencode", prompt: p} = state)
       when p != nil and not state.interrupted and state.turn.ids.run == run_id do
-    prompt = acp_prompt(Map.put(message, :ids, state.turn.ids), state.capabilities, nil)
+    {:ok, prompt} = acp_prompt(Map.put(message, :ids, state.turn.ids), state.capabilities, nil)
     params = %{"sessionId" => state.session_id, "prompt" => prompt}
     prompts = Connection.request(state.conn, "session/prompt", params, :steer, state.prompts)
     {:reply, :ok, %{state | prompts: prompts}}
@@ -328,7 +344,24 @@ defmodule HalC2.Acp.ThreadRuntime do
   # The instance's sessions stop (sign-out, a new sign-in method): a running turn
   # ends, and the thread's next message starts the agent again.
   def handle_call(:close, _from, state) do
-    state = if state.turn, do: end_turn(%{state | prompt: nil}, "interrupted", nil), else: state
+    # An Antigravity turn cut off while its prompt is still out never had the
+    # agent confirm it ended; its process stops with the session.
+    state =
+      cond do
+        state.turn && state.prompt && Antigravity.antigravity?(state.agent) ->
+          end_turn(
+            %{state | prompt: nil},
+            "failed",
+            "The ACP prompt stopped before the agent confirmed completion."
+          )
+
+        state.turn ->
+          end_turn(%{state | prompt: nil}, "interrupted", nil)
+
+        true ->
+          state
+      end
+
     state = end_work(state, "interrupted")
     if state.conn, do: Connection.stop(state.conn)
     {:reply, :ok, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
@@ -367,6 +400,37 @@ defmodule HalC2.Acp.ThreadRuntime do
     do: handle_call({:respond, request_id, %{"decision" => decision}}, from, state)
 
   def handle_call({:respond, request_id, response}, _from, state) do
+    case state.requests[request_id] do
+      {:antigravity_question, rpc_id, params} ->
+        antigravity_answer(state, request_id, rpc_id, params, response)
+
+      _ ->
+        respond_request(state, request_id, response)
+    end
+  end
+
+  # An answer that matches no single Antigravity option leaves its question
+  # open; only cancelling it tells the agent it was cancelled.
+  defp antigravity_answer(state, request_id, rpc_id, params, response) do
+    alias HalC2.Acp.Antigravity.Protocol
+
+    cond do
+      response["dismissed"] ->
+        Connection.respond(state.conn, rpc_id, {:ok, %{"outcome" => %{"outcome" => "cancelled"}}})
+        state = %{state | requests: Map.delete(state.requests, request_id)}
+        {:reply, :ok, resolve_request(state, request_id, response, "cancelled")}
+
+      answer = Protocol.answer(params, response["answers"]) ->
+        Connection.respond(state.conn, rpc_id, {:ok, answer})
+        state = %{state | requests: Map.delete(state.requests, request_id)}
+        {:reply, :ok, resolve_request(state, request_id, response, "resolved")}
+
+      true ->
+        {:reply, {:error, "the answer does not match a single option"}, state}
+    end
+  end
+
+  defp respond_request(state, request_id, response) do
     case Map.pop(state.requests, request_id) do
       {nil, _} ->
         {:reply, {:error, "no pending request #{request_id}"}, state}
@@ -384,7 +448,13 @@ defmodule HalC2.Acp.ThreadRuntime do
 
       {{:permission, rpc_id, options, tool}, requests} ->
         decision = response["decision"] || "decline"
-        Connection.respond(state.conn, rpc_id, {:ok, %{"outcome" => outcome(options, decision)}})
+
+        outcome =
+          if Antigravity.antigravity?(state.agent),
+            do: antigravity_outcome(options, decision),
+            else: outcome(options, decision)
+
+        Connection.respond(state.conn, rpc_id, {:ok, %{"outcome" => outcome}})
         state = %{state | requests: requests} |> remember_allowed(tool, decision)
         {:reply, :ok, resolve_request(state, request_id, decision)}
 
@@ -400,6 +470,12 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:json_rpc, _conn, {:notification, "session/update", %{"update" => update} = params}},
         state
       ) do
+    # Antigravity's tool data is bounded before anything of it is stored.
+    update =
+      if Antigravity.antigravity?(state.agent),
+        do: HalC2.Acp.Antigravity.Protocol.normalize_update(update),
+        else: update
+
     cond do
       state.replaying -> {:noreply, state}
       child_session?(params["sessionId"], state) -> {:noreply, child_update(params, state)}
@@ -476,13 +552,129 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   # The agent reads text files of the thread's workspace (and the files attached to
   # its messages) through HAL-C2. A turn waiting on an approval still answers.
+  # Antigravity's reads and writes answer with its own messages
+  # (`HalC2.Acp.Antigravity.ClientFiles`).
   def handle_info(
         {:json_rpc, conn, {:request, id, "fs/read_text_file", params}},
         %{turn: turn} = state
       )
       when turn != nil do
-    Connection.respond(conn, id, read_text_file(turn.cwd, params || %{}))
+    reply =
+      if Antigravity.antigravity?(state.agent),
+        do: HalC2.Acp.Antigravity.ClientFiles.read(turn.cwd, params || %{}),
+        else: read_text_file(turn.cwd, params || %{})
+
+    Connection.respond(conn, id, reply)
     {:noreply, state}
+  end
+
+  # MCP over the ACP connection (`HalC2.Mcp.OverAcp`): the agent connects to
+  # the `hal-c2` server through this client and sends it messages here.
+  def handle_info({:json_rpc, conn, {:request, id, method, params}}, state)
+      when method in [
+             "mcp/connect",
+             "_mcp/connect",
+             "mcp/message",
+             "_mcp/message",
+             "mcp/disconnect",
+             "_mcp/disconnect"
+           ] do
+    params = params || %{}
+    {bridge, state} = mcp_bridge(state)
+
+    cond do
+      bridge == nil ->
+        Connection.respond(
+          conn,
+          id,
+          {:error,
+           %{
+             "code" => -32603,
+             "message" => "The hal-c2 MCP server is not available in this session."
+           }}
+        )
+
+      String.ends_with?(method, "connect") ->
+        # Local bookkeeping only; answering inline cannot stall the runtime.
+        answer =
+          case HalC2.Mcp.OverAcp.connect(bridge, params["serverId"]) do
+            {:ok, connection_id} -> {:ok, %{"connectionId" => connection_id}}
+            {:error, message} -> {:error, message}
+          end
+
+        respond_mcp(conn, id, answer)
+
+      String.ends_with?(method, "disconnect") ->
+        answer_mcp(conn, id, fn ->
+          case HalC2.Mcp.OverAcp.disconnect(bridge, params["connectionId"]) do
+            :ok -> {:ok, %{}}
+            {:error, message} -> {:error, message}
+          end
+        end)
+
+      true ->
+        # A tool call over HTTP, up to the ACP wait: answered off this
+        # process so interrupts, updates and orchestration calls keep
+        # flowing, and a tool that calls back into this runtime cannot
+        # deadlock it.
+        answer_mcp(conn, id, fn ->
+          HalC2.Mcp.OverAcp.message(
+            bridge,
+            params["connectionId"],
+            params["method"],
+            params["params"]
+          )
+        end)
+    end
+
+    {:noreply, state}
+  end
+
+  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
+      when method in ["mcp/message", "_mcp/message"] do
+    params = params || %{}
+    {bridge, state} = mcp_bridge(state)
+
+    if bridge do
+      spawn(fn ->
+        try do
+          HalC2.Mcp.OverAcp.notification(
+            bridge,
+            params["connectionId"],
+            params["method"],
+            params["params"]
+          )
+        catch
+          :exit, _ -> :ok
+        end
+      end)
+    end
+
+    {:noreply, state}
+  end
+
+  def handle_info(
+        {:json_rpc, conn, {:request, id, "fs/write_text_file", params}},
+        %{turn: turn} = state
+      )
+      when turn != nil do
+    if Antigravity.antigravity?(state.agent) do
+      Connection.respond(
+        conn,
+        id,
+        HalC2.Acp.Antigravity.ClientFiles.write(turn.cwd, params || %{})
+      )
+
+      {:noreply, state}
+    else
+      Connection.respond(
+        conn,
+        id,
+        {:error, %{"code" => -32601, "message" => "fs/write_text_file is not supported"}}
+      )
+
+      {:noreply, state}
+    end
   end
 
   # This client writes no files and runs no terminal; say so rather than hang.
@@ -514,6 +706,25 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
+
+  # Antigravity never confirmed a stopped turn: stop its process and say so.
+  def handle_info({:antigravity_cancel_timeout, run}, state) do
+    if state.turn && state.turn.ids.run == run && state.interrupted && state.conn do
+      Connection.stop(state.conn)
+
+      state =
+        end_turn(
+          %{state | prompt: nil},
+          "failed",
+          "The ACP agent did not finish cancellation. Its process was stopped."
+        )
+
+      {:noreply,
+       released(%{stop_work(state, "failed") | conn: nil, session_id: nil, prompt: nil})}
+    else
+      {:noreply, state}
+    end
+  end
 
   def handle_info(:kimi_wire, %{wire: %{} = wire} = state),
     do: {:noreply, read_wire(%{state | wire: %{wire | timer: nil}})}
@@ -580,6 +791,7 @@ defmodule HalC2.Acp.ThreadRuntime do
            else: (_ -> {status, failure})
 
     state = record_turn(%{state | prompt: nil})
+    state = compacted(state, status)
     state = end_turn(state, status, failure)
     # A turn that did not complete takes its background work, and earlier turns', down.
     {:noreply, if(status == "completed", do: state, else: stop_work(state, status))}
@@ -593,6 +805,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   # left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(reason, %{turn: turn} = state) when turn != nil do
+    close_mcp_bridge(state)
+
     unless reason in [:normal, :shutdown] or match?({:shutdown, _}, reason) do
       for {_, %{done: false, sub: sub}} <- state.subagents,
           do: NativeSubagent.finish(sub, "failed", nil)
@@ -604,6 +818,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   def terminate(_reason, state) do
+    close_mcp_bridge(state)
     end_work(state, "interrupted")
     :ok
   catch
@@ -661,7 +876,19 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp migrate(%{v: 12} = state),
     do: state |> Map.merge(%{v: 13, kimi: Kimi.agent?(state.agent)}) |> migrate()
 
-  defp migrate(%{v: 13} = state), do: Map.merge(state, %{v: 14, wire: nil})
+  defp migrate(%{v: 13} = state),
+    do: state |> Map.merge(%{v: 14, wire: nil}) |> migrate()
+
+  defp migrate(%{v: 14} = state), do: state |> Map.merge(%{v: 15, temp_dir: nil}) |> migrate()
+
+  # The MCP-over-ACP bridge and the instruction state the last prompt announced.
+  defp migrate(%{v: 15} = state),
+    do:
+      state
+      |> Map.merge(%{v: 16})
+      |> Map.put_new(:mcp_bridge, nil)
+      |> Map.put_new(:announced, nil)
+      |> Map.put_new(:temp_dir, nil)
 
   # --- session -------------------------------------------------------------------
 
@@ -678,9 +905,14 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # The agent's permission mode is set when it starts, so a new mode means a new process.
+  # So does a changed MCP credential: the header, env and bridge the live
+  # session carries would otherwise keep a token the flipped setting revoked.
   defp ensure_session(%{conn: conn, session_id: sid, agent: agent, mode: mode} = state, turn)
-       when conn != nil and sid != nil and agent == turn.ids.driver and mode == turn.runtime_mode,
-       do: {:ok, state}
+       when conn != nil and sid != nil and agent == turn.ids.driver and mode == turn.runtime_mode do
+    if HalC2.Mcp.prepared?(state.thread_id, Entities.instance(turn.ids)),
+      do: {:ok, state},
+      else: ensure_session(%{state | session_id: nil}, turn)
+  end
 
   defp ensure_session(state, turn) do
     driver = turn.ids.driver
@@ -691,8 +923,25 @@ defmodule HalC2.Acp.ThreadRuntime do
            {:ok, session_id, state} <- open_session(state, forked) do
         if session_id != turn.native_thread_id, do: record_session(state, session_id)
         Antigravity.opened(state.conn, session_id, driver, turn.runtime_mode, state.options)
-        {:ok, %{state | session_id: session_id, announce: mcp_servers(state, turn) != []}}
+
+        {:ok,
+         %{
+           state
+           | session_id: session_id,
+             announce: mcp_servers(state, turn) != [],
+             announced: nil
+         }}
+      else
+        # The credential minted for a session that failed to open is revoked:
+        # nothing live holds it, and it must not outlive the attempt.
+        {:error, reason, state} ->
+          HalC2.Mcp.revoke(state.thread_id, Entities.instance(turn.ids))
+          {:error, reason, state}
       end
+    else
+      {:error, reason, state} ->
+        HalC2.Mcp.revoke(state.thread_id, Entities.instance(turn.ids))
+        {:error, reason, state}
     end
   end
 
@@ -712,9 +961,22 @@ defmodule HalC2.Acp.ThreadRuntime do
   # A new agent process for `instance`, initialized; OpenCode's serves its HTTP API.
   defp launch(state, instance, mode, cwd) do
     if state.conn, do: Connection.stop(state.conn)
-    state = %{state | conn: nil, session_id: nil, server: nil}
+    # The old session's MCP-over-ACP connections end with it; the next one
+    # starts a fresh bridge with the credential this launch prepares.
+    state = close_mcp_bridge(state)
+    release_temp(state)
+    state = %{state | conn: nil, session_id: nil, server: nil, temp_dir: nil}
 
     with {:ok, command, env} <- HalC2.Acp.command(instance, mode),
+         # The way back to HAL-C2's tools from the agent's terminal
+         # (`HalC2.Mcp.AcpServers`): the MCP address, its credential and the
+         # command to run one call with.
+         env =
+           env ++
+             HalC2.Mcp.AcpServers.build(
+               %{},
+               HalC2.Mcp.for_agent(state.thread_id, instance)
+             ).env,
          {command, env, server} = serve_opencode(instance, command, env),
          {:ok, conn} <-
            Connection.start_link(
@@ -730,7 +992,12 @@ defmodule HalC2.Acp.ThreadRuntime do
            Connection.call(conn, "initialize", %{
              "protocolVersion" => 1,
              "clientCapabilities" => %{
-               "fs" => %{"readTextFile" => true, "writeTextFile" => false},
+               # Antigravity edits workspace files through HAL-C2 in chat
+               # sessions; no agent gets a terminal.
+               "fs" => %{
+                 "readTextFile" => true,
+                 "writeTextFile" => Antigravity.antigravity?(instance)
+               },
                "terminal" => false,
                # A sign-in page the agent asks for shows on the provider (`HalC2.Acp.UrlAuth`).
                "elicitation" => %{"url" => %{}}
@@ -749,6 +1016,10 @@ defmodule HalC2.Acp.ThreadRuntime do
            kimi: Kimi.agent?(instance),
            mode: mode,
            server: server,
+           temp_dir:
+             if(Antigravity.antigravity?(instance),
+               do: HalC2.Acp.Antigravity.runtime_tmp(env)
+             ),
            capabilities: init["agentCapabilities"] || %{}
        }}
     else
@@ -849,22 +1120,70 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # HAL-C2's own MCP server, for agents that take servers over HTTP.
+  # HAL-C2's own MCP server, in the form this agent takes servers
+  # (`HalC2.Mcp.AcpServers`): by address over HTTP, as a local stdio
+  # command, and over the ACP connection itself when it can carry MCP.
   defp mcp_servers(state, turn) do
-    with true <- get_in(state.capabilities, ["mcpCapabilities", "http"]) == true,
-         %{url: url, authorization: authorization} <-
-           HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids)) do
-      [
-        %{
-          "type" => "http",
-          "name" => "hal-c2",
-          "url" => url,
-          "headers" => [%{"name" => "Authorization", "value" => authorization}]
-        }
-      ]
-    else
-      _ -> []
+    server = HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids))
+    HalC2.Mcp.AcpServers.build(state.capabilities, server).servers
+  end
+
+  # Runs `answer` off the runtime and responds with its result; a dead
+  # bridge or connection answers with an error instead of never answering.
+  defp answer_mcp(conn, id, answer) do
+    spawn(fn ->
+      result =
+        try do
+          answer.()
+        rescue
+          _ -> {:error, "The hal-c2 MCP bridge is no longer available."}
+        catch
+          :exit, _ -> {:error, "The hal-c2 MCP bridge is no longer available."}
+        end
+
+      respond_mcp(conn, id, result)
+    end)
+  end
+
+  defp respond_mcp(conn, id, {:ok, result}), do: Connection.respond(conn, id, {:ok, result})
+
+  defp respond_mcp(conn, id, {:error, message}),
+    do: Connection.respond(conn, id, {:error, %{"code" => -32603, "message" => message}})
+
+  # The thread's MCP-over-ACP bridge, started on its first connection.
+  defp mcp_bridge(state) do
+    cond do
+      state.mcp_bridge != nil ->
+        {state.mcp_bridge, state}
+
+      state.turn == nil ->
+        {nil, state}
+
+      true ->
+        case HalC2.Mcp.current(state.thread_id, Entities.instance(state.turn.ids)) do
+          %{url: url, authorization: authorization} ->
+            {:ok, bridge} =
+              HalC2.Mcp.OverAcp.start_link(endpoint: url, authorization: authorization)
+
+            {bridge, %{state | mcp_bridge: bridge}}
+
+          _ ->
+            {nil, state}
+        end
     end
+  end
+
+  defp close_mcp_bridge(state) do
+    if bridge = Map.get(state, :mcp_bridge) do
+      try do
+        HalC2.Mcp.OverAcp.dispose(bridge)
+        GenServer.stop(bridge)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    if is_map_key(state, :mcp_bridge), do: %{state | mcp_bridge: nil}, else: state
   end
 
   # A session that opens without saying its model gets the turn's model set again.
@@ -1090,7 +1409,24 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  defp select_model(state, model), do: {:ok, set_model(state, model)}
+  # Antigravity's default alias runs on HAL-C2's preferred model when the
+  # account offers it, and otherwise leaves the agent's own selection alone:
+  # it is never asked to change to the alias itself, nor to a model it
+  # already has. A picked model is set again, so a restarted session resumes
+  # on the thread's model.
+  defp select_model(state, model) do
+    if Antigravity.antigravity?(state.agent) and Antigravity.default_alias?(model) do
+      case Antigravity.default_model(state.options, state.model) do
+        resolved when is_binary(resolved) and resolved != state.model ->
+          {:ok, set_model(state, resolved)}
+
+        _ ->
+          {:ok, state}
+      end
+    else
+      {:ok, set_model(state, model)}
+    end
+  end
 
   # "Pi default" leaves the model to the user's own Pi settings.
   defp set_model(%{agent: agent} = state, "default") when agent != nil do
@@ -1368,10 +1704,13 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp terminal_bytes(_data), do: ""
 
   defp tool(state, id, call) do
-    {kind, fields} = tool_shape(call)
+    {kind, fields} = tool_shape(call, state)
     state = state |> flush() |> ensure_item(id, kind, fields) |> note_kill(id, call)
 
     cond do
+      batch?(state, id) ->
+        batch_update(state, id, call)
+
       task = started_task(call) ->
         start_task(state, id, task, call)
 
@@ -1389,12 +1728,15 @@ defmodule HalC2.Acp.ThreadRuntime do
         do: state,
         else:
           (fn {kind, fields} -> ensure_item(flush(state), id, kind, fields) end).(
-            tool_shape(call)
+            tool_shape(call, state)
           )
 
     state = note_kill(state, id, call)
 
     cond do
+      batch?(state, id) ->
+        batch_update(state, id, call)
+
       task = started_task(call) ->
         start_task(state, id, task, call)
 
@@ -2069,13 +2411,36 @@ defmodule HalC2.Acp.ThreadRuntime do
       else: ": " <> uri
   end
 
-  defp tool_shape(call) do
-    if HalC2.Acp.Antigravity.subagent?(call), do: subagent_shape(call), else: tool_kind(call)
+  defp tool_shape(call, state) do
+    cond do
+      HalC2.Acp.Antigravity.subagent?(call) ->
+        subagent_shape(call)
+
+      # An Antigravity tool carrying a command line and no kind is a command.
+      antigravity_turn?(state) && call["kind"] in [nil, ""] &&
+          HalC2.Acp.Antigravity.Protocol.native_fields(call)[:command] ->
+        native = HalC2.Acp.Antigravity.Protocol.native_fields(call)
+
+        {:command,
+         %{"input" => native.command, "output" => ""}
+         |> then(&if(native[:cwd], do: Map.put(&1, "cwd", native.cwd), else: &1))}
+
+      true ->
+        tool_kind(call)
+    end
   end
 
-  # Antigravity's `start_subagent` tool starts a batch of subagents.
+  defp antigravity_turn?(%{agent: agent}) when not is_nil(agent),
+    do: Antigravity.antigravity?(agent)
+
+  defp antigravity_turn?(_state), do: false
+
+  # Antigravity's `start_subagent` tool starts a batch of subagents. The
+  # batch shows its own output, or else its detail, or else its title.
   defp subagent_shape(call) do
-    prompt = content_text(call["content"]) || call["title"] || "Antigravity subagent batch"
+    prompt =
+      subagent_output(call) || content_text(call["content"]) || call["title"] ||
+        "Antigravity subagent batch"
 
     {:subagent,
      %{
@@ -2085,6 +2450,80 @@ defmodule HalC2.Acp.ThreadRuntime do
        "prompt" => prompt,
        "result" => nil
      }}
+  end
+
+  defp subagent_output(call) do
+    case call["rawOutput"] do
+      output when is_binary(output) ->
+        case String.trim(output) do
+          "" -> nil
+          text -> HalC2.Acp.Antigravity.Protocol.bound(text)
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  # An Antigravity subagent batch of this turn (not another agent's subagent).
+  defp batch?(state, id) do
+    antigravity_turn?(state) and match?(%{kind: :subagent}, state.items[id]) and
+      not Map.get(state.items[id] || %{}, :batch_done, false)
+  end
+
+  # A batch Antigravity reports started is not finished until its turn is;
+  # only its failure ends it sooner, with its output as its result.
+  defp batch_update(state, id, call) do
+    if call["status"] == "failed" do
+      output = subagent_output(call) || content_text(call["content"])
+
+      state =
+        finish_item(state, id, "failed", fn entity ->
+          entity
+          |> then(&if(output, do: Map.put(&1, "prompt", output), else: &1))
+          |> Map.put("result", output)
+        end)
+
+      %{state | items: Map.update!(state.items, id, &Map.put(&1, :batch_done, true))}
+    else
+      case subagent_output(call) || content_text(call["content"]) do
+        nil ->
+          state
+
+        prompt ->
+          item = state.items[id]
+
+          commit(state, fn stream ->
+            [Orchestration.upsert(stream, "turn-item", item.id, &Map.put(&1, "prompt", prompt))]
+          end)
+
+          state
+      end
+    end
+  end
+
+  # Batches still open when their turn ends take the turn's ending: idle for
+  # a completed turn, interrupted or failed with it.
+  defp close_batches(state, status) do
+    if antigravity_turn?(state) do
+      batch_status =
+        case status do
+          "completed" -> "idle"
+          other -> other
+        end
+
+      Enum.reduce(state.items, state, fn
+        {id, %{kind: :subagent} = item}, state ->
+          if Map.get(item, :batch_done, false),
+            do: state,
+            else: finish_item(state, id, batch_status, & &1)
+
+        _, state ->
+          state
+      end)
+    else
+      state
+    end
   end
 
   defp tool_kind(call) do
@@ -2146,14 +2585,34 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     output = content_text(call["content"]) || raw_output(call["rawOutput"])
 
+    # Antigravity's native command fields and local image previews, under
+    # whichever names the call used.
+    native =
+      if antigravity_turn?(state),
+        do: HalC2.Acp.Antigravity.Protocol.native_fields(call),
+        else: %{}
+
     finish_item(state, id, status, fn entity ->
       case kind do
         :command ->
           entity
-          |> Map.put("output", output || "")
+          |> Map.put("output", native[:output] || output || "")
+          |> then(fn entity ->
+            cond do
+              native[:command] ->
+                Map.put(entity, "input", native.command)
+
+              call["rawInput"] ->
+                Map.put(entity, "input", command_text(call["rawInput"], entity["input"]))
+
+              true ->
+                entity
+            end
+          end)
+          |> then(&if(native[:cwd], do: Map.put(&1, "cwd", native.cwd), else: &1))
           |> then(
-            &if(call["rawInput"],
-              do: Map.put(&1, "input", command_text(call["rawInput"], entity["input"])),
+            &if(is_integer(native[:exit_code]),
+              do: Map.put(&1, "exitCode", native.exit_code),
               else: &1
             )
           )
@@ -2163,8 +2622,11 @@ defmodule HalC2.Acp.ThreadRuntime do
 
         :tool ->
           entity
-          |> Map.put("output", output || "")
+          |> Map.put("output", native[:output] || output || "")
           |> then(&if(call["rawInput"], do: Map.put(&1, "input", call["rawInput"]), else: &1))
+          |> then(
+            &if(native[:image_path], do: Map.put(&1, "imagePath", native.image_path), else: &1)
+          )
 
         # What the call named when it was announced stays; the end fills in the rest.
         :search ->
@@ -2199,6 +2661,10 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp content_text(_), do: nil
 
   defp raw_output(%{"output" => output}) when is_binary(output), do: output
+
+  defp raw_output(%{"combinedOutput" => output}) when is_binary(output), do: output
+  defp raw_output(%{"combined_output" => output}) when is_binary(output), do: output
+  defp raw_output(output) when is_binary(output), do: output
   defp raw_output(_), do: nil
 
   # The commands and skills a session offers reach the composer as the agent
@@ -2269,6 +2735,35 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   defp permission(conn, id, params, state) do
+    if Antigravity.antigravity?(state.agent) &&
+         HalC2.Acp.Antigravity.Protocol.user_input?(params) do
+      antigravity_question(conn, id, params, state)
+    else
+      permission_request(conn, id, params, state)
+    end
+  end
+
+  # Antigravity asks its questions on the permission method: one to pick
+  # exactly one of its options from, never an approval. A request whose
+  # options cannot be told apart is shown as no question at all.
+  defp antigravity_question(conn, id, params, state) do
+    case HalC2.Acp.Antigravity.Protocol.question(params) do
+      nil ->
+        Connection.respond(conn, id, {:ok, %{"outcome" => %{"outcome" => "cancelled"}}})
+        state
+
+      question ->
+        native = params["toolCall"]["toolCallId"]
+        {state, request_id} = open_question(flush(state), native, [question])
+
+        %{
+          state
+          | requests: Map.put(state.requests, request_id, {:antigravity_question, id, params})
+        }
+    end
+  end
+
+  defp permission_request(conn, id, params, state) do
     options = params["options"] || []
     call = params["toolCall"] || %{}
 
@@ -2283,10 +2778,20 @@ defmodule HalC2.Acp.ThreadRuntime do
     prompt = command_text(call["rawInput"] || %{}, call["title"])
 
     if allowed?(state, kind, call, prompt) do
-      Connection.respond(conn, id, {:ok, %{"outcome" => outcome(options, "accept")}})
+      outcome =
+        if Antigravity.antigravity?(state.agent),
+          do: antigravity_outcome(options, "accept"),
+          else: outcome(options, "accept")
+
+      Connection.respond(conn, id, {:ok, %{"outcome" => outcome}})
       state
     else
-      {state, request_id} = open_request(flush(state), "#{id}", kind, prompt)
+      # An Antigravity approval offers only the choices Antigravity gives.
+      choices =
+        if Antigravity.antigravity?(state.agent),
+          do: HalC2.Acp.Antigravity.Protocol.approval_options(params)
+
+      {state, request_id} = open_request(flush(state), "#{id}", kind, prompt, choices)
       request = {:permission, id, options, {kind, prompt}}
       %{state | requests: Map.put(state.requests, request_id, request)}
     end
@@ -2337,6 +2842,26 @@ defmodule HalC2.Acp.ThreadRuntime do
 
   defp remember_allowed(state, _tool, _decision), do: state
 
+  # Antigravity honors only the option of the decision's own kind: accept is
+  # allow-once, never an allow-always it did not ask for.
+  defp antigravity_outcome(options, decision) do
+    kind =
+      case decision do
+        "accept" -> "allow_once"
+        "decline" -> "reject_once"
+        d when d in ["acceptForSession", "acceptAlways"] -> "allow_always"
+        _ -> nil
+      end
+
+    case kind &&
+           Enum.find(options, &(&1["kind"] == kind and filled_option?(&1["optionId"]))) do
+      %{"optionId" => option} -> %{"outcome" => "selected", "optionId" => option}
+      _ -> %{"outcome" => "cancelled"}
+    end
+  end
+
+  defp filled_option?(value), do: is_binary(value) and String.trim(value) != ""
+
   # The agent's option for a `ProviderApprovalDecision`, or a cancellation.
   defp outcome(options, decision) do
     wanted =
@@ -2360,6 +2885,9 @@ defmodule HalC2.Acp.ThreadRuntime do
           {:question, rpc_id, _params} ->
             {rpc_id, %{"outcome" => "cancelled"}}
 
+          {:antigravity_question, rpc_id, _params} ->
+            {rpc_id, %{"outcome" => %{"outcome" => "cancelled"}}}
+
           {:permission, rpc_id, _options, _tool} ->
             {rpc_id, %{"outcome" => %{"outcome" => "cancelled"}}}
 
@@ -2372,6 +2900,30 @@ defmodule HalC2.Acp.ThreadRuntime do
       resolve_request(state, request_id, nil, "cancelled")
     end)
   end
+
+  # `/compact` alone in an Antigravity thread compacts its conversation; the
+  # work log says so once, when the turn completes.
+  defp compacted(state, "completed") do
+    turn = state.turn
+
+    if turn && Antigravity.antigravity?(turn.ids.driver) &&
+         String.trim(turn.text || "") == "/compact" &&
+         Map.get(turn, :attachments, []) == [] do
+      native = "compaction:#{turn.ids.run}"
+
+      state
+      |> flush()
+      |> ensure_item(native, :compaction, %{
+        "driver" => Entities.driver(turn.ids),
+        "title" => "Context compacted"
+      })
+      |> finish_item(native, "completed", & &1)
+    else
+      state
+    end
+  end
+
+  defp compacted(state, _status), do: state
 
   defp end_turn(state, status, failure) do
     state = flush(state)
@@ -2393,7 +2945,13 @@ defmodule HalC2.Acp.ThreadRuntime do
         state
       end
 
-    state = state |> close_open_items(status) |> end_kimi_subagents(status) |> cancel_requests()
+    state =
+      state
+      |> close_batches(status)
+      |> close_open_items(status)
+      |> end_kimi_subagents(status)
+      |> cancel_requests()
+
     finish(state, status, failure)
     %{state | turn: nil, items: %{}, prompts: :gen_server.reqids_new(), answer: nil}
   end
@@ -2421,17 +2979,21 @@ defmodule HalC2.Acp.ThreadRuntime do
 
     cond do
       Antigravity.antigravity?(turn.ids.driver) ->
-        text ++ HalC2.Acp.Antigravity.attachment_blocks(attachments)
+        case HalC2.Acp.Antigravity.attachment_blocks(attachments) do
+          {:ok, blocks} -> {:ok, text ++ blocks}
+          {:error, _} = error -> error
+        end
 
       get_in(capabilities || %{}, ["promptCapabilities", "image"]) == true ->
-        text ++
-          for(
-            {mime, data} <- HalC2.Attachments.native_images(attachments),
-            do: %{"type" => "image", "mimeType" => mime, "data" => data}
-          )
+        {:ok,
+         text ++
+           for(
+             {mime, data} <- HalC2.Attachments.native_images(attachments),
+             do: %{"type" => "image", "mimeType" => mime, "data" => data}
+           )}
 
       true ->
-        text
+        {:ok, text}
     end
   end
 
@@ -2440,25 +3002,74 @@ defmodule HalC2.Acp.ThreadRuntime do
   # the same connection later lands behind it, so the agent reads the prompt first.
   defp prompt(state, turn) do
     state = %{state | leaf: leaf(state)} |> watch_wire()
-    prompt = acp_prompt(turn, state.capabilities, instructions(state))
-    params = %{"sessionId" => state.session_id, "prompt" => prompt}
-    prompts = Connection.request(state.conn, "session/prompt", params, :prompt, state.prompts)
-    %{state | announce: false, prompt: true, prompts: prompts}
+    current = instruction_state(state, turn)
+    slash? = String.starts_with?(String.trim_leading(turn.text || ""), "/")
+
+    # ACP prompts carry HAL-C2's instructions only when they change: first
+    # with the tools, then again when the mode or the tools do — and never
+    # in front of a slash command, which stays at the start.
+    announce? = current.has_mcp and current != state.announced and not slash?
+    text = if announce?, do: HalC2.Mcp.Instructions.acp_instructions(current)
+
+    text =
+      if text && state.kimi && HalC2.Mcp.workers_only?(%{}),
+        do: text <> HalC2.Mcp.workers_only_note(),
+        else: text
+
+    case acp_prompt(turn, state.capabilities, text) do
+      {:ok, prompt} ->
+        params = %{"sessionId" => state.session_id, "prompt" => prompt}
+        prompts = Connection.request(state.conn, "session/prompt", params, :prompt, state.prompts)
+
+        %{
+          state
+          | announce: false,
+            announced: if(announce?, do: current, else: state.announced),
+            prompt: true,
+            prompts: prompts
+        }
+
+      # An attachment changed under the turn since it was checked; the typed
+      # text is not sent without it.
+      {:error, message} ->
+        end_turn(state, "failed", message)
+    end
   end
 
-  # What a session given HAL-C2's tools is told about them with its first prompt. Kimi,
-  # whose Agent tool HAL-C2 cannot take away, is told to delegate when the subagents
-  # setting keeps agents to HAL-C2's workers.
-  defp instructions(%{announce: false}), do: nil
+  # A read, never a preparation: a prompt must not rotate the credential the
+  # live session's header, environment and bridge still carry. A flipped
+  # access setting relaunches at the next `ensure_session/2` instead.
+  defp instruction_state(state, turn) do
+    instance = Entities.instance(turn.ids)
+    server = HalC2.Mcp.current(state.thread_id, instance)
 
-  defp instructions(state),
-    do: HalC2.Mcp.instructions(state.kimi and HalC2.Mcp.workers_only?(%{}))
+    %{
+      interaction_mode: Map.get(turn, :interaction_mode) || "default",
+      has_mcp: server != nil,
+      capabilities:
+        HalC2.Mcp.capabilities(state.thread_id, instance) ||
+          HalC2.Mcp.agent_access(state.thread_id),
+      runtime: %{
+        harness: HalC2.Acp.label(instance),
+        model: Map.get(turn, :model),
+        effort: nil
+      }
+    }
+  end
 
   # The thread no longer holds an agent session (`HalC2.Acp.Antigravity.sessions/1`).
   defp released(state) do
     Registry.update_value(@registry, state.thread_id, fn _ -> nil end)
-    state
+    release_temp(state)
+    # The session's MCP-over-ACP connections end with it, not at the next launch.
+    state = close_mcp_bridge(state)
+    %{state | temp_dir: nil}
   end
+
+  defp release_temp(%{temp_dir: dir}) when is_binary(dir),
+    do: HalC2.Acp.Antigravity.SessionFiles.release(dir)
+
+  defp release_temp(_state), do: :ok
 
   # `/logout` alone in an Antigravity thread signs its instance out, unless its run
   # already ended.

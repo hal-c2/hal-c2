@@ -1549,7 +1549,10 @@ defmodule HalC2.Steps.Providers.Claude do
   step "Claude is told to delegate with {string}", %{args: [tool]} = context do
     %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
     prompt = Enum.at(argv, Enum.find_index(argv, &(&1 == "--append-system-prompt")) + 1)
-    assert prompt == HalC2.Mcp.instructions(true)
+    # The orchestration instructions and the workers-only note, with the
+    # browser and runtime sections of `HalC2.Mcp.Instructions` between them.
+    assert prompt =~ HalC2.Mcp.instructions()
+    assert prompt =~ HalC2.Mcp.workers_only_note()
     assert prompt =~ "Delegate child work with `#{tool}`"
     context
   end
@@ -3901,7 +3904,7 @@ defmodule HalC2.Steps.Providers.Claude do
   defp offered(context, name),
     do: Enum.find(context.skills, &(&1["name"] == name))
 
-  step ~r/^a skill "([^"]+)" in (.+)$/, %{args: [name, folder]} = context do
+  step ~r/^a Claude skill "([^"]+)" in (.+)$/, %{args: [name, folder]} = context do
     {context, home} = skills_home(context)
     root = World.project(context).root
 
@@ -3931,13 +3934,13 @@ defmodule HalC2.Steps.Providers.Claude do
     open_skill_list(context, context.workspace)
   end
 
-  step ~r/^"([^"]+)" is (offered|not offered|shown as off)$/,
+  step ~r/^"([^"]+)" is (offered to Claude|not offered to Claude|shown as off)$/,
        %{args: [name, state]} = context do
     skill = offered(context, name)
 
     case state do
-      "offered" -> assert skill && skill["enabled"] == true
-      "not offered" -> assert skill == nil
+      "offered to Claude" -> assert skill && skill["enabled"] == true
+      "not offered to Claude" -> assert skill == nil
       "shown as off" -> assert skill && skill["enabled"] == false
     end
 
@@ -4078,7 +4081,7 @@ defmodule HalC2.Steps.Providers.Claude do
     )
   end
 
-  step "the skill is offered as {string}", %{args: [name]} = context do
+  step "the skill is offered in the Claude thread as {string}", %{args: [name]} = context do
     assert offered(context, name)
     context
   end

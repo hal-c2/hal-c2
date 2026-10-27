@@ -44,6 +44,7 @@ defmodule HalC2.Steps.Navigation.KeybindingCustomisation do
   end
 
   step "the MC has the rule {string} for {string}", %{args: [key, command]} = context do
+    Mc.ensure(HalC2.Settings)
     rule = rule(key, command)
     assert {:ok, _} = HalC2.Keybindings.upsert(rule)
     Map.put(context, :rule, rule)
@@ -204,7 +205,10 @@ defmodule HalC2.Steps.Navigation.KeybindingCustomisation do
 
   defp rule(key, command), do: %{"key" => key, "command" => command}
 
+  # The settings server makes the edit, in turn with a member's rules.
   defp add(context, rule, extra \\ %{}, client \\ "default") do
+    Mc.ensure(HalC2.Settings)
+
     {reply, context} =
       World.call(context, "server.upsertKeybinding", Map.merge(rule, extra), client)
 

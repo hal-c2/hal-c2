@@ -48,5 +48,6 @@ Agents and bots that co-wrote those pull requests are not listed.
 - [ValeraZSD](https://github.com/ValeraZSD)
 - [Ved Pandey](https://github.com/vedprakash2302)
 - [Vitalii Yehorov](https://github.com/vitalyiegorov)
+- [Wout Stiens](https://github.com/StiensWout)
 - [Yash Singh](https://github.com/Yash-Singh1)
 - [Yordis Prieto](https://github.com/yordis)

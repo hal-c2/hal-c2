@@ -720,15 +720,15 @@ Feature: Claude
 
   @mc
   Scenario Outline: Claude skills are read from Claude's own folders
-    Given a skill "review" in <folder>
+    Given a Claude skill "review" in <folder>
     When the user opens the skill list in a Claude thread
     Then "review" is <offered>
 
     Examples:
       | folder                                         | offered     |
-      | the skills folder of Claude's config directory | offered     |
-      | the project's .claude/skills                   | offered     |
-      | the project's .agents/skills                   | not offered |
+      | the skills folder of Claude's config directory | offered to Claude     |
+      | the project's .claude/skills                   | offered to Claude     |
+      | the project's .agents/skills                   | not offered to Claude |
 
   @mc
   Scenario: A Claude skill whose header cannot be read is left out
@@ -747,8 +747,8 @@ Feature: Claude
       | settings                                                                | state        |
       | the user's Claude settings switch "review" off                          | shown as off |
       | the project's Claude settings switch "review" off                       | shown as off |
-      | the user's settings switch it off and the managed policy switches it on | offered      |
-      | a settings file switches it off but holds a value Claude cannot read    | offered      |
+      | the user's settings switch it off and the managed policy switches it on | offered to Claude      |
+      | a settings file switches it off but holds a value Claude cannot read    | offered to Claude      |
 
   @mc
   Scenario Outline: A dollar sign that is not a skill mention stays as typed
@@ -767,12 +767,12 @@ Feature: Claude
   Scenario: A Claude skill is known by its folder's name
     Given the project has a Claude skill in the folder "review" whose header names it "Code Review"
     When the user opens the skill list in a Claude thread
-    Then the skill is offered as "review"
+    Then the skill is offered in the Claude thread as "review"
     And Claude's skill settings switch it on or off under "review"
 
   @mc
   Scenario: The user's own Claude skill wins over a project skill of the same name
-    Given a skill "review" in the skills folder of Claude's config directory
+    Given a Claude skill "review" in the skills folder of Claude's config directory
     And another skill "review" in the project's .claude/skills
     When the user opens the skill list in a Claude thread
     Then "review" is listed once, with the description of the user's own skill
@@ -802,7 +802,7 @@ Feature: Claude
     And <lower file> switches "review" off
     And <higher file> switches "review" on
     When the user opens the skill list in a Claude thread
-    Then "review" is offered
+    Then "review" is offered to Claude
 
     Examples:
       | lower file                                  | higher file                                 |
@@ -816,7 +816,7 @@ Feature: Claude
     Given a thread's workspace is a folder nested inside a git repository
     And the repository root's shared Claude settings switch the skill "review" off
     When the user opens the skill list in that thread
-    Then "review" is offered
+    Then "review" is offered to Claude
     And Claude settings in folders above a workspace that is in no repository are not read either
 
   @mc

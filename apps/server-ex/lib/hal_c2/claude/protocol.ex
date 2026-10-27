@@ -51,7 +51,7 @@ defmodule HalC2.Claude.Protocol do
       if(opts[:thinking_display], do: ["--thinking-display", "summarized"], else: []) ++
       if(opts[:tools] in [nil, []], do: [], else: ["--tools", Enum.join(opts[:tools], ",")]) ++
       Enum.flat_map(List.wrap(opts[:add_dirs]), &["--add-dir", &1]) ++
-      mcp_args(opts) ++
+      mcp_args(opts[:mcp], opts[:disallowed_tools] not in [nil, []], opts) ++
       if(opts[:disallowed_tools] in [nil, []],
         do: [],
         else: ["--disallowedTools", Enum.join(opts[:disallowed_tools], ",")]
@@ -60,16 +60,9 @@ defmodule HalC2.Claude.Protocol do
   end
 
   # HAL-C2's own MCP server, its tools allowed without a prompt, and what it is for.
-  defp mcp_args(opts) do
-    case opts[:mcp] do
-      nil -> []
-      mcp -> mcp_args(mcp, opts)
-    end
-  end
+  defp mcp_args(nil, _workers_only, _opts), do: []
 
-  defp mcp_args(%{url: url, authorization: authorization}, opts) do
-    workers_only = opts[:disallowed_tools] not in [nil, []]
-
+  defp mcp_args(%{url: url, authorization: authorization}, workers_only, opts) do
     config = %{
       "mcpServers" => %{
         "hal-c2" => %{
@@ -94,7 +87,12 @@ defmodule HalC2.Claude.Protocol do
       "--allowedTools",
       allowed,
       "--append-system-prompt",
-      HalC2.Mcp.instructions(workers_only)
+      # The orchestration instructions in the system prompt, the user's own
+      # messages sent as written; runtime context names the harness, the
+      # model and the effort this session runs with.
+      HalC2.Mcp.Instructions.for_session(
+        runtime: %{harness: "Claude Code", model: opts[:model], effort: opts[:effort]}
+      ) <> if(workers_only, do: HalC2.Mcp.workers_only_note(), else: "")
     ]
   end
 

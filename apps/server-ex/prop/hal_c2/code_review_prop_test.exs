@@ -17,12 +17,17 @@ defmodule HalC2.CodeReviewPropTest do
 
   - one review runs per pull request: each run has a thread of its own once it starts
     and none before, and a retry replaces a run rather than adding one;
-  - every post is the one the model expects, on the commit its run reviewed, and a late
-    answer to a superseded post leaves the newer run alone;
+  - every post is the one the model expects, on the commit its run reviewed and opening
+    with the count and severities of the findings kept, and a late answer to a
+    superseded post leaves the newer run alone;
   - a report with nothing to post goes back to the agent as an error, and one posted
     automatically is answered once GitHub has, with how the post went;
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
     and the look for pull requests, and leaves no checkout no review points at;
+  - a settings save keeps them going, and starts queued reviews when it makes room;
+  - each review's thread is listed with the threads as the display last saved says,
+    and a discarded review's stays out of the list, even when the display was saved
+    just before and its listing is still under way;
   - the `reviews` snapshot, and the topic clients follow, match the model;
   - the plugin process is only replaced when the step restarts it.
   """
@@ -194,13 +199,19 @@ defmodule HalC2.CodeReviewPropTest do
   # (the head the last look saw, 1 or 2), reviewed, changed, verdict, comments (one
   # dismissed flag each), publish_error, seq (order queued)}. `runs`: key → whether
   # each run so far got its thread and checkout, kept when a review is discarded.
-  # `posts`: every post that reached GitHub, `{key, reviewed, comments, event}`.
+  # `posts`: every post that reached GitHub, `{key, reviewed, comments, event, headline}`.
   # `held_runs`/`held_pubs`: checkouts held at the fetch and posts held at GitHub.
   # Every pull request starts open, so the first look finds them all ready.
   def initial_state do
     look(%{
       enabled: true,
-      settings: %{publishing: "draft", concurrency: 2, activation: "selective", new_pushes: false},
+      settings: %{
+        publishing: "draft",
+        concurrency: 2,
+        activation: "selective",
+        new_pushes: false,
+        display: "threads"
+      },
       prs: Map.new(@keys, &{&1, %{open: true, head: 1, broken: false}}),
       reviews: %{},
       runs: %{},
@@ -242,6 +253,17 @@ defmodule HalC2.CodeReviewPropTest do
     commented = for {key, %{comments: [_ | _]}} <- m.reviews, do: key
     commented = if commented == [], do: key, else: frequency([{3, elements(commented)}, {1, key}])
 
+    # Mostly a review with a thread to unlist, discarded as a new display lists it again.
+    finished =
+      for {key, %{run: k, status: s}} when k != nil <- m.reviews,
+          s not in [:queued, :ready, :running, :publishing],
+          Enum.at(m.runs[key], k - 1),
+          do: key
+
+    relists = if finished == [], do: 1, else: 4
+    finished = if finished == [], do: key, else: frequency([{6, elements(finished)}, {1, key}])
+    relisted = if m.settings.display == "page", do: oneof(~w(threads both)), else: "page"
+
     on =
       [
         {3, {:call, __MODULE__, :refresh, []}},
@@ -250,6 +272,7 @@ defmodule HalC2.CodeReviewPropTest do
         {2, {:call, __MODULE__, :retry, [key]}},
         {2, {:call, __MODULE__, :dismiss, [commented, oneof([1, 2]), boolean()]}},
         {2, {:call, __MODULE__, :discard, [key]}},
+        {relists, {:call, __MODULE__, :relist_discard, [finished, relisted]}},
         {if(waiting == [], do: 2, else: 10), {:call, __MODULE__, :publish, [published]}},
         {1, {:call, __MODULE__, :disable, [oneof([:plain, :polling])]}}
       ] ++
@@ -286,7 +309,8 @@ defmodule HalC2.CodeReviewPropTest do
             {"publishing", oneof(~w(local draft automatic))},
             {"concurrency", oneof([1, 2])},
             {"activation", oneof(~w(automatic selective))},
-            {"reviewNewPushes", boolean()}
+            {"reviewNewPushes", boolean()},
+            {"display", oneof(~w(page threads both))}
           ])
         ]}}
     ]
@@ -294,7 +318,7 @@ defmodule HalC2.CodeReviewPropTest do
     frequency(if(m.enabled, do: on, else: off) ++ always)
   end
 
-  @plugin_commands ~w(refresh poll start retry dismiss discard publish disable report turn_finished limited late_published)a
+  @plugin_commands ~w(refresh poll start retry dismiss discard relist_discard publish disable report turn_finished limited late_published)a
 
   def precondition(m, {:call, _, :enable, _}), do: not m.enabled
   def precondition(m, {:call, _, :crash, _}), do: m.enabled and m.crashes < 2
@@ -319,6 +343,8 @@ defmodule HalC2.CodeReviewPropTest do
       reply: reply,
       view: view(m),
       threads: for({key, runs} <- m.runs, runs != [], into: %{}, do: {key, runs}),
+      listed: listed(m),
+      discarded: [],
       checkouts: checkouts(m),
       orphans: [],
       posts: Enum.sort(m.posts),
@@ -392,6 +418,11 @@ defmodule HalC2.CodeReviewPropTest do
       %{status: s} when s in [:running, :publishing] -> {m, :error}
       _ -> {pump(%{m | reviews: Map.delete(m.reviews, key)}), :ok}
     end
+  end
+
+  defp step(m, {:call, c, :relist_discard, [key, display]}) do
+    {m, :ok} = step(m, {:call, c, :save, [{"display", display}]})
+    step(m, {:call, c, :discard, [key]})
   end
 
   defp step(m, {:call, _, :publish, [key]}) do
@@ -477,11 +508,13 @@ defmodule HalC2.CodeReviewPropTest do
         "publishing" => :publishing,
         "concurrency" => :concurrency,
         "activation" => :activation,
-        "reviewNewPushes" => :new_pushes
+        "reviewNewPushes" => :new_pushes,
+        "display" => :display
       }[field]
 
+    # The running plugin takes it as it is: the next look reads the rest.
     m = %{m | settings: Map.put(m.settings, name, value)}
-    if m.enabled, do: {restart(%{m | crashes: 0}), :ok}, else: {m, :ok}
+    if m.enabled, do: {pump(m), :ok}, else: {m, :ok}
   end
 
   defp step(m, {:call, _, :push, [key]}),
@@ -652,11 +685,31 @@ defmodule HalC2.CodeReviewPropTest do
   defp post(m, key) do
     r = m.reviews[key]
     kept = Enum.count(r.comments, &(not &1))
-    m = %{m | posts: m.posts ++ [{key, r.reviewed, kept, @events[r.verdict]}]}
+
+    m = %{
+      m
+      | posts: m.posts ++ [{key, r.reviewed, kept, @events[r.verdict], headline(r.comments)}]
+    }
 
     if m.gate == :closed,
       do: {%{m | held_pubs: m.held_pubs ++ [{key, r.run, m.refusing}]}, :held},
       else: {complete(m, key, r.run, m.refusing), if(m.refusing, do: :error, else: :ok)}
+  end
+
+  # The line a post opens with: the findings of a report the user kept, where a
+  # report with findings has a high one and an unrated one on lines (`dismissed`
+  # says which the user dismissed) and an unrated one in the summary.
+  defp headline([]), do: "No findings."
+
+  defp headline([high_dismissed, other_dismissed]) do
+    high = if high_dismissed, do: 0, else: 1
+    unrated = if(other_dismissed, do: 0, else: 1) + 1
+    count = high + unrated
+    noun = if count == 1, do: "finding", else: "findings"
+
+    if high == 1,
+      do: "#{count} #{noun}: 1 high, #{unrated} unrated.",
+      else: "#{count} #{noun}."
   end
 
   # GitHub's answer to the post of run `run` lands only on that run, still being posted.
@@ -690,6 +743,16 @@ defmodule HalC2.CodeReviewPropTest do
     # A pause is saved with the reviews, so it stands across the restart; the
     # run of failures that may have led to it is not.
     look(%{m | reviews: reviews, held_runs: [], held_pubs: [], failures: 0})
+  end
+
+  # Whether the thread each review shows, once it has one, is listed with the threads.
+  defp listed(%{enabled: false}), do: :off
+
+  defp listed(m) do
+    for {key, %{run: k, status: s}} when k != nil and s not in [:queued, :ready] <- m.reviews,
+        Enum.at(m.runs[key], k - 1),
+        into: %{},
+        do: {key, m.settings.display != "page"}
   end
 
   defp view(%{enabled: false}), do: :off
@@ -731,7 +794,62 @@ defmodule HalC2.CodeReviewPropTest do
   def dismiss(key, i, flag),
     do: observe(call("dismiss", %{"key" => key, "commentId" => "c#{i}", "dismissed" => flag}))
 
-  def discard(key), do: observe(call("discard", %{"key" => key}))
+  def discard(key), do: observe(discarding(key))
+
+  # Saves the display with the listing of the threads it starts held on its way to the
+  # first, discards the review while it is, then lets the listing go.
+  def relist_discard(key, display) do
+    server = Process.whereis(@server)
+    Application.put_env(:hal_c2, :streams_hook, {__MODULE__, :hold_lister, [server, self()]})
+    :ok = plugins("saveSettings", %{"id" => @id, "settings" => %{"display" => display}})
+
+    listing =
+      case :sys.get_state(server).lister do
+        nil ->
+          nil
+
+        lister ->
+          ref = Process.monitor(lister)
+
+          receive do
+            {:held, ^lister} ->
+              Process.demonitor(ref, [:flush])
+              lister
+
+            # It had no thread to list.
+            {:DOWN, ^ref, :process, _, _} ->
+              nil
+          end
+      end
+
+    Application.delete_env(:hal_c2, :streams_hook)
+    reply = discarding(key)
+    if listing, do: send(listing, :go)
+    observe(reply)
+  end
+
+  # A `:streams_hook`: holds the plugin's listing of the threads on its way to a
+  # thread's stream until it is sent `:go`, and tells `test` it is held.
+  def hold_lister(server, test, :ensured, _stream_id) do
+    {:links, links} = Process.info(self(), :links)
+
+    if server in links and :sys.get_state(server).lister == self() do
+      send(test, {:held, self()})
+      receive do: (:go -> :ok)
+    end
+
+    :ok
+  end
+
+  def hold_lister(_server, _test, _stage, _stream_id), do: :ok
+
+  # Discards the review, keeping the thread it had for `observe` to check.
+  defp discarding(key) do
+    tid = GenServer.call(@server, :reviews)[key]["threadId"]
+    reply = call("discard", %{"key" => key})
+    if reply == :ok and tid, do: Process.put(:cr_discarded, [tid | Process.get(:cr_discarded)])
+    reply
+  end
 
   # Asked of the plugin directly, as `call("publish")` waits for GitHub's answer.
   def publish(key) do
@@ -754,8 +872,10 @@ defmodule HalC2.CodeReviewPropTest do
             "verdict" => "request-changes",
             "summary" => "Two things.",
             "comments" => [
-              %{"path" => "src/limits.ts", "line" => 1, "body" => "One."},
-              %{"path" => "src/limits.ts", "line" => 2, "body" => "Two."}
+              %{"path" => "src/limits.ts", "line" => 1, "body" => "One.", "severity" => "high"},
+              %{"path" => "src/limits.ts", "line" => 2, "body" => "Two."},
+              # Not in the diff, so it goes into the summary and cannot be dismissed.
+              %{"path" => "src/elsewhere.ts", "line" => 40, "body" => "Three."}
             ]
           }
 
@@ -906,12 +1026,8 @@ defmodule HalC2.CodeReviewPropTest do
     observe(nil, :restarted)
   end
 
-  def save({field, value}) do
-    restarts = if Process.whereis(@server), do: :restarted, else: :same
-
-    killing(fn -> plugins("saveSettings", %{"id" => @id, "settings" => %{field => value}}) end)
-    |> observe(restarts)
-  end
+  def save({field, value}),
+    do: observe(plugins("saveSettings", %{"id" => @id, "settings" => %{field => value}}))
 
   def push(key) do
     world = Process.get(:cr_world)
@@ -1012,7 +1128,7 @@ defmodule HalC2.CodeReviewPropTest do
 
     Process.put(:cr_pid, pid)
 
-    view =
+    {view, listed} =
       if pid do
         snapshot = GenServer.call(@server, :snapshot)
         if snapshot["problem"], do: problem("code-review reports: #{snapshot["problem"]}")
@@ -1021,15 +1137,17 @@ defmodule HalC2.CodeReviewPropTest do
         if Process.get(:cr_topic) != published,
           do: problem("the reviews topic is behind: #{inspect(Process.get(:cr_topic))}")
 
-        Enum.map(snapshot["reviews"], &review_view/1)
+        {Enum.map(snapshot["reviews"], &review_view/1), listing(snapshot)}
       else
-        :off
+        {:off, :off}
       end
 
     %{
       reply: reply,
       view: view,
       threads: threads(),
+      listed: listed,
+      discarded: Enum.filter(Process.get(:cr_discarded), &thread(&1)["plugin"]["listed"]),
       checkouts: length(checkout_dirs()),
       orphans: orphans(),
       posts: posts(),
@@ -1065,6 +1183,14 @@ defmodule HalC2.CodeReviewPropTest do
   defp head(nil), do: nil
   defp head(sha), do: Map.get(fx().heads, sha, {:unknown, sha})
 
+  # Whether the thread each review shows, where there is one, is listed with the threads.
+  defp listing(snapshot) do
+    for %{"key" => key, "threadId" => tid} when is_binary(tid) <- snapshot["reviews"],
+        thread = thread(tid),
+        into: %{},
+        do: {key, thread["plugin"]["listed"]}
+  end
+
   # Whether each run seen has its thread.
   defp threads do
     for {key, tids} <- Process.get(:cr_tids), into: %{} do
@@ -1072,9 +1198,11 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
-  defp thread?(tid) do
+  defp thread?(tid), do: thread(tid) != nil
+
+  defp thread(tid) do
     state = HalC2.Streams.Server.state(HalC2.Streams.ensure(tid))
-    HalC2.StreamState.get(state, "thread")[tid] != nil
+    HalC2.StreamState.get(state, "thread")[tid]
   end
 
   defp checkout_dirs,
@@ -1098,7 +1226,8 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp data_dir, do: Path.join([HalC2.Paths.data_dir(), "plugin-data", @id])
 
-  # Every review posted to the fake GitHub: `{key, head, comments, event}`.
+  # Every review posted to the fake GitHub: `{key, head, comments, event, first line}`,
+  # the first line after a verdict posted as a comment.
   defp posts do
     fx_path("calls.jsonl")
     |> File.read!()
@@ -1111,9 +1240,15 @@ defmodule HalC2.CodeReviewPropTest do
         [_, repo, number] ->
           body = JSON.decode!(call["stdin"])
 
+          first =
+            body["body"]
+            |> String.replace(~r/\A\*\*(Approved|Changes requested)\*\*\n\n/, "")
+            |> String.split("\n", parts: 2)
+            |> hd()
+
           [
             {"acme/#{repo}##{number}", head(body["commit_id"]), length(body["comments"] || []),
-             body["event"]}
+             body["event"], first}
           ]
 
         nil ->
@@ -1330,6 +1465,7 @@ defmodule HalC2.CodeReviewPropTest do
       end
 
     Process.put(:cr_tids, %{})
+    Process.put(:cr_discarded, [])
     Process.put(:cr_problems, [])
 
     put_world(%{
@@ -1395,13 +1531,17 @@ defmodule HalC2.CodeReviewPropTest do
           "publishing" => "draft",
           "concurrency" => 2,
           "reviewNewPushes" => false,
-          "readReviewMd" => false
+          "readReviewMd" => false,
+          "display" => "threads"
         }
       })
 
     {:ok, last} = HalC2.Plugins.subscribe_topic(self(), @id, "reviews")
     Process.put(:cr_topic, last)
     HalC2.PullRequests.invalidate(%{})
+    # The look the plugin started with is over, and one sees the repositories saved.
+    drain()
+    {:ok, _} = HalC2.Plugins.handle("call", %{"id" => @id, "method" => "refresh", "input" => %{}})
     drain()
     :sys.get_state(HalC2.Plugins)
     take_messages()

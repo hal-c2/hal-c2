@@ -179,6 +179,13 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
 
     assert state.entities["run"][run_id]["queuePosition"] == nil
 
+    # "starting" is decided before the provider is asked; running is its answer.
+    World.await_state(
+      context,
+      context.thread,
+      &(&1.entities["run"][run_id]["status"] in ~w(running waiting completed))
+    )
+
     assert Enum.any?(
              World.codex_requests(context, "turn/start"),
              &match?(%{"input" => [%{"text" => @continuation} | _]}, &1)
@@ -687,6 +694,12 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     assert text =~ "`npm run dev`"
 
     # The command itself was ended as interrupted, and Codex was sent the message.
+    World.await_state(
+      context,
+      context.thread,
+      &(&1.entities["run"][context.continuation_message["runId"]]["status"] in ~w(running waiting completed))
+    )
+
     assert %{"status" => "interrupted"} =
              World.state(context, context.thread).entities["turn-item"]["turn-item:codex:cmd-bg"]
 

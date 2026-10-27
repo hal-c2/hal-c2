@@ -69,6 +69,20 @@ which hands them its release. Removing a machine from the
 Cluster page stops every member from admitting it, and its projects and threads leave
 the sidebar.
 
+### Settings that follow you
+
+Settings about how you work are the same on every machine of a cluster: change one on any
+machine and the others take it, including machines that were asleep, once they are back.
+These are the default runtime and worktree modes, starting worktrees from origin, worktree
+submodules and cleanup, how responses stream, sidebar settling, what happens to
+usage-limited threads, the writing style and merge method for pull requests, price
+overrides, and your keybindings. If two machines change the same setting while apart, the
+later change wins.
+
+Everything else stays on its machine: providers and their keys, usage limit sources,
+projects, devices, storage, background activity, the environment icon, the theme, model
+choices and plugin settings.
+
 ### Move a thread to another machine
 
 Choose **Move to another machine** in a thread's menu or the command palette, then the

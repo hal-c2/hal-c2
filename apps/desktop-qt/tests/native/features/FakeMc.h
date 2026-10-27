@@ -108,6 +108,11 @@ public:
   bool holding(const QString& what) const { return m_holds.contains(what); }
   void defer(std::function<void()> answer) { m_held.append(std::move(answer)); }
   void answerHeld();
+  // While set, row frames wait (versioned as they are made) until catchUp():
+  // an answer reaches the client before the rows it changed.
+  bool lagRows = false;
+  // Sends the first `frames` waiting (all of them, and stops lagging, by default).
+  void catchUp(qsizetype frames = -1);
   // Lifts every hold and forgets the held answers: what they answer never
   // reached the MC.
   void dropHeld() {
@@ -236,6 +241,8 @@ private:
   int m_shellSubscription = -1;
   // The `have` of the shell subscription being answered.
   QJsonObject m_have;
+  // Row frames waiting for catchUp().
+  QList<QJsonObject> m_lagged;
   // What the client was last told of each MC's rows, and the rev that made.
   struct Told {
     int rev = 0;

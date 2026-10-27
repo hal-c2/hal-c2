@@ -82,6 +82,7 @@ defmodule HalC2.OrchestrationPropTest do
           HalC2.Streams,
           HalC2.Shell,
           HalC2.Orchestration.TurnWatch,
+          HalC2.Orchestration.Effects,
           {Registry, keys: :unique, name: HalC2.Codex.Registry},
           Supervisor.child_spec({Registry, keys: :unique, name: HalC2.Claude.Registry},
             id: :claude_registry
@@ -618,8 +619,13 @@ defmodule HalC2.OrchestrationPropTest do
 
   defp expected_reply(_state, :resend, _args), do: :ok
 
-  defp expected_reply(state, :interrupt_run, [tid, msg]),
-    do: if(pinned_running?(state, tid, msg), do: :ok, else: {:error, "no running turn"})
+  # A stop for the latest run, which completed as the stop arrived, counts as
+  # done: the provider had nothing active to stop (commands.feature).
+  defp expected_reply(state, :interrupt_run, [tid, msg]) do
+    if pinned_running?(state, tid, msg) or pinned_completed?(state, tid, msg),
+      do: :ok,
+      else: {:error, "no running turn"}
+  end
 
   defp expected_reply(state, :release, [tid]),
     do: if(running(state.threads[tid]), do: {:error, :busy}, else: :ok)
@@ -647,6 +653,14 @@ defmodule HalC2.OrchestrationPropTest do
     do:
       refusal(state, tid, :interrupt) == nil and
         match?(%{msg: ^msg}, running(state.threads[tid]))
+
+  defp pinned_completed?(state, tid, msg) do
+    thread = state.threads[tid]
+    last = thread && List.last(thread.runs)
+
+    thread != nil and thread.status != :deleted and last != nil and
+      last.status == :completed and last.msg == msg
+  end
 
   # A promote of this queued message asks the running turn's provider to take it.
   defp steers?(thread, msg) do

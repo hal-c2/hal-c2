@@ -95,6 +95,12 @@ defmodule HalC2.Streams do
   @doc "The stream's current state, started if needed."
   def state(stream_id), do: with_server(stream_id, &Server.state/1)
 
+  @doc "See `HalC2.Streams.Server.sequence/1`."
+  def sequence(stream_id), do: with_server(stream_id, &Server.sequence/1)
+
+  @doc "See `HalC2.Streams.Server.get/3`."
+  def get(stream_id, kind, id), do: with_server(stream_id, &Server.get(&1, kind, id))
+
   @doc "See `HalC2.Streams.Server.flush_shell/1`."
   def flush_shell(stream_id), do: with_server(stream_id, &Server.flush_shell/1)
 

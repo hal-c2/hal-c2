@@ -274,7 +274,13 @@ for line in sys.stdin:
     if method in ("session/new", "session/resume", "session/list") and AUTH_FILE and not os.path.exists(AUTH_FILE):
         send({"id": mid, "error": {"code": -32000, "message": "Authentication required"}})
         continue
+    if method in ("session/new", "session/resume", "session/load", "session/prompt") and os.environ.get("FAKE_ACP_LOG"):
+        with open(os.environ["FAKE_ACP_LOG"], "a") as f:
+            f.write(json.dumps({"method": method, "params": params}) + "\n")
     if method == "initialize":
+        if os.environ.get("FAKE_ACP_LOG"):
+            with open(os.environ["FAKE_ACP_LOG"], "a") as f:
+                f.write(json.dumps({"method": "env", "params": {k: v for k, v in os.environ.items() if k.startswith("HAL_C2_ACP_MCP_")}}) + "\n")
         send({"id": mid, "result": {"protocolVersion": 1, "agentInfo": {"name": "Fake", "version": "9.9"},
               "authMethods": [{"id": "browser", "name": "Browser login"},
                               {"id": "cli", "name": "CLI login", "type": "terminal", "args": ["login"]}],
@@ -303,14 +309,19 @@ for line in sys.stdin:
     elif method == "session/prompt":
         sid = params["sessionId"]
         text = params["prompt"][0]["text"]
-        add_message(sid, "user", text)
         # FAKE_ACP_INPUT_LOG names a file each prompt's text is appended to, as JSON.
         if os.environ.get("FAKE_ACP_INPUT_LOG"):
             with open(os.environ["FAKE_ACP_INPUT_LOG"], "a") as input_log:
                 input_log.write(json.dumps(text) + "\n")
+        # HAL-C2's instructions ride a session's first prompts in a wrapper; only
+        # the user's own request picks the script, never words like "wait" in them,
+        # and only it is kept as the session's history.
+        wrapped = re.search(r"<user_request>\n(.*)\n</user_request>\Z", text, flags=re.S)
+        if wrapped: text = wrapped.group(1)
         # A delegated subagent's task follows the MC's worker preamble, whose words
         # ("waiting", ...) must not pick the script.
         text = re.sub(r"\AYou are a HAL-C2 worker delegated by .*?\nTask:\n", "", text, flags=re.S)
+        add_message(sid, "user", text)
         if "never answered" in text:
             continue
         if waiting and waiting[1] == sid and waiting[2]:
