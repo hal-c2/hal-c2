@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12787
 #   docs/user/devices.md (Device panel, agent access, remote streaming)
 #   docs/internals/devices.md
 #   packages/contracts/src/device.ts (DeviceServiceState, device.open, device.close)
@@ -322,6 +323,59 @@ Feature: Device panel
       When the user makes the panel narrower than the device is wide
       Then the device is shown smaller with its own proportions
       And a touch at the middle of the shown screen is sent as the middle of the device
+
+    @backlog @desktop
+    Scenario: The device can be shown as a 3D body the user turns
+      Given the thread has the iOS Simulator "iPhone 18 Pro" open
+      And the user is watching the "iPhone 18 Pro" tab
+      When the user shows the device in 3D and drags across it
+      Then the body turns with the drag
+      And when the drag ends the body settles on the nearest view that faces its screen
+
+    @backlog @desktop
+    Scenario Outline: A device shown in 3D keeps a plain body when its own model is missing
+      Given the thread has the <device> open
+      And <reason>
+      When the user shows the device in 3D
+      Then a plain body of the device's family is shown instead of an error
+      And the device's screen is still live on it
+
+      Examples:
+        | device                              | reason                                 |
+        | Android Emulator "Pixel 9"          | the device has no 3D model             |
+        | iOS Simulator "iPhone 18 Pro"       | the 3D model cannot be downloaded      |
+        | iOS Simulator "iPhone 18 Pro"       | the 3D model file is not a valid model |
+
+    @backlog @desktop
+    Scenario: Switching to the flat view hides the Magic Keyboard but keeps it attached
+      Given the user is viewing the iOS Simulator "iPad Pro 13-inch" in 3D with the Magic Keyboard attached
+      When the user switches to the flat view
+      Then the live screen fills the panel
+      And the Magic Keyboard is not shown
+
+    @backlog @desktop
+    Scenario: Returning to the 3D view shows the Magic Keyboard attached again
+      Given the user is viewing the iOS Simulator "iPad Pro 13-inch" in the flat view with the Magic Keyboard attached
+      When the user switches to the 3D view
+      Then the Magic Keyboard is shown attached to the iPad
+
+    @backlog @desktop
+    Scenario: Attaching the Magic Keyboard in the 3D view shows it on the iPad
+      Given the user is viewing the iOS Simulator "iPad Pro 13-inch" in 3D with no keyboard attached
+      When the user attaches the Magic Keyboard
+      Then the Magic Keyboard is shown attached to the iPad
+
+    @backlog @desktop
+    Scenario: Detaching the Magic Keyboard in the 3D view removes it from the iPad
+      Given the user is viewing the iOS Simulator "iPad Pro 13-inch" in 3D with the Magic Keyboard attached
+      When the user detaches the Magic Keyboard
+      Then the Magic Keyboard is no longer shown
+
+    @backlog @desktop
+    Scenario: Attaching the Magic Keyboard in portrait turns the device to landscape
+      Given the user is viewing the iOS Simulator "iPad Pro 13-inch" in portrait with no keyboard attached
+      When the user attaches the Magic Keyboard
+      Then the device is asked to turn to landscape
 
     @backlog @desktop
     Scenario: The user overlays the device's accessibility elements
