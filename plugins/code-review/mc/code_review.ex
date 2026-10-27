@@ -44,8 +44,9 @@ defmodule HalC2Plugins.CodeReview do
   report counts, not your messages. Report once, with:
 
   - verdict: approve, comment or request-changes
-  - summary: one or two lines on what the change does, then what you found and \
-  the biggest risk in it, written for its author
+  - summary: one or two lines on what the change does, then the biggest risk in \
+  it, written for its author. The review opens with the count of findings on its \
+  own, so do not count them, and what you checked goes in validation, not here.
   - comments: one per finding on a line of the change, each with path (from the \
   repository root), line (in the new file, or for a removed line in the old file with \
   side "old"), body, and severity: high (a bug, data loss, a security problem or a \
@@ -53,6 +54,12 @@ defmodule HalC2Plugins.CodeReview do
   missing test, or a cost every caller pays: should be fixed), or low (a nit: worth \
   fixing, never blocking). Where the fix is a mechanical replacement of the line, \
   add suggestion with the replacement text.
+  - validation: what you checked of this change. ran: each command you ran and \
+  its result. notRun: each check the change calls for that you did not run, and \
+  why. blocked: each check this machine kept you from running, such as a missing \
+  tool or credential or a 401, and the error: the user fixes those on the machine. \
+  Leave out the standing rules you followed, such as what REVIEW.md tells you not \
+  to run or that you touched no shared environment.
 
   One comment per root cause, not per line it touches. Do not repeat a finding \
   already raised in the existing comments or your previous review unless it is \
@@ -196,7 +203,7 @@ defmodule HalC2Plugins.CodeReview do
           %{
             "name" => @tool,
             "description" =>
-              "Report your code review of the pull request this thread reviews: a verdict, a summary, and comments on lines of the change. Nobody sees the review until you report it.",
+              "Report your code review of the pull request this thread reviews: a verdict, a summary, comments on lines of the change, and what you checked. Nobody sees the review until you report it.",
             "inputSchema" => %{
               "type" => "object",
               "required" => ["verdict", "summary"],
@@ -220,6 +227,14 @@ defmodule HalC2Plugins.CodeReview do
                       "suggestion" => %{"type" => "string"}
                     }
                   }
+                },
+                "validation" => %{
+                  "type" => "object",
+                  "properties" => %{
+                    "ran" => entries_schema("command", "result"),
+                    "notRun" => entries_schema("check", "reason"),
+                    "blocked" => entries_schema("check", "error")
+                  }
                 }
               }
             }
@@ -232,6 +247,17 @@ defmodule HalC2Plugins.CodeReview do
   end
 
   def agent_tools(_context), do: []
+
+  defp entries_schema(name, value) do
+    %{
+      "type" => "array",
+      "items" => %{
+        "type" => "object",
+        "required" => [name, value],
+        "properties" => %{name => %{"type" => "string"}, value => %{"type" => "string"}}
+      }
+    }
+  end
 
   @impl HalC2.Plugins.Extension
   def call_agent_tool(@tool, arguments, %{thread_id: thread_id}) do
@@ -453,6 +479,8 @@ defmodule HalC2Plugins.CodeReview do
             "verdict" => findings.verdict,
             "summary" => findings.summary,
             "comments" => findings.comments,
+            "general" => findings.general,
+            "validation" => findings.validation,
             "finishedAt" => now(),
             "error" => nil,
             "publishError" => nil
@@ -997,6 +1025,8 @@ defmodule HalC2Plugins.CodeReview do
         "verdict" => nil,
         "summary" => nil,
         "comments" => [],
+        "general" => [],
+        "validation" => nil,
         "error" => nil,
         "publishError" => nil,
         "changed" => false
@@ -1379,6 +1409,7 @@ defmodule HalC2Plugins.CodeReview do
     verdict = arguments["verdict"]
     summary = String.trim(arguments["summary"] || "")
     comments = arguments["comments"] || []
+    validation = validation(arguments["validation"])
 
     cond do
       verdict not in @verdicts ->
@@ -1386,6 +1417,9 @@ defmodule HalC2Plugins.CodeReview do
 
       not is_list(comments) or not Enum.all?(comments, &comment?/1) ->
         {:error, "each comment needs a path, a line number and a body."}
+
+      match?({:error, _}, validation) ->
+        validation
 
       true ->
         lines =
@@ -1426,7 +1460,15 @@ defmodule HalC2Plugins.CodeReview do
         # The pull request takes a review that says nothing only as an approval.
         if verdict != "approve" and summary == "" and placed == [],
           do: {:error, "summary must say what the review found when no comment is on a line of the change."},
-          else: {:ok, %{verdict: verdict, summary: summary, comments: placed, general: general}}
+          else:
+            {:ok,
+             %{
+               verdict: verdict,
+               summary: summary,
+               comments: placed,
+               general: Enum.map(general, &Map.take(&1, ~w(path line severity))),
+               validation: validation
+             }}
     end
   end
 
@@ -1434,6 +1476,35 @@ defmodule HalC2Plugins.CodeReview do
     do: is_binary(path) and is_integer(line) and line > 0 and is_binary(body) and String.trim(body) != ""
 
   defp comment?(_), do: false
+
+  @validation [{"ran", "command", "result"}, {"notRun", "check", "reason"}, {"blocked", "check", "error"}]
+
+  # What the agent checked, each entry on one line, or nil when it says nothing.
+  defp validation(nil), do: nil
+
+  defp validation(given) when is_map(given) do
+    Enum.reduce_while(@validation, %{}, fn {list, name, value}, acc ->
+      entries = given[list] || []
+
+      if is_list(entries) and Enum.all?(entries, &entry?(&1, name, value)) do
+        lines = Enum.map(entries, &%{name => one_line(&1[name]), value => one_line(&1[value])})
+        {:cont, Map.put(acc, list, lines)}
+      else
+        {:halt, {:error, "each validation.#{list} entry needs a #{name} and a #{value}."}}
+      end
+    end)
+    |> case do
+      {:error, _} = error -> error
+      lists -> if Enum.all?(Map.values(lists), &(&1 == [])), do: nil, else: lists
+    end
+  end
+
+  defp validation(_), do: {:error, "validation must be an object with ran, notRun and blocked."}
+
+  defp one_line(text), do: text |> String.split() |> Enum.join(" ")
+
+  defp entry?(entry, name, value),
+    do: is_map(entry) and Enum.all?([name, value], &(is_binary(entry[&1]) and String.trim(entry[&1]) != ""))
 
   # A suggested replacement rides in the comment as a suggestion block, which
   # the host only accepts for a line of the new file; on an old line it is
@@ -1466,15 +1537,15 @@ defmodule HalC2Plugins.CodeReview do
       review["verdict"] != "comment" and (settings["verdictAsComment"] == true or not may_give?(review))
 
     body =
-      if as_comment,
-        do: String.trim("#{verdict_line(review["verdict"])}\n\n#{review["summary"]}"),
-        else: review["summary"]
-
-    body =
-      case findings_index(review["comments"] || []) do
-        nil -> body
-        index -> String.trim("#{body}\n\n#{index}")
-      end
+      [
+        as_comment && verdict_line(review["verdict"]),
+        headline(review),
+        review["summary"],
+        validation_text(review["validation"]),
+        findings_index(review["comments"] || [])
+      ]
+      |> Enum.reject(&(&1 in [nil, false, ""]))
+      |> Enum.join("\n\n")
 
     # The marker says which reviews under the user's own login are this
     # plugin's, and of which commit.
@@ -1548,6 +1619,67 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  # The review's first line, from its findings as they stand: the comments the
+  # user kept and those kept in the summary. Reviews saved before `general` was
+  # kept count only their line comments.
+  defp headline(review) do
+    findings =
+      Enum.reject(review["comments"] || [], & &1["dismissed"]) ++ (review["general"] || [])
+
+    case length(findings) do
+      0 ->
+        "No findings."
+
+      count ->
+        severities = Enum.map(findings, &severity(&1["severity"]))
+
+        by_severity =
+          severities
+          |> Enum.frequencies()
+          |> Enum.sort_by(fn {severity, _} -> Enum.find_index(@severities, &(&1 == severity)) || 3 end)
+          |> Enum.map(fn {severity, n} -> "#{n} #{severity || "unrated"}" end)
+
+        noun = if count == 1, do: "finding", else: "findings"
+
+        if Enum.all?(severities, &is_nil/1),
+          do: "#{count} #{noun}.",
+          else: "#{count} #{noun}: #{Enum.join(by_severity, ", ")}."
+    end
+  end
+
+  # What the agent checked: what it did not run and what the machine kept it from
+  # running in plain view, what it ran folded away.
+  defp validation_text(nil), do: nil
+
+  defp validation_text(validation) do
+    not_run = for e <- validation["notRun"] || [], do: "- #{e["check"]}: #{e["reason"]}"
+    blocked = for e <- validation["blocked"] || [], do: "- #{e["check"]}: #{e["error"]}"
+    ran = for e <- validation["ran"] || [], do: "- #{code(e["command"])}: #{e["result"]}"
+
+    [
+      not_run != [] && "**Not run**\n\n" <> Enum.join(not_run, "\n"),
+      blocked != [] &&
+        "**Blocked on the reviewing machine** (a setup problem there, not in this change)\n\n" <>
+          Enum.join(blocked, "\n"),
+      ran != [] &&
+        "<details><summary>Ran #{length(ran)} #{if length(ran) == 1, do: "check", else: "checks"}</summary>\n\n" <>
+          Enum.join(ran, "\n") <> "\n\n</details>"
+    ]
+    |> Enum.reject(&(&1 == false))
+    |> case do
+      [] -> nil
+      parts -> Enum.join(parts, "\n\n")
+    end
+  end
+
+  # A command as inline code, fenced past any backticks in it.
+  defp code(text) do
+    longest = ~r/`+/ |> Regex.scan(text) |> Enum.map(&String.length(hd(&1))) |> Enum.max(fn -> 0 end)
+    fence = String.duplicate("`", longest + 1)
+    pad = if String.contains?(text, "`"), do: " ", else: ""
+    "#{fence}#{pad}#{text}#{pad}#{fence}"
+  end
+
   defp verdict_line("approve"), do: "**Approved**"
   defp verdict_line("request-changes"), do: "**Changes requested**"
   defp verdict_line(_), do: ""
@@ -1590,7 +1722,10 @@ defmodule HalC2Plugins.CodeReview do
         state.reviews
         |> Map.values()
         |> Enum.sort_by(&{Enum.find_index(@order, fn s -> s == &1["status"] end), &1["repository"], -&1["number"]})
-        |> Enum.map(&Map.drop(&1, ["root"])),
+        |> Enum.map(fn review ->
+          review = Map.drop(review, ["root"])
+          if review["verdict"], do: Map.put(review, "headline", headline(review)), else: review
+        end),
       "problem" =>
         case Enum.reject(
                [state.problem, paused?(state) && state.paused_reason],

@@ -6,7 +6,7 @@ import HalC2.Shell
 import HalC2.Bricks
 
 // The Reviews page: the reviews of every MC that runs code-review, by state, and
-// the one picked with its verdict, summary and comments, and what can be done
+// the one picked with its verdict, summary, checks and comments, and what can be done
 // with it. Follows each MC's `reviews` topic.
 Item {
     id: page
@@ -570,6 +570,41 @@ Item {
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
 
+                    // A check the machine kept the agent from running is the machine's
+                    // to fix, not a finding: it is shown apart from the verdict.
+                    Rectangle {
+                        objectName: "codeReviewBlocked"
+                        Layout.fillWidth: true
+                        visible: (findings.review?.validation?.blocked ?? []).length > 0
+                        implicitHeight: blockedText.implicitHeight + 16
+                        radius: Math.min(Theme.radius, 8)
+                        color: "transparent"
+                        border.color: page.warningColor
+
+                        Text {
+                            id: blockedText
+
+                            objectName: "codeReviewBlockedText"
+                            anchors.fill: parent
+                            anchors.margins: 8
+                            text: qsTr("The agent could not run these on the MC's machine. Fix them there and review again:") + "\n" + (findings.review?.validation?.blocked ?? []).map(entry => "• " + entry.check + ": " + entry.error).join("\n")
+                            color: page.warningColor
+                            wrapMode: Text.Wrap
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                        }
+                    }
+
+                    Text {
+                        objectName: "codeReviewHeadline"
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: findings.review?.headline ?? ""
+                        color: page.foreground
+                        wrapMode: Text.Wrap
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                        font.weight: Font.DemiBold
+                    }
+
                     TextEdit {
                         objectName: "codeReviewSummary"
                         Layout.fillWidth: true
@@ -582,6 +617,40 @@ Item {
                         wrapMode: TextEdit.Wrap
                         font.pixelSize: Math.round(13 * Theme.fontScale)
                         onLinkActivated: link => Qt.openUrlExternally(link)
+                    }
+
+                    Repeater {
+                        model: [
+                            { name: "notRun", title: qsTr("Not run"), lines: (findings.review?.validation?.notRun ?? []).map(entry => entry.check + ": " + entry.reason) },
+                            { name: "ran", title: qsTr("Ran"), lines: (findings.review?.validation?.ran ?? []).map(entry => entry.command + ": " + entry.result) }
+                        ].filter(section => section.lines.length > 0)
+
+                        delegate: ColumnLayout {
+                            id: section
+
+                            required property var modelData
+
+                            objectName: "codeReviewValidation:" + modelData.name
+                            Layout.fillWidth: true
+                            spacing: 4
+
+                            Text {
+                                text: section.modelData.title
+                                color: page.muted
+                                font.pixelSize: Math.round(11 * Theme.fontScale)
+                                font.weight: Font.Medium
+                                font.capitalization: Font.AllUppercase
+                            }
+
+                            Text {
+                                objectName: "codeReviewValidationLines:" + section.modelData.name
+                                Layout.fillWidth: true
+                                text: section.modelData.lines.map(line => "• " + line).join("\n")
+                                color: page.foreground
+                                wrapMode: Text.Wrap
+                                font.pixelSize: Math.round(12 * Theme.fontScale)
+                            }
+                        }
                     }
 
                     Text {

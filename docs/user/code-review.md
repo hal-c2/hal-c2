@@ -62,8 +62,16 @@ your changes to it. Each repository can have instructions of its own, and with
 
 ## What happens with the findings
 
-The agent reports a verdict, a summary and comments on lines. A comment on a
-line the pull request does not change goes into the summary instead. Each
+The agent reports a verdict, a summary, comments on lines, and what it checked.
+A comment on a line the pull request does not change goes into the summary
+instead. A posted review opens with the count of its findings, such as "No
+findings." or "2 findings: 1 high, 1 medium", counting only the comments you
+kept. What the agent checked follows the summary: what it left out and why, and
+what this machine kept it from running, are listed in plain view, and the
+commands it ran are folded away. A check this machine kept it from running,
+such as a missing tool or credential, is a setup problem: the Reviews page
+shows it apart from the verdict, so you can fix it on the machine and review
+again. Each
 comment can say how much it matters (high, medium or low, marked 🔴 🟡 🔵 when posted, with the findings listed at a glance at the end of the review) and carry a
 suggested fix, which is posted as a GitHub suggestion you can apply from the
 pull request. The agent also reads the pull request's description and the
