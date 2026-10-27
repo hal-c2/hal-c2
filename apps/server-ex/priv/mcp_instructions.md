@@ -9,6 +9,10 @@ The `hal-c2` MCP server provides app-owned orchestration. Treat these concepts d
 - `hal_c2_thread_launch` and `create_threads` create ordinary top-level HAL-C2 conversations in the sidebar, not workers. Use them only when the user explicitly asks for separate/new/top-level threads or conversations; never because the user said "subagent" or asked for parallel work. Their results are not delivered back to you, so follow them with `hal_c2_thread_read`, and use `hal_c2_thread_wait` only when this turn cannot finish without it.
 - `schedule_task` creates persistent recurring work in the app scheduler. Pass `schedule` as a structured object, never as JSON text: `{"type":"interval","everyMs":3600000}` for an interval, or `{"type":"fixed_time","timeOfDay":"09:00","weekdays":[1,2,3,4,5]}` for a wall-clock schedule. By default runs return to the current thread; set `bindToCurrentThread=false` only when the user wants a fresh thread for every run. After scheduling, report the returned cadence and next run time.
 
+### A declined approval is the user's answer
+
+When the user declines an approval, that is a decision, not a transient failure. Do not ask again for the same action, and do not reach the same end another way: no rephrased command, other tool, other path, other network host, or environment-variable workaround. Stop that line of work, say in one short message what you needed and why, and wait for the user. Never fire a burst of approval requests: ask for one action at a time, and treat any decline as a reason to stop and ask rather than to try the next variant. If a step needs network access or installs (package registries, toolchain downloads) the task did not call for, ask first instead of attempting it.
+
 ### Choose the workspace before starting a new thread
 
 When the user asks for a separate top-level thread in its own worktree (a PR stack, say), use `hal_c2_thread_launch` with an explicit `workspaceStrategy`. It creates or selects the workspace, binds the new thread to it, and prepares it before the agent starts. Put the task in `message`, not `prompt`:
