@@ -697,7 +697,8 @@ Feature: Antigravity
     When the MC checks Antigravity
     Then Antigravity is reported as "<status>" for this HAL-C2 release
 
+    # Statuses are the MC's (see the Claude Code outline); no range names a version yet.
     Examples:
       | version | status    |
-      | 1.1.1   | supported |
-      | 1.2.0   | unknown   |
+      | 1.1.1   | unknown |
+      | 1.2.0   | unknown |

@@ -870,6 +870,8 @@ Feature: Claude
       | under ".local/share/claude" of the user's home | Claude's own "claude update"               |
       | in an npm global install                       | npm installing "@anthropic-ai/claude-code" |
 
+  # Statuses are the MC's: broken, unsupported, graceful (shown as limited) or unknown.
+  # No range names a version until the policy adds one, so the in-range rows are unknown.
   @backlog
   Scenario Outline: The version Claude Code runs decides whether this HAL-C2 release supports it
     Given Claude Code version "<version>" is installed
@@ -879,6 +881,6 @@ Feature: Claude
     Examples:
       | version | status      |
       | 2.1.110 | unsupported |
-      | 2.1.111 | limited     |
-      | 2.1.279 | limited     |
-      | 2.1.280 | supported   |
+      | 2.1.111 | graceful    |
+      | 2.1.279 | graceful    |
+      | 2.1.280 | unknown     |

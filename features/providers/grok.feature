@@ -627,7 +627,8 @@ Feature: Grok
     When the MC checks Grok
     Then Grok is reported as "<status>" for this HAL-C2 release
 
+    # Statuses are the MC's (see the Claude Code outline); no range names a version yet.
     Examples:
-      | version | status    |
-      | 1.0.12  | unknown   |
-      | 1.0.13  | supported |
+      | version | status  |
+      | 1.0.12  | unknown |
+      | 1.0.13  | unknown |

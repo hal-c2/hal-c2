@@ -811,6 +811,8 @@ Feature: Codex
     When the MC checks Codex
     Then Codex's status is reported from the manifest the MC already has
 
+  # Statuses are the MC's: broken, unsupported, graceful (shown as limited) or unknown.
+  # No range names a version until the policy adds one, so the in-range rows are unknown.
   @backlog
   Scenario Outline: The version Codex runs decides whether this HAL-C2 release supports it
     Given Codex version "<version>" is installed
@@ -818,7 +820,7 @@ Feature: Codex
     Then Codex is reported as "<status>" for this HAL-C2 release
 
     Examples:
-      | version         | status    |
-      | 0.128.0         | broken    |
-      | 0.129.0         | supported |
-      | 0.129.0-alpha.1 | unknown   |
+      | version         | status  |
+      | 0.128.0         | broken  |
+      | 0.129.0         | unknown |
+      | 0.129.0-alpha.1 | unknown |
