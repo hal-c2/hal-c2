@@ -415,11 +415,8 @@ impl FakeMc {
 
     /// Answers every GET whose target starts with `prefix` on the I/O
     /// thread, never waiting for [`FakeMc::pump`]: what the shell fetches
-    /// for an Image. Ljós's `TestWindow::advance` blocks the scenario's
-    /// thread until a picture under way has come (TODO(ljos#147): it does
-    /// not serve the scenario's fakes meanwhile), so a picture served from
-    /// the pump would stall it whenever the clock moves before the request
-    /// is pumped.
+    /// for an Image. Ljós's `TestWindow::advance` waits for a picture under
+    /// way, and the scenario's thread pumps nothing meanwhile.
     pub fn on_download(
         &mut self,
         prefix: &str,

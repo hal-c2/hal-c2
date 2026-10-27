@@ -37,7 +37,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Instant;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use gherkin::{Scenario, Selection};
 use harness::{Failure, Steps};
@@ -49,6 +50,28 @@ const RATCHET_HEADER: &str = "\
 # passing; `-- --raise` adds the ones that newly pass. Never remove a line to
 # make a run pass: fix the regression.
 ";
+
+/// Longer than any scenario takes: one that runs past it is stuck in a turn
+/// that never returns, which nothing on its own thread can interrupt.
+const HANG: Duration = Duration::from_secs(120);
+
+/// Ends the run, naming `id`, unless what it returns is dropped within
+/// [`HANG`]: a stuck scenario fails the run with its name instead of
+/// running until whatever runs the tests gives up.
+fn watchdog(id: &str) -> mpsc::Sender<()> {
+    let (done, finished) = mpsc::channel::<()>();
+    let id = id.to_owned();
+    std::thread::spawn(move || {
+        if finished.recv_timeout(HANG) == Err(mpsc::RecvTimeoutError::Timeout) {
+            println!(
+                "HANG  {id}\n        still running after {}s",
+                HANG.as_secs()
+            );
+            std::process::exit(1);
+        }
+    });
+    done
+}
 
 struct Args {
     globs: Vec<String>,
@@ -275,7 +298,11 @@ fn main() -> ExitCode {
             .unwrap_or_default()
             .to_owned();
         let counts = domains.entry(domain).or_default();
-        match run(&steps, scenario) {
+        let verdict = {
+            let _watch = watchdog(id);
+            run(&steps, scenario)
+        };
+        match verdict {
             Verdict::Pass => {
                 counts[0] += 1;
                 println!("PASS  {id}");
