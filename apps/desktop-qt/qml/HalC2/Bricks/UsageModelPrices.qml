@@ -70,6 +70,7 @@ Rectangle {
                 Label {
                     Layout.fillWidth: true
                     text: target.modelData.label
+                    wrapMode: Text.Wrap
                     color: dialog.foreground
                     font.pixelSize: Math.round(13 * Theme.fontScale)
                 }

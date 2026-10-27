@@ -116,6 +116,7 @@ Rectangle {
                         text: stage.modelData.label
                         color: stage.modelData.status === "pending" || stage.modelData.status === "skipped" ? card.muted : card.foreground
                         font.pixelSize: Math.round(12 * Theme.fontScale)
+                        elide: Text.ElideRight
                     }
                     Label {
                         text: stage.modelData.detail.length > 0 ? stage.modelData.detail : stage.modelData.status

@@ -234,20 +234,24 @@ Rectangle {
                 // iOS streams its portrait framebuffer while held sideways:
                 // the picture takes the turned box and turns into place.
                 DeviceScreen {
+                    id: deviceScreen
                     objectName: "deviceScreen"
                     anchors.centerIn: parent
                     width: stage.sideways ? frame.height : frame.width
                     height: stage.sideways ? frame.width : frame.height
                     rotation: stage.turn
                     stream: root.screen ? root.stream : null
-                    visible: hasFrame
+                    visible: deviceScreen.hasFrame
                 }
 
+                // The pointer's touches on the device. To assistive technology
+                // this is the stage, which is named and takes the keys.
                 MouseArea {
                     objectName: "deviceTouch"
                     anchors.fill: parent
                     enabled: root.stream !== null && root.stream.inputConnected
                     preventStealing: true
+                    Accessible.ignored: true
 
                     // Where the touch last was: a cancelled touch ends there.
                     property real lastX: 0
@@ -259,6 +263,7 @@ Rectangle {
                         root.stream.touch(phase, lastX, lastY);
                     }
 
+                    // ljos-allow(focus-pointer-only): a touch on the device's screen; the keyboard drives the device through the stage's Keys handler
                     onPressed: mouse => {
                         stage.forceActiveFocus();
                         send("begin", mouse);

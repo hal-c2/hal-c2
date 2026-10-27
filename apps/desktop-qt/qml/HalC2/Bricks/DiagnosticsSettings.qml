@@ -221,6 +221,7 @@ SettingsPage {
                             required property var modelData
                             Layout.preferredWidth: 80
                             text: modelData
+                            elide: Text.ElideRight
                             color: diagnostics.foreground
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                         }

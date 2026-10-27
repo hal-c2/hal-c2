@@ -60,6 +60,7 @@ Dialog {
     contentItem: ColumnLayout {
         spacing: 10
 
+        // ljos-allow(text-unbounded-dynamic): false positive, ljos#144 (Caption wraps)
         Caption {
             Layout.fillWidth: true
             text: qsTr("Choose an icon, emoji, monogram or image for %1.").arg(dialog.picker?.name ?? "")
@@ -139,6 +140,7 @@ Dialog {
             Layout.fillWidth: true
             visible: dialog.mode === "emoji"
             placeholderText: qsTr("Emoji")
+            Accessible.name: qsTr("Emoji")
             text: dialog.picker?.emoji ?? ""
             onTextEdited: dialog.set("emoji", text)
         }
@@ -152,6 +154,7 @@ Dialog {
                 objectName: "projectIconLetters"
                 Layout.preferredWidth: 96
                 placeholderText: qsTr("AB")
+                Accessible.name: qsTr("Letters")
                 text: dialog.picker?.letters ?? ""
                 onTextEdited: dialog.set("letters", text)
             }

@@ -381,6 +381,8 @@ Rectangle {
                             sourceSize: Qt.size(20, 20)
                             fillMode: Image.PreserveAspectFit
                             asynchronous: true
+                            // The agent's name is beside it.
+                            Accessible.ignored: true
                         }
 
                         ColumnLayout {
@@ -1447,6 +1449,7 @@ Rectangle {
                     text: page.model ? page.model.title : ""
                     color: page.foreground
                     font.pixelSize: Math.round(14 * Theme.fontScale)
+                    wrapMode: Text.Wrap
                     font.weight: Font.DemiBold
                 }
 
