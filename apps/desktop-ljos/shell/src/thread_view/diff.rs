@@ -654,7 +654,6 @@ fn pair_lines(file: &mut File) {
 
 /// What a row has for a role that is not its kind's: the role type's empty
 /// value, so a delegate's typed required property gets one.
-// TODO(ljos#143): undefined would do once it no longer stops the delegate.
 fn blank(role: &str) -> Value {
     match role {
         "file" | "additions" | "deletions" | "oldLine" | "newLine" => Value::Int(0),
