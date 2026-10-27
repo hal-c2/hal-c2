@@ -240,6 +240,8 @@ Popup {
 
                 width: ListView.view.width
                 implicitHeight: 34
+                // A row that cannot run here is faded and read as unavailable.
+                enabled: row.runnable
                 opacity: row.runnable ? 1 : 0.5
                 radius: Math.min(Theme.radius, 8)
                 color: index === PaletteModel.highlighted ? Theme.palette.color("accentSurface", "#2a2a30") : "transparent"
