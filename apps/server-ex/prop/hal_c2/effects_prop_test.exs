@@ -129,6 +129,71 @@ defmodule HalC2.EffectsPropTest do
     end
   end
 
+  property "a boot keeps a thread's newest settled failures, none older than a week",
+    numtests: HalC2.Prop.numtests(25) do
+    forall settled <-
+             list(
+               {oneof([exactly("failed"), exactly("cancelled")]),
+                oneof(Enum.map([0, 1, 6, 8, 10], &exactly/1))}
+             ) do
+      trap_exit do
+        _home = services()
+        sup = Process.get({HalC2.Prop, :services})
+        :ok = Supervisor.terminate_child(sup, HalC2.Orchestration.Effects)
+        now = DateTime.utc_now()
+
+        fabricated =
+          settled
+          |> Enum.with_index(1)
+          |> Enum.map(fn {{status, days}, index} ->
+            at =
+              now
+              |> DateTime.add(-days, :day)
+              |> DateTime.add(-index, :minute)
+              |> DateTime.truncate(:millisecond)
+
+            record = %{
+              "id" => "effect:settled-#{index}",
+              "threadId" => "t1",
+              "type" => "terminal.cleanup",
+              "lane" => "provider",
+              "status" => status,
+              "attempts" => 1,
+              "delays" => [],
+              "error" => "earlier",
+              "args" => %{},
+              "createdAt" => DateTime.to_iso8601(at),
+              "updatedAt" => DateTime.to_iso8601(at)
+            }
+
+            HalC2.Store.put_meta("effect:t1:#{record["id"]}", JSON.encode!(record))
+            record
+          end)
+
+        {:ok, _} = Supervisor.restart_child(sup, HalC2.Orchestration.Effects)
+        # Through the worker, so its boot sweep has run before rows are read.
+        :ok = Effects.drain(nil, 30_000)
+
+        want =
+          fabricated
+          |> Enum.sort_by(& &1["updatedAt"], :desc)
+          |> Enum.take(100)
+          |> Enum.filter(fn record ->
+            {:ok, at, _} = DateTime.from_iso8601(record["updatedAt"])
+            DateTime.diff(now, at, :millisecond) <= 7 * 24 * 60 * 60 * 1000
+          end)
+          |> MapSet.new(& &1["id"])
+
+        kept = MapSet.new(Effects.effects("t1"), & &1["id"])
+        :ok = Effects.drop_thread("t1")
+        dropped = Effects.effects("t1") == []
+
+        HalC2.Prop.stop_services()
+        kept == want and dropped
+      end
+    end
+  end
+
   defp collect_executed(acc) do
     receive do
       {:executed, id} -> collect_executed([id | acc])

@@ -376,7 +376,12 @@ defmodule HalC2.Orchestration.Effects do
         |> Enum.filter(&(updated_ms(&1) >= cutoff))
       end)
 
-    for record <- terminal -- kept, do: forget(record)
+    kept_ids = MapSet.new(kept, & &1["id"])
+
+    for record <- terminal,
+        not MapSet.member?(kept_ids, record["id"]),
+        do: forget(record)
+
     live ++ kept
   end
 
