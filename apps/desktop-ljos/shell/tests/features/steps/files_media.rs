@@ -22,12 +22,41 @@ use crate::{expect, fail};
 
 fn describe_media(world: &World) -> String {
     format!(
-        "the viewer has \"{}\" ({} {}, \"{}\") from {}",
+        "the viewer has \"{}\" ({} {}, \"{}\") from {}; {}",
         open_path(world),
         text_prop(world, "mediaKind"),
         file_status(world),
         text_prop(world, "fileProblem"),
-        text_prop(world, "mediaUrl")
+        text_prop(world, "mediaUrl"),
+        image_state(world)
+    )
+}
+
+/// The panel's Image itself: its status (QQuickImageBase's) and progress,
+/// and what it loads.
+fn image_state(world: &World) -> String {
+    let Some(brick) = world.peek_part::<brick::Shown>().and_then(|shown| shown.0) else {
+        return "no panel".into();
+    };
+    let Ok(Some(image)) = brick.find(world, "fileImage") else {
+        return "no image".into();
+    };
+    let status = match brick.read(world, image, "status") {
+        Value::Int(0) => "Null".to_owned(),
+        Value::Int(1) => "Ready".to_owned(),
+        Value::Int(2) => "Loading".to_owned(),
+        Value::Int(3) => "Error".to_owned(),
+        other => format!("{other:?}"),
+    };
+    format!(
+        "its image is {status} at {} of {}{}",
+        brick.text_of(world, image, "progress"),
+        brick.text_of(world, image, "source"),
+        if brick.flag(world, image, "visible") {
+            ""
+        } else {
+            ", hidden"
+        }
     )
 }
 
@@ -89,7 +118,10 @@ pub fn register(steps: &mut Steps) {
             }
             let path = open_path(world);
             let image = loaded_image(world)?;
-            let downloaded = fake_files(&mut world.mc).downloaded.contains(&path);
+            let downloaded = fake_files(&mut world.mc)
+                .downloads()
+                .downloaded
+                .contains(&path);
             expect!(
                 source_is_media(world, image) && downloaded,
                 "{}",
@@ -112,6 +144,7 @@ pub fn register(steps: &mut Steps) {
     steps.step(&format!("loading {Q} fails once"), |world, c, _| {
         ensure_viewer_file(world, &c[0]);
         fake_files(&mut world.mc)
+            .downloads()
             .load_fails_once
             .insert(c[0].clone());
         Ok(())
@@ -149,7 +182,10 @@ pub fn register(steps: &mut Steps) {
             },
         )?;
         let image = loaded_image(world)?;
-        let downloaded = fake_files(&mut world.mc).downloaded.contains(&c[0]);
+        let downloaded = fake_files(&mut world.mc)
+            .downloads()
+            .downloaded
+            .contains(&c[0]);
         expect!(
             source_is_media(world, image) && downloaded,
             "{}",

@@ -9,7 +9,9 @@
 //! moved on a thread of its own, and everything the MC decides runs on the
 //! scenario's thread, in [`FakeMc::pump`], which the world calls while it
 //! waits. A handler may fail the step it runs under: the world reports the
-//! first failure.
+//! first failure. Downloads ([`FakeMc::on_download`]) are the exception: the
+//! I/O thread answers them itself, as the scenario's thread may be blocked
+//! waiting for them.
 //!
 //! The shell's rows carry versions as the MC's do (lib/hal_c2/shell.ex): each
 //! MC's rows are at [`epoch`, rev], and a `sub` whose `have` names the version
@@ -76,6 +78,17 @@ pub type HttpHandler = Rc<dyn Fn(&mut FakeMc, &Value, Respond) -> Outcome>;
 /// handshake: the handler gets the connection with the request unread (`head`
 /// is its request line and headers) and answers it itself.
 pub type RawHandler = Rc<dyn Fn(&mut FakeMc, std::net::TcpStream, &str) -> Outcome>;
+/// A GET under a prefix (`/api/assets/`), by its target, answered on the
+/// I/O thread.
+pub type DownloadHandler = Arc<dyn Fn(&str) -> Download + Send + Sync>;
+
+/// What a download is answered with.
+pub struct Download {
+    pub status: u16,
+    pub content_type: &'static str,
+    pub body: Vec<u8>,
+}
+
 /// What an accepted command does to the MC's rows (the real MC's
 /// projection), run before it is answered.
 pub type Effect = Rc<dyn Fn(&mut FakeMc, &Value)>;
@@ -138,6 +151,7 @@ struct Io {
     sockets: Mutex<HashMap<u64, UnboundedSender<Control>>>,
     /// The prefixes raw handlers take, read as a request arrives.
     raw_prefixes: Mutex<Vec<String>>,
+    downloads: Mutex<Vec<(String, DownloadHandler)>>,
     next_socket: Mutex<u64>,
 }
 
@@ -248,6 +262,7 @@ impl FakeMc {
             signal,
             sockets: Mutex::default(),
             raw_prefixes: Mutex::default(),
+            downloads: Mutex::default(),
             next_socket: Mutex::new(1),
         });
         let (listen, listening) = unbounded_channel();
@@ -396,6 +411,23 @@ impl FakeMc {
             .unwrap_or_else(|e| e.into_inner());
         prefixes.retain(|p| p != prefix);
         prefixes.push(prefix.to_owned());
+    }
+
+    /// Answers every GET whose target starts with `prefix` on the I/O
+    /// thread, never waiting for [`FakeMc::pump`]: what the shell fetches
+    /// for an Image. Ljós's `TestWindow::advance` blocks the scenario's
+    /// thread until a picture under way has come (TODO(ljos#147): it does
+    /// not serve the scenario's fakes meanwhile), so a picture served from
+    /// the pump would stall it whenever the clock moves before the request
+    /// is pumped.
+    pub fn on_download(
+        &mut self,
+        prefix: &str,
+        handler: impl Fn(&str) -> Download + Send + Sync + 'static,
+    ) {
+        let mut downloads = self.io.downloads.lock().unwrap_or_else(|e| e.into_inner());
+        downloads.retain(|(p, _)| p != prefix);
+        downloads.push((prefix.to_owned(), Arc::new(handler)));
     }
 
     /// Hands a call an exact handler does not take to its namespace's
@@ -1123,6 +1155,30 @@ async fn connection(mut stream: TcpStream, port: u16, io: Arc<Io>) {
         .nth(1)
         .unwrap_or_default()
         .to_owned();
+    let download = io
+        .downloads
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(p, _)| target.starts_with(p.as_str()))
+        .map(|(_, handler)| handler.clone());
+    if let Some(handler) = download {
+        read_request(&mut stream).await;
+        let answer = handler(&target);
+        let head = format!(
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            answer.status,
+            if answer.status < 300 { "OK" } else { "Error" },
+            answer.content_type,
+            answer.body.len()
+        );
+        let _ = stream.write_all(head.as_bytes()).await;
+        let _ = stream.write_all(&answer.body).await;
+        let _ = stream.shutdown().await;
+        // What waits on the picture may want to look again.
+        io.signal.notify();
+        return;
+    }
     let prefixes = io
         .raw_prefixes
         .lock()
