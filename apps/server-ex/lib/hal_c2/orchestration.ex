@@ -339,6 +339,8 @@ defmodule HalC2.Orchestration do
   def dispatch(%{"type" => "run.interrupt", "threadId" => thread_id} = command) do
     with :ok <- interrupt_policy(thread_id, command["runId"]) do
       HalC2.Streams.transact(thread_id, :thread, &{interrupt_request(&1, command), :ok})
+      # Stopping a turn also stops its delegated tasks from waking it later.
+      HalC2.Orchestration.Delegation.stop_wakes(thread_id, command["runId"])
 
       with :ok <- interrupt_any(thread_id, command["runId"]),
            do: {:ok, %{"sequence" => sequence(thread_id)}}
@@ -566,6 +568,9 @@ defmodule HalC2.Orchestration do
         HalC2.Orchestration.Effects.enqueue(thread_id, "terminal.cleanup", %{})
         HalC2.Orchestration.Effects.enqueue(thread_id, "attachment.cleanup", %{})
       end
+
+      if type == "thread.runtime-mode.set",
+        do: runtime_mode_changed(thread_id, command["runtimeMode"])
 
       # The archived threads are read from the sidebar rows, which a stream writes a
       # moment after its events: this one is in place before the reply, so a client
@@ -1841,6 +1846,17 @@ defmodule HalC2.Orchestration do
 
     instance = run && (run["providerInstanceId"] || run["modelSelection"]["instanceId"])
     if run["status"] in @active_statuses and is_binary(instance), do: runtime(instance)
+  end
+
+  # The thread's access changed. The next turn starts with it from the thread record; a
+  # runtime that can change a running turn's access (`set_runtime_mode/2`, which must
+  # not block) is told now, so the user's switch is not ignored until the turn ends.
+  defp runtime_mode_changed(thread_id, mode) do
+    runtime = active_runtime(thread_id, nil)
+
+    if runtime && Code.ensure_loaded?(runtime) &&
+         function_exported?(runtime, :set_runtime_mode, 2),
+       do: runtime.set_runtime_mode(thread_id, mode)
   end
 
   @doc """

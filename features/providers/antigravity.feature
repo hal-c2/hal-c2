@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/9514 (the sign-in link on stderr)
 #   docs/user/providers-antigravity.md
@@ -689,3 +690,15 @@ Feature: Antigravity
     Given the subagents setting is HAL-C2 workers
     When an Antigravity session is started
     Then Antigravity starts as usual, because it has no switch for its subagents
+
+  @backlog
+  Scenario Outline: Only the pinned Antigravity release is known to work with this HAL-C2 release
+    Given Antigravity version "<version>" is installed
+    When the MC checks Antigravity
+    Then Antigravity is reported as "<status>" for this HAL-C2 release
+
+    # Statuses are the MC's (see the Claude Code outline); no range names a version yet.
+    Examples:
+      | version | status  |
+      | 1.1.1   | unknown |
+      | 1.2.0   | unknown |

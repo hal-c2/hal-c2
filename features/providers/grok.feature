@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   apps/server-ex/lib/hal_c2/acp.ex (grok agent, permission-mode args, supportsTextGeneration)
 #   apps/server-ex/lib/hal_c2/acp/thread_runtime.ex (permission requests, session/cancel, background tasks and subagents)
@@ -619,3 +620,15 @@ Feature: Grok
     Given the subagents setting is HAL-C2 workers
     When a Grok session is started
     Then its task tool is passed as disallowed
+
+  @backlog
+  Scenario Outline: The version Grok runs decides whether this HAL-C2 release supports it
+    Given Grok version "<version>" is installed
+    When the MC checks Grok
+    Then Grok is reported as "<status>" for this HAL-C2 release
+
+    # Statuses are the MC's (see the Claude Code outline); no range names a version yet.
+    Examples:
+      | version | status  |
+      | 1.0.12  | unknown |
+      | 1.0.13  | unknown |

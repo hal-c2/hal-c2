@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-opencode.md
 #   docs/internals/providers.md (OpenCode server per thread, full-access replies once)

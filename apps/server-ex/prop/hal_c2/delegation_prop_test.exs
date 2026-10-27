@@ -25,7 +25,10 @@ defmodule HalC2.DelegationPropTest do
     starts nothing;
   - a child whose worktree is still being prepared is working, and a task whose child
     fails or is cancelled while preparing settles as that, with why, though no turn
-    ever ran in it.
+    ever ran in it;
+  - a task that ended with its delivery still pending waits on a wake already with
+    the caller for its run, never stranded with none in flight, and every wake
+    names each of its tasks once, with the worst of their endings as its outcome.
   """
 
   use ExUnit.Case, async: false
@@ -256,8 +259,61 @@ defmodule HalC2.DelegationPropTest do
   # Every command returns the task before and after it, and the child's stream after.
   def postcondition(_state, {:call, _, call, args}, {before, task, child}) do
     agree?(task) and kept?(before, task) and never_owing?(before, task, child) and
-      as_ended?(before, task, child) and delivered_once?() and
+      as_ended?(before, task, child) and delivered_once?() and pending_has_wake?() and
+      wakes_agree?() and
       expected?(call, args, before, task, child)
+  end
+
+  # A task that ended with its delivery still pending is waiting on a wake already
+  # with the caller (queued or running) for the run that started it; it is never
+  # stranded pending with nothing in flight, which through the caller's owed work
+  # would keep the caller from ever settling.
+  defp pending_has_wake? do
+    state = stream(@parent)
+    messages = StreamState.get(state, "message")
+    runs = StreamState.get(state, "run")
+
+    Enum.all?(StreamState.list(state, "subagent"), fn task ->
+      task["status"] not in @ended or
+        get_in(task, ["completionDelivery", "state"]) != "pending" or
+        Enum.any?(Map.values(messages), fn message ->
+          get_in(message, ["delegatedCompletion", "parentRunId"]) == task["runId"] and
+            (runs[message["runId"]] || %{})["status"] in ~w(queued preparing starting running waiting)
+        end)
+    end)
+  end
+
+  # Every wake names each of its tasks once, no task is in two wakes that ran or
+  # wait, and a wake's outcome is the worst of its tasks' endings.
+  defp wakes_agree? do
+    state = stream(@parent)
+    runs = StreamState.get(state, "run")
+    tasks = StreamState.get(state, "subagent")
+
+    wakes =
+      for message <- StreamState.list(state, "message"),
+          ids = get_in(message, ["delegatedCompletion", "taskIds"]),
+          ids != nil,
+          (runs[message["runId"]] || %{})["status"] != "cancelled" do
+        {message, ids}
+      end
+
+    named = Enum.flat_map(wakes, fn {_message, ids} -> ids end)
+
+    length(named) == length(Enum.uniq(named)) and
+      Enum.all?(wakes, fn {message, ids} ->
+        ids == Enum.uniq(ids) and
+          message["notification"]["outcome"] ==
+            worst(Enum.map(ids, &(tasks[&1] || %{})["status"]))
+      end)
+  end
+
+  defp worst(statuses) do
+    cond do
+      "failed" in statuses -> "failed"
+      Enum.any?(statuses, &(&1 in ["cancelled", "interrupted"])) -> "cancelled"
+      true -> "completed"
+    end
   end
 
   defp agree?(%{"subagent" => s, "node" => n, "item" => i}),
@@ -269,13 +325,19 @@ defmodule HalC2.DelegationPropTest do
   defp never_owing?(before, task, child),
     do: settled?(before) or not settled?(task) or quiet?(child)
 
-  # As the child's last run not rolled back ended, with its last answer in such a run.
+  # As the child's last run not rolled back ended, with its last answer in such a
+  # run, or what a run that left no answer says for itself.
   defp as_ended?(before, task, child) do
     settled?(before) or not settled?(task) or
       (task["subagent"]["status"] == ended_as(child) and
          task["subagent"]["completedAt"] == ended_at(child) and
-         task["subagent"]["result"] == (last_answer(child) || prepared(child)))
+         task["subagent"]["result"] ==
+           (prepared(child) || last_answer(child) || no_answer(ended_as(child))))
   end
+
+  defp no_answer("completed"), do: "Child task completed without an assistant result."
+  defp no_answer("interrupted"), do: "Child task ended with status interrupted."
+  defp no_answer(_status), do: nil
 
   defp delivered_once? do
     results =

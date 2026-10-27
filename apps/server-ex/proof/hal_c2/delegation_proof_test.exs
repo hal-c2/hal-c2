@@ -31,7 +31,8 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation hook(:reporting)" => "report-fail",
       "HalC2.Orchestration.Delegation hook(:settling)" => "report-fail",
       "HalC2.Orchestration.Delegation hook(:expiring)" => "time-out",
-      "HalC2.Orchestration.Delegation hook(:cancelling)" => "cancel"
+      "HalC2.Orchestration.Delegation hook(:cancelling)" => "cancel",
+      "HalC2.Orchestration.Delegation hook(:starting)" => "record"
     },
     abstracts: %{
       "HalC2.Orchestration.Delegation.request/1" => @tool,
@@ -42,6 +43,12 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation.preamble/1" =>
         "the text the child's first message opens with; the model has the launch",
       "HalC2.Orchestration.Delegation.resolve_delivery/1" => @policy,
+      "HalC2.Orchestration.Delegation.acknowledge_child_read/3" =>
+        "reading the child's answer in full resolves its delivery, as resolve_delivery/1 does; no part of how the task ends",
+      "HalC2.Orchestration.Delegation.flush_pending/1" =>
+        "wakes the caller for results that landed while a wake was already with it; with one task no delivery is left pending that way, and its caller finished/3 is covered",
+      "HalC2.Orchestration.Delegation.stop_wakes/2" =>
+        "stopping the caller's turn disposes its tasks' deliveries and cancels a queued wake; disposal is in the model through cancel, and a suppressed wake can only wake less",
       "HalC2.Orchestration.Delegation.accept_delivery/1" =>
         "the provider reads the message that woke the parent; the model ends at the message",
       "HalC2.Orchestration.Recovery.start_link/0" => "starts the process that runs boot",

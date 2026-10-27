@@ -121,7 +121,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
   step "the parent receives {string} once its own run is over", %{args: [text]} = context do
     title = World.current(context)
 
-    assert %{"structuredContent" => %{"status" => "completed", "summary" => nil}} =
+    assert %{"structuredContent" => %{"status" => "completed", "summary" => ^text}} =
              Task.await(context.waiting, 5_000)
 
     assert_result_runs(context, title, text)
@@ -296,6 +296,11 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
 
   step "the agent delegated work to a subagent on the model {string}",
        %{args: [model]} = context do
+    # The model is one this MC offers for Codex (a custom model in settings), so
+    # naming it is asking for an advertised model.
+    context =
+      World.update_settings(context, %{"providers" => %{"codex" => %{"customModels" => [model]}}})
+
     context = World.working_thread(context, World.current(context))
     HalC2.Test.Mc.ensure(HalC2.Mcp)
     result = delegate(context, %{"task" => "answer from gate", "target" => %{"model" => model}})
@@ -541,20 +546,16 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     context
   end
 
+  # Ends the parent's turn as the agent ending it does (a steer it answers), not
+  # as the user stopping it: a stop would also stop the task waking it later.
   defp stop_run(context, run) do
     title = World.current(context)
-
-    {:ok, _} =
-      HalC2.Orchestration.dispatch(%{
-        "type" => "run.interrupt",
-        "threadId" => World.thread_id(context, title),
-        "runId" => run["id"]
-      })
+    World.send_turn(context, title, "say Carrying on")
 
     World.await_thread(
       context,
       title,
-      &(StreamState.get(&1, "run")[run["id"]]["status"] == "interrupted")
+      &(StreamState.get(&1, "run")[run["id"]]["status"] == "completed")
     )
   end
 

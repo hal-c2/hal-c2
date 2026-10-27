@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13286
 #   docs/user/snap-shot.md
 #   docs/internals/linux-snap-shot.md
 #   apps/web/src/components/settings/SnapShotSettings.tsx
@@ -67,6 +68,14 @@ Feature: Snap Shot settings
     Given the desktop app runs on macOS
     When the user finishes setup without changing the shortcut
     Then the shortcut is pressing both Shift keys
+
+  # The Qt desktop captures only on Linux so far; this is the macOS watcher's requirement.
+  @backlog-desktop
+  Scenario: Watching for both Shift keys adds no second app to the Dock
+    Given the desktop app runs on macOS
+    And the shortcut is pressing both Shift keys
+    When the desktop watches for the shortcut
+    Then the Dock lists the desktop app once
 
   Scenario: Recording a new shortcut
     When the user changes the shortcut and presses Ctrl+Shift+2

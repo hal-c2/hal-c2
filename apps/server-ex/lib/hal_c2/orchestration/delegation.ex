@@ -39,6 +39,7 @@ defmodule HalC2.Orchestration.Delegation do
 
     with :ok <- task_given(input["task"]),
          :ok <- if(run && run["providerInstanceId"] == instance, do: :ok, else: not_active()),
+         :new <- repeated(parent, thread, instance, input),
          {:ok, selection} <- target(thread, input["target"]),
          {:ok, runtime} <- mode(thread["runtimeMode"], input["runtimeMode"], :runtime),
          {:ok, interaction} <-
@@ -46,6 +47,8 @@ defmodule HalC2.Orchestration.Delegation do
          {:ok, workspace} <- resolve_workspace(thread, input["workspace"]) do
       spec = %{
         "task" => input["task"],
+        "prompt" => framed(input),
+        "taskId" => request_task_id(thread["id"], input["clientRequestId"]),
         "workspace" => workspace,
         "title" => input["title"],
         "modelSelection" => selection,
@@ -57,7 +60,7 @@ defmodule HalC2.Orchestration.Delegation do
       }
 
       case start(thread, run, spec) do
-        {:ok, task_id} ->
+        {tag, task_id} when tag in [:ok, :existing] ->
           if input["mode"] == "wait",
             do:
               wait(
@@ -85,7 +88,12 @@ defmodule HalC2.Orchestration.Delegation do
 
     with %{} <- thread || {:error, "Thread #{parent_id} was not found."},
          :ok <- task_given(command["task"]),
-         :ok <- if(run && run["status"] in @active, do: :ok, else: not_active()),
+         :ok <-
+           if(run && run["status"] in @active,
+             do: :ok,
+             else: {:error, "parent_not_active", "Parent run #{run_id} is not active."}
+           ),
+         :ok <- parent_node(parent, run, command["parentNodeId"]),
          {:ok, runtime} <- mode(thread["runtimeMode"], command["runtimeMode"], :runtime),
          {:ok, interaction} <-
            mode(thread["interactionMode"], command["interactionMode"], :interaction),
@@ -120,12 +128,33 @@ defmodule HalC2.Orchestration.Delegation do
         {:error,
          "Delegated task #{task_id} already wakes the parent with completionWake #{wake}."}
 
-      %{"origin" => "app_owned"} ->
-        update(parent_id, task_id, %{"completionWake" => wake})
+      %{"origin" => "app_owned"} = task ->
+        :ok = update(parent_id, task_id, %{"completionWake" => wake})
+
+        # A task that already ended was decided under its old policy: switching it
+        # to always wake a caller that is still working delivers its result now.
+        # A caller that has since gone idle already heard it (or can read it from
+        # the task's status), so no second wake is sent then.
+        if wake == "always" and task["status"] in @terminal and
+             get_in(task, ["completionDelivery", "state"]) not in ["delivered", "disposed"] and
+             not idle?(stream(parent_id)) do
+          deliver_now(parent_id, Map.put(task, "completionWake", "always"))
+        else
+          :ok
+        end
 
       _ ->
         not_app_owned(parent_id, task_id)
     end
+  end
+
+  # The node a `delegated_task.request` hangs the task on must be part of the run.
+  defp parent_node(_parent, _run, nil), do: :ok
+
+  defp parent_node(parent, run, node_id) do
+    if (StreamState.get(parent, "node")[node_id] || %{})["runId"] == run["id"],
+      do: :ok,
+      else: {:error, "Parent node #{node_id} is not part of active run #{run["id"]}."}
   end
 
   @doc """
@@ -203,6 +232,7 @@ defmodule HalC2.Orchestration.Delegation do
          # Settled before the child is interrupted, so the report of the interrupted run
          # finds the task ended and wakes nobody; a task that ended meanwhile is not
          # cancelled.
+         :ok <- cancellable(task),
          {:settled, _, _} <-
            settle(thread_id, task, "cancelled", task["result"], "disposed", :once) do
       hook(:cancelling, task_id)
@@ -218,7 +248,10 @@ defmodule HalC2.Orchestration.Delegation do
   end
 
   @doc "Called when a run of `thread_id` ends: settles a subagent's task once it is quiet (`settle_if_quiet/1`)."
-  def finished(thread_id, _run_id, _status), do: settle_if_quiet(thread_id)
+  def finished(thread_id, _run_id, _status) do
+    settle_if_quiet(thread_id)
+    flush_pending(thread_id)
+  end
 
   @doc """
   Settles the task `thread_id` works on, once the child is quiet: no run active or
@@ -261,7 +294,7 @@ defmodule HalC2.Orchestration.Delegation do
     with [_ | _] = runs <- StreamState.list(child, "run"),
          true <- quiet?(child),
          {status, run, ended_at} <- last_end(runs) do
-      result = answer(child) || preparation_failure(child, run)
+      result = result_for(child, run, status)
 
       # A child found quiet twice (two runs' ends, a provider replaying its turn's end
       # after a reconnect, the periodic check racing a report) settles and wakes once:
@@ -270,9 +303,9 @@ defmodule HalC2.Orchestration.Delegation do
       # either hears of the end or leaves the task to wake the caller. The result
       # message is recorded in the same transaction, so a crash cannot leave a task
       # delivered without it.
-      with {:settled, "delivered", {:ok, _} = sent} <-
-             settle(parent_id, task, status, result, &delivery/2, :once, ended_at, true),
-           do: Orchestration.dispatched(parent_id, wake(parent_id, task, status, result), sent)
+      with {:settled, "delivered", {{:ok, _} = sent, command}} <-
+             settle(parent_id, task, status, result, nil, :once, ended_at, true),
+           do: Orchestration.dispatched(parent_id, command, sent)
 
       true
     else
@@ -315,7 +348,7 @@ defmodule HalC2.Orchestration.Delegation do
           parent_id,
           task,
           ended,
-          if(run, do: answer(child)),
+          if(run, do: result_for(child, run, ended)),
           "disposed",
           :once,
           ended_at
@@ -357,17 +390,26 @@ defmodule HalC2.Orchestration.Delegation do
   defp quiet?(child), do: not working?(StreamState.list(child, "run")) and owed(child) == []
 
   # The child's owed background work, as its sidebar row shows it, read from its stream.
+  # A task of its own whose result is still to reach it (a `pending` delivery) is
+  # owed too: the child is not done until the wake about it has run.
   defp owed(child) do
     runs = StreamState.list(child, "run")
 
-    HalC2.Projection.BackgroundWork.derive(
-      latest_run: HalC2.Projection.Shell.latest_run(runs),
-      provider_threads: StreamState.list(child, "provider-thread"),
-      turn_items: StreamState.list(child, "turn-item"),
-      active_provider_thread_id:
-        (HalC2.Projection.Timeline.thread(child) || %{})["activeProviderThreadId"],
-      runs: runs
-    )
+    pending =
+      for task <- StreamState.list(child, "subagent"),
+          task["origin"] == "app_owned" and task["status"] in @terminal and
+            get_in(task, ["completionDelivery", "state"]) == "pending",
+          do: task["id"]
+
+    pending ++
+      HalC2.Projection.BackgroundWork.derive(
+        latest_run: HalC2.Projection.Shell.latest_run(runs),
+        provider_threads: StreamState.list(child, "provider-thread"),
+        turn_items: StreamState.list(child, "turn-item"),
+        active_provider_thread_id:
+          (HalC2.Projection.Timeline.thread(child) || %{})["activeProviderThreadId"],
+        runs: runs
+      )
   end
 
   defp working?(runs), do: Enum.any?(runs, &(&1["status"] in @active or &1["status"] == "queued"))
@@ -384,8 +426,9 @@ defmodule HalC2.Orchestration.Delegation do
   # that ends at once reports to it. A launch the MC stopped in the middle of is
   # settled at the next boot (`reconcile/2`).
   defp start(thread, run, spec) do
+    hook(:starting, thread["id"])
     child_id = HalC2.Environment.uuid4()
-    task_id = "node:subagent:" <> HalC2.Environment.uuid4()
+    task_id = spec["taskId"] || "node:subagent:" <> HalC2.Environment.uuid4()
     selection = spec["modelSelection"]
 
     title =
@@ -393,17 +436,28 @@ defmodule HalC2.Orchestration.Delegation do
 
     workspace = spec["workspace"] || {"inherited", workspace(thread)}
 
-    record(
-      thread,
-      run,
-      task_id,
-      child_id,
-      selection,
-      title,
-      spec["task"],
-      spec["completionWake"],
-      elem(workspace, 0)
-    )
+    claimed =
+      record(
+        thread,
+        run,
+        task_id,
+        child_id,
+        selection,
+        title,
+        spec["task"],
+        spec["completionWake"],
+        elem(workspace, 0)
+      )
+
+    if claimed == :exists do
+      {:existing, task_id}
+    else
+      launch(thread, spec, task_id, child_id, title, workspace)
+    end
+  end
+
+  defp launch(thread, spec, task_id, child_id, title, workspace) do
+    selection = spec["modelSelection"]
 
     launched =
       Orchestration.launch_thread(%{
@@ -425,7 +479,7 @@ defmodule HalC2.Orchestration.Delegation do
         "initialMessage" => %{
           "messageId" => "message:delegate:" <> HalC2.Environment.uuid4(),
           "senderThreadId" => thread["id"],
-          "text" => preamble(thread) <> spec["task"],
+          "text" => preamble(thread) <> (spec["prompt"] || spec["task"]),
           "attachments" => []
         }
       })
@@ -465,27 +519,147 @@ defmodule HalC2.Orchestration.Delegation do
     end)
   end
 
-  # The task's result message, while it still waits behind the caller's run.
+  # Takes the task out of a wake that still waits behind the caller's run: the
+  # wake goes on naming the tasks that are left, or is cancelled when none are.
   defp cancel_delivery(parent_id, task_id) do
-    message_id = result_message_id(task_id)
+    state = stream(parent_id)
+    messages = StreamState.get(state, "message")
 
-    case Enum.find(
-           StreamState.list(stream(parent_id), "run"),
-           &(&1["userMessageId"] == message_id and &1["status"] == "queued")
-         ) do
+    queued =
+      Enum.find_value(StreamState.list(state, "run"), fn run ->
+        message = messages[run["userMessageId"]]
+
+        if (run["status"] == "queued" and message) &&
+             task_id in (get_in(message, ["delegatedCompletion", "taskIds"]) || []),
+           do: {run, message}
+      end)
+
+    case queued do
       nil ->
         :ok
 
-      run ->
-        {:ok, _} =
+      {run, message} ->
+        remaining =
+          (get_in(message, ["delegatedCompletion", "taskIds"]) || []) -- [task_id]
+
+        if remaining == [] do
+          {:ok, _} =
+            Orchestration.dispatch(%{
+              "type" => "queued-run.cancel",
+              "threadId" => parent_id,
+              "runId" => run["id"]
+            })
+
+          :ok
+        else
+          HalC2.Streams.transact(parent_id, :thread, fn fresh ->
+            tasks = cohort_tasks(fresh, remaining, nil)
+
+            {[
+               Orchestration.upsert(fresh, "message", message["id"], fn current ->
+                 current
+                 |> Map.put("text", wake_text(tasks))
+                 |> Map.put("notification", notification(tasks))
+                 |> put_in(["delegatedCompletion", "taskIds"], remaining)
+                 |> Map.put("updatedAt", Entities.now())
+               end)
+             ]
+             |> Enum.filter(&is_tuple/1), :ok}
+          end)
+        end
+    end
+  end
+
+  @doc """
+  Stops the wakes of the run `run_id` of `thread_id` (the thread's active run
+  when none is named), as stopping that turn does: a wake still queued for it
+  is cancelled, and its tasks, whenever they finish, no longer wake the caller.
+  Their results stay readable from their status.
+  """
+  def stop_wakes(thread_id, run_id \\ nil) do
+    state = stream(thread_id)
+    messages = StreamState.get(state, "message")
+    runs = StreamState.list(state, "run")
+
+    stopped =
+      case run_id do
+        nil ->
+          runs |> Enum.filter(&(&1["status"] in @active)) |> Enum.map(& &1["id"])
+
+        id ->
+          [id]
+      end
+
+    # Interrupting a wake run itself stops the cohort it was waking for.
+    cohorts =
+      Enum.flat_map(stopped, fn id ->
+        case Enum.find(runs, &(&1["id"] == id)) do
+          %{"userMessageId" => message_id} ->
+            [id, get_in(messages, [message_id, "delegatedCompletion", "parentRunId"])]
+
+          _ ->
+            [id]
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    if cohorts != [] do
+      HalC2.Streams.transact(thread_id, :thread, fn fresh ->
+        {for task <- StreamState.list(fresh, "subagent"),
+             task["origin"] == "app_owned" and task["runId"] in cohorts and
+               get_in(task, ["completionDelivery", "state"]) in ["pending", "delivered"] do
+           Orchestration.upsert(fresh, "subagent", task["id"], fn entity ->
+             Map.merge(entity, %{
+               "completionDelivery" => %{"state" => "disposed", "observedByRunId" => nil},
+               "updatedAt" => Entities.now()
+             })
+           end)
+         end
+         |> Enum.filter(&is_tuple/1), :ok}
+      end)
+
+      for run <- runs,
+          run["status"] == "queued",
+          get_in(messages, [run["userMessageId"], "delegatedCompletion", "parentRunId"]) in cohorts do
+        _ =
           Orchestration.dispatch(%{
             "type" => "queued-run.cancel",
-            "threadId" => parent_id,
+            "threadId" => thread_id,
             "runId" => run["id"]
           })
-
-        :ok
+      end
     end
+
+    :ok
+  end
+
+  @doc """
+  Acknowledges the delivery of every finished task of `parent_id` whose child
+  is `child_id`, as reading the child's answer in full does: the caller has the
+  result, so it is not woken for it again. Returns whether one was acknowledged.
+  """
+  def acknowledge_child_read(parent_id, child_id, observed_by_run_id) do
+    tasks =
+      parent_id
+      |> stream()
+      |> StreamState.list("subagent")
+      |> Enum.filter(
+        &(&1["origin"] == "app_owned" and &1["childThreadId"] == child_id and
+            &1["status"] in @terminal and
+            get_in(&1, ["completionDelivery", "state"]) in ["pending", "delivered"])
+      )
+
+    for task <- tasks do
+      resolve_delivery(%{
+        "type" => "delegated_task.completion-delivery.acknowledge",
+        "parentThreadId" => parent_id,
+        "taskId" => task["id"],
+        "observedByRunId" => observed_by_run_id
+      })
+    end
+
+    tasks != []
   end
 
   defp result_message_id(task_id), do: "message:delegate-result:" <> task_id
@@ -543,39 +717,56 @@ defmodule HalC2.Orchestration.Delegation do
     }
 
     HalC2.Streams.transact(thread["id"], :thread, fn state ->
-      item =
-        Entities.turn_item(
-          %{
-            thread: thread["id"],
-            run: run["id"],
-            root_node: run["rootNodeId"],
-            node: task_id,
-            provider_thread: nil,
-            driver: driver
-          },
-          item_id,
-          "subagent",
-          Orchestration.next_ordinal(state),
-          "running",
-          at,
-          %{
-            "nodeId" => task_id,
-            "subagentId" => task_id,
-            "origin" => "app_owned",
-            "driver" => driver,
-            "providerInstanceId" => instance,
-            "childThreadId" => child_id,
-            "prompt" => prompt,
-            "result" => nil
-          }
-        )
-
-      {[
-         Orchestration.create("subagent", task_id, task),
-         Orchestration.create("node", task_id, node),
-         Orchestration.create("turn-item", item_id, item)
-       ], :ok}
+      # The claim is the transaction: a repeated request (a deterministic task id
+      # from a clientRequestId) that races the first finds the task recorded here
+      # and starts no second child.
+      if StreamState.get(state, "subagent")[task_id] do
+        {[], :exists}
+      else
+        record_changes(state, thread, run, task, node, item_id, at)
+      end
     end)
+  end
+
+  defp record_changes(state, thread, run, task, node, item_id, at) do
+    task_id = task["id"]
+    driver = task["driver"]
+    instance = task["providerInstanceId"]
+    child_id = task["childThreadId"]
+    prompt = task["prompt"]
+
+    item =
+      Entities.turn_item(
+        %{
+          thread: thread["id"],
+          run: run["id"],
+          root_node: run["rootNodeId"],
+          node: task_id,
+          provider_thread: nil,
+          driver: driver
+        },
+        item_id,
+        "subagent",
+        Orchestration.next_ordinal(state),
+        "running",
+        at,
+        %{
+          "nodeId" => task_id,
+          "subagentId" => task_id,
+          "origin" => "app_owned",
+          "driver" => driver,
+          "providerInstanceId" => instance,
+          "childThreadId" => child_id,
+          "prompt" => prompt,
+          "result" => nil
+        }
+      )
+
+    {[
+       Orchestration.create("subagent", task_id, task),
+       Orchestration.create("node", task_id, node),
+       Orchestration.create("turn-item", item_id, item)
+     ], :ok}
   end
 
   # Ends the task in its parent, at `at` or now, and returns `{:settled, delivery, sent}`.
@@ -601,13 +792,14 @@ defmodule HalC2.Orchestration.Delegation do
     HalC2.Streams.transact(parent_id, :thread, fn state ->
       finish = &Map.merge(&1, %{"status" => status, "completedAt" => at})
       current = StreamState.get(state, "subagent")[task["id"]] || %{}
-      delivery = if is_function(delivery), do: delivery.(current, state), else: delivery
 
-      {message, sent} =
-        if wake? and delivery == "delivered",
-          do:
-            Orchestration.decide_dispatch(state, parent_id, wake(parent_id, task, status, result)),
-          else: {[], nil}
+      {delivery, message, sent} =
+        if wake? do
+          plan_wake(state, parent_id, current, status, result)
+        else
+          delivery = if is_function(delivery), do: delivery.(current, state), else: delivery
+          {delivery, [], {nil, nil}}
+        end
 
       changes =
         (message ++
@@ -640,64 +832,350 @@ defmodule HalC2.Orchestration.Delegation do
     end)
   end
 
-  # Whether a finished task's result reaches the caller as a message: not once disposed,
-  # when the task always wakes it, or when it is idle; else it is only acknowledged,
-  # which is the caller's wait reading it (`wait/3`).
-  defp delivery(task, parent_state) do
+  # Whether and how a finished task's result reaches the caller, decided with its
+  # end inside the caller's transaction. Returns the delivery state, the wake's
+  # changes and `{sent, command}` for `Orchestration.dispatched/3`.
+  #
+  # A disposed task, and one whose caller is archived or deleted, wakes nobody. A
+  # task that wakes only an idle caller (`settled_only`) ending while the caller
+  # works is only acknowledged, which is the caller's wait reading it (`wait/3`).
+  # Otherwise the result joins a wake still queued for the run that started it, or
+  # starts one, at most two wakes per such run: later results stay readable from
+  # the task's status instead of waking the caller again and again.
+  defp plan_wake(state, parent_id, task, status, result) do
+    thread = StreamState.get(state, "thread")[parent_id] || %{}
+    task = Map.merge(task, %{"status" => status, "result" => result})
+
     cond do
-      task["completionDelivery"]["state"] == "disposed" -> "disposed"
-      task["completionWake"] == "always" or idle?(parent_state) -> "delivered"
-      true -> "acknowledged"
+      get_in(task, ["completionDelivery", "state"]) == "disposed" ->
+        {"disposed", [], {nil, nil}}
+
+      thread["archivedAt"] != nil or thread["deletedAt"] != nil ->
+        {"disposed", [], {nil, nil}}
+
+      (task["completionWake"] || "settled_only") != "always" and not idle?(state) ->
+        {"acknowledged", [], {nil, nil}}
+
+      queued = queued_wake(state, task["runId"]) ->
+        join_wake(state, queued, task)
+
+      # A wake for this run is already with the caller: this result rides the
+      # one follow-up wake that runs when it ends (`flush_pending/1`).
+      wake_in_flight?(state, task["runId"]) ->
+        {"pending", [], {nil, nil}}
+
+      settled_wake_count(state, task["runId"]) >= 2 ->
+        {"acknowledged", [], {nil, nil}}
+
+      true ->
+        command = wake_command(state, parent_id, thread, [task])
+        {changes, sent} = Orchestration.decide_dispatch(state, parent_id, command)
+        {"delivered", changes, {sent, command}}
     end
   end
 
-  # The parent hears the result as a message that runs once it is free. The
-  # message carries which task it delivers (`delegatedCompletion`), so the
-  # provider's acceptance and a later dispose can find it, and what the user is
-  # shown in place of its text (`notification`): that the task ended, and how.
-  defp wake(parent_id, task, status, result) do
-    {outcome, ended} =
-      case status do
-        "completed" -> {"completed", "finished"}
-        "failed" -> {"failed", "failed"}
-        _ -> {"cancelled", "stopped"}
+  # Plans a wake for a task that already ended, as `wake_policy/1` asks when a
+  # finished task is switched to always wake a caller that is still working.
+  defp deliver_now(parent_id, task) do
+    decided =
+      HalC2.Streams.transact(parent_id, :thread, fn state ->
+        current = StreamState.get(state, "subagent")[task["id"]] || task
+        thread = StreamState.get(state, "thread")[parent_id] || %{}
+
+        cond do
+          get_in(current, ["completionDelivery", "state"]) == "disposed" ->
+            {[], nil}
+
+          queued = queued_wake(state, current["runId"]) ->
+            {_delivery, changes, sent} = join_wake(state, queued, current)
+            {changes ++ delivered_change(state, current), sent}
+
+          settled_wake_count(state, current["runId"]) >= 2 and
+              not wake_in_flight?(state, current["runId"]) ->
+            {[], nil}
+
+          true ->
+            command = wake_command(state, parent_id, thread, [current])
+            {changes, sent} = Orchestration.decide_dispatch(state, parent_id, command)
+            {changes ++ delivered_change(state, current), {sent, command}}
+        end
+      end)
+
+    case decided do
+      {{:ok, _} = sent, command} -> Orchestration.dispatched(parent_id, command, sent)
+      _ -> :ok
+    end
+
+    :ok
+  end
+
+  defp delivered_change(state, task) do
+    [
+      Orchestration.upsert(state, "subagent", task["id"], fn entity ->
+        Map.merge(entity, %{
+          "completionDelivery" => %{"state" => "delivered", "observedByRunId" => nil},
+          "updatedAt" => Entities.now()
+        })
+      end)
+    ]
+    |> Enum.filter(&is_tuple/1)
+  end
+
+  # A result that lands while its run's wake still waits joins that wake: one
+  # message naming every task it carries, its notification re-summed over them.
+  defp join_wake(state, {_run, message}, task) do
+    ids =
+      ((get_in(message, ["delegatedCompletion", "taskIds"]) || []) ++ [task["id"]])
+      |> Enum.uniq()
+
+    tasks = cohort_tasks(state, ids, task)
+
+    changes =
+      [
+        Orchestration.upsert(state, "message", message["id"], fn current ->
+          current
+          |> Map.put("text", wake_text(tasks))
+          |> Map.put("notification", notification(tasks))
+          |> put_in(["delegatedCompletion", "taskIds"], ids)
+          |> Map.put("updatedAt", Entities.now())
+        end)
+      ]
+      |> Enum.filter(&is_tuple/1)
+
+    {"delivered", changes, {{:ok, :sent}, nil}}
+  end
+
+  defp cohort_tasks(state, ids, fresh) do
+    stored = StreamState.get(state, "subagent")
+
+    Enum.flat_map(ids, fn id ->
+      cond do
+        fresh && id == fresh["id"] -> [fresh]
+        stored[id] -> [stored[id]]
+        true -> []
       end
+    end)
+  end
 
-    label = String.trim(task["title"] || "")
-    label = if label == "", do: "Delegated task", else: label
+  # The queued run and message waking `parent_run_id`, if one still waits.
+  defp queued_wake(state, parent_run_id) when is_binary(parent_run_id) do
+    messages = StreamState.get(state, "message")
 
-    answer = result || "(no answer)"
-    child = task["childThreadId"]
+    Enum.find_value(StreamState.list(state, "run"), fn run ->
+      message = messages[run["userMessageId"]]
 
-    text = """
-    <delegated_task_result taskId="#{attr(task["id"])}" title="#{attr(task["title"])}" status="#{attr(status)}" childThreadId="#{attr(child)}">
-    #{close_tag_safe(answer)}
-    </delegated_task_result>
-    """
+      if (run["status"] == "queued" and message) &&
+           get_in(message, ["delegatedCompletion", "parentRunId"]) == parent_run_id,
+         do: {run, message}
+    end)
+  end
+
+  defp queued_wake(_state, _parent_run_id), do: nil
+
+  # Wakes for a run that have run their course, and whether one is with the
+  # caller now. Cancelled wakes never woke it, so they count for neither:
+  # only wakes that actually ran count as settled.
+  defp settled_wake_count(state, parent_run_id) when is_binary(parent_run_id) do
+    runs = StreamState.get(state, "run")
+
+    Enum.count(StreamState.list(state, "message"), fn message ->
+      get_in(message, ["delegatedCompletion", "parentRunId"]) == parent_run_id and
+        (runs[message["runId"]] || %{})["status"] in ~w(completed failed interrupted)
+    end)
+  end
+
+  defp settled_wake_count(_state, _parent_run_id), do: 0
+
+  defp wake_in_flight?(state, parent_run_id) when is_binary(parent_run_id) do
+    runs = StreamState.get(state, "run")
+
+    Enum.any?(StreamState.list(state, "message"), fn message ->
+      get_in(message, ["delegatedCompletion", "parentRunId"]) == parent_run_id and
+        (runs[message["runId"]] || %{})["status"] in @active
+    end)
+  end
+
+  defp wake_in_flight?(_state, _parent_run_id), do: false
+
+  @doc """
+  Wakes `parent_id` once for each run whose tasks ended while that run's wake
+  was already with the caller (`plan_wake/5` left them `pending`): one follow-up
+  wake carrying them all. Called as runs of the thread end, when a wake that
+  kept them waiting may have settled.
+  """
+  def flush_pending(parent_id) do
+    state = stream(parent_id)
+    thread = StreamState.get(state, "thread")[parent_id] || %{}
+
+    pending =
+      state
+      |> StreamState.list("subagent")
+      |> Enum.filter(
+        &(&1["origin"] == "app_owned" and &1["status"] in @terminal and
+            get_in(&1, ["completionDelivery", "state"]) == "pending")
+      )
+      |> Enum.group_by(& &1["runId"])
+
+    for {_run_id, tasks} <- pending do
+      if thread["archivedAt"] != nil or thread["deletedAt"] != nil do
+        for task <- tasks,
+            do:
+              update(parent_id, task["id"], %{
+                "completionDelivery" => %{"state" => "disposed", "observedByRunId" => nil}
+              })
+      else
+        decided =
+          HalC2.Streams.transact(parent_id, :thread, fn fresh ->
+            still =
+              Enum.filter(tasks, fn task ->
+                current = StreamState.get(fresh, "subagent")[task["id"]] || %{}
+                get_in(current, ["completionDelivery", "state"]) == "pending"
+              end)
+
+            if still == [] or wake_in_flight?(fresh, hd(still)["runId"]) do
+              {[], nil}
+            else
+              case queued_wake(fresh, hd(still)["runId"]) do
+                {_run, message} ->
+                  ids =
+                    ((get_in(message, ["delegatedCompletion", "taskIds"]) || []) ++
+                       Enum.map(still, & &1["id"]))
+                    |> Enum.uniq()
+
+                  tasks = cohort_tasks(fresh, ids, nil)
+
+                  changes =
+                    [
+                      Orchestration.upsert(fresh, "message", message["id"], fn current ->
+                        current
+                        |> Map.put("text", wake_text(tasks))
+                        |> Map.put("notification", notification(tasks))
+                        |> put_in(["delegatedCompletion", "taskIds"], ids)
+                        |> Map.put("updatedAt", Entities.now())
+                      end)
+                    ]
+                    |> Enum.filter(&is_tuple/1)
+
+                  {changes ++ Enum.flat_map(still, &delivered_change(fresh, &1)),
+                   {{:ok, :sent}, nil}}
+
+                nil ->
+                  stored = cohort_tasks(fresh, Enum.map(still, & &1["id"]), nil)
+                  command = wake_command(fresh, parent_id, thread, stored)
+                  {changes, sent} = Orchestration.decide_dispatch(fresh, parent_id, command)
+
+                  {changes ++ Enum.flat_map(stored, &delivered_change(fresh, &1)),
+                   {sent, command}}
+              end
+            end
+          end)
+
+        case decided do
+          {{:ok, _} = sent, command} -> Orchestration.dispatched(parent_id, command, sent)
+          _ -> :ok
+        end
+      end
+    end
+
+    :ok
+  end
+
+  # The parent hears the results as one message. It carries which tasks it
+  # delivers (`delegatedCompletion`), so the provider's acceptance and a later
+  # dispose can find it, and what the user is shown in place of its text
+  # (`notification`): that the tasks ended, and how. On a provider that takes a
+  # message mid-turn as its next prompt (Claude, OpenCode, Pi, Muse) an
+  # always-wake joins the running turn; elsewhere it waits behind it. A wake
+  # never interrupts or restarts the turn it wakes.
+  defp wake_command(state, parent_id, thread, tasks) do
+    first = hd(tasks)
+    active = Enum.find(StreamState.list(state, "run"), &(&1["status"] in @active))
+
+    mode =
+      if active && Enum.all?(tasks, &(&1["completionWake"] == "always")) &&
+           mailbox_steers?(active, thread) do
+        %{"type" => "steer_active", "targetRunId" => active["id"]}
+      else
+        %{"type" => "queue_after_active"}
+      end
 
     %{
       "type" => "message.dispatch",
-      "commandId" => "command:delegate-result:#{task["id"]}",
+      "commandId" => "command:delegate-result:#{first["id"]}",
       "threadId" => parent_id,
-      "messageId" => result_message_id(task["id"]),
-      "text" => String.trim(text),
+      "messageId" => result_message_id(first["id"]),
+      "text" => wake_text(tasks),
       "attachments" => [],
       "createdBy" => "system",
       "creationSource" => "server",
-      "dispatchMode" => %{"type" => "queue_after_active"},
-      "notification" => %{
-        "source" => %{"kind" => "delegated_task", "taskIds" => [task["id"]]},
-        "outcome" => outcome,
-        "summary" => "#{label} #{ended}",
-        "workerThreadId" => child,
-        "workerTitle" => label,
-        "detail" => cap_result(answer)
-      },
+      "dispatchMode" => mode,
+      "notification" => notification(tasks),
       "delegatedCompletion" => %{
-        "parentRunId" => task["runId"],
-        "taskIds" => [task["id"]],
+        "parentRunId" => first["runId"],
+        "taskIds" => Enum.map(tasks, & &1["id"]),
         "acceptedAt" => nil
       }
+    }
+  end
+
+  defp mailbox_steers?(run, thread) do
+    instance = run["providerInstanceId"] || "codex"
+    driver = Orchestration.driver_for(instance)
+
+    run["status"] in ["running", "waiting"] and instance == thread_instance(thread) and
+      (driver == "claudeAgent" or
+         (HalC2.Acp.driver(driver) || driver) in ["opencode", "pi", "muse"])
+  end
+
+  defp thread_instance(thread) do
+    get_in(thread, ["modelSelection", "instanceId"]) || thread["providerInstanceId"] || "codex"
+  end
+
+  defp wake_text(tasks), do: tasks |> Enum.map(&envelope/1) |> Enum.join("\n")
+
+  defp envelope(task) do
+    answer = task["result"] || "(no answer)"
+
+    """
+    <delegated_task_result taskId="#{attr(task["id"])}" title="#{attr(task["title"])}" status="#{attr(task["status"])}" childThreadId="#{attr(task["childThreadId"])}">
+    #{close_tag_safe(answer)}
+    </delegated_task_result>
+    """
+    |> String.trim()
+  end
+
+  # What the caller's timeline shows for a wake: one task by its title, several
+  # counted, the outcome the worst of theirs (upstream `Notification.ts`).
+  defp notification(tasks) do
+    outcome =
+      cond do
+        Enum.any?(tasks, &(&1["status"] == "failed")) -> "failed"
+        Enum.any?(tasks, &(&1["status"] in ["cancelled", "interrupted"])) -> "cancelled"
+        true -> "completed"
+      end
+
+    label =
+      case tasks do
+        [task] ->
+          case String.trim(task["title"] || "") do
+            "" -> "Delegated task"
+            title -> title
+          end
+
+        _ ->
+          "#{length(tasks)} delegated tasks"
+      end
+
+    ended = %{"failed" => "failed", "cancelled" => "stopped", "completed" => "finished"}[outcome]
+    first = hd(tasks)
+
+    %{
+      "source" => %{"kind" => "delegated_task", "taskIds" => Enum.map(tasks, & &1["id"])},
+      "outcome" => outcome,
+      "summary" => "#{label} #{ended}",
+      "workerThreadId" => first["childThreadId"],
+      "workerTitle" => label,
+      "detail" => cap_result(Enum.map_join(tasks, "\n\n", &(&1["result"] || "(no answer)")))
     }
   end
 
@@ -864,35 +1342,267 @@ defmodule HalC2.Orchestration.Delegation do
 
   defp preparation_failure(_child, _run), do: nil
 
+  # What a task's result is, however its end reaches the caller.
+  defp result_for(child, run, status) do
+    preparation_failure(child, run) || failure_text(child, run, status) || answer(child) ||
+      no_answer_text(status)
+  end
+
+  # A failed run's own word on why: its latest error item, which outranks any
+  # answer it gave before failing (upstream `subagentResultForRun`).
+  defp failure_text(_child, _run, status) when status != "failed", do: nil
+
+  defp failure_text(child, %{"id" => run_id}, "failed") do
+    child
+    |> StreamState.list("turn-item")
+    |> Enum.filter(&(&1["type"] == "error" and &1["runId"] == run_id))
+    |> Enum.sort_by(&(&1["ordinal"] || 0))
+    |> List.last(%{})
+    |> Map.get("failure")
+    |> case do
+      %{"message" => message} when is_binary(message) and message != "" -> message
+      message when is_binary(message) and message != "" -> message
+      _ -> nil
+    end
+  end
+
+  defp failure_text(_child, _run, _status), do: nil
+
+  # What the result says when the child left no answer and no failure of its own.
+  # A failed or cancelled child keeps no result: its wake says "(no answer)".
+  defp no_answer_text("completed"), do: "Child task completed without an assistant result."
+  defp no_answer_text("interrupted"), do: "Child task ended with status interrupted."
+  defp no_answer_text(_status), do: nil
+
+  # A task can be cancelled only while its child has work to interrupt: a run
+  # going, or background work it still owes.
+  defp cancellable(task) do
+    child = stream(task["childThreadId"])
+
+    if working?(StreamState.list(child, "run")) or owed(child) != [] do
+      :ok
+    else
+      {:error, "task_not_cancellable",
+       "Delegated task #{task["id"]} has no interruptible child run."}
+    end
+  end
+
   defp idle?(state), do: not Enum.any?(StreamState.list(state, "run"), &(&1["status"] in @active))
+
+  # A role frames the child's prompt; "general" and no role leave the task as given.
+  defp framed(%{"task" => task, "role" => role}) when role not in [nil, "general"],
+    do: "Act as the #{role} sub-agent for this task.\n\n#{task}"
+
+  defp framed(%{"task" => task}), do: task
+
+  # The task id a request key names, so repeating a delegation with the same
+  # `clientRequestId` finds the task it started instead of starting another.
+  defp request_task_id(_parent_id, key) when not is_binary(key) or key == "", do: nil
+
+  defp request_task_id(parent_id, key) do
+    digest =
+      :crypto.hash(:sha256, "delegate_task\0#{parent_id}\0#{key}")
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 32)
+
+    "node:subagent:" <>
+      Enum.join(
+        [
+          binary_part(digest, 0, 8),
+          binary_part(digest, 8, 4),
+          binary_part(digest, 12, 4),
+          binary_part(digest, 16, 4),
+          binary_part(digest, 20, 12)
+        ],
+        "-"
+      )
+  end
+
+  defp repeated(parent, thread, instance, input) do
+    case request_task_id(thread["id"], input["clientRequestId"]) do
+      nil ->
+        :new
+
+      task_id ->
+        if StreamState.get(parent, "subagent")[task_id] do
+          if input["mode"] == "wait",
+            do:
+              wait(
+                thread["id"],
+                task_id,
+                min(wait_budget(input["timeoutMs"]), HalC2.Mcp.max_wait_ms(instance))
+              ),
+            else: {:ok, status(thread["id"], task_id)}
+        else
+          :new
+        end
+    end
+  end
 
   defp target(thread, nil), do: {:ok, thread["modelSelection"]}
 
   defp target(thread, target) do
-    instance = target["providerInstanceId"] || get_in(thread, ["modelSelection", "instanceId"])
+    providers = HalC2.Environment.providers()
+    inherited = thread["modelSelection"] || %{}
+    driver = target["driverKind"]
 
-    case Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == instance)) do
-      nil ->
-        {:error, "provider_unavailable", "Provider #{instance} is not available on this MC."}
+    with {:ok, instance} <-
+           resolve_instance(providers, inherited, target["providerInstanceId"], driver),
+         %{} = provider <-
+           Enum.find(providers, &(&1["instanceId"] == instance)) ||
+             {:error, "provider_unavailable", "Provider instance #{instance} is not registered."},
+         :ok <- driver_matches(provider, instance, driver),
+         :ok <- runnable(provider, instance) do
+      models = provider["models"] || []
 
-      provider ->
-        model =
-          target["model"] ||
-            if(instance == get_in(thread, ["modelSelection", "instanceId"]),
-              do: get_in(thread, ["modelSelection", "model"]),
-              else: provider["models"] |> Enum.find(%{}, & &1["isDefault"]) |> Map.get("slug")
-            )
+      model =
+        target["model"] ||
+          if(instance == inherited["instanceId"],
+            do: inherited["model"],
+            else: Enum.find(models, %{}, & &1["isDefault"])["slug"]
+          )
 
-        options =
-          case target["options"] do
-            %{} = map -> for {id, value} <- map, do: %{"id" => id, "value" => value}
-            list when is_list(list) -> list
-            _ -> nil
-          end
+      options =
+        case target["options"] do
+          %{} = map -> for {id, value} <- map, do: %{"id" => id, "value" => value}
+          list when is_list(list) -> list
+          _ -> nil
+        end
 
+      with :ok <- model_advertised(models, instance, target["model"]),
+           :ok <- options_valid(models, instance, model, options) do
         {:ok,
          %{"instanceId" => instance, "model" => model}
          |> then(&if(options, do: Map.put(&1, "options", options), else: &1))}
+      end
+    end
+  end
+
+  # An instance named outright, else one of the named kind: the caller's own when it
+  # can run, else another healthy one of that kind.
+  defp resolve_instance(_providers, _inherited, instance, _driver) when is_binary(instance),
+    do: {:ok, instance}
+
+  defp resolve_instance(providers, inherited, _instance, driver) when is_binary(driver) do
+    healthy =
+      providers
+      |> Enum.filter(&(&1["driver"] == driver))
+      |> Enum.filter(&healthy?/1)
+
+    case Enum.find(healthy, &(&1["instanceId"] == inherited["instanceId"])) || List.first(healthy) do
+      %{"instanceId" => instance} ->
+        {:ok, instance}
+
+      nil ->
+        {:error, "provider_unavailable",
+         "No available V2 provider instance for driver #{driver}."}
+    end
+  end
+
+  defp resolve_instance(_providers, inherited, _instance, _driver),
+    do: {:ok, inherited["instanceId"]}
+
+  defp driver_matches(provider, instance, driver) when is_binary(driver) do
+    if provider["driver"] == driver,
+      do: :ok,
+      else:
+        {:error, "invalid_request",
+         "Provider instance #{instance} uses driver #{provider["driver"]}, not #{driver}."}
+  end
+
+  defp driver_matches(_provider, _instance, _driver), do: :ok
+
+  defp healthy?(provider) do
+    provider["enabled"] != false and provider["installed"] != false and
+      provider["status"] not in ["error", "disabled"] and
+      get_in(provider, ["auth", "status"]) != "unauthenticated"
+  end
+
+  defp runnable(provider, instance) do
+    problems =
+      [
+        provider["enabled"] == false && "Provider instance is disabled.",
+        provider["installed"] == false && "Provider executable is not installed.",
+        provider["status"] in ["error", "disabled"] &&
+          (provider["message"] || "Provider status is #{provider["status"]}."),
+        get_in(provider, ["auth", "status"]) == "unauthenticated" &&
+          "Provider is not authenticated."
+      ]
+      |> Enum.filter(&is_binary/1)
+
+    if problems == [],
+      do: :ok,
+      else:
+        {:error, "provider_unavailable",
+         "Provider #{instance} cannot run a child task: #{Enum.join(problems, " ")}"}
+  end
+
+  defp model_advertised(models, instance, requested) when is_binary(requested) do
+    if models == [] or Enum.any?(models, &(&1["slug"] == requested)),
+      do: :ok,
+      else:
+        {:error, "model_unavailable",
+         "Model #{requested} is not advertised by provider #{instance}."}
+  end
+
+  defp model_advertised(_models, _instance, _requested), do: :ok
+
+  # The requested options against the model's descriptors (upstream
+  # `invalidOptionSelections`): duplicates always fail; without descriptors the
+  # rest is the provider's to judge.
+  defp options_valid(_models, _instance, _model, nil), do: :ok
+
+  defp options_valid(models, instance, model, options) do
+    descriptors =
+      models
+      |> Enum.find(&(&1["slug"] == model))
+      |> get_in([Access.key("capabilities", %{}), "optionDescriptors"])
+
+    problems =
+      options
+      |> Enum.reduce({MapSet.new(), []}, fn
+        %{"id" => id} = option, {seen, problems} ->
+          cond do
+            MapSet.member?(seen, id) ->
+              {seen, problems ++ ["Option #{id} was specified more than once."]}
+
+            descriptors == nil ->
+              {MapSet.put(seen, id), problems}
+
+            true ->
+              {MapSet.put(seen, id), problems ++ option_problem(descriptors, option)}
+          end
+
+        _other, acc ->
+          acc
+      end)
+      |> elem(1)
+
+    if problems == [],
+      do: :ok,
+      else:
+        {:error, "invalid_request",
+         "Model #{model} on provider #{instance} rejected options: #{Enum.join(problems, " ")}"}
+  end
+
+  defp option_problem(descriptors, %{"id" => id, "value" => value}) do
+    case Enum.find(descriptors, &(&1["id"] == id)) do
+      nil ->
+        known = descriptors |> Enum.map(& &1["id"]) |> Enum.join(", ")
+        ["Unknown option #{id}; supported options: #{if known == "", do: "none", else: known}."]
+
+      %{"type" => "boolean"} when not is_boolean(value) ->
+        ["Option #{id} expects a boolean value."]
+
+      %{"type" => "select", "options" => choices} ->
+        if Enum.any?(choices, &(&1["id"] == value)),
+          do: [],
+          else: [
+            "Option #{id} must be one of: #{choices |> Enum.map(& &1["id"]) |> Enum.join(", ")}."
+          ]
+
+      _ ->
+        []
     end
   end
 

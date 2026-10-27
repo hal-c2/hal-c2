@@ -102,14 +102,11 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     assert_status(context, status)
   end
 
+  # The agent finishes its turn (a steer it answers), as distinct from the user
+  # stopping it: only the stop keeps its tasks from waking it later.
   step "the turn of {string} ended", %{args: [thread]} = context do
-    {:ok, _} =
-      HalC2.Orchestration.dispatch(%{
-        "type" => "run.interrupt",
-        "threadId" => World.thread_id(context, thread)
-      })
-
-    World.await_runs(context, thread, ["interrupted"])
+    World.send_turn(context, thread, "say Carrying on")
+    World.await_runs(context, thread, ["completed"])
     context
   end
 
@@ -1277,6 +1274,10 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   # The report is held at its retry, as one given up on would never come.
   step "the subagent completed with {string}, and the report of its end was lost",
        %{args: [answer]} = context do
+    lost_report(context, answer)
+  end
+
+  defp lost_report(context, answer) do
     parent = HalC2.Streams.ensure(World.thread_id(context, context.task_parent))
     World.await_runs(context, "subagent", ["running"])
     gate = :"delegation_retry_gate_#{System.unique_integer([:positive])}"
@@ -1315,6 +1316,1290 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   step "the subagent's command is stopped", context do
     World.await_row(World.thread_id(context, "subagent"), &(&1["pendingBackgroundTasks"] == []))
+    context
+  end
+
+  # --- backlog: roles, targets, request keys ------------------------------------------
+
+  step "the agent in {string} delegates the task {string} with role {string}",
+       %{args: [caller, task, role]} = context do
+    delegate(context, caller, %{"task" => task, "role" => role})
+  end
+
+  step "the agent in {string} delegates the task {string} with no role",
+       %{args: [caller, task]} = context do
+    delegate(context, caller, %{"task" => task})
+  end
+
+  step "the subagent's first message is {string} and then the task",
+       %{args: [prefix]} = context do
+    [message | _] = messages(context, "subagent")
+    assert String.ends_with?(message["text"], "#{prefix}\n\n#{context.task}")
+    context
+  end
+
+  step "the subagent's first message is the task unchanged", context do
+    [message | _] = messages(context, "subagent")
+    assert String.ends_with?(message["text"], context.task)
+    refute message["text"] =~ "Act as the"
+    context
+  end
+
+  step "{string} runs on a {string} instance that is healthy",
+       %{args: [thread, driver]} = context do
+    assert World.thread(context, thread)["modelSelection"]["instanceId"] == driver
+
+    assert %{"enabled" => true} =
+             Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == driver))
+
+    context
+  end
+
+  step "{string} runs on a {string} instance that is disabled",
+       %{args: [thread, driver]} = context do
+    context = World.update_settings(context, %{"providers" => %{driver => %{"enabled" => false}}})
+    assert World.thread(context, thread)["modelSelection"]["instanceId"] == driver
+    context
+  end
+
+  step "another healthy {string} instance exists", %{args: [driver]} = context do
+    context =
+      World.update_settings(context, %{
+        "providerInstances" => %{"codex2" => %{"driver" => driver}}
+      })
+
+    assert %{"enabled" => true, "driver" => ^driver} =
+             Enum.find(HalC2.Environment.providers(), &(&1["instanceId"] == "codex2"))
+
+    Map.put(context, :other_instance, "codex2")
+  end
+
+  step "the agent in {string} delegates a task naming the provider kind {string}",
+       %{args: [caller, driver]} = context do
+    delegate(context, caller, %{"target" => %{"driverKind" => driver}})
+  end
+
+  step "the subagent runs on the instance {string} runs on", %{args: [parent]} = context do
+    assert World.thread(context, "subagent")["modelSelection"]["instanceId"] ==
+             World.thread(context, parent)["modelSelection"]["instanceId"]
+
+    context
+  end
+
+  step "the subagent runs on the other healthy instance", context do
+    assert World.thread(context, "subagent")["modelSelection"]["instanceId"] ==
+             context.other_instance
+
+    context
+  end
+
+  step "the agent in {string} delegates a task and names the provider kind {string} but none is healthy",
+       %{args: [caller, driver]} = context do
+    context = World.update_settings(context, %{"providers" => %{driver => %{"enabled" => false}}})
+    delegate(context, caller, %{"target" => %{"driverKind" => driver}})
+  end
+
+  step "the agent in {string} delegates a task and names an instance that is not registered",
+       %{args: [caller]} = context do
+    delegate(context, caller, %{"target" => %{"providerInstanceId" => "ghost"}})
+  end
+
+  step "the agent in {string} delegates a task and names an instance of a different kind than the kind given",
+       %{args: [caller]} = context do
+    context =
+      World.update_settings(context, %{
+        "providerInstances" => %{"claude" => %{"driver" => "claudeAgent"}}
+      })
+
+    delegate(context, caller, %{
+      "target" => %{"providerInstanceId" => "claude", "driverKind" => "codex"}
+    })
+  end
+
+  step "the agent in {string} delegates a task and names a model the provider does not advertise",
+       %{args: [caller]} = context do
+    delegate(context, caller, %{"target" => %{"providerInstanceId" => "codex", "model" => "nope"}})
+  end
+
+  # A provider, model and descriptor of `type` from what this MC advertises, so the
+  # option checks run against a model that really has the option.
+  defp find_descriptor(type) do
+    found =
+      for provider <- HalC2.Environment.providers(),
+          model <- provider["models"] || [],
+          descriptor <- get_in(model, ["capabilities", "optionDescriptors"]) || [],
+          descriptor["type"] == type or type == :any do
+        {provider["instanceId"], model["slug"], descriptor}
+      end
+
+    List.first(found) || flunk("no advertised model has a #{type} option")
+  end
+
+  defp option_case(context, caller, type, options_for) do
+    {instance, model, descriptor} = find_descriptor(type)
+
+    context =
+      Map.put(context, :option_case, %{
+        instance: instance,
+        model: model,
+        descriptor: descriptor
+      })
+
+    delegate(context, caller, %{
+      "target" => %{
+        "providerInstanceId" => instance,
+        "model" => model,
+        "options" => options_for.(descriptor)
+      }
+    })
+  end
+
+  step "the agent in {string} delegates a task with the same option given twice",
+       %{args: [caller]} = context do
+    option_case(context, caller, :any, fn %{"id" => id} = descriptor ->
+      value = if descriptor["type"] == "boolean", do: true, else: hd(descriptor["options"])["id"]
+      [%{"id" => id, "value" => value}, %{"id" => id, "value" => value}]
+    end)
+  end
+
+  step "the agent in {string} delegates a task with an option the model does not have",
+       %{args: [caller]} = context do
+    option_case(context, caller, :any, fn _descriptor ->
+      [%{"id" => "noSuchOption", "value" => "x"}]
+    end)
+  end
+
+  step "the agent in {string} delegates a task with a true or false option given a word",
+       %{args: [caller]} = context do
+    option_case(context, caller, "boolean", fn %{"id" => id} ->
+      [%{"id" => id, "value" => "yes"}]
+    end)
+  end
+
+  step "the agent in {string} delegates a task with a choice option given a value outside its choices",
+       %{args: [caller]} = context do
+    option_case(context, caller, "select", fn %{"id" => id} ->
+      [%{"id" => id, "value" => "no-such-choice"}]
+    end)
+  end
+
+  step ~r/^the message names the model and the provider and says (?<problem>.+)$/,
+       %{args: [problem]} = context do
+    assert {:error, _code, message} = context.mcp_result
+    %{instance: instance, model: model, descriptor: descriptor} = context.option_case
+    assert message =~ "Model #{model} on provider #{instance} rejected options:"
+
+    cond do
+      problem =~ "more than once" ->
+        assert message =~ "Option #{descriptor["id"]} was specified more than once."
+
+      problem =~ "unknown" ->
+        assert message =~ "Unknown option noSuchOption; supported options:"
+        assert message =~ descriptor["id"]
+
+      problem =~ "boolean" ->
+        assert message =~ "Option #{descriptor["id"]} expects a boolean value."
+
+      problem =~ "one of the choices" ->
+        assert message =~ "Option #{descriptor["id"]} must be one of:"
+    end
+
+    context
+  end
+
+  step "the agent in {string} delegated a task with request key {string}",
+       %{args: [caller, key]} = context do
+    context = delegate(context, caller, %{"mode" => "async", "clientRequestId" => key})
+    Map.merge(context, %{request_key: key, first_task_id: context.task_id})
+  end
+
+  step "no second subagent thread is started", context do
+    assert [_one] = StreamState.list(World.state(context, context.task_parent), "subagent")
+    context
+  end
+
+  step "it receives the same task id", context do
+    assert {:ok, %{"taskId" => task_id}} = context.mcp_result
+    assert task_id == context.first_task_id
+    context
+  end
+
+  step "a delegated task of {string} finished with an answer that fits one read",
+       %{args: [parent]} = context do
+    context = delegate(context, parent, %{"mode" => "async"})
+    complete(context, "Done")
+  end
+
+  step "a delegated task of {string} finished", %{args: [parent]} = context do
+    context = delegate(context, parent, %{"mode" => "async"})
+    complete(context, "Done")
+  end
+
+  step "the agent in {string} reads the subagent's thread from the start",
+       %{args: [caller]} = context do
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_read", %{
+        "threadId" => World.thread_id(context, "subagent")
+      })
+
+    assert {:ok, %{"items" => items}} = result
+    assert Enum.any?(items, &(&1["text"] =~ "Done"))
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "the task's delivery is {string} and {string} is not woken for it",
+       %{args: [delivery, parent]} = context do
+    await_task(context, &(&1["completionDelivery"]["state"] == delivery))
+
+    refute Enum.any?(
+             World.runs(context, parent),
+             &(&1["status"] in ["queued"] and wake_run?(context, parent, &1))
+           )
+
+    context
+  end
+
+  # The child says one thing while working and its answer last, then its turn ends.
+  step "a delegated task of {string} finished after a progress message",
+       %{args: [parent]} = context do
+    context = delegate(context, parent, %{"mode" => "async"})
+    World.await_runs(context, "subagent", ["running"])
+    {_pid, runtime} = World.codex_runtime(context, "subagent")
+    at = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+
+    for {id, text} <- [{"msg-progress", "Working on it"}, {"msg-answer", "Done"}] do
+      message = %{"type" => "agentMessage", "id" => id, "text" => text}
+
+      World.codex_notify(
+        context,
+        "subagent",
+        "item/started",
+        Map.put(at, "item", %{message | "text" => ""})
+      )
+
+      World.codex_notify(context, "subagent", "item/completed", Map.put(at, "item", message))
+    end
+
+    World.codex_notify(context, "subagent", "turn/completed", %{
+      "threadId" => runtime.native_thread_id,
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
+
+    await_task(
+      context,
+      &(&1["status"] == "completed" and &1["completionDelivery"]["state"] == "delivered")
+    )
+
+    progress =
+      context
+      |> World.state("subagent")
+      |> StreamState.list("turn-item")
+      |> Enum.find(&(&1["type"] == "assistant_message"))
+
+    Map.put(context, :progress_item_id, progress["id"])
+  end
+
+  step "the agent in {string} reads just the progress message of the subagent's thread",
+       %{args: [caller]} = context do
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_read", %{
+        "threadId" => World.thread_id(context, "subagent"),
+        "itemId" => context.progress_item_id
+      })
+
+    assert {:ok, %{"items" => [%{"text" => "Working on it"}]}} = result
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "the agent in {string} waits on the subagent's thread", %{args: [caller]} = context do
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_wait", %{
+        "threadId" => World.thread_id(context, "subagent"),
+        "timeoutMs" => 5_000
+      })
+
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "the wait reports only the status", context do
+    assert {:ok, %{"status" => "completed", "timedOut" => false}} = context.mcp_result
+    context
+  end
+
+  step "the task's delivery is still pending", context do
+    state = task(context)["completionDelivery"]["state"]
+    assert state in ["pending", "delivered"]
+    # The wake that carries it still waits for the caller.
+    assert Enum.any?(World.runs(context, context.task_parent), &(&1["status"] == "queued"))
+    context
+  end
+
+  step "the agent in {string} delegated a task that is not finished and whose subagent has nothing running or in the background",
+       %{args: [caller]} = context do
+    context = delegate(context, caller, %{"mode" => "async"})
+    context = lost_report(context, "Done")
+    assert [%{"status" => "completed"}] = World.runs(context, "subagent")
+    assert task(context)["status"] == "running"
+    context
+  end
+
+  # Whether `run` of `parent` is a delegated-result wake.
+  defp wake_run?(context, parent, run) do
+    message = StreamState.get(World.state(context, parent), "message")[run["userMessageId"]]
+    message != nil and get_in(message, ["delegatedCompletion", "taskIds"]) != nil
+  end
+
+  # --- backlog: wakes ------------------------------------------------------------------
+
+  # Delegates one task per name; each child thread and task is kept under its name.
+  defp named_tasks(context, caller, names, input \\ %{}) do
+    Enum.reduce(names, context, fn name, context ->
+      title = input["title"] || "where are we with #{name}"
+
+      context =
+        delegate(
+          context,
+          caller,
+          Map.merge(%{"mode" => "async", "title" => title}, Map.delete(input, "title"))
+        )
+
+      context
+      |> put_in([:threads, name], context.threads["subagent"])
+      |> put_in([Access.key(:named_tasks, %{}), name], context.task_id)
+    end)
+  end
+
+  defp named_task(context, name) do
+    StreamState.get(World.state(context, context.task_parent), "subagent")[
+      context.named_tasks[name]
+    ]
+  end
+
+  defp wake_messages(context, parent) do
+    Enum.filter(
+      messages(context, parent),
+      &(get_in(&1, ["delegatedCompletion", "taskIds"]) != nil)
+    )
+  end
+
+  defp await_wake(context, parent, fun) do
+    World.await_state(context, parent, fn state ->
+      Enum.any?(
+        StreamState.list(state, "message"),
+        &(get_in(&1, ["delegatedCompletion", "taskIds"]) != nil and fun.(&1))
+      )
+    end)
+
+    Enum.find(wake_messages(context, parent), fun)
+  end
+
+  # Ends the named task's child the way its ending says, and waits for the task.
+  defp end_named(context, name, ending) do
+    task_id = context.named_tasks[name]
+
+    case ending do
+      "complete" ->
+        complete_named(context, name)
+
+      "fail" ->
+        World.await_runs(context, name, ["running"])
+        {_pid, runtime} = World.codex_runtime(context, name)
+
+        World.codex_notify(context, name, "turn/completed", %{
+          "threadId" => runtime.native_thread_id,
+          "turn" => %{
+            "id" => runtime.turn.native_turn_id,
+            "status" => "failed",
+            "error" => %{"message" => "the turn failed"}
+          }
+        })
+
+        World.await_state(context, context.task_parent, fn state ->
+          StreamState.get(state, "subagent")[task_id]["status"] == "failed"
+        end)
+
+        context
+
+      "stop" ->
+        {:ok, _} =
+          HalC2.Orchestration.dispatch(%{
+            "type" => "run.interrupt",
+            "threadId" => World.thread_id(context, name)
+          })
+
+        World.await_state(context, context.task_parent, fn state ->
+          StreamState.get(state, "subagent")[task_id]["status"] in ["interrupted", "cancelled"]
+        end)
+
+        context
+    end
+  end
+
+  step "the turn of {string} ended while a task titled {string} were still working",
+       %{args: [parent, title]} = context do
+    context = named_tasks(context, parent, ["one"], %{"title" => title})
+    World.send_turn(context, parent, "say Carrying on")
+    World.await_runs(context, parent, ["completed"])
+    context
+  end
+
+  step "the turn of {string} ended while a task with no title were still working",
+       %{args: [parent]} = context do
+    context = named_tasks(context, parent, ["one"], %{"title" => ""})
+    World.send_turn(context, parent, "say Carrying on")
+    World.await_runs(context, parent, ["completed"])
+    context
+  end
+
+  step "the turn of {string} ended while three tasks were still working",
+       %{args: [parent]} = context do
+    context = named_tasks(context, parent, ["one", "two", "three"])
+    World.send_turn(context, parent, "say Carrying on")
+    World.await_runs(context, parent, ["completed"])
+    context
+  end
+
+  # The parent is busy with a held turn while the tasks end, so their results
+  # gather in one queued wake; ending that turn wakes it for them together.
+  defp finish_and_wake(context, parent, endings) do
+    context = World.send_turn(context, parent, "wait for it")
+    World.await_runs(context, parent, ["completed", "running"])
+
+    context =
+      Enum.reduce(endings, context, fn {name, ending}, context ->
+        end_named(context, name, ending)
+      end)
+
+    World.send_turn(context, parent, "say Carrying on")
+    context
+  end
+
+  step "the task completes and {string} is woken for it", %{args: [parent]} = context do
+    finish_and_wake(context, parent, [{"one", "complete"}])
+  end
+
+  step "the task fails and {string} is woken for it", %{args: [parent]} = context do
+    finish_and_wake(context, parent, [{"one", "fail"}])
+  end
+
+  step "the task is cancelled or interrupted and {string} is woken for it",
+       %{args: [parent]} = context do
+    finish_and_wake(context, parent, [{"one", "stop"}])
+  end
+
+  step "all three complete and {string} is woken for it", %{args: [parent]} = context do
+    finish_and_wake(context, parent, [
+      {"one", "complete"},
+      {"two", "complete"},
+      {"three", "complete"}
+    ])
+  end
+
+  step "two complete and one is cancelled and {string} is woken for it",
+       %{args: [parent]} = context do
+    finish_and_wake(context, parent, [{"one", "complete"}, {"two", "complete"}, {"three", "stop"}])
+  end
+
+  step "one fails and one is cancelled and {string} is woken for it",
+       %{args: [parent]} = context do
+    finish_and_wake(context, parent, [{"one", "fail"}, {"two", "stop"}, {"three", "complete"}])
+  end
+
+  step "the timeline of {string} shows a delegated task notification reading {string}",
+       %{args: [parent, summary]} = context do
+    message = await_wake(context, parent, &(get_in(&1, ["notification", "summary"]) == summary))
+    assert message["notification"]["summary"] == summary
+    Map.put(context, :wake_message, message)
+  end
+
+  step "the notification's outcome is {string}", %{args: [outcome]} = context do
+    assert context.wake_message["notification"]["outcome"] == outcome
+    context
+  end
+
+  # A task started by command, as a client starts one, with the given wake policy.
+  defp request_delegated(context, parent, fields) do
+    [run] = World.runs(context, parent)
+    thread = World.thread(context, parent)
+
+    {reply, context} =
+      World.dispatch(
+        context,
+        Map.merge(
+          %{
+            "type" => "delegated_task.request",
+            "parentThreadId" => thread["id"],
+            "parentRunId" => run["id"],
+            "parentNodeId" => run["rootNodeId"],
+            "task" => "wait for it",
+            "modelSelection" => thread["modelSelection"],
+            "runtimeMode" => thread["runtimeMode"],
+            "interactionMode" => thread["interactionMode"]
+          },
+          fields
+        )
+      )
+
+    assert {:ok, _} = reply
+    context |> Map.put(:task, "wait for it") |> await_child(parent)
+  end
+
+  step "the agent in {string} delegated a task that wakes it only once it is idle",
+       %{args: [caller]} = context do
+    request_delegated(context, caller, %{"completionWake" => "settled_only"})
+  end
+
+  step "the subagent completes while the turn of {string} is still running",
+       %{args: [parent]} = context do
+    assert Enum.any?(World.runs(context, parent), &(&1["status"] == "running"))
+    context = Map.put(context, :parent_runs_before, World.runs(context, parent))
+    complete(context, "Done")
+  end
+
+  step "{string} is not woken and nothing is queued for it", %{args: [parent]} = context do
+    assert [%{"status" => "running"}] = World.runs(context, parent)
+    assert wake_messages(context, parent) == []
+    context
+  end
+
+  step "the result can be read from the task's status", context do
+    assert {:ok, %{"summary" => summary}} = status(context)
+    assert summary in ["Done", "three done"]
+    context
+  end
+
+  step "the task's result stays readable from its status", context do
+    result =
+      World.mcp_tool(context, context.task_parent, "task_status", %{
+        "taskId" => context.named_tasks["three"]
+      })
+
+    assert {:ok, %{"summary" => "three done", "status" => "completed"}} = result
+    context
+  end
+
+  step "{string} runs on a provider that can take messages mid-turn",
+       %{args: [parent]} = context do
+    selection = %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"}
+
+    context =
+      World.launch_titled(context, parent, nil, "wait for it", %{"modelSelection" => selection})
+
+    World.await_runs(context, parent, ["running"])
+    [run] = World.runs(context, parent)
+    Map.put(context, :parent_run, run["id"])
+  end
+
+  step "{string} runs on a provider that cannot take messages mid-turn",
+       %{args: [parent]} = context do
+    # The background's Codex parent: its delegated results queue behind the turn.
+    [run] = World.runs(context, parent)
+    Map.put(context, :parent_run, run["id"])
+  end
+
+  step "the agent in {string} delegated a task that always wakes it",
+       %{args: [caller]} = context do
+    delegate(context, caller, %{
+      "mode" => "async",
+      "target" => %{"providerInstanceId" => "codex"}
+    })
+  end
+
+  step "the wake message joins the running turn", context do
+    parent = context.task_parent
+    message = await_wake(context, parent, &(&1["runId"] == context.parent_run))
+    assert message["runId"] == context.parent_run
+    assert length(World.runs(context, parent)) == 1
+    context
+  end
+
+  step "the wake message waits in the queue behind the running turn", context do
+    parent = context.task_parent
+    message = await_wake(context, parent, fn _ -> true end)
+
+    assert [%{"id" => running, "status" => "running"}, %{"status" => "queued"} = queued] =
+             World.runs(context, parent)
+
+    assert running == context.parent_run
+    assert queued["userMessageId"] == message["id"]
+    context
+  end
+
+  step "the running turn is never interrupted or restarted for it", context do
+    run =
+      Enum.find(World.runs(context, context.task_parent), &(&1["id"] == context.parent_run))
+
+    assert run["status"] == "running"
+    context
+  end
+
+  step "a wake for the finished task {string} of {string} is queued behind a running turn",
+       %{args: [name, parent]} = context do
+    context = named_tasks(context, parent, ["one", "two"])
+    context = complete_named(context, name)
+    assert {_run, _message} = queued_wake!(context, parent)
+    context
+  end
+
+  defp queued_wake!(context, parent) do
+    state =
+      World.await_state(context, parent, fn state ->
+        messages = StreamState.get(state, "message")
+
+        Enum.any?(StreamState.list(state, "run"), fn run ->
+          run["status"] == "queued" and
+            get_in(messages, [run["userMessageId"], "delegatedCompletion", "taskIds"]) != nil
+        end)
+      end)
+
+    messages = StreamState.get(state, "message")
+
+    Enum.find_value(StreamState.list(state, "run"), fn run ->
+      message = messages[run["userMessageId"]]
+
+      if (run["status"] == "queued" and message) &&
+           get_in(message, ["delegatedCompletion", "taskIds"]) != nil,
+         do: {run, message}
+    end)
+  end
+
+  step "task {string} of the same turn finishes", %{args: [name]} = context do
+    complete_named(context, name)
+  end
+
+  step "no second wake is queued", context do
+    assert length(wake_messages(context, context.task_parent)) == 1
+    context
+  end
+
+  step "the queued wake now names {string} and {string}", %{args: [one, two]} = context do
+    {_run, message} = queued_wake!(context, context.task_parent)
+
+    assert MapSet.new(message["delegatedCompletion"]["taskIds"]) ==
+             MapSet.new([context.named_tasks[one], context.named_tasks[two]])
+
+    context
+  end
+
+  step "{string} is running the turn that woke it for task {string}",
+       %{args: [parent, name]} = context do
+    # Titled with "wait", which the fake Codex holds the wake turn on.
+    context = named_tasks(context, parent, ["one", "two", "three"], %{"title" => "wait a while"})
+
+    context = complete_named(context, name)
+    World.send_turn(context, parent, "say Carrying on")
+
+    World.await_state(context, parent, fn state ->
+      messages = StreamState.get(state, "message")
+
+      Enum.any?(StreamState.list(state, "run"), fn run ->
+        run["status"] == "running" and
+          get_in(messages, [run["userMessageId"], "delegatedCompletion", "taskIds"]) != nil
+      end)
+    end)
+
+    context
+  end
+
+  step "tasks {string} and {string} of the same original turn finish",
+       %{args: [one, two]} = context do
+    context |> complete_named(one) |> complete_named(two)
+  end
+
+  step "they are not added to the running wake", context do
+    [message] = wake_messages(context, context.task_parent)
+    assert message["delegatedCompletion"]["taskIds"] == [context.named_tasks["one"]]
+    Map.put(context, :first_wake_id, message["id"])
+  end
+
+  step "when that turn ends {string} is woken once more, for {string} and {string} together",
+       %{args: [parent, one, two]} = context do
+    World.send_turn(context, parent, "say Carrying on")
+
+    message =
+      await_wake(
+        context,
+        parent,
+        &(&1["id"] != context.first_wake_id and
+            MapSet.new(&1["delegatedCompletion"]["taskIds"]) ==
+              MapSet.new([context.named_tasks[one], context.named_tasks[two]]))
+      )
+
+    assert message
+    assert length(wake_messages(context, parent)) == 2
+    context
+  end
+
+  step "the tasks of one turn of {string} already woke it twice", %{args: [parent]} = context do
+    context = named_tasks(context, parent, ["one", "two", "three"])
+    context = complete_named(context, "one")
+    World.send_turn(context, parent, "say Carrying on")
+    await_wakes(context, parent, ["one"])
+    context = complete_named(context, "two")
+    await_wakes(context, parent, ["two"])
+    assert length(wake_messages(context, parent)) == 2
+    context
+  end
+
+  step "another task of that turn finishes", context do
+    complete_named(context, "three")
+  end
+
+  step "a wake for task {string} is queued", %{args: [name]} = context do
+    {_run, message} = queued_wake!(context, context.task_parent)
+    assert message["delegatedCompletion"]["taskIds"] == [context.named_tasks[name]]
+    context
+  end
+
+  step "{string} is not woken a third time", %{args: [parent]} = context do
+    assert length(wake_messages(context, parent)) == 2
+    context
+  end
+
+  step "{string} was archived while the task was still working", %{args: [parent]} = context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.archive",
+        "threadId" => World.thread_id(context, parent)
+      })
+
+    context
+  end
+
+  step "{string} was deleted while the task was still working", %{args: [parent]} = context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.delete",
+        "threadId" => World.thread_id(context, parent)
+      })
+
+    context
+  end
+
+  step "{string} is not woken and no message is added to it", %{args: [parent]} = context do
+    assert wake_messages(context, parent) == []
+    assert result_messages(context, parent) == []
+    context
+  end
+
+  step "the task's delivery is {string}", %{args: [delivery]} = context do
+    await_task(context, &(&1["completionDelivery"]["state"] == delivery))
+    context
+  end
+
+  step "the result can still be read from the task's status", context do
+    assert {:ok, %{"summary" => "Done", "status" => "completed"}} = status(context)
+    context
+  end
+
+  # One of the two has already finished, so a wake for it is queued when the user
+  # stops the turn; the other is still working.
+  step "the agent in {string} delegated tasks {string} and {string} without waiting",
+       %{args: [caller, one, two]} = context do
+    context = named_tasks(context, caller, [one, two])
+    context = complete_named(context, one)
+    assert {_run, _message} = queued_wake!(context, caller)
+    context
+  end
+
+  step "the user interrupts the turn of {string}", %{args: [parent]} = context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, parent)
+      })
+
+    context
+  end
+
+  step "{string} and {string} finish afterwards", %{args: [one, two]} = context do
+    context =
+      Enum.reduce([one, two], context, fn name, context ->
+        if named_task(context, name)["status"] == "running",
+          do: complete_named(context, name),
+          else: context
+      end)
+
+    context
+  end
+
+  step "{string} is not woken for either", %{args: [parent]} = context do
+    refute Enum.any?(
+             World.runs(context, parent),
+             &(&1["status"] in ["queued", "running", "completed"] and
+                 wake_run?(context, parent, &1))
+           )
+
+    context
+  end
+
+  step "a wake already queued for that turn is cancelled", context do
+    parent = context.task_parent
+    [message] = wake_messages(context, parent)
+    run = Enum.find(World.runs(context, parent), &(&1["userMessageId"] == message["id"]))
+    assert run["status"] == "cancelled"
+    context
+  end
+
+  step "a wake for the finished tasks {string} and {string} of {string} is queued",
+       %{args: [one, two, parent]} = context do
+    context = named_tasks(context, parent, [one, two])
+    context = context |> complete_named(one) |> complete_named(two)
+    {_run, message} = queued_wake!(context, parent)
+
+    assert MapSet.new(message["delegatedCompletion"]["taskIds"]) ==
+             MapSet.new([context.named_tasks[one], context.named_tasks[two]])
+
+    context
+  end
+
+  defp delivery_for(context, task_id, action) do
+    [run | _] = World.runs(context, context.task_parent)
+
+    command = %{
+      "type" => "delegated_task.completion-delivery.#{action}",
+      "parentThreadId" => World.thread_id(context, context.task_parent),
+      "taskId" => task_id
+    }
+
+    command =
+      if action == "acknowledge",
+        do: Map.put(command, "observedByRunId", run["id"]),
+        else: command
+
+    {reply, context} = World.dispatch(context, command)
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "the agent acknowledges the result of {string}", %{args: [name]} = context do
+    delivery_for(context, context.named_tasks[name], "acknowledge")
+  end
+
+  step "the agent acknowledges the results of both tasks", context do
+    context
+    |> delivery_for(context.named_tasks["one"], "acknowledge")
+    |> delivery_for(context.named_tasks["two"], "acknowledge")
+  end
+
+  step "the agent disposes the delivery of both tasks", context do
+    context
+    |> delivery_for(context.named_tasks["one"], "dispose")
+    |> delivery_for(context.named_tasks["two"], "dispose")
+  end
+
+  step "the queued wake names only {string}", %{args: [name]} = context do
+    {_run, message} = queued_wake!(context, context.task_parent)
+    assert message["delegatedCompletion"]["taskIds"] == [context.named_tasks[name]]
+    context
+  end
+
+  step "the queued wake is cancelled and never runs", context do
+    parent = context.task_parent
+    [message] = wake_messages(context, parent)
+
+    World.await_state(context, parent, fn state ->
+      Enum.any?(
+        StreamState.list(state, "run"),
+        &(&1["userMessageId"] == message["id"] and &1["status"] == "cancelled")
+      )
+    end)
+
+    context
+  end
+
+  # --- backlog: delivery commands, wake policy, results, native subagents ----------------
+
+  # A "parent" thread on Claude with its turn running, for provider-started work.
+  defp claude_parent(context, fields \\ %{}) do
+    selection = %{"instanceId" => "claudeAgent", "model" => "claude-sonnet-4-6"}
+
+    context =
+      World.launch_titled(
+        context,
+        "parent",
+        nil,
+        "wait for it",
+        Map.merge(%{"modelSelection" => selection}, fields)
+      )
+
+    World.await_runs(context, "parent", ["running"])
+    context
+  end
+
+  # Claude starts a subagent of its own in "parent" (an Agent tool call and its
+  # task_started), as the existing Claude steps drive it. Keeps the newest
+  # provider-native subagent and its child thread in the context.
+  defp start_native(context, suffix, input, started) do
+    before =
+      context
+      |> World.state("parent")
+      |> StreamState.list("subagent")
+      |> Enum.map(& &1["id"])
+
+    claude_says(context, "parent", [
+      claude_tool_use(nil, "agent-#{suffix}", "Agent", input),
+      Map.merge(
+        %{
+          "type" => "system",
+          "subtype" => "task_started",
+          "task_id" => "task-agent-#{suffix}",
+          "tool_use_id" => "agent-#{suffix}",
+          "task_type" => "local_agent"
+        },
+        started
+      )
+    ])
+
+    state =
+      World.await_state(context, "parent", fn state ->
+        Enum.any?(
+          StreamState.list(state, "subagent"),
+          &(&1["origin"] == "provider_native" and &1["id"] not in before)
+        )
+      end)
+
+    native =
+      state
+      |> StreamState.list("subagent")
+      |> Enum.filter(&(&1["origin"] == "provider_native" and &1["id"] not in before))
+      |> List.last()
+
+    context
+    |> Map.put(:native, native)
+    |> put_in([:threads, "native-child"], native["childThreadId"])
+  end
+
+  step "a subagent that the provider of {string} started by itself",
+       %{args: [_parent]} = context do
+    context = claude_parent(context)
+    start_native(context, "own", %{"prompt" => "Fan out"}, %{"prompt" => "Fan out"})
+  end
+
+  defp try_delivery_command(context, command) do
+    {reply, context} = World.dispatch(context, command)
+    context |> Map.put(:command_reply, reply) |> Map.put(:reply, reply)
+  end
+
+  step "a client tries to acknowledge its completion delivery for that subagent", context do
+    try_delivery_command(context, %{
+      "type" => "delegated_task.completion-delivery.acknowledge",
+      "parentThreadId" => World.thread_id(context, "parent"),
+      "taskId" => context.native["id"],
+      "observedByRunId" => nil
+    })
+  end
+
+  step "a client tries to dispose its completion delivery for that subagent", context do
+    try_delivery_command(context, %{
+      "type" => "delegated_task.completion-delivery.dispose",
+      "parentThreadId" => World.thread_id(context, "parent"),
+      "taskId" => context.native["id"]
+    })
+  end
+
+  step "a client tries to change its wake policy for that subagent", context do
+    try_delivery_command(context, %{
+      "type" => "delegated_task.wake-policy",
+      "parentThreadId" => World.thread_id(context, "parent"),
+      "taskId" => context.native["id"],
+      "completionWake" => "always"
+    })
+  end
+
+  step "the agent in {string} delegated task {string} that always wakes it",
+       %{args: [caller, name]} = context do
+    named_tasks(context, caller, [name])
+  end
+
+  step "the wake policy of {string} is set to always again", %{args: [name]} = context do
+    context =
+      try_delivery_command(context, %{
+        "type" => "delegated_task.wake-policy",
+        "parentThreadId" => World.thread_id(context, context.task_parent),
+        "taskId" => context.named_tasks[name],
+        "completionWake" => "always"
+      })
+
+    Map.update!(context, :reply, &rename_reply(&1, context.named_tasks[name], name))
+  end
+
+  # The refusal's ids in the names the scenario gives them, for the common
+  # "the command fails with {string}" step (which reads `context.reply`).
+  defp rename_reply(value, id, name) when is_binary(value),
+    do: String.replace(value, id, name)
+
+  defp rename_reply(value, id, name) when is_tuple(value),
+    do: value |> Tuple.to_list() |> Enum.map(&rename_reply(&1, id, name)) |> List.to_tuple()
+
+  defp rename_reply(value, id, name) when is_list(value),
+    do: Enum.map(value, &rename_reply(&1, id, name))
+
+  defp rename_reply(value, id, name) when is_map(value),
+    do: Map.new(value, fn {k, v} -> {k, rename_reply(v, id, name)} end)
+
+  defp rename_reply(value, _id, _name), do: value
+
+  step "a task of {string} that wakes it only once idle finished while its turn was running",
+       %{args: [parent]} = context do
+    context = request_delegated(context, parent, %{"completionWake" => "settled_only"})
+    context = complete(context, "Done")
+    assert task(context)["completionDelivery"]["state"] == "acknowledged"
+    context
+  end
+
+  step "the turn of {string} is still running", %{args: [parent]} = context do
+    assert Enum.any?(World.runs(context, parent), &(&1["status"] == "running"))
+    context
+  end
+
+  step "the turn of {string} has ended", %{args: [parent]} = context do
+    World.send_turn(context, parent, "say Carrying on")
+    World.await_runs(context, parent, ["completed"])
+    context
+  end
+
+  step "the task's wake policy is changed to always", context do
+    {reply, context} = World.dispatch(context, wake_command(context, "always"))
+    assert {:ok, _} = reply
+    context
+  end
+
+  step "the result is delivered to {string} now", %{args: [parent]} = context do
+    await_task(context, &(&1["completionDelivery"]["state"] == "delivered"))
+    assert await_wake(context, parent, fn _ -> true end)["text"] =~ "\nDone\n"
+    context
+  end
+
+  step "no wake is sent and the result stays readable from the task's status", context do
+    assert wake_messages(context, context.task_parent) == []
+    assert {:ok, %{"summary" => "Done"}} = status(context)
+    context
+  end
+
+  defp request_command(context, parent, run) do
+    thread = World.thread(context, parent)
+
+    %{
+      "type" => "delegated_task.request",
+      "parentThreadId" => thread["id"],
+      "parentRunId" => run["id"],
+      "parentNodeId" => run["rootNodeId"],
+      "task" => "wait for it",
+      "modelSelection" => thread["modelSelection"],
+      "runtimeMode" => thread["runtimeMode"],
+      "interactionMode" => thread["interactionMode"]
+    }
+  end
+
+  step "a client requests a delegated task for a run that already ended of {string}",
+       %{args: [parent]} = context do
+    [run] = World.runs(context, parent)
+    World.send_turn(context, parent, "say Carrying on")
+    World.await_runs(context, parent, ["completed"])
+    try_delivery_command(context, request_command(context, parent, run))
+  end
+
+  step "a client requests a delegated task for the active run and a node that is not part of it of {string}",
+       %{args: [parent]} = context do
+    [run] = World.runs(context, parent)
+
+    try_delivery_command(
+      context,
+      Map.put(request_command(context, parent, run), "parentNodeId", "node:not-in-run")
+    )
+  end
+
+  step ~r/^the command fails saying (?<reason>the parent run is not active|the parent node is not part of the active run|it is not an app-owned task of thread ".+")$/,
+       %{args: [reason]} = context do
+    assert {:error, _, _} = context.command_reply
+    text = inspect(context.command_reply)
+
+    cond do
+      reason =~ "app-owned" ->
+        assert text =~ "is not an app-owned task of thread"
+
+      reason =~ "node" ->
+        assert text =~ "is not part of active run"
+
+      true ->
+        assert text =~ "is not active"
+    end
+
+    context
+  end
+
+  # Ends the subagent's running Codex turn the way `ending` says, with no answer
+  # of its own unless the ending gives one first.
+  defp end_child(context, ending) do
+    context = delegate(context, "parent", %{"mode" => "async"})
+    World.await_runs(context, "subagent", ["running"])
+    {_pid, runtime} = World.codex_runtime(context, "subagent")
+    at = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+
+    case ending do
+      "completed" ->
+        World.codex_notify(context, "subagent", "turn/completed", %{
+          "threadId" => runtime.native_thread_id,
+          "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+        })
+
+        await_task(context, &(&1["status"] == "completed"))
+
+      "interrupted" ->
+        {:ok, _} =
+          HalC2.Orchestration.dispatch(%{
+            "type" => "run.interrupt",
+            "threadId" => World.thread_id(context, "subagent")
+          })
+
+        await_task(context, &(&1["status"] == "interrupted"))
+
+      "failed" ->
+        message = %{"type" => "agentMessage", "id" => "msg-before-failure", "text" => "Answered"}
+
+        World.codex_notify(
+          context,
+          "subagent",
+          "item/started",
+          Map.put(at, "item", %{message | "text" => ""})
+        )
+
+        World.codex_notify(
+          context,
+          "subagent",
+          "item/completed",
+          Map.put(at, "item", message)
+        )
+
+        World.codex_notify(context, "subagent", "error", %{
+          "threadId" => runtime.native_thread_id,
+          "turnId" => runtime.turn.native_turn_id,
+          "willRetry" => true,
+          "error" => %{"message" => "Rate limit reached"}
+        })
+
+        World.codex_notify(context, "subagent", "turn/completed", %{
+          "threadId" => runtime.native_thread_id,
+          "turn" => %{
+            "id" => runtime.turn.native_turn_id,
+            "status" => "failed",
+            "error" => %{"message" => "Rate limit reached"}
+          }
+        })
+
+        await_task(context, &(&1["status"] == "failed"))
+    end
+
+    context
+  end
+
+  step "the subagent's turn completes without an assistant message", context do
+    end_child(context, "completed")
+  end
+
+  step "the subagent's turn is interrupted without an assistant message", context do
+    end_child(context, "interrupted")
+  end
+
+  step "the subagent's turn fails with {string} after it already answered",
+       %{args: [_message]} = context do
+    end_child(context, "failed")
+  end
+
+  step "the task's result reads {string}", %{args: [result]} = context do
+    assert task(context)["result"] == result
+    context
+  end
+
+  step "{string} is titled {string}", %{args: [_thread, title]} = context do
+    claude_parent(context, %{"title" => title})
+  end
+
+  step "the provider of {string} starts its second subagent with neither a title nor a prompt",
+       %{args: [_parent]} = context do
+    context =
+      start_native(context, "first", %{"prompt" => "First task"}, %{"prompt" => "First task"})
+
+    start_native(context, "second", %{}, %{})
+  end
+
+  step "the subagent's thread is titled {string}", %{args: [title]} = context do
+    row = World.await_row(context.native["childThreadId"], & &1)
+    assert row["title"] == title
+    context
+  end
+
+  step "the provider of {string} starts a subagent with no title and a prompt of 100 characters",
+       %{args: [_parent]} = context do
+    prompt = String.duplicate("a", 100)
+    context = claude_parent(context)
+    context = start_native(context, "long", %{"prompt" => prompt}, %{"prompt" => prompt})
+    Map.put(context, :long_prompt, prompt)
+  end
+
+  step "the subagent's thread is titled with the prompt's first 69 characters followed by {string}",
+       %{args: [suffix]} = context do
+    row = World.await_row(context.native["childThreadId"], & &1)
+    assert row["title"] == String.slice(context.long_prompt, 0, 69) <> suffix
+    context
+  end
+
+  step "thread {string} is snoozed", %{args: [parent]} = context do
+    context = claude_parent(context)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.snooze",
+        "threadId" => World.thread_id(context, parent),
+        "snoozedUntil" => World.iso_from_now(World.days(1))
+      })
+
+    context
+  end
+
+  step "the provider of {string} starts a subagent", %{args: [_parent]} = context do
+    start_native(context, "fresh", %{"prompt" => "Check something"}, %{
+      "prompt" => "Check something"
+    })
+  end
+
+  step "the subagent's thread is not snoozed, settled or archived", context do
+    child =
+      context.native["childThreadId"]
+      |> World.await_stream(& &1)
+      |> StreamState.get("thread")
+      |> Map.fetch!(context.native["childThreadId"])
+
+    assert child["snoozedUntil"] == nil
+    assert child["settledOverride"] == nil
+    assert child["settledAt"] == nil
+    assert child["archivedAt"] == nil
+    Map.put(context, :native_child_thread, child)
+  end
+
+  step "it has never been visited", context do
+    assert context.native_child_thread["lastVisitedAt"] == nil
+    context
+  end
+
+  step "the provider of {string} starts a subagent with the prompt {string}",
+       %{args: [_parent, prompt]} = context do
+    context = claude_parent(context)
+    start_native(context, "prompted", %{"prompt" => prompt}, %{"prompt" => prompt})
+  end
+
+  step "the subagent's thread opens with the message {string} written by the agent",
+       %{args: [text]} = context do
+    [message | _] = messages(context, "native-child")
+    assert message["text"] == text
+    assert message["role"] == "user"
+    assert message["createdBy"] == "agent"
+    Map.put(context, :native_first_message, message)
+  end
+
+  step "the message names {string} as the thread that sent it", %{args: [parent]} = context do
+    assert context.native_first_message["senderThreadId"] == World.thread_id(context, parent)
     context
   end
 
@@ -1368,12 +2653,18 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
     context = Map.put(context, :task, input["task"])
 
+    instance =
+      get_in(World.thread(context, caller) || %{}, ["modelSelection", "instanceId"]) || "codex"
+
     if input["mode"] == "wait" do
       started = System.monotonic_time(:millisecond)
-      wait = Task.async(fn -> World.mcp_tool(context, caller, "delegate_task", input) end)
+
+      wait =
+        Task.async(fn -> World.mcp_tool(context, caller, "delegate_task", input, instance) end)
+
       await_child(Map.merge(context, %{wait: wait, wait_started: started}), caller)
     else
-      case World.mcp_tool(context, caller, "delegate_task", input) do
+      case World.mcp_tool(context, caller, "delegate_task", input, instance) do
         {:ok, %{"taskId" => _}} = result ->
           context |> Map.put(:mcp_result, result) |> await_child(caller)
 
