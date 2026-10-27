@@ -268,8 +268,11 @@ defmodule HalC2.Settings do
   def notify_usage_limit_sources(sources),
     do: GenServer.cast(__MODULE__, {:usage_limit_sources_changed, sources})
 
-  @doc "Tells watchers the keybinding rules changed (`HalC2.Keybindings`)."
-  def notify_keybindings(rules), do: GenServer.cast(__MODULE__, {:keybindings_changed, rules})
+  @doc """
+  Changes the keybinding rules with `fun` (`HalC2.Keybindings`), in turn with a member's
+  rules arriving, so neither writes over the other.
+  """
+  def edit_keybindings(fun), do: GenServer.call(__MODULE__, {:edit_keybindings, fun})
 
   @doc "The stamped records of the shared settings (`HalC2.Settings.Shared`), for members."
   def shared_records do
@@ -446,6 +449,15 @@ defmodule HalC2.Settings do
   def handle_call({:put, _settings, _version}, _from, state),
     do: {:reply, {:error, :stale}, state}
 
+  def handle_call({:edit_keybindings, fun}, _from, state) do
+    rules = fun.(HalC2.Keybindings.rules())
+    HalC2.Keybindings.write(rules)
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
+
+    {:reply, {:ok, %{"rules" => rules}},
+     put_shared(state, local_keybindings(state.shared, state))}
+  end
+
   def handle_call({:watch, pid, ref}, _from, state) do
     watchers = HalC2.Watchers.add(state.watchers, pid, ref)
     {:reply, :ok, %{state | watchers: watchers}}
@@ -457,19 +469,11 @@ defmodule HalC2.Settings do
     {:noreply, state}
   end
 
-  # The rules as the file holds them now, not as the notice carries them: a member's
-  # newer ones may have replaced them since it was sent (`:merge_shared`).
-  def handle_cast({:keybindings_changed, _rules}, state) do
-    rules = HalC2.Keybindings.rules()
-    HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
-    {:noreply, put_shared(state, local_keybindings(state.shared, state))}
-  end
-
   def handle_cast({:merge_shared, _records}, %{held: true} = state), do: {:noreply, state}
 
   def handle_cast({:merge_shared, records}, state) do
-    # A rules file unlike its record holds an edit whose notice is still on its way. It
-    # is stamped first, so the merge weighs it rather than writing over it.
+    # A rules file unlike its record was edited by hand since. It is stamped first, so
+    # the merge weighs the edit rather than writing over it.
     ours =
       if File.exists?(HalC2.Keybindings.path()),
         do: local_keybindings(state.shared, state),
@@ -483,7 +487,11 @@ defmodule HalC2.Settings do
       # The rules file is written before the record that stamps it, like settings.json.
       if merged["keybindings"] != state.shared["keybindings"] do
         rules = merged["keybindings"]["value"] || []
-        if rules != HalC2.Keybindings.rules(), do: HalC2.Keybindings.replace(rules)
+
+        if rules != HalC2.Keybindings.rules() do
+          HalC2.Keybindings.write(rules)
+          HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
+        end
       end
 
       settings = Shared.apply(state.settings, merged)

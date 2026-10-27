@@ -33,11 +33,12 @@ defmodule HalC2.Keybindings do
 
     case invalid(rule) do
       nil ->
-        rules()
-        |> Enum.reject(&(&1 == rule or &1 == replace))
-        |> Kernel.++([rule])
-        |> Enum.take(-@max)
-        |> save()
+        HalC2.Settings.edit_keybindings(fn rules ->
+          rules
+          |> Enum.reject(&(&1 == rule or &1 == replace))
+          |> Kernel.++([rule])
+          |> Enum.take(-@max)
+        end)
 
       reason ->
         {:error,
@@ -51,7 +52,7 @@ defmodule HalC2.Keybindings do
   @doc "`server.removeKeybinding`: removes a rule."
   def remove(input) do
     target = rule(input)
-    rules() |> Enum.reject(&(&1 == target)) |> save()
+    HalC2.Settings.edit_keybindings(fn rules -> Enum.reject(rules, &(&1 == target)) end)
   end
 
   defp rule(input),
@@ -109,17 +110,16 @@ defmodule HalC2.Keybindings do
     |> elem(2)
   end
 
-  @doc "Replaces the rules with a member's newer ones (`HalC2.Settings.Shared`)."
-  def replace(rules), do: save(rules)
-
-  defp save(rules) do
+  @doc """
+  Writes the rules. Only `HalC2.Settings` calls it, for an edit or a member's newer
+  rules (`HalC2.Settings.Shared`), so the file is read and written one change at a time.
+  """
+  def write(rules) do
     file = path()
     tmp = file <> ".tmp"
     File.mkdir_p!(Path.dirname(file))
     File.write!(tmp, JSON.encode!(rules))
     File.rename!(tmp, file)
-    HalC2.Settings.notify_keybindings(rules)
-    {:ok, %{"rules" => rules}}
   end
 
   @doc "Where the rules are kept."

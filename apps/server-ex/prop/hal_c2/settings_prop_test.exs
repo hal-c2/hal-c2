@@ -8,8 +8,8 @@ defmodule HalC2.SettingsPropTest do
   document but starts counting versions again. Some keys are shared with the cluster
   (`HalC2.Settings.Shared`), and so are the keybinding rules: every change to one is
   stamped, and members' records arrive in any order, from clocks behind or ahead of
-  this one, and win only when newer, also against a keybinding edit whose notice is
-  still on its way. While the document cannot be read the shared keys stand in for it,
+  this one, and win only when newer; a keybinding edit queued behind them is made on
+  top of them. While the document cannot be read the shared keys stand in for it,
   so a write then resets none it left alone. A second property races writers on one
   version.
   """
@@ -220,13 +220,12 @@ defmodule HalC2.SettingsPropTest do
 
   def next_state(state, _result, {:call, _, :bind, [key]}), do: bound_rules(state, key)
 
-  # The edit lands in the file before the member's rules are taken up, and is weighed
-  # against them as stamped then; its notice, handled after, changes nothing more.
+  # The member's rules are taken up first, and the edit is made on whatever they leave.
   def next_state(%{held: true} = state, _result, {:call, _, :bind_racing, [key, _incoming]}),
     do: bound_rules(state, key)
 
   def next_state(state, _result, {:call, _, :bind_racing, [key, incoming]}),
-    do: state |> bound_rules(key) |> gossiped(incoming)
+    do: state |> gossiped(incoming) |> bound_rules(key)
 
   def next_state(state, _result, {:call, _, :watch, []}), do: %{state | watching: true}
   def next_state(state, _result, {:call, _, :unwatch, []}), do: %{state | watching: false}
@@ -509,14 +508,13 @@ defmodule HalC2.SettingsPropTest do
     :ok
   end
 
-  # A member's rules reach the server after a client's edit is written, before its
-  # notice is handled.
+  # A member's rules reach the server just ahead of a client's edit.
   def bind_racing(key, incoming) do
     :ok = :sys.suspend(Settings)
     Settings.merge_shared(incoming)
-    {:ok, _} = HalC2.Keybindings.upsert(rule(key))
+    edit = Task.async(fn -> HalC2.Keybindings.upsert(rule(key)) end)
     :ok = :sys.resume(Settings)
-    :sys.get_state(Settings)
+    {:ok, _} = Task.await(edit)
     :ok
   end
 

@@ -7,6 +7,8 @@ defmodule HalC2.KeybindingsTest do
     previous = Application.get_env(:hal_c2, :home)
     Application.put_env(:hal_c2, :home, dir)
     on_exit(fn -> Application.put_env(:hal_c2, :home, previous) end)
+    # Edits are made by the settings server, in turn with a member's rules.
+    start_supervised!(HalC2.Settings)
     %{path: Path.join(dir, "keybindings.json")}
   end
 

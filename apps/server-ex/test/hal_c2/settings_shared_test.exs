@@ -246,41 +246,41 @@ defmodule HalC2.SettingsSharedTest do
              }
     end
 
-    test "a member's rules arriving while a local edit's notice is on its way keep the edit",
-         %{id: id} do
+    test "a client's edit queued behind a member's rules is made on top of them", %{id: id} do
       :ok = Settings.watch(self())
-      ours = [%{"key" => "mod+k", "command" => "commandPalette.toggle"}]
-      theirs = [%{"key" => "mod+j", "command" => "terminal.toggle"}]
-
-      # The member's rules are newer than any record here, but older than the edit.
-      :ok = :sys.suspend(Settings)
-      Settings.merge_shared(%{"keybindings" => record(1, "zz", theirs)})
-      {:ok, _} = HalC2.Keybindings.upsert(hd(ours))
-      :ok = :sys.resume(Settings)
-      _ = :sys.get_state(Settings)
-
-      assert HalC2.Keybindings.rules() == ours
-
-      assert %{"keybindings" => %{"by" => ^id, "value" => ^ours}} =
-               Settings.shared_records()
-
-      assert_received {:hal_c2_keybindings, _, ^ours}
-      refute_received {:hal_c2_keybindings, _, ^theirs}
-    end
-
-    test "a member's rules newer than a local edit in flight win, in the file and the record" do
-      ours = [%{"key" => "mod+k", "command" => "commandPalette.toggle"}]
+      ours = %{"key" => "mod+k", "command" => "commandPalette.toggle"}
       theirs = [%{"key" => "mod+j", "command" => "terminal.toggle"}]
       ahead = System.os_time(:millisecond) + 3_600_000
 
+      # The edit reads the rules only once the member's are in the file.
       :ok = :sys.suspend(Settings)
       Settings.merge_shared(%{"keybindings" => record(ahead, "zz", theirs)})
-      {:ok, _} = HalC2.Keybindings.upsert(hd(ours))
+      edit = Task.async(fn -> HalC2.Keybindings.upsert(ours) end)
       :ok = :sys.resume(Settings)
+      both = theirs ++ [ours]
+      assert {:ok, %{"rules" => ^both}} = Task.await(edit)
+
+      assert HalC2.Keybindings.rules() == both
+
+      assert %{"keybindings" => %{"at" => at, "by" => ^id, "value" => ^both}} =
+               Settings.shared_records()
+
+      assert at > ahead
+      assert_received {:hal_c2_keybindings, _, ^theirs}
+      assert_received {:hal_c2_keybindings, _, ^both}
+    end
+
+    test "a hand edit to the rules file is weighed against a member's older rules, not written over",
+         %{id: id} do
+      ours = [%{"key" => "mod+k", "command" => "commandPalette.toggle"}]
+      theirs = [%{"key" => "mod+j", "command" => "terminal.toggle"}]
+      File.write!(HalC2.Keybindings.path(), JSON.encode!(ours))
+
+      Settings.merge_shared(%{"keybindings" => record(1, "zz", theirs)})
       _ = :sys.get_state(Settings)
 
-      assert HalC2.Keybindings.rules() == theirs
-      assert %{"keybindings" => %{"at" => ^ahead, "value" => ^theirs}} = Settings.shared_records()
+      assert HalC2.Keybindings.rules() == ours
+      assert %{"keybindings" => %{"by" => ^id, "value" => ^ours}} = Settings.shared_records()
     end
 
     test "a member's empty rule list is kept as it arrived, not stamped over by the file" do

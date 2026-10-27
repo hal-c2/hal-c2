@@ -41,6 +41,8 @@ defmodule HalC2.Steps.Plugins.Keymaps do
   end
 
   step "the user bound {string} to {string}", %{args: [key, command]} = context do
+    # The settings server makes the edit, in turn with a member's rules.
+    Mc.ensure(HalC2.Settings)
     rule = %{"key" => key, "command" => command}
     {%{"rules" => rules}, context} = World.call!(context, "hal-c2.upsertKeybinding", rule)
     assert rule in rules
