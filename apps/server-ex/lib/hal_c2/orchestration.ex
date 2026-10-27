@@ -3533,6 +3533,9 @@ defmodule HalC2.Orchestration do
       # A turn the provider started by itself, whose output its runtime already has
       # (a Claude wake, `HalC2.Claude.ThreadRuntime`): the message is not sent to it.
       wake: command["providerWake"] == true,
+      # A run confined to reading the workspace, which providers that can
+      # confine a run (Claude's `--tools`) honour.
+      read_only: command["readOnly"] == true,
       native_thread_id: get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]),
       head: get_in(provider_thread || %{}, ["nativeConversationHeadRef", "nativeId"])
     }

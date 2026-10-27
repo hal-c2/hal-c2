@@ -341,7 +341,7 @@ Feature: Claude
     When the user opens the limits view
     Then Claude shows its session and weekly windows and a weekly window for the limited model
 
-  @backlog @mc
+  @mc
   Scenario Outline: The Claude context meter is sized by the model's context window
     When a Claude turn runs on <model>
     Then the context meter is out of <size> tokens
@@ -354,7 +354,7 @@ Feature: Claude
       | a model with the 1M context window set | 1,000,000 |
       | any other model                        | 200,000   |
 
-  @backlog @mc
+  @mc
   Scenario Outline: Claude is asked for summaries of its thinking unless they were turned off
     Given <setup>
     When the user sends a message to Claude
@@ -366,13 +366,13 @@ Feature: Claude
       | a model with thinking set to off                                        | not asked |
       | a Claude instance with the launch argument "--thinking-display omitted" | not asked |
 
-  @backlog @mc
+  @mc
   Scenario: Claude starts with the launch arguments configured for it
     Given the Claude instance has launch arguments configured
     When the user sends a message to Claude
     Then Claude is started with those arguments
 
-  @backlog @mc
+  @mc
   Scenario Outline: A permission flag in Claude's launch arguments wins over the thread's mode
     Given the Claude instance has the launch argument "<argument>"
     And a Claude thread in supervised
@@ -384,20 +384,20 @@ Feature: Claude
       | --permission-mode acceptEdits  | acceptEdits       |
       | --dangerously-skip-permissions | bypassPermissions |
 
-  @backlog @mc
+  @mc
   Scenario: A Claude run that may only read is given only its reading tools
     Given a Claude run that may only read the workspace and never asks for approval
     When the run starts
     Then Claude can use only its tools for reading and searching files
 
-  @backlog @mc
+  @mc
   Scenario: A read-only Claude run can call only the HAL-C2 tools that read
     Given a Claude run that may only read the workspace and has the HAL-C2 tools
     When the run starts
     Then HAL-C2 tools that only read, such as listing threads, are allowed without asking
     And HAL-C2 tools that start threads or schedule tasks are not allowed
 
-  @backlog @mc
+  @mc
   Scenario: Claude can open the files attached to a message
     When the user sends Claude a message with an attached file
     Then Claude is given access to the folder the MC saved the file in

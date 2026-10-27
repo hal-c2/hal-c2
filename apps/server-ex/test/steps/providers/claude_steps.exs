@@ -546,8 +546,16 @@ defmodule HalC2.Steps.Providers.Claude do
   # --- turns ---------------------------------------------------------------------------
 
   step "the user sends a message to Claude", context do
+    fields =
+      case context[:model_selection] do
+        nil -> %{}
+        selection -> %{"modelSelection" => selection}
+      end
+
     context =
-      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "hello", fields)
 
     # A signed-out CLI fails the turn; the steps after this one say which it should be.
     World.await_value(context, @thread, fn state ->
@@ -3114,6 +3122,264 @@ defmodule HalC2.Steps.Providers.Claude do
 
     refute "--resume" in argv
     assert "resumed at None fork False history False" in World.replies(context, @thread)
+    context
+  end
+
+  # --- launch, context meter, read-only runs -----------------------------------------
+
+  defp last_argv(context) do
+    context
+    |> World.provider_log("claude")
+    |> Enum.flat_map(fn
+      %{"argv" => argv} -> [argv]
+      _ -> []
+    end)
+    |> List.last()
+  end
+
+  defp flag_value(argv, flag) do
+    case Enum.chunk_every(argv, 2, 1, :discard) |> Enum.find(&match?([^flag, _], &1)) do
+      [_, value] -> value
+      _ -> nil
+    end
+  end
+
+  defp launch_args(context, text) do
+    World.put_settings(context, %{"providers" => %{"claudeAgent" => %{"launchArgs" => text}}})
+    World.reset_provider_caches()
+    context
+  end
+
+  step ~r/^a Claude turn runs on (?<model>.+)$/, %{args: [model]} = context do
+    {slug, options} =
+      case model do
+        "Opus 4.6" ->
+          {"claude-opus-4-6", %{}}
+
+        "Opus 4.7" ->
+          {"claude-opus-4-7", %{}}
+
+        "a model with the 1M context window set" ->
+          {"claude-sonnet-4-6", [%{"id" => "contextWindow", "value" => "1m"}]}
+
+        "any other model" ->
+          {"claude-haiku-4-5-20251001", %{}}
+      end
+
+    selection = %{"instanceId" => "claudeAgent", "model" => slug, "options" => options}
+
+    context =
+      context
+      |> World.fake_providers(claude_version: "999.0.0")
+      |> World.launch_on(@thread, "claudeAgent", "wait for me", %{"modelSelection" => selection})
+
+    World.await_running(context, @thread)
+
+    claude_says(context, %{
+      "type" => "result",
+      "subtype" => "success",
+      "is_error" => false,
+      "usage" => %{
+        "input_tokens" => 1000,
+        "cache_creation_input_tokens" => 200,
+        "cache_read_input_tokens" => 300,
+        "output_tokens" => 50
+      }
+    })
+
+    World.await_runs(context, @thread, ["completed"])
+    Map.put(context, :usage, context_usage(context))
+  end
+
+  step ~r/^the context meter is out of (?<size>[\d,]+) tokens$/, %{args: [size]} = context do
+    assert context.usage["maxTokens"] == size |> String.replace(",", "") |> String.to_integer()
+    context
+  end
+
+  step "what is used counts the input, cached and output tokens Claude reported", context do
+    assert context.usage["usedTokens"] == 1000 + 200 + 300 + 50
+    assert context.usage["inputTokens"] == 1500
+    assert context.usage["cachedInputTokens"] == 300
+    assert context.usage["outputTokens"] == 50
+    context
+  end
+
+  step "a Claude instance with no launch arguments", context do
+    World.fake_providers(context)
+  end
+
+  step "a model with thinking set to off", context do
+    context = World.fake_providers(context)
+
+    Map.put(context, :model_selection, %{
+      "instanceId" => "claudeAgent",
+      "model" => "claude-haiku-4-5-20251001",
+      "options" => [%{"id" => "thinking", "value" => false}]
+    })
+  end
+
+  step "a Claude instance with the launch argument {string}", %{args: [argument]} = context do
+    context |> World.fake_providers() |> launch_args(argument)
+  end
+
+  step ~r/^Claude is (?<asked>asked|not asked) for summaries of its thinking$/,
+       %{args: [asked]} = context do
+    argv = last_argv(context)
+    context = Map.put(context, :argv, argv)
+
+    if asked == "asked" do
+      assert flag_value(argv, "--thinking-display") == "summarized"
+      assert settings(context)["showThinkingSummaries"] == true
+    else
+      refute flag_value(argv, "--thinking-display") == "summarized"
+
+      case Enum.find(pairs(argv), &match?(["--settings", _], &1)) do
+        nil -> :ok
+        _ -> refute settings(context)["showThinkingSummaries"] == true
+      end
+    end
+
+    assert Enum.count(argv, &(&1 == "--thinking-display")) <= 1
+    context
+  end
+
+  step "the Claude instance has launch arguments configured", context do
+    context
+    |> World.fake_providers()
+    |> launch_args(~s(--verbose --append-system-prompt "be brief"))
+  end
+
+  step "Claude is started with those arguments", context do
+    argv = last_argv(context)
+    assert "--verbose" in argv
+
+    assert Enum.any?(
+             Enum.chunk_every(argv, 2, 1, :discard),
+             &match?(["--append-system-prompt", "be brief"], &1)
+           )
+
+    context
+  end
+
+  step "the Claude instance has the launch argument {string}", %{args: [argument]} = context do
+    context |> World.fake_providers() |> launch_args(argument)
+  end
+
+  # A run confined to reading: a message dispatched with `readOnly`, the way an
+  # internal sender asks for one (`Orchestration` carries it onto the turn).
+  defp read_only_run(context) do
+    # The fake setup does not start the MCP server the app always runs.
+    Mc.ensure(HalC2.Mcp)
+
+    context =
+      context
+      |> World.fake_providers()
+      |> World.create_project("shop")
+      |> World.create_thread(@thread)
+
+    {{:ok, _}, context} =
+      World.send_message(context, @thread, "survey the code", %{
+        "modelSelection" => %{
+          "instanceId" => "claudeAgent",
+          "model" => "claude-haiku-4-5-20251001"
+        },
+        "readOnly" => true
+      })
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "a Claude run that may only read the workspace and never asks for approval", context do
+    Map.put(context, :read_only_run, true)
+  end
+
+  step "a Claude run that may only read the workspace and has the HAL-C2 tools", context do
+    Map.put(context, :read_only_run, true)
+  end
+
+  step "the run starts", context do
+    read_only_run(context)
+  end
+
+  step "Claude can use only its tools for reading and searching files", context do
+    argv = last_argv(context)
+    assert flag_value(argv, "--tools") == "Read,Glob,Grep"
+    assert flag_value(argv, "--permission-mode") == "dontAsk"
+    context
+  end
+
+  # The session's start (later starts may be the usage probe's `claude -p`).
+  defp session_argv(context) do
+    context
+    |> World.provider_log("claude")
+    |> Enum.flat_map(fn
+      %{"argv" => argv} -> [argv]
+      _ -> []
+    end)
+    |> Enum.find(&("--output-format" in &1))
+  end
+
+  step "HAL-C2 tools that only read, such as listing threads, are allowed without asking",
+       context do
+    allowed = flag_value(session_argv(context), "--allowedTools")
+    assert allowed =~ "mcp__hal-c2__hal_c2_thread_list"
+    Map.put(context, :allowed_tools, allowed)
+  end
+
+  step "HAL-C2 tools that start threads or schedule tasks are not allowed", context do
+    allowed = context.allowed_tools
+    refute allowed == "mcp__hal-c2"
+    refute allowed =~ "delegate_task"
+    refute allowed =~ "schedule_task"
+    refute allowed =~ "create_threads"
+    context
+  end
+
+  step "the user sends Claude a message with an attached file", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.create_project("shop")
+      |> World.create_thread(@thread)
+
+    bytes = "remember the milk\n"
+    id = "pending-00000000-0000-4000-8000-000000000123"
+    File.mkdir_p!(HalC2.Attachments.dir())
+    File.write!(Path.join(HalC2.Attachments.dir(), id <> ".txt"), bytes)
+
+    attachment = %{
+      "type" => "file",
+      "id" => id,
+      "name" => "notes.txt",
+      "mimeType" => "text/plain",
+      "sizeBytes" => byte_size(bytes)
+    }
+
+    {{:ok, _}, context} =
+      World.send_message(context, @thread, "read this", %{
+        "modelSelection" => %{
+          "instanceId" => "claudeAgent",
+          "model" => "claude-haiku-4-5-20251001"
+        },
+        "attachments" => [attachment]
+      })
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Claude is given access to the folder the MC saved the file in", context do
+    argv = last_argv(context)
+    assert flag_value(argv, "--add-dir") == HalC2.Attachments.dir()
+
+    message =
+      World.stream(context, @thread)
+      |> StreamState.list("message")
+      |> Enum.find(& &1["attachments"])
+
+    assert [claimed] = message["attachments"]
+    assert String.starts_with?(HalC2.Attachments.path(claimed), HalC2.Attachments.dir())
     context
   end
 

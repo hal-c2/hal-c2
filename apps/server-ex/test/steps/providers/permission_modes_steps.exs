@@ -69,7 +69,11 @@ defmodule HalC2.Steps.Providers.PermissionModes do
   end
 
   step "Claude runs with the {string} permission mode", %{args: [mode]} = context do
-    assert ["--permission-mode", mode] in Enum.chunk_every(launch_argv(context, "claude"), 2, 1)
+    argv = launch_argv(context, "claude")
+    assert ["--permission-mode", mode] in Enum.chunk_every(argv, 2, 1)
+    # One permission flag only: a launch argument's flag is not passed again.
+    assert Enum.count(argv, &(&1 == "--permission-mode")) == 1
+    refute "--dangerously-skip-permissions" in argv
     context
   end
 

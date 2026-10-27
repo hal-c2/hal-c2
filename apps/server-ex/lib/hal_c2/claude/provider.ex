@@ -372,12 +372,19 @@ defmodule HalC2.Claude.Provider do
           model: String.t() | nil,
           effort: String.t() | nil,
           settings: map,
-          prompt_effort: String.t() | nil
+          prompt_effort: String.t() | nil,
+          context_window: pos_integer
         }
   def launch(model, options, instance \\ "claudeAgent") do
     case spec(model, instance) do
       nil ->
-        %{model: model, effort: nil, settings: %{}, prompt_effort: nil}
+        %{
+          model: model,
+          effort: nil,
+          settings: %{},
+          prompt_effort: nil,
+          context_window: 200_000
+        }
 
       %{"slug" => slug, "capabilities" => capabilities, "adapter" => adapter} ->
         descriptors = (capabilities || %{})["optionDescriptors"] || []
@@ -400,9 +407,28 @@ defmodule HalC2.Claude.Provider do
           model: if(suffix == "", do: slug, else: (adapter["modelId"] || slug) <> suffix),
           effort: Map.get(adapter["effortMap"] || %{}, effort, effort),
           settings: Map.reject(settings, fn {_, value} -> value == nil end),
-          prompt_effort: if(effort in injected, do: effort)
+          prompt_effort: if(effort in injected, do: effort),
+          context_window:
+            adapter["fixedContextWindowTokens"] ||
+              get_in(adapter, [
+                "contextWindowTokens",
+                choice(descriptors, "contextWindow", options)
+              ]) ||
+              200_000
         }
     end
+  end
+
+  @doc """
+  The launch arguments set on a Claude instance (`launchArgs`), split as a shell
+  would, as Codex's are (`HalC2.Codex.Provider.launch_args/1`).
+  """
+  @spec launch_args(String.t()) :: {:ok, [String.t()]} | {:error, String.t()}
+  def launch_args(instance \\ "claudeAgent") do
+    {:ok, OptionParser.split(HalC2.Settings.instance_setting(instance, "launchArgs") || "")}
+  rescue
+    RuntimeError ->
+      {:error, "the launch arguments in settings have a quote that is never closed"}
   end
 
   # The slug, capabilities and adapter settings `model` runs with on `instance`: the
