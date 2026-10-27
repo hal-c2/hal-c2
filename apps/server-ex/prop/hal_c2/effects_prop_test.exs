@@ -132,9 +132,14 @@ defmodule HalC2.EffectsPropTest do
   property "a boot keeps a thread's newest settled failures, none older than a week",
     numtests: HalC2.Prop.numtests(25) do
     forall settled <-
-             list(
-               {oneof([exactly("failed"), exactly("cancelled")]),
-                oneof(Enum.map([0, 1, 6, 8, 10], &exactly/1))}
+             let(
+               count <- integer(0, 130),
+               do:
+                 vector(
+                   count,
+                   {oneof([exactly("failed"), exactly("cancelled")]),
+                    oneof(Enum.map([0, 1, 6, 8, 10], &exactly/1))}
+                 )
              ) do
       trap_exit do
         _home = services()
