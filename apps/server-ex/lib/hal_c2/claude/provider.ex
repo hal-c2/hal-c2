@@ -16,6 +16,7 @@ defmodule HalC2.Claude.Provider do
   @models {__MODULE__, :models}
   @capabilities {__MODULE__, :capabilities}
   @health {__MODULE__, :health}
+  @workspaces {__MODULE__, :workspaces}
   @probe_timeout 20_000
   # How long an `initialize` read (account, commands, models) stands before the
   # next check reads it again; a refresh by hand always reads afresh.
@@ -99,14 +100,55 @@ defmodule HalC2.Claude.Provider do
             message -> Map.put(entry, "message", message)
           end
         end)
+        |> then(fn entry ->
+          case workspace_snapshots(id) do
+            [] -> entry
+            snapshots -> Map.put(entry, "workspaceSnapshots", snapshots)
+          end
+        end)
         |> with_health(id, path, enabled)
     end
   end
 
-  # Claude's skills for the entry: read from its config directory and the
-  # project's folders when a client asks for a folder's (`skills/2`); the entry
-  # itself carries none until then.
+  # The entry itself carries no skills: a project's are read when a client asks
+  # for its folder's (`refresh_workspace/2`, the workspace snapshots below).
   defp skills(_id, _path), do: []
+
+  @doc """
+  Reads instance `id`'s skills for a thread in `cwd` and keeps them as that
+  folder's workspace snapshot on the entry, as Antigravity's refresh does. A
+  turned-off instance reads no folder and offers none.
+  """
+  @spec refresh_workspace(String.t(), String.t()) :: :ok
+  def refresh_workspace(id, cwd) do
+    skills =
+      if HalC2.Settings.instance_enabled?(id, "claudeAgent"),
+        do: HalC2.Claude.Skills.discover(id, cwd),
+        else: []
+
+    snapshot = %{
+      "cwd" => cwd,
+      "checkedAt" => HalC2.Orchestration.Entities.now(),
+      "slashCommands" =>
+        case executable(id) do
+          nil -> []
+          path -> slash_commands(id, path)
+        end,
+      "skills" => skills
+    }
+
+    workspaces = :persistent_term.get(@workspaces, %{})
+    :persistent_term.put(@workspaces, Map.put(workspaces, {id, cwd}, snapshot))
+    HalC2.Settings.notify_providers()
+    :ok
+  end
+
+  defp workspace_snapshots(id) do
+    @workspaces
+    |> :persistent_term.get(%{})
+    |> Enum.filter(fn {{instance, _cwd}, _} -> instance == id end)
+    |> Enum.map(fn {_, snapshot} -> snapshot end)
+  end
 
   defp slash_commands(id, path) do
     commands =

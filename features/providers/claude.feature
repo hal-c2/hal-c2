@@ -401,14 +401,14 @@ Feature: Claude
     When the user sends Claude a message with an attached file
     Then Claude is given access to the folder the MC saved the file in
 
-  @backlog @mc
+  @mc
   Scenario: A skill mentioned in a message runs as Claude's own skill
     Given the project has the Claude skill "review"
     When the user sends "Please $review the diff" to Claude
     Then Claude runs its "review" skill
     And the rest of the message still reaches Claude
 
-  @backlog @mc
+  @mc
   Scenario Outline: A skill Claude will not run for the user stays as text
     Given the project has the Claude skill "review" and <state>
     When the user sends "Please $review the diff" to Claude
@@ -701,7 +701,7 @@ Feature: Claude
     And the message names the folder to run it from and the config directory to set
     And says to start a new thread afterwards, or to check the instance's credentials when it uses an API key
 
-  @backlog @mc
+  @mc
   Scenario Outline: Claude skills are read from Claude's own folders
     Given a skill "review" in <folder>
     When the user opens the skill list in a Claude thread
@@ -713,13 +713,13 @@ Feature: Claude
       | the project's .claude/skills                   | offered     |
       | the project's .agents/skills                   | not offered |
 
-  @backlog @mc
+  @mc
   Scenario: A Claude skill whose header cannot be read is left out
     Given the project has the Claude skills "review" and "broken", and the header of "broken" is malformed
     When the user opens the skill list in a Claude thread
     Then "review" is offered and "broken" is not
 
-  @backlog @mc
+  @mc
   Scenario Outline: Claude's skill settings decide which skills the user can run
     Given the project has the Claude skill "review"
     And <settings>
@@ -733,7 +733,7 @@ Feature: Claude
       | the user's settings switch it off and the managed policy switches it on | offered      |
       | a settings file switches it off but holds a value Claude cannot read    | offered      |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A dollar sign that is not a skill mention stays as typed
     Given the project has the Claude skill "review"
     When the user sends "<message>" to Claude
@@ -746,27 +746,27 @@ Feature: Claude
       | a budget of $10k           |
       | the price$review is wrong  |
 
-  @backlog @mc
+  @mc
   Scenario: A Claude skill is known by its folder's name
     Given the project has a Claude skill in the folder "review" whose header names it "Code Review"
     When the user opens the skill list in a Claude thread
     Then the skill is offered as "review"
     And Claude's skill settings switch it on or off under "review"
 
-  @backlog @mc
+  @mc
   Scenario: The user's own Claude skill wins over a project skill of the same name
     Given a skill "review" in the skills folder of Claude's config directory
     And another skill "review" in the project's .claude/skills
     When the user opens the skill list in a Claude thread
     Then "review" is listed once, with the description of the user's own skill
 
-  @backlog @mc
+  @mc
   Scenario: A Claude skill without a header is still offered
     Given the project has a Claude skill "notes" whose file has no header
     When the user opens the skill list in a Claude thread
     Then "notes" is offered without a description
 
-  @backlog @mc
+  @mc
   Scenario Outline: A Claude skill that only the user may start is marked so
     Given the project has the Claude skill "deploy"
     And <cause>
@@ -779,7 +779,7 @@ Feature: Claude
       | its header says so with "yes" or "on" instead of "true"      |
       | Claude's skill settings set it to user-invocable-only        |
 
-  @backlog @mc
+  @mc
   Scenario Outline: Claude's skill settings are layered from the user's to the organisation's
     Given the project has the Claude skill "review"
     And <lower file> switches "review" off
@@ -794,7 +794,7 @@ Feature: Claude
       | the project's local Claude settings         | the repository root's local Claude settings |
       | the repository root's local Claude settings | the organisation's managed Claude settings  |
 
-  @backlog @mc
+  @mc
   Scenario: Only the repository root's local Claude settings reach a nested workspace
     Given a thread's workspace is a folder nested inside a git repository
     And the repository root's shared Claude settings switch the skill "review" off
@@ -802,7 +802,7 @@ Feature: Claude
     Then "review" is offered
     And Claude settings in folders above a workspace that is in no repository are not read either
 
-  @backlog @mc
+  @mc
   Scenario Outline: The organisation's Claude settings are read from each system's own place
     Given the MC runs on <system>
     And the managed Claude settings at <path> switch the skill "review" off
@@ -815,13 +815,13 @@ Feature: Claude
       | Linux   | "/etc/claude-code/managed-settings.json"                           |
       | Windows | "managed-settings.json" in "ClaudeCode" of the program data folder |
 
-  @backlog @mc
+  @mc
   Scenario: Claude settings with comments or trailing commas are still read
     Given the project's Claude settings hold comments and a trailing comma, and switch the skill "review" off
     When the user opens the skill list in a Claude thread
     Then "review" is shown as off
 
-  @backlog @mc
+  @mc
   Scenario: A relative Claude config directory from the MC's environment is taken from the thread's folder
     Given the MC's environment sets the Claude config directory to "claude-config"
     And the Claude instance has no config directory of its own
@@ -829,20 +829,20 @@ Feature: Claude
     Then skills are read from "/work/shop/claude-config/skills"
     And a config directory written with a leading "~" is not expanded to the user's home
 
-  @backlog @mc
+  @mc
   Scenario: A disabled Claude instance offers no skills
     Given the Claude instance is disabled
     When a client asks for the skills of a project folder
     Then no skills are listed and no skill folder is read
 
-  @backlog @mc
+  @mc
   Scenario: A message that mentions several Claude skills runs the last one
     Given the project has the Claude skills "review" and "ship"
     When the user sends "Use $review then $ship now" to Claude
     Then Claude runs the skill "ship" with the rest of the message as its request
     And the earlier mention reaches Claude as "/review"
 
-  @backlog @mc
+  @mc
   Scenario: A Claude skill whose name starts with a digit can be mentioned
     Given the project has the Claude skill "5k-report"
     When the user sends "$5k-report for March" to Claude

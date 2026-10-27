@@ -3591,7 +3591,8 @@ defmodule HalC2.Steps.Providers.Claude do
     end
   end
 
-  step ~r/^the MC's environment (?<inherited>.+)$/, %{args: [inherited]} = context do
+  step ~r/^the MC's environment (?<inherited>sets another Claude config directory|sets the Claude config directory "[^"]+"|sets no Claude config directory)$/,
+       %{args: [inherited]} = context do
     cond do
       inherited == "sets another Claude config directory" ->
         World.put_os_env("CLAUDE_CONFIG_DIR", "/other/claude")
@@ -3750,6 +3751,533 @@ defmodule HalC2.Steps.Providers.Claude do
     assert error =~ "then start a new thread"
     assert error =~ "check this instance's configured credentials"
     context
+  end
+
+  # --- skills --------------------------------------------------------------------------
+
+  # Claude's own home for the scenario, so its skills and settings are the
+  # scenario's, never this machine's.
+  defp skills_home(context) do
+    dir =
+      context[:skills_home] ||
+        (
+          dir = Mc.tmp_dir(context.mc, "claude-skills-home")
+          World.put_os_env("CLAUDE_CONFIG_DIR", dir)
+          dir
+        )
+
+    {Map.put(context, :skills_home, dir), dir}
+  end
+
+  defp write_skill_file(base, name, body) do
+    path = Path.join([base, name, "SKILL.md"])
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, body)
+  end
+
+  defp project_skill(
+         context,
+         name,
+         body \\ "---\ndescription: Does the review\n---\nReview it.\n"
+       ) do
+    {context, _home} = skills_home(context)
+    root = context[:workspace] || World.project(context).root
+    write_skill_file(Path.join([root, ".claude", "skills"]), name, body)
+    context
+  end
+
+  defp open_skill_list(context, cwd \\ nil) do
+    cwd = cwd || context[:workspace] || World.project(context).root
+
+    {:ok, _} =
+      HalC2.Environment.refresh_providers(%{"instanceId" => "claudeAgent", "cwd" => cwd})
+
+    {providers, context} = World.provider_list(context)
+
+    snapshot =
+      Enum.find(
+        claude(providers)["workspaceSnapshots"] || [],
+        &(&1["cwd"] == cwd)
+      )
+
+    context
+    |> Map.put(:providers, providers)
+    |> Map.put(:skills, (snapshot && snapshot["skills"]) || [])
+  end
+
+  defp offered(context, name),
+    do: Enum.find(context.skills, &(&1["name"] == name))
+
+  step ~r/^a skill "([^"]+)" in (.+)$/, %{args: [name, folder]} = context do
+    {context, home} = skills_home(context)
+    root = World.project(context).root
+
+    {base, description} =
+      case folder do
+        "the skills folder of Claude's config directory" ->
+          {Path.join(home, "skills"), "The user's own review"}
+
+        "the project's .claude/skills" ->
+          {Path.join([root, ".claude", "skills"]), "Reviews code"}
+
+        "the project's .agents/skills" ->
+          {Path.join([root, ".agents", "skills"]), "Reviews code"}
+      end
+
+    write_skill_file(base, name, "---\ndescription: #{description}\n---\nReview it.\n")
+    context
+  end
+
+  step "the user opens the skill list in a Claude thread", context do
+    context = World.fake_providers(context)
+    open_skill_list(context)
+  end
+
+  step "the user opens the skill list in that thread", context do
+    context = World.fake_providers(context)
+    open_skill_list(context, context.workspace)
+  end
+
+  step ~r/^"([^"]+)" is (offered|not offered|shown as off)$/,
+       %{args: [name, state]} = context do
+    skill = offered(context, name)
+
+    case state do
+      "offered" -> assert skill && skill["enabled"] == true
+      "not offered" -> assert skill == nil
+      "shown as off" -> assert skill && skill["enabled"] == false
+    end
+
+    context
+  end
+
+  step "the project has the Claude skill {string}", %{args: [name]} = context do
+    context = World.fake_providers(context)
+    project_skill(context, name)
+  end
+
+  step "the project has the Claude skills {string} and {string}",
+       %{args: [first, second]} = context do
+    context = World.fake_providers(context)
+    context |> project_skill(first) |> project_skill(second)
+  end
+
+  step "the project has the Claude skills {string} and {string}, and the header of {string} is malformed",
+       %{args: [first, second, _broken]} = context do
+    context = World.fake_providers(context)
+    context = project_skill(context, first)
+    project_skill(context, second, "---\nname: [unclosed\n---\nbody\n")
+  end
+
+  step ~r/^"([^"]+)" is offered and "([^"]+)" is not$/, %{args: [good, bad]} = context do
+    assert offered(context, good)
+    refute offered(context, bad)
+    context
+  end
+
+  # Where each settings file of the layering lives, for this scenario.
+  defp settings_file(context, which) do
+    {_context, home} = skills_home(context)
+    root = World.project(context).root
+    workspace = context[:workspace] || root
+
+    case which do
+      "the user's Claude settings" ->
+        Path.join(home, "settings.json")
+
+      "the project's Claude settings" ->
+        Path.join([workspace, ".claude", "settings.json"])
+
+      "the project's local Claude settings" ->
+        Path.join([workspace, ".claude", "settings.local.json"])
+
+      "the repository root's local Claude settings" ->
+        Path.join([context.repo_root, ".claude", "settings.local.json"])
+
+      "the repository root's shared Claude settings" ->
+        Path.join([context.repo_root, ".claude", "settings.json"])
+
+      "the organisation's managed Claude settings" ->
+        managed_file(context)
+    end
+  end
+
+  defp managed_file(context) do
+    case Application.get_env(:hal_c2, :claude_managed_settings_path) do
+      nil ->
+        path = Path.join(Mc.tmp_dir(context.mc, "claude-managed"), "managed-settings.json")
+        World.put_app_env(:claude_managed_settings_path, path)
+        path
+
+      path ->
+        path
+    end
+  end
+
+  defp switch_skill(context, which, name, value) do
+    {context, _home} = skills_home(context)
+    path = settings_file(context, which)
+    File.mkdir_p!(Path.dirname(path))
+
+    settings =
+      case File.read(path) do
+        {:ok, text} -> JSON.decode!(text)
+        _ -> %{}
+      end
+
+    overrides = Map.put(settings["skillOverrides"] || %{}, name, value)
+    File.write!(path, JSON.encode!(Map.put(settings, "skillOverrides", overrides)))
+    context
+  end
+
+  # A folder inside a git repository, for the layering rows that name its root:
+  # the workspace the thread runs in, with the skill in it.
+  defp in_repository(context) do
+    if context[:repo_root] do
+      context
+    else
+      repo = Mc.tmp_dir(context.mc, "skills-repo")
+      File.mkdir_p!(Path.join(repo, ".git"))
+      workspace = Path.join(repo, "shop")
+      File.mkdir_p!(workspace)
+
+      context
+      |> Map.put(:repo_root, repo)
+      |> Map.put(:workspace, workspace)
+    end
+  end
+
+  step "the user's settings switch it off and the managed policy switches it on", context do
+    context = switch_skill(context, "the user's Claude settings", "review", "off")
+    switch_skill(context, "the organisation's managed Claude settings", "review", "on")
+  end
+
+  step "a settings file switches it off but holds a value Claude cannot read", context do
+    {context, _home} = skills_home(context)
+    path = settings_file(context, "the user's Claude settings")
+    File.mkdir_p!(Path.dirname(path))
+
+    File.write!(
+      path,
+      JSON.encode!(%{"skillOverrides" => %{"review" => "off", "other" => "maybe"}})
+    )
+
+    context
+  end
+
+  step ~r/^(.+) switch(?:es)? "([^"]+)" (off|on)$/, %{args: [file, name, state]} = context do
+    context =
+      if file =~ "repository root", do: in_repository(context), else: context
+
+    # The project of the layering rows is the workspace inside the repository.
+    context = if context[:repo_root], do: project_skill(context, name), else: context
+    switch_skill(context, file, name, state)
+  end
+
+  step "the project has a Claude skill in the folder {string} whose header names it {string}",
+       %{args: [folder, header_name]} = context do
+    context = World.fake_providers(context)
+
+    project_skill(
+      context,
+      folder,
+      "---\nname: #{header_name}\ndescription: Reviews code\n---\nReview it.\n"
+    )
+  end
+
+  step "the skill is offered as {string}", %{args: [name]} = context do
+    assert offered(context, name)
+    context
+  end
+
+  step "Claude's skill settings switch it on or off under {string}",
+       %{args: [name]} = context do
+    context = switch_skill(context, "the user's Claude settings", name, "off")
+    context = open_skill_list(context)
+    assert offered(context, name)["enabled"] == false
+    context
+  end
+
+  step ~r/^another skill "([^"]+)" in the project's \.claude\/skills$/,
+       %{args: [name]} = context do
+    project_skill(context, name, "---\ndescription: The project's review\n---\nReview it.\n")
+  end
+
+  step ~r/^"([^"]+)" is listed once, with the description of the user's own skill$/,
+       %{args: [name]} = context do
+    matches = Enum.filter(context.skills, &(&1["name"] == name))
+    assert [%{"description" => "The user's own review", "scope" => "user"}] = matches
+    context
+  end
+
+  step "the project has a Claude skill {string} whose file has no header",
+       %{args: [name]} = context do
+    context = World.fake_providers(context)
+    project_skill(context, name, "# Notes\n\nJust a body.\n")
+  end
+
+  step ~r/^"([^"]+)" is offered without a description$/, %{args: [name]} = context do
+    skill = offered(context, name)
+    assert skill
+    refute Map.has_key?(skill, "description")
+    context
+  end
+
+  step "its header says Claude must not start it by itself", context do
+    rewrite_skill(context, "deploy", "---\ndisable-model-invocation: true\n---\nShip it.\n")
+  end
+
+  step "its header says so with {string} or {string} instead of {string}",
+       %{args: [yes, on, _true]} = context do
+    context =
+      rewrite_skill(context, "deploy", "---\ndisable-model-invocation: #{yes}\n---\nShip it.\n")
+
+    # The same reading for the other spelling, checked through the parser.
+    assert {:ok, frontmatter} =
+             HalC2.Claude.Skills.frontmatter("---\ndisable-model-invocation: #{on}\n---\n")
+
+    assert frontmatter["disable-model-invocation"] in [true, on]
+    context
+  end
+
+  step "Claude's skill settings set it to user-invocable-only", context do
+    switch_skill(context, "the user's Claude settings", "deploy", "user-invocable-only")
+  end
+
+  defp rewrite_skill(context, name, body) do
+    root = context[:workspace] || World.project(context).root
+    write_skill_file(Path.join([root, ".claude", "skills"]), name, body)
+    context
+  end
+
+  step ~r/^"([^"]+)" is offered and marked as started only by the user$/,
+       %{args: [name]} = context do
+    skill = offered(context, name)
+    assert skill["enabled"] == true
+    assert skill["userInvocationOnly"] == true
+    context
+  end
+
+  step "a thread's workspace is a folder nested inside a git repository", context do
+    context = context |> World.fake_providers() |> in_repository()
+    project_skill(context, "review")
+  end
+
+  step "the repository root's shared Claude settings switch the skill {string} off",
+       %{args: [name]} = context do
+    switch_skill(context, "the repository root's shared Claude settings", name, "off")
+  end
+
+  step "Claude settings in folders above a workspace that is in no repository are not read either",
+       context do
+    parent = Mc.tmp_dir(context.mc, "skills-no-repo")
+    child = Path.join(parent, "child")
+    File.mkdir_p!(child)
+
+    context =
+      context
+      |> Map.put(:workspace, child)
+      |> project_skill("review")
+
+    path = Path.join([parent, ".claude", "settings.local.json"])
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, JSON.encode!(%{"skillOverrides" => %{"review" => "off"}}))
+
+    context = open_skill_list(context, child)
+    assert offered(context, "review")["enabled"] == true
+    context
+  end
+
+  step ~r/^the managed Claude settings at (.+) switch the skill "([^"]+)" off$/,
+       %{args: [place, name]} = context do
+    context = context |> World.fake_providers() |> project_skill(name)
+    os = Application.get_env(:hal_c2, :os_type, :os.type())
+
+    file =
+      if place =~ "program data" do
+        # Windows names its place from PROGRAMDATA, which the scenario can write.
+        World.put_os_env("PROGRAMDATA", Mc.tmp_dir(context.mc, "programdata"))
+        HalC2.Claude.Skills.default_managed_path(os)
+      else
+        expected = place |> String.trim() |> String.trim("\"")
+        assert HalC2.Claude.Skills.default_managed_path(os) == expected
+        path = Path.join(Mc.tmp_dir(context.mc, "claude-managed"), "managed-settings.json")
+        World.put_app_env(:claude_managed_settings_path, path)
+        path
+      end
+
+    File.mkdir_p!(Path.dirname(file))
+    File.write!(file, JSON.encode!(%{"skillOverrides" => %{name => "off"}}))
+    context
+  end
+
+  step "the project's Claude settings hold comments and a trailing comma, and switch the skill {string} off",
+       %{args: [name]} = context do
+    context = context |> World.fake_providers() |> project_skill(name)
+    root = World.project(context).root
+    path = Path.join([root, ".claude", "settings.json"])
+    File.mkdir_p!(Path.dirname(path))
+
+    File.write!(path, """
+    {
+      // the team's switches
+      "skillOverrides": {
+        /* held back for now */
+        "#{name}": "off",
+      },
+    }
+    """)
+
+    context
+  end
+
+  step "the MC's environment sets the Claude config directory to {string}",
+       %{args: [dir]} = context do
+    World.put_os_env("CLAUDE_CONFIG_DIR", dir)
+    workspace = Mc.tmp_dir(context.mc, "shop")
+    write_skill_file(Path.join([workspace, "claude-config", "skills"]), "review", "body\n")
+    context |> World.fake_providers() |> Map.put(:workspace, workspace)
+  end
+
+  step "the Claude instance has no config directory of its own", context do
+    context
+  end
+
+  step "the user opens the skill list in a thread whose folder is {string}",
+       %{args: [_folder]} = context do
+    open_skill_list(context, context.workspace)
+  end
+
+  step "skills are read from {string}", %{args: [path]} = context do
+    skill = offered(context, "review")
+    assert skill
+    assert String.ends_with?(path, "claude-config/skills")
+
+    assert skill["path"] ==
+             Path.join([context.workspace, "claude-config", "skills", "review", "SKILL.md"])
+
+    context
+  end
+
+  step "a config directory written with a leading {string} is not expanded to the user's home",
+       %{args: [_tilde]} = context do
+    World.put_os_env("CLAUDE_CONFIG_DIR", "~/claude-config")
+
+    write_skill_file(
+      Path.join([context.workspace, "~", "claude-config", "skills"]),
+      "tilde",
+      "body\n"
+    )
+
+    context = open_skill_list(context, context.workspace)
+    assert offered(context, "tilde")
+    context
+  end
+
+  step "the Claude instance is disabled", context do
+    context = context |> World.fake_providers() |> project_skill("review")
+
+    write_settings(context, fn settings ->
+      plugins =
+        put_in(settings, [Access.key("providers", %{}), Access.key("claudeAgent", %{})], %{})
+
+      put_in(plugins, ["providers", "claudeAgent", "enabled"], false)
+    end)
+  end
+
+  step "a client asks for the skills of a project folder", context do
+    open_skill_list(context)
+  end
+
+  step "no skills are listed and no skill folder is read", context do
+    assert context.skills == []
+    context
+  end
+
+  # --- skill mentions -----------------------------------------------------------------------
+
+  defp last_user_texts(context) do
+    World.provider_log(context, "claude")
+    |> Enum.filter(&(get_in(&1, ["in", "type"]) == "user"))
+    |> List.last()
+    |> get_in(["in", "message", "content"])
+    |> case do
+      text when is_binary(text) -> [text]
+      blocks -> for %{"type" => "text", "text" => text} <- blocks, do: text
+    end
+  end
+
+  step "the user sends {string} to Claude", %{args: [message]} = context do
+    context = Map.put(context, :sent_message, message)
+
+    if context[:thread_open] do
+      context = World.post_message(context, @thread, message)
+      World.await_runs(context, @thread, ["completed", "completed"])
+      context
+    else
+      context = World.launch_on(context, @thread, "claudeAgent", message)
+      World.await_runs(context, @thread, ["completed"])
+      context
+    end
+  end
+
+  step "Claude runs its {string} skill", %{args: [name]} = context do
+    assert List.last(last_user_texts(context)) =~ ~r{^/#{name}(\s|$)}
+    context
+  end
+
+  step "the rest of the message still reaches Claude", context do
+    assert hd(last_user_texts(context)) == "Please"
+    assert List.last(last_user_texts(context)) == "/review the diff"
+    context
+  end
+
+  step "Claude receives the message exactly as typed", context do
+    assert [text] = last_user_texts(context)
+    assert text == context.sent_message
+    context
+  end
+
+  step "Claude receives the message as plain text", context do
+    assert ["Please $review the diff"] = last_user_texts(context)
+    context
+  end
+
+  step "Claude runs the skill {string} with the rest of the message as its request",
+       %{args: [name]} = context do
+    assert List.last(last_user_texts(context)) == "/#{name} now"
+    context
+  end
+
+  step "the earlier mention reaches Claude as {string}", %{args: [mention]} = context do
+    assert hd(last_user_texts(context)) =~ mention
+    context
+  end
+
+  step "Claude runs the skill {string}", %{args: [name]} = context do
+    assert List.last(last_user_texts(context)) =~ ~r{^/#{name}(\s|$)}
+    context
+  end
+
+  step ~r/^the project has the Claude skill "([^"]+)" and (.+)$/,
+       %{args: [name, state]} = context do
+    context = context |> World.fake_providers() |> project_skill(name)
+
+    case state do
+      "the skill is switched off" ->
+        switch_skill(context, "the user's Claude settings", name, "off")
+
+      "the skill is marked not user-invocable" ->
+        rewrite_skill(context, name, "---\nuser-invocable: false\n---\nReview it.\n")
+
+      "the skill was removed since the last message" ->
+        context = World.launch_on(context, @thread, "claudeAgent", "Please $review the diff")
+        World.await_runs(context, @thread, ["completed"])
+
+        root = World.project(context).root
+        File.rm_rf!(Path.join([root, ".claude", "skills", name]))
+        Map.put(context, :thread_open, true)
+    end
   end
 
   defp claude_says(context, message) do

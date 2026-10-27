@@ -100,8 +100,16 @@ defmodule HalC2.Environment do
     case input do
       # Antigravity's skills come from the workspace's folders (`HalC2.Acp.Antigravity.skills/2`).
       %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
-        if HalC2.Acp.driver(id) == "antigravity",
-          do: HalC2.Acp.Antigravity.refresh_workspace(id, cwd)
+        cond do
+          HalC2.Acp.driver(id) == "antigravity" ->
+            HalC2.Acp.Antigravity.refresh_workspace(id, cwd)
+
+          id in HalC2.Claude.Provider.instances() ->
+            HalC2.Claude.Provider.refresh_workspace(id, cwd)
+
+          true ->
+            :ok
+        end
 
       %{"cwd" => cwd} when is_binary(cwd) ->
         :ok

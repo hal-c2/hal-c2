@@ -831,23 +831,47 @@ defmodule HalC2.Claude.ThreadRuntime do
   # The message, with where its files are; images go inline as content blocks.
   defp claude_content(turn) do
     attachments = Map.get(turn, :attachments, [])
+    images = HalC2.Attachments.native_images(attachments)
 
-    text =
-      turn.text
-      |> Provider.prompt(turn.launch.prompt_effort)
-      |> HalC2.Attachments.prompt_text(attachments)
+    image_blocks =
+      for {mime, data} <- images,
+          do: %{
+            "type" => "image",
+            "source" => %{"type" => "base64", "media_type" => mime, "data" => data}
+          }
 
-    case HalC2.Attachments.native_images(attachments) do
-      [] ->
-        text
+    # A `$skill` mention runs as Claude's own `/skill` command: the command is
+    # the last block (where Claude expands it), after any leading text and the
+    # message's images. Skills are re-read at each send, as they change
+    # mid-session; one that may not run for the user stays plain text.
+    names =
+      HalC2.Claude.Skills.user_invocable_names(
+        turn.launch[:instance] || Entities.instance(turn[:ids] || %{}),
+        Map.get(turn, :cwd)
+      )
 
-      images ->
-        [%{"type" => "text", "text" => text}] ++
-          for {mime, data} <- images,
-              do: %{
-                "type" => "image",
-                "source" => %{"type" => "base64", "media_type" => mime, "data" => data}
-              }
+    case HalC2.Claude.Skills.dispatch(turn.text, names) do
+      nil ->
+        text =
+          turn.text
+          |> Provider.prompt(turn.launch.prompt_effort)
+          |> HalC2.Attachments.prompt_text(attachments)
+
+        if images == [], do: text, else: [%{"type" => "text", "text" => text}] ++ image_blocks
+
+      {leading, command} ->
+        leading =
+          (leading || "")
+          |> Provider.prompt(turn.launch.prompt_effort)
+          |> HalC2.Attachments.prompt_text(attachments)
+
+        Enum.reject(
+          [
+            if(leading != "", do: %{"type" => "text", "text" => leading})
+          ] ++
+            image_blocks ++ [%{"type" => "text", "text" => command}],
+          &is_nil/1
+        )
     end
   end
 
