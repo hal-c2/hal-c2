@@ -107,7 +107,7 @@ Rectangle {
                 Layout.topMargin: 4
                 visible: page.notice !== null
                 text: page.notice ? page.notice.text : ""
-                color: page.notice && page.notice.kind === "error" ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#22c55e")
+                color: page.notice && page.notice.kind === "error" ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("success", "#22c55e")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }

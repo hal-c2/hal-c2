@@ -65,7 +65,7 @@ Dialog {
             Layout.fillWidth: true
             visible: text.length > 0
             text: dialog.flow?.error ?? ""
-            color: Theme.palette.color("error", "#ef4444")
+            color: Theme.palette.color("errorForeground", "#ef4444")
             font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }

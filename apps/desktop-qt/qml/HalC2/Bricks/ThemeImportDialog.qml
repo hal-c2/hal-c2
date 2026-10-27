@@ -88,7 +88,7 @@ Popup {
             Layout.fillWidth: true
             visible: text.length > 0
             text: Themes.importError
-            color: Theme.palette.color("error", "#f87171")
+            color: Theme.palette.color("errorForeground", "#f87171")
             wrapMode: Text.Wrap
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }

@@ -15,7 +15,7 @@ ColumnLayout {
     required property var provider
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color danger: Theme.palette.color("error", "#f87171")
+    readonly property color danger: Theme.palette.color("errorForeground", "#f87171")
 
     function act(action, extra) {
         Shell.dispatch("providerSettings." + action, Object.assign({ instanceId: models.provider.instanceId }, extra || {}));

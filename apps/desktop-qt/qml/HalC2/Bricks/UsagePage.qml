@@ -18,7 +18,7 @@ Rectangle {
     readonly property var limits: model && model.limits ? model.limits : ({ pools: [], notices: [] })
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color warning: Theme.palette.color("warning", "#f59e0b")
+    readonly property color warning: Theme.palette.color("warningForeground", "#f59e0b")
 
     function usd(value) {
         return "$" + Number(value).toLocaleString(Qt.locale("en_US"), "f", 2);

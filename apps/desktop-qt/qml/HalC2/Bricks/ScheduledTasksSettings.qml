@@ -12,7 +12,7 @@ SettingsPage {
 
     readonly property var settings: Shell.state.scheduledTasks ?? null
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color danger: Theme.palette.color("error", "#ef4444")
+    readonly property color danger: Theme.palette.color("errorForeground", "#ef4444")
 
     objectName: "scheduledTasksSettings"
     title: qsTr("Scheduled Tasks")
@@ -49,7 +49,7 @@ SettingsPage {
                     objectName: "lastRun"
                     visible: text.length > 0
                     text: task.modelData.lastRun ?? ""
-                    color: task.modelData.lastRunStatus === "failed" ? Theme.palette.color("error", "#ef4444") : Theme.palette.color("textMuted", "#a1a1aa")
+                    color: task.modelData.lastRunStatus === "failed" ? Theme.palette.color("errorForeground", "#ef4444") : Theme.palette.color("textMuted", "#a1a1aa")
                     font.pixelSize: Math.round(11 * Theme.fontScale)
                     leftPadding: 6
                     rightPadding: 6
@@ -88,7 +88,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: task.modelData.lastRunStatus === "failed"
                 text: qsTr("Last run failed: %1").arg(task.modelData.lastRunError || qsTr("unknown error"))
-                color: Theme.palette.color("error", "#ef4444")
+                color: Theme.palette.color("errorForeground", "#ef4444")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -122,7 +122,7 @@ SettingsPage {
             subtle: true
             enabled: !task.modelData.busy
             text: qsTr("Delete")
-            tint: Theme.palette.color("error", "#ef4444")
+            tint: Theme.palette.color("errorForeground", "#ef4444")
             onClicked: Shell.dispatch("scheduledTasks.delete", task.ids)
         }
     }

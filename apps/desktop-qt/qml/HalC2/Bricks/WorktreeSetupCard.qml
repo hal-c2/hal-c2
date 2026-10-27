@@ -18,9 +18,9 @@ Rectangle {
             return muted;
         }
         if (setup.phase === "failed") {
-            return Theme.palette.color("error", "#ef4444");
+            return Theme.palette.color("errorForeground", "#ef4444");
         }
-        return setup.label.endsWith("failed") ? Theme.palette.color("warning", "#f59e0b") : muted;
+        return setup.label.endsWith("failed") ? Theme.palette.color("warningForeground", "#f59e0b") : muted;
     }
 
     objectName: "worktreeSetup"
@@ -91,7 +91,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: card.setup?.detailsOpen === true && text.length > 0
             text: card.setup?.error ?? ""
-            color: Theme.palette.color("error", "#ef4444")
+            color: Theme.palette.color("errorForeground", "#ef4444")
             font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
@@ -120,7 +120,7 @@ Rectangle {
                     }
                     Label {
                         text: stage.modelData.detail.length > 0 ? stage.modelData.detail : stage.modelData.status
-                        color: stage.modelData.status === "failed" ? Theme.palette.color("error", "#ef4444") : card.muted
+                        color: stage.modelData.status === "failed" ? Theme.palette.color("errorForeground", "#ef4444") : card.muted
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
                 }

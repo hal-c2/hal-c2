@@ -69,7 +69,7 @@ Rectangle {
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color borderColor: Theme.palette.color("border", "#27272a")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     readonly property string mono: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
 
     objectName: "filesPanel"
@@ -246,7 +246,7 @@ Rectangle {
                 Layout.bottomMargin: 4
                 visible: text.length > 0
                 text: root.source?.truncatedNotice ?? ""
-                color: Theme.palette.color("warning", "#f59e0b")
+                color: Theme.palette.color("warningForeground", "#f59e0b")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }

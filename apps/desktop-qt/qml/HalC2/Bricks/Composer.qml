@@ -1446,7 +1446,7 @@ Rectangle {
                     id: prBadge
 
                     readonly property var pr: contextStrip.wsReady && contextStrip.ws.git ? contextStrip.ws.git.pullRequest : null
-                    readonly property color prColor: pr === null ? "transparent" : pr.state === "merged" ? Theme.palette.color("merged", "#a855f7") : pr.state === "closed" ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#34d399")
+                    readonly property color prColor: pr === null ? "transparent" : pr.state === "merged" ? Theme.palette.color("merged", "#a855f7") : pr.state === "closed" ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("success", "#34d399")
 
                     visible: pr !== null && contextStrip.ws.canOpenPullRequest
                     text: pr ? "#" + pr.number : ""

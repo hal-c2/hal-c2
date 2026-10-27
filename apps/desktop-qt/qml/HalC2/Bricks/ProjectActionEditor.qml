@@ -186,7 +186,7 @@ Dialog {
             Layout.fillWidth: true
             visible: text.length > 0
             text: dialog.editor?.error ?? ""
-            color: Theme.palette.color("error", "#ef4444")
+            color: Theme.palette.color("errorForeground", "#ef4444")
             font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
@@ -199,7 +199,7 @@ Dialog {
                 objectName: "projectActionDelete"
                 visible: dialog.editing
                 text: qsTr("Delete")
-                tint: Theme.palette.color("error", "#ef4444")
+                tint: Theme.palette.color("errorForeground", "#ef4444")
                 onClicked: Shell.dispatch("projectActions.delete", {})
             }
             Item {

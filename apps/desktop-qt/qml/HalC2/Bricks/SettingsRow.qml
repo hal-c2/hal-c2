@@ -108,7 +108,7 @@ ColumnLayout {
                 Layout.fillWidth: true
                 text: row.blocked
                 visible: text.length > 0
-                color: Theme.palette.color("warning", "#fbbf24")
+                color: Theme.palette.color("warningForeground", "#fbbf24")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }

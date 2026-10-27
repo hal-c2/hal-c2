@@ -20,7 +20,7 @@ Rectangle {
     readonly property var stream: source ? source.stream : null
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     readonly property color borderColor: Theme.palette.color("border", "#27272a")
 
     objectName: "devicePanel"

@@ -97,7 +97,7 @@ Dialog {
                 Layout.fillWidth: true
                 visible: dialog.editor !== null && !dialog.editor.connected
                 text: qsTr("Reconnect this environment before saving.")
-                color: Theme.palette.color("warning", "#fbbf24")
+                color: Theme.palette.color("warningForeground", "#fbbf24")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -108,7 +108,7 @@ Dialog {
                 visible: text.length > 0
                 text: dialog.editor?.error ? dialog.editor.error
                     : dialog.editor?.missing ? qsTr("This scheduled task no longer exists.") : ""
-                color: Theme.palette.color("error", "#ef4444")
+                color: Theme.palette.color("errorForeground", "#ef4444")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }

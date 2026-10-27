@@ -85,7 +85,7 @@ Rectangle {
             visible: text.length > 0
             text: notice.model ? notice.model.pairingError : ""
             font.pixelSize: Math.round(12 * Theme.fontScale)
-            color: Theme.palette.color("error", "#f87171")
+            color: Theme.palette.color("errorForeground", "#f87171")
             wrapMode: Text.Wrap
         }
 

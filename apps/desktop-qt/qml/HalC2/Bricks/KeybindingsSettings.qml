@@ -17,7 +17,7 @@ Rectangle {
     readonly property int count: rows.length + (adding ? 1 : 0)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color warning: Theme.palette.color("warning", "#f59e0b")
+    readonly property color warning: Theme.palette.color("warningForeground", "#f59e0b")
 
     function conflictText(labels) {
         if (labels.length === 0)
@@ -130,7 +130,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: whenField.problem.length > 0
             text: whenField.problem
-            color: Theme.palette.color("error", "#f87171")
+            color: Theme.palette.color("errorForeground", "#f87171")
             font.pixelSize: Math.round(11 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
@@ -140,7 +140,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: whenField.unknown.length > 0
             text: qsTr("Unknown: %1").arg(whenField.unknown.join(", "))
-            color: Theme.palette.color("warning", "#f59e0b")
+            color: Theme.palette.color("warningForeground", "#f59e0b")
             font.pixelSize: Math.round(11 * Theme.fontScale)
             wrapMode: Text.Wrap
         }

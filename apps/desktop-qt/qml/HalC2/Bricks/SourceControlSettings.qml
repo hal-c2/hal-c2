@@ -18,7 +18,7 @@ SettingsPage {
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
     readonly property bool projectScope: settings?.projectScope ?? false
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color warning: Theme.palette.color("warning", "#fbbf24")
+    readonly property color warning: Theme.palette.color("warningForeground", "#fbbf24")
     readonly property var mergeMethods: ["last", "merge", "squash", "rebase"]
     readonly property var writingModes: ["repo_conventions", "conventional_commits", "custom"]
     property bool writingForAll: false

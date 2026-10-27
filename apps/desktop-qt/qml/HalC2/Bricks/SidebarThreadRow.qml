@@ -128,7 +128,7 @@ Item {
         }
         switch (item.status) {
         case "approval":
-            return Theme.palette.color("warning", "#f59e0b");
+            return Theme.palette.color("warningForeground", "#f59e0b");
         case "input":
             return Theme.palette.color("accent", "#818cf8");
         case "working":
@@ -136,12 +136,12 @@ Item {
         case "waiting":
             return row.secondaryColor;
         case "limited":
-            return Theme.palette.color("warning", "#f59e0b");
+            return Theme.palette.color("warningForeground", "#f59e0b");
         case "failed":
-            return Theme.palette.color("error", "#f87171");
+            return Theme.palette.color("errorForeground", "#f87171");
         }
         if (row.woke) {
-            return Theme.palette.color("warning", "#f59e0b");
+            return Theme.palette.color("warningForeground", "#f59e0b");
         }
         if (item.unread === true) {
             return Theme.palette.color("success", "#34d399");

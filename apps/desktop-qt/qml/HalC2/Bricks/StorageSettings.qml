@@ -43,7 +43,7 @@ SettingsPage {
                 objectName: "mixed"
                 visible: rule.modelData.mixed
                 text: qsTr("Mixed across selected machines")
-                color: Theme.palette.color("warning", "#fbbf24")
+                color: Theme.palette.color("warningForeground", "#fbbf24")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
