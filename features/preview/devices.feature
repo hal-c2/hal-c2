@@ -347,7 +347,7 @@ Feature: Device panel
         | iOS Simulator "iPhone 18 Pro"       | the 3D model file is not a valid model |
 
     @backlog @desktop
-    Scenario: Switching to the flat view hides the Magic Keyboard but keeps it attached
+    Scenario: Switching to the flat view hides the Magic Keyboard
       Given the user is viewing the iOS Simulator "iPad Pro 13-inch" in 3D with the Magic Keyboard attached
       When the user switches to the flat view
       Then the live screen fills the panel

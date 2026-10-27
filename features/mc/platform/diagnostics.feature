@@ -280,6 +280,7 @@ Feature: MC diagnostics
   @backlog @mc
   Scenario Outline: The standard telemetry switch stops forwarding to a collector
     Given an OTLP collector is configured on the MC
+    And tracing is enabled on the MC
     And the MC's environment sets the standard telemetry switch to "<value>"
     When client spans arrive
     Then the MC does not forward them to the collector
@@ -295,7 +296,7 @@ Feature: MC diagnostics
     Given an OTLP collector is configured on the MC
     And the MC's environment sets the standard telemetry switch to "1"
     When the MC starts
-    Then the MC starts and warns that the switch's value is not recognised
+    Then the MC warns that the switch's value is not recognised
     And client spans are still forwarded to the collector
 
   # The MC's own spans and metrics are not exported to a collector yet; only client spans are forwarded.
