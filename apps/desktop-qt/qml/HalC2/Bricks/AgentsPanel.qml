@@ -65,6 +65,7 @@ Rectangle {
             bottomPadding: 4
             leftPadding: 6
             text: section === "active" ? qsTr("Active") : qsTr("Finished")
+            elide: Text.ElideRight
             color: root.muted
             font.pixelSize: Math.round(11 * Theme.fontScale)
             font.weight: Font.Medium

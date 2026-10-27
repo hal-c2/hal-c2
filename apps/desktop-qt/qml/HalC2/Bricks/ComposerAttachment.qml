@@ -38,6 +38,7 @@ Row {
         Image {
             id: thumbnail
             objectName: "attachmentThumbnail"
+            Accessible.name: chip.label
             anchors.fill: parent
             anchors.margins: 1
             source: chip.attachment.preview ?? ""

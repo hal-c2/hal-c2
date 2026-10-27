@@ -87,6 +87,7 @@ Dialog {
 
         Image {
             objectName: "attachmentViewerImage"
+            Accessible.name: dialog.attachment?.name ?? ""
             Layout.fillWidth: true
             Layout.fillHeight: true
             visible: dialog.kind === "image"
