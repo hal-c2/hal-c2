@@ -2051,6 +2051,8 @@ timeline/notifications.feature: Turning system notifications off clears the ones
 timeline/plans-and-subagents.feature: A delegated task's result shows as a notification, not a message of the user's
 timeline/plans-and-subagents.feature: A finished subagent shows its result, a working one its latest progress
 timeline/plans-and-subagents.feature: A finished subagent with work still running is shown as pending
+timeline/plans-and-subagents.feature: A finished task's notification names its worker and links to it
+timeline/plans-and-subagents.feature: A finished task's result is kept apart from the agent's replies until opened
 timeline/plans-and-subagents.feature: A message from another agent says which thread it came from
 timeline/plans-and-subagents.feature: A plan card does not repeat its title
 timeline/plans-and-subagents.feature: A proposed plan appears as a card titled by its first heading

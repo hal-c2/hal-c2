@@ -1474,6 +1474,7 @@ pub fn queued<'a>(
                 "runId": run_id,
                 "summary": summary,
                 "outcome": notice.as_ref().map(|n| n.outcome.as_str()).unwrap_or(""),
+                "workerThreadId": notice.as_ref().map(|n| n.worker_thread_id.as_str()).unwrap_or(""),
             }));
             continue;
         }

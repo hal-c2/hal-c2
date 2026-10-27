@@ -352,6 +352,76 @@ pub fn register(steps: &mut Steps) {
             )
         },
     );
+    // The same, as the MC now records it: it names the worker and carries its result.
+    steps.step(
+        &format!("a task the agent delegated as {Q} finished with {Q}"),
+        |world, c, _| {
+            list_child_thread(world)?;
+            start_notified_run(
+                world,
+                json!({"source": {"kind": "delegated_task", "taskIds": [TASK]},
+                       "outcome": "completed", "summary": format!("{} finished", c[0]),
+                       "workerThreadId": CHILD, "workerTitle": c[0], "detail": c[1]}),
+            )
+        },
+    );
+    steps.step(
+        &format!("the worker's notification reads {Q}"),
+        |world, c, _| {
+            let row = row_of(world, "marker")?;
+            expect!(role(world, row, "title") == c[0], "{}", describe(world));
+            expect!(
+                drawn_text(world, "workerResultTitle")? == c[0],
+                "the notification is not drawn as a card for \"{}\"",
+                c[0]
+            );
+            expect!(
+                !draws(world, "markerTitle")?,
+                "the notification is drawn as a plain divider"
+            );
+            expect!(
+                !draws(world, "messageAttribution")?,
+                "the notification is drawn as someone's message"
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        &format!("the worker's result {Q} is hidden until the user opens it"),
+        |world, c, _| {
+            let row = row_of(world, "marker")?;
+            expect!(role(world, row, "text") == c[0], "{}", describe(world));
+            expect!(
+                !draws(world, "workerResultText")?,
+                "the result is shown before it is opened"
+            );
+            click(world, "workerResultToggle")?;
+            expect!(
+                drawn_text(world, "workerResultText")? == c[0],
+                "the opened result does not read \"{}\"",
+                c[0]
+            );
+            Ok(())
+        },
+    );
+    steps.step(
+        "the notification links to the worker's thread",
+        |world, _, _| {
+            let row = row_of(world, "marker")?;
+            expect!(role(world, row, "thread") == CHILD, "{}", describe(world));
+            click(world, "workerResultTitle")?;
+            let child = key(world, CHILD);
+            world.wait_for_with(
+                |w| shown_thread(w) == child,
+                |w| {
+                    format!(
+                        "the worker's thread to open; the window shows {}",
+                        shown_thread(w)
+                    )
+                },
+            )
+        },
+    );
     steps.step(
         &format!("a thread stored the failed result of the delegated task {Q} as a user message"),
         |world, c, _| {

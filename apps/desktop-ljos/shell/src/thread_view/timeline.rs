@@ -678,7 +678,11 @@ fn marker_detail(item: &Obj) -> String {
     match text(item, "type") {
         "fork" => format!("Continues in {}", text(item, "targetThreadId")),
         "thread_created" => text(item, "title").to_owned(),
-        _ => String::new(),
+        // A worker's result, which the card under its title shows.
+        _ => summary::notice_of(item)
+            .filter(|notice| !notice.worker_thread_id.is_empty())
+            .map(|notice| notice.detail)
+            .unwrap_or_default(),
     }
 }
 
@@ -2510,6 +2514,13 @@ impl Timeline {
                     Json::from(text(item, "childThreadId"))
                 } else if kind == "user_message" && text(item, "createdBy") == "agent" {
                     Json::from(text(item, "senderThreadId"))
+                } else if row.kind == "marker" {
+                    // A finished worker's notification opens the worker's thread.
+                    Json::from(
+                        summary::notice_of(item)
+                            .map(|notice| notice.worker_thread_id)
+                            .unwrap_or_default(),
+                    )
                 } else {
                     Json::from("")
                 }

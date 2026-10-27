@@ -1824,6 +1824,8 @@ Item {
                             font.pixelSize: Math.round(11 * Theme.fontScale)
                             wrapMode: Text.NoWrap
                             elide: Text.ElideRight
+                            // One line on the rule: a detail of several would hang over the rows around it.
+                            maximumLineCount: 1
                         }
                     }
                     Rectangle {

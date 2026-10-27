@@ -622,10 +622,26 @@ pub fn command_display_text(command: &str) -> String {
 /// did hold the message as the user's instead, a delegated task's result as
 /// the envelope the agent reads, and are read here as what they stand for.
 /// `item` is a turn item, or a queued run's message (which has no `type`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A delegated task's names its worker (`workerThreadId`, `workerTitle`)
+/// and carries the worker's result (`detail`, capped by the MC); an older
+/// record has none of the three.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Notice {
     pub summary: String,
     pub outcome: String,
+    pub worker_thread_id: String,
+    pub worker_title: String,
+    pub detail: String,
+}
+
+fn notice_from(notification: &Obj) -> Notice {
+    Notice {
+        summary: text(notification, "summary").trim().to_owned(),
+        outcome: text(notification, "outcome").to_owned(),
+        worker_thread_id: text(notification, "workerThreadId").to_owned(),
+        worker_title: text(notification, "workerTitle").trim().to_owned(),
+        detail: text(notification, "detail").to_owned(),
+    }
 }
 
 pub fn notice_of(item: &Obj) -> Option<Notice> {
@@ -636,17 +652,11 @@ pub fn notice_of(item: &Obj) -> Option<Notice> {
     });
     let kind = text(item, "type");
     if kind == "notification" {
-        return Some(Notice {
-            summary: text(item, "summary").trim().to_owned(),
-            outcome: text(item, "outcome").to_owned(),
-        });
+        return Some(notice_from(item));
     }
     let notification = object(item, "notification");
     if kind.is_empty() && !notification.is_empty() {
-        return Some(Notice {
-            summary: text(notification, "summary").trim().to_owned(),
-            outcome: text(notification, "outcome").to_owned(),
-        });
+        return Some(notice_from(notification));
     }
     if !kind.is_empty() && kind != "user_message" {
         return None;
@@ -662,6 +672,7 @@ pub fn notice_of(item: &Obj) -> Option<Notice> {
             Some(Notice {
                 summary: "Background activity updated".into(),
                 outcome: "updated".into(),
+                ..Notice::default()
             })
         }
         "system" => {
@@ -684,6 +695,7 @@ pub fn notice_of(item: &Obj) -> Option<Notice> {
             Some(Notice {
                 summary: format!("{title} {ended}"),
                 outcome,
+                ..Notice::default()
             })
         }
         _ => None,
@@ -837,7 +849,8 @@ mod tests {
             n,
             Notice {
                 summary: "Fix it stopped".into(),
-                outcome: "cancelled".into()
+                outcome: "cancelled".into(),
+                ..Notice::default()
             }
         );
         let n = notice_of(&obj(
@@ -852,5 +865,13 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(n.summary, "Queued");
+        // A delegated task's names its worker and carries its result.
+        let n = notice_of(&obj(json!({"type": "notification", "summary": "Tax tests finished",
+            "workerThreadId": "w", "workerTitle": " Tax tests ", "detail": "12 tests added"})))
+        .unwrap();
+        assert_eq!(
+            (n.worker_thread_id.as_str(), n.worker_title.as_str(), n.detail.as_str()),
+            ("w", "Tax tests", "12 tests added")
+        );
     }
 }
