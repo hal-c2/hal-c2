@@ -1247,6 +1247,44 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     context
   end
 
+  # A manifest from before the finer capability atoms: its session keeps the
+  # defaults it shipped with, so its queue still queues.
+  step "a provider plugin that declares only the earlier capabilities", context do
+    earlier =
+      ~w(interrupt active_steering fork rollback approvals plan_updates model_switching interaction_mode text_generation native_sessions usage_limits sign_in)a
+
+    context = provider_plugin(context, "earlier", capabilities: earlier)
+    context = launch(context, "earlier", "wait")
+    [_] = Turns.await_runs(context.thread_id, ["running"])
+    Map.put(context, :plugin, "earlier")
+  end
+
+  step "a message is queued behind its running turn", context do
+    queued =
+      context.thread_id
+      |> Turns.message("m2", "hello again")
+      |> Map.put("dispatchMode", %{"type" => "queue_after_active"})
+
+    {{:ok, _}, context} = World.dispatch(context, queued)
+    [_, _] = Turns.await_runs(context.thread_id, ["running", "queued"])
+    context
+  end
+
+  step "the message runs once that turn is interrupted", context do
+    [%{"id" => run_id, "status" => "running"} | _] =
+      Turns.runs(state(context.thread_id))
+
+    assert {:ok, _} =
+             HalC2.Orchestration.dispatch(%{
+               "type" => "run.interrupt",
+               "threadId" => context.thread_id,
+               "runId" => run_id
+             })
+
+    [_, _] = Turns.await_runs(context.thread_id, ["interrupted", "completed"])
+    context
+  end
+
   step "no approval prompts are shown and the plugin decides on its own", context do
     approvals = context.session["capabilities"]["approvals"]
     refute approvals["supportsCommandApproval"] or approvals["supportsFileChangeApproval"]

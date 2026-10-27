@@ -56,7 +56,7 @@ defmodule HalC2.EffectsPropTest do
         settled =
           Enum.all?(enqueued, fn {thread, type, id} ->
             case Enum.find(Effects.effects(thread), &(&1["id"] == id)) do
-              %{"status" => "done", "attempts" => 1} -> type != "unknown.kind"
+              nil -> type != "unknown.kind"
               %{"status" => "failed", "attempts" => 1} -> type == "unknown.kind"
               _ -> false
             end
@@ -109,19 +109,17 @@ defmodule HalC2.EffectsPropTest do
 
         classified =
           Enum.all?(fabricated, fn record ->
-            case Enum.find(records, &(&1["id"] == record["id"])) do
-              nil ->
-                false
+            after_restart = Enum.find(records, &(&1["id"] == record["id"]))
 
-              after_restart ->
-                if record["type"] in @bound do
-                  after_restart["status"] == "cancelled" and
-                    after_restart["error"] == @process_ended and
-                    after_restart["attempts"] == record["attempts"]
-                else
-                  after_restart["status"] in ["done", "failed"] and
-                    after_restart["attempts"] > record["attempts"]
-                end
+            if record["type"] in @bound do
+              after_restart != nil and after_restart["status"] == "cancelled" and
+                after_restart["error"] == @process_ended and
+                after_restart["attempts"] == record["attempts"]
+            else
+              # Ran again: done (its record is deleted) or failed with a try spent.
+              after_restart == nil or
+                (after_restart["status"] == "failed" and
+                   after_restart["attempts"] > record["attempts"])
             end
           end)
 

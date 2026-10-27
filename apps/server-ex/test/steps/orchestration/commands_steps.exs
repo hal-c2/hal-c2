@@ -566,9 +566,8 @@ defmodule HalC2.Steps.Orchestration.Commands do
     Application.delete_env(:hal_c2, :effects_hold_match)
     release_helds()
     :ok = HalC2.Orchestration.Effects.drain(thread_id, 20_000)
-    effect = find_effect(context, context.effect_id)
-    assert effect["status"] == "done"
-    assert effect["attempts"] >= 2
+    # A record that ran to done is deleted; a cancelled or failed one stays.
+    assert find_effect(context, context.effect_id) == nil
     safe_outcome(context)
     Process.exit(context.held, :kill)
     context
@@ -640,8 +639,11 @@ defmodule HalC2.Steps.Orchestration.Commands do
   end
 
   step "the side effect of {string} runs without waiting", %{args: [thread]} = context do
-    [effect] = Enum.filter(effects(context, thread), &(&1["type"] == "provider-session.detach"))
-    assert effect["status"] == "done"
+    # It ran to done while the other thread's first effect was still held:
+    # nothing of it waits or runs, and its done record is gone.
+    assert Enum.filter(effects(context, thread), &(&1["type"] == "provider-session.detach")) ==
+             []
+
     context
   end
 
@@ -795,11 +797,9 @@ defmodule HalC2.Steps.Orchestration.Commands do
   end
 
   step "it is not retried", context do
-    [effect] =
-      Enum.filter(effects(context, "t1"), &(&1["type"] == "provider-turn.interrupt"))
-
-    assert effect["status"] == "done"
-    assert effect["attempts"] == 1
+    # The interrupt ran to done (its record is gone, not failed for a retry),
+    # and the provider was asked at most once.
+    assert Enum.filter(effects(context, "t1"), &(&1["type"] == "provider-turn.interrupt")) == []
     assert Enum.count(World.codex_methods(context), &(&1 == "turn/interrupt")) <= 1
     context
   end

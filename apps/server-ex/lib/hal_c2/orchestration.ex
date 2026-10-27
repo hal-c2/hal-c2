@@ -565,6 +565,7 @@ defmodule HalC2.Orchestration do
         # terminals and attached files is recorded work that outlives a
         # restart (`HalC2.Orchestration.Effects`).
         HalC2.Orchestration.Effects.cancel_thread(thread_id)
+        HalC2.Orchestration.Effects.drop_thread(thread_id)
         HalC2.Orchestration.Effects.enqueue(thread_id, "terminal.cleanup", %{})
         HalC2.Orchestration.Effects.enqueue(thread_id, "attachment.cleanup", %{})
       end

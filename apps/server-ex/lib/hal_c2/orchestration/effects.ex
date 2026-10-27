@@ -19,7 +19,10 @@ defmodule HalC2.Orchestration.Effects do
   When the server process ends, unfinished work tied to the old provider
   process (a turn start, interrupt, steer or restart, an answer) is cancelled
   rather than run again: the provider it meant is gone. Work that is safe to
-  repeat runs again from the start.
+  repeat runs again from the start. A record that ran to done is deleted;
+  failed and cancelled records are kept for diagnosis, newest hundred per
+  thread and no older than a week, pruned at boot and dropped with their
+  thread.
 
   Ported from upstream T3 Code's `orchestration-v2/EffectOutbox.ts` and
   `EffectWorker.ts` (see `features/mc/orchestration/commands.feature`).
@@ -39,6 +42,9 @@ defmodule HalC2.Orchestration.Effects do
   @max_attempts 5
   @base_delay_ms 100
   @max_delay_ms 30_000
+  # How much of a thread's settled failure history a boot keeps.
+  @kept_terminal 100
+  @terminal_ttl_ms 7 * 24 * 60 * 60 * 1000
 
   @type result :: :ok | {:ok, term} | {:error, String.t()} | {:retry, String.t()}
 
@@ -212,10 +218,26 @@ defmodule HalC2.Orchestration.Effects do
   defp forget(record),
     do: HalC2.Store.delete_meta("effect:#{record["threadId"]}:#{record["id"]}")
 
+  @doc "Deletes a thread's recorded effects, done or not: its history dies with it."
+  @spec drop_thread(String.t()) :: :ok
+  def drop_thread(thread_id) do
+    if Process.whereis(HalC2.Store) do
+      HalC2.Store.path()
+      |> HalC2.Store.metas("effect:#{thread_id}:")
+      |> Map.keys()
+      |> Enum.each(&HalC2.Store.delete_meta/1)
+    end
+
+    :ok
+  end
+
   ## Worker
 
   @impl true
   def init(nil) do
+    # Effect processes are linked (see `start_effect/2`), so their exits
+    # arrive as messages instead of taking the worker down with them.
+    Process.flag(:trap_exit, true)
     {:ok, %{queues: %{}, running: %{}, effects: %{}, drains: []}, {:continue, :sweep}}
   end
 
@@ -234,6 +256,8 @@ defmodule HalC2.Orchestration.Effects do
       else
         []
       end
+
+    records = prune(records)
 
     state =
       Enum.reduce(records, state, fn record, state ->
@@ -321,15 +345,45 @@ defmodule HalC2.Orchestration.Effects do
   end
 
   # A running effect's process ended without answering (killed from outside):
-  # cancelled ones are already settled; others count as a failed try.
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
-    case Enum.find(state.effects, fn {_id, effect} -> effect.ref == ref end) do
-      nil ->
-        {:noreply, state}
+  # cancelled ones are already settled; others count as a failed try. The link
+  # and the monitor both report it; whichever arrives second finds nothing.
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state),
+    do: {:noreply, ended(state, Enum.find(state.effects, fn {_id, e} -> e.ref == ref end))}
 
-      {_id, effect} ->
-        {:noreply,
-         settle(state, %{effect | pid: nil, ref: nil}, {:retry, "the effect process ended"})}
+  def handle_info({:EXIT, pid, _reason}, state),
+    do: {:noreply, ended(state, Enum.find(state.effects, fn {_id, e} -> e.pid == pid end))}
+
+  defp ended(state, nil), do: state
+
+  defp ended(state, {_id, effect}),
+    do: settle(state, %{effect | pid: nil, ref: nil}, {:retry, "the effect process ended"})
+
+  # Settled failures are kept for diagnosis, not forever: the newest hundred
+  # of a thread and none older than a week.
+  defp prune(records) do
+    cutoff = System.os_time(:millisecond) - @terminal_ttl_ms
+
+    {terminal, live} =
+      Enum.split_with(records, &(&1["status"] in ["failed", "cancelled"]))
+
+    kept =
+      terminal
+      |> Enum.group_by(& &1["threadId"])
+      |> Enum.flat_map(fn {_thread, rows} ->
+        rows
+        |> Enum.sort_by(& &1["updatedAt"], :desc)
+        |> Enum.take(@kept_terminal)
+        |> Enum.filter(&(updated_ms(&1) >= cutoff))
+      end)
+
+    for record <- terminal -- kept, do: forget(record)
+    live ++ kept
+  end
+
+  defp updated_ms(%{"updatedAt" => iso}) do
+    case DateTime.from_iso8601(to_string(iso || "")) do
+      {:ok, at, _} -> DateTime.to_unix(at, :millisecond)
+      _ -> 0
     end
   end
 
@@ -372,11 +426,17 @@ defmodule HalC2.Orchestration.Effects do
     key = {record["threadId"], record["lane"]}
     payload = effect.payload
 
+    # Linked, so an effect dies with its worker instead of outliving a
+    # restart that would sweep its record as if it had ended; monitored, so
+    # its own end is reported whichever way it goes.
     {pid, ref} =
-      spawn_monitor(fn ->
-        Process.put(:hal_c2_effect_key, key)
-        send(worker, {:effect_result, record["id"], execute(record, payload, will_retry)})
-      end)
+      :erlang.spawn_opt(
+        fn ->
+          Process.put(:hal_c2_effect_key, key)
+          send(worker, {:effect_result, record["id"], execute(record, payload, will_retry)})
+        end,
+        [:link, :monitor]
+      )
 
     effect = %{effect | record: record, pid: pid, ref: ref}
     put_in(state, [Access.key(:effects), record["id"]], effect)
@@ -401,6 +461,7 @@ defmodule HalC2.Orchestration.Effects do
           })
 
         Process.send_after(self(), {:retry, record["id"]}, wait)
+        if effect.ref, do: Process.demonitor(effect.ref, [:flush])
         effect = %{effect | record: record, pid: nil, ref: nil}
         put_in(state, [Access.key(:effects), record["id"]], effect)
 
@@ -416,13 +477,16 @@ defmodule HalC2.Orchestration.Effects do
   end
 
   defp finish(state, effect, key, status, reply, error) do
-    record =
-      persist(%{
-        effect.record
-        | "status" => status,
-          "error" => error,
-          "updatedAt" => Entities.now()
-      })
+    record = %{
+      effect.record
+      | "status" => status,
+        "error" => error,
+        "updatedAt" => Entities.now()
+    }
+
+    # A failure stays on record for diagnosis (pruned at boot); what ran to
+    # done has served its purpose and its row goes.
+    if status == "done", do: forget(record), else: persist(record)
 
     if effect.ref, do: Process.demonitor(effect.ref, [:flush])
     if effect.waiter, do: GenServer.reply(effect.waiter, reply)
