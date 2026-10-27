@@ -280,7 +280,7 @@ Item {
         }
 
         textFormat: TextEdit.RichText
-        // TODO(ljos#145): Qt names a Text by its text already; `ljos check` wants it said.
+        // TODO(ljos#159): Qt names a TextEdit by its text already; `ljos check` wants it said.
         // Its plain text, since `text` here is the HTML document.
         Accessible.name: getText(0, length)
         wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere

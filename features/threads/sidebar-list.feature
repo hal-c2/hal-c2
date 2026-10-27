@@ -220,6 +220,7 @@ Feature: The thread list
     Given <state>
     When the user looks at the thread list
     Then the list says "<message>"
+    And Tab passes over the thread list
 
     Examples:
       | state                                 | message              |

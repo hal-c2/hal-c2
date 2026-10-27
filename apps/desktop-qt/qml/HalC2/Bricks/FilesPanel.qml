@@ -323,8 +323,6 @@ Rectangle {
 
                             objectName: "fileRenderedPage"
                             text: root.source?.renderedText ?? ""
-                            // TODO(ljos#145): Qt names a Text by its text already; `ljos check` wants it said.
-                            Accessible.name: text
                             textFormat: Text.RichText
                             color: root.foreground
                             font.pixelSize: Math.round(13 * Theme.fontScale)

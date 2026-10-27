@@ -1853,7 +1853,6 @@ Item {
             }
         }
 
-        // ljos-allow(text-unbounded-dynamic): false positive, ljos#144 (RowText wraps)
         header: RowText {
             width: ListView.view ? ListView.view.width : 0
             visible: root.showStatus && root.model !== null && (root.model.status === "unreachable" || (root.model.status === "loading" && view.count === 0))
