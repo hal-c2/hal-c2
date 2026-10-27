@@ -37,6 +37,7 @@ Item {
                 text: Runtime.lastError.length > 0
                     ? (Runtime.usingUserShell ? qsTr("Shell warning") : qsTr("shell.qml failed — using the built-in shell"))
                     : qsTr("Desktop host stopped")
+                wrapMode: Text.Wrap
                 font.bold: true
                 color: Theme.palette.color("text", "#e4e4e7")
             }
