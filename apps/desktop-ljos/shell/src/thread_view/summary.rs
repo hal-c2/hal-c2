@@ -866,11 +866,17 @@ mod tests {
         .unwrap();
         assert_eq!(n.summary, "Queued");
         // A delegated task's names its worker and carries its result.
-        let n = notice_of(&obj(json!({"type": "notification", "summary": "Tax tests finished",
-            "workerThreadId": "w", "workerTitle": " Tax tests ", "detail": "12 tests added"})))
+        let n = notice_of(&obj(
+            json!({"type": "notification", "summary": "Tax tests finished",
+            "workerThreadId": "w", "workerTitle": " Tax tests ", "detail": "12 tests added"}),
+        ))
         .unwrap();
         assert_eq!(
-            (n.worker_thread_id.as_str(), n.worker_title.as_str(), n.detail.as_str()),
+            (
+                n.worker_thread_id.as_str(),
+                n.worker_title.as_str(),
+                n.detail.as_str()
+            ),
             ("w", "Tax tests", "12 tests added")
         );
     }
