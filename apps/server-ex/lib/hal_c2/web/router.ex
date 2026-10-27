@@ -187,15 +187,35 @@ defmodule HalC2.Web.Router do
     {:ok, body, conn} = read_body(conn, length: 10_000_000)
     authorization = conn |> get_req_header("authorization") |> List.first()
 
-    case HalC2.Mcp.handle(authorization, body) do
-      {status, nil} -> send_resp(conn, status, "")
-      {status, reply} -> json(conn, status, reply)
+    headers =
+      Map.new(
+        ~w(mcp-session-id mcp-protocol-version),
+        &{&1, conn |> get_req_header(&1) |> List.first()}
+      )
+
+    {status, reply_headers, reply} = HalC2.Mcp.handle_request(authorization, headers, body)
+    conn = Enum.reduce(reply_headers, conn, fn {k, v}, c -> put_resp_header(c, k, v) end)
+
+    case reply do
+      nil -> send_resp(conn, status, "")
+      reply -> json(conn, status, reply)
     end
   end
 
   # No server-initiated stream: every answer comes back on its request.
   get "/mcp", do: send_resp(conn, 405, "")
-  delete "/mcp", do: send_resp(conn, 200, "")
+
+  # Ends the MCP session the header names; one this MC no longer has is fine.
+  delete "/mcp" do
+    case conn |> get_req_header("mcp-session-id") |> List.first() do
+      nil ->
+        send_resp(conn, 200, "")
+
+      session_id ->
+        HalC2.Mcp.end_session(session_id)
+        send_resp(conn, 200, "")
+    end
+  end
 
   # Settings → Connections: pairing links and the clients paired with this MC.
   post "/api/auth/pairing-token" do

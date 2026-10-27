@@ -38,7 +38,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   alias HalC2.Acp.Kimi
   alias HalC2.Acp.OpenCode
 
-  @state_version 14
+  @state_version 15
   @registry HalC2.Acp.Registry
 
   # Grok's background task notifications.
@@ -188,6 +188,10 @@ defmodule HalC2.Acp.ThreadRuntime do
        # ACP has no system prompt: a session given HAL-C2's tools hears about them in
        # its first prompt.
        announce: false,
+       # The instruction state (`HalC2.Mcp.Instructions.acp_prompt/3`) the last
+       # prompt announced, and the MCP-over-ACP bridge when the agent opened one.
+       announced: nil,
+       mcp_bridge: nil,
        # Subagents the agent started this turn, or in the background before it (Grok's
        # `task` tool): tool call id -> %{sub: NativeSubagent handle, session: child
        # session id, done: bool, background: bool}.
@@ -485,6 +489,77 @@ defmodule HalC2.Acp.ThreadRuntime do
     {:noreply, state}
   end
 
+  # MCP over the ACP connection (`HalC2.Mcp.OverAcp`): the agent connects to
+  # the `hal-c2` server through this client and sends it messages here.
+  def handle_info({:json_rpc, conn, {:request, id, method, params}}, state)
+      when method in [
+             "mcp/connect",
+             "_mcp/connect",
+             "mcp/message",
+             "_mcp/message",
+             "mcp/disconnect",
+             "_mcp/disconnect"
+           ] do
+    params = params || %{}
+    {bridge, state} = mcp_bridge(state)
+
+    answer =
+      cond do
+        bridge == nil ->
+          {:error, "The hal-c2 MCP server is not available in this session."}
+
+        String.ends_with?(method, "connect") ->
+          case HalC2.Mcp.OverAcp.connect(bridge, params["serverId"]) do
+            {:ok, connection_id} -> {:ok, %{"connectionId" => connection_id}}
+            {:error, message} -> {:error, message}
+          end
+
+        String.ends_with?(method, "disconnect") ->
+          case HalC2.Mcp.OverAcp.disconnect(bridge, params["connectionId"]) do
+            :ok -> {:ok, %{}}
+            {:error, message} -> {:error, message}
+          end
+
+        true ->
+          case HalC2.Mcp.OverAcp.message(
+                 bridge,
+                 params["connectionId"],
+                 params["method"],
+                 params["params"]
+               ) do
+            {:ok, result} -> {:ok, result}
+            {:error, message} -> {:error, message}
+          end
+      end
+
+    case answer do
+      {:ok, result} ->
+        Connection.respond(conn, id, {:ok, result})
+
+      {:error, message} ->
+        Connection.respond(conn, id, {:error, %{"code" => -32603, "message" => message}})
+    end
+
+    {:noreply, state}
+  end
+
+  def handle_info({:json_rpc, _conn, {:notification, method, params}}, state)
+      when method in ["mcp/message", "_mcp/message"] do
+    params = params || %{}
+    {bridge, state} = mcp_bridge(state)
+
+    if bridge,
+      do:
+        HalC2.Mcp.OverAcp.notification(
+          bridge,
+          params["connectionId"],
+          params["method"],
+          params["params"]
+        )
+
+    {:noreply, state}
+  end
+
   # This client writes no files and runs no terminal; say so rather than hang.
   def handle_info({:json_rpc, conn, {:request, id, method, _params}}, state) do
     Connection.respond(
@@ -593,6 +668,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   # left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(reason, %{turn: turn} = state) when turn != nil do
+    close_mcp_bridge(state)
+
     unless reason in [:normal, :shutdown] or match?({:shutdown, _}, reason) do
       for {_, %{done: false, sub: sub}} <- state.subagents,
           do: NativeSubagent.finish(sub, "failed", nil)
@@ -604,6 +681,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   def terminate(_reason, state) do
+    close_mcp_bridge(state)
     end_work(state, "interrupted")
     :ok
   catch
@@ -661,7 +739,11 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp migrate(%{v: 12} = state),
     do: state |> Map.merge(%{v: 13, kimi: Kimi.agent?(state.agent)}) |> migrate()
 
-  defp migrate(%{v: 13} = state), do: Map.merge(state, %{v: 14, wire: nil})
+  defp migrate(%{v: 13} = state), do: state |> Map.merge(%{v: 14, wire: nil}) |> migrate()
+
+  # The MCP-over-ACP bridge and the instruction state the last prompt announced.
+  defp migrate(%{v: 14} = state),
+    do: Map.merge(state, %{v: 15, mcp_bridge: nil, announced: nil})
 
   # --- session -------------------------------------------------------------------
 
@@ -691,8 +773,25 @@ defmodule HalC2.Acp.ThreadRuntime do
            {:ok, session_id, state} <- open_session(state, forked) do
         if session_id != turn.native_thread_id, do: record_session(state, session_id)
         Antigravity.opened(state.conn, session_id, driver, turn.runtime_mode, state.options)
-        {:ok, %{state | session_id: session_id, announce: mcp_servers(state, turn) != []}}
+
+        {:ok,
+         %{
+           state
+           | session_id: session_id,
+             announce: mcp_servers(state, turn) != [],
+             announced: nil
+         }}
+      else
+        # The credential minted for a session that failed to open is revoked:
+        # nothing live holds it, and it must not outlive the attempt.
+        {:error, reason, state} ->
+          HalC2.Mcp.revoke(state.thread_id, Entities.instance(turn.ids))
+          {:error, reason, state}
       end
+    else
+      {:error, reason, state} ->
+        HalC2.Mcp.revoke(state.thread_id, Entities.instance(turn.ids))
+        {:error, reason, state}
     end
   end
 
@@ -715,6 +814,15 @@ defmodule HalC2.Acp.ThreadRuntime do
     state = %{state | conn: nil, session_id: nil, server: nil}
 
     with {:ok, command, env} <- HalC2.Acp.command(instance, mode),
+         # The way back to HAL-C2's tools from the agent's terminal
+         # (`HalC2.Mcp.AcpServers`): the MCP address, its credential and the
+         # command to run one call with.
+         env =
+           env ++
+             HalC2.Mcp.AcpServers.build(
+               %{},
+               HalC2.Mcp.for_agent(state.thread_id, instance)
+             ).env,
          {command, env, server} = serve_opencode(instance, command, env),
          {:ok, conn} <-
            Connection.start_link(
@@ -849,22 +957,48 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # HAL-C2's own MCP server, for agents that take servers over HTTP.
+  # HAL-C2's own MCP server, in the form this agent takes servers
+  # (`HalC2.Mcp.AcpServers`): by address over HTTP, as a local stdio
+  # command, and over the ACP connection itself when it can carry MCP.
   defp mcp_servers(state, turn) do
-    with true <- get_in(state.capabilities, ["mcpCapabilities", "http"]) == true,
-         %{url: url, authorization: authorization} <-
-           HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids)) do
-      [
-        %{
-          "type" => "http",
-          "name" => "hal-c2",
-          "url" => url,
-          "headers" => [%{"name" => "Authorization", "value" => authorization}]
-        }
-      ]
-    else
-      _ -> []
+    server = HalC2.Mcp.for_agent(state.thread_id, Entities.instance(turn.ids))
+    HalC2.Mcp.AcpServers.build(state.capabilities, server).servers
+  end
+
+  # The thread's MCP-over-ACP bridge, started on its first connection.
+  defp mcp_bridge(state) do
+    cond do
+      state.mcp_bridge != nil ->
+        {state.mcp_bridge, state}
+
+      state.turn == nil ->
+        {nil, state}
+
+      true ->
+        case HalC2.Mcp.for_agent(state.thread_id, Entities.instance(state.turn.ids)) do
+          %{url: url, authorization: authorization} ->
+            {:ok, bridge} =
+              HalC2.Mcp.OverAcp.start_link(endpoint: url, authorization: authorization)
+
+            {bridge, %{state | mcp_bridge: bridge}}
+
+          _ ->
+            {nil, state}
+        end
     end
+  end
+
+  defp close_mcp_bridge(state) do
+    if bridge = Map.get(state, :mcp_bridge) do
+      try do
+        HalC2.Mcp.OverAcp.dispose(bridge)
+        GenServer.stop(bridge)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    if is_map_key(state, :mcp_bridge), do: %{state | mcp_bridge: nil}, else: state
   end
 
   # A session that opens without saying its model gets the turn's model set again.
@@ -2440,19 +2574,50 @@ defmodule HalC2.Acp.ThreadRuntime do
   # the same connection later lands behind it, so the agent reads the prompt first.
   defp prompt(state, turn) do
     state = %{state | leaf: leaf(state)} |> watch_wire()
-    prompt = acp_prompt(turn, state.capabilities, instructions(state))
+    current = instruction_state(state, turn)
+    slash? = String.starts_with?(String.trim_leading(turn.text || ""), "/")
+
+    # ACP prompts carry HAL-C2's instructions only when they change: first
+    # with the tools, then again when the mode or the tools do — and never
+    # in front of a slash command, which stays at the start.
+    announce? = current.has_mcp and current != state.announced and not slash?
+    text = if announce?, do: HalC2.Mcp.Instructions.acp_instructions(current)
+
+    text =
+      if text && state.kimi && HalC2.Mcp.workers_only?(%{}),
+        do: text <> HalC2.Mcp.workers_only_note(),
+        else: text
+
+    prompt = acp_prompt(turn, state.capabilities, text)
     params = %{"sessionId" => state.session_id, "prompt" => prompt}
     prompts = Connection.request(state.conn, "session/prompt", params, :prompt, state.prompts)
-    %{state | announce: false, prompt: true, prompts: prompts}
+
+    %{
+      state
+      | announce: false,
+        announced: if(announce?, do: current, else: state.announced),
+        prompt: true,
+        prompts: prompts
+    }
   end
 
-  # What a session given HAL-C2's tools is told about them with its first prompt. Kimi,
-  # whose Agent tool HAL-C2 cannot take away, is told to delegate when the subagents
-  # setting keeps agents to HAL-C2's workers.
-  defp instructions(%{announce: false}), do: nil
+  defp instruction_state(state, turn) do
+    instance = Entities.instance(turn.ids)
+    server = HalC2.Mcp.for_agent(state.thread_id, instance)
 
-  defp instructions(state),
-    do: HalC2.Mcp.instructions(state.kimi and HalC2.Mcp.workers_only?(%{}))
+    %{
+      interaction_mode: Map.get(turn, :interaction_mode) || "default",
+      has_mcp: server != nil,
+      capabilities:
+        HalC2.Mcp.capabilities(state.thread_id, instance) ||
+          HalC2.Mcp.agent_access(state.thread_id),
+      runtime: %{
+        harness: HalC2.Acp.label(instance),
+        model: Map.get(turn, :model),
+        effort: nil
+      }
+    }
+  end
 
   # The thread no longer holds an agent session (`HalC2.Acp.Antigravity.sessions/1`).
   defp released(state) do

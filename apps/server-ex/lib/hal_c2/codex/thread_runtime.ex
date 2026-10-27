@@ -945,7 +945,14 @@ defmodule HalC2.Codex.ThreadRuntime do
           if(mcp(state, turn),
             do: %{
               "model" => turn.model,
-              "developer_instructions" => HalC2.Mcp.instructions(state.workers_only)
+              "developer_instructions" =>
+                HalC2.Mcp.Instructions.for_session(
+                  runtime: %{
+                    harness: "Codex",
+                    model: turn.model,
+                    effort: Map.get(turn, :options, %{})["reasoningEffort"]
+                  }
+                ) <> if(state.workers_only, do: HalC2.Mcp.workers_only_note(), else: "")
             },
             else: %{"model" => turn.model}
           )

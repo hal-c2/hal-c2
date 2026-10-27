@@ -541,6 +541,12 @@ defmodule HalC2.Orchestration do
 
       if type == "thread.delete", do: stop_runtimes(thread_id)
 
+      # Archiving is a terminal detach: the thread's agent loses its tools at
+      # once, not at the credential's idle lapse. Deleting keeps the
+      # credential so its calls can be answered "the calling thread is gone"
+      # (`stop_session/1` below).
+      if type == "thread.archive", do: HalC2.Mcp.revoke(thread_id)
+
       if type == "thread.runtime-mode.set",
         do: runtime_mode_changed(thread_id, command["runtimeMode"])
 
