@@ -198,6 +198,8 @@ ShellWindow {
             color: root.canvas
 
             RowLayout {
+                id: columns
+
                 anchors.fill: parent
                 spacing: 0
 
@@ -230,8 +232,13 @@ ShellWindow {
                 }
 
                 ColumnLayout {
+                    id: thread
+
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    // The thread keeps room of its own (DefaultLayout's
+                    // threadMinimumWidth); the right panel gives way instead.
+                    Layout.minimumWidth: 360
                     visible: !root.pluginTab
                     spacing: 0
 
@@ -278,6 +285,9 @@ ShellWindow {
 
                     Layout.fillHeight: true
                     Layout.preferredWidth: implicitWidth
+                    // What the thread leaves it, so a narrower window or a
+                    // wider drag takes no room from the thread.
+                    maximumWidth: Math.max(minimumWidth, columns.width - thread.x - thread.Layout.minimumWidth)
                     ownToggle: false
                     visible: available && !root.pluginTab
                 }

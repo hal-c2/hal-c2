@@ -31,6 +31,8 @@ ShellWindow {
         border.width: 1
 
         RowLayout {
+            id: columns
+
             anchors.fill: parent
             anchors.margins: 1
             spacing: 0
@@ -105,8 +107,13 @@ ShellWindow {
             // Content column: toolbar, page, composer, all on one opaque
             // canvas so text stays crisp over whatever the desktop shows.
             Rectangle {
+                id: thread
+
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                // The thread keeps room of its own (DefaultLayout's
+                // threadMinimumWidth); the right panel gives way instead.
+                Layout.minimumWidth: 360
                 color: root.canvas
                 topLeftRadius: sidebarColumn.visible ? 0 : root.corner - 1
                 bottomLeftRadius: sidebarColumn.visible ? 0 : root.corner - 1
@@ -220,6 +227,9 @@ ShellWindow {
 
                     anchors.fill: parent
                     anchors.leftMargin: 1
+                    // What the thread leaves it, so a narrower window or a
+                    // wider drag takes no room from the thread.
+                    maximumWidth: Math.max(minimumWidth, columns.width - thread.x - thread.Layout.minimumWidth)
                     ownToggle: false
                     color: "transparent"
                 }

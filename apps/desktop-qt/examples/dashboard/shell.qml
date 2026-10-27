@@ -26,7 +26,11 @@ ShellWindow {
 
     // The sidebar's width is the one animated layout value; the title pill
     // above it follows so the two collapse as one piece.
-    property real sidebarSlot: sidebarCollapsed ? 0 : 272
+    // It also folds while an open right panel would leave the thread less
+    // than its 360 (the rail, sidebar, thread and panel, and their gaps).
+    readonly property bool crowded: panel.open && !pluginTab && columns.width < 52 + 272 + threadMinimum + panel.minimumWidth + 3 * columns.spacing
+    readonly property int threadMinimum: 360
+    property real sidebarSlot: sidebarCollapsed || crowded ? 0 : 272
     property bool drawerOpen: false
     // A page an MC plugin added is showing: it takes the place of the thread.
     readonly property bool pluginTab: (root.route?.tab ?? "threads") !== "threads" && !root.settingsActive
@@ -393,6 +397,8 @@ ShellWindow {
         }
 
         RowLayout {
+            id: columns
+
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 12
@@ -531,6 +537,8 @@ ShellWindow {
             }
 
             ColumnLayout {
+                id: thread
+
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 spacing: 12
@@ -1170,6 +1178,9 @@ ShellWindow {
                     id: panel
 
                     anchors.fill: parent
+                    // What the thread leaves it, so a narrower window or a
+                    // wider drag takes no room from the thread.
+                    maximumWidth: Math.max(minimumWidth, columns.width - thread.x - root.threadMinimum - columns.spacing)
                     color: "transparent"
                     radius: panelCard.radius - panelCard.border.width
                 }
