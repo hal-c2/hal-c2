@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13340
 #   docs/user/mobile-notifications.md
 #   apps/mobile/src/features/agent-awareness/ (push registration, live activity arming, channels)
 #   apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
@@ -85,6 +86,14 @@ Feature: Push notifications and live agent activity
       | finishes its turn        |
       | fails                    |
       | needs the user's input   |
+
+  # The MC pushes on its own, so a restart must not replay work it already reported.
+  @backlog @mc @mobile
+  Scenario: A restarted MC does not alert about work that finished before it started
+    Given "My MacBook" has several threads whose turns finished days ago
+    And device notifications are on
+    When the MC starts
+    Then no alert is pushed for those threads
 
   @backlog @mobile
   Scenario: Tapping an alert opens the thread

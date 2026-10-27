@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-claude.md
 #   docs/internals/providers.md (Claude homes, update ownership)
@@ -868,3 +869,18 @@ Feature: Claude
       | in ".local/bin" of the user's home             | Claude's own "claude update"               |
       | under ".local/share/claude" of the user's home | Claude's own "claude update"               |
       | in an npm global install                       | npm installing "@anthropic-ai/claude-code" |
+
+  # Statuses are the MC's: broken, unsupported, graceful (shown as limited) or unknown.
+  # No range names a version until the policy adds one, so the in-range rows are unknown.
+  @backlog
+  Scenario Outline: The version Claude Code runs decides whether this HAL-C2 release supports it
+    Given Claude Code version "<version>" is installed
+    When the MC checks Claude Code
+    Then Claude Code is reported as "<status>" for this HAL-C2 release
+
+    Examples:
+      | version | status      |
+      | 2.1.110 | unsupported |
+      | 2.1.111 | graceful    |
+      | 2.1.279 | graceful    |
+      | 2.1.280 | unknown     |
