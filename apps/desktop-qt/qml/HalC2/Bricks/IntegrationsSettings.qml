@@ -115,7 +115,9 @@ SettingsPage {
 
         RowLayout {
             spacing: 8
-            visible: update.visible || check.visible
+            // From the state, not the buttons' `visible`: theirs follows
+            // this row's, so a row once hidden would stay hidden.
+            visible: (toggle.entry?.update ?? "") !== "" || (toggle.settings?.canCheck ?? false)
 
             ShellButton {
                 id: update

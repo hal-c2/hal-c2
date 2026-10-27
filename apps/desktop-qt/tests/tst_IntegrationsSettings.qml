@@ -65,6 +65,16 @@ Item {
             compare(Shell.dispatchedActions[0].payload.tool, "hub");
         }
 
+        // An update found after the page is shown is offered by its name.
+        function test_an_update_found_later_is_offered() {
+            Shell.state = { settingsScope: { editable: true }, deviceSettings: root.state({ canCheck: false }) };
+            const page = createTemporaryObject(pageComponent, root);
+            const update = findChild(findChild(page, "hub"), "update");
+            verify(!update.visible);
+            Shell.state = { settingsScope: { editable: true }, deviceSettings: root.state({ canCheck: false, hub: root.toggle({ update: "Update to v1.4.0" }) }) };
+            tryVerify(() => update.visible && update.width > update.leftPadding + update.rightPadding + 40);
+        }
+
         function test_simulator_support_names_the_environment_shown() {
             Shell.state = { settingsScope: { editable: true }, deviceSettings: root.state({
                 hub: root.toggle({ on: true }),
