@@ -280,6 +280,9 @@ Item {
         }
 
         textFormat: TextEdit.RichText
+        // TODO(ljos#145): Qt names a Text by its text already; `ljos check` wants it said.
+        // Its plain text, since `text` here is the HTML document.
+        Accessible.name: getText(0, length)
         wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
         readOnly: true
         selectByMouse: true
@@ -307,8 +310,6 @@ Item {
             // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
             onTapped: eventPoint => richText.follow(eventPoint)
         }
-        // TODO(ljos#145): `ljos check` calls this unnamed (an error no allow
-        // keeps), but the text is its name; the links' keyboard path is hal-c2#574.
         TapHandler {
             acceptedDevices: PointerDevice.TouchScreen
             // ljos-allow(focus-pointer-only): a read-only TextEdit has no keyboard path to its links yet, hal-c2#574
