@@ -30,7 +30,9 @@ defmodule HalC2.Orchestration.NativeSubagent do
     item_id = "turn-item:subagent:#{id}"
     ref = Entities.provider_ref(native, driver)
     prompt = task["prompt"] || ""
-    parent = stream(ids.thread) |> StreamState.get("thread") |> Map.get(ids.thread, %{})
+    parent_state = stream(ids.thread)
+    parent = parent_state |> StreamState.get("thread") |> Map.get(ids.thread, %{})
+    ordinal = length(StreamState.list(parent_state, "subagent")) + 1
 
     HalC2.Streams.transact(ids.thread, :thread, fn state ->
       item =
@@ -94,7 +96,7 @@ defmodule HalC2.Orchestration.NativeSubagent do
         %{
           "threadId" => child_id,
           "projectId" => parent["projectId"],
-          "title" => task["title"] || title(prompt),
+          "title" => title(parent["title"] || "", task["title"], prompt, ordinal),
           "modelSelection" =>
             if(task["model"],
               do: Map.put(parent["modelSelection"] || %{}, "model", task["model"]),
@@ -108,6 +110,14 @@ defmodule HalC2.Orchestration.NativeSubagent do
         at
       )
       |> Map.merge(%{
+        # A subagent starts awake, whatever state its parent is in.
+        "archivedAt" => nil,
+        "settledOverride" => nil,
+        "settledAt" => nil,
+        "snoozedUntil" => nil,
+        "snoozedAt" => nil,
+        "lastVisitedAt" => nil,
+        "deletedAt" => nil,
         "worktreePath" => parent["worktreePath"],
         "branch" => parent["branch"],
         "lineage" => %{
@@ -492,7 +502,28 @@ defmodule HalC2.Orchestration.NativeSubagent do
     [{"message", message_id, message}, {"turn-item", item_id, item}]
   end
 
-  defp title(prompt), do: prompt |> String.split("\n") |> hd() |> String.slice(0, 80)
+  # The child's title (upstream `subagentThreadTitle`): its given title, else its
+  # prompt, cut to 72 characters; with neither, it is named after its parent.
+  defp title(parent_title, given, prompt, ordinal) do
+    case trimmed(given) || trimmed(prompt) do
+      nil ->
+        "#{parent_title} subagent #{ordinal}"
+
+      detail ->
+        if String.length(detail) > 72,
+          do: String.slice(detail, 0, 69) <> "...",
+          else: detail
+    end
+  end
+
+  defp trimmed(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      text -> text
+    end
+  end
+
+  defp trimmed(_value), do: nil
 
   defp nilify(""), do: nil
   defp nilify(text), do: text

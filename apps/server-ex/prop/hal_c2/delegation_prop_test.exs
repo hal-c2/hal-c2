@@ -269,13 +269,19 @@ defmodule HalC2.DelegationPropTest do
   defp never_owing?(before, task, child),
     do: settled?(before) or not settled?(task) or quiet?(child)
 
-  # As the child's last run not rolled back ended, with its last answer in such a run.
+  # As the child's last run not rolled back ended, with its last answer in such a
+  # run, or what a run that left no answer says for itself.
   defp as_ended?(before, task, child) do
     settled?(before) or not settled?(task) or
       (task["subagent"]["status"] == ended_as(child) and
          task["subagent"]["completedAt"] == ended_at(child) and
-         task["subagent"]["result"] == (last_answer(child) || prepared(child)))
+         task["subagent"]["result"] ==
+           (prepared(child) || last_answer(child) || no_answer(ended_as(child))))
   end
+
+  defp no_answer("completed"), do: "Child task completed without an assistant result."
+  defp no_answer("interrupted"), do: "Child task ended with status interrupted."
+  defp no_answer(_status), do: nil
 
   defp delivered_once? do
     results =

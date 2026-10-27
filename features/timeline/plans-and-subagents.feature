@@ -284,7 +284,7 @@ Feature: Plans and subagents
     Examples:
       | wait        | answer                | message                                |
       | carry on    | with "12 tests added" | "12 tests added" once it is free       |
-      | wait for it | without an answer     | "(no answer)" once its own run is over |
+      | wait for it | without an answer     | "Child task completed without an assistant result." once its own run is over |
 
   @mc
   Scenario Outline: A result waiting to wake the parent is the agent's, not the user's to change

@@ -174,6 +174,26 @@ defmodule HalC2.Mcp.Tools do
         |> Enum.filter(fn {_, position} -> position > after_position end)
         |> Enum.take(limit)
 
+      read =
+        Enum.map(page, fn {item, position} ->
+          timeline_item(item, position, messages, max_chars, args["textOffset"] || 0)
+        end)
+
+      # Reading a finished direct child's answer in full is the caller taking
+      # its result: its automatic delivery is acknowledged, so no wake follows.
+      if (args["textOffset"] || 0) == 0 and
+           Enum.any?(read, &(&1["type"] == "assistant_message" and not &1["truncated"])) do
+        observed =
+          me["id"]
+          |> stream()
+          |> StreamState.list("run")
+          |> Enum.filter(&(&1["status"] in ~w(preparing starting running waiting)))
+          |> Enum.max_by(&(&1["ordinal"] || 0), fn -> %{} end)
+          |> Map.get("id")
+
+        HalC2.Orchestration.Delegation.acknowledge_child_read(me["id"], row["id"], observed)
+      end
+
       {:ok,
        %{
          "thread" => Map.put(list_item(row), "totalItems", length(items)),
@@ -183,10 +203,7 @@ defmodule HalC2.Mcp.Tools do
            |> Enum.sort_by(&(&1["ordinal"] || 0), :desc)
            |> Enum.take(args["runLimit"] || 10)
            |> Enum.map(&run_summary/1),
-         "items" =>
-           Enum.map(page, fn {item, position} ->
-             timeline_item(item, position, messages, max_chars, args["textOffset"] || 0)
-           end),
+         "items" => read,
          "nextPosition" =>
            case List.last(page) do
              {_, position} -> position

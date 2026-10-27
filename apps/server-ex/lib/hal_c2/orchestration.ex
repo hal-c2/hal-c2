@@ -303,6 +303,8 @@ defmodule HalC2.Orchestration do
   # "Run interrupted" result once the provider stops (`TurnWriter.finish/3`).
   def dispatch(%{"type" => "run.interrupt", "threadId" => thread_id} = command) do
     HalC2.Streams.transact(thread_id, :thread, &{interrupt_request(&1, command), :ok})
+    # Stopping a turn also stops its delegated tasks from waking it later.
+    HalC2.Orchestration.Delegation.stop_wakes(thread_id, command["runId"])
 
     with :ok <- interrupt_any(thread_id, command["runId"]),
          do: {:ok, %{"sequence" => sequence(thread_id)}}
