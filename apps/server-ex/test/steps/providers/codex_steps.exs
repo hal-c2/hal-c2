@@ -3654,7 +3654,7 @@ Red"} <- StreamState.get(state, "message")[message],
   end
 
   step "reading the skills fails naming the project folder", context do
-    assert {:error, message} = context.reply
+    assert {:error, %{"message" => message}} = context.reply
     assert message == "Failed to probe Codex skills for '#{context.skills_cwd}'"
     context
   end

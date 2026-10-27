@@ -385,6 +385,11 @@ defmodule HalC2.Steps.Providers.PermissionModes do
     context
   end
 
+  step "the thread is in auto-accept edits at once", context do
+    assert World.thread(context, @thread)["runtimeMode"] == "auto-accept-edits"
+    context
+  end
+
   step "the next turn runs in auto-accept edits", context do
     # The delegating turn that "a supervised thread" left running ends first.
     {:ok, _} =

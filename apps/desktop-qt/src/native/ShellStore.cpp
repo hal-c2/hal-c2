@@ -77,6 +77,11 @@ void ShellStore::hold(const cache::Shell& kept, const QString& origin) {
   if (held || m_previewing) emit changed();
 }
 
+bool ShellStore::reached(const QString& mc, const QString& epoch, qint64 rev) const {
+  const auto it = m_mcs.constFind(mc);
+  return it == m_mcs.cend() || it->epoch != epoch || it->rev >= rev;
+}
+
 QJsonObject ShellStore::have() const {
   QJsonObject have;
   for (auto it = m_mcs.cbegin(); it != m_mcs.cend(); ++it) {

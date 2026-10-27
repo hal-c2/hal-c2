@@ -13,14 +13,14 @@ defmodule HalC2.Keybindings do
   @script ~r/^script\.([a-z0-9][a-z0-9-]*)\.run$/
   @max_script_id 24
 
-  @doc "The stored rules, skipping entries that are not rules."
+  @doc "The stored rules, skipping entries that are not rules; a null `when` is left out."
   def rules do
     with {:ok, text} <- File.read(path()),
          {:ok, list} when is_list(list) <- JSON.decode(text) do
       for %{"key" => key, "command" => command} = rule <- list,
           is_binary(key) and is_binary(command) and
             (rule["when"] == nil or is_binary(rule["when"])),
-          do: Map.take(rule, ~w(key command when))
+          do: rule(rule)
     else
       _ -> []
     end
@@ -33,11 +33,12 @@ defmodule HalC2.Keybindings do
 
     case invalid(rule) do
       nil ->
-        rules()
-        |> Enum.reject(&(&1 == rule or &1 == replace))
-        |> Kernel.++([rule])
-        |> Enum.take(-@max)
-        |> save()
+        HalC2.Settings.edit_keybindings(fn rules ->
+          rules
+          |> Enum.reject(&(&1 == rule or &1 == replace))
+          |> Kernel.++([rule])
+          |> Enum.take(-@max)
+        end)
 
       reason ->
         {:error,
@@ -51,7 +52,7 @@ defmodule HalC2.Keybindings do
   @doc "`server.removeKeybinding`: removes a rule."
   def remove(input) do
     target = rule(input)
-    rules() |> Enum.reject(&(&1 == target)) |> save()
+    HalC2.Settings.edit_keybindings(fn rules -> Enum.reject(rules, &(&1 == target)) end)
   end
 
   defp rule(input),
@@ -109,15 +110,18 @@ defmodule HalC2.Keybindings do
     |> elem(2)
   end
 
-  defp save(rules) do
+  @doc """
+  Writes the rules. Only `HalC2.Settings` calls it, for an edit or a member's newer
+  rules (`HalC2.Settings.Shared`), so the file is read and written one change at a time.
+  """
+  def write(rules) do
     file = path()
     tmp = file <> ".tmp"
     File.mkdir_p!(Path.dirname(file))
     File.write!(tmp, JSON.encode!(rules))
     File.rename!(tmp, file)
-    HalC2.Settings.notify_keybindings(rules)
-    {:ok, %{"rules" => rules}}
   end
 
-  defp path, do: Path.join(HalC2.Paths.config_dir(), "keybindings.json")
+  @doc "Where the rules are kept."
+  def path, do: Path.join(HalC2.Paths.config_dir(), "keybindings.json")
 end

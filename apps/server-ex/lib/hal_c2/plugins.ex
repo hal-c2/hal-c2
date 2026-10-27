@@ -605,6 +605,11 @@ defmodule HalC2.Plugins do
   @doc false
   # The plugin's process, started by its supervisor (`self()`); the MC watches it for
   # crashes, and charges them only to the supervisor it is running or has just failed.
+  # It reads the settings each time it starts, so a restart after a crash runs with the
+  # ones saved last (a spec from before an update in place still carries a map).
+  def start_worker(id, module, fields) when is_list(fields),
+    do: start_worker(id, module, current(id, fields))
+
   def start_worker(id, module, settings) do
     with {:ok, pid} <- module.start_link(settings) do
       GenServer.cast(__MODULE__, {:worker, id, self(), pid})
@@ -737,10 +742,9 @@ defmodule HalC2.Plugins do
 
         with :ok <- check_types(fields, input),
              :ok <- validate(module, Map.merge(defaults(fields), reveal(id, fields, next))) do
+          old = settings(plugin)
           update_config(id, &Map.put(&1, "settings", seal(id, fields, next)))
-          # A running plugin starts again with what the user saved.
-          state = if plugin.sup, do: state |> stop(id) |> reconcile(), else: state
-          state = push(state)
+          state = state |> apply_settings(plugin, old) |> push()
           {:reply, {:ok, entry(state.plugins[id])}, state}
         else
           {:error, message} ->
@@ -1384,7 +1388,7 @@ defmodule HalC2.Plugins do
 
     children =
       if module != nil and function_exported?(module, :start_link, 1),
-        do: [%{id: module, start: {__MODULE__, :start_worker, [id, module, settings(plugin)]}}],
+        do: [%{id: module, start: {__MODULE__, :start_worker, [id, module, fields(plugin)]}}],
         else: []
 
     # A provider's thread processes (`sessions/1`).
@@ -1434,6 +1438,25 @@ defmodule HalC2.Plugins do
       %{gave_up: ^sup} -> true
       _ -> false
     end
+  end
+
+  # A running plugin takes the settings the user saved: live when its process says it
+  # has (`settings_changed/3`), or else by starting again with them. A plugin without a
+  # process reads them per call, and keeps running with its provider sessions.
+  defp apply_settings(state, %{sup: nil}, _old), do: state
+
+  defp apply_settings(state, %{id: id, module: module, sup: sup} = plugin, old) do
+    with {_, pid, _, _} when is_pid(pid) <- List.keyfind(children(sup), module, 0),
+         false <- live?(module, pid, settings(plugin), old) do
+      state |> stop(id) |> reconcile()
+    else
+      _ -> sync(state)
+    end
+  end
+
+  defp live?(module, pid, settings, old) do
+    function_exported?(module, :settings_changed, 3) and
+      safely(fn -> module.settings_changed(pid, settings, old) end) == :ok
   end
 
   defp stop(state, id) do
@@ -1494,10 +1517,10 @@ defmodule HalC2.Plugins do
 
   # A plugin's settings as it uses them: defaults, then what the user saved, with
   # secrets read back from the secret store.
-  defp settings(plugin) do
-    fields = fields(plugin)
-    Map.merge(defaults(fields), reveal(plugin.id, fields, config(plugin.id)["settings"] || %{}))
-  end
+  defp settings(plugin), do: current(plugin.id, fields(plugin))
+
+  defp current(id, fields),
+    do: Map.merge(defaults(fields), reveal(id, fields, config(id)["settings"] || %{}))
 
   # Values of the declared type; a field without one takes anything.
   defp check_types(fields, input) do

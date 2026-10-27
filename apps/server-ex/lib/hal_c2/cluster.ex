@@ -35,6 +35,11 @@ defmodule HalC2.Cluster do
   minute is for a member whose cluster process restarted: its connections outlived it,
   so no member connects anew to tell it what it missed. Timestamps come from
   `stamp/1`, so they order changes even when the members' clocks disagree.
+
+  The settings that follow the person (`HalC2.Settings.Shared`) travel the same way: a
+  member's records go to the others whenever they connect, every half minute and
+  whenever they change here (`share_settings/0`). Only members are told them and only
+  a member's are taken up, so a removed machine stops sharing with the rest at once.
   """
 
   use GenServer
@@ -92,6 +97,9 @@ defmodule HalC2.Cluster do
   member list for the new machine.
   """
   def admit(entry), do: GenServer.call(__MODULE__, {:admit, entry})
+
+  @doc "Tells the connected members this MC's shared settings, which changed here."
+  def share_settings, do: GenServer.cast(__MODULE__, :share_settings)
 
   @doc "Stops admitting the member `id`, here and on every member, and disconnects it."
   def remove(id), do: GenServer.call(__MODULE__, {:remove, id})
@@ -501,6 +509,19 @@ defmodule HalC2.Cluster do
     {:noreply, state}
   end
 
+  def handle_cast(:share_settings, %{off: nil} = state) do
+    tell_settings(state, connected_members(state))
+    {:noreply, state}
+  end
+
+  def handle_cast({:settings, from, records}, %{off: nil} = state)
+      when is_binary(from) and is_map(records) do
+    if from != state.id and member?(state.members[from]),
+      do: HalC2.Settings.merge_shared(records)
+
+    {:noreply, state}
+  end
+
   def handle_cast(_request, state), do: {:noreply, state}
 
   @impl true
@@ -508,8 +529,10 @@ defmodule HalC2.Cluster do
     state = refresh_own(state) |> commit()
     # A machine that is no member any more was cut off by `commit/1`: it is not told
     # the members, and a send would only connect to it again.
-    if member?(state.members[id_of(mc)]),
-      do: state.transport.send(mc, {:merge, state.members})
+    if member?(state.members[id_of(mc)]) do
+      state.transport.send(mc, {:merge, state.members})
+      tell_settings(state, [mc])
+    end
 
     {:noreply, state}
   end
@@ -522,9 +545,20 @@ defmodule HalC2.Cluster do
   end
 
   defp tell_members(state) do
-    for mc <- state.transport.connected(),
-        member?(state.members[id_of(mc)]),
-        do: state.transport.send(mc, {:merge, state.members})
+    members = connected_members(state)
+    for mc <- members, do: state.transport.send(mc, {:merge, state.members})
+    tell_settings(state, members)
+  end
+
+  defp connected_members(state),
+    do: for(mc <- state.transport.connected(), member?(state.members[id_of(mc)]), do: mc)
+
+  # An MC with nothing to share (no settings server, as in tests) sends nothing.
+  defp tell_settings(state, mcs) do
+    case HalC2.Settings.shared_records() do
+      records when records == %{} -> :ok
+      records -> for mc <- mcs, do: state.transport.send(mc, {:settings, state.id, records})
+    end
   end
 
   defp schedule_gossip,

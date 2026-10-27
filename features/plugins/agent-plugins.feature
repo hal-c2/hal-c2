@@ -135,6 +135,12 @@ Feature: Agent providers are plugins
       | sign-in             | the user is pointed to the provider's documentation to sign in                |
 
   @mc
+  Scenario: A provider plugin declared before the finer capabilities keeps its defaults
+    Given a provider plugin that declares only the earlier capabilities
+    When a message is queued behind its running turn
+    Then the message runs once that turn is interrupted
+
+  @mc
   Scenario: A plugin that declares a capability it does not honour is reported
     Given a provider plugin that declares rollback but fails every rollback
     When the user reverts a turn on that provider

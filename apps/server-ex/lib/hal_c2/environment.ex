@@ -97,47 +97,98 @@ defmodule HalC2.Environment do
   (with a `cwd`) leaves quota and probes alone.
   """
   def refresh_providers(input) do
-    result =
-      case input do
-        # Antigravity's skills come from the workspace's folders (`HalC2.Acp.Antigravity.skills/2`),
-        # Codex's from its app-server for that folder (`HalC2.Codex.Provider.refresh_workspace/2`).
-        %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
-          cond do
-            HalC2.Acp.driver(id) == "antigravity" ->
-              HalC2.Acp.Antigravity.refresh_workspace(id, cwd)
+    case refresh(input) do
+      :ok -> {:ok, %{"providers" => providers()}}
+      {:error, _} = error -> error
+    end
+  end
 
-            HalC2.Settings.known_instance?(id, "codex") ->
-              HalC2.Codex.Provider.refresh_workspace(id, cwd)
+  defp refresh(input) do
+    case input do
+      # Antigravity's skills come from the workspace's folders (`HalC2.Acp.Antigravity.skills/2`),
+      # Codex's from its app-server for that folder (`HalC2.Codex.Provider.refresh_workspace/2`).
+      %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
+        cond do
+          HalC2.Acp.driver(id) == "antigravity" ->
+            case HalC2.Acp.Antigravity.refresh_workspace(id, cwd) do
+              :ok ->
+                :ok
 
-            true ->
+              {:error, detail} ->
+                {:error,
+                 %{
+                   "_tag" => "ProviderSetupError",
+                   "instanceId" => id,
+                   "operation" => "refresh",
+                   "detail" => "Could not read Antigravity workspace skills.",
+                   "message" => "Could not read Antigravity workspace skills.",
+                   "cause" => detail
+                 }}
+            end
+
+          HalC2.Settings.known_instance?(id, "codex") ->
+            case HalC2.Codex.Provider.refresh_workspace(id, cwd) do
+              :ok ->
+                :ok
+
+              {:error, detail} ->
+                {:error,
+                 %{
+                   "_tag" => "ProviderSetupError",
+                   "instanceId" => id,
+                   "operation" => "refresh",
+                   "detail" => detail,
+                   "message" => detail
+                 }}
+            end
+
+          true ->
+            :ok
+        end
+
+      %{"cwd" => cwd} when is_binary(cwd) ->
+        :ok
+
+      %{"instanceId" => id} when is_binary(id) ->
+        HalC2.ProviderUsageLimits.refresh([id])
+
+        # A model refresh on a signed-in Antigravity instance reads its
+        # account's models in a disposable session, and its failure is the
+        # caller's. Without an account there is nothing to refresh, and the
+        # ordinary read says to sign in.
+        if input["refreshModels"] == true and HalC2.Acp.driver(id) == "antigravity" and
+             HalC2.Acp.Antigravity.account(id) != nil do
+          case HalC2.Acp.Antigravity.refresh_models(id) do
+            :ok ->
               :ok
+
+            {:error, detail} ->
+              {:error,
+               %{
+                 "_tag" => "ProviderSetupError",
+                 "instanceId" => id,
+                 "operation" => "refresh-models",
+                 "detail" => detail,
+                 "message" => detail
+               }}
           end
-
-        %{"cwd" => cwd} when is_binary(cwd) ->
-          :ok
-
-        %{"instanceId" => id} when is_binary(id) ->
-          HalC2.ProviderUsageLimits.refresh([id])
+        else
           probe([id], input["refreshModels"] == true)
           :ok
+        end
 
-        _ ->
-          # Newer models, defaults and compatibility policies, when there are any.
-          HalC2.ModelManifest.refresh()
-          HalC2.ProviderUsageLimits.refresh()
-          HalC2.UsageLimitSources.refresh()
+      _ ->
+        # Newer models, defaults and compatibility policies, when there are any.
+        HalC2.ModelManifest.refresh()
+        HalC2.ProviderUsageLimits.refresh()
+        HalC2.UsageLimitSources.refresh()
 
-          probe(
-            ["codex" | HalC2.Claude.Provider.instances()] ++ HalC2.Acp.instances(),
-            input["refreshModels"] == true
-          )
+        probe(
+          ["codex" | HalC2.Claude.Provider.instances()] ++ HalC2.Acp.instances(),
+          input["refreshModels"] == true
+        )
 
-          :ok
-      end
-
-    case result do
-      {:error, _message} = error -> error
-      _ -> {:ok, %{"providers" => providers()}}
+        :ok
     end
   end
 

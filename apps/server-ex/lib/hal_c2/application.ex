@@ -50,6 +50,9 @@ defmodule HalC2.Application do
       # Turns this MC was running when it stopped end as interrupted.
       %{id: :recovery, start: {HalC2.Orchestration.Recovery, :start_link, []}},
       HalC2.Orchestration.TurnWatch,
+      # The recorded side effects of accepted commands, replayed or cancelled
+      # for what the last boot left unfinished.
+      HalC2.Orchestration.Effects,
       Supervisor.child_spec({Task, &HalC2.Search.backfill/0}, id: :search_backfill),
       {Registry, keys: :unique, name: HalC2.Codex.Registry},
       {Registry, keys: :unique, name: HalC2.Claude.Registry},
@@ -101,6 +104,8 @@ defmodule HalC2.Application do
       {Registry, keys: :unique, name: HalC2.Muse.Registry},
       HalC2.Acp.UrlAuth,
       HalC2.Acp.Antigravity.Installation,
+      # Owns the table of live Antigravity runtime temp directories.
+      HalC2.Acp.Antigravity.SessionFiles,
       Supervisor.child_spec({Task, &HalC2.Acp.load/0}, id: :acp_models),
       HalC2.Web,
       # server-runtime.json, once the listener is bound; removed first on the way down.

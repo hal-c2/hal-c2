@@ -15,8 +15,15 @@ defmodule HalC2.Acp.Antigravity do
   the provider list shows the account across MC restarts.
 
   Test seams (application env): `:antigravity_platform` (`{os, arch}`),
-  `:antigravity_release` (a release map, or `:none`).
+  `:antigravity_release` (a release map, or `:none`), `:antigravity_node`
+  (the Node.js executable, or `false` for none), `:antigravity_setup_dir`
+  (the workspace a model refresh checks in), and the timeouts
+  `:antigravity_health_timeout_ms`, `:antigravity_model_refresh_timeout_ms`
+  and `:antigravity_cancel_timeout_ms`.
   """
+
+  alias HalC2.Acp.Antigravity.SessionFiles
+  alias HalC2.JsonRpc.Connection
 
   @version "agy_acp_server_1.1.1"
   # Google's published builds (the ACP Registry's `antigravity-acp` entry).
@@ -169,8 +176,7 @@ defmodule HalC2.Acp.Antigravity do
             {:ok, found}
 
           release() ->
-            {:error,
-             "Antigravity is not installed. Install it in this environment or set a custom executable path."}
+            {:error, "Antigravity is not installed or its executable could not be found."}
 
           true ->
             {:error,
@@ -332,23 +338,75 @@ defmodule HalC2.Acp.Antigravity do
   def token_path(instance),
     do: Path.join([profile(instance), "antigravity-acp", "acp_token.json"])
 
-  # Owner-only directories and the method's `settings.json`, which never holds a key.
+  # Sign-in runs its browser helper on Node.js, as upstream's does; without it
+  # a session cannot be prepared at all.
+  defp require_node do
+    found =
+      case Application.get_env(:hal_c2, :antigravity_node, :find) do
+        :find -> System.find_executable("node")
+        false -> nil
+        path -> path
+      end
+
+    if found,
+      do: :ok,
+      else:
+        {:error,
+         "Antigravity sign-in requires Node.js. Install Node.js and make sure node is on PATH, then retry."}
+  end
+
+  # Owner-only directories, this process's runtime temp directory, the user's
+  # skill folders linked in, and the method's `settings.json`, which never
+  # holds a key. Each step that can fail names itself.
   defp prepare_profile(instance, config) do
     acp = Path.join(profile(instance), "antigravity-acp")
-    tmp = Path.join(acp, "tmp")
-    File.mkdir_p!(tmp)
-    for dir <- [profile(instance), acp, tmp], do: File.chmod(dir, 0o700)
 
-    gcp =
-      %{"project" => config["gcpProject"], "location" => config["gcpLocation"]}
-      |> Map.reject(fn {_k, v} -> v == nil end)
+    with {:ok, tmp} <- SessionFiles.runtime_dir(profile(instance)) do
+      for dir <- [profile(instance), acp, SessionFiles.temp_dir(profile(instance))],
+          do: File.chmod(dir, 0o700)
 
-    settings =
-      %{"auth" => %{"type" => config["authMethod"]}}
-      |> then(&if(gcp == %{}, do: &1, else: Map.put(&1, "gcp", gcp)))
+      gcp =
+        %{"project" => config["gcpProject"], "location" => config["gcpLocation"]}
+        |> Map.reject(fn {_k, v} -> v == nil end)
 
-    File.write!(Path.join(acp, "settings.json"), JSON.encode!(settings) <> "\n")
-    tmp
+      settings =
+        %{"auth" => %{"type" => config["authMethod"]}}
+        |> then(&if(gcp == %{}, do: &1, else: Map.put(&1, "gcp", gcp)))
+
+      case File.write(Path.join(acp, "settings.json"), JSON.encode!(settings) <> "\n") do
+        :ok ->
+          link_user_skills(profile(instance))
+          {:ok, tmp}
+
+        _ ->
+          SessionFiles.release(tmp)
+          {:error, "Could not prepare the Antigravity provider status."}
+      end
+    end
+  end
+
+  # The agent resolves its user skill folders under its profile, so they link
+  # back to the user's own `~/.gemini`.
+  defp link_user_skills(profile) do
+    home = System.get_env("HOME") || System.user_home() || "/nonexistent"
+
+    for rel <- [["config", "skills"], ["antigravity-cli", "skills"]] do
+      link = Path.join([profile | rel])
+      target = Path.join([home, ".gemini" | rel])
+
+      case File.lstat(link) do
+        {:error, _} ->
+          File.mkdir_p(Path.dirname(link))
+          File.ln_s(target, link)
+
+        _ ->
+          :ok
+      end
+    end
+
+    :ok
+  rescue
+    _ -> :ok
   end
 
   @doc """
@@ -360,9 +418,9 @@ defmodule HalC2.Acp.Antigravity do
   def command(instance, extra_env \\ []) do
     config = config(instance)
 
-    with {:ok, found} <- resolve(config["binaryPath"]) do
-      tmp = prepare_profile(instance, config)
-
+    with {:ok, found} <- resolve(config["binaryPath"]),
+         :ok <- require_node(),
+         {:ok, tmp} <- prepare_profile(instance, config) do
       credential =
         case config do
           %{"authMethod" => "gemini-api-key", "apiKey" => key} when is_binary(key) ->
@@ -497,10 +555,200 @@ defmodule HalC2.Acp.Antigravity do
           "status" => "warning",
           "models" => [],
           "message" =>
-            config_issue(config) ||
-              "Antigravity is installed. Google account access is not checked yet.",
+            if(:persistent_term.get({HalC2.Acp, id, :models}, nil) == nil,
+              do: "Checking Antigravity availability.",
+              else:
+                config_issue(config) ||
+                  "Antigravity is installed. Google account access is not checked yet."
+            ),
           "auth" => Map.put(entry["auth"], "status", "unknown")
         })
+    end
+  end
+
+  # --- timeouts and the preferred model ------------------------------------------
+
+  @doc "How long a health check waits for the runtime, in milliseconds."
+  def health_timeout, do: Application.get_env(:hal_c2, :antigravity_health_timeout_ms, 90_000)
+
+  @doc "How long a model refresh waits for the runtime, in milliseconds."
+  def model_refresh_timeout,
+    do: Application.get_env(:hal_c2, :antigravity_model_refresh_timeout_ms, 90_000)
+
+  @doc "How long a stopped turn's process is given to confirm before it is stopped."
+  def cancel_timeout, do: Application.get_env(:hal_c2, :antigravity_cancel_timeout_ms, 15_000)
+
+  @doc "The model HAL-C2 ships as Antigravity's default (the manifest's chat default)."
+  def preferred_model do
+    case HalC2.ModelManifest.catalog("antigravity") do
+      %{} = catalog -> get_in(catalog, ["defaults", "chat"])
+      _ -> nil
+    end
+  end
+
+  # --- refreshing the account's models --------------------------------------------
+
+  @doc """
+  Reads the account's models again in a disposable session, as upstream's
+  model refresh does: `:ok` with the new list recorded, or `{:error, detail}`
+  leaving the previous list unchanged.
+  """
+  def refresh_models(instance) do
+    config = config(instance)
+    method = config["authMethod"]
+
+    cond do
+      issue = config_issue(config) ->
+        {:error, issue}
+
+      browser?(method) and not File.exists?(token_path(instance)) ->
+        {:error, "Sign in to Antigravity in provider settings before refreshing models."}
+
+      true ->
+        case setup_workspace() do
+          {:ok, cwd} -> refresh_in(instance, config, cwd)
+          {:error, _} = error -> error
+        end
+    end
+  end
+
+  # The workspace is chosen here, and the session reports its runtime
+  # directory and session id as it makes them, so a task killed at the
+  # deadline is still cleaned up: its own `after` block never runs.
+  defp refresh_in(instance, config, cwd) do
+    saved = File.read(account_path(instance))
+    caller = self()
+    task = Task.async(fn -> refresh_session(instance, config, cwd, caller) end)
+
+    result =
+      case Task.yield(task, model_refresh_timeout()) || Task.shutdown(task, :brutal_kill) do
+        {:ok, result} ->
+          result
+
+        {:exit, _} ->
+          {:error, could_not_refresh()}
+
+        nil ->
+          {:error, "Antigravity model refresh timed out. Try again or check Google sign-in."}
+      end
+
+    # Drained on every path: a finished session already cleaned up after
+    # itself, and its reports must not sit in the caller's mailbox.
+    {tmp, session} = collect_refresh(nil, nil)
+
+    if result != :ok do
+      clean_refresh(instance, cwd, tmp, session)
+      restore_account(instance, saved)
+    end
+
+    result
+  end
+
+  defp clean_refresh(instance, cwd, tmp, session) do
+    SessionFiles.remove_session_files(profile(instance), session, cwd)
+    SessionFiles.release(tmp)
+    File.rm_rf(cwd)
+  end
+
+  defp collect_refresh(tmp, session) do
+    receive do
+      {:antigravity_refresh, :tmp, dir} -> collect_refresh(dir, session)
+      {:antigravity_refresh, :session, id} -> collect_refresh(tmp, id)
+    after
+      0 -> {tmp, session}
+    end
+  end
+
+  defp could_not_refresh,
+    do: "Could not refresh Antigravity models. The previous model list is unchanged."
+
+  # A failed refresh changes nothing the list shows, even where trying it
+  # learned the login had gone.
+  defp restore_account(instance, {:ok, body}) do
+    File.write(account_path(instance), body)
+    HalC2.Acp.forget(instance)
+    :persistent_term.put({HalC2.Acp, instance, :models}, [])
+  end
+
+  defp restore_account(_instance, _saved), do: :ok
+
+  defp refresh_session(instance, config, cwd, caller) do
+    try do
+      with {:ok, command, env} <- command(instance),
+           _ <- Process.put(:antigravity_refresh_tmp, tmp_of(env)),
+           _ <- send(caller, {:antigravity_refresh, :tmp, tmp_of(env)}),
+           {:ok, conn} <-
+             Connection.start_link(
+               cmd: command,
+               handler: self(),
+               cd: cwd,
+               env: env,
+               dialect: :v2,
+               stderr_prefix: auth_prefix()
+             ),
+           _ <- Process.put(:antigravity_refresh_conn, conn),
+           {:ok, _init} <-
+             Connection.call(conn, "initialize", HalC2.Acp.initialize_params(), 60_000),
+           :ok <- refresh_authenticate(conn, instance, config),
+           {:ok, %{} = session} <-
+             Connection.call(conn, "session/new", %{"cwd" => cwd, "mcpServers" => []}, 60_000) do
+        Process.put(:antigravity_refresh_session, session["sessionId"])
+        send(caller, {:antigravity_refresh, :session, session["sessionId"]})
+        put_account(instance, HalC2.Acp.session_models(session))
+        :ok
+      else
+        {:error, detail} when is_binary(detail) -> {:error, detail}
+        {:error, _} -> {:error, could_not_refresh()}
+      end
+    after
+      if conn = Process.get(:antigravity_refresh_conn), do: Connection.stop(conn)
+
+      SessionFiles.remove_session_files(
+        profile(instance),
+        Process.get(:antigravity_refresh_session),
+        cwd
+      )
+
+      SessionFiles.release(Process.get(:antigravity_refresh_tmp))
+      File.rm_rf(cwd)
+    end
+  end
+
+  defp refresh_authenticate(conn, instance, _config) do
+    case HalC2.Acp.Antigravity.Session.authenticate(conn, instance) do
+      :ok ->
+        :ok
+
+      {:error, message} ->
+        if message == sign_in_required(),
+          do: {:error, "Sign in to Antigravity in provider settings before refreshing models."},
+          else: {:error, could_not_refresh()}
+    end
+  end
+
+  defp tmp_of(env) do
+    case List.keyfind(env, "TMPDIR", 0) do
+      {"TMPDIR", dir} -> dir
+      _ -> nil
+    end
+  end
+
+  @doc "The `TMPDIR` a command's environment carries, for releasing it when its process ends."
+  def runtime_tmp(env) when is_list(env), do: tmp_of(env)
+  def runtime_tmp(_env), do: nil
+
+  # The folder a disposable check runs in, made for it and removed with it.
+  defp setup_workspace do
+    dir =
+      Application.get_env(:hal_c2, :antigravity_setup_dir) ||
+        Path.join(
+          System.tmp_dir!(),
+          "hal-c2-antigravity-setup-#{System.unique_integer([:positive])}"
+        )
+
+    case File.mkdir_p(dir) do
+      :ok -> {:ok, dir}
+      _ -> {:error, "Could not create an Antigravity setup workspace."}
     end
   end
 
@@ -534,93 +782,225 @@ defmodule HalC2.Acp.Antigravity do
         do: Map.put(snapshot, "cwd", cwd)
   end
 
-  @doc "Reads the skills Antigravity offers in `cwd` and keeps them on the entry."
+  @doc """
+  Reads the skills Antigravity offers in `cwd` and keeps them on the entry:
+  `:ok`, or `{:error, detail}` with no snapshot kept, so a failed read never
+  leaves a partial skill list behind.
+  """
   def refresh_workspace(id, cwd) do
-    snapshot = %{
-      "checkedAt" => HalC2.Orchestration.Entities.now(),
-      "slashCommands" => [],
-      "skills" => skills(cwd)
-    }
+    case skills(cwd) do
+      {:ok, found} ->
+        snapshot = %{
+          "checkedAt" => HalC2.Orchestration.Entities.now(),
+          "slashCommands" => [],
+          "skills" => found
+        }
 
-    workspaces = :persistent_term.get({HalC2.Acp, id, :workspaces}, %{})
-    :persistent_term.put({HalC2.Acp, id, :workspaces}, Map.put(workspaces, cwd, snapshot))
-    HalC2.Settings.notify_providers()
+        workspaces = :persistent_term.get({HalC2.Acp, id, :workspaces}, %{})
+        :persistent_term.put({HalC2.Acp, id, :workspaces}, Map.put(workspaces, cwd, snapshot))
+        HalC2.Settings.notify_providers()
+        :ok
+
+      {:error, _detail} = error ->
+        error
+    end
   end
+
+  # The scan's budget, as upstream's `AntigravitySkills.ts` keeps it: a skill
+  # file over 1 MB, over 8 MB of skill files, or over 10,000 folder entries
+  # stops the whole search instead of cutting it short.
+  @skill_file_bytes 1_000_000
+  @skill_scan_bytes 8_000_000
+  @skill_scan_entries 10_000
 
   @doc """
   The skills the agent loads in `cwd`, in its own order: the first skill of a
   name wins across `~/.gemini/config/skills`, `.gemini/skills`,
-  `~/.gemini/antigravity-cli/skills`, `.agents/skills` and `.agent/skills`.
+  `~/.gemini/antigravity-cli/skills`, `.agents/skills` and `.agent/skills`;
+  `~/.agents/skills` is not read. A folder holds its own skill or skills one
+  folder below it, no deeper. `{:ok, skills}` or `{:error, detail}` naming
+  where reading failed.
   """
   def skills(cwd, home \\ System.get_env("HOME") || System.user_home()) do
     gemini = Path.join(home || "/nonexistent", ".gemini")
 
-    [
+    roots = [
       {Path.join([gemini, "config", "skills"]), "user"},
       {Path.join([cwd, ".gemini", "skills"]), "project"},
       {Path.join([gemini, "antigravity-cli", "skills"]), "user"},
       {Path.join([cwd, ".agents", "skills"]), "project"},
       {Path.join([cwd, ".agent", "skills"]), "project"}
     ]
-    |> Enum.reduce(%{}, fn {dir, scope}, found -> scan(dir, scope, true, found) end)
-    |> Map.values()
-    |> Enum.sort_by(& &1["name"])
-  end
 
-  defp scan(dir, scope, children?, found) do
-    case File.ls(dir) do
-      {:ok, entries} ->
-        entries = Enum.sort(entries)
+    budget = %{bytes: @skill_scan_bytes, entries: @skill_scan_entries}
 
-        case Enum.find(entries, &(String.downcase(&1) == "skill.md")) do
-          nil when children? ->
-            Enum.reduce(entries, found, &scan(Path.join(dir, &1), scope, false, &2))
-
-          nil ->
-            found
-
-          file ->
-            path = Path.join(dir, file)
-
-            with {:ok, body} <- File.read(path),
-                 %{"name" => name} = skill <- frontmatter(body, file),
-                 false <- Map.has_key?(found, name) do
-              Map.put(
-                found,
-                name,
-                Map.merge(skill, %{"path" => path, "scope" => scope, "enabled" => true})
-              )
-            else
-              _ -> found
-            end
-        end
-
-      _ ->
-        found
+    case Enum.reduce_while(roots, {:ok, budget, %{}}, fn {dir, scope}, {:ok, budget, found} ->
+           case scan(dir, scope, true, budget, found) do
+             {:ok, budget, found} -> {:cont, {:ok, budget, found}}
+             {:error, _} = error -> {:halt, error}
+           end
+         end) do
+      {:ok, _budget, found} -> {:ok, found |> Map.values() |> Enum.sort_by(& &1["name"])}
+      {:error, _} = error -> error
     end
   end
 
-  defp frontmatter(body, file) do
+  defp scan(dir, scope, children?, budget, found) do
+    case File.ls(dir) do
+      {:ok, entries} ->
+        if length(entries) > budget.entries do
+          scan_limit(dir)
+        else
+          budget = %{budget | entries: budget.entries - length(entries)}
+          entries = Enum.sort(entries)
+
+          case Enum.find(entries, &(String.downcase(&1) == "skill.md")) do
+            nil when children? ->
+              Enum.reduce_while(entries, {:ok, budget, found}, fn entry, {:ok, budget, found} ->
+                case scan(Path.join(dir, entry), scope, false, budget, found) do
+                  {:ok, budget, found} -> {:cont, {:ok, budget, found}}
+                  {:error, _} = error -> {:halt, error}
+                end
+              end)
+
+            nil ->
+              {:ok, budget, found}
+
+            file ->
+              read_skill(Path.join(dir, file), dir, scope, budget, found)
+          end
+        end
+
+      {:error, reason} when reason in [:enoent, :enotdir] ->
+        {:ok, budget, found}
+
+      {:error, _reason} ->
+        {:error, "Antigravity could not read skills at '#{dir}'."}
+    end
+  end
+
+  defp read_skill(path, dir, scope, budget, found) do
+    limit = min(@skill_file_bytes, budget.bytes)
+
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :regular, size: size}} when size > limit ->
+        scan_limit(path)
+
+      {:ok, %File.Stat{type: :regular}} ->
+        case File.read(path) do
+          {:ok, body} when byte_size(body) > limit ->
+            scan_limit(path)
+
+          {:ok, body} ->
+            budget = %{budget | bytes: budget.bytes - byte_size(body)}
+
+            found =
+              with %{"name" => name} = skill <- frontmatter(body, Path.basename(dir)),
+                   false <- Map.has_key?(found, name) do
+                Map.put(
+                  found,
+                  name,
+                  Map.merge(skill, %{"path" => path, "scope" => scope, "enabled" => true})
+                )
+              else
+                _ -> found
+              end
+
+            {:ok, budget, found}
+
+          {:error, :enoent} ->
+            {:ok, budget, found}
+
+          _ ->
+            {:error, "Antigravity could not read skills at '#{path}'."}
+        end
+
+      {:error, :enoent} ->
+        {:ok, budget, found}
+
+      {:ok, %File.Stat{}} ->
+        {:ok, budget, found}
+
+      _ ->
+        {:error, "Antigravity could not read skills at '#{path}'."}
+    end
+  end
+
+  defp scan_limit(path),
+    do: {:error, "Antigravity skill discovery exceeded its scan limit at '#{path}'."}
+
+  # A skill file's header block: `name` (its folder's name when it states
+  # none) and `description`. A header that does not parse as those strings,
+  # or a name with a space before or after it, describes no skill.
+  defp frontmatter(body, folder) do
     case String.split(body, "---", parts: 3) do
       [_, yaml, _] ->
-        fields =
-          for line <- String.split(yaml, "\n"),
-              [key, value] <- [String.split(line, ":", parts: 2)],
-              into: %{},
-              do: {String.trim(key), value |> String.trim() |> String.trim("\"")}
+        case yaml_fields(yaml) do
+          {:ok, fields} ->
+            name = if fields["name"] in [nil, ""], do: folder, else: fields["name"]
 
-        name = if fields["name"] in [nil, ""], do: Path.rootname(file), else: fields["name"]
+            if name == "" or name != String.trim(name) do
+              nil
+            else
+              %{"name" => name}
+              |> then(
+                &if(fields["description"] in [nil, ""],
+                  do: &1,
+                  else: Map.put(&1, "description", String.trim(fields["description"]))
+                )
+              )
+            end
 
-        %{"name" => name}
-        |> then(
-          &if(fields["description"] in [nil, ""],
-            do: &1,
-            else: Map.put(&1, "description", fields["description"])
-          )
-        )
+          :error ->
+            nil
+        end
 
       _ ->
         nil
+    end
+  end
+
+  defp yaml_fields(yaml) do
+    lines =
+      yaml
+      |> String.split("\n")
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    Enum.reduce_while(lines, {:ok, %{}}, fn line, {:ok, fields} ->
+      case String.split(line, ":", parts: 2) do
+        [key, value] ->
+          key = String.trim(key)
+
+          case yaml_value(String.trim(value)) do
+            {:ok, parsed} ->
+              {:cont, {:ok, Map.put(fields, key, parsed)}}
+
+            :error ->
+              if key in ["name", "description"], do: {:halt, :error}, else: {:cont, {:ok, fields}}
+          end
+
+        _ ->
+          {:halt, :error}
+      end
+    end)
+  end
+
+  # A quoted scalar keeps its inner spaces; a plain one that YAML would read
+  # as something other than a string is not a string.
+  defp yaml_value(<<quote, _::binary>> = value) when quote in [?", ?'] do
+    if byte_size(value) >= 2 and String.ends_with?(value, <<quote>>),
+      do: {:ok, String.slice(value, 1..-2//1)},
+      else: :error
+  end
+
+  defp yaml_value(value) do
+    cond do
+      value == "" -> {:ok, nil}
+      String.starts_with?(value, ["[", "{"]) -> :error
+      Regex.match?(~r/^-?\d+(\.\d+)?$/, value) -> :error
+      value in ~w(true false null ~) -> :error
+      true -> {:ok, value}
     end
   end
 
@@ -638,30 +1018,199 @@ defmodule HalC2.Acp.Antigravity do
     .svelte .ex .exs .erl .lua .r .pl .dart .scala .graphql .proto)
 
   @doc """
-  Checks a turn's attachments against Antigravity's limits: text files up to 1 MiB,
-  images up to 10 MiB, audio up to 20 MiB, PDFs, and 50 MiB in all. `:ok` or
-  `{:error, message}`.
+  Checks a turn's attachments against what Antigravity takes, reading each
+  as it will be sent: `:ok` or `{:error, message}` naming what is wrong.
+  The check remembers each file's size for this turn's prompt, so one that
+  grows past its limit between the check and the sending is reported as
+  changed while being read.
   """
   def check_attachments(attachments) do
-    Enum.reduce_while(attachments, {:ok, 0}, fn attachment, {:ok, total} ->
-      size = file_size(attachment.path)
+    Process.put(:antigravity_attachment_sizes, %{})
 
-      case kind(attachment) do
-        nil ->
-          {:halt,
-           {:error,
-            "Antigravity does not support '#{attachment.name}' (#{attachment.mime_type}). Attach a BMP, JPEG, PNG, WebP, PDF, audio, or text file."}}
+    case blocks(attachments, true) do
+      {:ok, _blocks} -> :ok
+      {:error, _} = error -> error
+    end
+  end
 
-        kind ->
-          if size > limit(kind) or total + size > 50 * @mib,
-            do: {:halt, {:error, too_large(attachment.name)}},
-            else: {:cont, {:ok, total + size}}
+  @doc """
+  The prompt blocks carrying a turn's attachments, in a form Antigravity
+  takes: an image or audio clip itself, a PDF as a link without its bytes,
+  a text file's text, and a long pasted text kept apart (the message names
+  where it is saved, and the agent reads it there). Text files up to 1 MiB,
+  images up to 10 MiB, audio up to 20 MiB, and 50 MiB in all. Ported from
+  upstream's `buildAntigravityPrompt`.
+  """
+  def attachment_blocks(attachments), do: blocks(attachments, false)
+
+  defp blocks(attachments, record?) do
+    Enum.reduce_while(attachments, {:ok, [], 0}, fn attachment, {:ok, blocks, total} ->
+      case attachment_block(attachment, total, record?) do
+        {:ok, nil, total} -> {:cont, {:ok, blocks, total}}
+        {:ok, block, total} -> {:cont, {:ok, blocks ++ [block], total}}
+        {:error, _} = error -> {:halt, error}
       end
     end)
     |> case do
-      {:ok, _} -> :ok
-      error -> error
+      {:ok, blocks, _total} -> {:ok, blocks}
+      {:error, _} = error -> error
     end
+  end
+
+  defp attachment_block(attachment, total, record?) do
+    name = attachment.name
+
+    with {:kind, kind} when not is_nil(kind) <- {:kind, kind(attachment)},
+         {:path, path} when is_binary(path) <- {:path, attachment_path(attachment)},
+         {:ok, %File.Stat{type: type, size: size}} <- stat(path, name) do
+      if record?,
+        do:
+          Process.put(
+            :antigravity_attachment_sizes,
+            Map.put(Process.get(:antigravity_attachment_sizes, %{}), path, size)
+          )
+
+      known = Process.get(:antigravity_attachment_sizes, %{})[path]
+
+      cond do
+        pasted_text?(attachment) ->
+          if type == :regular,
+            do: {:ok, nil, total},
+            else: {:error, "Could not read attachment '#{name}'."}
+
+        size > limit(kind) and is_integer(known) and known <= limit(kind) and not record? ->
+          {:error, "Attachment '#{name}' changed while being read and is too large."}
+
+        type != :regular or size > limit(kind) or total + size > 50 * @mib ->
+          {:error, too_large(name)}
+
+        kind == :pdf ->
+          {:ok,
+           %{
+             "type" => "resource_link",
+             "uri" => "file://" <> path,
+             "name" => name,
+             "mimeType" => "application/pdf"
+           }, total + size}
+
+        true ->
+          read_block(attachment, kind, path, size, total)
+      end
+    else
+      {:kind, nil} ->
+        {:error,
+         "Antigravity does not support '#{name}' (#{attachment.mime_type}). Attach a BMP, JPEG, PNG, WebP, PDF, audio, or text file."}
+
+      {:path, nil} ->
+        {:error, invalid_or_missing(attachment)}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp read_block(attachment, kind, path, size, total) do
+    name = attachment.name
+    limit = limit(kind)
+
+    case read_at_most(path, limit + 1) do
+      {:ok, bytes} ->
+        total = total + byte_size(bytes)
+
+        cond do
+          byte_size(bytes) > limit or total > 50 * @mib ->
+            if size <= limit and total - byte_size(bytes) + size <= 50 * @mib,
+              do: {:error, "Attachment '#{name}' changed while being read and is too large."},
+              else: {:error, too_large(name)}
+
+          kind == :image ->
+            {:ok,
+             %{"type" => "image", "mimeType" => mime(attachment), "data" => Base.encode64(bytes)},
+             total}
+
+          kind == :audio ->
+            {:ok,
+             %{"type" => "audio", "mimeType" => mime(attachment), "data" => Base.encode64(bytes)},
+             total}
+
+          not String.valid?(bytes) ->
+            {:error, "Attachment '#{name}' is not a UTF-8 text file."}
+
+          String.contains?(bytes, <<0>>) ->
+            {:error, "Attachment '#{name}' contains binary data."}
+
+          true ->
+            {:ok,
+             %{
+               "type" => "resource",
+               "resource" => %{
+                 "uri" => "file://" <> path,
+                 "mimeType" => mime(attachment),
+                 "text" => bytes
+               }
+             }, total}
+        end
+
+      _ ->
+        {:error, "Could not read attachment '#{name}'."}
+    end
+  end
+
+  defp read_at_most(path, max) do
+    case File.open(path, [:read, :binary]) do
+      {:ok, file} ->
+        try do
+          case IO.binread(file, max) do
+            data when is_binary(data) -> {:ok, data}
+            _ -> {:error, :read}
+          end
+        after
+          File.close(file)
+        end
+
+      error ->
+        error
+    end
+  end
+
+  defp stat(path, name) do
+    case File.stat(path) do
+      {:ok, _} = ok -> ok
+      _ -> {:error, "Could not read attachment '#{name}'."}
+    end
+  end
+
+  # An attachment whose stored id cannot name a file is invalid; one whose
+  # upload is simply gone could not be read.
+  defp invalid_or_missing(attachment) do
+    if HalC2.Attachments.valid_id?(Map.get(attachment, :id)),
+      do: "Could not read attachment '#{attachment.name}'.",
+      else: "Invalid attachment '#{attachment.name}'."
+  end
+
+  defp attachment_path(attachment) do
+    cond do
+      is_binary(Map.get(attachment, :path)) ->
+        attachment.path
+
+      HalC2.Attachments.valid_id?(Map.get(attachment, :id)) ->
+        HalC2.Attachments.path(%{"id" => attachment.id})
+
+      true ->
+        nil
+    end
+  end
+
+  defp pasted_text?(attachment),
+    do:
+      attachment.type == "file" and
+        get_in(attachment, [Access.key(:source), "_tag"]) == "pasted-text"
+
+  defp mime(attachment) do
+    (attachment.mime_type || "text/plain")
+    |> String.downcase()
+    |> String.split(";", parts: 2)
+    |> hd()
   end
 
   defp too_large(name),
@@ -673,76 +1222,20 @@ defmodule HalC2.Acp.Antigravity do
   defp limit(:pdf), do: 50 * @mib
   defp limit(:text), do: @mib
 
-  defp kind(%{mime_type: mime, name: name}) do
-    mime = String.downcase(mime || "")
+  defp kind(%{type: type, mime_type: raw_mime, name: name}) do
+    mime = (raw_mime || "") |> String.downcase() |> String.split(";", parts: 2) |> hd()
 
     cond do
-      mime in @images -> :image
-      mime in @audio -> :audio
-      mime == "application/pdf" -> :pdf
-      String.starts_with?(mime, "text/") or mime in @text_mimes -> :text
-      String.downcase(Path.extname(name || "")) in @text_exts -> :text
+      type == "image" and mime in @images -> :image
+      type == "file" and mime in @audio -> :audio
+      type == "file" and mime == "application/pdf" -> :pdf
+      type == "file" and (String.starts_with?(mime, "text/") or mime in @text_mimes) -> :text
+      type == "file" and String.downcase(Path.extname(name || "")) in @text_exts -> :text
+      # Attachments built before they carried a type are still classified.
+      type == nil and mime in @images -> :image
+      type == nil and mime in @audio -> :audio
       true -> nil
     end
-  end
-
-  defp file_size(path) do
-    case File.stat(path || "") do
-      {:ok, %{size: size}} -> size
-      _ -> 0
-    end
-  end
-
-  @doc "The prompt blocks carrying a turn's attachments."
-  def attachment_blocks(attachments) do
-    Enum.flat_map(attachments, fn attachment ->
-      case {kind(attachment), File.read(attachment.path || "")} do
-        {:image, {:ok, data}} ->
-          [
-            %{
-              "type" => "image",
-              "mimeType" => attachment.mime_type,
-              "data" => Base.encode64(data)
-            }
-          ]
-
-        {:audio, {:ok, data}} ->
-          [
-            %{
-              "type" => "audio",
-              "mimeType" => attachment.mime_type,
-              "data" => Base.encode64(data)
-            }
-          ]
-
-        {:pdf, {:ok, _}} ->
-          [
-            %{
-              "type" => "resource_link",
-              "uri" => "file://" <> attachment.path,
-              "name" => attachment.name,
-              "mimeType" => "application/pdf"
-            }
-          ]
-
-        {:text, {:ok, text}} ->
-          if String.valid?(text) and not String.contains?(text, <<0>>),
-            do: [
-              %{
-                "type" => "resource",
-                "resource" => %{
-                  "uri" => "file://" <> attachment.path,
-                  "mimeType" => attachment.mime_type || "text/plain",
-                  "text" => text
-                }
-              }
-            ],
-            else: []
-
-        _ ->
-          []
-      end
-    end)
   end
 
   # --- tools ----------------------------------------------------------------------
@@ -750,6 +1243,7 @@ defmodule HalC2.Acp.Antigravity do
   @doc "Whether a tool call starts Antigravity subagents (not an MCP tool of that name)."
   def subagent?(call) do
     call["title"] in ["Running start_subagent", "Run start_subagent?"] and
+      call["kind"] in [nil, "other"] and
       get_in(call, ["_meta", "is_mcp_tool_call"]) != true
   end
 

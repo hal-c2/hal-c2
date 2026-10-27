@@ -15,6 +15,11 @@
 #   modes              session/new's modes
 #   rejectUnknownModels  session/set_config_option refuses a model configOptions lacks
 #   turns              [{"match": substring, "steps": [...]}], first match wins
+#   sessionId          session/new's sessionId (default: a fake one)
+#   hangMethods        methods the agent never answers (it reads on regardless)
+#   initError          initialize fails with this error object
+#   waitForFileOn      {method: file name}: that method is answered only once
+#                      the file appears in FAKE_DIR
 #   googleAuth         Antigravity's Google sign-in (see fake_google_auth.py)
 #
 # Turn steps: {"text": s}, {"thought": s}, {"update": sessionUpdate[, "sessionId": child's
@@ -22,6 +27,8 @@
 # params}} (waits for the answer), {"permission": toolCall} (session/request_permission
 # with allow_once/allow_always/reject_once), {"waitCancel": true}, {"exit": code},
 # {"error": {code, message}} (ends the prompt with it), {"stop": reason},
+# {"hang": true} (never answers the prompt, even to a cancel),
+# {"waitFile": name} (waits until that file appears in FAKE_DIR),
 # {"kimiWire": {"agent": "main" | subagent id, "records": [record]}} (appends to an
 # agent's record as Kimi Code keeps it:
 # $KIMI_CODE_HOME/sessions/<workspace id>/<session id>/agents/<agent>/wire.jsonl).
@@ -58,7 +65,8 @@ def update(sid, u):
 
 
 log({"start": {"argv": sys.argv, "cwd": os.getcwd(), "pid": os.getpid(),
-               "env": {k: v for k, v in os.environ.items() if k.startswith(ENV_PREFIXES)}}})
+               "env": {k: v for k, v in os.environ.items()
+                       if k.startswith(ENV_PREFIXES) or k == "TMPDIR"}}})
 
 cancelled = False
 
@@ -112,6 +120,13 @@ def request(method, params):
     return wait_for(lambda m: m.get("id") == rid and m.get("method") is None)
 
 
+def wait_file(name):
+    """Polls until `name` appears in FAKE_DIR: how a step releases a held turn."""
+    import time
+    while not os.path.exists(os.path.join(DIR, name)):
+        time.sleep(0.005)
+
+
 def default_options():
     return [{"id": "model", "name": "Model", "type": "select", "currentValue": "fake/one",
              "options": [{"value": "fake/one", "name": "Fake/One"}]}]
@@ -157,6 +172,11 @@ def run_turn(mid, sid, text):
                 wait_for(lambda m: m.get("method") == "session/cancel")
             send({"id": mid, "result": {"stopReason": "cancelled"}})
             return
+        elif "hang" in step:
+            while True:
+                read()
+        elif "waitFile" in step:
+            wait_file(step["waitFile"])
         elif "exit" in step:
             sys.stdout.flush()
             os._exit(step["exit"])
@@ -176,13 +196,20 @@ while True:
     msg = read()
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
     cfg = config()
+    if method in (cfg.get("hangMethods") or []):
+        continue
+    gate = (cfg.get("waitForFileOn") or {}).get(method)
+    if gate:
+        wait_file(gate)
     if cfg.get("googleAuth"):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         sys.dont_write_bytecode = True  # no __pycache__ in the source tree
         import fake_google_auth
         if fake_google_auth.handle(msg, cfg, send):
             continue
-    if method == "initialize":
+    if method == "initialize" and cfg.get("initError"):
+        send({"id": mid, "error": cfg["initError"]})
+    elif method == "initialize":
         caps = {"loadSession": True, "sessionCapabilities": {"resume": {}},
                 "promptCapabilities": {"image": False}}
         caps.update(cfg.get("capabilities") or {})
@@ -208,7 +235,7 @@ while True:
         if cfg.get("modes") is not None:
             result["modes"] = cfg["modes"]
         if method == "session/new":
-            result["sessionId"] = "fake-session-%d-%d" % (os.getpid(), sessions)
+            result["sessionId"] = cfg.get("sessionId") or "fake-session-%d-%d" % (os.getpid(), sessions)
         send({"id": mid, "result": result})
     elif (method == "session/set_config_option" and cfg.get("rejectUnknownModels")
           and params.get("configId") == "model"
