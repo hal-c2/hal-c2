@@ -132,6 +132,45 @@ defmodule HalC2.Acp.SessionsTest do
     assert {401, _} = HalC2.Mcp.handle(auth, ping)
   end
 
+  # A session released without a relaunch (here: its agent process died)
+  # closes its MCP-over-ACP bridge instead of leaving it for the next launch.
+  test "releasing a session closes its MCP-over-ACP bridge" do
+    start_supervised!(HalC2.Mcp)
+    input = %{"instanceId" => "opencode", "projectId" => "p1"}
+    import = Map.merge(input, %{"sessionId" => "old-1", "title" => "Earlier work"})
+    assert {:ok, %{"threadId" => thread_id, "imported" => true}} = Sessions.import(import)
+
+    assert_receive {:hal_c2_shell, {:rows, _, [{^thread_id, {"thread", _}}]}}, 1_000
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "m1",
+        "text" => "continue",
+        "modelSelection" => %{"instanceId" => "opencode", "model" => "fake/one"}
+      })
+
+    await_runs(thread_id, 1)
+    [{runtime, _}] = Registry.lookup(HalC2.Acp.Registry, thread_id)
+    %{conn: conn} = :sys.get_state(runtime)
+
+    {:ok, bridge} =
+      HalC2.Mcp.OverAcp.start_link(
+        endpoint: HalC2.Mcp.endpoint(),
+        authorization: HalC2.Mcp.server(thread_id, "opencode").authorization
+      )
+
+    {:ok, _connection} = HalC2.Mcp.OverAcp.connect(bridge, "hal-c2")
+    down = Process.monitor(bridge)
+    :sys.replace_state(runtime, &%{&1 | mcp_bridge: bridge})
+
+    Process.exit(conn, :kill)
+    assert_receive {:DOWN, ^down, :process, ^bridge, _}, 5_000
+    assert :sys.get_state(runtime).mcp_bridge == nil
+  end
+
   test "providers and logout go to the agent" do
     input = %{"instanceId" => "opencode", "projectId" => "p1"}
 
