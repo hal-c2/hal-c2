@@ -60,7 +60,6 @@ Dialog {
     contentItem: ColumnLayout {
         spacing: 10
 
-        // ljos-allow(text-unbounded-dynamic): false positive, ljos#144 (Caption wraps)
         Caption {
             Layout.fillWidth: true
             text: qsTr("Choose an icon, emoji, monogram or image for %1.").arg(dialog.picker?.name ?? "")

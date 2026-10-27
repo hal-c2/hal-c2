@@ -543,7 +543,6 @@ Rectangle {
                 font.pixelSize: Theme.fontSizeCode
                 topPadding: 1
             }
-            // ljos-allow(text-unbounded-dynamic): false positive, ljos#144 (LineText wraps when the panel wraps, and scrolls sideways when not)
             LineText {
                 id: lineText
                 x: view.gutter
