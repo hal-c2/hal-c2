@@ -16,6 +16,7 @@ defmodule HalC2.Acp.Antigravity.SessionFiles do
   require Logger
 
   @uuid4 ~r/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  @live_table :hal_c2_antigravity_live_temp
 
   @doc "The profile's temp folder, where per-process runtime directories live."
   def temp_dir(profile), do: Path.join([profile, "antigravity-acp", "tmp"])
@@ -29,13 +30,15 @@ defmodule HalC2.Acp.Antigravity.SessionFiles do
     tmp = temp_dir(profile)
     sweep(tmp)
     dir = Path.join(tmp, "run-#{System.unique_integer([:positive])}")
+    # Held before it exists, so another launch's sweep cannot take it in between.
+    live_add(dir)
 
     case File.mkdir_p(dir) do
       :ok ->
-        live_add(dir)
         {:ok, dir}
 
       _ ->
+        live_remove(dir)
         {:error, "Could not create an Antigravity runtime temp directory."}
     end
   end
@@ -71,12 +74,38 @@ defmodule HalC2.Acp.Antigravity.SessionFiles do
     :ok
   end
 
-  defp live, do: :persistent_term.get({__MODULE__, :live}, MapSet.new())
+  # The live set is an ETS table: inserts and deletes are atomic per key, so
+  # concurrent launches cannot lose each other's directories (a
+  # read-modify-write set could, and the loser's runtime would be swept from
+  # under its process).
+  defp live do
+    table()
+    :ets.select(@live_table, [{{:"$1", true}, [], [:"$1"]}]) |> MapSet.new()
+  end
 
-  defp live_add(dir), do: :persistent_term.put({__MODULE__, :live}, MapSet.put(live(), dir))
+  defp live_add(dir) do
+    table()
+    :ets.insert(@live_table, {dir, true})
+    :ok
+  end
 
-  defp live_remove(dir),
-    do: :persistent_term.put({__MODULE__, :live}, MapSet.delete(live(), dir))
+  defp live_remove(dir) do
+    table()
+    :ets.delete(@live_table, dir)
+    :ok
+  end
+
+  defp table do
+    if :ets.whereis(@live_table) == :undefined do
+      try do
+        :ets.new(@live_table, [:named_table, :public, :set])
+      rescue
+        ArgumentError -> :ok
+      end
+    end
+
+    @live_table
+  end
 
   @doc """
   Removes the conversation files of a disposable session that ran in `cwd`:

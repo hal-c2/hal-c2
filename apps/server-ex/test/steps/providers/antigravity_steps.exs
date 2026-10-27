@@ -2000,16 +2000,32 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   step "Antigravity asks for a file through that link", context do
-    wanted = Path.join([World.project(context).root, "link", "secret.txt"])
+    root = World.project(context).root
 
+    # Reading through the link, and writing two levels below it into folders
+    # that do not exist yet: both leave the workspace.
     request_turn(context, [
-      %{"method" => "fs/read_text_file", "params" => %{"path" => wanted}}
+      %{
+        "method" => "fs/read_text_file",
+        "params" => %{"path" => Path.join([root, "link", "secret.txt"])}
+      },
+      %{
+        "method" => "fs/write_text_file",
+        "params" => %{
+          "path" => Path.join([root, "link", "newdir", "planted.txt"]),
+          "content" => "planted\n"
+        }
+      }
     ])
   end
 
   step "the request is refused as outside the session workspace", context do
-    %{"error" => %{"message" => message}} = last_answer(context)
-    assert message =~ "outside the session workspace."
+    for %{"error" => %{"message" => message}} <- answers(context) do
+      assert message =~ "outside the session workspace."
+    end
+
+    assert length(FakeAcp.answers(context)) == 2
+    refute File.exists?(Path.join([context.outside, "newdir", "planted.txt"]))
     context
   end
 

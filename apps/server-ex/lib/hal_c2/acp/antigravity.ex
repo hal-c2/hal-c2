@@ -605,23 +605,54 @@ defmodule HalC2.Acp.Antigravity do
         {:error, "Sign in to Antigravity in provider settings before refreshing models."}
 
       true ->
-        saved = File.read(account_path(instance))
-        task = Task.async(fn -> refresh_session(instance, config) end)
+        case setup_workspace() do
+          {:ok, cwd} -> refresh_in(instance, config, cwd)
+          {:error, _} = error -> error
+        end
+    end
+  end
 
-        result =
-          case Task.yield(task, model_refresh_timeout()) || Task.shutdown(task, :brutal_kill) do
-            {:ok, result} ->
-              result
+  # The workspace is chosen here, and the session reports its runtime
+  # directory and session id as it makes them, so a task killed at the
+  # deadline is still cleaned up: its own `after` block never runs.
+  defp refresh_in(instance, config, cwd) do
+    saved = File.read(account_path(instance))
+    caller = self()
+    task = Task.async(fn -> refresh_session(instance, config, cwd, caller) end)
 
-            {:exit, _} ->
-              {:error, could_not_refresh()}
+    result =
+      case Task.yield(task, model_refresh_timeout()) || Task.shutdown(task, :brutal_kill) do
+        {:ok, result} ->
+          result
 
-            nil ->
-              {:error, "Antigravity model refresh timed out. Try again or check Google sign-in."}
-          end
+        {:exit, _} ->
+          {:error, could_not_refresh()}
 
-        if result != :ok, do: restore_account(instance, saved)
-        result
+        nil ->
+          {:error, "Antigravity model refresh timed out. Try again or check Google sign-in."}
+      end
+
+    if result != :ok do
+      clean_refresh(instance, cwd)
+      restore_account(instance, saved)
+    end
+
+    result
+  end
+
+  defp clean_refresh(instance, cwd) do
+    {tmp, session} = collect_refresh(nil, nil)
+    SessionFiles.remove_session_files(profile(instance), session, cwd)
+    SessionFiles.release(tmp)
+    File.rm_rf(cwd)
+  end
+
+  defp collect_refresh(tmp, session) do
+    receive do
+      {:antigravity_refresh, :tmp, dir} -> collect_refresh(dir, session)
+      {:antigravity_refresh, :session, id} -> collect_refresh(tmp, id)
+    after
+      0 -> {tmp, session}
     end
   end
 
@@ -638,47 +669,45 @@ defmodule HalC2.Acp.Antigravity do
 
   defp restore_account(_instance, _saved), do: :ok
 
-  defp refresh_session(instance, config) do
-    with {:ok, cwd} <- setup_workspace() do
-      Process.put(:antigravity_refresh_cwd, cwd)
-
-      try do
-        with {:ok, command, env} <- command(instance),
-             _ <- Process.put(:antigravity_refresh_tmp, tmp_of(env)),
-             {:ok, conn} <-
-               Connection.start_link(
-                 cmd: command,
-                 handler: self(),
-                 cd: cwd,
-                 env: env,
-                 dialect: :v2,
-                 stderr_prefix: auth_prefix()
-               ),
-             _ <- Process.put(:antigravity_refresh_conn, conn),
-             {:ok, _init} <-
-               Connection.call(conn, "initialize", HalC2.Acp.initialize_params(), 60_000),
-             :ok <- refresh_authenticate(conn, instance, config),
-             {:ok, %{} = session} <-
-               Connection.call(conn, "session/new", %{"cwd" => cwd, "mcpServers" => []}, 60_000) do
-          Process.put(:antigravity_refresh_session, session["sessionId"])
-          put_account(instance, HalC2.Acp.session_models(session))
-          :ok
-        else
-          {:error, detail} when is_binary(detail) -> {:error, detail}
-          {:error, _} -> {:error, could_not_refresh()}
-        end
-      after
-        if conn = Process.get(:antigravity_refresh_conn), do: Connection.stop(conn)
-
-        SessionFiles.remove_session_files(
-          profile(instance),
-          Process.get(:antigravity_refresh_session),
-          cwd
-        )
-
-        SessionFiles.release(Process.get(:antigravity_refresh_tmp))
-        File.rm_rf(cwd)
+  defp refresh_session(instance, config, cwd, caller) do
+    try do
+      with {:ok, command, env} <- command(instance),
+           _ <- Process.put(:antigravity_refresh_tmp, tmp_of(env)),
+           _ <- send(caller, {:antigravity_refresh, :tmp, tmp_of(env)}),
+           {:ok, conn} <-
+             Connection.start_link(
+               cmd: command,
+               handler: self(),
+               cd: cwd,
+               env: env,
+               dialect: :v2,
+               stderr_prefix: auth_prefix()
+             ),
+           _ <- Process.put(:antigravity_refresh_conn, conn),
+           {:ok, _init} <-
+             Connection.call(conn, "initialize", HalC2.Acp.initialize_params(), 60_000),
+           :ok <- refresh_authenticate(conn, instance, config),
+           {:ok, %{} = session} <-
+             Connection.call(conn, "session/new", %{"cwd" => cwd, "mcpServers" => []}, 60_000) do
+        Process.put(:antigravity_refresh_session, session["sessionId"])
+        send(caller, {:antigravity_refresh, :session, session["sessionId"]})
+        put_account(instance, HalC2.Acp.session_models(session))
+        :ok
+      else
+        {:error, detail} when is_binary(detail) -> {:error, detail}
+        {:error, _} -> {:error, could_not_refresh()}
       end
+    after
+      if conn = Process.get(:antigravity_refresh_conn), do: Connection.stop(conn)
+
+      SessionFiles.remove_session_files(
+        profile(instance),
+        Process.get(:antigravity_refresh_session),
+        cwd
+      )
+
+      SessionFiles.release(Process.get(:antigravity_refresh_tmp))
+      File.rm_rf(cwd)
     end
   end
 

@@ -12,10 +12,11 @@ defmodule HalC2.Acp.Antigravity.ClientFiles do
 
   @doc """
   `fs/read_text_file` for `cwd`: the file's text, or one range of its lines
-  (`line` is 1-based, `limit` a line count).
+  (`line` is 1-based, `limit` a line count). Reads may also reach HAL-C2's
+  attachments, where a message's files are saved; writes may not.
   """
   def read(cwd, %{"path" => requested} = params) when is_binary(requested) do
-    with {:ok, path} <- resolve(cwd, requested),
+    with {:ok, path} <- resolve(cwd, requested, [cwd, HalC2.Attachments.dir()]),
          {:ok, text} <- read_file(path, requested) do
       {:ok, %{"content" => lines(text, params["line"], params["limit"])}}
     end
@@ -27,7 +28,7 @@ defmodule HalC2.Acp.Antigravity.ClientFiles do
   @doc "`fs/write_text_file` for `cwd`: parent folders are made as needed."
   def write(cwd, %{"path" => requested, "content" => content})
       when is_binary(requested) and is_binary(content) do
-    with {:ok, path} <- resolve(cwd, requested) do
+    with {:ok, path} <- resolve(cwd, requested, [cwd]) do
       case File.mkdir_p(Path.dirname(path)) do
         :ok ->
           case File.write(path, content) do
@@ -44,30 +45,38 @@ defmodule HalC2.Acp.Antigravity.ClientFiles do
   def write(_cwd, _params),
     do: {:error, %{"code" => -32602, "message" => "fs/write_text_file needs a path and content"}}
 
-  # A relative path is read against the workspace. The path itself resolves
-  # through its links when it exists; a file not yet written resolves through
-  # its parent folder, so a link out of the workspace cannot escape it either way.
-  defp resolve(cwd, requested) do
+  # A relative path is read against the workspace. The path resolves through
+  # its links at its nearest existing ancestor, with any folders not yet
+  # written rejoined below that, so creating them can only happen under a
+  # checked real path: a link out of the workspace cannot escape it, however
+  # deep under it the file sits.
+  defp resolve(cwd, requested, roots) do
     absolute =
       if Path.type(requested) == :absolute,
         do: Path.expand(requested),
         else: Path.expand(requested, cwd)
 
-    real =
-      case HalC2.Paths.real(absolute) do
-        {:ok, real} ->
-          real
+    real = real_path(absolute)
 
-        _ ->
-          case HalC2.Paths.real(Path.dirname(absolute)) do
-            {:ok, parent} -> Path.join(parent, Path.basename(absolute))
-            _ -> absolute
-          end
-      end
-
-    if Enum.any?([cwd, HalC2.Attachments.dir()], &inside?(real, &1)),
+    if Enum.any?(roots, &inside?(real, &1)),
       do: {:ok, real},
       else: refuse("Path '#{requested}' is outside the session workspace.")
+  end
+
+  defp real_path(path) do
+    case HalC2.Paths.real(path) do
+      {:ok, real} -> real
+      _ -> join_rest(Path.dirname(path), [Path.basename(path)])
+    end
+  end
+
+  defp join_rest("/", rest), do: Path.join(["/" | rest])
+
+  defp join_rest(dir, rest) do
+    case HalC2.Paths.real(dir) do
+      {:ok, real} -> Path.join([real | rest])
+      _ -> join_rest(Path.dirname(dir), [Path.basename(dir) | rest])
+    end
   end
 
   defp inside?(real, root) do
