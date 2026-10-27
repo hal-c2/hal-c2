@@ -522,6 +522,9 @@ defmodule HalC2.Orchestration do
 
       if type == "thread.delete", do: stop_runtimes(thread_id)
 
+      if type == "thread.runtime-mode.set",
+        do: runtime_mode_changed(thread_id, command["runtimeMode"])
+
       # The archived threads are read from the sidebar rows, which a stream writes a
       # moment after its events: this one is in place before the reply, so a client
       # that lists them next sees the change.
@@ -1729,6 +1732,29 @@ defmodule HalC2.Orchestration do
 
     instance = run && (run["providerInstanceId"] || run["modelSelection"]["instanceId"])
     if run["status"] in @active_statuses and is_binary(instance), do: runtime(instance)
+  end
+
+  # The thread's access changed. The next turn starts with it from the thread record; a
+  # runtime that can change a running turn's access (`set_runtime_mode/2`) is told now,
+  # so the user's switch is not ignored until the turn ends. Best effort: the record
+  # already holds the change.
+  defp runtime_mode_changed(thread_id, mode) do
+    runtime = active_runtime(thread_id, nil)
+
+    result =
+      if runtime && Code.ensure_loaded?(runtime) &&
+           function_exported?(runtime, :set_runtime_mode, 2),
+         do: runtime.set_runtime_mode(thread_id, mode),
+         else: :ok
+
+    with {:error, reason} <- result, do: kept_runtime_mode(reason)
+  catch
+    :exit, reason -> kept_runtime_mode(reason)
+  end
+
+  defp kept_runtime_mode(reason) do
+    require Logger
+    Logger.warning("a running turn kept its access mode: #{inspect(reason)}")
   end
 
   @doc """

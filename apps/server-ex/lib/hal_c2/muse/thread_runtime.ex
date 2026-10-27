@@ -54,6 +54,19 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   @doc """
+  The thread's access changed. A running turn takes Muse's approval mode for it at once,
+  and on full access the prompts it has open are accepted. The sandbox is the host's,
+  so it follows with the next turn's host.
+  """
+  @spec set_runtime_mode(String.t(), String.t()) :: :ok | {:error, String.t()}
+  def set_runtime_mode(thread_id, mode) do
+    case lookup(thread_id) do
+      nil -> :ok
+      pid -> GenServer.call(pid, {:runtime_mode, mode}, 35_000)
+    end
+  end
+
+  @doc """
   A `turn/steer` into the running turn, built from `%{text, attachments}` like a turn's.
   Non-timeout exits propagate and must be treated as a refusal; see `HalC2.RuntimeSteer`.
   """
@@ -223,12 +236,36 @@ defmodule HalC2.Muse.ThreadRuntime do
         do: command(state, "turn/interrupt", %{"turnId" => joined}, deadline)
 
     case command(state, "turn/interrupt", %{"turnId" => state.native}, deadline) do
-      {:ok, _} -> {:reply, :ok, %{state | interrupted: true}}
-      {:error, reason} -> {:reply, {:error, format(reason)}, state}
+      {:ok, _} ->
+        {:reply, :ok, %{state | interrupted: true}}
+
+      # A Muse that will not stop its turn is stopped with its host, as a compaction is:
+      # the user's stop always stops.
+      {:error, reason} ->
+        require Logger
+        Logger.warning("Muse refused to stop its turn, closing its host: #{format(reason)}")
+        state = %{state | interrupted: true} |> end_turn("interrupted", nil) |> close_host()
+        {:reply, :ok, state}
     end
   end
 
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, "no running turn"}, state}
+
+  def handle_call({:runtime_mode, mode}, _from, %{turn: turn, session: session} = state)
+      when turn != nil and is_binary(session) do
+    case command(state, "session/setApprovalMode", %{"mode" => Muse.approval_mode(mode)}) do
+      {:ok, _} ->
+        state = %{state | turn: %{turn | runtime_mode: mode}}
+        if mode == "full-access", do: accept_open(state)
+        {:reply, :ok, state}
+
+      {:error, reason} ->
+        {:reply, {:error, format(reason)}, state}
+    end
+  end
+
+  # Between turns the next turn's session takes the mode as it opens.
+  def handle_call({:runtime_mode, _mode}, _from, state), do: {:reply, :ok, state}
 
   def handle_call({:steer, run_id, message}, _from, %{turn: turn, compact: false} = state)
       when turn != nil and not state.interrupted and turn.ids.run == run_id do
@@ -1370,7 +1407,7 @@ defmodule HalC2.Muse.ThreadRuntime do
 
       # Muse does not give a workflow's children the session's allowAll mode. One Muse
       # will not take an accept for goes to the user instead.
-      child? and elem(state.host, 1) == "full-access" and accepted?(state, approval) ->
+      child? and state.turn.runtime_mode == "full-access" and accepted?(state, approval) ->
         state
 
       true ->
@@ -1387,6 +1424,12 @@ defmodule HalC2.Muse.ThreadRuntime do
   end
 
   defp approval(state, _method, _params), do: state
+
+  # Prompts left open when the thread switches to full access: Muse's allowAll covers
+  # what comes next, not what it already asked. Each settles with `approval/resolved`.
+  defp accept_open(state) do
+    for {_id, {:approval, approval}} <- state.requests, do: accepted?(state, approval)
+  end
 
   defp accepted?(state, approval) do
     case choices(approval)["accept"] do

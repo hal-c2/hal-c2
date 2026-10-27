@@ -26,7 +26,8 @@
 # "progress" as its fallbackText (in status "progressStatus", default inProgress), and completed
 # with "answer" as its result text, "summary" as its result summary and "status" (default
 # completed); no "answer" leaves it running), {"waitInterrupt": true} (until turn/interrupt, or a
-# turn/steer, which it answers with "steered: <text>"). Without a match the reply names the conversation so
+# turn/steer, which it answers with "steered: <text>"). With "interruptFails" turn/interrupt
+# answers an error. Without a match the reply names the conversation so
 # far.
 import json, os, queue, sys, threading, uuid
 
@@ -156,7 +157,9 @@ def run_turn(sid, turn, text, params):
     history = session["history"]
     session["history"] = history + [text]
     save_session(sid, session)
-    allow = session.get("approvalMode") == "allowAll"
+    # Read per step: the MC can change the session's approval mode mid-turn.
+    def allows():
+        return load_session(sid).get("approvalMode") == "allowAll"
     notify("turn/started", {"sessionId": sid, "turnId": turn})
     steps = next((t["steps"] for t in config().get("turns", []) if t["match"] in text), None)
     if steps is None:
@@ -167,6 +170,7 @@ def run_turn(sid, turn, text, params):
         if "text" in step:
             say(sid, turn, step["text"])
         elif "shell" in step:
+            allow = allows()
             approved = allow or ask(sid, turn, {"kind": "shell", "command": step["shell"]}, [
                 {"choiceId": "once", "decision": "approved", "scope": "once"},
                 {"choiceId": "session", "decision": "approvedForSession", "scope": "session"},
@@ -178,6 +182,7 @@ def run_turn(sid, turn, text, params):
             log({"tool": {"name": "shell", "approved": approved, "asked": not allow}})
             tool(sid, turn, "shell", {"command": step["shell"]}, "ok", approved)
         elif "edit" in step:
+            allow = allows()
             approved = allow or ask(sid, turn, {"kind": "fileAccess", "access": "write", "path": step["edit"]}, [
                 {"choiceId": "allow", "decision": "approved", "scope": "once"},
                 {"choiceId": "deny", "decision": "denied", "scope": "once"},
@@ -337,6 +342,8 @@ def handle(msg):
         text = "".join(p.get("text", "") for p in params["input"] if p["type"] == "text")
         reply({"turnId": state["turn"]})
         events.put(("steer", text))
+    elif method == "turn/interrupt" and config().get("interruptFails"):
+        error(-32603, "internal error")
     elif method == "turn/interrupt":
         reply({})
         if state["turn"] == params.get("turnId"):
