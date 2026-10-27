@@ -1273,9 +1273,11 @@ QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
   for (auto it = checkpoints.cbegin(); it != checkpoints.cend(); ++it) {
     if (text(*it, QLatin1String("runId")) != runId || text(*it, QLatin1String("status")) != QLatin1String("ready")) continue;
     // The MC's turn number (the diff panel's). A ready checkpoint that does
-    // not count as a diff turn (its run never completed) gets 0 rather than
-    // a count of runs, which could equal another turn's number.
+    // not count as a diff turn (its run never completed) has no point at
+    // all: its callers read turn 0 as "the shown or latest turn", so Revert
+    // and Open diff would act on a different turn.
     const int turn = diffTurnOf(checkpoints, m_entities.value(QStringLiteral("run")), runId);
+    if (turn <= 0) return {};
     return {{QStringLiteral("checkpointId"), it.key()},
             {QStringLiteral("scopeId"), text(*it, QLatin1String("scopeId"))},
             {QStringLiteral("turn"), turn}};
