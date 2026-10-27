@@ -91,7 +91,7 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWriter.finish_item/4" => @items,
       "HalC2.Orchestration.TurnWriter.finish_plan/3" => @items,
       "HalC2.Orchestration.TurnWriter.write_todo/4" => @items,
-      "HalC2.Orchestration.TurnWriter.open_request/4" => @items,
+      "HalC2.Orchestration.TurnWriter.open_request/5" => @items,
       "HalC2.Orchestration.TurnWriter.open_question/3" => @items,
       "HalC2.Orchestration.TurnWriter.open_async_question/3" => @items,
       "HalC2.Orchestration.TurnWriter.resolve_request/4" => @items,

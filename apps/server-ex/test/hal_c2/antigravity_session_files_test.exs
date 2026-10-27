@@ -5,6 +5,10 @@ defmodule HalC2.AntigravitySessionFilesTest do
 
   @tag :tmp_dir
   test "a runtime directory outlives the process that launched it", %{tmp_dir: profile} do
+    # Whether or not this environment started the owner, take it down so the
+    # launch below is the one that starts it (unlinked, in table/0).
+    if pid = Process.whereis(SessionFiles), do: GenServer.stop(pid)
+    assert :ets.whereis(:hal_c2_antigravity_live_temp) == :undefined
     # Left behind by an MC that was killed: swept by the next launch.
     stale = Path.join(SessionFiles.temp_dir(profile), "run-stale")
     File.mkdir_p!(stale)
@@ -12,8 +16,8 @@ defmodule HalC2.AntigravitySessionFilesTest do
     task = Task.async(fn -> SessionFiles.runtime_dir(profile) end)
     assert {:ok, first} = Task.await(task)
 
-    # The table belongs to the SessionFiles owner, never to the launcher:
-    # in this environment nothing has started it yet, so the launch did.
+    # The table belongs to the SessionFiles owner the launch started,
+    # never to the launcher itself.
     owner = Process.whereis(SessionFiles)
     assert is_pid(owner) and owner != task.pid
     assert :ets.info(:hal_c2_antigravity_live_temp, :owner) == owner
