@@ -44,11 +44,11 @@ Item {
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
-    // Whether the turn waits on anything. The height follows this and not
-    // `visible`, which a host may bind to more than this.
+    // Whether the turn waits on anything. The strip stays visible and is no
+    // height without it: each card hides itself, and on Ljós a card shown in the
+    // same change as a hidden strip stays hidden (hal-c2/ljos-ui#146).
     readonly property bool pending: approval !== null || question !== null || plan !== null || queue.length > 0 || waiting.length > 0
 
-    visible: pending
     implicitHeight: pending ? column.implicitHeight + 8 : 0
 
     onQuestionChanged: {
