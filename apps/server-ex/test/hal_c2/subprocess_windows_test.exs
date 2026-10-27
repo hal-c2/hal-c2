@@ -16,9 +16,15 @@ defmodule HalC2.SubprocessWindowsTest do
     )
 
     File.chmod!(cmd, 0o755)
-    System.put_env("PATH", "#{dir}:#{System.get_env("PATH")}")
+    path = System.get_env("PATH")
+    System.put_env("PATH", "#{dir}:#{path}")
     Application.put_env(:hal_c2, :os_type, {:win32, :nt})
-    on_exit(fn -> Application.delete_env(:hal_c2, :os_type) end)
+
+    on_exit(fn ->
+      Application.delete_env(:hal_c2, :os_type)
+      System.put_env("PATH", path)
+      File.rm_rf!(dir)
+    end)
 
     assert {:ok, conn} =
              HalC2.JsonRpc.Connection.start_link(
@@ -35,7 +41,6 @@ defmodule HalC2.SubprocessWindowsTest do
         5_000
       )
 
-    IO.inspect(result, label: "initialize")
     assert {:ok, _} = result
     HalC2.JsonRpc.Connection.stop(conn)
   end

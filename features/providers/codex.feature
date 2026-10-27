@@ -588,6 +588,11 @@ Feature: Codex
     Then the thread shows the first answer only
 
   @mc
+  Scenario: Two Codex messages without a phase are both shown
+    When Codex sends two messages without a phase with the same text in one turn
+    Then the thread shows both messages
+
+  @mc
   Scenario: A Codex question with blanks is still askable
     When Codex asks a question with no heading, no text and unlabelled choices
     Then the question is shown under "Question" asking "Choose an answer."

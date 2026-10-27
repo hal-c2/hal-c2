@@ -194,7 +194,7 @@ defmodule HalC2.Environment do
 
   # Agents are probed apart, so one slow agent does not hold up the others.
   defp probe(ids, models?) do
-    if Enum.any?(ids, &HalC2.Settings.known_instance?(&1, "codex")),
+    if models? and Enum.any?(ids, &HalC2.Settings.known_instance?(&1, "codex")),
       do: HalC2.Codex.Provider.load()
 
     claude = Enum.filter(ids, &(&1 in HalC2.Claude.Provider.instances()))

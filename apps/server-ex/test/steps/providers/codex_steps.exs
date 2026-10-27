@@ -3311,16 +3311,12 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
-  defp final_answers(context, texts) do
+  defp final_answers(context, texts, phase \\ "final_answer") do
     context = start_waiting(context)
 
     for {text, i} <- Enum.with_index(texts, 1) do
-      item = %{
-        "type" => "agentMessage",
-        "id" => "final-#{i}",
-        "phase" => "final_answer",
-        "text" => ""
-      }
+      item = %{"type" => "agentMessage", "id" => "final-#{i}", "text" => ""}
+      item = if phase, do: Map.put(item, "phase", phase), else: item
 
       notify_item(context, "started", item)
       notify_item(context, "completed", %{item | "text" => text})
@@ -3351,6 +3347,15 @@ Red"} <- StreamState.get(state, "message")[message],
 
   step "the thread shows the first answer only", context do
     assert World.replies(context, @thread) == ["All done."]
+    context
+  end
+
+  step "Codex sends two messages without a phase with the same text in one turn", context do
+    final_answers(context, ["All done.", "All done."], nil)
+  end
+
+  step "the thread shows both messages", context do
+    assert World.replies(context, @thread) == ["All done.", "All done."]
     context
   end
 

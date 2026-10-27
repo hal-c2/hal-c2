@@ -152,8 +152,9 @@ defmodule HalC2.Codex.Provider do
       {:DOWN, ^ref, :process, _, _} -> :ok
     end
 
-    # The entries' health and models are the check's: clients are told again.
-    HalC2.Settings.notify_providers()
+    # No notify here: a refresh probes every agent and tells clients once they
+    # are all read (`HalC2.Environment.probe/2`), and a list told mid-refresh
+    # would show an agent being re-read with no models yet.
   end
 
   defp probe(id) do
@@ -162,10 +163,13 @@ defmodule HalC2.Codex.Provider do
     Process.flag(:trap_exit, true)
     timeout = Application.get_env(:hal_c2, :codex_probe_timeout_ms, 10_000)
 
+    env = Enum.to_list(HalC2.Settings.instance_env(id))
+
     result =
       with [_ | _] = cmd <- command(id),
            {:ok, args} <- launch_args(id),
-           {:ok, conn} <- start_probe(cmd ++ args),
+           {:ok, home} <- HalC2.Codex.Home.env(id),
+           {:ok, conn} <- start_probe(cmd ++ args, home ++ env),
            {:ok, _} <-
              Connection.call(
                conn,
@@ -214,6 +218,9 @@ defmodule HalC2.Codex.Provider do
         {:error, %{"message" => message}} ->
           {:failed, message}
 
+        {:error, message} when is_binary(message) ->
+          {:failed, message}
+
         {:error, reason} ->
           {:failed, inspect(reason)}
 
@@ -260,8 +267,8 @@ defmodule HalC2.Codex.Provider do
 
   # Starting the app-server, told apart from it answering badly: a process that
   # never starts means the binary path is wrong, not that Codex misbehaved.
-  defp start_probe(cmd) do
-    case Connection.start_link(cmd: cmd, handler: self()) do
+  defp start_probe(cmd, env) do
+    case Connection.start_link(cmd: cmd, handler: self(), env: env) do
       {:ok, conn} -> {:ok, conn}
       {:error, reason} -> {:spawn, reason}
     end

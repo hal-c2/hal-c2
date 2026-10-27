@@ -70,8 +70,15 @@ defmodule HalC2.Codex.ThreadRuntime do
           GenServer.call(pid, {:interrupt, run_id, id}, budget)
         catch
           :exit, {:timeout, _} ->
-            cancelled = :persistent_term.get({__MODULE__, :cancelled_stops}, %{})
-            :persistent_term.put({__MODULE__, :cancelled_stops}, Map.put(cancelled, id, true))
+            now = System.monotonic_time(:millisecond)
+
+            cancelled =
+              :persistent_term.get({__MODULE__, :cancelled_stops}, %{})
+              |> Enum.filter(fn {_id, at} -> is_integer(at) and now - at < 60_000 end)
+              |> Map.new()
+              |> Map.put(id, now)
+
+            :persistent_term.put({__MODULE__, :cancelled_stops}, cancelled)
             {:error, @queued_stop}
 
           :exit, _ ->
@@ -237,10 +244,13 @@ defmodule HalC2.Codex.ThreadRuntime do
        # Native threads Codex runs to consolidate its memories: their work is not
        # this thread's, and none of it is shown.
        memory_threads: %{},
-       # The turn's final-answer items (`final_first`: the first one's native id,
+       # The turn's final-answer items, the ones Codex tags `final_answer`
+       # (`finals`: their native ids, `final_first`: the first one's,
        # `final_texts`: what they said, `suppressed`: later ones held back until
-       # they finish, `commentary`: items that are not final answers).
+       # they finish, `commentary`: items Codex tagged as commentary). A message
+       # with no phase is neither: it streams as any message does.
        final_first: nil,
+       finals: %{},
        final_texts: %{},
        suppressed: %{},
        commentary: %{},
@@ -286,6 +296,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       Map.merge(state, %{
         subagents: %{},
         final_first: nil,
+        finals: %{},
         final_texts: %{},
         suppressed: %{},
         commentary: %{},
@@ -729,6 +740,7 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:workers_only, false)
      |> Map.put_new(:memory_threads, %{})
      |> Map.put_new(:final_first, nil)
+     |> Map.put_new(:finals, %{})
      |> Map.put_new(:final_texts, %{})
      |> Map.put_new(:suppressed, %{})
      |> Map.put_new(:commentary, %{})
@@ -1375,7 +1387,13 @@ defmodule HalC2.Codex.ThreadRuntime do
   # thread, and nothing it says (its `turn/completed` least of all) is this turn's.
   defp notification(method, %{"threadId" => thread} = params, %{subagents: subagents} = state)
        when is_map_key(subagents, thread) do
-    entry = subagents[thread] |> Map.put_new(:final, nil) |> Map.put(:turn_id, params["turnId"])
+    entry =
+      subagents[thread]
+      |> Map.put_new(:final, nil)
+      |> Map.put(
+        :turn_id,
+        params["turnId"] || get_in(params, ["turn", "id"]) || subagents[thread][:turn_id]
+      )
 
     entry =
       case {method, params} do
@@ -1442,17 +1460,23 @@ defmodule HalC2.Codex.ThreadRuntime do
          %{"item" => %{"type" => "agentMessage", "id" => native} = item},
          state
        ) do
-    cond do
-      item["phase"] == "commentary" ->
+    case item["phase"] do
+      "commentary" ->
         state
         |> Map.put(:commentary, Map.put(state.commentary, native, true))
         |> ensure_item(native, :assistant)
 
-      state.final_first in [nil, native] ->
-        state |> Map.put(:final_first, native) |> ensure_item(native, :assistant)
+      "final_answer" ->
+        state = Map.put(state, :finals, Map.put(state.finals, native, true))
 
-      true ->
-        Map.put(state, :suppressed, Map.put(state.suppressed, native, true))
+        if state.final_first in [nil, native] do
+          state |> Map.put(:final_first, native) |> ensure_item(native, :assistant)
+        else
+          Map.put(state, :suppressed, Map.put(state.suppressed, native, true))
+        end
+
+      _ ->
+        ensure_item(state, native, :assistant)
     end
   end
 
@@ -1778,7 +1802,13 @@ defmodule HalC2.Codex.ThreadRuntime do
 
         _ ->
           for {_native, process} <- state.running, do: terminate_terminal(state, process)
-          state = %{state | running: %{}}
+
+          state = %{
+            state
+            | running: %{},
+              persistent: Map.drop(Map.get(state, :persistent, %{}), Map.keys(state.items))
+          }
+
           if status == "interrupted", do: end_background(state, status), else: state
       end
 
@@ -2044,7 +2074,7 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   defp complete_item(state, %{"type" => "agentMessage", "id" => native} = item) do
     text = item["text"] || ""
-    final? = item["phase"] != "commentary" and state.commentary[native] != true
+    final? = Map.get(state, :finals, %{})[native] == true
 
     cond do
       # A held-back final answer that repeats an earlier one, or says nothing,
