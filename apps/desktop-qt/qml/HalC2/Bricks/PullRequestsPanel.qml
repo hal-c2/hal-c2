@@ -255,7 +255,8 @@ Rectangle {
                 model: root.projectOpen
 
                 delegate: AbstractButton {
-                    id: open
+                    // Not `open`: RightPanel, an ancestor, has an `open` property.
+                    id: projectRow
 
                     required property var modelData
 
@@ -264,11 +265,11 @@ Rectangle {
                     height: 44
                     Accessible.name: qsTr("Review #%1 %2").arg(modelData.number).arg(modelData.title)
                     onClicked: Shell.dispatch("rightPanel.reviewProject", {
-                        key: open.modelData.key
+                        key: projectRow.modelData.key
                     })
                     background: Rectangle {
                         radius: 6
-                        color: open.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
+                        color: projectRow.hovered ? Theme.palette.color("surfaceRaised", "#1f1f24") : "transparent"
                     }
                     contentItem: Item {
                         ShellIcon {
@@ -276,13 +277,13 @@ Rectangle {
                             y: 8
                             name: "git-pull-request"
                             size: 14
-                            color: open.modelData.draft ? root.muted : root.successColor
+                            color: projectRow.modelData.draft ? root.muted : root.successColor
                         }
                         Text {
                             x: 30
                             y: 5
                             width: parent.width - x - openLinkButton.width - 12
-                            text: open.modelData.title
+                            text: projectRow.modelData.title
                             color: root.foreground
                             font.pixelSize: Math.round(13 * Theme.fontScale)
                             elide: Text.ElideRight
@@ -291,7 +292,7 @@ Rectangle {
                             x: 30
                             y: 24
                             width: parent.width - x - openLinkButton.width - 12
-                            text: [qsTr("#%1").arg(open.modelData.number), open.modelData.author, open.modelData.branches].filter(part => part.length > 0).join(" · ")
+                            text: [qsTr("#%1").arg(projectRow.modelData.number), projectRow.modelData.author, projectRow.modelData.branches].filter(part => part.length > 0).join(" · ")
                             color: root.muted
                             font.pixelSize: Math.round(11 * Theme.fontScale)
                             elide: Text.ElideRight
@@ -299,7 +300,7 @@ Rectangle {
                         ShellButton {
                             id: openLinkButton
 
-                            objectName: "projectPullRequestLink-" + open.modelData.number
+                            objectName: "projectPullRequestLink-" + projectRow.modelData.number
                             anchors.right: parent.right
                             anchors.rightMargin: 4
                             anchors.verticalCenter: parent.verticalCenter
@@ -307,7 +308,7 @@ Rectangle {
                             subtle: true
                             text: qsTr("Link")
                             enabled: root.online
-                            onClicked: root.source.link(open.modelData.url)
+                            onClicked: root.source.link(projectRow.modelData.url)
                         }
                     }
                 }
