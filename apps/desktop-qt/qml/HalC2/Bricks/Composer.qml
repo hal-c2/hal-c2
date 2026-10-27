@@ -1277,6 +1277,17 @@ Rectangle {
                             radius: 16
                             color: primaryAction.stopMode ? Qt.alpha(Theme.palette.color("error", "#ef4444"), 0.9) : Theme.palette.color("messageAction", "#2563eb")
 
+                            // The keyboard's ring, just outside the round button.
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: -3
+                                radius: parent.radius + 3
+                                visible: primaryAction.visualFocus
+                                color: "transparent"
+                                border.width: 2
+                                border.color: Theme.palette.color("focus", "#3b82f6")
+                            }
+
                             Behavior on color {
                                 ColorAnimation {
                                     duration: 120
