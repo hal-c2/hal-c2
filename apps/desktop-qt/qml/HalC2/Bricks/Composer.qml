@@ -441,6 +441,15 @@ Rectangle {
                     required property var modelData
                     required property int index
 
+                    // The prompt's arrows move through the rows and Enter or
+                    // Tab takes one.
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: [suggestion.modelData.label, suggestion.modelData.description].filter(part => (part ?? "").length > 0).join(", ")
+                    Accessible.selected: ListView.isCurrentItem
+                    Accessible.onPressAction: {
+                        composer.flushText();
+                        composer.selectSuggestion(suggestion.index);
+                    }
                     width: ListView.view.width
                     height: 34
                     radius: 10
@@ -585,6 +594,12 @@ Rectangle {
                     required property int index
 
                     objectName: "stashEntry-" + index
+                    // The prompt's arrows move through the rows and Enter
+                    // restores one.
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: qsTr("Restore stashed prompt: %1").arg(stashRow.modelData.snippet)
+                    Accessible.selected: ListView.isCurrentItem
+                    Accessible.onPressAction: composer.restoreStash(stashRow.modelData.id)
                     width: ListView.view.width
                     height: 34
                     radius: 10
@@ -1427,30 +1442,39 @@ Rectangle {
                 }
 
                 // PR badge.
-                Rectangle {
+                AbstractButton {
+                    id: prBadge
+
                     readonly property var pr: contextStrip.wsReady && contextStrip.ws.git ? contextStrip.ws.git.pullRequest : null
                     readonly property color prColor: pr === null ? "transparent" : pr.state === "merged" ? Theme.palette.color("merged", "#a855f7") : pr.state === "closed" ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#34d399")
 
                     visible: pr !== null && contextStrip.ws.canOpenPullRequest
+                    text: pr ? "#" + pr.number : ""
+                    Accessible.name: qsTr("%1 Open pull request").arg(text)
+                    focusPolicy: Qt.TabFocus
                     implicitWidth: prLabel.implicitWidth + 8
                     implicitHeight: 18
-                    radius: 4
-                    color: Qt.alpha(prColor, 0.15)
+                    padding: 0
+                    onClicked: Shell.dispatch("workspace.openPullRequest")
 
                     HoverHandler {
                         cursorShape: Qt.PointingHandCursor
                     }
 
-                    TapHandler {
-                        onTapped: Shell.dispatch("workspace.openPullRequest")
+                    background: Rectangle {
+                        radius: 4
+                        color: Qt.alpha(prBadge.prColor, 0.15)
+                        border.color: Theme.palette.color("focus", "#3b82f6")
+                        border.width: prBadge.visualFocus ? 1 : 0
                     }
 
-                    Text {
+                    contentItem: Text {
                         id: prLabel
 
-                        anchors.centerIn: parent
-                        text: parent.pr ? "#" + parent.pr.number : ""
-                        color: parent.prColor
+                        text: prBadge.text
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        color: prBadge.prColor
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                         font.weight: Font.Medium
                     }
@@ -1535,6 +1559,7 @@ Rectangle {
                                 from: 1
                                 to: 0
                                 duration: 90
+                                easing.type: Easing.InCubic
                             }
                         }
 
@@ -1555,6 +1580,7 @@ Rectangle {
 
                                 Layout.fillWidth: true
                                 placeholderText: qsTr("Search or create a branch")
+                                Accessible.name: qsTr("Search or create a branch")
                                 onTextEdited: Shell.dispatch("workspace.branch.search", {
                                     query: text
                                 })
@@ -1617,6 +1643,15 @@ Rectangle {
 
                                     readonly property string badge: modelData.current ? qsTr("current") : modelData.isDefault ? qsTr("default") : modelData.isRemote ? qsTr("remote") : ""
 
+                                    // Typing a ref's name and Enter picks it from the keyboard.
+                                    Accessible.role: Accessible.ListItem
+                                    Accessible.name: [branchRow.modelData.name, branchRow.badge].filter(part => part.length > 0).join(", ")
+                                    Accessible.onPressAction: {
+                                        Shell.dispatch("workspace.branch.select", {
+                                            name: branchRow.modelData.name
+                                        });
+                                        branchPicker.close();
+                                    }
                                     width: ListView.view.width
                                     height: 28
                                     radius: 6
@@ -1673,6 +1708,7 @@ Rectangle {
                                 Layout.bottomMargin: 4
                                 visible: contextStrip.wsReady && contextStrip.ws.branchesTotal > contextStrip.ws.branches.length
                                 text: contextStrip.wsReady ? qsTr("Showing %1 of %2 refs — type to narrow").arg(contextStrip.ws.branches.length).arg(contextStrip.ws.branchesTotal) : ""
+                                wrapMode: Text.Wrap
                                 color: composer.muted
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }

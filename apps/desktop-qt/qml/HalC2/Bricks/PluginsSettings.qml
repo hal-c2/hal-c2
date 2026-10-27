@@ -100,6 +100,8 @@ SettingsPage {
                 source: card.plugin.iconUrl
                 sourceSize: Qt.size(64, 64)
                 fillMode: Image.PreserveAspectFit
+                // The plugin's name is beside it.
+                Accessible.ignored: true
             }
 
             ColumnLayout {
@@ -224,6 +226,7 @@ SettingsPage {
                     text: qsTr("On %1").arg(environment.modelData.label)
                     color: page.foreground
                     font.pixelSize: Math.round(13 * Theme.fontScale)
+                    wrapMode: Text.Wrap
                     font.weight: Font.DemiBold
                 }
 

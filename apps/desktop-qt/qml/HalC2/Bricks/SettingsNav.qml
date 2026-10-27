@@ -126,6 +126,7 @@ Rectangle {
             Layout.rightMargin: 10
             Layout.bottomMargin: 6
             placeholderText: qsTr("Search settings")
+            Accessible.name: qsTr("Search settings")
             text: nav.route !== null ? (nav.route.search ?? "") : ""
             // Clears the query; an empty field leaves Escape to the section list's
             // owner, which leaves Settings.

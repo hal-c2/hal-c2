@@ -295,6 +295,7 @@ Rectangle {
                                         Label {
                                             Layout.fillWidth: true
                                             text: card.modelData.label
+                                            wrapMode: Text.Wrap
                                             color: page.muted
                                             font.pixelSize: Math.round(12 * Theme.fontScale)
                                         }
@@ -516,6 +517,7 @@ Rectangle {
                             Label {
                                 Layout.fillWidth: true
                                 text: total.modelData[0]
+                                wrapMode: Text.Wrap
                                 color: page.muted
                                 font.pixelSize: Math.round(12 * Theme.fontScale)
                             }
@@ -586,6 +588,7 @@ Rectangle {
                             Label {
                                 Layout.preferredWidth: 64
                                 text: periodRow.modelData.label
+                                elide: Text.ElideRight
                                 color: page.muted
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
@@ -606,6 +609,7 @@ Rectangle {
                                 Layout.preferredWidth: 72
                                 horizontalAlignment: Text.AlignRight
                                 text: page.amount(periodRow.modelData)
+                                elide: Text.ElideRight
                                 color: page.foreground
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }

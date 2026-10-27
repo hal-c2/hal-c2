@@ -36,6 +36,7 @@ Rectangle {
 
     TapHandler {
         enabled: strip.framelessChrome
+        // ljos-allow(focus-pointer-only): a double click on the title bar is the pointer's shortcut for the window controls' Maximize button, which the keyboard reaches
         onDoubleTapped: strip.window.visibility === Window.Maximized ? strip.window.showNormal() : strip.window.showMaximized()
     }
 

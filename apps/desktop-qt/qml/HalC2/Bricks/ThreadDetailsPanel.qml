@@ -83,6 +83,7 @@ Rectangle {
                 Text {
                     Layout.fillWidth: true
                     text: relation.modelData.relation
+                    elide: Text.ElideRight
                     color: root.muted
                     font.pixelSize: Math.round(11 * Theme.fontScale)
                 }

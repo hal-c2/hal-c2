@@ -78,6 +78,7 @@ SettingsPage {
                 objectName: "when"
                 Layout.fillWidth: true
                 text: task.modelData.schedule + " · " + task.modelData.when
+                wrapMode: Text.Wrap
                 color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }

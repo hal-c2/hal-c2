@@ -722,6 +722,9 @@ Rectangle {
                 Item {
                     objectName: entry.kind === "header" ? "header:" + entry.modelData.key : ""
                     anchors.fill: parent
+                    Accessible.role: Accessible.Button
+                    Accessible.name: entry.kind === "header" ? entry.modelData.label : ""
+                    Accessible.onPressAction: sidebar.toggleSection(entry.modelData.key)
                     visible: entry.kind === "header"
 
                     Rectangle {
