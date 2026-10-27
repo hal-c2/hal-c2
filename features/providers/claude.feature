@@ -318,7 +318,7 @@ Feature: Claude
     Then Claude answers it in the same session
     And the new run completes
 
-  @mc @backlog
+  @mc
   Scenario: A command Claude runs in the background is not a subagent
     Given Claude runs a long command as a background task
     Then the thread shows the command and its output
@@ -421,7 +421,7 @@ Feature: Claude
       | the skill is marked not user-invocable       |
       | the skill was removed since the last message |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A Claude approval says what kind of permission the tool wants
     Given a Claude thread in supervised
     When Claude asks to use <tool>
@@ -434,27 +434,27 @@ Feature: Claude
       | Read, Glob, Grep or LS               | read files    |
       | a tool HAL-C2 does not know          | run a command |
 
-  @backlog @mc
+  @mc
   Scenario: A Claude approval names the tool and what it would act on
     Given a Claude thread in supervised
     When Claude asks to run the command "npm test"
     Then the approval reads "Bash: npm test"
     And a longer summary is cut at 400 characters
 
-  @backlog @mc
+  @mc
   Scenario: Cancelling a Claude approval stops the turn
     Given a Claude thread waiting on a command approval
     When the user cancels the approval
     Then Claude is told the user cancelled the tool
     And the turn is interrupted instead of carrying on without the tool
 
-  @backlog @mc
+  @mc
   Scenario: A Claude web search shows what was searched and what it found
     When Claude searches the web for "tax rates 2026"
     Then the search step shows the query
     And it lists the titles and addresses of the pages found
 
-  @backlog @mc
+  @mc
   Scenario: An image Claude reads from the workspace can be previewed from the tool call
     When Claude reads the image "docs/mock.png" in the workspace
     Then the tool call carries the image's path so the client can show it
@@ -555,24 +555,24 @@ Feature: Claude
     When Claude ends a turn refused by a limit that resets at 14:00 and another with no reset time
     Then the thread is marked as limited without a reset time
 
-  @backlog @mc
+  @mc
   Scenario: A Claude question without a heading is labelled by its number
     When Claude asks two questions and the second has no heading
     Then the second question is headed "Question 2"
 
-  @backlog @mc
+  @mc
   Scenario: Several choices for one Claude question reach Claude as one answer
     Given Claude asked a question that allows several answers
     When the user picks "Unit tests" and "Docs"
     Then Claude receives "Unit tests, Docs" as the answer
 
-  @backlog @mc
+  @mc
   Scenario: Claude's task list is shown with each step's status
     When Claude writes a task list with a finished step, a step in progress and a step not started
     Then the task list shows the three steps as completed, running and pending
     And the list is completed once every step is completed
 
-  @backlog @mc
+  @mc
   Scenario: A newer Claude task list replaces the unfinished one before it
     Given Claude's task list still has unfinished steps
     When Claude writes a new task list
@@ -599,7 +599,7 @@ Feature: Claude
     Then the subagent's thread shows the progress as the subagent's thinking
     And the subagent's result is shown as its answer when it finishes
 
-  @backlog @mc
+  @mc
   Scenario Outline: A Claude subagent ends the way Claude says it ended
     Given Claude has a subagent running
     When Claude reports the subagent <reported>
@@ -611,31 +611,31 @@ Feature: Claude
       | stopped                 | cancelled |
       | ended any other way     | failed    |
 
-  @backlog @mc
+  @mc
   Scenario: A Claude subagent launched in the background is not finished by its launch
     When Claude launches a subagent in the background and the launch returns at once
     Then the subagent stays running until Claude reports it finished
 
-  @backlog @mc
+  @mc
   Scenario: A message to a finished Claude subagent sets it running again
     Given a Claude subagent completed with "3 files"
     When Claude sends that subagent another message
     Then the subagent is running again without its earlier result
 
-  @backlog @mc
+  @mc
   Scenario: Late progress does not reopen a finished Claude subagent
     Given a Claude subagent completed with "3 files"
     When a progress report for it arrives afterwards
     Then the subagent stays completed with "3 files"
 
-  @backlog @mc
+  @mc
   Scenario: Claude is not prompted again for work it already did by itself
     Given Claude answered a finished background task by itself after a turn ended
     When the thread runs a turn for that work
     Then the run shows what Claude already wrote
     And Claude is sent no new message for it
 
-  @backlog @mc
+  @mc
   Scenario: A wake with nothing from Claude to show completes at once
     Given the thread is asked to run a turn for work Claude did by itself
     And Claude wrote nothing for it
@@ -655,7 +655,7 @@ Feature: Claude
     Then the run is interrupted
     And it is not reported as a failed turn
 
-  @backlog @mc
+  @mc
   Scenario: Reverting a Claude thread to before its first turn starts a fresh Claude session
     Given a Claude thread with three turns
     When the user reverts to before the first turn and sends a message

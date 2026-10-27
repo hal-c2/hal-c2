@@ -242,6 +242,8 @@ defmodule HalC2.Claude.ThreadRuntime do
        # Claude's task ids -> the tool use id of their work, or nil for a task that is
        # not work (ambient, a foreground command) or has ended.
        tasks: %{},
+       # Task ids that already ended, so late progress cannot reopen them.
+       finished_tasks: MapSet.new(),
        # The latest turn's ids, which work Claude starts between turns joins.
        last_ids: nil,
        # The run the latest turn ran as, also one that failed to start: the run a
@@ -390,12 +392,17 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   def handle_call(:interrupt, _from, %{turn: turn, session: session} = state)
       when turn != nil and session != nil do
+    {:reply, :ok, interrupt_now(state)}
+  end
+
+  # Claude gets ten seconds to end the turn itself after an interrupt; after that
+  # the run is settled as interrupted here (`:settle_interrupt`).
+  defp interrupt_now(%{turn: turn, session: session} = state)
+       when turn != nil and session != nil do
     Session.control(session, "interrupt")
-    # Claude gets ten seconds to end the turn itself; after that the run is
-    # settled as interrupted here, so the thread can take its next message.
     settle = Application.get_env(:hal_c2, :claude_interrupt_timeout_ms, 10_000)
     Process.send_after(self(), {:settle_interrupt, turn.ids.run}, settle)
-    {:reply, :ok, %{state | interrupted: true}}
+    %{state | interrupted: true}
   end
 
   # Between turns, stopping the thread stops the work it left running in the background,
@@ -472,9 +479,13 @@ defmodule HalC2.Claude.ThreadRuntime do
 
       {{:permission, control_id, tool, suggestions}, requests} ->
         decision = response["decision"] || "decline"
+        cancelled? = decision == "cancel" or response["dismissed"] == true
 
         answer =
           case decision do
+            _ when cancelled? ->
+              :cancel
+
             "accept" ->
               :allow
 
@@ -486,7 +497,18 @@ defmodule HalC2.Claude.ThreadRuntime do
           end
 
         Session.answer_permission(state.session, control_id, answer)
-        state = resolve_request(%{state | requests: requests}, request_id, decision)
+
+        state =
+          resolve_request(
+            %{state | requests: requests},
+            request_id,
+            decision,
+            if(cancelled?, do: "cancelled", else: "resolved")
+          )
+
+        # Cancelling an approval stops the turn instead of carrying on without
+        # the tool.
+        state = if cancelled?, do: interrupt_now(state), else: state
         {:reply, :ok, state}
     end
   end
@@ -542,17 +564,49 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   def handle_info({:claude, _session, {:permission, id, tool, input, context}}, state) do
-    {kind, prompt} =
+    kind =
       cond do
-        tool == "Bash" -> {"command", input["command"]}
-        tool in @file_tools -> {"file-change", input["file_path"]}
-        tool in ["Read", "Glob", "Grep"] -> {"file-read", input["file_path"] || input["pattern"]}
-        true -> {"permission", tool}
+        tool in @file_tools -> "file-change"
+        tool in ["Read", "Glob", "Grep", "LS"] -> "file-read"
+        # Bash, the subagent and web tools, and any tool HAL-C2 does not know.
+        true -> "command"
       end
+
+    prompt =
+      context["title"] || context["description"] || context["decision_reason"] ||
+        summarize_tool(tool, input)
 
     {state, request_id} = open_request(flush(state), id, kind, prompt)
     request = {:permission, id, tool, context["permission_suggestions"]}
     {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
+  end
+
+  # What an approval reads: the tool and what it would act on — its command or
+  # its file, else its input — with the summary cut at 400 characters.
+  defp summarize_tool(tool, input) do
+    first = fn keys ->
+      Enum.find_value(keys, fn key ->
+        case input[key] do
+          value when is_binary(value) and value != "" -> value
+          _ -> nil
+        end
+      end)
+    end
+
+    cond do
+      command = first.(["command", "cmd", "script"]) ->
+        "#{tool}: #{String.slice(command, 0, 400)}"
+
+      path = first.(["file_path", "path", "filename", "fileName"]) ->
+        "#{tool}: #{String.slice(path, 0, 400)}"
+
+      true ->
+        serialized = JSON.encode!(input)
+
+        if String.length(serialized) <= 400,
+          do: "#{tool}: #{serialized}",
+          else: "#{tool}: #{String.slice(serialized, 0, 397)}..."
+    end
   end
 
   def handle_info({:claude, session, {:dialog, id, _kind, _payload}}, %{turn: nil} = state) do
@@ -614,6 +668,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        state
        |> Map.put_new(:work, %{})
        |> Map.put_new(:tasks, %{})
+       |> Map.put_new(:finished_tasks, MapSet.new())
        |> Map.put_new(:last_ids, nil)
        |> Map.put_new_lazy(:last_run, fn -> state[:last_ids][:run] end)
        |> Map.put_new(:usage_instance, nil)
@@ -1140,12 +1195,25 @@ defmodule HalC2.Claude.ThreadRuntime do
         do: end_work(state, tool, status, task["summary"], summary: true),
         else: state
 
-    %{state | tasks: Map.delete(state.tasks, task["task_id"])}
+    %{
+      state
+      | tasks: Map.delete(state.tasks, task["task_id"]),
+        finished_tasks: MapSet.put(Map.get(state, :finished_tasks, MapSet.new()), task["task_id"])
+    }
   end
 
   # A task Claude started without telling this runtime (between turns, or before it
-  # was upgraded to record them) is recorded on its first progress.
+  # was upgraded to record them) is recorded on its first progress. Progress for a
+  # task that already ended is late and does not reopen it.
   defp message(%{"type" => "system", "subtype" => "task_progress"} = task, state) do
+    if MapSet.member?(Map.get(state, :finished_tasks, MapSet.new()), task["task_id"]) do
+      state
+    else
+      task_progress(task, state)
+    end
+  end
+
+  defp task_progress(task, state) do
     state =
       if is_map_key(state.tasks, task["task_id"]), do: state, else: task_started(state, task)
 
@@ -1276,16 +1344,106 @@ defmodule HalC2.Claude.ThreadRuntime do
     |> Map.put(:blocks, %{})
   end
 
-  defp message(%{"type" => "user", "message" => %{"content" => content}}, state)
+  defp message(%{"type" => "user", "message" => %{"content" => content}} = message, state)
        when is_list(content) do
-    Enum.reduce(content, state, fn
-      %{"type" => "tool_result", "tool_use_id" => tool_id} = result, state ->
-        tool_result(state, tool_id, result)
+    state =
+      Enum.reduce(content, state, fn
+        %{"type" => "tool_result", "tool_use_id" => tool_id} = result, state ->
+          tool_result(state, tool_id, result)
 
-      _, state ->
-        state
-    end)
+        _, state ->
+          state
+      end)
+
+    web_results(state, content, message["tool_use_result"])
   end
+
+  # A web search's pages, from the structured `tool_use_result` Claude sends with
+  # the result (falling back to the `Links:` list in its text), go on the search
+  # step with their titles and addresses.
+  defp web_results(state, content, extra) do
+    block =
+      Enum.find(content, fn
+        %{"type" => "tool_result", "tool_use_id" => id} ->
+          match?(%{kind: :web}, state.items[id])
+
+        _ ->
+          false
+      end)
+
+    results = web_result_pages(extra) || web_result_pages(block && block["content"])
+
+    case {block, results} do
+      {%{"tool_use_id" => tool_id}, [_ | _]} ->
+        %{id: item_id} = state.items[tool_id]
+
+        commit(state, fn stream ->
+          [
+            Orchestration.upsert(
+              stream,
+              "turn-item",
+              item_id,
+              &Map.put(&1, "results", results)
+            )
+          ]
+        end)
+
+        state
+
+      _ ->
+        state
+    end
+  end
+
+  defp web_result_pages(%{"results" => results}) when is_list(results) do
+    pages =
+      Enum.flat_map(results, fn
+        %{"content" => content} when is_list(content) -> content
+        other -> [other]
+      end)
+      |> web_pages()
+
+    if pages == [], do: nil, else: pages
+  end
+
+  defp web_result_pages(content) when is_list(content) do
+    flat =
+      Enum.flat_map(content, fn
+        %{"content" => inner} when is_list(inner) -> inner
+        other -> [other]
+      end)
+
+    nonempty(web_pages(flat)) ||
+      Enum.find_value(flat, fn
+        %{"text" => text} -> web_result_pages(text)
+        text when is_binary(text) -> web_result_pages(text)
+        _ -> nil
+      end)
+  end
+
+  defp web_result_pages(text) when is_binary(text) do
+    case Regex.run(~r/Links: (\[.+\])/s, text) do
+      [_, json] ->
+        case JSON.decode(json) do
+          {:ok, pages} when is_list(pages) -> web_pages(pages) |> nonempty()
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp web_result_pages(_other), do: nil
+
+  defp web_pages(list) do
+    for %{"title" => title, "url" => url} <- list,
+        is_binary(title) and is_binary(url),
+        do: %{"title" => title, "url" => url}
+  end
+
+  defp nonempty([]), do: nil
+  defp nonempty(list), do: list
 
   # The part of a steered turn that the new message cut short; the turn goes on.
   # Claude compacted the conversation: the timeline says so, and the context meter
@@ -1733,7 +1891,7 @@ defmodule HalC2.Claude.ThreadRuntime do
         %{"id" => "step-#{index}", "text" => text, "status" => status}
       end
 
-    write_todo(state, "todos:#{state.turn.ids.run}", steps)
+    write_todo(state, "todos:#{block["id"] || state.turn.ids.run}", steps)
   end
 
   # Shown as their question card and plan instead.
@@ -1989,9 +2147,30 @@ defmodule HalC2.Claude.ThreadRuntime do
         {:web, %{"patterns" => Enum.filter([input["query"], input["url"]], &is_binary/1)}}
 
       true ->
-        {:tool, %{"toolName" => name, "input" => input}}
+        {:tool,
+         %{"toolName" => name, "input" => input}
+         |> then(fn fields ->
+           case viewed_image_path(name, input) do
+             nil -> fields
+             path -> Map.put(fields, "viewedImagePath", path)
+           end
+         end)}
     end
   end
+
+  @image_extensions ~w(.avif .gif .ico .jpeg .jpg .png .svg .webp)
+
+  # An image Claude reads in the workspace is previewed from its tool call, by path.
+  defp viewed_image_path(name, input) when name in ["Read", "Read file"] do
+    path = String.trim(input["file_path"] || input["path"] || "")
+    image? = String.downcase(Path.extname(path)) in @image_extensions
+
+    if path != "" and String.length(path) <= 4096 and
+         not String.contains?(path, ["\n", "\r"]) and image?,
+       do: path
+  end
+
+  defp viewed_image_path(_name, _input), do: nil
 
   # Where a tool's result goes on its item.
   defp result_field(:command), do: "output"
@@ -2128,6 +2307,9 @@ defmodule HalC2.Claude.ThreadRuntime do
   # whether it runs in the background. Other tasks (a workflow, say) show as subagents.
   # Ambient tasks, such as watchers, are not activity.
   defp task_started(state, %{"task_id" => task_id} = task) do
+    state =
+      Map.update(state, :finished_tasks, MapSet.new(), &MapSet.delete(&1, task_id))
+
     tool = task["tool_use_id"] || task_id
     background? = task["is_backgrounded"] == true
 

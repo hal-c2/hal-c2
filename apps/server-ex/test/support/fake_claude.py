@@ -105,6 +105,10 @@ for line in sys.stdin:
     trace({"in": msg})
     if msg.get("type") == "control_response":
         reply = msg["response"]["response"]
+        # A cancelled approval interrupts the turn (the reply's interrupt flag).
+        if reply.get("interrupt"):
+            send({"type": "result", "subtype": "error_during_execution", "is_error": True, "terminal_reason": "aborted_tools", "session_id": session})
+            continue
         if reply["behavior"] in ("completed", "cancelled"):
             send({"type": "assistant", "session_id": session, "message": {"id": "m-dialog", "role": "assistant", "content": [{"type": "text", "text": "resume " + reply.get("result", "cancelled")}]}})
             send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
@@ -331,10 +335,34 @@ for line in sys.stdin:
     if "plan" in text:
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "ExitPlanMode", "input": {"plan": "# Plan\n- do it"}}})
         continue
+    if "todo three" in text:
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}t", "role": "assistant", "content": [{"type": "tool_use", "id": f"todo-{turn}", "name": "TodoWrite", "input": {"todos": [
+            {"content": "Read the code", "status": "completed", "activeForm": "Reading"}, {"content": "Fix it", "status": "in_progress", "activeForm": "Fixing"}, {"content": "Ship it", "status": "pending", "activeForm": "Shipping"}]}}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    if "todo done" in text:
+        send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}t", "role": "assistant", "content": [{"type": "tool_use", "id": f"todo-{turn}", "name": "TodoWrite", "input": {"todos": [
+            {"content": "Read the code", "status": "completed", "activeForm": "Reading"}, {"content": "Fix it", "status": "completed", "activeForm": "Fixing"}]}}]}})
+        send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
     if "todo" in text:
         send({"type": "assistant", "session_id": session, "message": {"id": f"m{turn}t", "role": "assistant", "content": [{"type": "tool_use", "id": f"todo-{turn}", "name": "TodoWrite", "input": {"todos": [
             {"content": "Read the code", "status": "completed", "activeForm": "Reading"}, {"content": "Fix it", "status": "in_progress", "activeForm": "Fixing"}]}}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
+        continue
+    # "ask two": two questions, the second without a heading of its own.
+    if text.startswith("ask two"):
+        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
+            {"question": "Which color?", "header": "Color", "multiSelect": False,
+             "options": [{"label": "Red", "description": "Warm"}, {"label": "Blue", "description": ""}]},
+            {"question": "How big?", "multiSelect": False,
+             "options": [{"label": "Small", "description": ""}, {"label": "Large", "description": ""}]}]}}})
+        continue
+    # "ask multi": one question that takes several answers.
+    if text.startswith("ask multi"):
+        send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [
+            {"question": "What should we add?", "header": "Scope", "multiSelect": True,
+             "options": [{"label": "Unit tests", "description": ""}, {"label": "Docs", "description": ""}, {"label": "Benchmarks", "description": ""}]}]}}})
         continue
     if "ask" in text:
         send({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [

@@ -107,7 +107,7 @@ defmodule HalC2.Claude.Protocol do
 
   @spec permission_reply(
           String.t(),
-          :allow | {:allow, map} | {:allow_session, [map]} | {:deny, String.t()},
+          :allow | {:allow, map} | {:allow_session, [map]} | {:deny, String.t()} | :cancel,
           map
         ) :: iodata
   def permission_reply(request_id, decision, original_input) do
@@ -129,6 +129,14 @@ defmodule HalC2.Claude.Protocol do
 
         {:deny, message} ->
           %{"behavior" => "deny", "message" => message}
+
+        # The user cancelled the approval: Claude is told so and stops the turn.
+        :cancel ->
+          %{
+            "behavior" => "deny",
+            "message" => "User cancelled tool execution.",
+            "interrupt" => true
+          }
       end
 
     control_success(request_id, body)

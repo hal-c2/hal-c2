@@ -208,40 +208,48 @@ defmodule HalC2.Orchestration.TurnWriter do
       else
         item_ids = Map.put(ids, :node, node_id)
 
-        [
-          Orchestration.create(
-            "node",
-            node_id,
-            Entities.node(ids, node_id, "todo_list", "completed", at, %{
-              "nativeItemRef" => Entities.provider_ref(native, driver)
-            })
-          ),
-          Orchestration.create(
-            "plan",
-            plan_id,
-            plan(
-              ids,
-              plan_id,
+        # A newer list replaces the thread's unfinished one; a completed list
+        # stays completed.
+        superseded =
+          for {id, plan} <- stream.entities["plan"] || %{},
+              plan["kind"] == "todo_list" and plan["status"] == "active",
+              do: Orchestration.upsert(stream, "plan", id, &Map.put(&1, "status", "superseded"))
+
+        superseded ++
+          [
+            Orchestration.create(
+              "node",
               node_id,
-              "todo_list",
-              if(done, do: "completed", else: "active"),
-              fields
-            )
-          ),
-          Orchestration.create(
-            "turn-item",
-            item_id,
-            Entities.turn_item(
-              item_ids,
+              Entities.node(ids, node_id, "todo_list", "completed", at, %{
+                "nativeItemRef" => Entities.provider_ref(native, driver)
+              })
+            ),
+            Orchestration.create(
+              "plan",
+              plan_id,
+              plan(
+                ids,
+                plan_id,
+                node_id,
+                "todo_list",
+                if(done, do: "completed", else: "active"),
+                fields
+              )
+            ),
+            Orchestration.create(
+              "turn-item",
               item_id,
-              "todo_list",
-              Orchestration.next_ordinal(stream),
-              item_status,
-              at,
-              Map.put(fields, "planId", plan_id)
+              Entities.turn_item(
+                item_ids,
+                item_id,
+                "todo_list",
+                Orchestration.next_ordinal(stream),
+                item_status,
+                at,
+                Map.put(fields, "planId", plan_id)
+              )
             )
-          )
-        ]
+          ]
       end
     end)
 

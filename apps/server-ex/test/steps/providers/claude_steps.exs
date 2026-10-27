@@ -2404,6 +2404,719 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
+  # --- approvals ------------------------------------------------------------------------
+
+  # A permission request as the CLI sends it, straight to the runtime.
+  defp claude_asks(context, id, tool, input) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    send(pid, {:claude, :sys.get_state(pid).session, {:permission, id, tool, input, %{}}})
+    context
+  end
+
+  defp flush_runtime(context) do
+    [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
+    :sys.get_state(pid)
+    context
+  end
+
+  defp tool_input(tool) do
+    cond do
+      tool == "Bash" -> %{"command" => "npm test"}
+      tool in ["Glob", "Grep"] -> %{"pattern" => "lib/**/*.ex"}
+      tool == "LS" -> %{"path" => "lib"}
+      true -> %{"file_path" => "lib/shop.ex"}
+    end
+  end
+
+  step ~r/^Claude asks to use (?<tools>.+)$/, %{args: [tools]} = context do
+    %{instance: instance, fields: fields} = context.pending_launch
+
+    context =
+      context
+      |> Map.delete(:pending_launch)
+      |> World.launch_on(@thread, instance, "wait for me", fields)
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "claude", &(get_in(&1, ["in", "type"]) == "user"))
+
+    tools =
+      if tools == "a tool HAL-C2 does not know",
+        do: ["Frobnicate"],
+        else: tools |> String.split(~r/, | or /)
+
+    context =
+      tools
+      |> Enum.with_index(1)
+      |> Enum.reduce(context, fn {tool, i}, context ->
+        claude_asks(context, "perm-kind-#{i}", tool, tool_input(tool))
+      end)
+
+    World.await_value(context, @thread, fn state ->
+      length(StreamState.list(state, "runtime-request")) == length(tools)
+    end)
+
+    context
+  end
+
+  step ~r/^the user is asked for permission to (?<permission>.+)$/,
+       %{args: [permission]} = context do
+    kind =
+      %{
+        "run a command" => "command",
+        "change files" => "file-change",
+        "read files" => "file-read"
+      }[
+        permission
+      ]
+
+    requests = StreamState.list(World.stream(context, @thread), "runtime-request")
+    assert requests != []
+    assert Enum.all?(requests, &(&1["kind"] == kind)), inspect(requests)
+    context
+  end
+
+  step "Claude asks to run the command {string}", %{args: [command]} = context do
+    %{instance: instance, fields: fields} = context.pending_launch
+
+    context =
+      context
+      |> Map.delete(:pending_launch)
+      |> World.launch_on(@thread, instance, "wait for me", fields)
+
+    World.await_running(context, @thread)
+    World.await_provider_log(context, "claude", &(get_in(&1, ["in", "type"]) == "user"))
+    claude_asks(context, "perm-name-1", "Bash", %{"command" => command})
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  defp approval_prompt(context, native) do
+    World.stream(context, @thread)
+    |> StreamState.list("turn-item")
+    |> Enum.find(&(&1["id"] == "turn-item:approval:#{native}"))
+    |> Kernel.||(%{})
+    |> Map.get("prompt")
+  end
+
+  step "the approval reads {string}", %{args: [text]} = context do
+    World.await_value(context, @thread, fn _state ->
+      approval_prompt(context, "perm-name-1") == text
+    end)
+
+    context
+  end
+
+  step "a longer summary is cut at 400 characters", context do
+    long = String.duplicate("x", 500)
+    claude_asks(context, "perm-name-2", "Bash", %{"command" => long})
+
+    World.await_value(context, @thread, fn _state ->
+      approval_prompt(context, "perm-name-2") == "Bash: " <> String.duplicate("x", 400)
+    end)
+
+    context
+  end
+
+  # The waiting approval is the PermissionModes steps' Given, on their "Work" thread.
+  @work_thread "Work"
+
+  step "the user cancels the approval", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @work_thread),
+        "requestId" => context.request["id"],
+        "decision" => "cancel"
+      })
+
+    context
+  end
+
+  step "Claude is told the user cancelled the tool", context do
+    World.await_provider_log(context, "claude", fn entry ->
+      get_in(entry, ["in", "response", "response", "message"]) ==
+        "User cancelled tool execution." and
+        get_in(entry, ["in", "response", "response", "interrupt"]) == true
+    end)
+
+    context
+  end
+
+  step "the turn is interrupted instead of carrying on without the tool", context do
+    World.await_runs(context, @work_thread, ["interrupted"])
+    refute "denied" in World.replies(context, @work_thread)
+    context
+  end
+
+  # --- web search and read images -----------------------------------------------------------
+
+  step "Claude searches the web for {string}", %{args: [query]} = context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-web",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "web-1",
+            "name" => "WebSearch",
+            "input" => %{"query" => query}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "web-1",
+            "content" => "done",
+            "is_error" => false
+          }
+        ]
+      },
+      "tool_use_result" => %{
+        "query" => query,
+        "durationSeconds" => 1.5,
+        "results" => [
+          %{
+            "tool_use_id" => "srv-1",
+            "content" => [
+              %{"title" => "Tax rates explained", "url" => "https://example.com/tax"},
+              %{"title" => "Rates for 2026", "url" => "https://example.com/2026"}
+            ]
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the search step shows the query", context do
+    item =
+      World.stream(context, @thread)
+      |> StreamState.list("turn-item")
+      |> Enum.find(&(&1["type"] == "web_search"))
+
+    assert item["patterns"] == ["tax rates 2026"]
+    Map.put(context, :web_item, item)
+  end
+
+  step "it lists the titles and addresses of the pages found", context do
+    assert context.web_item["results"] == [
+             %{"title" => "Tax rates explained", "url" => "https://example.com/tax"},
+             %{"title" => "Rates for 2026", "url" => "https://example.com/2026"}
+           ]
+
+    context
+  end
+
+  step "Claude reads the image {string} in the workspace", %{args: [path]} = context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-read",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "read-1",
+            "name" => "Read",
+            "input" => %{"file_path" => path}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "read-1",
+            "content" => "image",
+            "is_error" => false
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the tool call carries the image's path so the client can show it", context do
+    item =
+      World.stream(context, @thread)
+      |> StreamState.list("turn-item")
+      |> Enum.find(&(&1["toolName"] == "Read"))
+
+    assert item["viewedImagePath"] == "docs/mock.png"
+    context
+  end
+
+  # --- questions ------------------------------------------------------------------------------
+
+  defp questions(context) do
+    World.stream(context, @thread)
+    |> StreamState.list("turn-item")
+    |> Enum.find_value(& &1["questions"])
+  end
+
+  step "Claude asks two questions and the second has no heading", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "ask two")
+
+    Map.put(context, :request, World.await_request(context, @thread))
+  end
+
+  step "the second question is headed {string}", %{args: [header]} = context do
+    assert [%{"header" => "Color"}, %{"header" => ^header}] = questions(context)
+    context
+  end
+
+  step "Claude asked a question that allows several answers", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "ask multi")
+
+    context = Map.put(context, :request, World.await_request(context, @thread))
+    assert [%{"multiSelect" => true} = question] = questions(context)
+    Map.put(context, :question, question)
+  end
+
+  step "the user picks {string} and {string}", %{args: [first, second]} = context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "runtime-request.respond",
+        "threadId" => World.thread_id(context, @thread),
+        "requestId" => context.request["id"],
+        "answers" => %{context.question["id"] => [first, second]}
+      })
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "Claude receives {string} as the answer", %{args: [answer]} = context do
+    assert ~s(answered {"What should we add?": "#{answer}"}) in World.replies(context, @thread)
+    context
+  end
+
+  # --- task lists -------------------------------------------------------------------------------
+
+  defp todo_plans(context) do
+    World.stream(context, @thread)
+    |> StreamState.list("plan")
+    |> Enum.filter(&(&1["kind"] == "todo_list"))
+    |> Enum.sort_by(& &1["id"])
+  end
+
+  step "Claude writes a task list with a finished step, a step in progress and a step not started",
+       context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "todo three")
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the task list shows the three steps as completed, running and pending", context do
+    assert [%{"status" => "active", "steps" => steps}] = todo_plans(context)
+    assert Enum.map(steps, & &1["status"]) == ["completed", "running", "pending"]
+    context
+  end
+
+  step "the list is completed once every step is completed", context do
+    context = World.post_message(context, @thread, "todo done")
+    World.await_runs(context, @thread, ["completed", "completed"])
+
+    assert Enum.any?(
+             todo_plans(context),
+             &(&1["status"] == "completed" and
+                 Enum.all?(&1["steps"], fn step -> step["status"] == "completed" end))
+           )
+
+    context
+  end
+
+  step "Claude's task list still has unfinished steps", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "todo done")
+
+    World.await_runs(context, @thread, ["completed"])
+    context = World.post_message(context, @thread, "todo")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    assert Enum.any?(todo_plans(context), &(&1["status"] == "active"))
+    context
+  end
+
+  step "Claude writes a new task list", context do
+    context = World.post_message(context, @thread, "todo three")
+    World.await_runs(context, @thread, ["completed", "completed", "completed"])
+    context
+  end
+
+  step "the earlier list is marked superseded", context do
+    assert Enum.any?(todo_plans(context), &(&1["status"] == "superseded"))
+    context
+  end
+
+  step "a list that had already completed stays completed", context do
+    assert Enum.any?(todo_plans(context), &(&1["status"] == "completed"))
+    context
+  end
+
+  # --- background commands and subagents ----------------------------------------------------------
+
+  step "Claude runs a long command as a background task", context do
+    context = running_turn(context)
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-bash",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "bash-9",
+            "name" => "Bash",
+            "input" => %{"command" => "npm run build", "run_in_background" => true}
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_started",
+      "task_id" => "task-bash-9",
+      "tool_use_id" => "bash-9",
+      "task_type" => "local_bash",
+      "is_backgrounded" => true,
+      "description" => "Build"
+    })
+
+    claude_says(context, %{
+      "type" => "user",
+      "message" => %{
+        "role" => "user",
+        "content" => [
+          %{
+            "type" => "tool_result",
+            "tool_use_id" => "bash-9",
+            "content" => "Command running in background with ID: task-bash-9",
+            "is_error" => false
+          }
+        ]
+      }
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed"])
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-bash-9",
+      "tool_use_id" => "bash-9",
+      "status" => "completed",
+      "summary" => "Build finished"
+    })
+
+    context
+  end
+
+  step "the thread shows the command and its output", context do
+    World.await_value(context, @thread, fn state ->
+      Enum.any?(
+        StreamState.list(state, "turn-item"),
+        &(&1["type"] == "command_execution" and &1["input"] == "npm run build" and
+            &1["status"] == "completed" and &1["output"] == "Build finished")
+      )
+    end)
+
+    context
+  end
+
+  step "no child thread or subagent is created for it", context do
+    assert StreamState.list(World.stream(context, @thread), "subagent") == []
+    context
+  end
+
+  defp subagent_notification(context, status, summary) do
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "agent-1",
+      "status" => status,
+      "summary" => summary
+    })
+
+    context
+  end
+
+  step ~r/^Claude reports the subagent (?<reported>.+)$/, %{args: [reported]} = context do
+    case reported do
+      "completed with a result" -> subagent_notification(context, "completed", "3 files")
+      "stopped" -> subagent_notification(context, "stopped", "")
+      "ended any other way" -> subagent_notification(context, "killed", "")
+    end
+  end
+
+  step ~r/^the subagent is (?<status>completed|cancelled|failed)$/,
+       %{args: [status]} = context do
+    World.await_value(context, @thread, fn state ->
+      match?([%{"status" => ^status}], StreamState.list(state, "subagent"))
+    end)
+
+    context
+  end
+
+  step "Claude launches a subagent in the background and the launch returns at once",
+       context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    context
+  end
+
+  step "the subagent stays running until Claude reports it finished", context do
+    assert [%{"status" => "running"}] =
+             StreamState.list(World.stream(context, @thread), "subagent")
+
+    subagent_notification(context, "completed", "3 files")
+
+    World.await_value(context, @thread, fn state ->
+      match?([%{"status" => "completed"}], StreamState.list(state, "subagent"))
+    end)
+
+    context
+  end
+
+  step "a Claude subagent completed with {string}", %{args: [result]} = context do
+    context =
+      context
+      |> World.fake_providers()
+      |> World.launch_on(@thread, "claudeAgent", "survey in the background")
+
+    World.await_runs(context, @thread, ["completed"])
+    subagent_notification(context, "completed", result)
+
+    World.await_value(context, @thread, fn state ->
+      match?(
+        [%{"status" => "completed", "result" => ^result}],
+        StreamState.list(state, "subagent")
+      )
+    end)
+
+    context
+  end
+
+  step "Claude sends that subagent another message", context do
+    context = World.post_message(context, @thread, "wait and resume it")
+    World.await_running(context, @thread)
+
+    World.await_provider_log(
+      context,
+      "claude",
+      &(get_in(&1, ["in", "message", "content"]) == "wait and resume it")
+    )
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-send",
+        "content" => [
+          %{
+            "type" => "tool_use",
+            "id" => "send-1",
+            "name" => "SendMessage",
+            "input" => %{"to" => "task-agent-1", "message" => "Also check the tests"}
+          }
+        ]
+      }
+    })
+
+    context
+  end
+
+  step "the subagent is running again without its earlier result", context do
+    state =
+      World.await_value(context, @thread, fn state ->
+        case StreamState.list(state, "subagent") do
+          [%{"status" => "running"} = sub] -> sub
+          _ -> false
+        end
+      end)
+
+    assert state["result"] in [nil, ""]
+
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_notification",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "send-1",
+      "status" => "completed",
+      "summary" => "The tests pass"
+    })
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "a progress report for it arrives afterwards", context do
+    claude_says(context, %{
+      "type" => "system",
+      "subtype" => "task_progress",
+      "task_id" => "task-agent-1",
+      "tool_use_id" => "agent-1",
+      "summary" => "Still going"
+    })
+
+    flush_runtime(context)
+  end
+
+  step "the subagent stays completed with {string}", %{args: [result]} = context do
+    assert [%{"status" => "completed", "result" => ^result}] =
+             StreamState.list(World.stream(context, @thread), "subagent")
+
+    context
+  end
+
+  # --- wakes --------------------------------------------------------------------------------------
+
+  defp user_messages(context) do
+    for %{"in" => %{"type" => "user"}} = entry <- World.provider_log(context, "claude"),
+        do: entry
+  end
+
+  step "Claude answered a finished background task by itself after a turn ended", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+
+    claude_says(context, %{
+      "type" => "assistant",
+      "message" => %{
+        "id" => "m-wake",
+        "content" => [%{"type" => "text", "text" => "The build passed"}]
+      }
+    })
+
+    context
+  end
+
+  step "the thread runs a turn for that work", context do
+    World.await_value(context, @thread, fn state ->
+      match?([_, %{"status" => "running"}], World.runs(context, @thread))
+    end)
+
+    claude_says(context, %{"type" => "result", "subtype" => "success", "is_error" => false})
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "the run shows what Claude already wrote", context do
+    assert "The build passed" in World.replies(context, @thread)
+    context
+  end
+
+  step "Claude is sent no new message for it", context do
+    assert length(user_messages(context)) == 1
+    context
+  end
+
+  step "the thread is asked to run a turn for work Claude did by itself", context do
+    context =
+      context |> World.fake_providers() |> World.launch_on(@thread, "claudeAgent", "hello")
+
+    World.await_runs(context, @thread, ["completed"])
+    [run] = World.runs(context, @thread)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "command:claude-wake:#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, @thread),
+        "messageId" => "message:wake-#{System.unique_integer([:positive])}",
+        "text" => "Background task completed.",
+        "attachments" => [],
+        "modelSelection" => run["modelSelection"],
+        "dispatchMode" => %{"type" => "queue_after_active"},
+        "createdBy" => "agent",
+        "creationSource" => "provider",
+        "providerWake" => true,
+        "notification" => %{
+          "source" => %{"kind" => "background_task"},
+          "outcome" => "updated",
+          "summary" => "Background activity updated"
+        }
+      })
+
+    context
+  end
+
+  step "Claude wrote nothing for it", context do
+    context
+  end
+
+  step "the run completes without asking Claude anything", context do
+    World.await_runs(context, @thread, ["completed", "completed"], 10_000)
+    assert length(user_messages(context)) == 1
+    context
+  end
+
+  # --- reverting to before the first turn ------------------------------------------------------------
+
+  step "the user reverts to before the first turn and sends a message", context do
+    context = World.rollback(context, @thread, 0, %{"restoreFiles" => false})
+    assert {:ok, _} = context.reply
+    World.post_message(context, @thread, "where are we")
+  end
+
+  step "Claude starts a new session that remembers none of the turns", context do
+    World.await_value(context, @thread, fn state ->
+      state
+      |> StreamState.list("run")
+      |> Enum.map(& &1["status"])
+      |> Kernel.==(["rolled_back", "rolled_back", "rolled_back", "completed"])
+    end)
+
+    argv =
+      World.provider_log(context, "claude")
+      |> Enum.flat_map(fn
+        %{"argv" => argv} -> [argv]
+        _ -> []
+      end)
+      |> List.last()
+
+    refute "--resume" in argv
+    assert "resumed at None fork False history False" in World.replies(context, @thread)
+    context
+  end
+
   defp claude_says(context, message) do
     [{pid, _}] = Registry.lookup(HalC2.Claude.Registry, World.thread_id(context, @thread))
     send(pid, {:claude, :sys.get_state(pid).session, {:message, message}})
