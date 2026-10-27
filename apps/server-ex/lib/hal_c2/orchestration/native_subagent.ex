@@ -329,29 +329,38 @@ defmodule HalC2.Orchestration.NativeSubagent do
       |> then(&if(status in @terminal, do: Map.put(&1, "completedAt", at), else: &1))
 
     HalC2.Streams.transact(sub.child, :thread, fn state ->
+      # An item can become a message after it was created as something else (a block
+      # Claude reported under another's id), so the message is created when missing.
+      message =
+        cond do
+          message_id == nil ->
+            nil
+
+          StreamState.get(state, "message")[message_id] ->
+            Orchestration.upsert(
+              state,
+              "message",
+              message_id,
+              &Map.merge(&1, %{"text" => fields["text"], "updatedAt" => at})
+            )
+
+          true ->
+            Orchestration.create(
+              "message",
+              message_id,
+              Entities.message(ids, message_id, "assistant", fields["text"] || "", false, at, %{
+                "createdBy" => "agent",
+                "creationSource" => "provider"
+              })
+            )
+        end
+
       changes =
         if StreamState.get(state, "turn-item")[item_id] do
-          [
-            Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)),
-            message_id &&
-              Orchestration.upsert(
-                state,
-                "message",
-                message_id,
-                &Map.merge(&1, %{"text" => fields["text"], "updatedAt" => at})
-              )
-          ]
+          [Orchestration.upsert(state, "turn-item", item_id, &Map.merge(&1, put)), message]
         else
           [
-            message_id &&
-              Orchestration.create(
-                "message",
-                message_id,
-                Entities.message(ids, message_id, "assistant", fields["text"] || "", false, at, %{
-                  "createdBy" => "agent",
-                  "creationSource" => "provider"
-                })
-              ),
+            message,
             Orchestration.create(
               "turn-item",
               item_id,
