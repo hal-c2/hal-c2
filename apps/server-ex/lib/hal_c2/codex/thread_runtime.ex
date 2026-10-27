@@ -850,7 +850,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     if HalC2.Mcp.prepared?(state.thread_id, Entities.instance(turn.ids)) do
       {:ok, state}
     else
-      ensure_native_thread(%{state | native_thread_id: nil, step: 0}, turn)
+      ensure_native_thread(%{state | native_thread_id: nil}, turn)
     end
   end
 
