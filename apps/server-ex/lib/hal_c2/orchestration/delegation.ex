@@ -1006,7 +1006,7 @@ defmodule HalC2.Orchestration.Delegation do
               {[], nil}
             else
               case queued_wake(fresh, hd(still)["runId"]) do
-                {_run, message} = queued ->
+                {_run, message} ->
                   ids =
                     ((get_in(message, ["delegatedCompletion", "taskIds"]) || []) ++
                        Enum.map(still, & &1["id"]))
