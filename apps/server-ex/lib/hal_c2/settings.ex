@@ -385,6 +385,27 @@ defmodule HalC2.Settings do
     Shared.local(records, values, units, Shared.stamp(records, at), state.id)
   end
 
+  # A rules file that cannot be written fails the edit, not the table every service reads.
+  defp edit_keybindings_file(fun) do
+    rules = fun.(HalC2.Keybindings.rules())
+    HalC2.Keybindings.write(rules)
+    {:ok, rules}
+  rescue
+    exception -> {:error, Exception.message(exception)}
+  catch
+    kind, reason -> {:error, Exception.format_banner(kind, reason)}
+  end
+
+  # An edit already made stands when its record cannot be saved: the next edit, a
+  # member's merge or a start finds the file unlike its record and stamps it then.
+  defp stamp_keybindings(state) do
+    put_shared(state, local_keybindings(state.shared, state))
+  rescue
+    exception ->
+      Logger.error("keybindings record not saved: #{Exception.message(exception)}")
+      state
+  end
+
   defp local_keybindings(records, state),
     do: local_shared(records, keybindings(HalC2.Keybindings.rules()), ["keybindings"], state)
 
@@ -456,18 +477,15 @@ defmodule HalC2.Settings do
   def handle_call({:put, _settings, _version}, _from, state),
     do: {:reply, {:error, :stale}, state}
 
-  # A rules file that cannot be written fails the edit, not the table every service reads.
   def handle_call({:edit_keybindings, fun}, _from, state) do
-    rules = fun.(HalC2.Keybindings.rules())
-    HalC2.Keybindings.write(rules)
-    HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
+    case edit_keybindings_file(fun) do
+      {:ok, rules} ->
+        HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
+        {:reply, {:ok, %{"rules" => rules}}, stamp_keybindings(state)}
 
-    {:reply, {:ok, %{"rules" => rules}},
-     put_shared(state, local_keybindings(state.shared, state))}
-  rescue
-    exception -> {:reply, {:error, Exception.message(exception)}, state}
-  catch
-    kind, reason -> {:reply, {:error, Exception.format_banner(kind, reason)}, state}
+      error ->
+        {:reply, error, state}
+    end
   end
 
   def handle_call({:watch, pid, ref}, _from, state) do

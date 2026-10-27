@@ -55,6 +55,28 @@ defmodule HalC2.KeybindingsTest do
     assert_received {:hal_c2_keybindings, _, [^rule]}
   end
 
+  test "an edit whose record cannot be saved stands, and is stamped by the next one",
+       %{path: path} do
+    rule = %{"key" => "mod+j", "command" => "terminal.toggle"}
+    other = %{"key" => "mod+k", "command" => "commandPalette.toggle"}
+    server = Process.whereis(HalC2.Settings)
+    # The records are written to `settings-shared.json.tmp` first.
+    tmp = Path.join(HalC2.Paths.config_dir(), "settings-shared.json.tmp")
+    File.mkdir_p!(tmp)
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      assert {:ok, %{"rules" => [^rule]}} = HalC2.Keybindings.upsert(rule)
+    end)
+
+    assert JSON.decode!(File.read!(path)) == [rule]
+    assert Process.whereis(HalC2.Settings) == server
+    refute Map.has_key?(HalC2.Settings.shared_records(), "keybindings")
+
+    File.rmdir!(tmp)
+    {:ok, _} = HalC2.Keybindings.upsert(other)
+    assert %{"keybindings" => %{"value" => [^rule, ^other]}} = HalC2.Settings.shared_records()
+  end
+
   test "entries that are not rules are skipped", %{path: path} do
     File.write!(path, ~s([{"key": "mod+k", "command": "commandPalette.toggle"}, 3, {"key": 1}]))
 
