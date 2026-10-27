@@ -699,6 +699,6 @@ Feature: Antigravity
 
     # Statuses are the MC's (see the Claude Code outline); no range names a version yet.
     Examples:
-      | version | status    |
+      | version | status  |
       | 1.1.1   | unknown |
       | 1.2.0   | unknown |
