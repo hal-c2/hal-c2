@@ -37,6 +37,7 @@ Agents and bots that co-wrote those pull requests are not listed.
 - [oliver](https://github.com/flamboh)
 - [Otavio Salvador](https://github.com/otavio)
 - PB
+- [Patrik Votoček](https://github.com/Vrtak-CZ)
 - Primož Ajdišek
 - [Ryan Ilano](https://github.com/ryanilano)
 - [scratchyone](https://github.com/scratchyone)
@@ -45,6 +46,7 @@ Agents and bots that co-wrote those pull requests are not listed.
 - [Theo Browne](https://github.com/t3dotgg)
 - [Tristan Knight](https://github.com/tris203)
 - [ValeraZSD](https://github.com/ValeraZSD)
+- [Ved Pandey](https://github.com/vedprakash2302)
 - [Vitalii Yehorov](https://github.com/vitalyiegorov)
 - [Yash Singh](https://github.com/Yash-Singh1)
 - [Yordis Prieto](https://github.com/yordis)
