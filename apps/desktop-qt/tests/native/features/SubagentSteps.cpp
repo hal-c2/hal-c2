@@ -160,6 +160,13 @@ const Steps steps([] {
              at(world.state(QStringLiteral("lineage")), QStringLiteral("parent.subagent")).toBool();
     }, [&] { return QStringLiteral("the thread's parent; its lineage is %1").arg(show(world.state(QStringLiteral("lineage")))); });
     world.waitFor([&] { return view(world).shows(QStringLiteral("Subagent of Tax line")); }, QStringLiteral("the thread to say where it came from"));
+    // The bar's title and the way to the parent sit side by side, not on top of each other.
+    QQuickItem* title = drawn(world, QStringLiteral("lineageTitle"));
+    QQuickItem* parent = drawn(world, QStringLiteral("lineageParent"));
+    const qreal titleEnd = title->mapToScene(QPointF(title->width(), 0)).x();
+    const qreal parentStart = parent->mapToScene(QPointF(0, 0)).x();
+    expect(titleEnd <= parentStart, QStringLiteral("the lineage title \"%1\" ends at %2, past the start of \"%3\" at %4")
+                                        .arg(title->property("text").toString()).arg(titleEnd).arg(parent->property("text").toString()).arg(parentStart));
   });
   step(QStringLiteral("the user opens the parent thread"), [](World& world, const Captures&, const Table&) { click(world, QStringLiteral("lineageParent")); });
   step(QStringLiteral("the parent thread is shown"), [](World& world, const Captures&, const Table&) {

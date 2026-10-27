@@ -258,7 +258,19 @@ pub fn register(steps: &mut Steps) {
             let brick = view(world)?;
             world.wait_for("the thread to say where it came from", |w| {
                 brick.shows(w, "Subagent of Tax line").unwrap_or(false)
-            })
+            })?;
+            // The bar's title and the way to the parent sit side by side, not on top of each other.
+            let title = drawn(world, "lineageTitle")?;
+            let parent = drawn(world, "lineageParent")?;
+            let (title_end, _) = brick.at(world, title, 1.0, 0.0)?;
+            let (parent_start, _) = brick.at(world, parent, 0.0, 0.0)?;
+            expect!(
+                title_end <= parent_start,
+                "the lineage title \"{}\" ends at {title_end}, past the start of \"{}\" at {parent_start}",
+                brick.text_of(world, title, "text"),
+                brick.text_of(world, parent, "text")
+            );
+            Ok(())
         },
     );
     steps.step("the user opens the parent thread", |world, _, _| {
