@@ -758,7 +758,7 @@ Rectangle {
 
                         Text {
                             text: entry.kind === "header" ? entry.modelData.label : ""
-                            color: entry.kind === "header" && entry.modelData.key === "snoozed" ? Theme.palette.color("info", "#60a5fa") : Qt.alpha(sidebar.muted, headerHover.hovered ? 0.8 : 0.5)
+                            color: entry.kind === "header" && entry.modelData.key === "snoozed" ? Theme.palette.color("info", "#60a5fa") : headerHover.hovered ? sidebar.foreground : sidebar.muted
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             font.weight: Font.Medium
                         }
@@ -779,7 +779,7 @@ Rectangle {
                             objectName: "headerCount"
                             visible: entry.kind === "header" && !entry.modelData.open
                             text: entry.kind === "header" ? entry.modelData.count : ""
-                            color: Qt.alpha(sidebar.muted, 0.5)
+                            color: sidebar.muted
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                         }
 
@@ -947,7 +947,7 @@ Rectangle {
                 y: 24
                 visible: list.count === 0
                 text: sidebar.model === null ? qsTr("Waiting for the app…") : sidebar.projects.length === 0 ? qsTr("No projects yet") : qsTr("No threads yet")
-                color: Qt.alpha(sidebar.muted, 0.6)
+                color: sidebar.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
         }

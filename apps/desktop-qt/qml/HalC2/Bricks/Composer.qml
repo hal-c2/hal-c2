@@ -40,7 +40,7 @@ Rectangle {
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color secondary: Theme.palette.color("secondaryLabel", "#a1a1aa")
     readonly property color iconMuted: Theme.palette.color("iconMuted", "#8b8b93")
-    readonly property color branchColor: Theme.palette.color("branchForeground", Qt.alpha(muted, 0.7))
+    readonly property color branchColor: Theme.palette.color("branchForeground", muted)
     readonly property var effortOption: ready ? (model.options.find(option => option.type === "select") ?? null) : null
     // The model's other options, such as Claude's fast mode and context window.
     // By id: every read of model.options converts to fresh objects, so identity never matches.
@@ -1687,7 +1687,7 @@ Rectangle {
                                         Text {
                                             visible: branchRow.badge.length > 0
                                             text: branchRow.badge
-                                            color: Qt.alpha(composer.muted, 0.45)
+                                            color: composer.muted
                                             font.pixelSize: Math.round(10 * Theme.fontScale)
                                         }
                                     }
