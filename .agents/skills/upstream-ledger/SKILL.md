@@ -71,6 +71,11 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
 - **Credit by name, not by trailer.** The digest's `By:` line is who wrote the pull request
   upstream. Name them in the PR description; never add them as `Co-authored-by` on a HAL-C2
   commit, which would say they wrote the scenarios.
+- **Thank each person once.** The digest's `New to CREDITS.md:` line is who the ledger has
+  not carried before. Add each to `CREDITS.md` in name order, `- [Name](https://github.com/<login>)`,
+  or `- Name` when no account was found, in the same commit. The PR description thanks
+  them with an `@login` mention; that is their one notification. Everyone else is named
+  without `@`, so nobody is pinged twice.
 - **No review register.** Nothing under `docs/`. The PR description is the record.
 
 ## Finish
@@ -82,4 +87,5 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
 3. Commit as `test(features): ledger upstream T3 Code through <short sha>`. When asked for a
    PR, its description is one table row per digest entry: pull request or commit and title,
    its upstream authors from the `By:` line, disposition, and the scenario or reason in a
-   few words.
+   few words. Below the table, a line thanking the newcomers by `@login` for the work
+   HAL-C2 now carries.
