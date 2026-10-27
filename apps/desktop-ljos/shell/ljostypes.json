@@ -1,0 +1,5485 @@
+{
+  "format": 2,
+  "modules": [
+    {
+      "uri": "HalC2.Shell",
+      "versions": [
+        "1.0"
+      ],
+      "types": [
+        {
+          "name": "Shell",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "protocolVersion",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "state",
+              "type": "QtObject",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "localFolderImportEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            }
+          ],
+          "signals": [
+            {
+              "name": "stateEntryChanged",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                },
+                {
+                  "name": "value",
+                  "type": "var"
+                }
+              ]
+            },
+            {
+              "name": "actionRequested",
+              "parameters": [
+                {
+                  "name": "action",
+                  "type": "string"
+                },
+                {
+                  "name": "payload",
+                  "type": "var"
+                }
+              ]
+            },
+            {
+              "name": "windowCommandRequested",
+              "parameters": [
+                {
+                  "name": "command",
+                  "type": "string"
+                }
+              ]
+            }
+          ],
+          "methods": [
+            {
+              "name": "dispatch",
+              "parameters": [
+                {
+                  "name": "action",
+                  "type": "string"
+                },
+                {
+                  "name": "payload",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "publish",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                },
+                {
+                  "name": "value",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "declareKey",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "windowCommand",
+              "parameters": [
+                {
+                  "name": "command",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "openExternal",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "clipboardText",
+              "parameters": [],
+              "returnType": "string"
+            },
+            {
+              "name": "setClipboardText",
+              "parameters": [
+                {
+                  "name": "text",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "pasteAttaches",
+              "parameters": [
+                {
+                  "name": "text",
+                  "type": "string"
+                },
+                {
+                  "name": "promptLength",
+                  "type": "int"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "directoryPaths",
+              "parameters": [
+                {
+                  "name": "urls",
+                  "type": "var"
+                }
+              ],
+              "returnType": "list"
+            },
+            {
+              "name": "localDirectoryPath",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "var"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "readImageFiles",
+              "parameters": [
+                {
+                  "name": "urls",
+                  "type": "var"
+                }
+              ],
+              "returnType": "list"
+            },
+            {
+              "name": "readAttachmentFiles",
+              "parameters": [
+                {
+                  "name": "urls",
+                  "type": "var"
+                }
+              ],
+              "returnType": "list"
+            },
+            {
+              "name": "clipboardFiles",
+              "parameters": [],
+              "returnType": "list"
+            }
+          ]
+        },
+        {
+          "name": "Theme",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "loaded",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "loadedChanged"
+            },
+            {
+              "name": "baseLoaded",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "baseLoadedChanged"
+            },
+            {
+              "name": "path",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "id",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "idChanged"
+            },
+            {
+              "name": "name",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "nameChanged"
+            },
+            {
+              "name": "appearance",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "appearanceChanged"
+            },
+            {
+              "name": "followsSystemAppearance",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "followsSystemAppearanceChanged"
+            },
+            {
+              "name": "lastError",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "lastErrorChanged"
+            },
+            {
+              "name": "palette",
+              "type": "QtObject",
+              "kind": "object",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "paletteChanged"
+            },
+            {
+              "name": "link",
+              "type": "color",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "linkChanged"
+            },
+            {
+              "name": "radius",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "radiusChanged"
+            },
+            {
+              "name": "fontUi",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fontUiChanged"
+            },
+            {
+              "name": "fontMono",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fontMonoChanged"
+            },
+            {
+              "name": "fontPrompt",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fontPromptChanged"
+            },
+            {
+              "name": "fontTerminal",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fontTerminalChanged"
+            },
+            {
+              "name": "fontScale",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fontScaleChanged"
+            },
+            {
+              "name": "fontSizePrompt",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fontSizePromptChanged"
+            },
+            {
+              "name": "fontSizeCode",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fontSizeCodeChanged"
+            },
+            {
+              "name": "fontSizeTerminal",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fontSizeTerminalChanged"
+            },
+            {
+              "name": "windowOpacity",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "windowOpacityChanged"
+            },
+            {
+              "name": "windowTransparent",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "windowTransparentChanged"
+            },
+            {
+              "name": "windowBlur",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "windowBlurChanged"
+            },
+            {
+              "name": "windowLiquidGlass",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "windowLiquidGlassChanged"
+            },
+            {
+              "name": "frameless",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "framelessChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "color",
+              "parameters": [
+                {
+                  "name": "role",
+                  "type": "string"
+                },
+                {
+                  "name": "fallback",
+                  "type": "var"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "reload",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "Runtime",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "configDir",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "userShellPath",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "usingUserShell",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "usingUserShellChanged"
+            },
+            {
+              "name": "lastError",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "lastErrorChanged"
+            },
+            {
+              "name": "generation",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "generationChanged"
+            },
+            {
+              "name": "hotReloadEnabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "hotReloadEnabledChanged"
+            },
+            {
+              "name": "appVersion",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "reload",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "LocalFolderModel",
+          "since": "1.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "enabled",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "enabledChanged"
+            },
+            {
+              "name": "rootPath",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "rootPathChanged"
+            },
+            {
+              "name": "rootIndex",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "rootIndexChanged"
+            },
+            {
+              "name": "protectedPaths",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "protectedPathsChanged"
+            },
+            {
+              "name": "error",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "errorChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "rootChanged",
+              "parameters": []
+            }
+          ],
+          "methods": [
+            {
+              "name": "pathForIndex",
+              "parameters": [
+                {
+                  "name": "index",
+                  "type": "var"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "isDirectory",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "canModifyFolder",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "holdsProject",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "createFolder",
+              "parameters": [
+                {
+                  "name": "parentPath",
+                  "type": "string"
+                },
+                {
+                  "name": "name",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "renameFolder",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                },
+                {
+                  "name": "newName",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "moveFolder",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                },
+                {
+                  "name": "destinationDirectory",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "trashFolder",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                },
+                {
+                  "name": "confirmationPath",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            }
+          ]
+        },
+        {
+          "name": "ComposerHighlighter",
+          "since": "1.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "document",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "documentChanged"
+            },
+            {
+              "name": "rich",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "richChanged"
+            },
+            {
+              "name": "markerColor",
+              "type": "color",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "markerColorChanged"
+            },
+            {
+              "name": "codeFont",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "codeFontChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "DeviceStream",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "status",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "statusChanged"
+            },
+            {
+              "name": "detail",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "detailChanged"
+            },
+            {
+              "name": "inputConnected",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "inputConnectedChanged"
+            },
+            {
+              "name": "platform",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "platformChanged"
+            },
+            {
+              "name": "orientation",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "orientationChanged"
+            },
+            {
+              "name": "rotation",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "rotationChanged"
+            },
+            {
+              "name": "aspect",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "aspectChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "reconnect",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "touch",
+              "parameters": [
+                {
+                  "name": "phase",
+                  "type": "string"
+                },
+                {
+                  "name": "x",
+                  "type": "real"
+                },
+                {
+                  "name": "y",
+                  "type": "real"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "key",
+              "parameters": [
+                {
+                  "name": "qtKey",
+                  "type": "int"
+                },
+                {
+                  "name": "text",
+                  "type": "string"
+                },
+                {
+                  "name": "command",
+                  "type": "bool"
+                },
+                {
+                  "name": "down",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "pressButton",
+              "parameters": [
+                {
+                  "name": "button",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "rotate",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "ThreadDevices",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "view",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "viewChanged"
+            },
+            {
+              "name": "stream",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "streamChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "open",
+              "parameters": [
+                {
+                  "name": "hostId",
+                  "type": "string"
+                },
+                {
+                  "name": "deviceId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "powerOff",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "close",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "refresh",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "dismissError",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "DeviceScreen",
+          "since": "1.0",
+          "base": "Item",
+          "baseModule": "QtQuick",
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": "data",
+          "attached": null,
+          "properties": [
+            {
+              "name": "stream",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "streamChanged"
+            },
+            {
+              "name": "hasFrame",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "hasFrameChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "LocalTranscriber",
+          "since": "1.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "program",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "programChanged"
+            },
+            {
+              "name": "arguments",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "argumentsChanged"
+            },
+            {
+              "name": "running",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "runningChanged"
+            },
+            {
+              "name": "status",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "statusChanged"
+            },
+            {
+              "name": "error",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "errorChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "configurationChanged",
+              "parameters": []
+            },
+            {
+              "name": "stateChanged",
+              "parameters": []
+            },
+            {
+              "name": "transcriptReady",
+              "parameters": [
+                {
+                  "name": "text",
+                  "type": "string"
+                }
+              ]
+            }
+          ],
+          "methods": [
+            {
+              "name": "start",
+              "parameters": [],
+              "returnType": "bool"
+            },
+            {
+              "name": "finishRecording",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "cancel",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "Settings",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "ready",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "readyChanged"
+            },
+            {
+              "name": "document",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "documentChanged"
+            },
+            {
+              "name": "version",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "versionChanged"
+            },
+            {
+              "name": "error",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "errorChanged"
+            },
+            {
+              "name": "config",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "configChanged"
+            },
+            {
+              "name": "themes",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "themesChanged"
+            },
+            {
+              "name": "device",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "deviceChanged"
+            },
+            {
+              "name": "deviceError",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "deviceErrorChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "value",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "write",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                },
+                {
+                  "name": "value",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "deviceValue",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "writeDevice",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                },
+                {
+                  "name": "value",
+                  "type": "var"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "reloadDevice",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "setting",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "defaultOf",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "isDefault",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "mixed",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "disabledReason",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "unreachable",
+              "parameters": [],
+              "returnType": "var"
+            },
+            {
+              "name": "supports",
+              "parameters": [
+                {
+                  "name": "capability",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "onDevice",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "set",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                },
+                {
+                  "name": "value",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "reset",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "resetAll",
+              "parameters": [
+                {
+                  "name": "keys",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "Keybindings",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "commands",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "commandsChanged"
+            },
+            {
+              "name": "shortcuts",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "shortcutsChanged"
+            },
+            {
+              "name": "bindings",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "bindingsChanged"
+            },
+            {
+              "name": "customCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "customCountChanged"
+            },
+            {
+              "name": "saving",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "savingChanged"
+            },
+            {
+              "name": "modelPickerOpen",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "modelPickerOpenChanged"
+            },
+            {
+              "name": "filePath",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "filePathChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "press",
+              "parameters": [
+                {
+                  "name": "sequence",
+                  "type": "string"
+                },
+                {
+                  "name": "focus",
+                  "type": "var"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "shortcutLabel",
+              "parameters": [
+                {
+                  "name": "command",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "recordKey",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "int"
+                },
+                {
+                  "name": "modifiers",
+                  "type": "int"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "keyLabel",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "commandLabel",
+              "parameters": [
+                {
+                  "name": "command",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "whenError",
+              "parameters": [
+                {
+                  "name": "expression",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "unknownVariables",
+              "parameters": [
+                {
+                  "name": "expression",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "conflicts",
+              "parameters": [
+                {
+                  "name": "rowId",
+                  "type": "string"
+                },
+                {
+                  "name": "key",
+                  "type": "string"
+                },
+                {
+                  "name": "when",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "commandOptions",
+              "parameters": [],
+              "returnType": "var"
+            },
+            {
+              "name": "save",
+              "parameters": [
+                {
+                  "name": "command",
+                  "type": "string"
+                },
+                {
+                  "name": "key",
+                  "type": "string"
+                },
+                {
+                  "name": "when",
+                  "type": "var"
+                },
+                {
+                  "name": "replacing",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "remove",
+              "parameters": [
+                {
+                  "name": "row",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "reset",
+              "parameters": [
+                {
+                  "name": "row",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "resetAll",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "openFile",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "McPlugins",
+          "since": "1.0",
+          "base": "QtObject",
+          "baseModule": "QtQml",
+          "singleton": true,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [],
+          "signals": [
+            {
+              "name": "answered",
+              "parameters": [
+                {
+                  "name": "request",
+                  "type": "int"
+                },
+                {
+                  "name": "result",
+                  "type": "var"
+                },
+                {
+                  "name": "error",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "name": "published",
+              "parameters": [
+                {
+                  "name": "watch",
+                  "type": "int"
+                },
+                {
+                  "name": "value",
+                  "type": "var"
+                }
+              ]
+            }
+          ],
+          "methods": [
+            {
+              "name": "call",
+              "parameters": [
+                {
+                  "name": "environment",
+                  "type": "string"
+                },
+                {
+                  "name": "id",
+                  "type": "string"
+                },
+                {
+                  "name": "method",
+                  "type": "string"
+                },
+                {
+                  "name": "input",
+                  "type": "var"
+                }
+              ],
+              "returnType": "int"
+            },
+            {
+              "name": "saveSettings",
+              "parameters": [
+                {
+                  "name": "environment",
+                  "type": "string"
+                },
+                {
+                  "name": "id",
+                  "type": "string"
+                },
+                {
+                  "name": "settings",
+                  "type": "var"
+                }
+              ],
+              "returnType": "int"
+            },
+            {
+              "name": "watch",
+              "parameters": [
+                {
+                  "name": "environment",
+                  "type": "string"
+                },
+                {
+                  "name": "id",
+                  "type": "string"
+                },
+                {
+                  "name": "topic",
+                  "type": "string"
+                }
+              ],
+              "returnType": "int"
+            },
+            {
+              "name": "unwatch",
+              "parameters": [
+                {
+                  "name": "watch",
+                  "type": "int"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "Threads",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "activeThread",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "activeThreadChanged"
+            },
+            {
+              "name": "timeline",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "timelineChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "open",
+              "parameters": [
+                {
+                  "name": "threadKey",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "close",
+              "parameters": [
+                {
+                  "name": "threadKey",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "reload",
+              "parameters": [
+                {
+                  "name": "threadKey",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "Panel",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "diff",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "diffChanged"
+            },
+            {
+              "name": "previews",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "previewsChanged"
+            },
+            {
+              "name": "files",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "agents",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "agentsChanged"
+            },
+            {
+              "name": "review",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "reviewChanged"
+            },
+            {
+              "name": "pullRequests",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pullRequestsChanged"
+            },
+            {
+              "name": "device",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": null
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "Terminals",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "supported",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "supportedChanged"
+            },
+            {
+              "name": "available",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "availableChanged"
+            },
+            {
+              "name": "open",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "openChanged"
+            },
+            {
+              "name": "height",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "heightChanged"
+            },
+            {
+              "name": "activeTerminalId",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "activeTerminalIdChanged"
+            },
+            {
+              "name": "activeGroup",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "activeGroupChanged"
+            },
+            {
+              "name": "groupSizes",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "groupSizesChanged"
+            },
+            {
+              "name": "tabs",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "tabsChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "focusRequested",
+              "parameters": [
+                {
+                  "name": "terminalId",
+                  "type": "string"
+                }
+              ]
+            }
+          ],
+          "methods": [
+            {
+              "name": "focusTerminal",
+              "parameters": [
+                {
+                  "name": "terminalId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "Themes",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "mode",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "modeChanged"
+            },
+            {
+              "name": "themeId",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "themeIdChanged"
+            },
+            {
+              "name": "halves",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "halvesChanged"
+            },
+            {
+              "name": "appearance",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "appearanceChanged"
+            },
+            {
+              "name": "resolvedId",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "resolvedIdChanged"
+            },
+            {
+              "name": "available",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "availableChanged"
+            },
+            {
+              "name": "standardSwatch",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "standardSwatchChanged"
+            },
+            {
+              "name": "roles",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "families",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "editorOpen",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "editorOpenChanged"
+            },
+            {
+              "name": "editing",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "editingChanged"
+            },
+            {
+              "name": "inspecting",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "inspectingChanged"
+            },
+            {
+              "name": "picked",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "pickedChanged"
+            },
+            {
+              "name": "importError",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "importErrorChanged"
+            },
+            {
+              "name": "importConflicts",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "importConflictsChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "setMode",
+              "parameters": [
+                {
+                  "name": "mode",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "choose",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "chooseHalf",
+              "parameters": [
+                {
+                  "name": "appearance",
+                  "type": "string"
+                },
+                {
+                  "name": "id",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "cycleAppearance",
+              "parameters": [],
+              "returnType": "bool"
+            },
+            {
+              "name": "restoreDefaults",
+              "parameters": [],
+              "returnType": "bool"
+            },
+            {
+              "name": "draft",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "var"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "saveCustom",
+              "parameters": [
+                {
+                  "name": "theme",
+                  "type": "var"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "duplicate",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "duplicateStandard",
+              "parameters": [],
+              "returnType": "string"
+            },
+            {
+              "name": "removeCustom",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "requestRemove",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "requestRemoveMany",
+              "parameters": [
+                {
+                  "name": "ids",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "edit",
+              "parameters": [
+                {
+                  "name": "draft",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "setEditing",
+              "parameters": [
+                {
+                  "name": "draft",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "hideEditor",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "pick",
+              "parameters": [
+                {
+                  "name": "color",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "derive",
+              "parameters": [
+                {
+                  "name": "canvas",
+                  "type": "string"
+                },
+                {
+                  "name": "accent",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "importText",
+              "parameters": [
+                {
+                  "name": "text",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "importFiles",
+              "parameters": [
+                {
+                  "name": "paths",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "resolveImport",
+              "parameters": [
+                {
+                  "name": "choice",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "clearImport",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "exportTheme",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                },
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Onboarding",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "terminal",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "terminalChanged"
+            }
+          ],
+          "signals": [],
+          "methods": []
+        },
+        {
+          "name": "PaletteModel",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": true,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "open",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "openChanged"
+            },
+            {
+              "name": "mode",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "modeChanged"
+            },
+            {
+              "name": "submenu",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "submenuChanged"
+            },
+            {
+              "name": "placeholder",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "placeholderChanged"
+            },
+            {
+              "name": "query",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "queryChanged"
+            },
+            {
+              "name": "highlighted",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "highlightedChanged"
+            },
+            {
+              "name": "count",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "countChanged"
+            },
+            {
+              "name": "emptyText",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "emptyTextChanged"
+            },
+            {
+              "name": "status",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "statusChanged"
+            },
+            {
+              "name": "submitLabel",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "submitLabelChanged"
+            },
+            {
+              "name": "submitShortcut",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "submitShortcutChanged"
+            },
+            {
+              "name": "caseSensitive",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "caseSensitiveChanged"
+            },
+            {
+              "name": "wholeWord",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "wholeWordChanged"
+            },
+            {
+              "name": "useRegex",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "useRegexChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "show",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "toggle",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "toggleMode",
+              "parameters": [
+                {
+                  "name": "mode",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "dismiss",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "back",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "leaveSubmenu",
+              "parameters": [],
+              "returnType": "bool"
+            },
+            {
+              "name": "move",
+              "parameters": [
+                {
+                  "name": "delta",
+                  "type": "int"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "run",
+              "parameters": [
+                {
+                  "name": "row",
+                  "type": "int"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "runHighlighted",
+              "parameters": [],
+              "returnType": "bool"
+            },
+            {
+              "name": "addBrowsedFolder",
+              "parameters": [],
+              "returnType": "bool"
+            },
+            {
+              "name": "setSettingsSections",
+              "parameters": [
+                {
+                  "name": "sections",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "TimelineModel",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "threadKey",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": true,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "count",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "countChanged"
+            },
+            {
+              "name": "status",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "statusChanged"
+            },
+            {
+              "name": "problem",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "problemChanged"
+            },
+            {
+              "name": "working",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "workingChanged"
+            },
+            {
+              "name": "workingSince",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "workingSinceChanged"
+            },
+            {
+              "name": "hasEarlier",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "hasEarlierChanged"
+            },
+            {
+              "name": "loadingEarlier",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "loadingEarlierChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "rowsAboutToBeInserted",
+              "parameters": [
+                {
+                  "name": "parent",
+                  "type": "var"
+                },
+                {
+                  "name": "first",
+                  "type": "int"
+                },
+                {
+                  "name": "last",
+                  "type": "int"
+                }
+              ]
+            },
+            {
+              "name": "rowsInserted",
+              "parameters": [
+                {
+                  "name": "parent",
+                  "type": "var"
+                },
+                {
+                  "name": "first",
+                  "type": "int"
+                },
+                {
+                  "name": "last",
+                  "type": "int"
+                }
+              ]
+            },
+            {
+              "name": "turnChanged",
+              "parameters": []
+            },
+            {
+              "name": "checkpointsChanged",
+              "parameters": []
+            },
+            {
+              "name": "agentsChanged",
+              "parameters": []
+            },
+            {
+              "name": "workspaceChanged",
+              "parameters": []
+            },
+            {
+              "name": "timesChanged",
+              "parameters": []
+            },
+            {
+              "name": "earlierChanged",
+              "parameters": []
+            },
+            {
+              "name": "attachmentWanted",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "name": "earlierWanted",
+              "parameters": [
+                {
+                  "name": "items",
+                  "type": "int"
+                }
+              ]
+            }
+          ],
+          "methods": [
+            {
+              "name": "workingLabel",
+              "parameters": [],
+              "returnType": "string"
+            },
+            {
+              "name": "timeTitle",
+              "parameters": [
+                {
+                  "name": "rowId",
+                  "type": "var"
+                },
+                {
+                  "name": "entryId",
+                  "type": "var"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "loadEarlier",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "toggle",
+              "parameters": [
+                {
+                  "name": "rowId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "indexOf",
+              "parameters": [
+                {
+                  "name": "rowId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "int"
+            },
+            {
+              "name": "checkpointOf",
+              "parameters": [
+                {
+                  "name": "rowId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "finishedRunOf",
+              "parameters": [
+                {
+                  "name": "rowId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "rewindPointOf",
+              "parameters": [
+                {
+                  "name": "rowId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "copy",
+              "parameters": [
+                {
+                  "name": "rowId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "loadAttachment",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "AgentsModel",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "count",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "countChanged"
+            },
+            {
+              "name": "agentCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "agentCountChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "indexOf",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "string"
+                }
+              ],
+              "returnType": "int"
+            }
+          ]
+        },
+        {
+          "name": "DiffModel",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "fileCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fileCountChanged"
+            },
+            {
+              "name": "additions",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "additionsChanged"
+            },
+            {
+              "name": "deletions",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "deletionsChanged"
+            },
+            {
+              "name": "maxColumns",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "maxColumnsChanged"
+            },
+            {
+              "name": "split",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "splitChanged"
+            },
+            {
+              "name": "allExpanded",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "allExpandedChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "patchChanged",
+              "parameters": []
+            },
+            {
+              "name": "expansionChanged",
+              "parameters": []
+            }
+          ],
+          "methods": [
+            {
+              "name": "tree",
+              "parameters": [],
+              "returnType": "var"
+            },
+            {
+              "name": "path",
+              "parameters": [
+                {
+                  "name": "file",
+                  "type": "int"
+                }
+              ],
+              "returnType": "string"
+            },
+            {
+              "name": "excerpt",
+              "parameters": [
+                {
+                  "name": "file",
+                  "type": "int"
+                },
+                {
+                  "name": "side",
+                  "type": "string"
+                },
+                {
+                  "name": "first",
+                  "type": "int"
+                },
+                {
+                  "name": "last",
+                  "type": "int"
+                }
+              ],
+              "returnType": "var"
+            },
+            {
+              "name": "rowOfFile",
+              "parameters": [
+                {
+                  "name": "file",
+                  "type": "int"
+                }
+              ],
+              "returnType": "int"
+            },
+            {
+              "name": "fileOf",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "int"
+            },
+            {
+              "name": "toggle",
+              "parameters": [
+                {
+                  "name": "file",
+                  "type": "int"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "setExpanded",
+              "parameters": [
+                {
+                  "name": "file",
+                  "type": "int"
+                },
+                {
+                  "name": "expanded",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "expandAll",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "collapseAll",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "FileTreeModel",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "rootStatus",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "rootStatusChanged"
+            },
+            {
+              "name": "rootProblem",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "rootProblemChanged"
+            },
+            {
+              "name": "selectedPath",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "selectedPathChanged"
+            },
+            {
+              "name": "filtered",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "filteredChanged"
+            },
+            {
+              "name": "allExpanded",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "allExpandedChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "rootChanged",
+              "parameters": []
+            },
+            {
+              "name": "selectedChanged",
+              "parameters": []
+            },
+            {
+              "name": "folderSettled",
+              "parameters": [
+                {
+                  "name": "folder",
+                  "type": "string"
+                }
+              ]
+            }
+          ],
+          "methods": [
+            {
+              "name": "toggle",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "expand",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "collapse",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "expandAll",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "collapseAll",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "retry",
+              "parameters": [
+                {
+                  "name": "folder",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "select",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "rowOf",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "int"
+            },
+            {
+              "name": "entriesIn",
+              "parameters": [
+                {
+                  "name": "folder",
+                  "type": "string"
+                }
+              ],
+              "returnType": "var"
+            }
+          ]
+        },
+        {
+          "name": "ThreadPreviews",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "count",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "countChanged"
+            },
+            {
+              "name": "status",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "statusChanged"
+            },
+            {
+              "name": "message",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "messageChanged"
+            },
+            {
+              "name": "suggestions",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "suggestionsChanged"
+            },
+            {
+              "name": "emptyTab",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "emptyTabChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "reload",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "open",
+              "parameters": [
+                {
+                  "name": "tabId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "close",
+              "parameters": [
+                {
+                  "name": "tabId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "newTab",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "navigate",
+              "parameters": [
+                {
+                  "name": "tabId",
+                  "type": "string"
+                },
+                {
+                  "name": "url",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "openAddress",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "ThreadPullRequests",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "count",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "countChanged"
+            },
+            {
+              "name": "openCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "openCountChanged"
+            },
+            {
+              "name": "online",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "onlineChanged"
+            },
+            {
+              "name": "problem",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "problemChanged"
+            },
+            {
+              "name": "notice",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "noticeChanged"
+            },
+            {
+              "name": "linking",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "linkingChanged"
+            },
+            {
+              "name": "refreshing",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "refreshingChanged"
+            },
+            {
+              "name": "linkOpen",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "linkOpenChanged"
+            },
+            {
+              "name": "projectOpen",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "projectOpenChanged"
+            },
+            {
+              "name": "projectProblem",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "projectProblemChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "indexOf",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "int"
+            },
+            {
+              "name": "link",
+              "parameters": [
+                {
+                  "name": "text",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "unlink",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "refresh",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "loadProject",
+              "parameters": [
+                {
+                  "name": "again",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "open",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "copyLink",
+              "parameters": [
+                {
+                  "name": "key",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "PullRequestReview",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "model",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "key",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "keyChanged"
+            },
+            {
+              "name": "number",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "numberChanged"
+            },
+            {
+              "name": "online",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "onlineChanged"
+            },
+            {
+              "name": "status",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "statusChanged"
+            },
+            {
+              "name": "message",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "messageChanged"
+            },
+            {
+              "name": "detail",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "detailChanged"
+            },
+            {
+              "name": "conversation",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "conversationChanged"
+            },
+            {
+              "name": "reviewThreads",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "reviewThreadsChanged"
+            },
+            {
+              "name": "stack",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "stackChanged"
+            },
+            {
+              "name": "stackConfirmation",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "stackConfirmationChanged"
+            },
+            {
+              "name": "codeStatus",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "codeStatusChanged"
+            },
+            {
+              "name": "codeMessage",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "codeMessageChanged"
+            },
+            {
+              "name": "viewedPaths",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "viewedPathsChanged"
+            },
+            {
+              "name": "viewedCount",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "viewedCountChanged"
+            },
+            {
+              "name": "busy",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "busyChanged"
+            },
+            {
+              "name": "problem",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "problemChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "reload",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "comment",
+              "parameters": [
+                {
+                  "name": "body",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "submitReview",
+              "parameters": [
+                {
+                  "name": "verdict",
+                  "type": "string"
+                },
+                {
+                  "name": "body",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "merge",
+              "parameters": [
+                {
+                  "name": "method",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "requestStackMerge",
+              "parameters": [
+                {
+                  "name": "method",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "requestStackRebase",
+              "parameters": [],
+              "returnType": "bool"
+            },
+            {
+              "name": "confirmStack",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "cancelStack",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "retryStack",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "setThreadResolved",
+              "parameters": [
+                {
+                  "name": "threadId",
+                  "type": "string"
+                },
+                {
+                  "name": "resolved",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "setViewed",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                },
+                {
+                  "name": "viewed",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "isViewed",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "copyNumber",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "openOnHost",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "ThreadDiff",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "model",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "modelChanged"
+            },
+            {
+              "name": "choices",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "choicesChanged"
+            },
+            {
+              "name": "latestTurn",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "latestTurnChanged"
+            },
+            {
+              "name": "selection",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "selectionChanged"
+            },
+            {
+              "name": "shownTurn",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "shownTurnChanged"
+            },
+            {
+              "name": "reviewing",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "reviewingChanged"
+            },
+            {
+              "name": "status",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "statusChanged"
+            },
+            {
+              "name": "message",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "messageChanged"
+            },
+            {
+              "name": "focusPath",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "focusPathChanged"
+            },
+            {
+              "name": "fileTotal",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fileTotalChanged"
+            },
+            {
+              "name": "baseRef",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "baseRefChanged"
+            },
+            {
+              "name": "comparedBase",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "comparedBaseChanged"
+            },
+            {
+              "name": "comparedHead",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "comparedHeadChanged"
+            },
+            {
+              "name": "truncated",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "truncatedChanged"
+            },
+            {
+              "name": "ignoreWhitespace",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "ignoreWhitespaceChanged"
+            },
+            {
+              "name": "wrap",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "wrapChanged"
+            },
+            {
+              "name": "canRevert",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "canRevertChanged"
+            },
+            {
+              "name": "revertTurn",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "revertTurnChanged"
+            },
+            {
+              "name": "reverting",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "revertingChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "turnsChanged",
+              "parameters": []
+            },
+            {
+              "name": "focusChanged",
+              "parameters": []
+            },
+            {
+              "name": "reviewChanged",
+              "parameters": []
+            },
+            {
+              "name": "revertChanged",
+              "parameters": []
+            },
+            {
+              "name": "optionsChanged",
+              "parameters": []
+            },
+            {
+              "name": "commentRequested",
+              "parameters": [
+                {
+                  "name": "comment",
+                  "type": "var"
+                }
+              ]
+            },
+            {
+              "name": "revealRow",
+              "parameters": [
+                {
+                  "name": "row",
+                  "type": "int"
+                }
+              ]
+            }
+          ],
+          "methods": [
+            {
+              "name": "select",
+              "parameters": [
+                {
+                  "name": "selection",
+                  "type": "int"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "selectRun",
+              "parameters": [
+                {
+                  "name": "runId",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "reload",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "revealFile",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "focusFile",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "showAllFiles",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "comment",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                },
+                {
+                  "name": "side",
+                  "type": "string"
+                },
+                {
+                  "name": "first",
+                  "type": "int"
+                },
+                {
+                  "name": "last",
+                  "type": "int"
+                },
+                {
+                  "name": "note",
+                  "type": "string"
+                }
+              ],
+              "returnType": "bool"
+            },
+            {
+              "name": "requestRevert",
+              "parameters": [
+                {
+                  "name": "turn",
+                  "type": "int"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "confirmRevert",
+              "parameters": [
+                {
+                  "name": "restoreFiles",
+                  "type": "bool"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "cancelRevert",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        },
+        {
+          "name": "TextLinesModel",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "count",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "countChanged"
+            },
+            {
+              "name": "maxColumns",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "maxColumnsChanged"
+            }
+          ],
+          "signals": [],
+          "methods": [
+            {
+              "name": "line",
+              "parameters": [
+                {
+                  "name": "row",
+                  "type": "int"
+                }
+              ],
+              "returnType": "string"
+            }
+          ]
+        },
+        {
+          "name": "WorkspaceFiles",
+          "since": "1.0",
+          "base": null,
+          "baseModule": null,
+          "singleton": false,
+          "enums": [],
+          "creatable": false,
+          "defaultProperty": null,
+          "attached": null,
+          "properties": [
+            {
+              "name": "tree",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "lines",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": null
+            },
+            {
+              "name": "root",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "rootChanged"
+            },
+            {
+              "name": "query",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "queryChanged"
+            },
+            {
+              "name": "searching",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "searchingChanged"
+            },
+            {
+              "name": "searchTruncated",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "searchTruncatedChanged"
+            },
+            {
+              "name": "searchProblem",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "searchProblemChanged"
+            },
+            {
+              "name": "openPath",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "openPathChanged"
+            },
+            {
+              "name": "fileStatus",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fileStatusChanged"
+            },
+            {
+              "name": "fileProblem",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fileProblemChanged"
+            },
+            {
+              "name": "truncatedNotice",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "truncatedNoticeChanged"
+            },
+            {
+              "name": "fileEmpty",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fileEmptyChanged"
+            },
+            {
+              "name": "mediaKind",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "mediaKindChanged"
+            },
+            {
+              "name": "mediaUrl",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "mediaUrlChanged"
+            },
+            {
+              "name": "revealLine",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "revealLineChanged"
+            },
+            {
+              "name": "wrap",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "wrapChanged"
+            },
+            {
+              "name": "text",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "textChanged"
+            },
+            {
+              "name": "renderKind",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "renderKindChanged"
+            },
+            {
+              "name": "rendered",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "renderedChanged"
+            },
+            {
+              "name": "renderedText",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "renderedTextChanged"
+            },
+            {
+              "name": "editable",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "editableChanged"
+            },
+            {
+              "name": "readOnlyReason",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "readOnlyReasonChanged"
+            },
+            {
+              "name": "editing",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "editingChanged"
+            },
+            {
+              "name": "unsaved",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "unsavedChanged"
+            },
+            {
+              "name": "saveProblem",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "saveProblemChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "revealRequested",
+              "parameters": []
+            },
+            {
+              "name": "sourceKindsChanged",
+              "parameters": []
+            },
+            {
+              "name": "saveFailed",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                },
+                {
+                  "name": "problem",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "name": "mediaOpened",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "string"
+                }
+              ]
+            }
+          ],
+          "methods": [
+            {
+              "name": "mediaFailed",
+              "parameters": [
+                {
+                  "name": "url",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "openMedia",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "openFile",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                },
+                {
+                  "name": "line",
+                  "type": "int"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "closeFile",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "reloadFile",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "reload",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "reveal",
+              "parameters": [
+                {
+                  "name": "path",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "edit",
+              "parameters": [
+                {
+                  "name": "contents",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "toggleTask",
+              "parameters": [
+                {
+                  "name": "index",
+                  "type": "int"
+                }
+              ],
+              "returnType": "void"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "uri": "Ghostty",
+      "versions": [
+        "1.0"
+      ],
+      "types": [
+        {
+          "name": "Terminal",
+          "since": "1.0",
+          "base": "Item",
+          "baseModule": "QtQuick",
+          "singleton": false,
+          "enums": [],
+          "creatable": true,
+          "defaultProperty": "data",
+          "attached": null,
+          "properties": [
+            {
+              "name": "font",
+              "type": "font",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "fontChanged"
+            },
+            {
+              "name": "foregroundColor",
+              "type": "color",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "foregroundColorChanged"
+            },
+            {
+              "name": "backgroundColor",
+              "type": "color",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "backgroundColorChanged"
+            },
+            {
+              "name": "cursorColor",
+              "type": "color",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "cursorColorChanged"
+            },
+            {
+              "name": "selectionColor",
+              "type": "color",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "selectionColorChanged"
+            },
+            {
+              "name": "ansiColors",
+              "type": "var",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "ansiColorsChanged"
+            },
+            {
+              "name": "padding",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "paddingChanged"
+            },
+            {
+              "name": "scrollbackLimit",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": false,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "scrollbackLimitChanged"
+            },
+            {
+              "name": "columns",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "columnsChanged"
+            },
+            {
+              "name": "rows",
+              "type": "int",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "rowsChanged"
+            },
+            {
+              "name": "cellWidth",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "cellWidthChanged"
+            },
+            {
+              "name": "cellHeight",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "cellHeightChanged"
+            },
+            {
+              "name": "title",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "titleChanged"
+            },
+            {
+              "name": "workingDirectory",
+              "type": "string",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "workingDirectoryChanged"
+            },
+            {
+              "name": "hasSelection",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "hasSelectionChanged"
+            },
+            {
+              "name": "scrollTotal",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "scrollTotalChanged"
+            },
+            {
+              "name": "scrollOffset",
+              "type": "real",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "scrollOffsetChanged"
+            },
+            {
+              "name": "atBottom",
+              "type": "bool",
+              "kind": "value",
+              "list": false,
+              "readonly": true,
+              "final": true,
+              "required": false,
+              "constant": false,
+              "group": false,
+              "notify": "atBottomChanged"
+            }
+          ],
+          "signals": [
+            {
+              "name": "input",
+              "parameters": [
+                {
+                  "name": "data",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "name": "resized",
+              "parameters": [
+                {
+                  "name": "columns",
+                  "type": "int"
+                },
+                {
+                  "name": "rows",
+                  "type": "int"
+                }
+              ]
+            },
+            {
+              "name": "bell",
+              "parameters": []
+            }
+          ],
+          "methods": [
+            {
+              "name": "write",
+              "parameters": [
+                {
+                  "name": "data",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "restore",
+              "parameters": [
+                {
+                  "name": "data",
+                  "type": "var"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "reset",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "paste",
+              "parameters": [
+                {
+                  "name": "text",
+                  "type": "string"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "copy",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "selectAll",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "clearSelection",
+              "parameters": [],
+              "returnType": "void"
+            },
+            {
+              "name": "selectedText",
+              "parameters": [],
+              "returnType": "string"
+            },
+            {
+              "name": "text",
+              "parameters": [],
+              "returnType": "string"
+            },
+            {
+              "name": "scrollLines",
+              "parameters": [
+                {
+                  "name": "delta",
+                  "type": "int"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "scrollTo",
+              "parameters": [
+                {
+                  "name": "offset",
+                  "type": "real"
+                }
+              ],
+              "returnType": "void"
+            },
+            {
+              "name": "scrollToBottom",
+              "parameters": [],
+              "returnType": "void"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "unnamed": []
+}

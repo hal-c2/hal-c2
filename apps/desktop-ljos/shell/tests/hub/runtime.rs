@@ -392,3 +392,44 @@ fn a_reloaded_shell_keeps_the_backdrop_of_the_window_it_takes() {
     platform_window::apply_window_blur(engine, true, true);
     assert_eq!(backdrop(mine), 2.0, "Window.GlassBackdrop");
 }
+
+#[test]
+fn an_edited_brick_runs_dynamically_after_a_reload_and_the_rest_compiled() {
+    let bricks = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    copy_dir(&Roots::checkout().bricks, bricks.path());
+    let roots = Roots {
+        bricks: bricks.path().to_path_buf(),
+        ..Roots::checkout()
+    };
+    let hub = Hub::with(Launch {
+        qml: Some(roots.clone()),
+        ..Launch::default()
+    });
+    hub.engine
+        .set_component_source(qml::compile(&roots).unwrap().source);
+    runtime::open(&hub.engine, false).unwrap();
+    let url = |key: &str| hub.engine.component_source().unwrap().url(key);
+    let compiled = |key: &str| hub.engine.aot_file(&url(key));
+    assert_eq!(compiled("HalC2/Bricks/ShellWindow"), Some(true));
+
+    let edited = bricks.path().join("HalC2/Bricks/ShellWindow.qml");
+    let text = std::fs::read_to_string(&edited).unwrap();
+    write(&edited, &(text + "\n// Edited.\n"));
+    runtime::reload(&hub.engine);
+    assert_eq!(generation(&hub), 2);
+    assert_eq!(compiled("HalC2/Bricks/ShellWindow"), Some(false));
+    assert_eq!(compiled("HalC2/Bricks/DefaultLayout"), Some(true));
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let (from, to) = (entry.path(), to.join(entry.file_name()));
+        if from.is_dir() {
+            std::fs::create_dir_all(&to).unwrap();
+            copy_dir(&from, &to);
+        } else {
+            std::fs::copy(&from, &to).unwrap();
+        }
+    }
+}

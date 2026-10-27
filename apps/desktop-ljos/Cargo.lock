@@ -3075,6 +3075,7 @@ version = "0.0.0"
 source = "git+https://github.com/hal-c2/ljos-ui?rev=6cfd906ea6db3a04737723489529c96f7dc5a746#6cfd906ea6db3a04737723489529c96f7dc5a746"
 dependencies = [
  "ljos_a11y",
+ "ljos_aot",
  "ljos_compiler",
  "ljos_controls",
  "ljos_dev",

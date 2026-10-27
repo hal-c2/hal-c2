@@ -26,7 +26,8 @@ test = false
 mcp = ["ljos/mcp"]
 
 [dependencies]
-# dev-qml: the shell compiles its QML at start-up (the README says why).
+# dev-qml: the shell compiles its QML at start-up, for reloads and --qml-dir;
+# what build.rs compiled ahead of time runs for the files it was made from.
 # render: `--render`. media: the Device tab's screen is decoded with Ljós's
 # stream decoder (src/device/decoder.rs). collation: names sort by the
 # locale's alphabet (sidebar_model::locale_compare, `localeCompare`).
@@ -94,6 +95,10 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSView",
     "NSWindow",
 ] }
+
+# build.rs: the QML's bindings and handlers compiled to Rust.
+[build-dependencies]
+ljos = { workspace = true, features = ["build"] }
 
 [dev-dependencies]
 # `testing`: a window without a platform, on a virtual clock, to show items

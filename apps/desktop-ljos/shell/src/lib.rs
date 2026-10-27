@@ -61,7 +61,14 @@ pub const MODULE: &str = "HalC2.Shell";
 /// For `App::register`, which also runs it on the engine that compiles the
 /// QML, so what depends on the launch (config dir, MC) is given afterwards,
 /// by [`start`].
+///
+/// Also gives the engine the checkout's bindings and handlers as build.rs
+/// compiled them: a file runs that code while it is as built, and
+/// dynamically once edited (a reload, `--qml-dir`).
 pub fn register(engine: &Engine) {
+    if let Err(e) = engine.register_compiled(ljos::include_compiled!("qml.rs")) {
+        engine.warn(e.to_string());
+    }
     let v = Version::new(1, 0);
     engine.register_singleton::<bridge::ShellBridge>(MODULE, v);
     engine.register_singleton::<theme::ThemeStore>(MODULE, v);

@@ -14,12 +14,13 @@ Both QML trees are compiled when the app starts, against `HalC2.Shell`'s native 
 whose base URL is the bricks' root (so a brick's `Qt.resolvedUrl` finds its icons). A file that does not compile
 fails only where it is made, as in Qt. It takes about a second in a debug build.
 
-Not ahead of time, though Ljós allows it: a test would write `ljostypes.json` from
-the shell's types with `ljos::types::check_file`, and a build script would compile both trees against it with
-`ljos::build::compile_dirs_with_types`, running none of the shell's code. It would catch nothing `--check` does
-not, as the compiler checks a native type's members either way. Every QML edit would mean a rebuild where a
-restart does now, a file that does not compile would fail the build, and `--qml-dir` would still need the
-compiler. A second at start-up does not pay for that.
+The build also compiles them ahead of time: `shell/build.rs` lowers their bindings and handlers to Rust
+(`ljos::build::compile_dirs_with_types_to_rust`) against `shell/ljostypes.json`, the shell's native types as
+`shell/tests/shell_tree.rs` writes them (`LJOS_TYPES=write cargo test -p hal_c2_shell --test shell_tree` after a
+change to a native type). A file runs that code while it is the file it was made from, and dynamically once it is
+edited, so reloads work as before; what the generator refuses runs dynamically too. Two costs: a brick that does
+not compile fails the build, not only `--check`, and an edited brick rebuilds the shell. The build script's stderr
+(`target/*/build/hal_c2_shell-*/stderr`) lists what each file compiled and why the rest did not.
 
 ## Run, check and render
 
