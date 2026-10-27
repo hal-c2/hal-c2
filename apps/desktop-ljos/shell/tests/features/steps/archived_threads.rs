@@ -104,10 +104,6 @@ fn open(world: &mut World) -> Outcome {
     })
 }
 
-pub fn groups_of(world: &World) -> Vec<Value> {
-    groups(world)
-}
-
 /// The listed groups.
 fn groups(world: &World) -> Vec<Value> {
     at(&world.state("archivedThreads"), "groups")
