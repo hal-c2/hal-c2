@@ -220,10 +220,12 @@ describe("changed files", () => {
     assistantMessageId: string | null,
     completedAt: string,
     files: Array<{ path: string; additions: number; deletions: number }>,
+    checkpointTurnCount = 1,
   ): OrchestrationCheckpointSummary =>
     ({
       assistantMessageId,
       completedAt,
+      checkpointTurnCount,
       files: files.map((f) => ({ ...f, kind: "file" })),
     }) as unknown as OrchestrationCheckpointSummary;
 
@@ -248,6 +250,14 @@ describe("changed files", () => {
       "2026-06-19T00:00:05.000Z",
       "2026-06-19T00:00:01.000Z",
     ]);
+  });
+
+  it("leaves checkpoints with no diff turn out of the revert picker", () => {
+    const ordered = revertableCheckpoints([
+      checkpoint("m1", "2026-06-19T00:00:01.000Z", [], 1),
+      checkpoint("m2", "2026-06-19T00:00:09.000Z", [], 0),
+    ]);
+    expect(ordered.map((c) => c.completedAt)).toEqual(["2026-06-19T00:00:01.000Z"]);
   });
 
   it("maps the latest non-empty checkpoint to its assistant message", () => {
