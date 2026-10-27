@@ -440,6 +440,12 @@ Feature: Delegating tasks to subagents
     Then the task's delivery is "acknowledged" and "parent" is not woken for it
 
   @mc
+  Scenario: Reading one earlier message of a finished subagent does not acknowledge its result
+    Given a delegated task of "parent" finished after a progress message
+    When the agent in "parent" reads just the progress message of the subagent's thread
+    Then the task's delivery is still pending
+
+  @mc
   Scenario: Waiting on a subagent's thread does not acknowledge its delivery
     Given a delegated task of "parent" finished
     When the agent in "parent" waits on the subagent's thread

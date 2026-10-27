@@ -1559,6 +1559,58 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
+  # The child says one thing while working and its answer last, then its turn ends.
+  step "a delegated task of {string} finished after a progress message",
+       %{args: [parent]} = context do
+    context = delegate(context, parent, %{"mode" => "async"})
+    World.await_runs(context, "subagent", ["running"])
+    {_pid, runtime} = World.codex_runtime(context, "subagent")
+    at = %{"threadId" => runtime.native_thread_id, "turnId" => runtime.turn.native_turn_id}
+
+    for {id, text} <- [{"msg-progress", "Working on it"}, {"msg-answer", "Done"}] do
+      message = %{"type" => "agentMessage", "id" => id, "text" => text}
+
+      World.codex_notify(
+        context,
+        "subagent",
+        "item/started",
+        Map.put(at, "item", %{message | "text" => ""})
+      )
+
+      World.codex_notify(context, "subagent", "item/completed", Map.put(at, "item", message))
+    end
+
+    World.codex_notify(context, "subagent", "turn/completed", %{
+      "threadId" => runtime.native_thread_id,
+      "turn" => %{"id" => runtime.turn.native_turn_id, "status" => "completed"}
+    })
+
+    await_task(
+      context,
+      &(&1["status"] == "completed" and &1["completionDelivery"]["state"] == "delivered")
+    )
+
+    progress =
+      context
+      |> World.state("subagent")
+      |> StreamState.list("turn-item")
+      |> Enum.find(&(&1["type"] == "assistant_message"))
+
+    Map.put(context, :progress_item_id, progress["id"])
+  end
+
+  step "the agent in {string} reads just the progress message of the subagent's thread",
+       %{args: [caller]} = context do
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_read", %{
+        "threadId" => World.thread_id(context, "subagent"),
+        "itemId" => context.progress_item_id
+      })
+
+    assert {:ok, %{"items" => [%{"text" => "Working on it"}]}} = result
+    Map.put(context, :mcp_result, result)
+  end
+
   step "the agent in {string} waits on the subagent's thread", %{args: [caller]} = context do
     result =
       World.mcp_tool(context, caller, "hal_c2_thread_wait", %{
