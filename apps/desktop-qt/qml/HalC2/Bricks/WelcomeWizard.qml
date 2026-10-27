@@ -339,7 +339,7 @@ Item {
                             wrapMode: Text.Wrap
                             text: wizard.onboarding ? (wizard.onboarding.pairingDetail || wizard.onboarding.pairingError || "") : ""
                             font.pixelSize: Math.round(13 * Theme.fontScale)
-                            color: Theme.palette.color("error", "#ef4444")
+                            color: Theme.palette.color("errorForeground", "#ef4444")
                         }
                         RowLayout {
                             Layout.fillWidth: true
@@ -928,7 +928,7 @@ Item {
                     wrapMode: Text.Wrap
                     text: wizard.importState.error ?? ""
                     font.pixelSize: Math.round(13 * Theme.fontScale)
-                    color: Theme.palette.color("error", "#ef4444")
+                    color: Theme.palette.color("errorForeground", "#ef4444")
                 }
 
                 RowLayout {

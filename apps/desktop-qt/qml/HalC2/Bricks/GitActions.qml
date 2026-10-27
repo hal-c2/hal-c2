@@ -211,7 +211,7 @@ RowLayout {
             Text {
                 visible: git.ready && git.model.isDefaultRef
                 text: qsTr("Warning: committing on the default branch %1").arg(git.ready ? (git.model.branch ?? "") : "")
-                color: Theme.palette.color("warning", "#e0af68")
+                color: Theme.palette.color("warningForeground", "#e0af68")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
@@ -279,7 +279,7 @@ RowLayout {
 
                     Text {
                         text: "−" + fileRow.modelData.deletions
-                        color: Theme.palette.color("error", "#ef4444")
+                        color: Theme.palette.color("errorForeground", "#ef4444")
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                     }
                 }
@@ -510,7 +510,7 @@ RowLayout {
                 Layout.fillWidth: true
                 visible: publishDialog.step === 0 && text.length > 0
                 text: publishDialog.host?.hint ?? ""
-                color: Theme.palette.color("warning", "#e0af68")
+                color: Theme.palette.color("warningForeground", "#e0af68")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -565,7 +565,7 @@ RowLayout {
                 Layout.fillWidth: true
                 visible: text !== ""
                 text: publishDialog.form?.error ?? ""
-                color: Theme.palette.color("error", "#ef4444")
+                color: Theme.palette.color("errorForeground", "#ef4444")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }

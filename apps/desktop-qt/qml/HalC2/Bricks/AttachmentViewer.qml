@@ -73,7 +73,7 @@ Dialog {
             ShellButton {
                 objectName: "attachmentViewerRemove"
                 text: qsTr("Remove")
-                tint: Theme.palette.color("error", "#ef4444")
+                tint: Theme.palette.color("errorForeground", "#ef4444")
                 onClicked: Shell.dispatch("attachment.viewer.remove")
             }
             ShellButton {

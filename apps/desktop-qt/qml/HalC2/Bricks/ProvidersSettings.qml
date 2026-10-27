@@ -47,8 +47,8 @@ Rectangle {
     // The session may only view this environment: nothing on it can be changed.
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color warning: Theme.palette.color("warning", "#f59e0b")
-    readonly property color danger: Theme.palette.color("error", "#f87171")
+    readonly property color warning: Theme.palette.color("warningForeground", "#f59e0b")
+    readonly property color danger: Theme.palette.color("errorForeground", "#f87171")
 
     // A redacted placeholder: the same length and
     // separators, other characters drawn from a hash of the value, so an

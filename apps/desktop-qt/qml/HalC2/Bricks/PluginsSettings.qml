@@ -20,7 +20,7 @@ SettingsPage {
     // Every MC, with plugins or not: one with none yet can still look in its folder.
     readonly property var mcEnvironments: Shell.state.mcPlugins?.environments ?? []
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color errorColor: Theme.palette.color("error", "#ef4444")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#ef4444")
     // Keeps the plugins loaded while only this page shows.
     readonly property int loadedRevision: PluginRegistry.revision
 

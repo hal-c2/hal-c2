@@ -146,7 +146,7 @@ Rectangle {
 
                 Layout.fillWidth: true
                 text: modelData
-                color: Theme.palette.color("warning", "#f59e0b")
+                color: Theme.palette.color("warningForeground", "#f59e0b")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -164,7 +164,7 @@ Rectangle {
             Layout.fillWidth: true
             visible: page.model !== null && page.model.notice !== null
             text: page.model && page.model.notice ? page.model.notice.text : ""
-            color: page.model && page.model.notice && page.model.notice.kind === "error" ? Theme.palette.color("error", "#f87171") : page.muted
+            color: page.model && page.model.notice && page.model.notice.kind === "error" ? Theme.palette.color("errorForeground", "#f87171") : page.muted
             font.pixelSize: Math.round(12 * Theme.fontScale)
             wrapMode: Text.Wrap
         }
@@ -279,7 +279,7 @@ Rectangle {
                                     if (row.state === "closed") return qsTr("Closed");
                                     return row.isDraft ? qsTr("Draft") : qsTr("Open");
                                 }
-                                color: entry.modelData.state === "merged" ? Theme.palette.color("merged", "#a855f7") : entry.modelData.state === "closed" ? Theme.palette.color("error", "#f87171") : Theme.palette.color("success", "#22c55e")
+                                color: entry.modelData.state === "merged" ? Theme.palette.color("merged", "#a855f7") : entry.modelData.state === "closed" ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("success", "#22c55e")
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
 
@@ -300,7 +300,7 @@ Rectangle {
                             Label {
                                 visible: !entry.modelData.header && entry.modelData.conflicting && entry.modelData.state === "open"
                                 text: qsTr("Has conflicts")
-                                color: Theme.palette.color("warning", "#f59e0b")
+                                color: Theme.palette.color("warningForeground", "#f59e0b")
                                 font.pixelSize: Math.round(11 * Theme.fontScale)
                             }
 

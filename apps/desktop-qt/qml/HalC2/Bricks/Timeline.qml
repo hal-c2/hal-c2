@@ -214,8 +214,8 @@ Item {
     readonly property color borderColor: Theme.palette.color("border", "#191919")
     readonly property color surfaceColor: Theme.palette.color("surface", "#111111")
     readonly property color accentColor: Theme.palette.color("accent", "#346bf1")
-    readonly property color errorColor: Theme.palette.color("error", "#fb414a")
-    readonly property color warningColor: Theme.palette.color("warning", "#fe9a00")
+    readonly property color errorColor: Theme.palette.color("errorForeground", "#fb414a")
+    readonly property color warningColor: Theme.palette.color("warningForeground", "#fe9a00")
     readonly property string monoFamily: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
     readonly property string uiFamily: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     // The row colours: the message surface and its text, the hover wash, the

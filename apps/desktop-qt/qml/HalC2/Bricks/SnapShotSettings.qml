@@ -220,7 +220,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 text: snap.wizard?.details ?? ""
-                color: Theme.palette.color("warning", "#fbbf24")
+                color: Theme.palette.color("warningForeground", "#fbbf24")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }

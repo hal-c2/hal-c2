@@ -39,7 +39,7 @@ Item {
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
-    readonly property color warning: Theme.palette.color("warning", "#e0af68")
+    readonly property color warning: Theme.palette.color("warningForeground", "#e0af68")
     readonly property string uiFont: Theme.fontUi.length > 0 ? Theme.fontUi : Application.font.family
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20

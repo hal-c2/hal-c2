@@ -16,7 +16,7 @@ ColumnLayout {
     readonly property bool editable: (Shell.state.settingsScope?.editable ?? false) && (model?.available ?? false)
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color warning: Theme.palette.color("warning", "#fbbf24")
+    readonly property color warning: Theme.palette.color("warningForeground", "#fbbf24")
 
     objectName: "projectActions"
     Layout.fillWidth: true

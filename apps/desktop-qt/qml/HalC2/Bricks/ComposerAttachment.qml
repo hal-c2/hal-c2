@@ -83,7 +83,7 @@ Row {
         implicitHeight: 24
         iconName: chip.attachment.kind === "file" ? "file-text" : "image"
         text: chip.failed ? qsTr("%1 (upload failed)").arg(chip.label) : chip.attachment.status === "uploading" ? qsTr("%1 (uploading…)").arg(chip.label) : chip.label
-        tint: chip.failed ? Theme.palette.color("error", "#f87171") : Theme.palette.color("text", "#e4e4e7")
+        tint: chip.failed ? Theme.palette.color("errorForeground", "#f87171") : Theme.palette.color("text", "#e4e4e7")
         font.pixelSize: Math.round(12 * Theme.fontScale)
         Accessible.name: qsTr("Remove %1").arg(chip.label)
         ToolTip.visible: hovered && chip.failed && ToolTip.text.length > 0

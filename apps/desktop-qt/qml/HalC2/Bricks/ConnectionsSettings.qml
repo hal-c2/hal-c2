@@ -24,7 +24,7 @@ SettingsPage {
     readonly property var notice: model ? model.notice : null
     readonly property bool busy: model !== null && model.busy
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color danger: Theme.palette.color("error", "#f87171")
+    readonly property color danger: Theme.palette.color("errorForeground", "#f87171")
     // What a pairing link may grant (packages/contracts auth scopes); the
     // standard ones start checked.
     readonly property var scopeOptions: [

@@ -189,7 +189,7 @@ SettingsPage {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 text: Theme.lastError
-                color: Theme.palette.color("error", "#f87171")
+                color: Theme.palette.color("errorForeground", "#f87171")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
             }
@@ -377,7 +377,7 @@ SettingsPage {
     ShellButton {
         objectName: "removeSelected"
         visible: page.selected.length > 0
-        tint: Theme.palette.color("error", "#ef4444")
+        tint: Theme.palette.color("errorForeground", "#ef4444")
         text: qsTr("Remove selected (%1)").arg(page.selected.length)
         onClicked: {
             Themes.requestRemoveMany(page.selected);

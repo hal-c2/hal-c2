@@ -16,7 +16,7 @@ SettingsPage {
     readonly property bool editable: Shell.state.settingsScope?.editable ?? false
     readonly property bool projectScope: (Shell.state.settingsScope?.kind ?? "all") === "project"
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color warning: Theme.palette.color("warning", "#fbbf24")
+    readonly property color warning: Theme.palette.color("warningForeground", "#fbbf24")
 
     function send(name, payload) {
         Shell.dispatch("projectSettings." + name, payload ?? {});
@@ -260,7 +260,7 @@ SettingsPage {
             ShellButton {
                 objectName: "control"
                 enabled: page.editable
-                tint: Theme.palette.color("error", "#ef4444")
+                tint: Theme.palette.color("errorForeground", "#ef4444")
                 text: page.settings?.removal?.button ?? ""
                 onClicked: page.send("remove")
             }

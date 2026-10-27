@@ -16,7 +16,7 @@ SettingsPage {
     readonly property var history: settings?.history ?? ({})
     readonly property var traces: settings?.traces ?? ({})
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
-    readonly property color danger: Theme.palette.color("error", "#ef4444")
+    readonly property color danger: Theme.palette.color("errorForeground", "#ef4444")
 
     objectName: "diagnosticsSettings"
     title: qsTr("Diagnostics")
@@ -94,7 +94,7 @@ SettingsPage {
         Layout.fillWidth: true
         visible: message.length > 0
         text: message
-        color: Theme.palette.color("error", "#ef4444")
+        color: Theme.palette.color("errorForeground", "#ef4444")
         font.pixelSize: Math.round(12 * Theme.fontScale)
         wrapMode: Text.Wrap
     }

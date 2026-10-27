@@ -299,7 +299,7 @@ Rectangle {
 
                 ShellButton {
                     objectName: "confirm"
-                    tint: Theme.palette.color("error", "#ef4444")
+                    tint: Theme.palette.color("errorForeground", "#ef4444")
                     text: qsTr("Restore defaults")
                     onClicked: restoreDialog.accept()
                 }
