@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13302
 #   apps/mobile/src/features/settings/SettingsRouteScreen.tsx (HAL-C2 Account row, sections)
 #   apps/mobile/src/features/settings/SettingsAuthRouteScreen.tsx (sign in, profile, sign out)
 #   apps/mobile/app.config.ts (Apple and Google sign-in configuration)
@@ -374,6 +375,53 @@ Feature: Settings that belong to the phone
       When the user opens maintenance settings
       Then checking for provider updates is shown but cannot be changed
       And the user is told it is environment-wide and to select all projects to change it
+
+  Rule: Environment and provider updates on a phone
+
+    @backlog @mobile
+    Scenario: The phone shows a newer release on an environment's channel
+      Given "My MacBook" is on the stable channel and version 1.4.0 is out on it
+      When the user opens maintenance settings for "My MacBook"
+      Then "My MacBook" is shown with version 1.4.0 available
+
+    @backlog @mobile
+    Scenario: The user updates an environment from the phone
+      Given "My MacBook" is connected with operate permission and version 1.4.0 is out on its channel
+      When the user updates "My MacBook" from maintenance settings
+      Then the phone shows the update's progress
+      And "My MacBook" reports version 1.4.0 once it has restarted
+
+    @backlog @mobile
+    Scenario: The user updates a provider from the phone
+      Given "My MacBook" has Codex enabled and Codex is behind its latest version
+      When the user updates Codex from maintenance settings
+      Then the phone shows the update's progress
+      And Codex reports its new version
+
+    @backlog @mobile
+    Scenario: Only enabled providers are offered for update
+      Given "My MacBook" has Codex enabled and Cursor disabled, and both are behind their latest versions
+      When the user opens maintenance settings for "My MacBook"
+      Then Codex is offered for update
+      And Cursor is not listed
+
+    @backlog @mobile
+    Scenario: A failed environment update says why
+      Given the update of "My MacBook" fails with "disk full"
+      When the user updates "My MacBook" from maintenance settings
+      Then the user is told the update of "My MacBook" failed with "disk full"
+
+    @backlog @mobile
+    Scenario: Viewing an environment without operate permission offers no update
+      Given the user can view "My MacBook" but not operate it
+      When the user opens maintenance settings for "My MacBook"
+      Then updating is not offered
+
+    @backlog @mobile
+    Scenario: An environment that is not connected cannot be updated from the phone
+      Given "My MacBook" is not connected
+      When the user opens maintenance settings for "My MacBook"
+      Then updating is not offered
 
   Rule: Provider accounts on a phone
 

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-opencode.md
 #   docs/internals/providers.md (OpenCode server per thread, full-access replies once)
@@ -678,3 +679,14 @@ Feature: OpenCode
     Given the subagents setting is HAL-C2 workers
     When an OpenCode session is started
     Then its task permission is denied, through the config OpenCode is started with
+
+  @backlog
+  Scenario Outline: The version OpenCode runs decides whether this HAL-C2 release supports it
+    Given OpenCode version "<version>" is installed
+    When the MC checks OpenCode
+    Then OpenCode is reported as "<status>" for this HAL-C2 release
+
+    Examples:
+      | version | status    |
+      | 1.14.18 | broken    |
+      | 1.14.19 | supported |

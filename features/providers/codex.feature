@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/providers-codex.md
 #   docs/internals/providers.md (Codex async questions, shadow homes, update ownership)
@@ -809,3 +810,15 @@ Feature: Codex
     Given the model manifest cannot be fetched
     When the MC checks Codex
     Then Codex's status is reported from the manifest the MC already has
+
+  @backlog
+  Scenario Outline: The version Codex runs decides whether this HAL-C2 release supports it
+    Given Codex version "<version>" is installed
+    When the MC checks Codex
+    Then Codex is reported as "<status>" for this HAL-C2 release
+
+    Examples:
+      | version         | status    |
+      | 0.128.0         | broken    |
+      | 0.129.0         | supported |
+      | 0.129.0-alpha.1 | unknown   |

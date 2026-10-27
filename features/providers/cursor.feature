@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/cursor.md (including Replay And Live Testing, dropped)
 #   apps/server-ex/lib/hal_c2/acp.ex (cursor agent: MC + cursor-acp, HAL_C2_CURSOR_CREDENTIALS, --mode)
@@ -450,3 +451,14 @@ Feature: Cursor
     Given the subagents setting is HAL-C2 workers
     When a Cursor session is started
     Then Cursor starts as usual, because it has no switch for its subagents
+
+  @backlog
+  Scenario Outline: The build Cursor runs decides whether this HAL-C2 release supports it
+    Given Cursor version "<version>" is installed
+    When the MC checks Cursor
+    Then Cursor is reported as "<status>" for this HAL-C2 release
+
+    Examples:
+      | version              | status    |
+      | 2026.05.08-a1b2c3d   | unknown   |
+      | 2026.05.09-a1b2c3d   | supported |
