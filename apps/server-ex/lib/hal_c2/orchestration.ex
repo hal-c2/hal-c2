@@ -3249,6 +3249,25 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # Two Claude instances whose config directories resolve to the same home share
+  # Claude Code's own sessions, so a run moved between them resumes the native
+  # thread the other instance started instead of starting a new conversation.
+  defp carried_native_ref(state, "claudeAgent", instance, cwd) do
+    home = HalC2.Claude.Provider.config_dir(instance, cwd)
+
+    state
+    |> StreamState.list("provider-thread")
+    |> Enum.find_value(fn other ->
+      if other["nativeThreadRef"] != nil and
+           (other["providerInstanceId"] || "claudeAgent") != instance and
+           HalC2.Claude.Provider.config_dir(other["providerInstanceId"] || "claudeAgent", cwd) ==
+             home,
+         do: other["nativeThreadRef"]
+    end)
+  end
+
+  defp carried_native_ref(_state, _driver, _instance, _cwd), do: nil
+
   # Points the relocated runs, their attempts and their provider turns at their new
   # provider threads; nodes and turn items stay as they were (`relocated/4`).
   defp references(state, runs) do
@@ -3416,6 +3435,12 @@ defmodule HalC2.Orchestration do
               driver,
               instance
             )
+            |> then(fn record ->
+              case carried_native_ref(state, driver, instance, cwd) do
+                nil -> record
+                ref -> Map.put(record, "nativeThreadRef", ref)
+              end
+            end)
           )
         ]
       end
@@ -3499,6 +3524,16 @@ defmodule HalC2.Orchestration do
         ]
         |> Enum.reject(&is_nil/1)
       )
+
+    # A first run on an instance that shares another's Claude home continues
+    # that instance's native thread (see `carried_native_ref/4`).
+    carried_ref =
+      if provider_thread == nil,
+        do: carried_native_ref(state, driver, instance, cwd)
+
+    provider_thread =
+      provider_thread ||
+        if(carried_ref, do: %{"nativeThreadRef" => carried_ref})
 
     handoff =
       HalC2.Orchestration.Handoff.plan(state, provider_thread, ids, ordinal, at)

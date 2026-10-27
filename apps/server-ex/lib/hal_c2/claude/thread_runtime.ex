@@ -38,9 +38,23 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   @state_version 11
 
-  @signed_out "Claude could not authenticate. For subscription login, run `claude auth login` " <>
-                "on this environment's machine, then start a new thread. For API-key " <>
-                "authentication, check this instance's configured credentials."
+  # How to sign in, naming where when this instance runs under its own config
+  # directory: the login has to land in the directory Claude will be pointed at.
+  defp signed_out_message(turn) do
+    where =
+      case HalC2.Claude.Provider.home_path(Entities.instance(turn.ids)) do
+        nil ->
+          ""
+
+        home ->
+          " from #{JSON.encode!(Map.get(turn, :cwd) || "")}, with CLAUDE_CONFIG_DIR " <>
+            "set to #{JSON.encode!(HalC2.Claude.Provider.expand_home(home))}"
+      end
+
+    "Claude could not authenticate. For subscription login, run `claude auth login` " <>
+      "on this environment's machine#{where}, then start a new thread. For API-key " <>
+      "authentication, check this instance's configured credentials."
+  end
 
   # runtimeMode -> the CLI's permission mode; prompts it raises become approval
   # requests the user answers in the client. In auto, Claude Code's classifier
@@ -1088,7 +1102,19 @@ defmodule HalC2.Claude.ThreadRuntime do
   # unless told otherwise, which cuts HAL-C2's waiting tools short.
   @doc false
   def session_env(turn) do
-    Enum.to_list(HalC2.Settings.instance_env(Entities.instance(turn.ids))) ++
+    instance = Entities.instance(turn.ids)
+
+    # An instance with its own Claude home runs under it. Only the config
+    # directory is pointed there, never HOME: on macOS the saved login lives in
+    # the keychain under HOME, and Claude would not find it signed in.
+    home =
+      case HalC2.Claude.Provider.home_path(instance) do
+        nil -> []
+        path -> [{"CLAUDE_CONFIG_DIR", HalC2.Claude.Provider.expand_home(path)}]
+      end
+
+    Enum.to_list(HalC2.Settings.instance_env(instance)) ++
+      home ++
       if(turn.launch.mcp,
         do: [{"MCP_TOOL_TIMEOUT", to_string(HalC2.Mcp.tool_timeout_ms())}],
         else: []
@@ -1096,12 +1122,13 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # The `claude` the turn's instance runs: its binary path in settings, else the one on PATH.
-  defp command(turn),
-    do:
-      HalC2.Settings.instance_command(
-        Entities.instance(turn.ids),
-        Application.get_env(:hal_c2, :claude_command) || ["claude"]
-      )
+  defp command(turn) do
+    Entities.instance(turn.ids)
+    |> HalC2.Settings.instance_command(
+      Application.get_env(:hal_c2, :claude_command) || ["claude"]
+    )
+    |> HalC2.Claude.Provider.resolve_command()
+  end
 
   # A fork's first turn resumes the source session at the fork point, as a new session.
   defp fork_or(%{fork: %{} = fork}, key, _default), do: Map.fetch!(fork, key)
@@ -1378,7 +1405,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     state =
       if message["error"] == "authentication_failed" and message["parent_tool_use_id"] == nil and
            state.turn != nil,
-         do: put_in(state.turn[:auth_failure], @signed_out),
+         do: put_in(state.turn[:auth_failure], signed_out_message(state.turn)),
          else: state
 
     # An answer Claude could not give for a usage limit ends the turn as one.

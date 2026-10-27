@@ -3096,13 +3096,22 @@ defmodule HalC2.OrchestrationTest do
   end
 
   describe "approvals" do
-    for {instance, answer_text} <- [{"codex", nil}, {"claudeAgent", "allowed"}] do
+    for {instance, answer_text, prompt} <- [
+          {"codex", nil, "touch x"},
+          {"claudeAgent", "allowed", "Bash: touch x"}
+        ] do
       test "#{instance}: a prompt becomes a pending request, and accepting it lets the turn go on" do
         thread_id = launch("approve this", unquote(instance))
         request = await_request(thread_id)
         assert %{"status" => "pending", "kind" => "command"} = request
 
-        assert [%{"type" => "approval_request", "status" => "waiting", "prompt" => "touch x"}] =
+        assert [
+                 %{
+                   "type" => "approval_request",
+                   "status" => "waiting",
+                   "prompt" => unquote(prompt)
+                 }
+               ] =
                  thread_id
                  |> current()
                  |> StreamState.list("turn-item")

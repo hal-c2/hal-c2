@@ -1307,6 +1307,7 @@ defmodule HalC2.Steps.Providers.Claude do
 
     assert env == %{
              "CLAUDE_CONFIG_DIR" => context.router_config,
+             "HOME" => System.user_home!(),
              "ANTHROPIC_BASE_URL" => "https://openrouter.test/api",
              "ANTHROPIC_AUTH_TOKEN" => "sk-or-secret"
            }
@@ -3380,6 +3381,374 @@ defmodule HalC2.Steps.Providers.Claude do
 
     assert [claimed] = message["attachments"]
     assert String.starts_with?(HalC2.Attachments.path(claimed), HalC2.Attachments.dir())
+    context
+  end
+
+  # --- health, homes, sign-in ----------------------------------------------------------------
+
+  # A `claude` of the scenario's own making, run in place of the fake's command.
+  defp claude_script(context, name, body) do
+    path = Path.join(Mc.tmp_dir(context.mc, "claude-script"), name)
+    File.write!(path, body)
+    File.chmod!(path, 0o755)
+    World.put_app_env(:claude_command, [path])
+    World.reset_provider_caches()
+    context
+  end
+
+  step "the claude command is not on the path", context do
+    context =
+      context
+      |> World.fake_providers()
+      |> write_settings(fn settings ->
+        put_in(settings, [Access.key("providers", %{}), "claudeAgent"], %{
+          "binaryPath" => "claude"
+        })
+      end)
+
+    World.put_os_env("PATH", Mc.tmp_dir(context.mc, "empty-path"))
+    World.reset_provider_caches()
+    context
+  end
+
+  step "the claude command is found but cannot be run", context do
+    context
+    |> World.fake_providers()
+    |> claude_script("claude", "#!/nonexistent/interpreter\necho never\n")
+  end
+
+  step "the claude version check exits with an error", context do
+    context
+    |> World.fake_providers()
+    |> claude_script("claude", "#!/bin/sh\necho \"2.1.0 (Claude Code)\"\nexit 3\n")
+  end
+
+  step "the claude version check does not finish in time", context do
+    World.put_app_env(:claude_health_timeout_ms, 300)
+
+    context
+    |> World.fake_providers()
+    |> claude_script("claude", "#!/bin/sh\nsleep 5\n")
+  end
+
+  step "claude runs but does not report its sign-in", context do
+    System.put_env("FAKE_CLAUDE_NO_ACCOUNT", "1")
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_NO_ACCOUNT") end)
+    context = World.fake_providers(context)
+    # The check every MC runs at boot; it reads what `initialize` reports.
+    :ok = HalC2.Claude.Provider.load()
+    context
+  end
+
+  step "Claude is turned off in the provider settings", context do
+    context
+    |> World.fake_providers()
+    |> write_settings(fn settings ->
+      plugins =
+        put_in(settings, [Access.key("providers", %{}), Access.key("claudeAgent", %{})], %{})
+
+      put_in(plugins, ["providers", "claudeAgent", "enabled"], false)
+    end)
+  end
+
+  step "the MC has not checked Claude yet since it started", context do
+    World.put_app_env(:claude_health_timeout_ms, 10_000)
+
+    context =
+      context
+      |> World.fake_providers()
+      |> claude_script(
+        "claude",
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then sleep 3; echo \"2.1.0 (Claude Code)\"; exit 0; fi\nexec python3 -u #{Path.expand("../../support/fake_claude.py", __DIR__)} \"$@\"\n"
+      )
+
+    task = Task.async(fn -> HalC2.Claude.Provider.entry() end)
+
+    # Until the check it started lands, the entry is the pending one.
+    Enum.reduce_while(1..200, nil, fn _, _ ->
+      case :persistent_term.get({HalC2.Claude.Provider, :health}, %{}) do
+        %{} = records when map_size(records) > 0 ->
+          {:halt, :probing}
+
+        _ ->
+          Process.sleep(10)
+          {:cont, nil}
+      end
+    end)
+
+    Map.put(context, :health_task, task)
+  end
+
+  step "Claude is shown with the message {string}", %{args: [message]} = context do
+    assert claude(context.providers)["message"] == message
+    if task = context[:health_task], do: Task.await(task, 15_000)
+    context
+  end
+
+  defp probe_starts(context) do
+    Enum.count(World.provider_log(context, "claude"), fn
+      %{"argv" => argv} -> "--strict-mcp-config" in argv
+      _ -> false
+    end)
+  end
+
+  step "the MC read a Claude instance's account, commands and agents for a project folder",
+       context do
+    context = World.fake_providers(context)
+    :ok = HalC2.Claude.Provider.load()
+    assert {:ok, %{"account" => _}} = HalC2.Claude.Provider.capabilities("claudeAgent")
+    Map.put(context, :probe_starts, probe_starts(context))
+  end
+
+  step "it checks that instance again within five minutes", context do
+    {providers, context} = World.provider_list(context)
+    assert claude(providers)
+    assert {:ok, _} = HalC2.Claude.Provider.capabilities("claudeAgent")
+    context
+  end
+
+  step "Claude is not started again to read them", context do
+    assert probe_starts(context) == context.probe_starts
+    context
+  end
+
+  step "refreshing the provider by hand reads them afresh", context do
+    {:ok, _} =
+      HalC2.Environment.refresh_providers(%{
+        "instanceId" => "claudeAgent",
+        "refreshModels" => true
+      })
+
+    assert probe_starts(context) > context.probe_starts
+    context
+  end
+
+  step "the MC runs on Windows and {string} on its path is npm's launcher script",
+       %{args: [_name]} = context do
+    World.put_app_env(:os_type, {:win32, :nt})
+    context = World.fake_providers(context)
+    root = Mc.tmp_dir(context.mc, "claude-npm-windows")
+    bin = Path.join([root, "node_modules", "@anthropic-ai", "claude-code", "bin"])
+    File.mkdir_p!(bin)
+
+    exe = Path.join(bin, "claude.exe")
+
+    File.write!(
+      exe,
+      "#!/bin/sh\nexec python3 -u #{Path.expand("../../support/fake_claude.py", __DIR__)} \"$@\"\n"
+    )
+
+    File.chmod!(exe, 0o755)
+
+    launcher = Path.join(root, "claude.cmd")
+
+    File.write!(
+      launcher,
+      "@echo off\r\n\"%~dp0\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe\" %*\r\n"
+    )
+
+    File.chmod!(launcher, 0o755)
+
+    World.put_app_env(:claude_command, [launcher])
+    World.reset_provider_caches()
+    context |> Map.put(:windows_exe, exe) |> Map.put(:windows_launcher, launcher)
+  end
+
+  step "the MC starts the Claude program that script points to", context do
+    # The launcher script itself cannot run here; a start happened, so the
+    # program it points to is what ran.
+    assert HalC2.Claude.Provider.resolve_command([context.windows_launcher]) ==
+             [context.windows_exe]
+
+    assert [%{"argv" => _}] =
+             Enum.filter(World.provider_log(context, "claude"), &Map.has_key?(&1, "argv"))
+
+    context
+  end
+
+  step "the turn runs", context do
+    World.await_runs(context, @thread, ["completed"])
+    assert "Hello from claude" in World.replies(context, @thread)
+    context
+  end
+
+  defp unquote_setting(value) do
+    value |> String.trim() |> String.trim("\"")
+  end
+
+  step ~r/^the Claude instance's config directory is (?<setting>.+)$/,
+       %{args: [setting]} = context do
+    context = World.fake_providers(context)
+
+    if setting == "empty" do
+      context
+    else
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providers", %{}), "claudeAgent"], %{
+          "homePath" => unquote_setting(setting)
+        })
+      end)
+    end
+  end
+
+  step ~r/^the MC's environment (?<inherited>.+)$/, %{args: [inherited]} = context do
+    cond do
+      inherited == "sets another Claude config directory" ->
+        World.put_os_env("CLAUDE_CONFIG_DIR", "/other/claude")
+
+      inherited =~ ~r/sets the Claude config directory "([^"]+)"/ ->
+        [_, dir] = Regex.run(~r/"([^"]+)"/, inherited)
+        World.put_os_env("CLAUDE_CONFIG_DIR", dir)
+
+      true ->
+        World.put_os_env("CLAUDE_CONFIG_DIR", nil)
+    end
+
+    context
+  end
+
+  step ~r/^Claude uses (?<directory>"[^"]+"(?: in the user's home)?)$/,
+       %{args: [directory]} = context do
+    env =
+      World.provider_log(context, "claude")
+      |> Enum.find_value(& &1["env"])
+
+    if directory == "\".claude\" in the user's home" do
+      refute Map.has_key?(env, "CLAUDE_CONFIG_DIR")
+      assert HalC2.Claude.Provider.config_dir() == Path.join(System.user_home!(), ".claude")
+    else
+      assert env["CLAUDE_CONFIG_DIR"] == unquote_setting(directory)
+    end
+
+    context
+  end
+
+  @second_home "claude-second-home"
+
+  step "one Claude instance has no config directory set and another is set to {string}",
+       %{args: [home]} = context do
+    home_dir = Mc.tmp_dir(context.mc, "user-home")
+    World.put_os_env("HOME", home_dir)
+    World.put_os_env("CLAUDE_CONFIG_DIR", nil)
+    World.put_os_env("FAKE_SESSIONS", "1")
+    context = World.fake_providers(context)
+
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providerInstances", %{}), @second_home], %{
+          "driver" => "claudeAgent",
+          "enabled" => true,
+          "displayName" => "Claude (second home)",
+          "config" => %{"homePath" => home}
+        })
+      end)
+
+    context = World.launch_on(context, @thread, "claudeAgent", "hello")
+    World.await_runs(context, @thread, ["completed"])
+    Map.put(context, :user_home, home_dir)
+  end
+
+  step "a thread started on the first is moved to the second", context do
+    context =
+      World.send_turn(context, @thread, "where are we", %{
+        "modelSelection" => %{"instanceId" => @second_home, "model" => "sonnet"}
+      })
+
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "Claude continues the same conversation", context do
+    starts = for %{"argv" => argv} <- World.provider_log(context, "claude"), do: argv
+
+    native =
+      World.stream(context, @thread)
+      |> StreamState.list("provider-thread")
+      |> Enum.find_value(&get_in(&1, ["nativeThreadRef", "nativeId"]))
+
+    assert ["--resume", native] in pairs(List.last(starts))
+    context
+  end
+
+  step "a Claude instance with its own config directory was signed in from a terminal",
+       context do
+    dir = Mc.tmp_dir(context.mc, "claude-mac-home")
+
+    File.write!(
+      Path.join(dir, ".claude.json"),
+      JSON.encode!(%{"oauthAccount" => %{"emailAddress" => "mac@example.com"}})
+    )
+
+    context = World.fake_providers(context)
+
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providers", %{}), "claudeAgent"], %{"homePath" => dir})
+      end)
+
+    Map.put(context, :claude_home, dir)
+  end
+
+  step "the user sends a message to that instance", context do
+    context = World.launch_on(context, @thread, "claudeAgent", "hello")
+
+    World.await_value(context, @thread, fn state ->
+      match?([%{"status" => s}] when s in ["completed", "failed"], StreamState.list(state, "run"))
+    end)
+
+    context
+  end
+
+  step "Claude runs signed in", context do
+    start = Enum.find(World.provider_log(context, "claude"), &Map.has_key?(&1, "argv"))
+    assert start["account"] == "mac@example.com"
+    assert start["env"]["CLAUDE_CONFIG_DIR"] == context.claude_home
+    # HOME is the user's own: Claude finds the login its keychain holds there.
+    assert start["env"]["HOME"] == System.user_home!()
+    assert "Hello from claude" in World.replies(context, @thread)
+    context
+  end
+
+  step "a Claude instance with its own config directory is not signed in", context do
+    System.put_env("FAKE_CLAUDE_SIGNED_OUT", "1")
+    ExUnit.Callbacks.on_exit(fn -> System.delete_env("FAKE_CLAUDE_SIGNED_OUT") end)
+    dir = Mc.tmp_dir(context.mc, "claude-signed-out-home")
+    context = World.fake_providers(context)
+
+    context =
+      write_settings(context, fn settings ->
+        put_in(settings, [Access.key("providers", %{}), "claudeAgent"], %{"homePath" => dir})
+      end)
+
+    Map.put(context, :claude_home, dir)
+  end
+
+  defp last_error(context, title \\ @thread) do
+    state = World.await_runs(context, title, ["failed"])
+    [session] = StreamState.list(state, "provider-session")
+    session["lastError"]
+  end
+
+  step "the turn fails saying to run {string} on the MC's machine",
+       %{args: [command]} = context do
+    assert last_error(context) =~ "run `#{command}` on this environment's machine"
+    context
+  end
+
+  step "the message names the folder to run it from and the config directory to set", context do
+    project = World.project(context)
+
+    assert last_error(context) =~
+             ~s(from "#{project.root}", with CLAUDE_CONFIG_DIR set to "#{context.claude_home}")
+
+    context
+  end
+
+  step "says to start a new thread afterwards, or to check the instance's credentials when it uses an API key",
+       context do
+    error = last_error(context)
+    assert error =~ "then start a new thread"
+    assert error =~ "check this instance's configured credentials"
     context
   end
 

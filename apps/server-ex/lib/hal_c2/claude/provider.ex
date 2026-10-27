@@ -14,7 +14,12 @@ defmodule HalC2.Claude.Provider do
   alias HalC2.Claude.Session
 
   @models {__MODULE__, :models}
+  @capabilities {__MODULE__, :capabilities}
+  @health {__MODULE__, :health}
   @probe_timeout 20_000
+  # How long an `initialize` read (account, commands, models) stands before the
+  # next check reads it again; a refresh by hand always reads afresh.
+  @capabilities_ttl_ms 300_000
 
   @effort_labels %{
     "low" => "Low",
@@ -52,15 +57,28 @@ defmodule HalC2.Claude.Provider do
   def entry(id \\ "claudeAgent") do
     case executable(id) do
       nil ->
-        HalC2.Settings.not_installed_entry(id, "claudeAgent", "Claude")
+        case HalC2.Settings.not_installed_entry(id, "claudeAgent", "Claude") do
+          nil ->
+            nil
+
+          entry ->
+            # A bare command name was looked up on the PATH, and says so.
+            if String.contains?(HalC2.Settings.instance_setting(id, "binaryPath") || "", "/") do
+              entry
+            else
+              Map.put(entry, "message", "Claude Agent CLI (`claude`) was not found on PATH.")
+            end
+        end
 
       path ->
-        %{
+        enabled = HalC2.Settings.instance_enabled?(id, "claudeAgent")
+
+        base = %{
           "instanceId" => id,
           "driver" => "claudeAgent",
           # Turned off in settings (`providers.claudeAgent.enabled`), it stays listed so it can be
           # turned back on; clients leave it out of the model picker.
-          "enabled" => HalC2.Settings.instance_enabled?(id, "claudeAgent"),
+          "enabled" => enabled,
           "installed" => true,
           "version" => version(path),
           "versionAdvisory" =>
@@ -70,20 +88,172 @@ defmodule HalC2.Claude.Provider do
           "auth" => %{"status" => "authenticated"},
           "checkedAt" => HalC2.Orchestration.Entities.now(),
           "models" => models(id, path),
-          "slashCommands" => [
-            %{
-              "name" => "compact",
-              "description" => "Summarize the conversation and reduce context usage"
-            }
-          ],
-          "skills" => []
+          "slashCommands" => slash_commands(id, path),
+          "skills" => skills(id, path)
         }
+
+        base
         |> then(fn entry ->
           case upgrade_message(version(path)) do
             nil -> entry
             message -> Map.put(entry, "message", message)
           end
         end)
+        |> with_health(id, path, enabled)
+    end
+  end
+
+  # Claude's skills for the entry: read from its config directory and the
+  # project's folders when a client asks for a folder's (`skills/2`); the entry
+  # itself carries none until then.
+  defp skills(_id, _path), do: []
+
+  defp slash_commands(id, path) do
+    commands =
+      case cached_capabilities(id, path) do
+        %{"commands" => commands} -> HalC2.ProviderUsageLimits.Claude.commands(commands)
+        _ -> []
+      end
+
+    Enum.uniq_by(
+      [
+        %{
+          "name" => "compact",
+          "description" => "Summarize the conversation and reduce context usage"
+        }
+      ] ++ commands,
+      & &1["name"]
+    )
+  end
+
+  # What the health check last found, in the entry's words. The version run is the
+  # check (as it always was, now with a deadline); the sign-in comes from the
+  # `initialize` read the models load or the usage probe already made.
+  defp with_health(entry, _id, _path, false) do
+    entry
+    |> Map.put("status", "warning")
+    |> Map.put("message", "Claude is disabled in HAL-C2 settings.")
+  end
+
+  defp with_health(entry, id, path, true) do
+    case version_health(id, path) do
+      :pending ->
+        entry
+        |> Map.merge(%{
+          "status" => "warning",
+          "installed" => false,
+          "version" => nil,
+          "auth" => %{"status" => "unknown"},
+          "message" => "Claude provider status has not been checked in this session yet."
+        })
+
+      {:error, message, version} ->
+        entry
+        |> Map.merge(%{
+          "status" => "error",
+          "version" => version,
+          "auth" => %{"status" => "unknown"},
+          "message" => message
+        })
+
+      {:ok, _version} ->
+        if auth_unverified?(id, path) do
+          entry
+          |> Map.merge(%{
+            "status" => "warning",
+            "auth" => %{"status" => "unknown"},
+            "message" =>
+              "Could not verify Claude authentication status from initialization result."
+          })
+        else
+          entry
+        end
+    end
+  end
+
+  # Signed-in-ness as the last `initialize` read left it: a read that reported no
+  # account could not verify it. No read yet says nothing either way.
+  defp auth_unverified?(id, path) do
+    case cached_capabilities(id, path) do
+      nil -> false
+      reply -> reply["account"] in [nil, ""]
+    end
+  end
+
+  # The version run's outcome, checked once per executable: the first reader runs
+  # it (readers while it runs see the check as pending), later ones read the record.
+  defp version_health(id, path) do
+    records = :persistent_term.get(@health, %{})
+
+    case Map.get(records, {id, path}) do
+      {:done, health} ->
+        health
+
+      :probing ->
+        :pending
+
+      nil ->
+        :persistent_term.put(@health, Map.put(records, {id, path}, :probing))
+
+        health =
+          try do
+            probe_version(path)
+          rescue
+            _ -> {:error, "Failed to execute Claude Agent CLI health check.", nil}
+          end
+
+        records = :persistent_term.get(@health, %{})
+        :persistent_term.put(@health, Map.put(records, {id, path}, {:done, health}))
+        health
+    end
+  end
+
+  defp probe_version(path) do
+    task = Task.async(fn -> run_version(path) end)
+    timeout = Application.get_env(:hal_c2, :claude_health_timeout_ms, 5_000)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:ok, version}} ->
+        {:ok, version}
+
+      {:ok, {:exit, output}} ->
+        {:error, "Claude Agent CLI is installed but failed to run.", version_token(output)}
+
+      {:ok, {:spawn, :enoent}} ->
+        if System.find_executable(path) do
+          {:error, "Failed to execute Claude Agent CLI health check.", nil}
+        else
+          {:error, "Claude Agent CLI (`claude`) was not found on PATH.", nil}
+        end
+
+      {:ok, {:spawn, _reason}} ->
+        {:error, "Failed to execute Claude Agent CLI health check.", nil}
+
+      _ ->
+        {:error,
+         "Claude Agent CLI is installed but failed to run. Timed out while running command.", nil}
+    end
+  end
+
+  defp run_version(path) do
+    case System.cmd(path, ["--version"], stderr_to_stdout: true) do
+      {output, 0} -> {:ok, version_token(output) || "unknown"}
+      # A program that cannot be executed at all (a launcher whose interpreter
+      # is gone) fails before it can say anything: an empty failure is the OS's.
+      {"", _status} -> {:spawn, :enoent}
+      {output, _status} -> {:exit, output}
+    end
+  rescue
+    error in ErlangError -> {:spawn, error.original}
+  end
+
+  defp version_token(output) do
+    case output |> String.split() |> List.first() do
+      token ->
+        case token && Version.parse(token) do
+          {:ok, _} -> token
+          _ -> nil
+        end
     end
   end
 
@@ -134,9 +304,70 @@ defmodule HalC2.Claude.Provider do
     :ok
   end
 
-  # Without the user's hooks or MCP servers, as the usage probe runs it.
   defp read_models(id) do
+    case capabilities(id, executable(id), true) do
+      {:ok, %{"models" => [_ | _] = models}} -> {:ok, models}
+      {:ok, _reply} -> :none
+      :error -> :error
+    end
+  end
+
+  # The last `initialize` reply read for an instance, when it is still fresh.
+  defp cached_capabilities(id, path) do
+    case Map.get(:persistent_term.get(@capabilities, %{}), {id, path}) do
+      {reply, at} ->
+        if System.monotonic_time(:millisecond) - at < @capabilities_ttl_ms, do: reply
+
+      _ ->
+        nil
+    end
+  end
+
+  @doc """
+  What `initialize` reports for instance `id` — its account, commands, agents and
+  models — read at most once in five minutes. `force` reads afresh, as a refresh
+  by hand does. The read itself is the models load's: a short-lived session with
+  no hooks or MCP servers, so nothing reaches the model.
+  """
+  @spec capabilities(String.t(), String.t() | nil, boolean) :: {:ok, map} | :error
+  def capabilities(id, path \\ nil, force \\ false) do
+    path = path || executable(id)
+
+    if path == nil do
+      :error
+    else
+      case {force, cached_capabilities(id, path)} do
+        {false, %{} = reply} ->
+          {:ok, reply}
+
+        _ ->
+          case read_capabilities(id) do
+            {:ok, reply} ->
+              records = :persistent_term.get(@capabilities, %{})
+
+              :persistent_term.put(
+                @capabilities,
+                Map.put(records, {id, path}, {reply, System.monotonic_time(:millisecond)})
+              )
+
+              {:ok, reply}
+
+            :error ->
+              :error
+          end
+      end
+    end
+  end
+
+  # Without the user's hooks or MCP servers, as the usage probe runs it.
+  defp read_capabilities(id) do
     Process.flag(:trap_exit, true)
+
+    home =
+      case home_path(id) do
+        nil -> []
+        path -> [{"CLAUDE_CONFIG_DIR", expand_home(path)}]
+      end
 
     opts = [
       handler: self(),
@@ -144,6 +375,7 @@ defmodule HalC2.Claude.Provider do
       persist_session: false,
       env:
         Enum.to_list(HalC2.Settings.instance_env(id)) ++
+          home ++
           [
             {"ENABLE_CLAUDEAI_MCP_SERVERS", "false"},
             {"CLAUDE_CODE_AUTO_CONNECT_IDE", "0"},
@@ -155,11 +387,8 @@ defmodule HalC2.Claude.Provider do
       {:ok, session} ->
         result =
           receive do
-            {:claude, ^session, {:initialized, {:ok, %{"models" => [_ | _] = models}}}} ->
-              {:ok, models}
-
-            {:claude, ^session, {:initialized, {:ok, _reply}}} ->
-              :none
+            {:claude, ^session, {:initialized, {:ok, reply}}} ->
+              {:ok, reply}
 
             {:claude, ^session, {:initialized, _error}} ->
               :error
@@ -420,6 +649,82 @@ defmodule HalC2.Claude.Provider do
   end
 
   @doc """
+  The config directory instance `instance`'s Claude uses: its `homePath` setting
+  (`~` expanded) when set, else the MC's own `CLAUDE_CONFIG_DIR` (a relative one
+  resolved from `cwd`, `~` left as written), else `.claude` in the user's home.
+  """
+  @spec config_dir(String.t(), String.t()) :: String.t()
+  def config_dir(instance \\ "claudeAgent", cwd \\ nil) do
+    cond do
+      home = home_path(instance) ->
+        expand_home(home)
+
+      env = trim(HalC2.Settings.instance_env(instance)["CLAUDE_CONFIG_DIR"]) ->
+        expand_home(env)
+
+      env = trim(System.get_env("CLAUDE_CONFIG_DIR")) ->
+        if Path.type(env) == :absolute, do: env, else: Path.absname(env, cwd || File.cwd!())
+
+      true ->
+        Path.join(System.get_env("HOME") || System.user_home!(), ".claude")
+    end
+  end
+
+  @doc "The instance's own config directory (`homePath`) when it sets one."
+  @spec home_path(String.t()) :: String.t() | nil
+  def home_path(instance \\ "claudeAgent"),
+    do: trim(HalC2.Settings.instance_setting(instance, "homePath"))
+
+  defp trim(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp trim(_value), do: nil
+
+  @doc "A `homePath` with a leading `~` filled in from the MC's HOME, as a shell would."
+  @spec expand_home(String.t()) :: String.t()
+  def expand_home("~" <> rest) do
+    home = System.get_env("HOME") || System.user_home!()
+    Path.expand(Path.join(home, String.trim_leading(rest, "/")))
+  end
+
+  def expand_home(path), do: Path.expand(path)
+
+  @doc """
+  The `claude` a session spawns. On Windows an npm install puts a launcher script
+  (`.cmd`/`.bat`/`.ps1`) on the path, which cannot be spawned directly, so the
+  program it points to — `bin/claude.exe`, else `cli.js` under Node — is started
+  instead. Anywhere else the command is unchanged.
+  """
+  @spec resolve_command([String.t()], (String.t() -> boolean)) :: [String.t()]
+  def resolve_command(command, exists? \\ &File.regular?/1)
+
+  def resolve_command([exe | rest] = command, exists?) do
+    if Application.get_env(:hal_c2, :os_type, :os.type()) |> elem(0) == :win32 and
+         String.downcase(Path.extname(exe)) in [".cmd", ".bat", ".ps1"] do
+      dir = Path.dirname(exe)
+
+      native =
+        Path.join([dir, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"])
+
+      cli = Path.join([dir, "node_modules", "@anthropic-ai", "claude-code", "cli.js"])
+
+      cond do
+        exists?.(native) -> [native | rest]
+        exists?.(cli) -> ["node", cli | rest]
+        true -> command
+      end
+    else
+      command
+    end
+  end
+
+  def resolve_command(command, _exists?), do: command
+
+  @doc """
   The launch arguments set on a Claude instance (`launchArgs`), split as a shell
   would, as Codex's are (`HalC2.Codex.Provider.launch_args/1`).
   """
@@ -527,12 +832,11 @@ defmodule HalC2.Claude.Provider do
     end
   end
 
-  defp command(id),
-    do:
-      HalC2.Settings.instance_command(
-        id,
-        Application.get_env(:hal_c2, :claude_command, ["claude"])
-      )
+  defp command(id) do
+    id
+    |> HalC2.Settings.instance_command(Application.get_env(:hal_c2, :claude_command, ["claude"]))
+    |> resolve_command()
+  end
 
   # The instance's `claude` on this machine, or nil when it names nothing.
   defp executable(id) do
@@ -585,7 +889,8 @@ defmodule HalC2.Claude.Provider do
     end
   end
 
-  # Read once per executable, so each instance's binary path has its own.
+  # Read once per executable, so each instance's binary path has its own. The run
+  # has the health check's deadline, so a CLI that hangs cannot hang the list.
   defp version(path) do
     versions = :persistent_term.get({__MODULE__, :version}, %{})
 
@@ -595,9 +900,9 @@ defmodule HalC2.Claude.Provider do
 
       _ ->
         version =
-          case System.cmd(path, ["--version"], stderr_to_stdout: true) do
-            {out, 0} -> out |> String.split() |> List.first() |> Kernel.||("unknown")
-            _ -> "unknown"
+          case probe_version(path) do
+            {:ok, version} -> version
+            {:error, _message, version} -> version || "unknown"
           end
 
         :persistent_term.put({__MODULE__, :version}, Map.put(versions, path, version))

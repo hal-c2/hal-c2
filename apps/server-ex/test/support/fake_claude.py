@@ -36,7 +36,7 @@ session = "fake-session-1"
 # transcript's path, and --fork-session continues it as a new session; a missing
 # transcript, or one written by a newer version than FAKE_CLAUDE_VERSION, ends the
 # process as Claude Code does.
-SESSIONS = os.environ.get("CLAUDE_CONFIG_DIR") if os.environ.get("FAKE_SESSIONS") else None
+SESSIONS = (os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")) if os.environ.get("FAKE_SESSIONS") else None
 VERSION = os.environ.get("FAKE_CLAUDE_VERSION", "2.1.0")
 if sys.argv[1:] and sys.argv[-1] == "--version":
     print(f"{VERSION} (Claude Code)")
@@ -99,7 +99,7 @@ try:
 except (OSError, ValueError, KeyError):
     pass
 # The start also traces where it was pointed: its config directory, its account and any router.
-trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k == "CLAUDE_CONFIG_DIR"}})
+trace({"argv": sys.argv[1:], "account": ACCOUNT_EMAIL, "env": {k: v for k, v in os.environ.items() if k.startswith("ANTHROPIC_") or k in ("CLAUDE_CONFIG_DIR", "HOME")}})
 for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
@@ -160,6 +160,9 @@ for line in sys.stdin:
         # reply has no models, as a Claude Code too old to list them answers.
         if sub == "initialize" and os.environ.get("FAKE_CLAUDE_MODELS"):
             reply["models"] = json.loads(os.environ["FAKE_CLAUDE_MODELS"])
+        # FAKE_CLAUDE_NO_ACCOUNT: an initialize that reports no sign-in.
+        if sub == "initialize" and os.environ.get("FAKE_CLAUDE_NO_ACCOUNT"):
+            reply.pop("account", None)
         send({"type": "control_response", "response": {"subtype": "success", "request_id": msg["request_id"], "response": reply}})
         # FAKE_CLAUDE_HOLD_INTERRUPT: an interrupt the CLI never answers, so the
         # host has to settle the turn itself.

@@ -90,7 +90,6 @@ Feature: Claude
     Then Claude shows "Claude Code the installed version is too old for" the model needing the lowest version
     And is told to upgrade to that version or newer
 
-  @backlog
   Scenario Outline: Claude's health states are explained
     Given <situation>
     When the user opens the provider list
@@ -661,14 +660,14 @@ Feature: Claude
     When the user reverts to before the first turn and sends a message
     Then Claude starts a new session that remembers none of the turns
 
-  @backlog @mc
+  @mc
   Scenario: Claude installed through npm on Windows starts
     Given the MC runs on Windows and "claude" on its path is npm's launcher script
     When the user sends a message to Claude
     Then the MC starts the Claude program that script points to
     And the turn runs
 
-  @backlog @mc
+  @mc
   Scenario Outline: Claude's config directory is chosen in a fixed order
     Given the Claude instance's config directory is <instance setting>
     And the MC's environment <inherited>
@@ -681,20 +680,20 @@ Feature: Claude
       | empty            | sets the Claude config directory "/env/claude" | "/env/claude"                |
       | empty            | sets no Claude config directory                | ".claude" in the user's home |
 
-  @backlog @mc
+  @mc
   Scenario: An empty config directory and the default one are the same Claude home
     Given one Claude instance has no config directory set and another is set to "~/.claude"
     When a thread started on the first is moved to the second
     Then Claude continues the same conversation
 
-  @backlog @mc
+  @mc
   Scenario: A Claude instance with its own config directory still finds its saved login on macOS
     Given the MC runs on macOS
     And a Claude instance with its own config directory was signed in from a terminal
     When the user sends a message to that instance
     Then Claude runs signed in
 
-  @backlog @mc
+  @mc
   Scenario: A signed-out Claude instance names the config directory to sign in with
     Given a Claude instance with its own config directory is not signed in
     When the user sends a message to that instance
@@ -849,7 +848,7 @@ Feature: Claude
     When the user sends "$5k-report for March" to Claude
     Then Claude runs the skill "5k-report"
 
-  @backlog @mc
+  @mc
   Scenario: Claude's account and command details are read once and reused for five minutes
     Given the MC read a Claude instance's account, commands and agents for a project folder
     When it checks that instance again within five minutes
