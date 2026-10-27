@@ -83,6 +83,7 @@ ComboBox {
 
         width: ListView.view.width
         height: 28
+        text: item.model[control.textRole] ?? item.model.modelData ?? item.model.display ?? ""
         readonly property bool selected: control.markCurrent && item.index === control.currentIndex
 
         enabled: !control.disabledRows.includes(item.index)
@@ -90,8 +91,12 @@ ComboBox {
         opacity: enabled ? 1 : 0.5
         leftPadding: 8
         rightPadding: 8
+        // No vertical padding: the label takes the whole row and centres on its fill.
+        topPadding: 0
+        bottomPadding: 0
         hoverEnabled: true
 
+        Accessible.name: item.text
         Accessible.checkable: control.markCurrent
         Accessible.checked: item.selected
 
@@ -99,7 +104,7 @@ ComboBox {
             spacing: 8
 
             Text {
-                text: item.model[control.textRole] ?? item.model.modelData ?? item.model.display ?? ""
+                text: item.text
                 font: control.font
                 color: Theme.palette.color("text", "#e4e4e7")
                 verticalAlignment: Text.AlignVCenter
@@ -161,7 +166,9 @@ ComboBox {
 
         contentItem: ListView {
             clip: true
-            implicitHeight: contentHeight
+            // Counted, not measured: the rows exist only once the popup shows,
+            // after `onAboutToShow` has chosen which way it opens.
+            implicitHeight: control.count * 28
             model: control.popup.visible ? control.delegateModel : null
             currentIndex: control.highlightedIndex
             boundsBehavior: Flickable.StopAtBounds
