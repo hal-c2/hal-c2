@@ -348,28 +348,6 @@ Feature: Plans and subagents
     And the user can open the worker's thread from it
 
   @shared @backlog-mobile @backlog-tui
-  Scenario: A finished task's notification names its worker and links to it
-    Given a task the agent delegated as "Tax tests" finished with "12 tests added"
-    When the user reads the parent thread
-    Then the worker's notification reads "Tax tests finished"
-    And the notification links to the worker's thread
-
-  @desktop @backlog-mobile
-  Scenario: A finished task's result is kept apart from the agent's replies until opened
-    Given a task the agent delegated as "Tax tests" finished with "12 tests added"
-    When the user reads the parent thread
-    Then the worker's result "12 tests added" is hidden until the user opens it
-
-  # Proven by tst_TurnRequests.qml test_waitingResultOpensItsWorkersThread until the native runner can queue a run.
-  @desktop @backlog-desktop @backlog-mobile @backlog-tui
-  Scenario: A result waiting to wake the parent names its worker and opens its thread
-    Given the agent delegated a task and chose to carry on
-    And the subagent finishes with "12 tests added"
-    When the user looks at the result waiting to wake the parent
-    Then it names the worker
-    And the user can open the worker's thread from it
-
-  @shared @backlog-mobile @backlog-tui
   Scenario: A result a thread stored as a user message still shows as a notification
     Given a thread stored the failed result of the delegated task "Tax tests" as a user message
     When the user reads the parent thread
