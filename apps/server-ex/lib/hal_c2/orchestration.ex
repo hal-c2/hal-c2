@@ -547,10 +547,10 @@ defmodule HalC2.Orchestration do
       # The archived threads are read from the sidebar rows, which a stream writes a
       # moment after its events: this one is in place before the reply, so a client
       # that lists them next sees the change.
-      if type in ~w(thread.archive thread.unarchive thread.delete),
+      if type in ~w(thread.archive thread.unarchive thread.delete thread.runtime-mode.set),
         do: HalC2.Streams.flush_shell(thread_id)
 
-      {:ok, %{"sequence" => sequence(thread_id)}}
+      {:ok, Map.merge(%{"sequence" => sequence(thread_id)}, shell_version(type))}
     end
   end
 
@@ -1942,6 +1942,20 @@ defmodule HalC2.Orchestration do
   end
 
   defp sequence(thread_id), do: HalC2.Streams.state(thread_id).seq
+
+  # An access change names the version of this MC's rows that holds it, so a client
+  # shows the pick until its rows reach it, whichever arrives first.
+  defp shell_version("thread.runtime-mode.set") do
+    case HalC2.Shell.version() do
+      {epoch, rev} when is_binary(epoch) ->
+        %{"shell" => %{"mc" => to_string(node()), "epoch" => epoch, "rev" => rev}}
+
+      _ ->
+        %{}
+    end
+  end
+
+  defp shell_version(_type), do: %{}
 
   defp interrupt_request(state, command) do
     runs = StreamState.get(state, "run")

@@ -78,6 +78,15 @@ QList<int> FakeMc::subscribers(const QString& type) const {
   return ids;
 }
 
+void FakeMc::catchUp(qsizetype frames) {
+  if (frames < 0 || frames >= m_lagged.size()) {
+    frames = m_lagged.size();
+    lagRows = false;
+  }
+  for (const QJsonObject& frame : m_lagged.mid(0, frames)) send(frame);
+  m_lagged.remove(0, frames);
+}
+
 void FakeMc::answerHeld() {
   m_holds.clear();
   const auto held = std::exchange(m_held, {});
@@ -244,6 +253,7 @@ void FakeMc::sendRows(const QString& mc, const QJsonArray& rows) {
     frame.insert(QStringLiteral("rev"), ++told.rev);
     frame.insert(QStringLiteral("reset"), false);
   }
+  if (lagRows) return m_lagged.append(frame);
   send(frame);
 }
 
@@ -253,6 +263,7 @@ void FakeMc::drop() {
   m_socket = nullptr;
   m_shellSubscription = -1;
   m_live.clear();
+  m_lagged.clear();
   socket->close();
 }
 
@@ -385,12 +396,19 @@ void FakeMc::dispatchCommand(const Rpc& rpc) {
   // A refusal is for every command of a type, or (`type:threadId`) one thread's.
   const QString one = type + QLatin1Char(':') + rpc.payload.value(QLatin1String("threadId")).toString();
   const QString refused = refusals.contains(one) ? one : type;
-  auto answer = [this, rpc, known = refusals.contains(refused), refusal = refusals.value(refused)] {
+  auto answer = [this, rpc, type, known = refusals.contains(refused), refusal = refusals.value(refused)] {
     if (known) {
       refuse(rpc, refusal);
     } else {
       for (const auto& effect : std::as_const(effects)) effect(rpc.payload);
-      reply(rpc, QJsonObject{{QStringLiteral("sequence"), commands.size()}});
+      QJsonObject result{{QStringLiteral("sequence"), commands.size()}};
+      // An access change names the version of the rows that holds it, as the MC does.
+      if (versioned && type == QLatin1String("thread.runtime-mode.set")) {
+        result.insert(QStringLiteral("shell"), QJsonObject{{QStringLiteral("mc"), name},
+                                                           {QStringLiteral("epoch"), epoch},
+                                                           {QStringLiteral("rev"), m_told.value(name).rev}});
+      }
+      reply(rpc, result);
     }
   };
   if (holding(QStringLiteral("answers"))) {

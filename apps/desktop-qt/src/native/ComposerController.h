@@ -482,12 +482,14 @@ private:
   // Requests answered and waiting for the MC, and ones it said are gone.
   QSet<QString> m_responding;
   QSet<QString> m_closed;
-  // An access change sent to the MC, until the thread shows it: the thread's
-  // mode when it was sent, and whether the MC has taken it.
+  // An access change sent to the MC, until the thread's row holds it: once the
+  // MC took it, the version of its rows that does.
   struct SettingMode {
     QString mode;
-    QString from;
     bool accepted = false;
+    QString mc;
+    QString epoch;  // none from an MC that names no version
+    qint64 rev = 0;
   };
   // By draft target.
   QHash<QString, SettingMode> m_settingMode;

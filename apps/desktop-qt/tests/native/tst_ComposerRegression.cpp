@@ -469,6 +469,42 @@ private slots:
 
     QTRY_COMPARE(shown(), QStringLiteral("auto-accept-edits"));
   }
+
+  // The MC's answers can beat the rows they changed: a second pick the MC took
+  // still shows while the row holds the first, or neither.
+  void anAccessChangeAnsweredBeforeItsRowStillShows() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    shell.mc.effects.append([&shell](const QJsonObject& command) {
+      if (command.value(QLatin1String("type")) != QLatin1String("thread.runtime-mode.set")) return;
+      QJsonObject row = shell.mc.threads.value(QStringLiteral("t1"));
+      row.insert(QStringLiteral("runtimeMode"), command.value(QLatin1String("runtimeMode")));
+      shell.mc.threads.insert(QStringLiteral("t1"), row);
+      shell.mc.sendRow(QStringLiteral("t1"), row);
+    });
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto pick = [&shell](const QString& mode) {
+      shell.bridge->dispatch(QStringLiteral("composer.runtimeMode.set"), QVariantMap{{QStringLiteral("mode"), mode}});
+    };
+    const auto shown = [&shell] {
+      return shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("runtimeMode")).toString();
+    };
+    shell.mc.lagRows = true;
+    shell.mc.hold(QStringLiteral("answers"));
+    pick(QStringLiteral("approval-required"));
+    pick(QStringLiteral("auto-accept-edits"));
+    QTRY_COMPARE(shell.mc.commands.size(), 2);
+    shell.mc.answerHeld();
+    // The answers went first: the row with the first pick comes after them.
+    shell.mc.catchUp(1);
+    QTRY_COMPARE(shell.native->store()->thread(shell.key)->runtimeMode, QStringLiteral("approval-required"));
+    QCOMPARE(shown(), QStringLiteral("auto-accept-edits"));
+
+    shell.mc.catchUp();
+    QTRY_COMPARE(shell.native->store()->thread(shell.key)->runtimeMode, QStringLiteral("auto-accept-edits"));
+    QCOMPARE(shown(), QStringLiteral("auto-accept-edits"));
+  }
 };
 
 int main(int argc, char** argv) {

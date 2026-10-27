@@ -111,6 +111,12 @@ struct Model {
   QMap<QString, QString> setting;
   // The access changes whose answers the MC holds, in the order they went out.
   QList<HeldPick> heldPicks;
+  // While set, the MC's rows reach the client after its answers, which do not
+  // wait for them: the access each row will show, by thread, in order.
+  bool lagging = false;
+  QList<std::pair<QString, QString>> lagged;
+  // The changes the MC took whose rows have not come, by thread.
+  QMap<QString, QString> landing;
 
   int total() const {
     int count = 0;
@@ -144,12 +150,17 @@ QStringList commandsOf(const Send& send) {
 void dispatchFirst(Model& m, const QString& thread);
 
 // The MC answers an access change: the thread takes it, and the pick goes once
-// the thread shows it; a refused one goes too, with a toast, unless a newer
-// one is on its way.
+// the row with it has come, whatever the row shows; a refused one goes too,
+// with a toast, unless a newer one is on its way.
 void answerPick(Model& m, const HeldPick& pick) {
   if (!pick.refused) {
-    m.runtimes[pick.thread] = pick.mode;
+    if (m.lagging) {
+      m.lagged.append({pick.thread, pick.mode});
+    } else {
+      m.runtimes[pick.thread] = pick.mode;
+    }
     if (m.setting.value(pick.thread) != pick.mode) return;
+    if (m.lagging) return void(m.landing[pick.thread] = pick.mode);
   } else {
     if (m.setting.value(pick.thread) != pick.mode) return;
     m.toasts.prepend({pick.thread, QString()});
@@ -705,11 +716,6 @@ struct PickRuntime : Command {
     if (!m.setting.contains(m.open) && m.runtimes.value(m.open) == mode) return;
     m.commands[m.open].append(QStringLiteral("runtime|") + mode);
     m.setting[m.open] = mode;
-    // One the thread already shows (another device made it) settles at once.
-    if (m.runtimes.value(m.open) == mode) {
-      m.setting.remove(m.open);
-      m.picked.remove(m.open);
-    }
     const HeldPick sent{m.open, mode, m.refusing};
     if (m.holding) {
       m.heldPicks.append(sent);
@@ -725,22 +731,23 @@ struct PickRuntime : Command {
 };
 
 // Another device changes a thread's access: a change from here still on its
-// way lands after it, unless the thread now shows the one it was making.
+// way shows until its own answer and row have come.
 struct AccessElsewhere : Command {
   QString thread = pick(kThreads);
   QString mode = pick(kRuntimeModes);
   void apply(Model& m) const override {
-    m.runtimes[thread] = mode;
-    if (m.setting.value(thread) != mode) return;
-    m.setting.remove(thread);
-    if (m.picked.value(thread) == mode) m.picked.remove(thread);
+    if (m.lagging) {
+      m.lagged.append({thread, mode});
+    } else {
+      m.runtimes[thread] = mode;
+    }
   }
   void run(const Model& m0, Sut& sut) const override {
     QJsonObject row = sut.mc.threads.value(thread);
     row.insert(QStringLiteral("runtimeMode"), mode);
     sut.mc.threads.insert(thread, row);
     sut.mc.sendRow(thread, row);
-    RC_ASSERT(prop::until([&] {
+    RC_ASSERT(m0.lagging || prop::until([&] {
       const auto row = sut.native->store()->thread(keyOf(thread));
       return row && row->runtimeMode == mode;
     }));
@@ -756,6 +763,7 @@ struct Submit : Command {
   void checkPreconditions(const Model& m) const override {
     RC_PRE(m.isThread(m.open));
     RC_PRE(m.heldPicks.isEmpty());
+    RC_PRE(!m.lagging);
   }
   void apply(Model& m) const override {
     Target& target = m.targets[m.open];
@@ -853,6 +861,8 @@ struct RestorePrompt : Command {
 struct SetRunning : Command {
   QString thread = pick(kThreads);
   bool on = *rc::gen::arbitrary<bool>();
+  // Its row would bring the access rows still lagging.
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.lagging); }
   void apply(Model& m) const override {
     if (on) {
       m.running.insert(thread);
@@ -875,6 +885,45 @@ struct SetRunning : Command {
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "SetRunning(" << thread.toStdString() << ", " << on << ")"; }
+};
+
+// The MC's rows start to lag behind its answers.
+struct Lag : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(!m.lagging); }
+  void apply(Model& m) const override { m.lagging = true; }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.mc.lagRows = true;
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "Lag"; }
+};
+
+// The rows that lagged come, in order: the changes they carry settle.
+struct CatchUp : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.lagging); }
+  void apply(Model& m) const override {
+    m.lagging = false;
+    for (const auto& [thread, mode] : std::exchange(m.lagged, {})) m.runtimes[thread] = mode;
+    for (auto it = m.landing.cbegin(); it != m.landing.cend(); ++it) {
+      if (m.setting.value(it.key()) != it.value()) continue;
+      m.setting.remove(it.key());
+      if (m.picked.value(it.key()) == it.value()) m.picked.remove(it.key());
+    }
+    m.landing.clear();
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    sut.mc.catchUp();
+    const Model m = nextState(m0);
+    RC_ASSERT(prop::until([&] {
+      for (const QString& thread : kThreads) {
+        const auto row = sut.native->store()->thread(keyOf(thread));
+        if (!row || row->runtimeMode != m.runtimes.value(thread)) return false;
+      }
+      return true;
+    }));
+    verify(m, sut);
+  }
+  void show(std::ostream& os) const override { os << "CatchUp"; }
 };
 
 struct Hold : Command {
@@ -919,7 +968,8 @@ struct AnswerHeld : Command {
 struct Drop : Command {
   bool received = *rc::gen::arbitrary<bool>();
   // An access change cut off is not modelled yet (hal-c2#609).
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.heldPicks.isEmpty()); }
+  // Lagging rows are not modelled across a reconnect, which sends them whole.
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.heldPicks.isEmpty() && !m.lagging); }
   void apply(Model& m) const override {
     cutOff(m, received);
     // The threads followed are asked for again, and a slow MC keeps them waiting.
@@ -970,7 +1020,8 @@ struct Elsewhere : Command {
 // comes back once the thread is open.
 struct Restart : Command {
   bool received = *rc::gen::arbitrary<bool>();
-  void checkPreconditions(const Model& m) const override { RC_PRE(m.heldPicks.isEmpty()); }
+  // Lagging rows are not modelled across a reconnect, which sends them whole.
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.heldPicks.isEmpty() && !m.lagging); }
   void apply(Model& m) const override {
     m.toasts.clear();
     if (!m.held.isEmpty()) cutOff(m, received);
@@ -1112,8 +1163,9 @@ private slots:
   }
 
   // Picking a thread's access often, with the MC holding or refusing the
-  // changes: the composer shows the pick while it is on its way, then what the
-  // thread really has, and a pick back to the thread's access still goes.
+  // changes and its rows lagging behind its answers: the composer shows the
+  // pick while it is on its way, then what the thread really has, and a pick
+  // back to the thread's access still goes.
   void accessChanges() {
     QVERIFY(rc::check("a thread takes the access picked at once, and the composer shows what the thread has", [] {
       Sut sut;
@@ -1122,7 +1174,7 @@ private slots:
       const auto commands = *rc::gen::scale(
           0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
                                                    Open, PickRuntime, PickRuntime, PickRuntime, AccessElsewhere, Prompt, SetRunning,
-                                                   Hold, Hold, AnswerHeld, Refuse, Restart>()));
+                                                   Hold, Hold, AnswerHeld, Refuse, Restart, Lag, CatchUp>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

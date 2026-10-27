@@ -2590,19 +2590,22 @@ bool ComposerController::slashUsageLimits(const QString& target, const QString& 
 void ComposerController::setThreadRuntimeMode(const QString& target, const QString& mode) {
   const auto thread = m_store->thread(target);
   if (!thread || (thread->runtimeMode == mode && !m_settingMode.contains(target))) return;
-  // A change still on its way reaches the row before this one.
-  const QString from = m_settingMode.contains(target) ? m_settingMode.value(target).mode : thread->runtimeMode;
-  m_settingMode.insert(target, {mode, from});
+  m_settingMode.insert(target, {mode});
   m_client->dispatchCommand(this, thread->environmentId,
                             {
                                 {QStringLiteral("type"), QStringLiteral("thread.runtime-mode.set")},
                                 {QStringLiteral("threadId"), thread->id},
                                 {QStringLiteral("runtimeMode"), mode},
                             },
-                            [this, target, mode](const QJsonValue&, const std::optional<QString>& error) {
+                            [this, target, mode](const QJsonValue& result, const std::optional<QString>& error) {
                               if (m_settingMode.value(target).mode != mode) return;
                               if (!error) {
-                                m_settingMode[target].accepted = true;
+                                const QJsonObject shell = result.toObject().value(QLatin1String("shell")).toObject();
+                                SettingMode& setting = m_settingMode[target];
+                                setting.accepted = true;
+                                setting.mc = shell.value(QLatin1String("mc")).toString();
+                                setting.epoch = shell.value(QLatin1String("epoch")).toString();
+                                setting.rev = qint64(shell.value(QLatin1String("rev")).toDouble());
                                 return settleRuntimeModes();
                               }
                               m_settingMode.remove(target);
@@ -2612,20 +2615,18 @@ void ComposerController::setThreadRuntimeMode(const QString& target, const QStri
                               save();
                               publish();
                             });
-  // A pick of what the row already shows needs no answer to settle.
-  settleRuntimeModes();
 }
 
-// Drops the drafts of access changes the threads now hold. One still on its way
-// stays: the thread's row shows the old mode until the MC has it. Once the MC
-// took it, any other mode the row moves to settles it too: another client's
-// change can reach this one in the same update as ours.
+// Drops the drafts of access changes the threads' rows now hold, whatever mode
+// they show: the row and the MC's answer travel apart, and another device's
+// change can land with ours or after it.
 void ComposerController::settleRuntimeModes() {
   bool changed = false;
   for (auto it = m_settingMode.begin(); it != m_settingMode.end();) {
     const auto thread = m_store->thread(it.key());
-    const bool moved = thread && (thread->runtimeMode == it->mode || (it->accepted && thread->runtimeMode != it->from));
-    if (thread && !moved) {
+    // From an MC that names no version, the row is as good as it gets.
+    const bool landed = it->accepted && (it->epoch.isEmpty() || m_store->reached(it->mc, it->epoch, it->rev));
+    if (thread && !landed) {
       ++it;
       continue;
     }
