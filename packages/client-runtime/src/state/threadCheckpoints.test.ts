@@ -80,11 +80,16 @@ describe("checkpoint turn counts", () => {
 
     expect(diffCheckpoints(projection).map((entry) => entry.appRunOrdinal)).toEqual([1, 4, 6]);
     expect(
-      deriveThreadCheckpointSummaries(projection)
-        .filter((summary) => summary.status === "ready")
-        .map((summary) => [summary.runId, summary.checkpointTurnCount]),
+      deriveThreadCheckpointSummaries(projection).map((summary) => [
+        summary.runId,
+        summary.checkpointTurnCount,
+      ]),
     ).toEqual([
       ["run-1", 1],
+      // Rewound checkpoints carry no turn count: their run ordinal could
+      // equal a standing turn's position and be taken for it.
+      ["run-2", 0],
+      ["run-3", 0],
       ["run-4", 2],
       ["run-6", 3],
     ]);

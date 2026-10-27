@@ -1272,15 +1272,10 @@ QVariantMap TimelineModel::checkpointOf(const QString& rowId) const {
   const auto checkpoints = m_entities.value(QStringLiteral("checkpoint"));
   for (auto it = checkpoints.cbegin(); it != checkpoints.cend(); ++it) {
     if (text(*it, QLatin1String("runId")) != runId || text(*it, QLatin1String("status")) != QLatin1String("ready")) continue;
-    // The MC's turn number (the diff panel's), else the turn's number among
-    // the runs still shown.
-    int turn = diffTurnOf(checkpoints, m_entities.value(QStringLiteral("run")), runId);
-    if (turn <= 0) {
-      const int ordinal = run.value(QLatin1String("ordinal")).toInt();
-      for (const QJsonObject& other : m_entities.value(QStringLiteral("run"))) {
-        if (other.value(QLatin1String("ordinal")).toInt() <= ordinal && text(other, QLatin1String("status")) != QLatin1String("rolled_back")) ++turn;
-      }
-    }
+    // The MC's turn number (the diff panel's). A ready checkpoint that does
+    // not count as a diff turn (its run never completed) gets 0 rather than
+    // a count of runs, which could equal another turn's number.
+    const int turn = diffTurnOf(checkpoints, m_entities.value(QStringLiteral("run")), runId);
     return {{QStringLiteral("checkpointId"), it.key()},
             {QStringLiteral("scopeId"), text(*it, QLatin1String("scopeId"))},
             {QStringLiteral("turn"), turn}};

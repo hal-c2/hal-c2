@@ -65,9 +65,10 @@ export function deriveThreadCheckpointSummaries(
         scopeId: checkpoint.scopeId,
         runId: checkpoint.runId,
         // A checkpoint with no diff turn (not ready, or its run never
-        // completed) keeps its run ordinal as a label; it is never asked
-        // for a diff, and rollback refuses it as not ready.
-        checkpointTurnCount: turnOf.get(checkpoint.id) ?? checkpoint.appRunOrdinal,
+        // completed) gets 0: its run ordinal could equal a real turn's
+        // position, and a count taken for that turn would diff or roll
+        // back to a different checkpoint.
+        checkpointTurnCount: turnOf.get(checkpoint.id) ?? 0,
         checkpointRef: checkpoint.ref,
         status: checkpoint.status,
         files: checkpoint.files,
