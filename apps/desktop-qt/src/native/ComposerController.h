@@ -482,8 +482,15 @@ private:
   // Requests answered and waiting for the MC, and ones it said are gone.
   QSet<QString> m_responding;
   QSet<QString> m_closed;
-  // Access changes sent to the MC, by draft target, until the thread shows them.
-  QHash<QString, QString> m_settingMode;
+  // An access change sent to the MC, until the thread shows it: the thread's
+  // mode when it was sent, and whether the MC has taken it.
+  struct SettingMode {
+    QString mode;
+    QString from;
+    bool accepted = false;
+  };
+  // By draft target.
+  QHash<QString, SettingMode> m_settingMode;
   // Drafts whose first send is on the way.
   QSet<QString> m_launching;
   // The thumbnails of the draft images the composer has shown, by attachment id.

@@ -690,7 +690,7 @@ bool ComposerController::sendTurn(const QString& target, const QString& text, co
   if (planFollowUp) interactionMode = implement ? QStringLiteral("default") : QStringLiteral("plan");
   if (thread->interactionMode.isEmpty() && interactionMode == QLatin1String("default")) interactionMode.clear();
   QList<QJsonObject> commands;
-  if (!runtimeMode.isEmpty() && runtimeMode != thread->runtimeMode && m_settingMode.value(target) != runtimeMode) {
+  if (!runtimeMode.isEmpty() && runtimeMode != thread->runtimeMode && m_settingMode.value(target).mode != runtimeMode) {
     commands.append({
         {QStringLiteral("type"), QStringLiteral("thread.runtime-mode.set")},
         {QStringLiteral("threadId"), thread->id},
@@ -2590,7 +2590,9 @@ bool ComposerController::slashUsageLimits(const QString& target, const QString& 
 void ComposerController::setThreadRuntimeMode(const QString& target, const QString& mode) {
   const auto thread = m_store->thread(target);
   if (!thread || (thread->runtimeMode == mode && !m_settingMode.contains(target))) return;
-  m_settingMode.insert(target, mode);
+  // A change still on its way reaches the row before this one.
+  const QString from = m_settingMode.contains(target) ? m_settingMode.value(target).mode : thread->runtimeMode;
+  m_settingMode.insert(target, {mode, from});
   m_client->dispatchCommand(this, thread->environmentId,
                             {
                                 {QStringLiteral("type"), QStringLiteral("thread.runtime-mode.set")},
@@ -2598,8 +2600,11 @@ void ComposerController::setThreadRuntimeMode(const QString& target, const QStri
                                 {QStringLiteral("runtimeMode"), mode},
                             },
                             [this, target, mode](const QJsonValue&, const std::optional<QString>& error) {
-                              if (m_settingMode.value(target) != mode) return;
-                              if (!error) return settleRuntimeModes();
+                              if (m_settingMode.value(target).mode != mode) return;
+                              if (!error) {
+                                m_settingMode[target].accepted = true;
+                                return settleRuntimeModes();
+                              }
                               m_settingMode.remove(target);
                               toast(QStringLiteral("Failed to change the thread's access."), *error);
                               if (m_drafts.value(target).runtimeMode != mode) return;
@@ -2607,19 +2612,24 @@ void ComposerController::setThreadRuntimeMode(const QString& target, const QStri
                               save();
                               publish();
                             });
+  // A pick of what the row already shows needs no answer to settle.
+  settleRuntimeModes();
 }
 
 // Drops the drafts of access changes the threads now hold. One still on its way
-// stays: the thread's row shows the old mode until the MC has it.
+// stays: the thread's row shows the old mode until the MC has it. Once the MC
+// took it, any other mode the row moves to settles it too: another client's
+// change can reach this one in the same update as ours.
 void ComposerController::settleRuntimeModes() {
   bool changed = false;
   for (auto it = m_settingMode.begin(); it != m_settingMode.end();) {
     const auto thread = m_store->thread(it.key());
-    if (thread && thread->runtimeMode != it.value()) {
+    const bool moved = thread && (thread->runtimeMode == it->mode || (it->accepted && thread->runtimeMode != it->from));
+    if (thread && !moved) {
       ++it;
       continue;
     }
-    if (m_drafts.contains(it.key()) && m_drafts[it.key()].runtimeMode == it.value()) {
+    if (m_drafts.contains(it.key()) && m_drafts[it.key()].runtimeMode == it->mode) {
       m_drafts[it.key()].runtimeMode.clear();
       changed = true;
     }

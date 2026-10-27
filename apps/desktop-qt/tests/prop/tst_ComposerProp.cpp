@@ -705,6 +705,11 @@ struct PickRuntime : Command {
     if (!m.setting.contains(m.open) && m.runtimes.value(m.open) == mode) return;
     m.commands[m.open].append(QStringLiteral("runtime|") + mode);
     m.setting[m.open] = mode;
+    // One the thread already shows (another device made it) settles at once.
+    if (m.runtimes.value(m.open) == mode) {
+      m.setting.remove(m.open);
+      m.picked.remove(m.open);
+    }
     const HeldPick sent{m.open, mode, m.refusing};
     if (m.holding) {
       m.heldPicks.append(sent);
@@ -717,6 +722,31 @@ struct PickRuntime : Command {
     verify(nextState(m0), sut);
   }
   void show(std::ostream& os) const override { os << "PickRuntime(" << mode.toStdString() << ")"; }
+};
+
+// Another device changes a thread's access: a change from here still on its
+// way lands after it, unless the thread now shows the one it was making.
+struct AccessElsewhere : Command {
+  QString thread = pick(kThreads);
+  QString mode = pick(kRuntimeModes);
+  void apply(Model& m) const override {
+    m.runtimes[thread] = mode;
+    if (m.setting.value(thread) != mode) return;
+    m.setting.remove(thread);
+    if (m.picked.value(thread) == mode) m.picked.remove(thread);
+  }
+  void run(const Model& m0, Sut& sut) const override {
+    QJsonObject row = sut.mc.threads.value(thread);
+    row.insert(QStringLiteral("runtimeMode"), mode);
+    sut.mc.threads.insert(thread, row);
+    sut.mc.sendRow(thread, row);
+    RC_ASSERT(prop::until([&] {
+      const auto row = sut.native->store()->thread(keyOf(thread));
+      return row && row->runtimeMode == mode;
+    }));
+    verify(nextState(m0), sut);
+  }
+  void show(std::ostream& os) const override { os << "AccessElsewhere(" << thread.toStdString() << ", " << mode.toStdString() << ")"; }
 };
 
 // A send from a thread's composer: the draft empties as it goes, and a send
@@ -1091,8 +1121,8 @@ private slots:
       verify(model, sut);
       const auto commands = *rc::gen::scale(
           0.3, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<
-                                                   Open, PickRuntime, PickRuntime, PickRuntime, Prompt, SetRunning, Hold, Hold,
-                                                   AnswerHeld, Refuse, Restart>()));
+                                                   Open, PickRuntime, PickRuntime, PickRuntime, AccessElsewhere, Prompt, SetRunning,
+                                                   Hold, Hold, AnswerHeld, Refuse, Restart>()));
       rc::state::runAll(commands, model, sut);
     }));
   }
