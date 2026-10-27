@@ -919,8 +919,11 @@ AbstractButton {
 
         width: 36
         height: 36
-        Accessible.role: Accessible.Button
+        // A tab of the rail: reached from the search with Left or Shift+Tab,
+        // and moved through with the arrows.
+        Accessible.role: Accessible.PageTab
         Accessible.name: tooltip
+        Accessible.selected: selected
         activeFocusOnTab: false
 
         HoverHandler {

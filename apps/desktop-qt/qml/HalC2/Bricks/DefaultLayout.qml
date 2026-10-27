@@ -234,6 +234,8 @@ Item {
                     Layout.preferredHeight: 36
                     visible: layout.framesWindow && Theme.frameless && !workspaceView.visible && !tabsView.visible
                     color: Theme.palette.color("canvas", "#0f0f12")
+                    Accessible.role: Accessible.TitleBar
+                    Accessible.name: qsTr("Title bar")
 
                     DragHandler {
                         target: null
@@ -393,6 +395,8 @@ Item {
         color: Theme.palette.color("scrim", "#52000000")
         Accessible.role: Accessible.Button
         Accessible.name: qsTr("Close thread list")
+        // The pointer's way out; the keyboard has the header's toggle.
+        Accessible.focusable: false
         Accessible.onPressAction: Shell.dispatch("sidebar.toggle")
 
         MouseArea {
@@ -415,6 +419,8 @@ Item {
         color: Theme.palette.color("scrim", "#52000000")
         Accessible.role: Accessible.Button
         Accessible.name: qsTr("Close panel")
+        // The pointer's way out; the keyboard has the header's toggle.
+        Accessible.focusable: false
         Accessible.onPressAction: Shell.dispatch("rightPanel.toggle")
 
         MouseArea {
