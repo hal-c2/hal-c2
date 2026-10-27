@@ -74,7 +74,9 @@ These are the mistakes the first upstream batch (hal-c2/hal-c2#10) made and revi
 - **Thank each person once.** The digest's `New to CREDITS.md:` line is who the ledger has
   not carried before. Add each to `CREDITS.md` in name order, `- [Name](https://github.com/<login>)`,
   or `- Name` when no account was found, in the same commit. When it says GitHub could not
-  be asked, run the digest again rather than writing `- Name`. The PR description thanks
+  be asked, run the digest again rather than writing `- Name`. A `Link in CREDITS.md:`
+  line names someone thanked before by name alone: turn their `- Name` line into the
+  linked form, without mentioning them again. The PR description thanks
   them with an `@login` mention; that is their one notification. Everyone else is named
   without `@`, so nobody is pinged twice.
 - **No review register.** Nothing under `docs/`. The PR description is the record.

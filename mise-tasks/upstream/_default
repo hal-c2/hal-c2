@@ -72,15 +72,16 @@ login() {
 # Each person is thanked by mention once, in the ledger pull request that first carries
 # their work, which adds them to CREDITS.md ("- Name" or "- [Name](profile)" lines).
 # Someone is known by their login, so a shared or changed name neither hides a newcomer
-# nor thanks anyone twice; by name only when no login is found for them.
-declare -A credited=() logins=()
+# nor thanks anyone twice; by name only when no login is found for them. Someone listed
+# by name alone whose login turns up later was thanked already: their line gets the link.
+declare -A credited=() logins=() bare=()
 while IFS=$'\t' read -r name handle; do
   credited[$name]=1
-  [[ -z $handle ]] || logins[${handle,,}]=1
+  if [[ -n $handle ]]; then logins[${handle,,}]=1; else bare[$name]=1; fi
 done < <(sed -nE 's/^- \[(.*)\]\(https:\/\/github\.com\/([^)]*)\)$/\1\t\2/p;t;s/^- (.+)$/\1\t/p' CREDITS.md)
 declare -A looked=()
 newcomers() {
-  local name email handle who=()
+  local name email handle who=() links=()
   while IFS=$'\t' read -r name email; do
     if [[ -z ${looked[$email]+set} ]]; then
       looked[$email]=$(login "$email") || looked[$email]="?"
@@ -91,7 +92,11 @@ newcomers() {
     elif [[ -n $handle ]]; then
       [[ -z ${logins[${handle,,}]:-} ]] || continue
       logins[${handle,,}]=1
-      who+=("$name @$handle")
+      if [[ -n ${bare[$name]:-} ]]; then
+        links+=("$name https://github.com/$handle")
+      else
+        who+=("$name @$handle")
+      fi
     else
       [[ -z ${credited[$name]:-} ]] || continue
       credited[$name]=1
@@ -101,6 +106,10 @@ newcomers() {
   if ((${#who[@]})); then
     local IFS=$'\x1f'
     echo "New to CREDITS.md: ${who[*]}" | sed $'s/\x1f/; /g'
+  fi
+  if ((${#links[@]})); then
+    local IFS=$'\x1f'
+    echo "Link in CREDITS.md: ${links[*]}" | sed $'s/\x1f/; /g'
   fi
 }
 
