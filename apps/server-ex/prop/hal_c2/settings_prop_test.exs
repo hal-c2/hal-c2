@@ -129,6 +129,7 @@ defmodule HalC2.SettingsPropTest do
             {2, {:call, __MODULE__, :records, []}},
             {2, {:call, __MODULE__, :bind, [rule_key()]}},
             {2, {:call, __MODULE__, :bind_racing, [rule_key(), incoming_rules()]}},
+            {1, {:call, __MODULE__, :bind_unwritable, [rule_key()]}},
             {1, {:call, __MODULE__, :rules, []}}
           ]
         end
@@ -358,6 +359,10 @@ defmodule HalC2.SettingsPropTest do
   def postcondition(_state, {:call, _, :update_raises, _}, result),
     do: match?({:error, _}, result)
 
+  # Likewise a rules file it cannot write, and keeps the rules and their record.
+  def postcondition(_state, {:call, _, :bind_unwritable, _}, result),
+    do: match?({:error, _}, result)
+
   # `settings/0` reads the table a second time, and so does `hal_c2_subagents?/0`, so a
   # racing writer can land in between.
   def postcondition(
@@ -530,6 +535,15 @@ defmodule HalC2.SettingsPropTest do
     :ok = :sys.resume(Settings)
     {:ok, _} = Task.await(edit)
     :ok
+  end
+
+  # A client's edit when the rules cannot be written: `<path>.tmp` is a directory.
+  def bind_unwritable(key) do
+    tmp = HalC2.Keybindings.path() <> ".tmp"
+    File.mkdir_p!(tmp)
+    HalC2.Keybindings.upsert(rule(key))
+  after
+    File.rm_rf!(HalC2.Keybindings.path() <> ".tmp")
   end
 
   def rules, do: HalC2.Keybindings.rules()

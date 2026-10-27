@@ -456,6 +456,7 @@ defmodule HalC2.Settings do
   def handle_call({:put, _settings, _version}, _from, state),
     do: {:reply, {:error, :stale}, state}
 
+  # A rules file that cannot be written fails the edit, not the table every service reads.
   def handle_call({:edit_keybindings, fun}, _from, state) do
     rules = fun.(HalC2.Keybindings.rules())
     HalC2.Keybindings.write(rules)
@@ -463,6 +464,10 @@ defmodule HalC2.Settings do
 
     {:reply, {:ok, %{"rules" => rules}},
      put_shared(state, local_keybindings(state.shared, state))}
+  rescue
+    exception -> {:reply, {:error, Exception.message(exception)}, state}
+  catch
+    kind, reason -> {:reply, {:error, Exception.format_banner(kind, reason)}, state}
   end
 
   def handle_call({:watch, pid, ref}, _from, state) do

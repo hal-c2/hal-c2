@@ -31,6 +31,30 @@ defmodule HalC2.KeybindingsTest do
       HalC2.Keybindings.remove(%{"key" => "mod+shift+j", "command" => "terminal.toggle"})
   end
 
+  test "a rules file that cannot be written fails the edit, and the settings server stays up",
+       %{path: path} do
+    {_, version} = HalC2.Settings.get()
+    server = Process.whereis(HalC2.Settings)
+    :ok = HalC2.Settings.watch(self())
+    # The rules are written to `<path>.tmp` first; a directory there refuses them.
+    File.mkdir_p!(path <> ".tmp")
+
+    assert {:error, message} =
+             HalC2.Keybindings.upsert(%{"key" => "mod+j", "command" => "terminal.toggle"})
+
+    assert message =~ "keybindings.json.tmp"
+    assert Process.whereis(HalC2.Settings) == server
+    assert {_, ^version} = HalC2.Settings.get()
+    assert HalC2.Keybindings.rules() == []
+    refute_received {:hal_c2_keybindings, _, _}
+
+    File.rmdir!(path <> ".tmp")
+    rule = %{"key" => "mod+j", "command" => "terminal.toggle"}
+    assert {:ok, %{"rules" => [^rule]}} = HalC2.Keybindings.upsert(rule)
+    # The watch survived the failed edit.
+    assert_received {:hal_c2_keybindings, _, [^rule]}
+  end
+
   test "entries that are not rules are skipped", %{path: path} do
     File.write!(path, ~s([{"key": "mod+k", "command": "commandPalette.toggle"}, 3, {"key": 1}]))
 
