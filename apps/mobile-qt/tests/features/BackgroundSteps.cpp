@@ -50,6 +50,8 @@ const Steps steps([] {
   step(S("Claude starts a monitor in the thread"), [](World& world, const Captures&, const Table&) {
     // Room for the desktop layout, whose right panel carries the Agents tab.
     world.resize(960, 600);
+    world.waitFor([&] { return world.find(S("desktopLayout")) != nullptr; },
+                  [&] { return S("the desktop layout; the screen says: %1").arg(world.texts().join(S(" | "))); });
     world.thread = haveThread(world, S("Tax line"));
     openThread(world, S("Tax line"));
     FakeStreams& fake = world.mc.part<FakeStreams>();
