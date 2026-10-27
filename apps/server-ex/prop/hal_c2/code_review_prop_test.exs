@@ -18,8 +18,8 @@ defmodule HalC2.CodeReviewPropTest do
   - one review runs per pull request: each run has a thread of its own once it starts
     and none before, and a retry replaces a run rather than adding one;
   - every post is the one the model expects, on the commit its run reviewed and opening
-    with the count of the comments kept, and a late answer to a superseded post leaves
-    the newer run alone;
+    with the count and severities of the findings kept, and a late answer to a
+    superseded post leaves the newer run alone;
   - a report with nothing to post goes back to the agent as an error, and one posted
     automatically is answered once GitHub has, with how the post went;
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
@@ -653,17 +653,32 @@ defmodule HalC2.CodeReviewPropTest do
   defp post(m, key) do
     r = m.reviews[key]
     kept = Enum.count(r.comments, &(not &1))
-    m = %{m | posts: m.posts ++ [{key, r.reviewed, kept, @events[r.verdict], headline(kept)}]}
+
+    m = %{
+      m
+      | posts: m.posts ++ [{key, r.reviewed, kept, @events[r.verdict], headline(r.comments)}]
+    }
 
     if m.gate == :closed,
       do: {%{m | held_pubs: m.held_pubs ++ [{key, r.run, m.refusing}]}, :held},
       else: {complete(m, key, r.run, m.refusing), if(m.refusing, do: :error, else: :ok)}
   end
 
-  # The line a post opens with: the count of the comments the user kept.
-  defp headline(0), do: "No findings."
-  defp headline(1), do: "1 finding."
-  defp headline(n), do: "#{n} findings."
+  # The line a post opens with: the findings of a report the user kept, where a
+  # report with findings has a high one and an unrated one on lines (`dismissed`
+  # says which the user dismissed) and an unrated one in the summary.
+  defp headline([]), do: "No findings."
+
+  defp headline([high_dismissed, other_dismissed]) do
+    high = if high_dismissed, do: 0, else: 1
+    unrated = if(other_dismissed, do: 0, else: 1) + 1
+    count = high + unrated
+    noun = if count == 1, do: "finding", else: "findings"
+
+    if high == 1,
+      do: "#{count} #{noun}: 1 high, #{unrated} unrated.",
+      else: "#{count} #{noun}."
+  end
 
   # GitHub's answer to the post of run `run` lands only on that run, still being posted.
   defp complete(m, key, run, refused) do
@@ -760,8 +775,10 @@ defmodule HalC2.CodeReviewPropTest do
             "verdict" => "request-changes",
             "summary" => "Two things.",
             "comments" => [
-              %{"path" => "src/limits.ts", "line" => 1, "body" => "One."},
-              %{"path" => "src/limits.ts", "line" => 2, "body" => "Two."}
+              %{"path" => "src/limits.ts", "line" => 1, "body" => "One.", "severity" => "high"},
+              %{"path" => "src/limits.ts", "line" => 2, "body" => "Two."},
+              # Not in the diff, so it goes into the summary and cannot be dismissed.
+              %{"path" => "src/elsewhere.ts", "line" => 40, "body" => "Three."}
             ]
           }
 
