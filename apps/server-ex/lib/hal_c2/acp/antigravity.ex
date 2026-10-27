@@ -632,16 +632,19 @@ defmodule HalC2.Acp.Antigravity do
           {:error, "Antigravity model refresh timed out. Try again or check Google sign-in."}
       end
 
+    # Drained on every path: a finished session already cleaned up after
+    # itself, and its reports must not sit in the caller's mailbox.
+    {tmp, session} = collect_refresh(nil, nil)
+
     if result != :ok do
-      clean_refresh(instance, cwd)
+      clean_refresh(instance, cwd, tmp, session)
       restore_account(instance, saved)
     end
 
     result
   end
 
-  defp clean_refresh(instance, cwd) do
-    {tmp, session} = collect_refresh(nil, nil)
+  defp clean_refresh(instance, cwd, tmp, session) do
     SessionFiles.remove_session_files(profile(instance), session, cwd)
     SessionFiles.release(tmp)
     File.rm_rf(cwd)

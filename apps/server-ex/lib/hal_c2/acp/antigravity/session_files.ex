@@ -13,10 +13,23 @@ defmodule HalC2.Acp.Antigravity.SessionFiles do
   best effort and never fails the session it follows.
   """
 
+  use GenServer
+
   require Logger
 
   @uuid4 ~r/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
   @live_table :hal_c2_antigravity_live_temp
+
+  # This process only owns the live-directories table below: an ETS table
+  # dies with its owner, and the processes that launch runtimes are
+  # short-lived. In the MC it runs under `HalC2.Supervisor`.
+  def start_link(_opts), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+
+  @impl true
+  def init(:ok) do
+    table()
+    {:ok, %{}}
+  end
 
   @doc "The profile's temp folder, where per-process runtime directories live."
   def temp_dir(profile), do: Path.join([profile, "antigravity-acp", "tmp"])
