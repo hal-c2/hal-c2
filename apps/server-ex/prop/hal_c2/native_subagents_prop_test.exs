@@ -314,10 +314,13 @@ defmodule HalC2.NativeSubagentsPropTest do
   end
 
   # Whether the instructions keep the agent to HAL-C2's workers, short for a report.
+  # A session's instructions are the orchestration text with the mode, browser
+  # and runtime sections around it (`HalC2.Mcp.Instructions`), so classify by
+  # what they contain, not by equality with the orchestration text alone.
   defp told(text) do
     cond do
-      text == HalC2.Mcp.instructions(true) -> :workers
-      text == HalC2.Mcp.instructions(false) -> :anything
+      is_binary(text) and String.contains?(text, HalC2.Mcp.workers_only_note()) -> :workers
+      is_binary(text) and String.contains?(text, HalC2.Mcp.instructions()) -> :anything
       true -> {:other, text}
     end
   end

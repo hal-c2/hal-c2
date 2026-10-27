@@ -452,7 +452,9 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
     [history, message] = String.split(prompt, "</conversation_history>", parts: 2)
     assert history =~ "User: write run-1.txt"
     assert history =~ "User: write run-2.txt"
-    assert String.trim(message) == last_user_text(context, thread)
+    # An ACP session's first prompt wraps the request after HAL-C2's instructions.
+    message = message |> String.trim() |> String.trim_trailing("</user_request>") |> String.trim()
+    assert message == last_user_text(context, thread)
     context
   end
 

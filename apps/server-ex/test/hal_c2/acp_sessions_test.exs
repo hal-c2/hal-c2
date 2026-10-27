@@ -82,6 +82,95 @@ defmodule HalC2.Acp.SessionsTest do
     assert {:ok, %{"deleted" => true}} = Sessions.delete(Map.put(input, "sessionId", "old/2"))
   end
 
+  # An access flip must not strand the credential a live ACP session was
+  # given: the next turn relaunches with the rotated one, and the old agent
+  # process is stopped rather than left linked to the runtime.
+  test "flipping browser access relaunches the session and stops the old agent" do
+    start_supervised!(HalC2.Mcp)
+    input = %{"instanceId" => "opencode", "projectId" => "p1"}
+    import = Map.merge(input, %{"sessionId" => "old-1", "title" => "Earlier work"})
+    assert {:ok, %{"threadId" => thread_id, "imported" => true}} = Sessions.import(import)
+
+    assert_receive {:hal_c2_shell, {:rows, _, [{^thread_id, {"thread", _}}]}}, 1_000
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+
+    message = fn id, text ->
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => id,
+        "text" => text,
+        "modelSelection" => %{"instanceId" => "opencode", "model" => "fake/one"}
+      })
+    end
+
+    {:ok, _} = message.("m1", "continue")
+    await_runs(thread_id, 1)
+
+    [{runtime, _}] = Registry.lookup(HalC2.Acp.Registry, thread_id)
+    %{conn: old_conn} = :sys.get_state(runtime)
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "opencode")
+
+    {settings, version} = HalC2.Settings.get()
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        Map.put(settings, "projectSettingsOverrides", %{
+          "p1" => %{"enableAgentBrowserAccess" => false}
+        }),
+        version
+      )
+
+    {:ok, _} = message.("m2", "again")
+    await_runs(thread_id, 2)
+
+    %{conn: new_conn} = :sys.get_state(runtime)
+    assert new_conn != old_conn
+    refute Process.alive?(old_conn)
+
+    ping = JSON.encode!(%{"jsonrpc" => "2.0", "id" => 1, "method" => "ping"})
+    assert {401, _} = HalC2.Mcp.handle(auth, ping)
+  end
+
+  # A session released without a relaunch (here: its agent process died)
+  # closes its MCP-over-ACP bridge instead of leaving it for the next launch.
+  test "releasing a session closes its MCP-over-ACP bridge" do
+    start_supervised!(HalC2.Mcp)
+    input = %{"instanceId" => "opencode", "projectId" => "p1"}
+    import = Map.merge(input, %{"sessionId" => "old-1", "title" => "Earlier work"})
+    assert {:ok, %{"threadId" => thread_id, "imported" => true}} = Sessions.import(import)
+
+    assert_receive {:hal_c2_shell, {:rows, _, [{^thread_id, {"thread", _}}]}}, 1_000
+    :ok = HalC2.Streams.subscribe(thread_id, self(), nil)
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "m1",
+        "text" => "continue",
+        "modelSelection" => %{"instanceId" => "opencode", "model" => "fake/one"}
+      })
+
+    await_runs(thread_id, 1)
+    [{runtime, _}] = Registry.lookup(HalC2.Acp.Registry, thread_id)
+    %{conn: conn} = :sys.get_state(runtime)
+
+    {:ok, bridge} =
+      HalC2.Mcp.OverAcp.start_link(
+        endpoint: HalC2.Mcp.endpoint(),
+        authorization: HalC2.Mcp.server(thread_id, "opencode").authorization
+      )
+
+    {:ok, _connection} = HalC2.Mcp.OverAcp.connect(bridge, "hal-c2")
+    down = Process.monitor(bridge)
+    :sys.replace_state(runtime, &%{&1 | mcp_bridge: bridge})
+
+    Process.exit(conn, :kill)
+    assert_receive {:DOWN, ^down, :process, ^bridge, _}, 5_000
+    assert :sys.get_state(runtime).mcp_bridge == nil
+  end
+
   test "providers and logout go to the agent" do
     input = %{"instanceId" => "opencode", "projectId" => "p1"}
 
@@ -107,6 +196,17 @@ defmodule HalC2.Acp.SessionsTest do
   test "an unknown project is refused" do
     assert {:error, %{"reason" => "project_not_found"}} =
              Sessions.list(%{"instanceId" => "opencode", "projectId" => "nope"})
+  end
+
+  defp await_runs(thread_id, count) do
+    receive do
+      {:hal_c2_stream, ^thread_id, _} ->
+        state = HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+        completed = Enum.count(StreamState.list(state, "run"), &(&1["status"] == "completed"))
+        if completed >= count, do: state, else: await_runs(thread_id, count)
+    after
+      10_000 -> flunk("the runs did not complete")
+    end
   end
 
   defp await_run(thread_id) do

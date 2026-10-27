@@ -1379,7 +1379,10 @@ defmodule HalC2.Steps.Providers.Claude do
   step "Claude is told to delegate with {string}", %{args: [tool]} = context do
     %{"argv" => argv} = World.await_provider_log(context, "claude", &Map.has_key?(&1, "argv"))
     prompt = Enum.at(argv, Enum.find_index(argv, &(&1 == "--append-system-prompt")) + 1)
-    assert prompt == HalC2.Mcp.instructions(true)
+    # The orchestration instructions and the workers-only note, with the
+    # browser and runtime sections of `HalC2.Mcp.Instructions` between them.
+    assert prompt =~ HalC2.Mcp.instructions()
+    assert prompt =~ HalC2.Mcp.workers_only_note()
     assert prompt =~ "Delegate child work with `#{tool}`"
     context
   end
