@@ -25,7 +25,7 @@ defmodule HalC2.Plugins.Kind do
 end
 
 defmodule HalC2.Plugins.ProviderAdapter do
-  @capabilities ~w(interrupt active_steering fork rollback approvals plan_updates model_switching interaction_mode text_generation native_sessions usage_limits sign_in)a
+  @capabilities ~w(interrupt active_steering interrupt_restart_steering queued_messages fork fork_from_turn rollback rollback_snapshot context_handoff strong_terminal_status approvals plan_updates model_switching interaction_mode text_generation native_sessions usage_limits sign_in)a
   @moduledoc """
   An agent provider. The orchestration runs every turn through the adapter behind
   the thread's provider instance (`HalC2.Plugins.provider/1`); Codex, Claude and the
@@ -203,11 +203,25 @@ defmodule HalC2.Plugins.ProviderAdapter do
     base
     |> put_in(["turns", "supportsInterrupt"], :interrupt in can)
     |> put_in(["turns", "supportsActiveSteering"], :active_steering in can)
-    |> put_in(["turns", "supportsSteeringByInterruptRestart"], :active_steering not in can)
+    |> put_in(
+      ["turns", "supportsSteeringByInterruptRestart"],
+      :interrupt_restart_steering in can
+    )
+    |> put_in(["turns", "supportsQueuedMessages"], :queued_messages in can)
+    |> put_in(
+      ["turns", "terminalStatusQuality"],
+      if(:strong_terminal_status in can, do: "strong", else: "weak")
+    )
     |> put_in(["threads", "canForkThread"], :fork in can)
-    |> put_in(["threads", "canForkFromTurn"], :fork in can)
+    |> put_in(["threads", "canForkFromTurn"], :fork_from_turn in can)
     |> put_in(["threads", "canRollbackThread"], :rollback in can)
     |> put_in(["checkpointing", "providerCanRollbackConversation"], :rollback in can)
+    |> put_in(["checkpointing", "providerRollbackReturnsSnapshot"], :rollback_snapshot in can)
+    |> put_in(["context", "canConsumeHandoffSummaries"], :context_handoff in can)
+    |> put_in(["context", "acceptsSyntheticUserContext"], :context_handoff in can)
+    |> put_in(["context", "supportsDeltaHandoff"], :context_handoff in can)
+    |> put_in(["context", "supportsFullThreadHandoff"], :context_handoff in can)
+    |> put_in(["sessions", "supportsProviderSwitchingViaHandoff"], :context_handoff in can)
     |> put_in(["sessions", "supportsModelSwitchInSession"], :model_switching in can)
     |> put_in(["approvals", "supportsCommandApproval"], approvals)
     |> put_in(["approvals", "supportsFileChangeApproval"], approvals)

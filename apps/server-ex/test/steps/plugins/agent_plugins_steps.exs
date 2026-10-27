@@ -1166,7 +1166,7 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
   step "the stop control is not offered while a turn runs", context do
     refute context.session["capabilities"]["turns"]["supportsInterrupt"]
 
-    assert {:error, "The provider \"acme\" cannot stop a running turn."} =
+    assert {:error, "Acme cannot stop a run once it has started."} =
              HalC2.Orchestration.dispatch(%{
                "type" => "run.interrupt",
                "commandId" => "cmd-stop",

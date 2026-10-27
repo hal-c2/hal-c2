@@ -707,8 +707,14 @@ defmodule HalC2.Orchestration.TurnWriter do
       end)
 
     case abandoned do
-      {state, queue?} -> finished(state, status, failure, queue?)
-      nil -> :ok
+      {state, queue?} ->
+        # A start still in flight for the run (its runtime stopped answering)
+        # must not hold the thread's work behind it.
+        HalC2.Orchestration.Effects.cancel_pending(thread_id, "provider-turn.start", run_id)
+        finished(state, status, failure, queue?)
+
+      nil ->
+        :ok
     end
   end
 
@@ -856,15 +862,25 @@ defmodule HalC2.Orchestration.TurnWriter do
   end
 
   defp capture_checkpoint(%{scope_id: scope_id} = turn, at) do
-    HalC2.Checkpoint.capture_run(
-      turn.cwd,
-      scope_id,
-      turn.run_ordinal,
-      turn.ids.run,
-      turn.ids.root_node,
-      turn.ids.thread,
-      at
-    )
+    # Its own lane: a finish can run inside the turn's own start (a wake
+    # replayed to its end), where the provider lane is the start itself.
+    case HalC2.Orchestration.Effects.run_now(
+           turn.ids.thread,
+           "checkpoint.capture",
+           %{
+             "cwd" => turn.cwd,
+             "scopeId" => scope_id,
+             "runOrdinal" => turn.run_ordinal,
+             "runId" => turn.ids.run,
+             "rootNodeId" => turn.ids.root_node,
+             "at" => at
+           },
+           nil,
+           "checkpoint"
+         ) do
+      {:ok, checkpoint} -> checkpoint
+      _ -> nil
+    end
   end
 
   defp capture_checkpoint(_turn, _at), do: nil
