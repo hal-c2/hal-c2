@@ -2192,16 +2192,20 @@ defmodule HalC2.Orchestration do
     }
   end
 
-  # The files providers read, from this MC's attachment store.
+  # The files providers read, from this MC's attachment store. One whose
+  # upload is gone keeps its id and no path, so a provider that checks its
+  # attachments itself (Antigravity) can say what is wrong with it.
   defp provider_attachments(attachments) do
-    for attachment <- attachments || [],
-        path = HalC2.Attachments.path(attachment),
-        do: %{
-          type: attachment["type"],
-          name: attachment["name"],
-          mime_type: attachment["mimeType"],
-          path: path
-        }
+    for attachment <- attachments || [] do
+      %{
+        type: attachment["type"],
+        id: attachment["id"],
+        name: attachment["name"],
+        mime_type: attachment["mimeType"],
+        source: attachment["source"],
+        path: HalC2.Attachments.path(attachment)
+      }
+    end
   end
 
   # The steered message's place in the transcript, inside the run it joined.

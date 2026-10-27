@@ -195,7 +195,8 @@ defmodule HalC2.Steps.Providers.Antigravity do
     assert %{"phase" => "failed", "message" => message} = List.last(context.install_states)
 
     assert message ==
-             "The Antigravity download failed its size or SHA-256 check. Nothing was installed."
+             (context[:install_error] ||
+                "The Antigravity download failed its size or SHA-256 check. Nothing was installed.")
 
     context
   end
@@ -293,6 +294,175 @@ defmodule HalC2.Steps.Providers.Antigravity do
     context
   end
 
+  step "an Antigravity instance's binary path is inside the downloaded runtime", context do
+    {:ok, %{executable: exe}} = Antigravity.resolve(nil)
+    FakeAcp.settings(&put_in(&1, ["providers", @instance, "binaryPath"], exe))
+    context
+  end
+
+  step "the removal is refused asking the user to clear that path first", context do
+    assert {:error, message, %{"operation" => "remove-install"}} = context.reply
+    assert message =~ "Clear"
+    assert {:ok, %{version: @old}} = Antigravity.resolve(nil)
+    context
+  end
+
+  step "the environment has less free disk space than the Antigravity runtime needs",
+       context do
+    Application.put_env(:hal_c2, :antigravity_free_space, fn _dir -> 1024 end)
+    test = self()
+
+    Application.put_env(:hal_c2, :antigravity_fetch, fn _url, _dest, _progress ->
+      send(test, :antigravity_downloaded)
+      {:error, "should not download"}
+    end)
+
+    context
+  end
+
+  step "the installation fails naming the free space it needs in megabytes", context do
+    assert %{"phase" => "failed", "message" => message} = List.last(context.install_states)
+    assert message =~ ~r/^Antigravity needs at least \d+ MiB of free space to install\.$/
+    context
+  end
+
+  step "nothing is downloaded", context do
+    refute_received :antigravity_downloaded
+    previous_unchanged(context)
+  end
+
+  step "the downloaded runtime matches its checksum but holds more than the executable and its helper",
+       context do
+    dir = Mc.tmp_dir(context.mc, "agy-extra")
+    File.cp!(FakeAcp.fake(context, @instance).bin, Path.join(dir, "agy_acp_server.par"))
+    File.write!(Path.join(dir, "localharness_external"), "#!/bin/sh\nexit 0\n")
+    File.write!(Path.join(dir, "README.txt"), "extra\n")
+    archive = Path.join(Mc.tmp_dir(context.mc, "agy-extra-archive"), "runtime.zip")
+
+    {:ok, _} =
+      :zip.create(
+        String.to_charlist(archive),
+        [~c"agy_acp_server.par", ~c"localharness_external", ~c"README.txt"],
+        cwd: String.to_charlist(dir)
+      )
+
+    data = File.read!(archive)
+
+    release = %{
+      context.release
+      | sha256: :crypto.hash(:sha256, data) |> Base.encode16(case: :lower),
+        archive_bytes: byte_size(data)
+    }
+
+    Application.put_env(:hal_c2, :antigravity_release, release)
+    context = context |> Map.put(:release, release) |> Map.put(:archive, archive)
+    fetch(context, :copy)
+
+    Map.put(
+      context,
+      :install_error,
+      "The archive must contain exactly the Antigravity executable and its harness."
+    )
+  end
+
+  step "the installation extracts the download", context do
+    context = context |> installer() |> watch_install()
+    {_, context} = World.call!(context, "provider.install.start", %{"instanceId" => @instance})
+    {states, context} = collect_install(context, &(&1["phase"] in ~w(succeeded failed)))
+    Map.put(context, :install_states, states)
+  end
+
+  step "the downloaded runtime of this release is already stored on the environment",
+       context do
+    id = context.release.sha256
+    dir = Path.join(Antigravity.versions_dir(), id)
+    File.mkdir_p!(dir)
+    exe = Path.join(dir, "agy_acp_server.par")
+    harness = Path.join(dir, "localharness_external")
+    File.cp!(FakeAcp.fake(context, @instance).bin, exe)
+    File.write!(harness, "#!/bin/sh\nexit 0\n")
+    for file <- [exe, harness], do: File.chmod!(file, 0o755)
+
+    File.write!(
+      Path.join(dir, ".install-complete.json"),
+      JSON.encode!(%{
+        "releaseId" => id,
+        "version" => @version,
+        "executable" => %{"name" => "agy_acp_server.par", "bytes" => File.stat!(exe).size},
+        "harness" => %{"name" => "localharness_external", "bytes" => File.stat!(harness).size}
+      })
+    )
+
+    test = self()
+
+    Application.put_env(:hal_c2, :antigravity_fetch, fn _url, _dest, _progress ->
+      send(test, :antigravity_downloaded)
+      {:error, "should not download"}
+    end)
+
+    context
+  end
+
+  step "the stored runtime is checked and activated without downloading it again", context do
+    refute_received :antigravity_downloaded
+    phases = context.install_states |> Enum.map(& &1["phase"]) |> Enum.dedup()
+    assert "verifying" in phases
+
+    assert %{"phase" => "succeeded", "installedVersion" => @version} =
+             List.last(context.install_states)
+
+    assert {:ok, %{source: "managed", version: @version}} = Antigravity.resolve(nil)
+    context
+  end
+
+  step "the downloaded Antigravity runtime is missing files the MC recorded", context do
+    {:ok, %{harness: harness}} = Antigravity.resolve(nil)
+    File.rm!(harness)
+    context
+  end
+
+  step "the user is told the managed runtime is incomplete", context do
+    # A starting MC reads its install state from disk (`Installation.init/1`).
+    if pid = GenServer.whereis(Installation), do: GenServer.stop(pid)
+    context = installer(context)
+    assert %{"phase" => "failed", "message" => message} = Installation.state()
+    Map.put(context, :install_message, message)
+  end
+
+  step "is told to remove it and install again", context do
+    assert context.install_message ==
+             "The managed Antigravity runtime is incomplete. Remove it and reinstall."
+
+    context
+  end
+
+  step "an Antigravity installation finished after the client last refreshed", context do
+    context = context |> installer() |> watch_install()
+    {_, context} = World.call!(context, "provider.install.start", %{"instanceId" => @instance})
+    {states, context} = collect_install(context, &(&1["phase"] in ~w(succeeded failed)))
+    assert %{"phase" => "succeeded", "operationId" => op} = List.last(states)
+    Map.put(context, :finished_op, op)
+  end
+
+  step "the client cancels that earlier installation", context do
+    {reply, context} =
+      World.call(context, "provider.install.cancel", %{
+        "instanceId" => @instance,
+        "operationId" => context.finished_op
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the user is told to refresh the installation status before cancelling", context do
+    assert {:error, message, %{"operation" => "cancel-install"}} = context.reply
+
+    assert message ==
+             "This installation is no longer current. Refresh its status before cancelling."
+
+    context
+  end
+
   # --- platforms and manual installations ------------------------------------------
 
   step "the environment runs on an Intel Mac", context do
@@ -381,6 +551,290 @@ defmodule HalC2.Steps.Providers.Antigravity do
     assert message ==
              "The custom Antigravity executable or its localharness_external sibling is missing or not executable."
 
+    context
+  end
+
+  # --- health ---------------------------------------------------------------------
+
+  step "Antigravity is turned off in the provider settings", context do
+    FakeAcp.settings(&put_in(&1, ["providers", @instance], %{"enabled" => false}))
+    context
+  end
+
+  step "the MC is still checking Antigravity", context do
+    :persistent_term.erase({HalC2.Acp, @instance, :models})
+    :persistent_term.erase({HalC2.Acp, @instance, :error})
+    :persistent_term.put({HalC2.Acp, @instance, :loading}, true)
+    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase({HalC2.Acp, @instance, :loading}) end)
+    context
+  end
+
+  step "no Antigravity runtime is installed", context do
+    File.rm_rf!(Antigravity.managed_dir())
+    context
+  end
+
+  step "the runtime starts but fails its local health check", context do
+    FakeAcp.configure(
+      context,
+      &Map.put(&1, "initError", %{"code" => -32603, "message" => "boom"})
+    )
+
+    FakeAcp.probe(@instance)
+    context
+  end
+
+  step "the runtime does not answer its health check within 90 seconds", context do
+    Application.put_env(:hal_c2, :antigravity_health_timeout_ms, 200)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Application.delete_env(:hal_c2, :antigravity_health_timeout_ms)
+    end)
+
+    FakeAcp.configure(context, &Map.put(&1, "hangMethods", ["initialize"]))
+    FakeAcp.probe(@instance)
+    context
+  end
+
+  step "the runtime is installed and the user has not signed in", context do
+    assert {:ok, %{source: "managed"}} = Antigravity.resolve(nil)
+    Antigravity.drop_account(@instance)
+    context
+  end
+
+  step "the runtime is installed and the sign-in has not been checked", context do
+    assert {:ok, %{source: "managed"}} = Antigravity.resolve(nil)
+    FakeAcp.probe(@instance)
+    context
+  end
+
+  step "Antigravity is shown with the message {string}", %{args: [message]} = context do
+    entry = FakeAcp.find(context.providers, @instance)
+    assert entry["message"] == message, "got #{inspect(entry["message"])}"
+    context
+  end
+
+  step "the MC checks provider status at startup", context do
+    HalC2.Acp.forget(@instance)
+    context = Map.put(context, :starts_before, length(FakeAcp.starts(context)))
+    HalC2.Acp.load()
+    context
+  end
+
+  step "the runtime is not launched and no Google request is made", context do
+    assert length(FakeAcp.starts(context)) == context.starts_before
+    context
+  end
+
+  step "account access is reported as not checked yet", context do
+    entry = FakeAcp.entry(@instance)
+
+    assert entry["message"] ==
+             "Antigravity is installed. Google account access is not checked yet."
+
+    assert entry["auth"]["status"] == "unknown"
+    context
+  end
+
+  # --- model refresh, setup and temporary files -------------------------------------
+
+  step "Antigravity lists the models it loaded earlier", context do
+    context = signed_in(context)
+    assert [%{"slug" => "fake/one"}] = Antigravity.account(@instance)["models"]
+    context
+  end
+
+  step ~r/^the user refreshes the Antigravity models and (?<problem>.+)$/,
+       %{args: [problem]} = context do
+    case problem do
+      "the runtime does not answer in 90 seconds" ->
+        Application.put_env(:hal_c2, :antigravity_model_refresh_timeout_ms, 300)
+
+        ExUnit.Callbacks.on_exit(fn ->
+          Application.delete_env(:hal_c2, :antigravity_model_refresh_timeout_ms)
+        end)
+
+        FakeAcp.configure(context, &Map.put(&1, "hangMethods", ["session/new"]))
+
+      "the instance is not signed in" ->
+        File.rm!(Antigravity.token_path(@instance))
+
+      "the refresh fails for another reason" ->
+        FakeAcp.configure(
+          context,
+          &Map.put(&1, "sessionError", %{"code" => -32603, "message" => "no session"})
+        )
+    end
+
+    {reply, context} =
+      World.call(context, "server.refreshProviders", %{
+        "instanceId" => @instance,
+        "refreshModels" => true
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the earlier models are still listed", context do
+    assert [%{"slug" => "fake/one"}] = Antigravity.account(@instance)["models"]
+    entry = FakeAcp.entry(@instance)
+    assert [%{"slug" => "fake/one"}] = entry["models"]
+    context
+  end
+
+  step "Node.js cannot be found on the machine running the MC", context do
+    Application.put_env(:hal_c2, :antigravity_node, false)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :antigravity_node) end)
+    Map.put(context, :setup_via, :turn)
+  end
+
+  step "an Antigravity session is prepared", context do
+    prepare_runtime(context)
+  end
+
+  step "the instance's temporary folder cannot be created", context do
+    tmp = HalC2.Acp.Antigravity.SessionFiles.temp_dir(Antigravity.profile(@instance))
+    File.mkdir_p!(Path.dirname(tmp))
+    File.write!(tmp, "not a folder\n")
+    Map.put(context, :setup_via, :turn)
+  end
+
+  step "the folder used to check the instance cannot be created", context do
+    context = signed_in(context)
+    blocker = Path.join(Mc.tmp_dir(context.mc, "setup-blocker"), "file")
+    File.write!(blocker, "not a folder\n")
+    Application.put_env(:hal_c2, :antigravity_setup_dir, Path.join(blocker, "setup"))
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :antigravity_setup_dir) end)
+    Map.put(context, :setup_via, :refresh)
+  end
+
+  step "the instance's status cannot be prepared for another reason", context do
+    settings = Path.join([Antigravity.profile(@instance), "antigravity-acp", "settings.json"])
+    File.mkdir_p!(settings)
+    Map.put(context, :setup_via, :turn)
+  end
+
+  step "the MC prepares an Antigravity runtime for the instance", context do
+    prepare_runtime(context)
+  end
+
+  step "the Antigravity runtime cannot be set up for the instance", context do
+    context = signed_in(context)
+    settings = Path.join([Antigravity.profile(@instance), "antigravity-acp", "settings.json"])
+    File.mkdir_p!(settings)
+    context
+  end
+
+  step "the turn fails with the setup problem's own explanation", context do
+    state = FakeAcp.await_run(context, "failed")
+    assert last_error(state) =~ "Could not prepare the Antigravity provider status."
+    context
+  end
+
+  @session_uuid "123e4567-e89b-42d3-a456-426614174000"
+
+  step "an Antigravity session created temporary runtime and session files", context do
+    FakeAcp.configure(context, &Map.put(&1, "sessionId", @session_uuid))
+    context = start_sign_in(context)
+
+    %{"env" => %{"TMPDIR" => tmp}} = List.last(FakeAcp.starts(context))
+    assert File.dir?(tmp)
+    File.write!(Path.join(tmp, "unpacked.bin"), "runtime\n")
+
+    profile = Antigravity.profile(@instance)
+    conversations = Path.join([profile, "antigravity-acp", "conversations"])
+    File.mkdir_p!(conversations)
+    File.write!(Path.join(conversations, @session_uuid <> ".db"), "db\n")
+    cwd = Path.join(profile, "sign-in")
+    File.write!(Path.join(conversations, @session_uuid <> ".meta"), JSON.encode!(%{"cwd" => cwd}))
+    brain = Path.join([profile, "antigravity-acp", "brain", @session_uuid])
+    File.mkdir_p!(brain)
+    File.write!(Path.join(brain, "note.txt"), "note\n")
+
+    stale = Path.join(HalC2.Acp.Antigravity.SessionFiles.temp_dir(profile), "run-stale")
+    File.mkdir_p!(stale)
+    File.write!(Path.join(stale, "left.bin"), "left\n")
+
+    Map.merge(context, %{session_tmp: tmp, stale_tmp: stale, conversations: conversations})
+  end
+
+  step "the session ends", context do
+    assert browser(context.flow, %{"code" => "google-code"}) =~ "Sign-in succeeded"
+    await_auth(context, "succeeded")
+  end
+
+  step "those files are removed", context do
+    refute File.exists?(Path.join(context.conversations, @session_uuid <> ".db"))
+    refute File.exists?(Path.join(context.conversations, @session_uuid <> ".meta"))
+    refute File.exists?(context.session_tmp)
+    context
+  end
+
+  step "files left behind by an MC that was killed are removed the next time Antigravity starts",
+       context do
+    assert File.exists?(context.stale_tmp)
+    context = context |> FakeAcp.thread("Work") |> FakeAcp.send_message("hello")
+    FakeAcp.await_run(context, "completed")
+    refute File.exists?(context.stale_tmp)
+    context
+  end
+
+  step "a temporary Antigravity session ended", context do
+    FakeAcp.configure(context, &Map.put(&1, "sessionId", @session_uuid))
+    context = start_sign_in(context)
+
+    profile = Antigravity.profile(@instance)
+    conversations = Path.join([profile, "antigravity-acp", "conversations"])
+    File.mkdir_p!(conversations)
+    File.write!(Path.join(conversations, @session_uuid <> ".db"), "db\n")
+    brain = Path.join([profile, "antigravity-acp", "brain", @session_uuid])
+    File.mkdir_p!(brain)
+    File.write!(Path.join(brain, "note.txt"), "note\n")
+
+    Map.merge(context, %{conversations: conversations, brain: brain, profile_dir: profile})
+  end
+
+  step "the conversation stored under its id was recorded for a different folder than the temporary one",
+       context do
+    File.write!(
+      Path.join(context.conversations, @session_uuid <> ".meta"),
+      JSON.encode!(%{"cwd" => "/someone/elses/project"})
+    )
+
+    assert browser(context.flow, %{"code" => "google-code"}) =~ "Sign-in succeeded"
+    await_auth(context, "succeeded")
+  end
+
+  step "that conversation's files are not removed", context do
+    assert File.exists?(Path.join(context.conversations, @session_uuid <> ".db"))
+    assert File.exists?(Path.join(context.brain, "note.txt"))
+    context
+  end
+
+  step "a failure to remove temporary files is logged without failing the session", context do
+    # An owned conversation whose database cannot be removed (a folder where
+    # the file should be): removal is logged and still returns fine.
+    db = Path.join(context.conversations, @session_uuid <> ".db")
+    File.rm!(db)
+    File.mkdir_p!(Path.join(db, "inner"))
+
+    File.write!(
+      Path.join(context.conversations, @session_uuid <> ".meta"),
+      JSON.encode!(%{"cwd" => Path.join(context.profile_dir, "sign-in")})
+    )
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert :ok =
+                 HalC2.Acp.Antigravity.SessionFiles.remove_session_files(
+                   context.profile_dir,
+                   @session_uuid,
+                   Path.join(context.profile_dir, "sign-in")
+                 )
+      end)
+
+    assert log =~ "Could not remove temporary Antigravity session files."
+    assert context.auth["phase"] == "succeeded"
     context
   end
 
@@ -919,27 +1373,304 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   step "the user opens the skill list in an Antigravity thread", context do
+    open_skills(context)
+  end
+
+  step "the MC reads the Antigravity skills", context do
+    open_skills(context)
+  end
+
+  defp open_skills(context) do
     context = FakeAcp.thread(context, "Work")
 
-    {result, context} =
-      World.call!(context, "server.refreshProviders", %{
+    {reply, context} =
+      World.call(context, "server.refreshProviders", %{
         "instanceId" => @instance,
         "cwd" => World.project(context).root
       })
 
-    Map.put(context, :providers, result["providers"])
+    context = Map.put(context, :reply, reply)
+
+    case reply do
+      {:ok, result} -> Map.put(context, :providers, result["providers"])
+      _ -> context
+    end
   end
 
-  step ~r/^"(?<name>[^"]+)" is offered once, from (?<dir>\S+)$/, %{args: [name, dir]} = context do
+  defp listed_skills(context) do
     root = World.project(context).root
-    entry = FakeAcp.find(context.providers, @instance)
 
-    assert [%{"skills" => skills}] =
-             Enum.filter(entry["workspaceSnapshots"], &(&1["cwd"] == root))
+    entry =
+      FakeAcp.find(context[:providers] || [], @instance) || FakeAcp.entry(@instance) || %{}
 
+    case Enum.filter(entry["workspaceSnapshots"] || [], &(&1["cwd"] == root)) do
+      [%{"skills" => skills}] -> skills
+      _ -> []
+    end
+  end
+
+  # A skill folder as a scenario names it.
+  defp skill_folder(context, folder) do
+    home = HalC2.Test.Mc.Host.home(context)
+    root = World.project(context).root
+
+    case folder do
+      "the user's .gemini/config/skills" ->
+        Path.join([home, ".gemini", "config", "skills"])
+
+      "the user's .gemini/antigravity-cli/skills" ->
+        Path.join([home, ".gemini", "antigravity-cli", "skills"])
+
+      "the user's .agents/skills" ->
+        Path.join([home, ".agents", "skills"])
+
+      "the project's .gemini/skills" ->
+        Path.join([root, ".gemini", "skills"])
+
+      "the project's .agents/skills" ->
+        Path.join([root, ".agents", "skills"])
+
+      "the project's .agent/skills" ->
+        Path.join([root, ".agent", "skills"])
+
+      other ->
+        flunk("unknown skill folder #{inspect(other)}")
+    end
+  end
+
+  defp write_skill(dir, name, body \\ nil) do
+    skill = Path.join(dir, name)
+    File.mkdir_p!(skill)
+
+    File.write!(
+      Path.join(skill, "SKILL.md"),
+      body ||
+        """
+        ---
+        name: #{name}
+        description: Deploy from #{dir}
+        ---
+        Ship it.
+        """
+    )
+
+    skill
+  end
+
+  step ~r/^a skill "(?<name>[^"]+)" in (?<folder>.+)$/, %{args: [name, folder]} = context do
+    write_skill(skill_folder(context, folder), name)
+    context
+  end
+
+  step ~r/^a skill "(?<name>[^"]+)" exists in (?<first>.+) and in (?<second>.+)$/,
+       %{args: [name, first, second]} = context do
+    write_skill(skill_folder(context, first), name)
+    write_skill(skill_folder(context, second), name)
+    context
+  end
+
+  step ~r/^"(?<name>[a-z0-9_-]+)" is offered$/, %{args: [name]} = context do
+    assert Enum.any?(listed_skills(context), &(&1["name"] == name)),
+           "#{name} not in #{inspect(Enum.map(listed_skills(context), & &1["name"]))}"
+
+    context
+  end
+
+  step ~r/^"(?<name>[a-z0-9_-]+)" is not offered$/, %{args: [name]} = context do
+    refute Enum.any?(listed_skills(context), &(&1["name"] == name))
+    context
+  end
+
+  step "the skill is offered as {string}", %{args: [name]} = context do
+    assert [%{"name" => ^name}] = listed_skills(context)
+    context
+  end
+
+  step "the skill of that folder is offered", context do
+    assert [%{"name" => "deploy"}] = listed_skills(context)
+    context
+  end
+
+  step "only the skill of the skill folder itself is offered", context do
+    assert [%{"name" => "rootskill"}] = listed_skills(context)
+    context
+  end
+
+  step "that skill is not offered", context do
+    refute Enum.any?(listed_skills(context), &String.contains?(&1["path"], "broken"))
+    context
+  end
+
+  step "the other skills are still offered", context do
+    assert Enum.any?(listed_skills(context), &(&1["name"] == "deploy"))
+    context
+  end
+
+  step "no partial skill list is offered", context do
+    assert listed_skills(context) == []
+    context
+  end
+
+  step "reading fails naming the path where the scan limit was exceeded", context do
+    assert {:error, _message, %{"cause" => cause}} = context.reply
+    assert cause =~ "Antigravity skill discovery exceeded its scan limit at '"
+    assert cause =~ World.project(context).root
+    context
+  end
+
+  step "reading fails with {string}", %{args: [message]} = context do
+    assert {:error, _message, %{"cause" => cause}} = context.reply
+    assert cause == wtext(context, message)
+    context
+  end
+
+  step "the list fails with {string}", %{args: [message]} = context do
+    assert {:error, error, _detail} = context.reply
+    assert error == message
+    context
+  end
+
+  step "the reason names {string}", %{args: [message]} = context do
+    assert {:error, _message, %{"cause" => cause}} = context.reply
+    assert cause == wtext(context, message)
+    context
+  end
+
+  step "a skill folder that does not exist is simply skipped", context do
+    folder = Path.join(World.project(context).root, ".agents/skills")
+    File.chmod!(folder, 0o755)
+    File.rm_rf!(folder)
+    context = open_skills(context)
+    assert {:ok, _} = context.reply
+    context
+  end
+
+  step "the project has a skill folder {string} whose skill file states no name",
+       %{args: [name]} = context do
+    HalC2.Test.Mc.Host.home(context)
+    dir = Path.join([World.project(context).root, ".agents/skills"])
+
+    write_skill(dir, name, """
+    ---
+    description: Deploy things
+    ---
+    Ship it.
+    """)
+
+    context
+  end
+
+  step "the project has a skill folder {string} whose skill file is named {string}",
+       %{args: [name, file]} = context do
+    HalC2.Test.Mc.Host.home(context)
+    skill = Path.join([World.project(context).root, ".agents/skills", name])
+    File.mkdir_p!(skill)
+
+    File.write!(
+      Path.join(skill, file),
+      "---\nname: #{name}\ndescription: Deploy\n---\nShip it.\n"
+    )
+
+    context
+  end
+
+  step ~r/^the project has a skill folder whose skill file (?<problem>.+)$/,
+       %{args: [problem]} = context do
+    HalC2.Test.Mc.Host.home(context)
+    dir = Path.join([World.project(context).root, ".agents/skills"])
+    write_skill(dir, "deploy")
+
+    body =
+      case problem do
+        "has no header block" ->
+          "Just text, no header.\n"
+
+        "has a header that is not valid" ->
+          "---\nname: [broken]\n---\nShip it.\n"
+
+        "gives a name with a space before or after it" ->
+          "---\nname: \" broken\"\n---\nShip it.\n"
+      end
+
+    write_skill(dir, "broken", body)
+    context
+  end
+
+  step "the project's {string} holds the skill {string} in {string} and the skill {string} in {string}",
+       %{args: [folder, first, first_at, second, second_at]} = context do
+    HalC2.Test.Mc.Host.home(context)
+    base = Path.join(World.project(context).root, folder)
+
+    for {name, at} <- [{first, first_at}, {second, second_at}] do
+      skill = Path.join(base, at)
+      File.mkdir_p!(skill)
+
+      File.write!(
+        Path.join(skill, "SKILL.md"),
+        "---\nname: #{name}\ndescription: Deploy\n---\nShip it.\n"
+      )
+    end
+
+    context
+  end
+
+  step "the project's {string} holds a skill file of its own and further skills in folders below it",
+       %{args: [folder]} = context do
+    HalC2.Test.Mc.Host.home(context)
+    base = Path.join(World.project(context).root, folder)
+    File.mkdir_p!(base)
+
+    File.write!(
+      Path.join(base, "SKILL.md"),
+      "---\nname: rootskill\ndescription: Root\n---\nShip it.\n"
+    )
+
+    write_skill(base, "deploy")
+    context
+  end
+
+  step "the project's skill folders hold more than 10,000 entries, or more than 8 MB of skill files",
+       context do
+    HalC2.Test.Mc.Host.home(context)
+    dir = Path.join([World.project(context).root, ".agents/skills"])
+    File.mkdir_p!(dir)
+    for n <- 1..10_001, do: File.touch!(Path.join(dir, "entry-#{n}"))
+    context
+  end
+
+  step "the project has a skill file larger than 1 MB at {string}", %{args: [path]} = context do
+    HalC2.Test.Mc.Host.home(context)
+    real = wpath(context, path)
+    File.mkdir_p!(Path.dirname(real))
+    File.write!(real, :binary.copy("a", 1_000_001))
+    context
+  end
+
+  step "the MC is not allowed to read the project's skill folder {string}",
+       %{args: [path]} = context do
+    HalC2.Test.Mc.Host.home(context)
+    real = wpath(context, path)
+    File.mkdir_p!(real)
+    File.chmod!(real, 0o000)
+    ExUnit.Callbacks.on_exit(fn -> File.chmod(real, 0o755) end)
+    context
+  end
+
+  step ~r/^"(?<name>[^"]+)" is offered once, from (?<dir>.+)$/, %{args: [name, dir]} = context do
+    root = World.project(context).root
+    skills = listed_skills(context)
     assert [skill] = Enum.filter(skills, &(&1["name"] == name))
-    assert skill["path"] == Path.join([root, dir, name, "SKILL.md"])
-    assert skill["description"] == "Deploy from gemini"
+
+    {expected_path, expected_description} =
+      if String.starts_with?(dir, ".") do
+        {Path.join([root, dir, name, "SKILL.md"]), "Deploy from gemini"}
+      else
+        folder = skill_folder(context, dir)
+        {Path.join([folder, name, "SKILL.md"]), "Deploy from #{folder}"}
+      end
+
+    assert skill["path"] == expected_path
+    assert skill["description"] == expected_description
     context
   end
 
@@ -1112,8 +1843,9 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   step "the turn completes", context do
-    FakeAcp.await_run(context, "completed")
-    context
+    # A subagent batch held by its scenario is let finish first.
+    if context[:batch_pending], do: release_file(context, "release-batch")
+    Map.put(context, :run_state, FakeAcp.await_run(context, "completed"))
   end
 
   step "the thread shows Google's message and any retry time", context do
@@ -1146,7 +1878,13 @@ defmodule HalC2.Steps.Providers.Antigravity do
   end
 
   step "Antigravity receives the file's contents", context do
-    assert [%{"result" => %{"content" => "table users\n"}}] = FakeAcp.answers(context)
+    if context[:attached_path] do
+      FakeAcp.await_run(context, "completed")
+      assert [%{"result" => %{"content" => "attached text\n"}} | _] = FakeAcp.answers(context)
+    else
+      assert [%{"result" => %{"content" => "table users\n"}}] = FakeAcp.answers(context)
+    end
+
     context
   end
 
@@ -1177,6 +1915,1392 @@ defmodule HalC2.Steps.Providers.Antigravity do
              answers = FakeAcp.answers(context)
 
     refute inspect(answers) =~ "secret\\n"
+    context
+  end
+
+  # --- workspace files --------------------------------------------------------------
+
+  # A turn in which the agent makes the given client requests, in order.
+  defp request_turn(context, requests, text \\ "work on files") do
+    steps = Enum.map(requests, &%{"request" => &1})
+
+    context
+    |> script_turn(%{"match" => text, "steps" => steps})
+    |> run_turn(text)
+  end
+
+  defp last_answer(context) do
+    FakeAcp.await_run(context, "completed")
+    List.last(FakeAcp.answers(context))
+  end
+
+  # The agent's refusal, in the scenario's own `/w` spelling of the workspace.
+  defp refused_reply(context) do
+    %{"error" => %{"message" => message}} = last_answer(context)
+    {:error, String.replace(message, World.project(context).root, "/w"), %{}}
+  end
+
+  step ~r/^Antigravity asks for the workspace file "(?<name>[^"]+)" and (?<problem>.+)$/,
+       %{args: [name, problem]} = context do
+    root = World.project(context).root
+
+    case problem do
+      "the file does not exist" ->
+        :ok
+
+      "the file is not text or is larger than 8 MiB" ->
+        path = Path.join(root, name)
+        {:ok, file} = File.open(path, [:write, :binary])
+        :file.pwrite(file, 9 * 1024 * 1024, "x")
+        File.close(file)
+    end
+
+    context =
+      request_turn(context, [%{"method" => "fs/read_text_file", "params" => %{"path" => name}}])
+
+    Map.put(context, :reply, refused_reply(context))
+  end
+
+  step ~r/^Antigravity asks to (?<request>.+) and (?<problem>.+)$/,
+       %{args: [request, problem]} = context do
+    root = World.project(context).root
+    [verb, quoted] = String.split(request, " ", parts: 2)
+    wanted = quoted |> String.trim("\"") |> then(&wpath(context, &1))
+
+    case {verb, problem} do
+      {"read", "the file cannot be read"} ->
+        File.write!(wanted, "secret\n")
+        File.chmod!(wanted, 0o000)
+        ExUnit.Callbacks.on_exit(fn -> File.chmod(wanted, 0o644) end)
+
+      {"write", "the file cannot be written"} ->
+        File.mkdir_p!(wanted)
+
+      _ ->
+        :ok
+    end
+
+    params =
+      if verb == "read",
+        do: %{"path" => wanted},
+        else: %{"path" => wanted, "content" => "new\n"}
+
+    context =
+      request_turn(context, [%{"method" => "fs/#{verb}_text_file", "params" => params}])
+
+    _ = root
+    Map.put(context, :reply, refused_reply(context))
+  end
+
+  step "the workspace holds a link to a folder outside it", context do
+    outside = Mc.tmp_dir(context.mc, "outside")
+    File.write!(Path.join(outside, "secret.txt"), "outside\n")
+    File.ln_s!(outside, Path.join(World.project(context).root, "link"))
+    Map.put(context, :outside, outside)
+  end
+
+  step "Antigravity asks for a file through that link", context do
+    wanted = Path.join([World.project(context).root, "link", "secret.txt"])
+
+    request_turn(context, [
+      %{"method" => "fs/read_text_file", "params" => %{"path" => wanted}}
+    ])
+  end
+
+  step "the request is refused as outside the session workspace", context do
+    %{"error" => %{"message" => message}} = last_answer(context)
+    assert message =~ "outside the session workspace."
+    context
+  end
+
+  step "the user attached a file to an Antigravity message", context do
+    dir = HalC2.Attachments.dir()
+    File.mkdir_p!(dir)
+    path = Path.join(dir, "att-note.txt")
+    File.write!(path, "attached text\n")
+
+    attachment = %{
+      "type" => "file",
+      "id" => "att-note",
+      "name" => "note.txt",
+      "mimeType" => "text/plain"
+    }
+
+    Map.merge(context, %{attached: attachment, attached_path: path})
+  end
+
+  step "Antigravity asks for that file at the path the message names", context do
+    steps = [
+      %{
+        "request" => %{
+          "method" => "fs/read_text_file",
+          "params" => %{"path" => context.attached_path}
+        }
+      },
+      %{
+        "request" => %{
+          "method" => "fs/read_text_file",
+          "params" => %{"path" => "/etc/hosts"}
+        }
+      }
+    ]
+
+    context = script_turn(context, %{"match" => "read the note", "steps" => steps})
+    context = signed_in(context) |> FakeAcp.thread("Work")
+    dispatch_attachment(context, context.attached, "read the note")
+  end
+
+  step "a path outside both the workspace and HAL-C2's attachments is still refused", context do
+    assert %{"error" => %{"message" => message}} = List.last(FakeAcp.answers(context))
+    assert message == "Path '/etc/hosts' is outside the session workspace."
+    context
+  end
+
+  step "Antigravity asks for a range of lines of a workspace file", context do
+    root = World.project(context).root
+    File.write!(Path.join(root, "lines.txt"), "one\ntwo\nthree\nfour\n")
+
+    request_turn(context, [
+      %{
+        "method" => "fs/read_text_file",
+        "params" => %{"path" => Path.join(root, "lines.txt"), "line" => 2, "limit" => 2}
+      },
+      %{
+        "method" => "fs/write_text_file",
+        "params" => %{
+          "path" => Path.join([root, "new", "deep", "out.txt"]),
+          "content" => "made\n"
+        }
+      }
+    ])
+  end
+
+  step "it receives only those lines", context do
+    assert [%{"result" => %{"content" => "two\nthree"}} | _] = answers(context)
+    context
+  end
+
+  defp answers(context) do
+    FakeAcp.await_run(context, "completed")
+    FakeAcp.answers(context)
+  end
+
+  step "a workspace file it writes in a folder that does not exist yet is created with its folders",
+       context do
+    path = Path.join([World.project(context).root, "new", "deep", "out.txt"])
+    assert File.read!(path) == "made\n"
+    context
+  end
+
+  step "Antigravity is started for a chat thread", context do
+    context = run_turn(context, "hello caps")
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  defp initialize_caps(context) do
+    for %{"params" => %{"clientCapabilities" => caps}} <- FakeAcp.received(context, "initialize"),
+        do: caps
+  end
+
+  step "it is told HAL-C2 reads and writes workspace files for it, and that HAL-C2 runs no terminals for it",
+       context do
+    assert Enum.any?(
+             initialize_caps(context),
+             &(&1["fs"] == %{"readTextFile" => true, "writeTextFile" => true} and
+                 &1["terminal"] == false)
+           )
+
+    context
+  end
+
+  step "an Antigravity started for sign-in, a status check or text generation is told HAL-C2 does neither",
+       context do
+    before = length(FakeAcp.received(context, "initialize"))
+    FakeAcp.probe(@instance)
+
+    context =
+      World.update_settings(context, %{
+        "textGenerationModelSelection" => %{
+          "instanceId" => @instance,
+          "model" => "antigravity-default"
+        }
+      })
+
+    HalC2.TextGeneration.thread_title(World.project(context).root, "Fix the parser")
+    File.rm!(Antigravity.token_path(@instance))
+    context = start_sign_in(context)
+
+    started =
+      FakeAcp.received(context, "initialize")
+      |> Enum.drop(before)
+      |> Enum.map(& &1["params"]["clientCapabilities"])
+
+    assert length(started) >= 3
+
+    assert Enum.all?(
+             started,
+             &(&1["fs"] == %{"readTextFile" => false, "writeTextFile" => false} and
+                 &1["terminal"] == false)
+           )
+
+    context
+  end
+
+  # --- stopping ---------------------------------------------------------------------
+
+  defp hang_turn(context) do
+    context
+    |> script_turn(%{"match" => "long task", "steps" => [%{"hang" => true}]})
+    |> run_turn("long task")
+  end
+
+  # Waits until `fun` returns a truthy value, and returns it.
+  defp wait_for(fun, attempts \\ 1_000) do
+    case fun.() do
+      nil -> retry_wait(fun, attempts)
+      false -> retry_wait(fun, attempts)
+      [] -> retry_wait(fun, attempts)
+      value -> value
+    end
+  end
+
+  defp retry_wait(_fun, 0), do: flunk("timed out waiting")
+
+  defp retry_wait(fun, attempts) do
+    Process.sleep(10)
+    wait_for(fun, attempts - 1)
+  end
+
+  defp await_prompt(context) do
+    assert [_ | _] = wait_for(fn -> FakeAcp.received(context, "session/prompt") end)
+    context
+  end
+
+  defp prompts(context) do
+    for %{"params" => params} <- FakeAcp.received(context, "session/prompt"), do: params
+  end
+
+  defp process_stopped?(context) do
+    %{conn: nil} = :sys.get_state(runtime(context))
+    %{"pid" => pid} = List.last(FakeAcp.starts(context))
+    {_out, code} = System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true)
+    code != 0
+  end
+
+  step "the user interrupted an Antigravity turn", context do
+    Application.put_env(:hal_c2, :antigravity_cancel_timeout_ms, 300)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Application.delete_env(:hal_c2, :antigravity_cancel_timeout_ms)
+    end)
+
+    context = context |> hang_turn() |> await_prompt()
+
+    run =
+      context
+      |> World.runs(context.thread)
+      |> Enum.find(&(&1["status"] in ~w(starting running waiting)))
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "run.interrupt",
+        "threadId" => World.thread_id(context, context.thread),
+        "runId" => run["id"]
+      })
+
+    context
+  end
+
+  step "Antigravity has not confirmed the stop after 15 seconds", context do
+    state = FakeAcp.await_run(context, "failed")
+    Map.put(context, :told, last_error(state))
+  end
+
+  step "its process is stopped", context do
+    assert process_stopped?(context)
+    context
+  end
+
+  step "an Antigravity turn is running", context do
+    context |> hang_turn() |> await_prompt()
+  end
+
+  step "the turn is broken off without Antigravity confirming that it ended", context do
+    Antigravity.stop_sessions(@instance)
+    context
+  end
+
+  step "the Antigravity process is stopped", context do
+    assert process_stopped?(context)
+    context
+  end
+
+  step "the session reports {string}", %{args: [message]} = context do
+    state = FakeAcp.await_run(context, "failed")
+    assert last_error(state) == message
+    context
+  end
+
+  # --- /compact and workers -----------------------------------------------------------
+
+  step "an Antigravity thread with earlier turns", context do
+    context = run_turn(context, "hello")
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step ~r{^the user sends "/compact" with no attachments and the turn completes$}, context do
+    context = FakeAcp.send_message(context, "/compact")
+    FakeAcp.await_runs(context, 2)
+    context
+  end
+
+  step "the work log shows \"Context compacted\" once", context do
+    state = FakeAcp.await_run(context, "completed")
+
+    compacted =
+      Enum.filter(
+        turn_items(state),
+        &(&1["type"] == "compaction" and &1["title"] == "Context compacted")
+      )
+
+    assert length(compacted) == 1, inspect(turn_items(state))
+    context
+  end
+
+  step "an Antigravity session is started", context do
+    context = run_turn(context, "hello")
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "Antigravity starts as usual, because it has no switch for its subagents", context do
+    assert [_ | _] = FakeAcp.received(context, "session/new")
+    assert [%{"prompt" => [%{"type" => "text", "text" => text}]}] = prompts(context)
+    refute text =~ "worker"
+    context
+  end
+
+  # --- questions and approvals --------------------------------------------------------
+
+  defp permission_params(call_id, title, options) do
+    call = %{"toolCallId" => call_id, "status" => "pending"}
+    call = if title, do: Map.put(call, "title", title), else: call
+    %{"toolCall" => call, "options" => options}
+  end
+
+  defp question_turn(context, params, text \\ "choose please") do
+    steps = [%{"request" => %{"method" => "session/request_permission", "params" => params}}]
+
+    context
+    |> script_turn(%{"match" => text, "steps" => steps})
+    |> run_turn(text)
+  end
+
+  defp pending_item(context, kind) do
+    request = FakeAcp.await_request(context)
+
+    state =
+      World.await_stream(World.thread_id(context, context.thread), fn state ->
+        case Enum.find(turn_items(state), &(&1["type"] == kind)) do
+          nil -> nil
+          item -> {state, item}
+        end
+      end)
+
+    {request, elem(state, 1)}
+  end
+
+  defp answer_question(context, request_id, answers) do
+    HalC2.Orchestration.dispatch(%{
+      "type" => "runtime-request.respond",
+      "threadId" => World.thread_id(context, context.thread),
+      "requestId" => request_id,
+      "answers" => answers
+    })
+  end
+
+  defp dismiss_question(context, request_id) do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.user-input.dismiss",
+        "threadId" => World.thread_id(context, context.thread),
+        "requestId" => request_id
+      })
+
+    context
+  end
+
+  step "Antigravity asks the user to choose between options", context do
+    options = [
+      %{"optionId" => "opt-red", "name" => "Red", "kind" => "allow_once"},
+      %{"optionId" => "opt-blue", "name" => "Blue", "kind" => "allow_once"}
+    ]
+
+    context = question_turn(context, permission_params("interaction_1", "Pick a color?", options))
+    {request, item} = pending_item(context, "user_input_request")
+    assert [%{"question" => "Pick a color?"}] = item["questions"]
+    context = dismiss_question(context, request["id"])
+    FakeAcp.await_run(context, "completed")
+
+    context =
+      question_turn(context, permission_params("interaction_2", nil, options), "choose again")
+
+    {request, item} = pending_item(context, "user_input_request")
+    Map.merge(context, %{question_request: request, question_item: item})
+  end
+
+  step "the user is shown the question, or \"Choose an option.\" when Antigravity gave none",
+       context do
+    assert [%{"question" => "Choose an option.", "id" => "interaction_2"}] =
+             context.question_item["questions"]
+
+    context
+  end
+
+  step "can pick exactly one of the options and cannot type a different answer", context do
+    assert [%{"multiSelect" => false, "allowCustomAnswer" => false, "options" => options}] =
+             context.question_item["questions"]
+
+    assert Enum.map(options, & &1["label"]) == ["Red", "Blue"]
+    context
+  end
+
+  step "an answer that matches no single option leaves the question open", context do
+    request = context.question_request
+    assert {:error, _} = answer_question(context, request["id"], %{"interaction_2" => "Green"})
+    assert FakeAcp.await_request(context)["id"] == request["id"]
+    context = dismiss_question(context, request["id"])
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "Antigravity asks for approval and offers only to allow once or to reject", context do
+    options = [
+      %{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"},
+      %{"optionId" => "deny", "name" => "Deny", "kind" => "reject_once"}
+    ]
+
+    context = question_turn(context, permission_params("call-1", "Run this command?", options))
+    {request, item} = pending_item(context, "approval_request")
+    Map.merge(context, %{approval_request: request, approval_item: item})
+  end
+
+  step "Antigravity asks for approval and marks its allow-always choice with a security warning",
+       context do
+    warning = String.duplicate("Careful with this lasting approval. ", 20)
+
+    options = [
+      %{"optionId" => "allow", "name" => "Allow", "kind" => "allow_once"},
+      %{
+        "optionId" => "always",
+        "name" => "Always allow",
+        "kind" => "allow_always",
+        "_meta" => %{"agy.security.warning" => %{"title" => "Warning", "message" => warning}}
+      },
+      %{"optionId" => "deny", "name" => "Deny", "kind" => "reject_once"}
+    ]
+
+    context = question_turn(context, permission_params("call-1", "Run this command?", options))
+    {request, item} = pending_item(context, "approval_request")
+    Map.merge(context, %{approval_request: request, approval_item: item, warning: warning})
+  end
+
+  step "the user sees the request", context do
+    assert context.approval_item["type"] == "approval_request"
+    context
+  end
+
+  step "\"Allow once\", \"Deny\" and \"Cancel\" are offered", context do
+    labels = Enum.map(context.approval_item["options"], & &1["label"])
+    assert labels == ["Allow once", "Deny", "Cancel"]
+    context
+  end
+
+  step "\"Allow for this thread\" is not", context do
+    labels = Enum.map(context.approval_item["options"], & &1["label"])
+    refute "Allow for this thread" in labels
+    FakeAcp.respond(context, context.approval_request["id"], %{"decision" => "cancel"})
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "\"Allow for this thread\" carries that warning", context do
+    choice =
+      Enum.find(context.approval_item["options"], &(&1["label"] == "Allow for this thread"))
+
+    assert choice["warning"] =~ "Careful with this lasting approval."
+    Map.put(context, :shown_warning, choice["warning"])
+  end
+
+  step "a warning longer than 512 characters is cut and ends with \"...\"", context do
+    assert String.length(context.warning) > 512
+    assert String.length(context.shown_warning) == 512
+    assert String.ends_with?(context.shown_warning, "...")
+    FakeAcp.respond(context, context.approval_request["id"], %{"decision" => "cancel"})
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step ~r/^Antigravity asks a question with the options (?<options>.+)$/,
+       %{args: [described]} = context do
+    options =
+      case described do
+        ~s("Yes" and "No") ->
+          [
+            %{"optionId" => "opt-yes", "name" => "Yes", "kind" => "allow_once"},
+            %{"optionId" => "opt-no", "name" => "No", "kind" => "allow_once"}
+          ]
+
+        ~s(two options both labelled "Continue") ->
+          [
+            %{"optionId" => "opt-a", "name" => "Continue", "kind" => "allow_once"},
+            %{"optionId" => "opt-b", "name" => "Continue", "kind" => "allow_once"}
+          ]
+      end
+
+    context = question_turn(context, permission_params("interaction_q", "Shall we?", options))
+    {request, _item} = pending_item(context, "user_input_request")
+    Map.put(context, :question_request, request)
+  end
+
+  step "a client answers {string}", %{args: [answer]} = context do
+    result =
+      answer_question(context, context.question_request["id"], %{"interaction_q" => answer})
+
+    Map.put(context, :answer_result, result)
+  end
+
+  step "Antigravity is told \"Yes\"", context do
+    assert {:ok, _} = context.answer_result
+    FakeAcp.await_run(context, "completed")
+
+    assert %{"result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "opt-yes"}}} =
+             List.last(FakeAcp.answers(context))
+
+    context
+  end
+
+  step "the question stays open", context do
+    assert {:error, _} = context.answer_result
+    assert FakeAcp.await_request(context)["id"] == context.question_request["id"]
+    context = dismiss_question(context, context.question_request["id"])
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "Antigravity asks a question and one of its options declines", context do
+    options = [
+      %{"optionId" => "opt-go", "name" => "Proceed", "kind" => "allow_once"},
+      %{"optionId" => "opt-decline", "name" => "No thanks", "kind" => "reject_once"}
+    ]
+
+    context = question_turn(context, permission_params("interaction_d", "Proceed?", options))
+    {request, _item} = pending_item(context, "user_input_request")
+    Map.put(context, :question_request, request)
+  end
+
+  step "the user picks that option", context do
+    assert {:ok, _} =
+             answer_question(context, context.question_request["id"], %{
+               "interaction_d" => "opt-decline"
+             })
+
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "Antigravity is told which option was picked", context do
+    assert %{"result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "opt-decline"}}} =
+             List.last(FakeAcp.answers(context))
+
+    context
+  end
+
+  step "only cancelling the question tells Antigravity it was cancelled", context do
+    options = [%{"optionId" => "opt-go", "name" => "Proceed", "kind" => "allow_once"}]
+
+    context =
+      question_turn(
+        context,
+        permission_params("interaction_e", "Proceed?", options),
+        "choose more"
+      )
+
+    {request, _item} = pending_item(context, "user_input_request")
+    context = dismiss_question(context, request["id"])
+    FakeAcp.await_run(context, "completed")
+
+    assert %{"result" => %{"outcome" => %{"outcome" => "cancelled"}}} =
+             List.last(FakeAcp.answers(context))
+
+    context
+  end
+
+  step "Antigravity asks a question whose options share an id or have none", context do
+    options = [
+      %{"optionId" => "same", "name" => "One", "kind" => "allow_once"},
+      %{"optionId" => "same", "name" => "Two", "kind" => "allow_once"}
+    ]
+
+    context = question_turn(context, permission_params("interaction_x", "Which?", options))
+    Map.put(context, :run_state, FakeAcp.await_run(context, "completed"))
+  end
+
+  step "the user is not shown a question to pick from", context do
+    refute Enum.any?(turn_items(context.run_state), &(&1["type"] == "user_input_request"))
+    assert HalC2.StreamState.list(context.run_state, "runtime-request") == []
+
+    assert %{"result" => %{"outcome" => %{"outcome" => "cancelled"}}} =
+             List.last(FakeAcp.answers(context))
+
+    context
+  end
+
+  step "Antigravity asks a question longer than 8,000 characters with an option label longer than 512",
+       context do
+    options = [
+      %{
+        "optionId" => "opt-long",
+        "name" => String.duplicate("L", 600),
+        "kind" => "allow_once"
+      }
+    ]
+
+    context =
+      question_turn(
+        context,
+        permission_params("interaction_long", String.duplicate("q", 9_000), options)
+      )
+
+    {request, item} = pending_item(context, "user_input_request")
+    Map.merge(context, %{question_request: request, question_item: item})
+  end
+
+  step "the question and the label are cut and end with \"...\"", context do
+    assert [%{"question" => question, "options" => [%{"label" => label}]}] =
+             context.question_item["questions"]
+
+    assert String.length(question) == 8_000 and String.ends_with?(question, "...")
+    assert String.length(label) == 512 and String.ends_with?(label, "...")
+    Map.put(context, :shown_label, label)
+  end
+
+  step "picking the option still tells Antigravity the option's own id", context do
+    assert {:ok, _} =
+             answer_question(context, context.question_request["id"], %{
+               "interaction_long" => context.shown_label
+             })
+
+    FakeAcp.await_run(context, "completed")
+
+    assert %{"result" => %{"outcome" => %{"outcome" => "selected", "optionId" => "opt-long"}}} =
+             List.last(FakeAcp.answers(context))
+
+    context
+  end
+
+  # --- tools and subagent batches -------------------------------------------------------
+
+  defp update_step(kind, fields), do: %{"update" => Map.put(fields, "sessionUpdate", kind)}
+
+  step "a command Antigravity ran exits with code 2", context do
+    root = World.project(context).root
+
+    steps = [
+      update_step("tool_call", %{
+        "toolCallId" => "cmd1",
+        "title" => "make test",
+        "kind" => "execute",
+        "status" => "completed",
+        "rawInput" => %{"command" => "make test", "cwd" => root},
+        "rawOutput" => %{"combinedOutput" => "boom output", "exitCode" => 2},
+        "content" => []
+      })
+    ]
+
+    context = script_turn(context, %{"match" => "run it", "steps" => steps}) |> run_turn("run it")
+    Map.put(context, :run_state, FakeAcp.await_run(context, "completed"))
+  end
+
+  step "the command is shown with its output, its working folder and the exit code 2", context do
+    assert [item] =
+             Enum.filter(turn_items(context.run_state), &(&1["type"] == "command_execution"))
+
+    assert item["input"] == "make test"
+    assert item["output"] == "boom output"
+    assert item["cwd"] == World.project(context).root
+    assert item["exitCode"] == 2
+    assert item["status"] == "completed"
+    context
+  end
+
+  step "Antigravity reports a tool with a command line and no kind", context do
+    root = World.project(context).root
+
+    steps = [
+      update_step("tool_call_update", %{
+        "toolCallId" => "cmd2",
+        "title" => "run_command",
+        "status" => "completed",
+        "rawInput" => %{"CommandLine" => "ls -la", "Cwd" => root},
+        "rawOutput" => %{"combinedOutput" => "done", "exitCode" => 1},
+        "content" => []
+      })
+    ]
+
+    context =
+      script_turn(context, %{"match" => "list files", "steps" => steps}) |> run_turn("list files")
+
+    Map.put(context, :run_state, FakeAcp.await_run(context, "completed"))
+  end
+
+  step "the tool is shown as a command with that command line and its working folder", context do
+    assert [item] =
+             Enum.filter(turn_items(context.run_state), &(&1["type"] == "command_execution"))
+
+    assert item["input"] == "ls -la"
+    assert item["cwd"] == World.project(context).root
+    Map.put(context, :tool_item, item)
+  end
+
+  step "a command that exited with an error code is not shown as a failed tool for that reason alone",
+       context do
+    assert context.tool_item["exitCode"] == 1
+    assert context.tool_item["status"] == "completed"
+    context
+  end
+
+  step "an Antigravity tool result carries an inline image and names a local image file",
+       context do
+    root = World.project(context).root
+    local = Path.join(root, "shot.png")
+    File.write!(local, "PNG")
+
+    call = fn id, image_path, secret ->
+      update_step("tool_call_update", %{
+        "toolCallId" => id,
+        "title" => "screenshot",
+        "kind" => "other",
+        "status" => "completed",
+        "rawInput" => %{"path" => "shot.png"},
+        "rawOutput" => %{"imagePath" => image_path, "data" => "data:image/png;base64,#{secret}"},
+        "content" => [
+          %{"type" => "image", "data" => secret, "mimeType" => "image/png"},
+          %{"type" => "content", "content" => %{"type" => "text", "text" => "look"}}
+        ]
+      })
+    end
+
+    steps = [
+      call.("img1", local, "INLINESECRET1"),
+      call.("img2", "https://example.com/shot.png", "INLINESECRET2"),
+      call.("img3", "file://othermachine/share/shot.png", "INLINESECRET3")
+    ]
+
+    context =
+      script_turn(context, %{"match" => "show images", "steps" => steps})
+      |> run_turn("show images")
+
+    Map.merge(context, %{
+      run_state: FakeAcp.await_run(context, "completed"),
+      local_image: local
+    })
+  end
+
+  defp tool_items(state),
+    do: Enum.filter(turn_items(state), &(&1["type"] == "dynamic_tool"))
+
+  step "the inline image is not stored with the thread", context do
+    for item <- tool_items(context.run_state),
+        secret <- ["INLINESECRET1", "INLINESECRET2", "INLINESECRET3"],
+        do: refute(inspect(item) =~ secret)
+
+    context
+  end
+
+  step "the local image file is offered as a preview", context do
+    assert Enum.any?(tool_items(context.run_state), &(&1["imagePath"] == context.local_image))
+    context
+  end
+
+  step "an image named by a web address or a file on another machine is not", context do
+    previews =
+      tool_items(context.run_state) |> Enum.map(& &1["imagePath"]) |> Enum.reject(&is_nil/1)
+
+    assert previews == [context.local_image]
+    context
+  end
+
+  step "an Antigravity tool reports very large or deeply nested data", context do
+    deep = Enum.reduce(1..20, %{"leaf" => "x"}, fn _, acc -> %{"level" => acc} end)
+    many = Map.new(1..600, &{"key-#{&1}", "v"})
+
+    steps = [
+      update_step("tool_call_update", %{
+        "toolCallId" => "big1",
+        "title" => "big_tool",
+        "kind" => "other",
+        "status" => "completed",
+        "rawInput" => %{
+          "blob" => String.duplicate("x", 9_000),
+          "tail" => String.duplicate("0123456789", 1_000),
+          "deep" => deep
+        },
+        "content" => []
+      }),
+      update_step("tool_call_update", %{
+        "toolCallId" => "big2",
+        "title" => "wide_tool",
+        "kind" => "other",
+        "status" => "completed",
+        "rawInput" => %{"many" => many},
+        "content" => []
+      }),
+      %{"text" => String.duplicate("A", 9_000)}
+    ]
+
+    context =
+      script_turn(context, %{"match" => "big data", "steps" => steps}) |> run_turn("big data")
+
+    Map.put(context, :run_state, FakeAcp.await_run(context, "completed"))
+  end
+
+  step "each piece of text keeps its last 8,000 characters under \"[Earlier output truncated]\"",
+       context do
+    item = Enum.find(tool_items(context.run_state), &(&1["input"]["blob"] != nil))
+    blob = item["input"]["blob"]
+    assert String.starts_with?(blob, "[Earlier output truncated]")
+
+    assert String.length(blob) <=
+             8_000 + String.length("[Earlier output truncated]\n\n")
+
+    assert String.ends_with?(item["input"]["tail"], "0123456789")
+    Map.put(context, :tool_item, item)
+  end
+
+  step "at most 512 entries and 64,000 characters of one tool report are kept", context do
+    wide = Enum.find(tool_items(context.run_state), &(&1["input"]["many"] != nil))
+    assert map_size(wide["input"]["many"]) < 600
+
+    for item <- tool_items(context.run_state) do
+      assert inspect(item["input"]) |> String.length() |> Kernel.<(70_000)
+    end
+
+    depth =
+      Stream.unfold(context.tool_item["input"]["deep"], fn
+        %{"level" => next} -> {1, next}
+        _ -> nil
+      end)
+      |> Enum.count()
+
+    assert depth <= 12
+    context
+  end
+
+  step "what Antigravity writes as its answer is not shortened", context do
+    texts =
+      turn_items(context.run_state)
+      |> Enum.filter(&(&1["type"] == "assistant_message"))
+      |> Enum.map_join("", &(&1["text"] || ""))
+
+    assert String.length(texts) >= 9_000
+    context
+  end
+
+  step "an MCP server offers a tool called \"start_subagent\"", context do
+    steps = [
+      update_step("tool_call", %{
+        "toolCallId" => "mcp1",
+        "title" => "Running start_subagent",
+        "kind" => "other",
+        "status" => "completed",
+        "_meta" => %{"is_mcp_tool_call" => true},
+        "content" => [
+          %{"type" => "content", "content" => %{"type" => "text", "text" => "mcp ran"}}
+        ]
+      })
+    ]
+
+    script_turn(context, %{"match" => "use the mcp tool", "steps" => steps})
+  end
+
+  step "Antigravity calls that tool", context do
+    context = run_turn(context, "use the mcp tool")
+    Map.put(context, :run_state, FakeAcp.await_run(context, "completed"))
+  end
+
+  step "it is shown as a tool call, not as a subagent batch", context do
+    items = turn_items(context.run_state)
+    assert Enum.any?(items, &(&1["type"] == "dynamic_tool"))
+    refute Enum.any?(items, &(&1["type"] == "subagent"))
+    context
+  end
+
+  step "Antigravity starts a subagent batch", context do
+    steps = [
+      update_step("tool_call", %{
+        "toolCallId" => "batch1",
+        "title" => "Running start_subagent",
+        "kind" => "other",
+        "status" => "in_progress",
+        "rawOutput" => "Batch output: two subagents on it",
+        "content" => []
+      })
+    ]
+
+    context =
+      script_turn(context, %{"match" => "delegate this", "steps" => steps})
+      |> run_turn("delegate this")
+
+    Map.put(context, :run_state, FakeAcp.await_run(context, "completed"))
+  end
+
+  step "the batch is titled \"Antigravity subagent batch\"", context do
+    assert [item] = Enum.filter(turn_items(context.run_state), &(&1["type"] == "subagent"))
+    assert item["title"] == "Antigravity subagent batch"
+    Map.put(context, :batch_item, item)
+  end
+
+  step "it shows the batch's own output, or else its detail, or else its title", context do
+    assert context.batch_item["prompt"] == "Batch output: two subagents on it"
+    context
+  end
+
+  step "Antigravity reported that a subagent batch started successfully", context do
+    steps = [
+      update_step("tool_call", %{
+        "toolCallId" => "batch2",
+        "title" => "Running start_subagent",
+        "kind" => "other",
+        "status" => "completed",
+        "content" => [
+          %{"type" => "content", "content" => %{"type" => "text", "text" => "Check the tests"}}
+        ]
+      }),
+      %{"waitFile" => "release-batch"}
+    ]
+
+    context =
+      script_turn(context, %{"match" => "delegate more", "steps" => steps})
+      |> run_turn("delegate more")
+
+    state =
+      World.await_stream(World.thread_id(context, context.thread), fn state ->
+        if Enum.any?(turn_items(state), &(&1["type"] == "subagent")), do: state
+      end)
+
+    Map.merge(context, %{run_state: state, batch_pending: true})
+  end
+
+  step ~r/^the turn (?<ending>is still running|is stopped by the user)$/,
+       %{args: [ending]} = context do
+    case ending do
+      "is still running" ->
+        state =
+          World.await_stream(World.thread_id(context, context.thread), fn state ->
+            if Enum.any?(turn_items(state), &(&1["type"] == "subagent")), do: state
+          end)
+
+        context = Map.put(context, :run_state, state)
+        release_file(context, "release-batch")
+        context
+
+      "is stopped by the user" ->
+        run =
+          context
+          |> World.runs(context.thread)
+          |> Enum.find(&(&1["status"] in ~w(starting running waiting)))
+
+        {:ok, _} =
+          HalC2.Orchestration.dispatch(%{
+            "type" => "run.interrupt",
+            "threadId" => World.thread_id(context, context.thread),
+            "runId" => run["id"]
+          })
+
+        release_file(context, "release-batch")
+        Map.put(context, :run_state, FakeAcp.await_run(context, "interrupted"))
+    end
+  end
+
+  step ~r/^the batch is shown as (?<state>.+)$/, %{args: [shown]} = context do
+    assert [item] = Enum.filter(turn_items(context.run_state), &(&1["type"] == "subagent"))
+    assert item["status"] == shown, "got #{inspect(item["status"])}"
+    Map.put(context, :batch_item, item)
+  end
+
+  step "an Antigravity subagent batch fails", context do
+    steps = [
+      update_step("tool_call_update", %{
+        "toolCallId" => "batch3",
+        "title" => "Running start_subagent",
+        "kind" => "other",
+        "status" => "failed",
+        "rawOutput" => "the batch blew up",
+        "content" => []
+      })
+    ]
+
+    context =
+      script_turn(context, %{"match" => "delegate and fail", "steps" => steps})
+      |> run_turn("delegate and fail")
+
+    Map.put(context, :run_state, FakeAcp.await_run(context, "completed"))
+  end
+
+  step "its output is shown as its result", context do
+    assert context.batch_item["result"] == "the batch blew up"
+    context
+  end
+
+  # --- models ---------------------------------------------------------------------------
+
+  defp model_options(ids, current) do
+    %{
+      "configOptions" => [
+        %{
+          "id" => "model",
+          "name" => "Model",
+          "type" => "select",
+          "category" => "model",
+          "currentValue" => current,
+          "options" =>
+            [%{"value" => hd(ids), "name" => hd(ids)}] ++
+              for(id <- tl(ids), do: %{"value" => id, "name" => id})
+        }
+      ]
+    }
+  end
+
+  defp account_with_models(context, ids, current) do
+    options = model_options(ids, current)
+    FakeAcp.configure(context, &Map.merge(&1, options))
+    context = signed_in(context)
+    Antigravity.put_account(@instance, HalC2.Acp.session_models(options))
+    context
+  end
+
+  defp set_model_calls(context) do
+    for %{"params" => %{"value" => value}} <-
+          FakeAcp.received(context, "session/set_config_option"),
+        do: value
+  end
+
+  step "an Antigravity thread uses the default model", context do
+    Map.put(context, :preferred, Antigravity.preferred_model())
+  end
+
+  step ~r/^a turn starts and (?<situation>.+)$/, %{args: [situation]} = context do
+    preferred = context.preferred
+    assert is_binary(preferred)
+
+    {ids, current} =
+      case situation do
+        "the account offers the model HAL-C2 ships as its default" ->
+          {[preferred, "fake/other"], "fake/other"}
+
+        "the account does not offer that model" ->
+          {["fake/one"], "fake/one"}
+
+        "Antigravity already has that model selected" ->
+          {[preferred, "fake/other"], preferred}
+      end
+
+    context = account_with_models(context, ids, current)
+
+    context =
+      FakeAcp.thread(context, "Work", "full-access", %{
+        "modelSelection" => %{"instanceId" => @instance, "model" => "antigravity-default"}
+      })
+
+    context = FakeAcp.send_message(context, "hello model")
+    FakeAcp.await_run(context, "completed")
+    Map.merge(context, %{ids: ids, current: current})
+  end
+
+  step "the turn runs on that model", context do
+    assert set_model_calls(context) == [context.preferred]
+    context
+  end
+
+  step "the turn runs on the model Antigravity has selected", context do
+    assert set_model_calls(context) == []
+    context
+  end
+
+  step "Antigravity is not asked to change its model", context do
+    assert set_model_calls(context) == []
+    context
+  end
+
+  step "an Antigravity thread uses a model the user picked", context do
+    context = account_with_models(context, ["fake/one", "fake/two"], "fake/one")
+
+    context =
+      FakeAcp.thread(context, "Work", "full-access", %{
+        "modelSelection" => %{"instanceId" => @instance, "model" => "fake/two"}
+      })
+
+    context = FakeAcp.send_message(context, "first message")
+    FakeAcp.await_run(context, "completed")
+    assert set_model_calls(context) == ["fake/two"]
+    context
+  end
+
+  step "the Antigravity runtime restarts and the thread continues", context do
+    Antigravity.stop_sessions(@instance)
+    context = FakeAcp.send_message(context, "second message")
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step "the thread still uses that model", context do
+    assert set_model_calls(context) == ["fake/two", "fake/two"]
+    context
+  end
+
+  # One attachment as a scenario names it, sent with a typed message.
+  step ~r/^the user sends an Antigravity message with (?<what>.+)$/,
+       %{args: [what]} = context do
+    send_with_attachment(context, what)
+  end
+
+  @mib_bytes 1024 * 1024
+
+  defp dispatch_attachment(context, attachment, text) do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "threadId" => World.thread_id(context, context.thread),
+        "messageId" => "msg-#{System.unique_integer([:positive])}",
+        "text" => text,
+        "attachments" => [attachment]
+      })
+
+    context
+  end
+
+  defp send_with_attachment(context, what) do
+    dir = HalC2.Attachments.dir()
+    File.mkdir_p!(dir)
+
+    put = fn id, name, mime, content, extra ->
+      path = Path.join(dir, id <> Path.extname(name))
+      File.write!(path, content)
+
+      attachment =
+        Map.merge(
+          %{
+            "type" => if(String.starts_with?(mime, "image/"), do: "image", else: "file"),
+            "id" => id,
+            "name" => name,
+            "mimeType" => mime
+          },
+          extra
+        )
+
+      {attachment, %{path: path, bytes: content, name: name}}
+    end
+
+    spec =
+      case what do
+        "a PNG image" ->
+          put.("att-png", "pic.png", "image/png", "PNGDATA", %{})
+
+        "an audio clip" ->
+          put.("att-audio", "clip.mp3", "audio/mpeg", "AUDIODATA", %{})
+
+        "a PDF" ->
+          put.("att-pdf", "doc.pdf", "application/pdf", "%PDF-1.4 bytes", %{})
+
+        "a text file" ->
+          put.("att-text", "notes.md", "text/plain", "hello text\n", %{})
+
+        "a long pasted text" ->
+          put.("att-pasted", "pasted.txt", "text/plain", "PASTED-CONTENT kept apart\n", %{
+            "source" => %{"_tag" => "pasted-text"}
+          })
+
+        ~s(the spreadsheet "q3.xlsx") ->
+          put.(
+            "att-xlsx",
+            "q3.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xlsx",
+            %{}
+          )
+
+        ~s("notes.txt" that is not valid UTF-8) ->
+          put.("att-utf8", "notes.txt", "text/plain", <<0xFF, 0xFE, "abc">>, %{})
+
+        ~s("notes.txt" that holds binary data) ->
+          put.("att-bin", "notes.txt", "text/plain", "abc" <> <<0>> <> "def", %{})
+
+        ~s(the 2 MiB text file "big.txt") ->
+          put.("att-big", "big.txt", "text/plain", :binary.copy("a", 2 * @mib_bytes), %{})
+
+        ~s("log.txt" that grew past the limit while read) ->
+          {put.("att-grow", "log.txt", "text/plain", :binary.copy("a", 900 * 1024), %{}), :grow}
+
+        ~s("notes.txt" whose upload is no longer stored) ->
+          {%{
+             "type" => "file",
+             "id" => "att-gone",
+             "name" => "notes.txt",
+             "mimeType" => "text/plain"
+           }, %{}}
+
+        ~s(the pasted text "pasted.txt" whose upload is no longer stored) ->
+          {%{
+             "type" => "file",
+             "id" => "att-pasted-gone",
+             "name" => "pasted.txt",
+             "mimeType" => "text/plain",
+             "source" => %{"_tag" => "pasted-text"}
+           }, %{}}
+
+        ~s("notes.txt" whose stored id is not valid) ->
+          {%{
+             "type" => "file",
+             "id" => "../not valid!",
+             "name" => "notes.txt",
+             "mimeType" => "text/plain"
+           }, %{}}
+
+        "nothing but blank text" ->
+          :blank
+      end
+
+    case spec do
+      :blank ->
+        Map.put(run_turn(context, "   "), :sent_attachment, %{})
+
+      {{attachment, info}, :grow} ->
+        FakeAcp.configure(
+          context,
+          &Map.put(&1, "waitForFileOn", %{"session/new" => "release-session"})
+        )
+
+        context = signed_in(context) |> FakeAcp.thread("Work")
+        # Dispatch opens the session before it returns, and the fake holds
+        # that session open: grow the file while it waits, from here.
+        task = Task.async(fn -> dispatch_attachment(context, attachment, "please read this") end)
+        assert [_ | _] = wait_for(fn -> FakeAcp.received(context, "session/new") end)
+        File.write!(info.path, :binary.copy("b", 2 * @mib_bytes))
+        release_file(context, "release-session")
+        Task.await(task)
+        Map.put(context, :sent_attachment, info)
+
+      {attachment, info} ->
+        context = signed_in(context) |> FakeAcp.thread("Work")
+        context = dispatch_attachment(context, attachment, "please read this")
+        Map.put(context, :sent_attachment, info)
+    end
+  end
+
+  step ~r/^Antigravity receives (?<form>the image itself|the audio itself|a link to the file, without its bytes|the file's text|the text, kept apart from the typed message)$/,
+       %{args: [form]} = context do
+    FakeAcp.await_run(context, "completed")
+    [%{"prompt" => blocks} | _] = Enum.reverse(prompts(context))
+    info = context.sent_attachment
+
+    case form do
+      "the image itself" ->
+        assert %{"type" => "image", "mimeType" => "image/png", "data" => data} =
+                 Enum.find(blocks, &(&1["type"] == "image"))
+
+        assert data == Base.encode64(info.bytes)
+
+      "the audio itself" ->
+        assert %{"type" => "audio", "mimeType" => "audio/mpeg", "data" => data} =
+                 Enum.find(blocks, &(&1["type"] == "audio"))
+
+        assert data == Base.encode64(info.bytes)
+
+      "a link to the file, without its bytes" ->
+        assert %{
+                 "type" => "resource_link",
+                 "uri" => uri,
+                 "name" => "doc.pdf",
+                 "mimeType" => "application/pdf"
+               } = Enum.find(blocks, &(&1["type"] == "resource_link"))
+
+        assert uri == "file://" <> info.path
+        refute inspect(blocks) =~ Base.encode64(info.bytes)
+
+      "the file's text" ->
+        assert %{"type" => "resource", "resource" => %{"text" => "hello text\n"}} =
+                 Enum.find(blocks, &(&1["type"] == "resource"))
+
+      "the text, kept apart from the typed message" ->
+        assert [%{"type" => "text", "text" => text}] = blocks
+        assert text =~ "please read this"
+        assert text =~ info.path
+        refute text =~ "PASTED-CONTENT"
+    end
+
+    context
+  end
+
+  step "the message is refused with {string}", %{args: [message]} = context do
+    state = FakeAcp.await_run(context, "failed")
+    assert last_error(state) == message, "got #{inspect(last_error(state))}"
+    context
+  end
+
+  step "the typed text is not sent without the attachment", context do
+    assert FakeAcp.received(context, "session/prompt") == []
+    context
+  end
+
+  # Prepares a runtime the way the scenario's Given arranged to fail: by
+  # starting a thread turn, or by the model refresh's checking session.
+  defp prepare_runtime(context) do
+    case context[:setup_via] do
+      :refresh ->
+        {reply, context} =
+          World.call(context, "server.refreshProviders", %{
+            "instanceId" => @instance,
+            "refreshModels" => true
+          })
+
+        Map.put(context, :reply, reply)
+
+      _ ->
+        context =
+          context |> signed_in() |> FakeAcp.thread("Work") |> FakeAcp.send_message("hello")
+
+        state = FakeAcp.await_run(context, "failed")
+        Map.put(context, :reply, {:error, last_error(state), %{}})
+    end
+  end
+
+  # The scenario's `/w` is the project's folder.
+  defp wpath(context, "/w" <> rest),
+    do: Path.join(World.project(context).root, String.trim_leading(rest, "/"))
+
+  defp wpath(_context, path), do: path
+
+  defp wtext(context, text), do: String.replace(text, "/w", World.project(context).root)
+
+  # Adds a scripted turn to the fake, ahead of its defaults.
+  defp script_turn(context, turn) do
+    FakeAcp.configure(context, &Map.update!(&1, "turns", fn turns -> [turn | turns] end))
+    context
+  end
+
+  # A signed-in thread that has sent `text`.
+  defp run_turn(context, text) do
+    context |> signed_in() |> FakeAcp.thread("Work") |> FakeAcp.send_message(text)
+  end
+
+  defp turn_items(state), do: HalC2.StreamState.list(state, "turn-item")
+
+  defp release_file(context, name) do
+    File.write!(Path.join(FakeAcp.fake(context, @instance).dir, name), "go\n")
     context
   end
 

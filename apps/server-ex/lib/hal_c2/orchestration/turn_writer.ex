@@ -299,8 +299,8 @@ defmodule HalC2.Orchestration.TurnWriter do
   "file-read", "permission"). Returns `{state, request_id}`; the runtime keeps what
   it needs to answer the provider under that id.
   """
-  def open_request(state, native, request_kind, prompt),
-    do: open(state, native, {:approval, request_kind, prompt})
+  def open_request(state, native, request_kind, prompt, options \\ nil),
+    do: open(state, native, {:approval, request_kind, prompt, options})
 
   @doc """
   Opens questions for the user (`OrchestrationV2UserInputQuestion`s): a pending
@@ -332,14 +332,17 @@ defmodule HalC2.Orchestration.TurnWriter do
 
     {node_kind, request_kind, item_fields} =
       case what do
-        {:approval, kind, prompt} ->
+        {:approval, kind, prompt, options} ->
           fields = %{"requestId" => request_id, "requestKind" => kind}
 
+          fields =
+            if(is_binary(prompt) and prompt != "",
+              do: Map.put(fields, "prompt", prompt),
+              else: fields
+            )
+
           {"approval_request", kind,
-           if(is_binary(prompt) and prompt != "",
-             do: Map.put(fields, "prompt", prompt),
-             else: fields
-           )}
+           if(is_list(options), do: Map.put(fields, "options", options), else: fields)}
 
         {tag, questions} when tag in [:questions, :async_questions] ->
           {"user_input_request", "user_input",

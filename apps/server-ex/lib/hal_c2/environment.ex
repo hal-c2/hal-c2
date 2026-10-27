@@ -97,18 +97,66 @@ defmodule HalC2.Environment do
   (with a `cwd`) leaves quota and probes alone.
   """
   def refresh_providers(input) do
+    case refresh(input) do
+      :ok -> {:ok, %{"providers" => providers()}}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp refresh(input) do
     case input do
       # Antigravity's skills come from the workspace's folders (`HalC2.Acp.Antigravity.skills/2`).
       %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
-        if HalC2.Acp.driver(id) == "antigravity",
-          do: HalC2.Acp.Antigravity.refresh_workspace(id, cwd)
+        if HalC2.Acp.driver(id) == "antigravity" do
+          case HalC2.Acp.Antigravity.refresh_workspace(id, cwd) do
+            :ok ->
+              :ok
+
+            {:error, detail} ->
+              {:error,
+               %{
+                 "_tag" => "ProviderSetupError",
+                 "instanceId" => id,
+                 "operation" => "refresh",
+                 "detail" => "Could not read Antigravity workspace skills.",
+                 "message" => "Could not read Antigravity workspace skills.",
+                 "cause" => detail
+               }}
+          end
+        else
+          :ok
+        end
 
       %{"cwd" => cwd} when is_binary(cwd) ->
         :ok
 
       %{"instanceId" => id} when is_binary(id) ->
         HalC2.ProviderUsageLimits.refresh([id])
-        probe([id], input["refreshModels"] == true)
+
+        # A model refresh on a signed-in Antigravity instance reads its
+        # account's models in a disposable session, and its failure is the
+        # caller's. Without an account there is nothing to refresh, and the
+        # ordinary read says to sign in.
+        if input["refreshModels"] == true and HalC2.Acp.driver(id) == "antigravity" and
+             HalC2.Acp.Antigravity.account(id) != nil do
+          case HalC2.Acp.Antigravity.refresh_models(id) do
+            :ok ->
+              :ok
+
+            {:error, detail} ->
+              {:error,
+               %{
+                 "_tag" => "ProviderSetupError",
+                 "instanceId" => id,
+                 "operation" => "refresh-models",
+                 "detail" => detail,
+                 "message" => detail
+               }}
+          end
+        else
+          probe([id], input["refreshModels"] == true)
+          :ok
+        end
 
       _ ->
         # Newer models, defaults and compatibility policies, when there are any.
@@ -120,9 +168,9 @@ defmodule HalC2.Environment do
           ["codex" | HalC2.Claude.Provider.instances()] ++ HalC2.Acp.instances(),
           input["refreshModels"] == true
         )
-    end
 
-    {:ok, %{"providers" => providers()}}
+        :ok
+    end
   end
 
   # Agents are probed apart, so one slow agent does not hold up the others.
