@@ -136,6 +136,59 @@ defmodule HalC2.SettingsSharedTest do
       refute_received {:hal_c2_settings, _, _}
     end
 
+    test "a member's records that cannot be written are let go, and its next gossip brings them",
+         %{records: records} do
+      server = Process.whereis(Settings)
+      :ok = Settings.watch(self())
+      theirs = [%{"key" => "mod+j", "command" => "terminal.toggle"}]
+      incoming = %{"keybindings" => record(1, "zz", theirs)}
+      # The rules are written to `keybindings.json.tmp` first.
+      tmp = HalC2.Keybindings.path() <> ".tmp"
+      File.mkdir_p!(tmp)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        Settings.merge_shared(incoming)
+        _ = :sys.get_state(Settings)
+      end)
+
+      assert Process.whereis(Settings) == server
+      assert HalC2.Keybindings.rules() == []
+      assert Settings.shared_records() == %{}
+      refute File.exists?(records)
+
+      File.rmdir!(tmp)
+      Settings.merge_shared(incoming)
+      _ = :sys.get_state(Settings)
+
+      assert HalC2.Keybindings.rules() == theirs
+      assert Settings.shared_records() == incoming
+      # The watch survived the merge that failed.
+      assert_received {:hal_c2_keybindings, _, ^theirs}
+    end
+
+    test "a save whose records cannot be written is still made, and stamped by the next one",
+         %{path: path, id: id} do
+      # The records are written to `settings-shared.json.tmp` first.
+      tmp = Path.join(HalC2.Paths.config_dir(), "settings-shared.json.tmp")
+      File.mkdir_p!(tmp)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:ok, 1} = Settings.put(%{"defaultRuntimeMode" => "full-access"}, 0)
+      end)
+
+      assert {%{"defaultRuntimeMode" => "full-access"}, 1} = Settings.get()
+      assert JSON.decode!(File.read!(path)) == %{"defaultRuntimeMode" => "full-access"}
+      assert Settings.shared_records() == %{}
+
+      File.rmdir!(tmp)
+
+      {:ok, 2} =
+        Settings.put(%{"defaultRuntimeMode" => "full-access", "environmentIcon" => "x"}, 1)
+
+      assert %{"defaultRuntimeMode" => %{"by" => ^id, "value" => "full-access"}} =
+               Settings.shared_records()
+    end
+
     test "a reset from a member removes the key, and nothing older brings it back" do
       {:ok, 1} = Settings.put(%{"responseStreamingMode" => "paragraph"}, 0)
       %{"responseStreamingMode" => %{"at" => at}} = Settings.shared_records()
