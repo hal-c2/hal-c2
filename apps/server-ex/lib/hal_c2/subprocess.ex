@@ -36,6 +36,7 @@ defmodule HalC2.Subprocess do
 
   @spec start([String.t()], keyword) :: {:ok, t} | {:error, term}
   def start(cmd, opts \\ []) do
+    cmd = spawn_command(cmd)
     {prefix, opts} = Keyword.pop(opts, :stderr_prefix)
     stderr = if prefix, do: :consume, else: :disable
 
@@ -58,6 +59,19 @@ defmodule HalC2.Subprocess do
       {:ok, %__MODULE__{proc: proc, reader: reader}}
     end
   end
+
+  # Windows cannot exec a command script (`.cmd`/`.bat`, which is how npm installs
+  # its shims there) directly: `cmd.exe` runs it, as every Windows launcher does.
+  defp spawn_command([executable | args]) do
+    os = Application.get_env(:hal_c2, :os_type, :os.type())
+
+    if match?({:win32, _}, os) and
+         String.downcase(Path.extname(executable)) in [".cmd", ".bat"],
+       do: [System.find_executable("cmd.exe") || "cmd.exe", "/c", executable | args],
+       else: [executable | args]
+  end
+
+  defp spawn_command(cmd), do: cmd
 
   # A failure to track that is already known refuses before anything is
   # started, so no program (a provider CLI, a JSON-RPC connection, the device

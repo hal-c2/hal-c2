@@ -3445,6 +3445,7 @@ defmodule HalC2.Test.Mc.World do
   def reset_provider_caches do
     for key <- [
           {HalC2.Codex.Provider, :models},
+          {HalC2.Codex.Provider, :status},
           {HalC2.Codex.Provider, :version},
           {HalC2.Claude.Provider, :version},
           {HalC2.Claude.Provider, :models},

@@ -1724,8 +1724,10 @@ defmodule HalC2.Orchestration do
     # A provider plugin that cannot stop a turn is not asked; `interrupt_undriven/2`
     # says so. A bundled provider's runtime is its plugin module, which `runtimes/2`
     # does not list.
+    active = active_runtime(thread_id, run_id)
+
     asked =
-      case active_runtime(thread_id, run_id) do
+      case active do
         nil ->
           runtimes(:interrupt, 2)
 
@@ -1735,8 +1737,41 @@ defmodule HalC2.Orchestration do
             else: []
       end
 
-    stopped = Enum.filter(asked, &interrupted?(&1, thread_id, run_id))
-    if stopped != [], do: :ok, else: interrupt_undriven(thread_id, run_id)
+    results = Enum.map(asked, &interrupt_result(&1, thread_id, run_id))
+
+    cond do
+      :ok in results ->
+        :ok
+
+      # A runtime that refuses the stop with a reason of its own — not that it
+      # has no turn, but that the stop could not be delivered to the one it has
+      # (the provider has not started it yet) — surfaces that reason: the turn
+      # is the runtime's to run on, not an undriven one to abandon.
+      active != nil and match?([{:error, _}], results) and
+          not no_turn?(hd(results)) ->
+        hd(results)
+
+      true ->
+        interrupt_undriven(thread_id, run_id)
+    end
+  end
+
+  defp no_turn?({:error, message}),
+    do: String.starts_with?(message, "no active") or String.starts_with?(message, "no running")
+
+  # A runtime's answer to a stop: `:ok`, its `{:error, message}`, or `:gone` for
+  # one that died as it was asked (its turn is `interrupt_undriven/2`'s to end).
+  defp interrupt_result(runtime, thread_id, run_id) do
+    case runtime.interrupt(thread_id, run_id) do
+      :ok -> :ok
+      {:error, message} when is_binary(message) -> {:error, message}
+      _ -> :gone
+    end
+  rescue
+    error in ArgumentError ->
+      if error.message =~ "unknown registry", do: :gone, else: reraise(error, __STACKTRACE__)
+  catch
+    :exit, _ -> :gone
   end
 
   # The runtime of the pinned run if it is active, or of the active run for a stop
@@ -1830,18 +1865,6 @@ defmodule HalC2.Orchestration do
   defp log_stop_at_debug(why) do
     require Logger
     Logger.debug("a session call read as stopped exited with #{inspect(why)}")
-  end
-
-  # A runtime that dies as it is asked leaves its turn to `interrupt_undriven/2`, and
-  # one whose registry is not running (an MC started without it) holds nothing to stop.
-  defp interrupted?(runtime, thread_id, run_id) do
-    runtime.interrupt(thread_id, run_id) == :ok
-  rescue
-    # Any other error out of an adapter is a bug, and must not read as nothing to stop.
-    error in ArgumentError ->
-      if error.message =~ "unknown registry", do: false, else: reraise(error, __STACKTRACE__)
-  catch
-    :exit, _ -> false
   end
 
   defp interrupt_undriven(thread_id, run_id) do

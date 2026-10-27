@@ -7,6 +7,11 @@
       "halC2Range": ">=0.0.42",
       "recommendedRange": ">=1.14.19",
       "ranges": [{ "range": "<1.14.19", "status": "broken" }]
+    },
+    {
+      "driver": "codex",
+      "halC2Range": ">=0",
+      "ranges": [{ "range": "0.128.0", "status": "broken" }]
     }
   ],
   "currentModels": {

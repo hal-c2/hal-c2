@@ -97,37 +97,54 @@ defmodule HalC2.Environment do
   (with a `cwd`) leaves quota and probes alone.
   """
   def refresh_providers(input) do
-    case input do
-      # Antigravity's skills come from the workspace's folders (`HalC2.Acp.Antigravity.skills/2`).
-      %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
-        if HalC2.Acp.driver(id) == "antigravity",
-          do: HalC2.Acp.Antigravity.refresh_workspace(id, cwd)
+    result =
+      case input do
+        # Antigravity's skills come from the workspace's folders (`HalC2.Acp.Antigravity.skills/2`),
+        # Codex's from its app-server for that folder (`HalC2.Codex.Provider.refresh_workspace/2`).
+        %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
+          cond do
+            HalC2.Acp.driver(id) == "antigravity" ->
+              HalC2.Acp.Antigravity.refresh_workspace(id, cwd)
 
-      %{"cwd" => cwd} when is_binary(cwd) ->
-        :ok
+            HalC2.Settings.known_instance?(id, "codex") ->
+              HalC2.Codex.Provider.refresh_workspace(id, cwd)
 
-      %{"instanceId" => id} when is_binary(id) ->
-        HalC2.ProviderUsageLimits.refresh([id])
-        probe([id], input["refreshModels"] == true)
+            true ->
+              :ok
+          end
 
-      _ ->
-        # Newer models, defaults and compatibility policies, when there are any.
-        HalC2.ModelManifest.refresh()
-        HalC2.ProviderUsageLimits.refresh()
-        HalC2.UsageLimitSources.refresh()
+        %{"cwd" => cwd} when is_binary(cwd) ->
+          :ok
 
-        probe(
-          ["codex" | HalC2.Claude.Provider.instances()] ++ HalC2.Acp.instances(),
-          input["refreshModels"] == true
-        )
+        %{"instanceId" => id} when is_binary(id) ->
+          HalC2.ProviderUsageLimits.refresh([id])
+          probe([id], input["refreshModels"] == true)
+          :ok
+
+        _ ->
+          # Newer models, defaults and compatibility policies, when there are any.
+          HalC2.ModelManifest.refresh()
+          HalC2.ProviderUsageLimits.refresh()
+          HalC2.UsageLimitSources.refresh()
+
+          probe(
+            ["codex" | HalC2.Claude.Provider.instances()] ++ HalC2.Acp.instances(),
+            input["refreshModels"] == true
+          )
+
+          :ok
+      end
+
+    case result do
+      {:error, _message} = error -> error
+      _ -> {:ok, %{"providers" => providers()}}
     end
-
-    {:ok, %{"providers" => providers()}}
   end
 
   # Agents are probed apart, so one slow agent does not hold up the others.
   defp probe(ids, models?) do
-    if models? and "codex" in ids, do: HalC2.Codex.Provider.load()
+    if Enum.any?(ids, &HalC2.Settings.known_instance?(&1, "codex")),
+      do: HalC2.Codex.Provider.load()
 
     claude = Enum.filter(ids, &(&1 in HalC2.Claude.Provider.instances()))
     if models? and claude != [], do: HalC2.Claude.Provider.load(claude)

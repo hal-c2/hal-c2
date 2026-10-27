@@ -5,7 +5,9 @@ defmodule HalC2.JsonRpc.Connection do
   Callers use `call/4`, `request/5` and `notify/3`. Incoming notifications and server-to-client
   requests go to the `:handler` pid as `{:json_rpc, conn, message}`; the handler
   answers requests with `respond/3`. If the subprocess exits, pending calls fail with
-  `{:error, :closed}` and the connection stops. With `:log` (a thread id), every
+  `{:error, :closed}` and the connection stops; with `:program` (the subprocess's
+  name, as its user knows it) they fail with the exit instead, in the words that
+  program's own client used (`"Codex App Server process exited with code 1"`). With `:log` (a thread id), every
   line the subprocess sends also goes to `HalC2.ProviderLog`. With `:stderr_prefix`,
   stderr lines starting with it reach the handler as `{:invalid, line}`, like a
   non-JSON stdout line, and are not logged; the rest of stderr is discarded.
@@ -27,6 +29,7 @@ defmodule HalC2.JsonRpc.Connection do
           | {:env, [{String.t(), String.t()}]}
           | {:log, String.t() | nil}
           | {:stderr_prefix, String.t() | nil}
+          | {:program, String.t() | nil}
 
   @spec start_link([option]) :: GenServer.on_start()
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, hibernate_after: 15_000)
@@ -75,7 +78,9 @@ defmodule HalC2.JsonRpc.Connection do
            dialect: Keyword.get(opts, :dialect, :bare),
            next_id: 1,
            pending: %{},
-           log: Keyword.get(opts, :log)
+           log: Keyword.get(opts, :log),
+           program: Keyword.get(opts, :program),
+           exit_status: nil
          }}
 
       {:error, reason} ->
@@ -121,22 +126,60 @@ defmodule HalC2.JsonRpc.Connection do
     {:noreply, state}
   end
 
-  def handle_info({:subprocess_eof, _reader}, state), do: {:stop, :normal, state}
+  def handle_info({:subprocess_eof, _reader}, state) do
+    # The exit status is read here, while the subprocess can still be asked, so a
+    # call left open fails with the exit rather than a bare close.
+    state =
+      if state.program && state.exit_status == nil do
+        status =
+          case Subprocess.stop(state.sub, 1_000) do
+            {:ok, status} -> status
+            _ -> nil
+          end
+
+        %{state | exit_status: status}
+      else
+        state
+      end
+
+    {:stop, :normal, state}
+  catch
+    :exit, _ -> {:stop, :normal, state}
+  end
+
   def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
   def handle_info(_other, state), do: {:noreply, state}
 
   @impl true
   def terminate(_reason, state) do
-    for {_id, from} <- state.pending, do: GenServer.reply(from, {:error, :closed})
-    Subprocess.stop(state.sub)
+    error =
+      case {state.program, state.exit_status} do
+        {program, status} when is_binary(program) and is_integer(status) ->
+          %{"message" => "#{program} process exited with code #{status}"}
+
+        _ ->
+          :closed
+      end
+
+    for {_id, from} <- state.pending, do: GenServer.reply(from, {:error, error})
+    # The subprocess may already be gone (its exit is why this connection stops).
+    try do
+      Subprocess.stop(state.sub)
+    catch
+      :exit, _ -> :ok
+    end
   end
 
   @impl true
   def code_change(_old_vsn, state, _extra), do: {:ok, migrate(state)}
 
   # Every older state shape migrates forward here; new fields get defaults.
-  defp migrate(%{v: @state_version} = state), do: state
-  defp migrate(state), do: Map.put(state, :v, @state_version)
+  defp migrate(state),
+    do:
+      state
+      |> Map.put_new(:program, nil)
+      |> Map.put_new(:exit_status, nil)
+      |> Map.put(:v, @state_version)
 
   defp handle_line(line, state) do
     HalC2.ProviderLog.native(Map.get(state, :log), line)
