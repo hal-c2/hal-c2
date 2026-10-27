@@ -179,7 +179,7 @@ AbstractButton {
         return target !== null;
     }
 
-    implicitHeight: 28
+    implicitHeight: Math.max(28, topPadding + contentItem.implicitHeight + bottomPadding)
     implicitWidth: leftPadding + contentItem.implicitWidth + rightPadding
     leftPadding: 10
     rightPadding: 10 + 14 + 4
