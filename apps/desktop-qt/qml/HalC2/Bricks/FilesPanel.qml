@@ -601,6 +601,7 @@ Rectangle {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     placeholderText: qsTr("Search files")
+                    Accessible.name: qsTr("Search files")
                     enabled: (root.source?.root ?? "").length > 0
                     text: root.source?.query ?? ""
                     onTextEdited: root.source.query = text

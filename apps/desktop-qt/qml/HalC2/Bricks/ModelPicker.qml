@@ -260,6 +260,8 @@ AbstractButton {
     Popup {
         id: popup
 
+        Accessible.name: qsTr("Models")
+
         // Above the trigger, and
         // flipped below it when the window has no room above.
         property bool below: false

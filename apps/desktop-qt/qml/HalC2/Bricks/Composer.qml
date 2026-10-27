@@ -1524,6 +1524,7 @@ Rectangle {
                     Popup {
                         id: branchPicker
                         objectName: "branchPicker"
+                        Accessible.name: qsTr("Branches")
 
                         scale: Shell.state.layout?.zoom ?? 1
                         transformOrigin: Item.TopLeft
