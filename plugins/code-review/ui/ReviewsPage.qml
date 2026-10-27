@@ -585,6 +585,8 @@ Item {
                             id: blockedText
 
                             objectName: "codeReviewBlockedText"
+                            // The agent's words, never markup.
+                            textFormat: Text.PlainText
                             anchors.fill: parent
                             anchors.margins: 8
                             text: qsTr("The agent could not run these on the MC's machine. Fix them there and review again:") + "\n" + (findings.review?.validation?.blocked ?? []).map(entry => "• " + entry.check + ": " + entry.error).join("\n")
@@ -644,6 +646,7 @@ Item {
 
                             Text {
                                 objectName: "codeReviewValidationLines:" + section.modelData.name
+                                textFormat: Text.PlainText
                                 Layout.fillWidth: true
                                 text: section.modelData.lines.map(line => "• " + line).join("\n")
                                 color: page.foreground

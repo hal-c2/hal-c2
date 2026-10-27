@@ -65,10 +65,11 @@ your changes to it. Each repository can have instructions of its own, and with
 The agent reports a verdict, a summary, comments on lines, and what it checked.
 A comment on a line the pull request does not change goes into the summary
 instead. A posted review opens with the count of its findings, such as "No
-findings." or "2 findings: 1 high, 1 medium", counting only the comments you
-kept. What the agent checked follows the summary: what it left out and why, and
-what this machine kept it from running, are listed in plain view, and the
-commands it ran are folded away. A check this machine kept it from running,
+findings." or "2 findings: 1 high, 1 medium". It counts the comments you kept
+and those moved into the summary, which cannot be dismissed. What the agent
+checked follows the summary: what it left out and why, and what this machine
+kept it from running, are listed in plain view, and the commands it ran are
+folded away. A check this machine kept it from running,
 such as a missing tool or credential, is a setup problem: the Reviews page
 shows it apart from the verdict, so you can fix it on the machine and review
 again. Each
