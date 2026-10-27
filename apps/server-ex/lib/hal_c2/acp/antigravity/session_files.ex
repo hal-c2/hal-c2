@@ -22,12 +22,15 @@ defmodule HalC2.Acp.Antigravity.SessionFiles do
 
   # This process only owns the live-directories table below: an ETS table
   # dies with its owner, and the processes that launch runtimes are
-  # short-lived. In the MC it runs under `HalC2.Supervisor`.
+  # short-lived. In the MC it runs under `HalC2.Supervisor`; anywhere else
+  # the first use starts it, unlinked, so a launcher never owns the table.
   def start_link(_opts), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
 
   @impl true
   def init(:ok) do
-    table()
+    if :ets.whereis(@live_table) == :undefined,
+      do: :ets.new(@live_table, [:named_table, :public, :set])
+
     {:ok, %{}}
   end
 
@@ -110,10 +113,9 @@ defmodule HalC2.Acp.Antigravity.SessionFiles do
 
   defp table do
     if :ets.whereis(@live_table) == :undefined do
-      try do
-        :ets.new(@live_table, [:named_table, :public, :set])
-      rescue
-        ArgumentError -> :ok
+      case GenServer.start(__MODULE__, :ok, name: __MODULE__) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
       end
     end
 
