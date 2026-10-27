@@ -700,13 +700,25 @@ defmodule HalC2.Steps.Orchestration.Projections do
     context
   end
 
+  # The window scenarios page over their subscription; the history scenarios
+  # (whose Givens set `:bounded_via`) page a bounded snapshot by its cursor.
   step ~r/^a client asks for a bounded page of the history of "(?<thread>[^"]+)"$/,
        %{args: [thread]} = context do
-    client = windowed(World.client(context), thread, 1)
-    {_frames, client} = until_live(client, [])
-    client = WsClient.send_json(client, %{"t" => "more", "id" => 41, "items" => 100})
-    {page, client} = Mc.await(client, &(&1["t"] == "page" and &1["id"] == 41))
-    context |> World.put_client(client) |> Map.put(:page, page)
+    if context[:bounded_via] == :rpc do
+      {reply, context} =
+        World.call!(context, "hal-c2.threadRows", %{
+          "threadId" => World.thread_id(context, thread),
+          "bounded" => true
+        })
+
+      Map.put(context, :bounded_page, reply)
+    else
+      client = windowed(World.client(context), thread, 1)
+      {_frames, client} = until_live(client, [])
+      client = WsClient.send_json(client, %{"t" => "more", "id" => 41, "items" => 100})
+      {page, client} = Mc.await(client, &(&1["t"] == "page" and &1["id"] == 41))
+      context |> World.put_client(client) |> Map.put(:page, page)
+    end
   end
 
   step "the page holds only visible turns", context do
@@ -889,5 +901,945 @@ defmodule HalC2.Steps.Orchestration.Projections do
     if Enum.any?(frame["events"], &(hd(&1) == seq)),
       do: {acc, client},
       else: events_until(client, seq, acc)
+  end
+
+  # --- a cancelled queued run ----------------------------------------------------
+
+  step "run 1 of {string} is running and run 2 was queued behind it",
+       %{args: [thread]} = context do
+    context
+    |> World.numbered_run(thread, 1, "running")
+    |> World.numbered_run(thread, 2, "queued")
+    |> Map.put(:thread, thread)
+  end
+
+  step "run 2 is cancelled before it starts", context do
+    World.numbered_run(context, context.thread, 2, "cancelled", %{"startedAt" => nil})
+  end
+
+  step "the shell row of {string} has status {string} because run 2 is the latest run",
+       %{args: [thread, status]} = context do
+    row = World.row(context, thread)
+    assert row["status"] == status
+    assert row["latestRunId"] == "run-2"
+    context
+  end
+
+  step "the activity start time is the start of run 1", context do
+    run = Enum.find(World.entities(context, context.thread, "run"), &(&1["id"] == "run-1"))
+    assert World.row(context, context.thread)["activityRunStartedAt"] == run["startedAt"]
+    context
+  end
+
+  # --- bounded snapshots and history pages ----------------------------------------
+
+  step "{string} has {int} user turns", %{args: [thread, n]} = context do
+    commit_turns(context, thread, 1..n)
+  end
+
+  step "a client asks for a bounded snapshot of {string}", %{args: [thread]} = context do
+    {reply, context} =
+      World.call!(context, "hal-c2.threadRows", %{
+        "threadId" => World.thread_id(context, thread),
+        "bounded" => true
+      })
+
+    Map.merge(context, %{thread: thread, bounded: reply})
+  end
+
+  step "it receives the newest 10 user turns and a cursor for older history", context do
+    turns = user_turns(context.bounded)
+    assert length(turns) == 10
+    assert hd(turns) == "u-51"
+    assert context.bounded["hasMoreHistory"] == true
+    assert is_binary(context.bounded["historyCursor"])
+    context
+  end
+
+  step "it asks for the page before that cursor", context do
+    ask_page_before(context, context.bounded["historyCursor"])
+  end
+
+  step "it receives the 20 user turns before them", context do
+    turns = user_turns(context.page_reply)
+    assert length(turns) == 20
+    assert hd(turns) == "u-31"
+    assert List.last(turns) == "u-50"
+    context
+  end
+
+  step "an earlier turn of {string} ran hundreds of tool calls and was steered twice",
+       %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    run = %{"id" => "run-1", "threadId" => id, "ordinal" => 1, "status" => "completed"}
+
+    changes =
+      [{"run", "run-1", %{"s" => run}}, history_item("u-1", "run-1", user_turn())] ++
+        for(i <- 1..300, do: history_item("tool-#{i}", "run-1", %{"type" => "tool_call"})) ++
+        [
+          history_item("steer-1", "run-1", %{
+            "type" => "user_message",
+            "inputIntent" => "steer",
+            "createdBy" => "user"
+          }),
+          history_item("steer-2", "run-1", %{
+            "type" => "user_message",
+            "inputIntent" => "steer",
+            "createdBy" => "user"
+          }),
+          history_item("last", "run-1", %{"type" => "assistant_message"})
+        ]
+
+    {:ok, _} = HalC2.Streams.commit(id, :thread, changes)
+    context |> commit_turns(thread, 2..12) |> Map.put(:thread, thread)
+  end
+
+  step "a client pages back to that turn", context do
+    {reply, context} =
+      World.call!(context, "hal-c2.threadRows", %{
+        "threadId" => World.thread_id(context, context.thread),
+        "bounded" => true
+      })
+
+    page_back_until(context, reply["historyCursor"])
+  end
+
+  defp page_back_until(context, nil), do: flunk("the history ended before the turn was reached")
+
+  defp page_back_until(context, cursor) do
+    context = ask_page_before(context, cursor)
+
+    if "u-1" in reply_item_ids(context.page_reply),
+      do: context,
+      else: page_back_until(context, context.page_reply["historyCursor"])
+  end
+
+  step "the page holds the whole turn, from the user's message to its last item", context do
+    ids = reply_item_ids(context.page_reply)
+    turn = ids |> Enum.drop_while(&(&1 != "u-1")) |> Enum.take_while(&(&1 != "u-2"))
+    assert hd(turn) == "u-1"
+    assert List.last(turn) == "last"
+    assert length(Enum.filter(turn, &String.starts_with?(&1, "tool-"))) == 300
+    context
+  end
+
+  step "the steering messages do not count as turns of their own", context do
+    turn =
+      context.page_reply
+      |> reply_items()
+      |> Enum.drop_while(&(&1["id"] != "u-1"))
+      |> Enum.take_while(&(&1["id"] != "u-2"))
+
+    assert Enum.count(turn, &(&1["id"] in ["steer-1", "steer-2"])) == 2
+    assert Enum.count(turn, &HalC2.Projection.History.user_turn?/1) == 1
+    context
+  end
+
+  step "{string} has hundreds of turns started by background work between two user messages",
+       %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    automatic =
+      Enum.flat_map(2..301, fn n ->
+        run = %{"id" => "run-#{n}", "threadId" => id, "ordinal" => n, "status" => "completed"}
+
+        [
+          {"run", "run-#{n}", %{"s" => run}},
+          history_item("auto-#{n}", "run-#{n}", %{
+            "type" => "user_message",
+            "inputIntent" => "turn_start",
+            "createdBy" => "agent"
+          })
+        ]
+      end)
+
+    context = commit_turns(context, thread, 1..1)
+    {:ok, _} = HalC2.Streams.commit(id, :thread, automatic)
+
+    context
+    |> commit_turns(thread, 302..302)
+    |> Map.merge(%{thread: thread, bounded_via: :rpc})
+  end
+
+  step "the page holds at most 150 turns of any kind", context do
+    starts =
+      Enum.count(reply_items(context.bounded_page), &HalC2.Projection.History.turn_start?/1)
+
+    assert starts <= 150
+    assert context.bounded_page["hasMoreHistory"] == true
+    context
+  end
+
+  step "{string} holds imported history that records no turn starts",
+       %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    run = %{"id" => "run-1", "threadId" => id, "ordinal" => 1, "status" => "completed"}
+
+    changes =
+      [{"run", "run-1", %{"s" => run}}] ++
+        for(i <- 1..124, do: history_item("i-#{i}", "run-1", %{"type" => "assistant_message"})) ++
+        [
+          history_item("huge", "run-1", %{
+            "type" => "assistant_message",
+            "text" => String.duplicate("x", 2_000_000)
+          })
+        ] ++
+        for(i <- 126..200, do: history_item("i-#{i}", "run-1", %{"type" => "assistant_message"}))
+
+    {:ok, _} = HalC2.Streams.commit(id, :thread, changes)
+    Map.merge(context, %{thread: thread, bounded_via: :rpc})
+  end
+
+  step "the page holds at most 75 items and about one megabyte", context do
+    ids = reply_item_ids(context.bounded_page)
+    assert length(ids) <= 75
+    assert byte_size(JSON.encode!(context.bounded_page["rows"])) <= 1_048_576
+    context
+  end
+
+  # The page after the bounded one starts with the oversized item: however
+  # large it is, a page holds it rather than stalling on it forever.
+  step "it holds at least one item, however large that item is", context do
+    context = ask_page_before(context, context.bounded_page["historyCursor"])
+    assert reply_item_ids(context.page_reply) == ["huge"]
+    context
+  end
+
+  step ~r/^a client asks for older history of "(?<thread>[^"]+)" with (?<cursor>.+)$/,
+       %{args: [thread, which]} = context do
+    cursor =
+      case which do
+        "an empty cursor" -> ""
+        "a cursor the MC never gave" -> "never-given-by-anyone"
+        "a cursor longer than 4,096 characters" -> String.duplicate("a", 4_097)
+      end
+
+    {reply, context} =
+      World.call(context, "hal-c2.threadRows", %{
+        "threadId" => World.thread_id(context, thread),
+        "cursor" => cursor
+      })
+
+    Map.put(context, :reply, reply)
+  end
+
+  step "the request fails as an invalid history cursor", context do
+    assert {:error, "Invalid thread history cursor.",
+            %{"_tag" => "InvalidThreadHistoryCursorError"}} =
+             context.reply
+
+    context
+  end
+
+  step "a client holds a cursor into the history of {string}", %{args: [thread]} = context do
+    context = commit_turns(context, thread, 1..40)
+
+    {reply, context} =
+      World.call!(context, "hal-c2.threadRows", %{
+        "threadId" => World.thread_id(context, thread),
+        "bounded" => true
+      })
+
+    context =
+      context
+      |> Map.merge(%{thread: thread, cursor: reply["historyCursor"]})
+      |> ask_page_before(reply["historyCursor"])
+
+    Map.put(context, :expected_page, reply_item_ids(context.page_reply))
+  end
+
+  step "{string} gains new turns", %{args: [thread]} = context do
+    commit_turns(context, thread, 41..45)
+  end
+
+  step "the client asks for the page before that cursor", context do
+    ask_page_before(context, context.cursor)
+  end
+
+  step "it receives the same older turns as before, with none skipped or repeated", context do
+    assert reply_item_ids(context.page_reply) == context.expected_page
+    context
+  end
+
+  step "the item the cursor names has since left the timeline", context do
+    {:ok, %{"si" => item_id}} = HalC2.Projection.History.decode_cursor(context.cursor)
+    item = Enum.find(World.entities(context, context.thread, "turn-item"), &(&1["id"] == item_id))
+    id = World.thread_id(context, context.thread)
+
+    {:ok, _} =
+      HalC2.Streams.commit(id, :thread, [
+        {"run", item["runId"], %{"s" => %{"status" => "rolled_back"}}}
+      ])
+
+    context
+  end
+
+  step "it receives the turns before the position the cursor recorded", context do
+    ids = reply_item_ids(context.page_reply)
+    assert hd(ids) == "u-11"
+    assert List.last(ids) == "a-30"
+    refute "u-31" in ids
+    context
+  end
+
+  step "an active proposed plan, a pending handoff, a pending approval and a queued message are older than its newest turns",
+       context do
+    thread = "t1"
+    id = World.thread_id(context, thread)
+
+    context =
+      context
+      |> World.put_entity(thread, "plan", "plan-1", %{
+        "s" => %{
+          "id" => "plan-1",
+          "threadId" => id,
+          "kind" => "proposed_plan",
+          "status" => "active",
+          "markdown" => "# Plan"
+        }
+      })
+      |> World.put_entity(thread, "context-handoff", "handoff-1", %{
+        "s" => %{
+          "id" => "handoff-1",
+          "threadId" => id,
+          "status" => "pending",
+          "summaryText" => "the story"
+        }
+      })
+      |> World.put_entity(thread, "runtime-request", "request-1", %{
+        "s" => %{
+          "id" => "request-1",
+          "threadId" => id,
+          "kind" => "approval",
+          "status" => "pending"
+        }
+      })
+      |> World.put_entity(thread, "run", "run-queued", %{
+        "s" => %{
+          "id" => "run-queued",
+          "threadId" => id,
+          "ordinal" => 900,
+          "status" => "queued",
+          "userMessageId" => "queued-msg"
+        }
+      })
+      |> World.put_entity(thread, "message", "queued-msg", %{
+        "s" => %{
+          "id" => "queued-msg",
+          "threadId" => id,
+          "runId" => "run-queued",
+          "role" => "user",
+          "text" => "later please"
+        }
+      })
+
+    commit_turns(context, thread, 1..30)
+  end
+
+  step "the snapshot still carries the plan, the handoff, the approval and the queued message",
+       context do
+    rows = Map.new(context.bounded["rows"], fn [kind, id, entity] -> {{kind, id}, entity} end)
+    assert rows[{"plan", "plan-1"}]["status"] == "active"
+    assert rows[{"context-handoff", "handoff-1"}]["status"] == "pending"
+    assert rows[{"runtime-request", "request-1"}]["status"] == "pending"
+    assert rows[{"message", "queued-msg"}]["text"] == "later please"
+    context
+  end
+
+  step "the newest turns of {string} include a completed plan and a finished handoff",
+       %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    context
+    |> commit_turns(thread, 1..3)
+    |> World.add_item(thread, "pp-1", "proposed_plan", "run-3", %{"planId" => "plan-1"})
+    |> World.add_item(thread, "ho-1", "handoff", "run-3", %{"contextHandoffId" => "handoff-1"})
+    |> World.put_entity(thread, "plan", "plan-1", %{
+      "s" => %{
+        "id" => "plan-1",
+        "threadId" => id,
+        "kind" => "proposed_plan",
+        "status" => "completed",
+        "markdown" => "# The finished plan text"
+      }
+    })
+    |> World.put_entity(thread, "context-handoff", "handoff-1", %{
+      "s" => %{
+        "id" => "handoff-1",
+        "threadId" => id,
+        "status" => "superseded",
+        "summaryText" => "the handoff summary text"
+      }
+    })
+    |> Map.put(:thread, thread)
+  end
+
+  step "each carries its status and says its detail is in its timeline item", context do
+    rows = Map.new(context.bounded["rows"], fn [kind, id, entity] -> {{kind, id}, entity} end)
+    assert rows[{"plan", "plan-1"}]["status"] == "completed"
+    assert rows[{"plan", "plan-1"}]["detailInTurnItem"] == true
+    assert rows[{"context-handoff", "handoff-1"}]["status"] == "superseded"
+    assert rows[{"context-handoff", "handoff-1"}]["detailInTurnItem"] == true
+
+    Map.merge(context, %{bounded_rows: rows})
+  end
+
+  step "neither carries the plan text or the handoff summary a second time", context do
+    refute context.bounded_rows[{"plan", "plan-1"}]["markdown"] =~ "finished plan text"
+    refute context.bounded_rows[{"context-handoff", "handoff-1"}]["summaryText"] =~ "summary text"
+    context
+  end
+
+  step "what the user can still act on in {string} is larger than one megabyte",
+       %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    context
+    |> World.put_entity(thread, "plan", "plan-1", %{
+      "s" => %{
+        "id" => "plan-1",
+        "threadId" => id,
+        "kind" => "proposed_plan",
+        "status" => "active",
+        "markdown" => String.duplicate("x", 1_100_000)
+      }
+    })
+    |> World.put_entity(thread, "runtime-request", "request-1", %{
+      "s" => %{"id" => "request-1", "threadId" => id, "kind" => "approval", "status" => "pending"}
+    })
+    |> commit_turns(thread, 1..3)
+    |> Map.put(:thread, thread)
+  end
+
+  step "nothing the user can act on is left out", context do
+    rows = Map.new(context.bounded["rows"], fn [kind, id, entity] -> {{kind, id}, entity} end)
+    assert rows[{"plan", "plan-1"}]["status"] == "active"
+    assert rows[{"runtime-request", "request-1"}] != nil
+    context
+  end
+
+  step "the snapshot is marked as over its payload budget", context do
+    assert context.bounded["payloadBudgetExceeded"] == true
+    context
+  end
+
+  # One run per turn in `range`, opened by its user message, with one reply.
+  defp commit_turns(context, thread, range) do
+    id = World.thread_id(context, thread)
+
+    changes =
+      Enum.flat_map(range, fn n ->
+        run = %{"id" => "run-#{n}", "threadId" => id, "ordinal" => n, "status" => "completed"}
+
+        [
+          {"run", "run-#{n}", %{"s" => run}},
+          history_item("u-#{n}", "run-#{n}", user_turn()),
+          history_item("a-#{n}", "run-#{n}", %{"type" => "assistant_message"})
+        ]
+      end)
+
+    {:ok, _} = HalC2.Streams.commit(id, :thread, changes)
+    context
+  end
+
+  defp user_turn,
+    do: %{"type" => "user_message", "inputIntent" => "turn_start", "createdBy" => "user"}
+
+  defp history_item(id, run_id, fields) do
+    item = Map.merge(%{"id" => id, "runId" => run_id, "status" => "completed"}, fields)
+    {"turn-item", id, %{"s" => item}}
+  end
+
+  defp ask_page_before(context, cursor) do
+    {reply, context} =
+      World.call!(context, "hal-c2.threadRows", %{
+        "threadId" => World.thread_id(context, context.thread),
+        "cursor" => cursor
+      })
+
+    Map.put(context, :page_reply, reply)
+  end
+
+  defp reply_items(reply), do: for(["turn-item", _id, entity] <- reply["rows"], do: entity)
+  defp reply_item_ids(reply), do: Enum.map(reply_items(reply), & &1["id"])
+
+  defp user_turns(reply) do
+    reply
+    |> reply_items()
+    |> Enum.filter(&HalC2.Projection.History.user_turn?/1)
+    |> Enum.map(& &1["id"])
+  end
+
+  # --- what a thread subscriber is sent --------------------------------------------
+
+  step "{string} has a command that printed a long output", %{args: [thread]} = context do
+    wire_item(context, thread, "cmd-1", "command_execution", %{
+      "input" => "npm test",
+      "exitCode" => 3,
+      "output" => String.duplicate("a very long line of output\n", 200)
+    })
+  end
+
+  step "{string} has a file change", %{args: [thread]} = context do
+    wire_item(context, thread, "fc-1", "file_change", %{
+      "fileName" => "a.txt",
+      "additions" => 4,
+      "deletions" => 1,
+      "diffStr" => "--- a/a.txt\n+++ b/a.txt\n-one\n+two",
+      "oldStr" => "one",
+      "newStr" => "two"
+    })
+  end
+
+  step "{string} has a call to a tool the provider defined", %{args: [thread]} = context do
+    wire_item(context, thread, "dt-1", "dynamic_tool", %{
+      "toolName" => "hal_c2_thread_launch",
+      "input" => %{"title" => "spawn"},
+      "output" => %{
+        "threadId" => "th-new",
+        "isError" => true,
+        "raw" => String.duplicate("raw ", 100)
+      }
+    })
+  end
+
+  step "{string} has a handoff to another provider", %{args: [thread]} = context do
+    wire_item(context, thread, "ho-1", "handoff", %{
+      "contextHandoffId" => "handoff-1",
+      "summary" => "the story so far, at length",
+      "fromProviderInstanceIds" => ["codex"],
+      "toProviderInstanceId" => "claudeAgent",
+      "fromModelSelections" => [%{"instanceId" => "codex", "model" => "gpt-5.4"}],
+      "toModel" => "opus"
+    })
+  end
+
+  step "a client reads or follows {string}", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    {frames, client} = context |> World.client() |> Mc.sub(41, shape(id)) |> until_live([])
+    Mc.unsub(client, 41)
+
+    rows =
+      for frame <- frames,
+          [kind, entity_id, entity] <- frame["rows"] || [],
+          into: %{},
+          do: {{kind, entity_id}, entity}
+
+    context |> World.put_client(client) |> Map.merge(%{thread: thread, wire_rows: rows})
+  end
+
+  step "the item arrives without the output", context do
+    refute Map.has_key?(wire_entity(context), "output")
+    context
+  end
+
+  step "the item arrives without the before and after text and the diff", context do
+    entity = wire_entity(context)
+    refute Map.has_key?(entity, "diffStr")
+    refute Map.has_key?(entity, "oldStr")
+    refute Map.has_key?(entity, "newStr")
+    context
+  end
+
+  step "the item arrives without the tool's raw output", context do
+    refute JSON.encode!(wire_entity(context)) =~ "raw raw"
+    context
+  end
+
+  step "the item arrives without the handoff summary", context do
+    refute Map.has_key?(wire_entity(context), "summary")
+    context
+  end
+
+  step "it still carries the command and its exit code", context do
+    entity = wire_entity(context)
+    assert entity["input"] == "npm test"
+    assert entity["exitCode"] == 3
+    context
+  end
+
+  step "it still carries the file and its change counts", context do
+    entity = wire_entity(context)
+    assert entity["fileName"] == "a.txt"
+    assert entity["additions"] == 4
+    assert entity["deletions"] == 1
+    context
+  end
+
+  step "it still carries the ids the result named and whether it failed", context do
+    assert wire_entity(context)["output"] == %{"threadId" => "th-new", "isError" => true}
+    context
+  end
+
+  step "it still carries the providers and models it went between", context do
+    entity = wire_entity(context)
+    assert entity["fromProviderInstanceIds"] == ["codex"]
+    assert entity["toProviderInstanceId"] == "claudeAgent"
+    assert entity["fromModelSelections"] == [%{"instanceId" => "codex", "model" => "gpt-5.4"}]
+    assert entity["toModel"] == "opus"
+    context
+  end
+
+  step "a command in {string} exited with code 0 but its output reports an error",
+       %{args: [thread]} = context do
+    wire_item(context, thread, "cmd-1", "command_execution", %{
+      "input" => "frobnicate --all",
+      "exitCode" => 0,
+      "output" => "bash: frobnicate: command not found"
+    })
+  end
+
+  step "the command arrives without its output", context do
+    refute Map.has_key?(wire_entity(context), "output")
+    context
+  end
+
+  step "it is marked as having failed", context do
+    assert wire_entity(context)["outputIndicatesFailure"] == true
+    context
+  end
+
+  step ~r/^a subagent in "(?<thread>[^"]+)" has a prompt, progress or result longer than 32,768 bytes$/,
+       %{args: [thread]} = context do
+    long = String.duplicate("é", 20_000)
+
+    wire_item(context, thread, "sub-1", "subagent", %{
+      "prompt" => long,
+      "progress" => long,
+      "result" => long
+    })
+  end
+
+  step "the text is cut at 32,768 bytes without splitting a character", context do
+    for field <- ~w(prompt progress result) do
+      text = wire_entity(context)[field]
+      assert String.valid?(text)
+      held = String.trim_trailing(text, "\n… output truncated for transport")
+      assert byte_size(held) <= 32_768
+      assert byte_size(held) > 32_768 - 4
+    end
+
+    context
+  end
+
+  step "it ends with {string}", %{args: [suffix]} = context do
+    for field <- ~w(prompt progress result),
+        do: assert(String.ends_with?(wire_entity(context)[field], suffix))
+
+    context
+  end
+
+  step ~r/^a call to a provider-defined tool in "(?<thread>[^"]+)" has an input larger than 16,384 bytes$/,
+       %{args: [thread]} = context do
+    context =
+      wire_item(context, thread, "dt-big", "dynamic_tool", %{
+        "toolName" => "do_thing",
+        "input" => "\n\nfirst line here\n" <> String.duplicate("x", 20_000)
+      })
+
+    context
+    |> World.add_item(thread, "dt-small", "dynamic_tool", "run-1", %{
+      "toolName" => "do_thing",
+      "input" => "small input"
+    })
+    |> Map.put(:wire_item, "dt-big")
+  end
+
+  step "the input arrives as its first non-blank line, cut to 160 characters, marked truncated",
+       context do
+    input = wire_entity(context)["input"]
+    assert input == %{"summary" => "first line here", "truncated" => true}
+    assert String.length(input["summary"]) <= 160
+    context
+  end
+
+  step "a smaller input arrives unchanged", context do
+    assert context.wire_rows[{"turn-item", "dt-small"}]["input"] == "small input"
+    context
+  end
+
+  step "{string} was handed off with its conversation history and a summary",
+       %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    context
+    |> World.put_entity(thread, "context-handoff", "handoff-1", %{
+      "s" => %{
+        "id" => "handoff-1",
+        "threadId" => id,
+        "status" => "ready",
+        "summaryText" => "the story so far",
+        "history" => %{
+          "messages" => [%{"role" => "user", "text" => "everything said"}],
+          "coverage" => "all",
+          "omittedItems" => 0
+        },
+        "delivery" => %{"nativeThreadId" => "native-1", "status" => "injected", "itemIds" => []}
+      }
+    })
+    |> Map.put(:thread, thread)
+  end
+
+  step "the handoff arrives with its status", context do
+    assert context.wire_rows[{"context-handoff", "handoff-1"}]["status"] == "ready"
+    context
+  end
+
+  step "without the history, the delivery record or the summary text", context do
+    handoff = context.wire_rows[{"context-handoff", "handoff-1"}]
+    refute Map.has_key?(handoff, "history")
+    refute Map.has_key?(handoff, "delivery")
+    assert handoff["summaryText"] == ""
+    context
+  end
+
+  step "{string} has a file change whose diff was not sent to subscribers",
+       %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    root = World.project(context, "demo").root
+    scope = HalC2.Checkpoint.scope_id(id)
+
+    :ok = HalC2.Checkpoint.baseline(root, scope, 0)
+    File.write!(Path.join(root, "change.txt"), "changed line\n")
+    checkpoint = HalC2.Checkpoint.capture_run(root, scope, 1, "run-1", "node-run-1", id, nil)
+
+    scope_entity =
+      HalC2.Checkpoint.scope(id, "run-1", "node-run-1", "pt-1", root, World.iso_from_now(0))
+
+    {:ok, _} =
+      HalC2.Streams.commit(id, :thread, [
+        {"checkpoint-scope", scope, %{"s" => scope_entity}},
+        {"checkpoint", checkpoint["id"], %{"s" => checkpoint}}
+      ])
+
+    context =
+      context
+      |> World.numbered_run(thread, 1, "completed")
+      |> wire_item(thread, "fc-1", "file_change", %{
+        "fileName" => "change.txt",
+        "additions" => 1,
+        "deletions" => 0,
+        "diffStr" => "the stored diff of the change"
+      })
+      |> World.add_item(thread, "cmd-1", "command_execution", "run-1", %{
+        "input" => "ls",
+        "output" => "the stored command output"
+      })
+      |> World.add_item(thread, "dt-1", "dynamic_tool", "run-1", %{
+        "input" => %{},
+        "output" => %{"threadId" => "th-new", "raw" => "the stored tool result"}
+      })
+      |> World.put_entity(thread, "context-handoff", "handoff-1", %{
+        "s" => %{
+          "id" => "handoff-1",
+          "threadId" => id,
+          "status" => "ready",
+          "summaryText" => "stored summary",
+          "history" => %{
+            "messages" => [%{"role" => "user", "text" => "the stored transcript"}],
+            "coverage" => "all",
+            "omittedItems" => 0
+          }
+        }
+      })
+
+    {frames, client} = context |> World.client() |> Mc.sub(41, shape(id)) |> until_live([])
+    Mc.unsub(client, 41)
+
+    sent =
+      for frame <- frames,
+          ["turn-item", "fc-1", entity] <- frame["rows"] || [],
+          do: entity
+
+    assert sent != [] and Enum.all?(sent, &(not Map.has_key?(&1, "diffStr")))
+    context |> World.put_client(client) |> Map.put(:thread, thread)
+  end
+
+  step "a client asks for that change's diff", context do
+    {reply, context} =
+      World.call!(context, "orchestration.getTurnDiff", %{
+        "threadId" => World.thread_id(context, context.thread),
+        "fromTurnCount" => 0,
+        "toTurnCount" => 1
+      })
+
+    Map.put(context, :diff_reply, reply)
+  end
+
+  step "it receives the full diff", context do
+    assert context.diff_reply["diff"] =~ "change.txt"
+    assert context.diff_reply["diff"] =~ "+changed line"
+    context
+  end
+
+  step "the stored command outputs, tool results and handoff transcripts are unchanged",
+       context do
+    items = Map.new(World.entities(context, context.thread, "turn-item"), &{&1["id"], &1})
+    assert items["fc-1"]["diffStr"] == "the stored diff of the change"
+    assert items["cmd-1"]["output"] == "the stored command output"
+    assert items["dt-1"]["output"] == %{"threadId" => "th-new", "raw" => "the stored tool result"}
+
+    [handoff] = World.entities(context, context.thread, "context-handoff")
+
+    assert get_in(handoff, ["history", "messages"]) == [
+             %{"role" => "user", "text" => "the stored transcript"}
+           ]
+
+    assert handoff["summaryText"] == "stored summary"
+    context
+  end
+
+  defp wire_item(context, thread, id, type, extra) do
+    context
+    |> World.numbered_run(thread, 1, "completed")
+    |> World.add_item(thread, id, type, "run-1", extra)
+    |> Map.merge(%{thread: thread, wire_item: id})
+  end
+
+  defp wire_entity(context), do: context.wire_rows[{"turn-item", context.wire_item}]
+
+  # --- the shell snapshot and repository details -------------------------------------
+
+  step "project {string} has a repository whose identity is not resolved yet",
+       %{args: [project]} = context do
+    %{id: id, root: root} = World.project(context, project)
+    World.git!(root, ~w(remote add origin https://github.com/acme/demo.git))
+    {_kind, row} = HalC2.Shell.row(node(), id)
+    assert row["repositoryIdentity"] in [nil, :null]
+    Map.put(context, :shell_project, project)
+  end
+
+  step "it receives every project and thread row at once", context do
+    rows = context.shell_frame["rows"]
+    project_id = World.project(context, "demo").id
+    thread_id = World.thread_id(context, "t1")
+    assert Enum.any?(rows, &match?([_, ^project_id, "project", _], &1))
+    assert Enum.any?(rows, &match?([_, ^thread_id, "thread", _], &1))
+
+    [_, _, _, row] = Enum.find(rows, &match?([_, ^project_id, "project", _], &1))
+    assert row["repositoryIdentity"] == nil
+    context
+  end
+
+  step "the repository details of {string} follow as an update that carries no thread rows",
+       %{args: [project]} = context do
+    project_id = World.project(context, project).id
+
+    {frame, client} =
+      Mc.await(World.client(context, "subscriber"), fn frame ->
+        frame["t"] == "shell.rows" and frame["id"] == 900 and
+          Enum.any?(frame["rows"] || [], fn
+            [^project_id, "project", %{"repositoryIdentity" => %{} = identity}] ->
+              identity["canonicalKey"] =~ "acme/demo"
+
+            _ ->
+              false
+          end)
+      end)
+
+    assert Enum.all?(frame["rows"], &match?([_, "project", _], &1))
+    World.put_client(context, "subscriber", client)
+  end
+
+  step "a client loaded the shell snapshot before connecting", context do
+    %{root: root, id: project_id} = World.project(context, "demo")
+    World.git!(root, ~w(remote add origin https://github.com/acme/demo.git))
+
+    context = shell_subscribe(context)
+    [mc] = context.shell_frame["mcs"]
+
+    # The resolution the first subscription set off lands after the snapshot.
+    {_frame, client} =
+      Mc.await(World.client(context), fn frame ->
+        frame["t"] == "shell.rows" and
+          Enum.any?(
+            frame["rows"] || [],
+            &match?([^project_id, "project", %{"repositoryIdentity" => %{}}], &1)
+          )
+      end)
+
+    client = Mc.unsub(client, 77)
+
+    context
+    |> World.put_client(client)
+    |> Map.put(:shell_have, %{mc["mc"] => [mc["epoch"], mc["rev"]]})
+  end
+
+  step "it subscribes to the shell after that snapshot's sequence", context do
+    client =
+      WsClient.send_json(World.client(context, "second"), %{
+        "t" => "sub",
+        "id" => 77,
+        "shape" => %{"type" => "shell"},
+        "have" => context.shell_have
+      })
+
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 77))
+    context |> World.put_client("second", client) |> Map.put(:shell_frame, frame)
+  end
+
+  step "it receives only what changed since and the repository details that have resolved",
+       context do
+    project_id = World.project(context, "demo").id
+
+    [_, _, _, row] =
+      Enum.find(context.shell_frame["rows"], &match?([_, ^project_id, "project", _], &1))
+
+    assert row["repositoryIdentity"]["canonicalKey"] =~ "acme/demo"
+    context
+  end
+
+  step "it is not sent the full list of rows again", context do
+    [mc] = context.shell_frame["mcs"]
+    assert mc["reset"] == false
+    project_id = World.project(context, "demo").id
+    assert Enum.map(context.shell_frame["rows"], &Enum.at(&1, 1)) == [project_id]
+    context
+  end
+
+  step "a client is subscribed to the shell", context do
+    %{root: root, id: project_id} = World.project(context, "demo")
+    World.git!(root, ~w(remote add origin https://github.com/acme/demo.git))
+    :ok = HalC2.Projects.identify_repositories()
+    World.await_row(project_id, &(&1["repositoryIdentity"] not in [nil, :null]))
+    shell_subscribe(context)
+  end
+
+  step "the repository details of {string} are refreshed and nothing changed",
+       %{args: [project]} = context do
+    :ok = HalC2.Projects.identify_repositories()
+
+    # A marker the client must receive: everything up to it is all it was sent.
+    context = World.patch_thread(context, "t1", %{"title" => "Marker"})
+    {frames, client} = shell_frames_until_marker(World.client(context), [])
+
+    context
+    |> World.put_client(client)
+    |> Map.merge(%{shell_project: project, shell_frames: frames})
+  end
+
+  step "the client receives no second update for {string}", %{args: [project]} = context do
+    project_id = World.project(context, project).id
+
+    refute Enum.any?(context.shell_frames, fn frame ->
+             Enum.any?(frame["rows"] || [], &match?([^project_id, "project", _], &1))
+           end)
+
+    context
+  end
+
+  defp shell_subscribe(context) do
+    client = Mc.sub(World.client(context), 77, %{"type" => "shell"})
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell" and &1["id"] == 77))
+    context |> World.put_client(client) |> Map.put(:shell_frame, frame)
+  end
+
+  defp shell_frames_until_marker(client, acc) do
+    {frame, client} = Mc.await(client, &(&1["t"] == "shell.rows" and &1["id"] == 77))
+    acc = acc ++ [frame]
+
+    if Enum.any?(frame["rows"] || [], &match?([_, "thread", %{"title" => "Marker"}], &1)),
+      do: {acc, client},
+      else: shell_frames_until_marker(client, acc)
   end
 end

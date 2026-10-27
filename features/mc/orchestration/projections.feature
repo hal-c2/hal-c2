@@ -53,7 +53,7 @@ Feature: What the engine projects for clients
     Then the shell row has no active run
     And its activity status is waiting
 
-  @backlog @mc
+  @mc
   Scenario: A cancelled queued run does not hide the run still running before it
     Given run 1 of "t1" is running and run 2 was queued behind it
     When run 2 is cancelled before it starts
@@ -190,7 +190,7 @@ Feature: What the engine projects for clients
     Then the page holds only visible turns
     And it ends at the true start of the history
 
-  @mc @backlog
+  @mc
   Scenario: A bounded snapshot holds the newest 10 user turns and older pages hold 20
     Given "t1" has 60 user turns
     When a client asks for a bounded snapshot of "t1"
@@ -198,27 +198,27 @@ Feature: What the engine projects for clients
     When it asks for the page before that cursor
     Then it receives the 20 user turns before them
 
-  @mc @backlog
+  @mc
   Scenario: A page of history never splits a turn
     Given an earlier turn of "t1" ran hundreds of tool calls and was steered twice
     When a client pages back to that turn
     Then the page holds the whole turn, from the user's message to its last item
     And the steering messages do not count as turns of their own
 
-  @mc @backlog
+  @mc
   Scenario: Automatic turns cannot make a page of history unbounded
     Given "t1" has hundreds of turns started by background work between two user messages
     When a client asks for a bounded page of the history of "t1"
     Then the page holds at most 150 turns of any kind
 
-  @mc @backlog
+  @mc
   Scenario: History that records no turn starts is paged by items and size
     Given "t1" holds imported history that records no turn starts
     When a client asks for a bounded page of the history of "t1"
     Then the page holds at most 75 items and about one megabyte
     And it holds at least one item, however large that item is
 
-  @mc @backlog
+  @mc
   Scenario Outline: A history cursor the MC cannot use is refused
     When a client asks for older history of "t1" with <cursor>
     Then the request fails as an invalid history cursor
@@ -229,42 +229,42 @@ Feature: What the engine projects for clients
       | a cursor the MC never gave            |
       | a cursor longer than 4,096 characters |
 
-  @mc @backlog
+  @mc
   Scenario: A history cursor stays valid while the thread grows
     Given a client holds a cursor into the history of "t1"
     When "t1" gains new turns
     And the client asks for the page before that cursor
     Then it receives the same older turns as before, with none skipped or repeated
 
-  @mc @backlog
+  @mc
   Scenario: A history cursor whose item is gone resumes from where the item was
     Given a client holds a cursor into the history of "t1"
     And the item the cursor names has since left the timeline
     When the client asks for the page before that cursor
     Then it receives the turns before the position the cursor recorded
 
-  @mc @backlog
+  @mc
   Scenario: A bounded snapshot keeps everything the user can still act on
     Given "t1" has a very long history
     And an active proposed plan, a pending handoff, a pending approval and a queued message are older than its newest turns
     When a client asks for a bounded snapshot of "t1"
     Then the snapshot still carries the plan, the handoff, the approval and the queued message
 
-  @mc @backlog
+  @mc
   Scenario: Finished plans and handoffs in a bounded snapshot carry only their status
     Given the newest turns of "t1" include a completed plan and a finished handoff
     When a client asks for a bounded snapshot of "t1"
     Then each carries its status and says its detail is in its timeline item
     And neither carries the plan text or the handoff summary a second time
 
-  @mc @backlog
+  @mc
   Scenario: A bounded snapshot says when it could not stay within its size budget
     Given what the user can still act on in "t1" is larger than one megabyte
     When a client asks for a bounded snapshot of "t1"
     Then nothing the user can act on is left out
     And the snapshot is marked as over its payload budget
 
-  @mc @backlog
+  @mc
   Scenario Outline: Bulky item bodies are left out of what a thread subscriber is sent
     Given "t1" has <item>
     When a client reads or follows "t1"
@@ -278,14 +278,14 @@ Feature: What the engine projects for clients
       | a call to a tool the provider defined | the tool's raw output                  | the ids the result named and whether it failed |
       | a handoff to another provider         | the handoff summary                    | the providers and models it went between       |
 
-  @mc @backlog
+  @mc
   Scenario: A command whose output shows a failure is still sent as failed
     Given a command in "t1" exited with code 0 but its output reports an error
     When a client reads or follows "t1"
     Then the command arrives without its output
     And it is marked as having failed
 
-  @mc @backlog
+  @mc
   Scenario: Long subagent text is cut for transport and says so
     Given a subagent in "t1" has a prompt, progress or result longer than 32,768 bytes
     When a client reads or follows "t1"
@@ -299,42 +299,42 @@ Feature: What the engine projects for clients
     Then the progress it holds is the cut text a fresh read of "t1" shows
     And the appends past the limit are not sent
 
-  @mc @backlog
+  @mc
   Scenario: A large tool input is sent as its first line
     Given a call to a provider-defined tool in "t1" has an input larger than 16,384 bytes
     When a client reads or follows "t1"
     Then the input arrives as its first non-blank line, cut to 160 characters, marked truncated
     And a smaller input arrives unchanged
 
-  @mc @backlog
+  @mc
   Scenario: A context handoff is sent without the transcript it carries
     Given "t1" was handed off with its conversation history and a summary
     When a client reads or follows "t1"
     Then the handoff arrives with its status
     And without the history, the delivery record or the summary text
 
-  @mc @backlog
+  @mc
   Scenario: What is left off the wire stays in the stored thread
     Given "t1" has a file change whose diff was not sent to subscribers
     When a client asks for that change's diff
     Then it receives the full diff
     And the stored command outputs, tool results and handoff transcripts are unchanged
 
-  @mc @backlog
+  @mc
   Scenario: The first shell snapshot does not wait for repository lookups
     Given project "demo" has a repository whose identity is not resolved yet
     When a client subscribes to the shell
     Then it receives every project and thread row at once
     And the repository details of "demo" follow as an update that carries no thread rows
 
-  @mc @backlog
+  @mc
   Scenario: A client that already holds a shell snapshot is not sent the rows again
     Given a client loaded the shell snapshot before connecting
     When it subscribes to the shell after that snapshot's sequence
     Then it receives only what changed since and the repository details that have resolved
     And it is not sent the full list of rows again
 
-  @mc @backlog
+  @mc
   Scenario: An unchanged repository refresh is not sent twice
     Given a client is subscribed to the shell
     When the repository details of "demo" are refreshed and nothing changed

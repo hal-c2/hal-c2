@@ -491,8 +491,8 @@ defmodule HalC2.Steps.Orchestration.Threads do
   # reply, and a socket waiting for a reply drops what arrives first.
   step "a client subscribes to the shell", context do
     client = HalC2.Test.Mc.sub(World.client(context, "subscriber"), 900, %{"type" => "shell"})
-    {%{"t" => "shell"}, client} = HalC2.Test.WsClient.recv(client, 1_000)
-    World.put_client(context, "subscriber", client)
+    {%{"t" => "shell"} = frame, client} = HalC2.Test.WsClient.recv(client, 1_000)
+    context |> World.put_client("subscriber", client) |> Map.put(:shell_frame, frame)
   end
 
   step "the subscriber receives a thread-removed event for {string}",
