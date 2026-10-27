@@ -134,16 +134,27 @@ defmodule HalC2.Orchestration.Entities do
       driver in ["codex", "claudeAgent"] or
         (HalC2.Acp.driver(driver) || driver) in ["opencode", "pi", "muse"]
 
-  # Codex, Claude and OpenCode fork their own threads; other agents fork through a
-  # transcript. An ACP agent's driver is its instance's id.
-  defp capabilities(driver) do
+  @doc """
+  The capabilities a session of `driver` declares: what commands on its threads
+  may ask of it (`HalC2.Orchestration.CommandPolicy`).
+
+  Codex, Claude and OpenCode fork their own threads; other agents fork through a
+  transcript. An ACP agent's driver is its instance's id. A driver that cannot
+  take a message into a running turn can still redirect it by interrupting and
+  restarting, and Antigravity keeps no way to rewind its conversation.
+  """
+  def capabilities(driver) do
     native = driver in ["codex", "claudeAgent"] or HalC2.Acp.driver(driver) == "opencode"
+    rewinds = HalC2.Acp.driver(driver) != "antigravity" and driver != "antigravity"
 
     base =
       @codex_capabilities
       |> put_in(["turns", "supportsActiveSteering"], steers?(driver))
+      |> put_in(["turns", "supportsSteeringByInterruptRestart"], true)
       |> put_in(["threads", "canForkThread"], native)
       |> put_in(["threads", "canForkFromTurn"], native)
+      |> put_in(["threads", "canRollbackThread"], rewinds)
+      |> put_in(["checkpointing", "providerCanRollbackConversation"], rewinds)
 
     # A provider plugin offers what it declares.
     case HalC2.Plugins.declared(driver) do

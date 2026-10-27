@@ -26,7 +26,7 @@ defmodule HalC2.Orchestration.Rollback do
     with {:ok, plan} <- HalC2.Streams.transact(thread_id, :thread, &{[], plan(&1, command)}),
          :ok <- check_isolated(plan),
          {:ok, undo} <- restore(plan),
-         {:ok, patch} <- rewind_checked(plan) |> or_undo(plan, undo),
+         {:ok, patch} <- rewind_checked(plan) |> reported(plan) |> or_undo(plan, undo),
          :ok <- HalC2.Streams.transact(thread_id, :thread, &{settle(&1, plan, patch), :ok}) do
       for checkpoint <- plan.stale, do: HalC2.Checkpoint.delete_ref(plan.cwd, checkpoint["ref"])
       if undo, do: HalC2.Checkpoint.delete_ref(plan.cwd, undo)
@@ -35,6 +35,24 @@ defmodule HalC2.Orchestration.Rollback do
       :ok
     end
   end
+
+  # A provider that rewound must say where its conversation now stands: an
+  # empty report leaves the thread disagreeing with the provider, so the
+  # checkpoint is not restored. (The fresh context `rewind/1` marks for a
+  # provider that cannot roll back is such a report.)
+  defp reported({:ok, patch}, plan) do
+    if plan.drop > 0 and patch == %{} do
+      {:error,
+       HalC2.Orchestration.UserFacingErrors.capability_message(
+         plan.instance,
+         :rollback_snapshot
+       )}
+    else
+      {:ok, patch}
+    end
+  end
+
+  defp reported(error, _plan), do: error
 
   defp or_undo({:ok, _} = ok, _plan, _undo), do: ok
 
@@ -86,10 +104,11 @@ defmodule HalC2.Orchestration.Rollback do
       provider_thread == nil ->
         {:error, "No active provider thread exists for rollback."}
 
-      # Antigravity keeps no way to rewind its conversation; refused before any file moves.
-      HalC2.Acp.driver(provider_thread["providerInstanceId"]) == "antigravity" ->
-        {:error,
-         "Antigravity cannot rewind its conversation, so this checkpoint cannot be restored on this thread."}
+      # A provider with no way to rewind its conversation (Antigravity) is
+      # refused in its name before any file moves. A provider plugin that
+      # cannot roll back goes through `rewind/1`'s fresh context instead.
+      refusal = rewind_refusal(provider_thread) ->
+        {:error, refusal}
 
       true ->
         target = checkpoint["appRunOrdinal"] || 0
@@ -141,6 +160,18 @@ defmodule HalC2.Orchestration.Rollback do
                    (&1["appRunOrdinal"] || 0) > target)
              )
          }}
+    end
+  end
+
+  defp rewind_refusal(provider_thread) do
+    instance = provider_thread["providerInstanceId"]
+    driver = provider_thread["driver"] || Orchestration.driver_for(instance)
+
+    if HalC2.Plugins.declared(driver) == nil do
+      case HalC2.Orchestration.CommandPolicy.ensure(instance, :rollback) do
+        :ok -> nil
+        {:error, message} -> message
+      end
     end
   end
 

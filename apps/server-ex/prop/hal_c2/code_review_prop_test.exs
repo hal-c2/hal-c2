@@ -17,8 +17,9 @@ defmodule HalC2.CodeReviewPropTest do
 
   - one review runs per pull request: each run has a thread of its own once it starts
     and none before, and a retry replaces a run rather than adding one;
-  - every post is the one the model expects, on the commit its run reviewed, and a late
-    answer to a superseded post leaves the newer run alone;
+  - every post is the one the model expects, on the commit its run reviewed and opening
+    with the count and severities of the findings kept, and a late answer to a
+    superseded post leaves the newer run alone;
   - a report with nothing to post goes back to the agent as an error, and one posted
     automatically is answered once GitHub has, with how the post went;
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
@@ -194,7 +195,7 @@ defmodule HalC2.CodeReviewPropTest do
   # (the head the last look saw, 1 or 2), reviewed, changed, verdict, comments (one
   # dismissed flag each), publish_error, seq (order queued)}. `runs`: key → whether
   # each run so far got its thread and checkout, kept when a review is discarded.
-  # `posts`: every post that reached GitHub, `{key, reviewed, comments, event}`.
+  # `posts`: every post that reached GitHub, `{key, reviewed, comments, event, headline}`.
   # `held_runs`/`held_pubs`: checkouts held at the fetch and posts held at GitHub.
   # Every pull request starts open, so the first look finds them all ready.
   def initial_state do
@@ -652,11 +653,31 @@ defmodule HalC2.CodeReviewPropTest do
   defp post(m, key) do
     r = m.reviews[key]
     kept = Enum.count(r.comments, &(not &1))
-    m = %{m | posts: m.posts ++ [{key, r.reviewed, kept, @events[r.verdict]}]}
+
+    m = %{
+      m
+      | posts: m.posts ++ [{key, r.reviewed, kept, @events[r.verdict], headline(r.comments)}]
+    }
 
     if m.gate == :closed,
       do: {%{m | held_pubs: m.held_pubs ++ [{key, r.run, m.refusing}]}, :held},
       else: {complete(m, key, r.run, m.refusing), if(m.refusing, do: :error, else: :ok)}
+  end
+
+  # The line a post opens with: the findings of a report the user kept, where a
+  # report with findings has a high one and an unrated one on lines (`dismissed`
+  # says which the user dismissed) and an unrated one in the summary.
+  defp headline([]), do: "No findings."
+
+  defp headline([high_dismissed, other_dismissed]) do
+    high = if high_dismissed, do: 0, else: 1
+    unrated = if(other_dismissed, do: 0, else: 1) + 1
+    count = high + unrated
+    noun = if count == 1, do: "finding", else: "findings"
+
+    if high == 1,
+      do: "#{count} #{noun}: 1 high, #{unrated} unrated.",
+      else: "#{count} #{noun}."
   end
 
   # GitHub's answer to the post of run `run` lands only on that run, still being posted.
@@ -754,8 +775,10 @@ defmodule HalC2.CodeReviewPropTest do
             "verdict" => "request-changes",
             "summary" => "Two things.",
             "comments" => [
-              %{"path" => "src/limits.ts", "line" => 1, "body" => "One."},
-              %{"path" => "src/limits.ts", "line" => 2, "body" => "Two."}
+              %{"path" => "src/limits.ts", "line" => 1, "body" => "One.", "severity" => "high"},
+              %{"path" => "src/limits.ts", "line" => 2, "body" => "Two."},
+              # Not in the diff, so it goes into the summary and cannot be dismissed.
+              %{"path" => "src/elsewhere.ts", "line" => 40, "body" => "Three."}
             ]
           }
 
@@ -1098,7 +1121,8 @@ defmodule HalC2.CodeReviewPropTest do
 
   defp data_dir, do: Path.join([HalC2.Paths.data_dir(), "plugin-data", @id])
 
-  # Every review posted to the fake GitHub: `{key, head, comments, event}`.
+  # Every review posted to the fake GitHub: `{key, head, comments, event, first line}`,
+  # the first line after a verdict posted as a comment.
   defp posts do
     fx_path("calls.jsonl")
     |> File.read!()
@@ -1111,9 +1135,15 @@ defmodule HalC2.CodeReviewPropTest do
         [_, repo, number] ->
           body = JSON.decode!(call["stdin"])
 
+          first =
+            body["body"]
+            |> String.replace(~r/\A\*\*(Approved|Changes requested)\*\*\n\n/, "")
+            |> String.split("\n", parts: 2)
+            |> hd()
+
           [
             {"acme/#{repo}##{number}", head(body["commit_id"]), length(body["comments"] || []),
-             body["event"]}
+             body["event"], first}
           ]
 
         nil ->

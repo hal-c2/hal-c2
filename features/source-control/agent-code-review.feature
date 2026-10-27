@@ -264,6 +264,28 @@ Feature: Agent code review
       Then #12 gets the finding badged high with the suggested fix and the findings at a glance
 
     @mc
+    Scenario: A published review opens with the count of its findings
+      Given a review of #12 is running
+      When the agent reports a high finding with a suggested fix on "src/limits.ts"
+      And the user publishes the review of #12
+      Then the review posted to #12 opens with "2 findings: 1 high, 1 unrated."
+
+    @mc
+    Scenario: A published review with nothing to fix says so first
+      Given a review of #12 is running
+      When the agent reports the verdict "approved" with only a summary
+      And the user publishes the review of #12
+      Then the review posted to #12 opens with "No findings."
+
+    @mc
+    Scenario: What the agent checked is reported apart from the summary
+      Given a review of #12 is running
+      When the agent reports that it ran "mix test", left out the full suite and was blocked by a missing credential
+      And the user publishes the review of #12
+      Then the review posted to #12 lists the check left out and the blocked one in plain view
+      And the review posted to #12 folds away the commands that ran
+
+    @mc
     Scenario: A finding that starts with bold text still gets its severity badge
       Given a review of #12 is running
       When the agent reports a low finding starting with bold text on "src/limits.ts"
@@ -468,6 +490,12 @@ Feature: Agent code review
       When the user opens the review of #13 on the "Reviews" page
       Then its verdict, summary and comments are shown
       And the user can publish it or dismiss comments
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page shows a check the machine blocked as a problem of the machine
+      Given the review of #13 is waiting with a check its machine blocked
+      When the user opens the review of #13 on the "Reviews" page
+      Then the blocked check is shown as something to fix on the MC's machine, apart from the verdict
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A review thread shows the pull request and the verdict above the conversation

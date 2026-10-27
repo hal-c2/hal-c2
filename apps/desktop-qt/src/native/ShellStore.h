@@ -51,6 +51,9 @@ public:
   bool previewing() const { return m_previewing; }
   // What a `shell` subscription carries as `have`: each MC's version as held.
   QJsonObject have() const;
+  // Whether the rows held of `mc` are as of its version [epoch, rev] or later:
+  // they reached `rev`, or came whole from another run (or with no versions).
+  bool reached(const QString& mc, const QString& epoch, qint64 rev) const;
   // Hands the cache the row changes it has not been given.
   void flush();
 

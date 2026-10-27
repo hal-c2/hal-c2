@@ -7,6 +7,7 @@ defmodule HalC2.StreamRelayProofTest do
   @plain "the MC's own subscribers, untagged; no socket follows a thread so"
   @more "pages a subscriber's window, by its tag when it carries one (a tag no subscription has pages nothing); what it sends goes the way commit's events go"
   @shell "the sidebar row, which no subscription is sent"
+  @read "reads the stream (its sequence or one entity); changes no subscription, sends nothing"
 
   use HalC2.Proof,
     model: "stream_relay.maude",
@@ -60,6 +61,8 @@ defmodule HalC2.StreamRelayProofTest do
       "HalC2.Streams.Server.handle/1" => "names a log; sends nothing",
       "HalC2.Streams.Server.idle_stop/0" => "a constant; the idle stop is another model's",
       "HalC2.Streams.Server.state/1" => "reads the state; changes nothing",
+      "HalC2.Streams.Server.sequence/1" => @read,
+      "HalC2.Streams.Server.get/3" => @read,
       "HalC2.Streams.Server.flush_shell/1" => @shell,
       "HalC2.Streams.Server handle_call {:commit, _, []}" => "commits nothing, sends nothing",
       "HalC2.Streams.Server handle_call {:more, _, _}" => @more,
@@ -67,6 +70,8 @@ defmodule HalC2.StreamRelayProofTest do
       "HalC2.Streams.Server handle_cast {:more, _, _}" => @more,
       "HalC2.Streams.Server handle_cast {:more, _, _, _}" => @more,
       "HalC2.Streams.Server handle_call :state" => "reads the state; changes nothing",
+      "HalC2.Streams.Server handle_call :sequence" => @read,
+      "HalC2.Streams.Server handle_call {:get, _, _}" => @read,
       "HalC2.Streams.Server handle_call :flush_shell" => @shell,
       "HalC2.Streams.Server handle_info :shell" => @shell,
       "HalC2.Streams.Server handle_info :timeout" =>
