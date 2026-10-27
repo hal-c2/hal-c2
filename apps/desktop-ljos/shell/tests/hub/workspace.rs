@@ -486,10 +486,7 @@ fn another_members_files_open_here_through_the_folder_the_mc_mounts() {
         "files.localPath",
         Ok(json!({"path": "", "message": "sshfs is not installed."})),
     );
-    assert!(toasts(&hub).contains(&(
-        "sshfs is not installed.".into(),
-        "An error occurred.".into()
-    )));
+    assert!(toasts(&hub).contains(&("sshfs is not installed.".into(), String::new())));
 
     // An MC from before files.localPath.
     hub.dispatch("workspace.openInEditor", json!({"editorId": "zed"}));
@@ -499,10 +496,7 @@ fn another_members_files_open_here_through_the_folder_the_mc_mounts() {
         "files.localPath",
         Err(failure("unknown method")),
     );
-    assert!(toasts(&hub).contains(&(
-        workspace::FILES_ELSEWHERE.into(),
-        "An error occurred.".into()
-    )));
+    assert!(toasts(&hub).contains(&(workspace::FILES_ELSEWHERE.into(), String::new())));
 }
 
 /// An MC on another machine (reached over the network, or behind an SSH
@@ -524,8 +518,5 @@ fn files_of_an_mc_on_another_machine_do_not_open_here() {
             .iter()
             .any(|m| m == "shell.openInEditor" || m == "files.localPath")
     );
-    assert!(toasts(&hub).contains(&(
-        workspace::FILES_ELSEWHERE.into(),
-        "An error occurred.".into()
-    )));
+    assert!(toasts(&hub).contains(&(workspace::FILES_ELSEWHERE.into(), String::new())));
 }
