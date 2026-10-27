@@ -396,13 +396,40 @@ defmodule HalC2.Settings do
     kind, reason -> {:error, Exception.format_banner(kind, reason)}
   end
 
-  # An edit already made stands when its record cannot be saved: the next edit, a
-  # member's merge or a start finds the file unlike its record and stamps it then.
-  defp stamp_keybindings(state) do
-    put_shared(state, local_keybindings(state.shared, state))
+  # A member's records this MC cannot write are let go, not the table every service
+  # reads: the member's next gossip brings them again.
+  defp merge_shared(state, records) do
+    # A rules file unlike its record was edited by hand since. It is stamped first, so
+    # the merge weighs the edit rather than writing over it.
+    ours =
+      if File.exists?(HalC2.Keybindings.path()),
+        do: local_keybindings(state.shared, state),
+        else: state.shared
+
+    merged = Shared.merge(ours, Shared.sanitize(records))
+
+    if merged == state.shared do
+      state
+    else
+      # The rules file is written before the record that stamps it, like settings.json.
+      if merged["keybindings"] != state.shared["keybindings"] do
+        rules = merged["keybindings"]["value"] || []
+
+        if rules != HalC2.Keybindings.rules() do
+          HalC2.Keybindings.write(rules)
+          HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
+        end
+      end
+
+      settings = Shared.apply(state.settings, merged)
+
+      if settings == state.settings,
+        do: put_shared(state, merged),
+        else: save(state, settings, true, merged)
+    end
   rescue
     exception ->
-      Logger.error("keybindings record not saved: #{Exception.message(exception)}")
+      Logger.error("member's shared settings not merged: #{Exception.message(exception)}")
       state
   end
 
@@ -424,7 +451,9 @@ defmodule HalC2.Settings do
   end
 
   # Saves, publishes and tells the members the records, after whatever they stamp has
-  # been written: a crash in between then reads as a local edit of the new value.
+  # been written: a crash in between then reads as a local edit of the new value. So
+  # does a records file that cannot be written: the change it stamps stands, and the
+  # records stay as they were until a later change, merge or start stamps it again.
   defp put_shared(state, shared) when shared == state.shared, do: state
 
   defp put_shared(state, shared) do
@@ -432,6 +461,10 @@ defmodule HalC2.Settings do
     :ets.insert(__MODULE__, {:shared, shared})
     HalC2.Cluster.share_settings()
     %{state | shared: shared}
+  rescue
+    exception ->
+      Logger.error("shared settings not saved: #{Exception.message(exception)}")
+      state
   end
 
   @doc "The document as settings.json holds it, for tools running beside an MC."
@@ -481,7 +514,9 @@ defmodule HalC2.Settings do
     case edit_keybindings_file(fun) do
       {:ok, rules} ->
         HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
-        {:reply, {:ok, %{"rules" => rules}}, stamp_keybindings(state)}
+
+        {:reply, {:ok, %{"rules" => rules}},
+         put_shared(state, local_keybindings(state.shared, state))}
 
       error ->
         {:reply, error, state}
@@ -501,36 +536,7 @@ defmodule HalC2.Settings do
 
   def handle_cast({:merge_shared, _records}, %{held: true} = state), do: {:noreply, state}
 
-  def handle_cast({:merge_shared, records}, state) do
-    # A rules file unlike its record was edited by hand since. It is stamped first, so
-    # the merge weighs the edit rather than writing over it.
-    ours =
-      if File.exists?(HalC2.Keybindings.path()),
-        do: local_keybindings(state.shared, state),
-        else: state.shared
-
-    merged = Shared.merge(ours, Shared.sanitize(records))
-
-    if merged == state.shared do
-      {:noreply, state}
-    else
-      # The rules file is written before the record that stamps it, like settings.json.
-      if merged["keybindings"] != state.shared["keybindings"] do
-        rules = merged["keybindings"]["value"] || []
-
-        if rules != HalC2.Keybindings.rules() do
-          HalC2.Keybindings.write(rules)
-          HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
-        end
-      end
-
-      settings = Shared.apply(state.settings, merged)
-
-      if settings == state.settings,
-        do: {:noreply, put_shared(state, merged)},
-        else: {:noreply, save(state, settings, true, merged)}
-    end
-  end
+  def handle_cast({:merge_shared, records}, state), do: {:noreply, merge_shared(state, records)}
 
   def handle_cast({:usage_limit_sources_changed, sources}, state) do
     HalC2.Watchers.notify(state.watchers, {:hal_c2_usage_limit_sources, node(), sources})
