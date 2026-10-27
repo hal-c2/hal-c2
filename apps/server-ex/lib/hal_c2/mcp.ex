@@ -55,6 +55,42 @@ defmodule HalC2.Mcp do
     %{url: endpoint(), authorization: "Bearer " <> token}
   end
 
+  @doc """
+  The server a live session of `thread_id` on `instance` was given, or nil:
+  a read, never a mint or a rotation. Per-turn and per-prompt readers use
+  this, so an access setting flipped mid-session cannot revoke the token
+  the running agent still carries; rotation belongs to preparing a session
+  (`for_agent/2`), and runtimes relaunch when `prepared?/2` goes false.
+  """
+  def current(thread_id, instance) do
+    with [[token, capabilities]] <-
+           :ets.match(
+             @table,
+             {:"$1", %{thread_id: thread_id, instance: instance, capabilities: :"$2"}, :_}
+           ),
+         true <- MapSet.member?(capabilities, "preview") do
+      %{url: endpoint(), authorization: "Bearer " <> token}
+    else
+      _ -> nil
+    end
+  rescue
+    ArgumentError -> nil
+  end
+
+  @doc """
+  Whether the live credential of `thread_id` on `instance` still matches
+  what the user lets its agent reach, so a runtime can keep its session.
+  No credential is prepared: a session opened without a server (this
+  server was down, or access was withheld) has no token a flip could
+  strand, and it gains one at its next ordinary relaunch.
+  """
+  def prepared?(thread_id, instance) do
+    case capabilities(thread_id, instance) do
+      nil -> true
+      capabilities -> capabilities == agent_access(thread_id)
+    end
+  end
+
   @doc "The MCP endpoint agents reach this MC at."
   def endpoint do
     port = Application.get_env(:hal_c2, :port, 3780)
@@ -63,8 +99,10 @@ defmodule HalC2.Mcp do
 
   @doc "Revokes every credential of `thread_id`, as its provider session stops."
   def revoke(thread_id) do
-    if :ets.whereis(@table) != :undefined,
-      do: :ets.match_delete(@table, {:_, %{thread_id: thread_id, instance: :_}, :_})
+    if :ets.whereis(@table) != :undefined do
+      :ets.match_delete(@table, {:_, %{thread_id: thread_id, instance: :_}, :_})
+      drop_sessions(%{thread_id: thread_id})
+    end
 
     :ok
   end
@@ -75,10 +113,19 @@ defmodule HalC2.Mcp do
   another instance keeps its own.
   """
   def revoke(thread_id, instance) do
-    if :ets.whereis(@table) != :undefined,
-      do: :ets.match_delete(@table, {:_, %{thread_id: thread_id, instance: instance}, :_})
+    if :ets.whereis(@table) != :undefined do
+      :ets.match_delete(@table, {:_, %{thread_id: thread_id, instance: instance}, :_})
+      drop_sessions(%{thread_id: thread_id, instance: instance})
+    end
 
     :ok
+  end
+
+  # Sessions outlive nothing: a revoked (or lapsed) credential's are dropped
+  # with it, so the table holds only sessions a live credential opened.
+  defp drop_sessions(caller_match) do
+    if :ets.whereis(@sessions) != :undefined,
+      do: :ets.match_delete(@sessions, {:_, caller_match})
   end
 
   @doc "The capabilities the live credential of `thread_id` on `instance` carries, or nil."
@@ -139,9 +186,11 @@ defmodule HalC2.Mcp do
   def for_agent(thread_id, instance) do
     # Preparing the session resolves (or rotates) its credential first, so a
     # flipped access setting takes effect with this run even when the server
-    # itself ends up withheld.
+    # itself ends up withheld. Call this only where a session is prepared;
+    # a read mid-session goes through `current/2` and never rotates.
     if Process.whereis(__MODULE__) do
-      server = server(thread_id, instance)
+      token = GenServer.call(__MODULE__, {:prepare, thread_id, instance})
+      server = %{url: endpoint(), authorization: "Bearer " <> token}
       if MapSet.member?(agent_access(thread_id), "preview"), do: server
     end
   end
@@ -250,6 +299,7 @@ defmodule HalC2.Mcp do
       :ok
     else
       :ets.delete(@table, token)
+      drop_sessions(%{thread_id: caller.thread_id, instance: caller.instance})
       :expired
     end
   end
@@ -377,7 +427,23 @@ defmodule HalC2.Mcp do
   # thread that left its session and came back keeps it); a mismatch rotates,
   # revoking the old token as the new one is minted.
   @impl true
+  # `server/2`: the thread's credential, minted on first ask and then
+  # reused as it stands — a live session's token is never rotated under it.
   def handle_call({:credential, thread_id, instance}, _from, state) do
+    token =
+      case :ets.match(@table, {:"$1", %{thread_id: thread_id, instance: instance}, :_}) do
+        [[token] | _] -> token
+        [] -> mint(thread_id, instance, agent_access(thread_id))
+      end
+
+    {:reply, token, state}
+  end
+
+  # `for_agent/2`, at session preparation: like `:credential`, except a
+  # credential whose capabilities no longer match the settings rotates —
+  # the old token is revoked as its replacement is minted, and the caller
+  # hands the new one to the session it is about to open.
+  def handle_call({:prepare, thread_id, instance}, _from, state) do
     capabilities = agent_access(thread_id)
 
     token =
@@ -390,6 +456,7 @@ defmodule HalC2.Mcp do
 
         [[old, _stale] | _] ->
           :ets.delete(@table, old)
+          drop_sessions(%{thread_id: thread_id, instance: instance})
           mint(thread_id, instance, capabilities)
 
         [] ->

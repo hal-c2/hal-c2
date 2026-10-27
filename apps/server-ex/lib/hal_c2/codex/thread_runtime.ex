@@ -843,8 +843,16 @@ defmodule HalC2.Codex.ThreadRuntime do
     end)
   end
 
-  defp ensure_native_thread(%{native_thread_id: id} = state, _turn) when is_binary(id),
-    do: {:ok, state}
+  # A live native thread keeps its session while its MCP credential still
+  # matches the access settings; a flip resumes it with fresh config below,
+  # so its tool calls never carry a rotated-away token.
+  defp ensure_native_thread(%{native_thread_id: id} = state, turn) when is_binary(id) do
+    if HalC2.Mcp.prepared?(state.thread_id, Entities.instance(turn.ids)) do
+      {:ok, state}
+    else
+      ensure_native_thread(%{state | native_thread_id: nil, step: 0}, turn)
+    end
+  end
 
   # A fork's first turn starts from a copy of the source thread, cut after its turn;
   # a session carried from another machine is forked whole from its rollout's path.
@@ -941,8 +949,10 @@ defmodule HalC2.Codex.ThreadRuntime do
       # Always explicit: Codex keeps the last collaboration mode on a resumed thread.
       "collaborationMode" => %{
         "mode" => if(Map.get(turn, :interaction_mode) == "plan", do: "plan", else: "default"),
+        # A read, never a preparation: rotating here would strand the
+        # header this thread's config already carries.
         "settings" =>
-          if(mcp(state, turn),
+          if(HalC2.Mcp.current(state.thread_id, Entities.instance(turn.ids)),
             do: %{
               "model" => turn.model,
               "developer_instructions" =>

@@ -8,7 +8,17 @@ defmodule HalC2.Mcp.Bridge.Http do
 
   @doc "POSTs `body`, emitting each decoded payload. See `HalC2.Mcp.Bridge`."
   def post(endpoint, headers, body, emit) do
-    case Req.post(endpoint, headers: Map.to_list(headers), body: body, decode_body: false) do
+    # A forwarded call may wait as long as the MCP tool itself may
+    # (`delegate_task` mode=wait, `hal_c2_thread_wait`): Req's 15s default
+    # receive timeout would sever exactly the long calls the bridge exists for.
+    timeout = HalC2.Mcp.tool_timeout_ms()
+
+    case Req.post(endpoint,
+           headers: Map.to_list(headers),
+           body: body,
+           decode_body: false,
+           receive_timeout: timeout
+         ) do
       {:ok, %{status: status, headers: resp_headers, body: text}} ->
         if status not in [202, 204] and is_binary(text) and String.trim(text) != "" do
           text
@@ -27,7 +37,10 @@ defmodule HalC2.Mcp.Bridge.Http do
 
   @doc "DELETEs the endpoint (ending an MCP session): `{:ok, status}` or `{:error, term}`."
   def delete(endpoint, headers) do
-    case Req.delete(endpoint, headers: Map.to_list(headers)) do
+    case Req.delete(endpoint,
+           headers: Map.to_list(headers),
+           receive_timeout: HalC2.Mcp.tool_timeout_ms()
+         ) do
       {:ok, %{status: status}} -> {:ok, status}
       {:error, reason} -> {:error, reason}
     end

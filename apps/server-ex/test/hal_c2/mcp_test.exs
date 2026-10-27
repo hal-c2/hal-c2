@@ -91,6 +91,51 @@ defmodule HalC2.McpTest do
     assert text =~ "invalid_request"
   end
 
+  # Reading a credential never rotates it; preparing a session does, and a
+  # revoked credential's sessions go with it. A mid-session access flip must
+  # not strand the token a live session still carries.
+  test "a flipped access setting rotates at preparation, never on a read" do
+    start_supervised!(HalC2.Settings)
+    {thread_id, _tool} = caller("wait for it")
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
+    assert HalC2.Mcp.prepared?(thread_id, "codex")
+    assert HalC2.Mcp.current(thread_id, "codex").authorization == auth
+
+    initialize =
+      JSON.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => 1,
+        "method" => "initialize",
+        "params" => %{"protocolVersion" => "2025-06-18"}
+      })
+
+    {200, %{"mcp-session-id" => session_id}, _} = HalC2.Mcp.handle_request(auth, %{}, initialize)
+    assert HalC2.Mcp.session?(session_id)
+
+    {settings, version} = HalC2.Settings.get()
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        Map.put(settings, "projectSettingsOverrides", %{
+          @project => %{"enableAgentBrowserAccess" => false}
+        }),
+        version
+      )
+
+    # Reads keep the live credential and its session.
+    assert HalC2.Mcp.server(thread_id, "codex").authorization == auth
+    assert HalC2.Mcp.current(thread_id, "codex").authorization == auth
+    assert HalC2.Mcp.session?(session_id)
+    refute HalC2.Mcp.prepared?(thread_id, "codex")
+
+    # Preparation rotates: the old token and its sessions are gone.
+    assert HalC2.Mcp.for_agent(thread_id, "codex") == nil
+    assert {401, _} = HalC2.Mcp.handle(auth, initialize)
+    refute HalC2.Mcp.session?(session_id)
+    assert HalC2.Mcp.current(thread_id, "codex") == nil
+    assert HalC2.Mcp.prepared?(thread_id, "codex")
+  end
+
   test "an agent answers a pending question through MCP" do
     {caller, tool} = caller("ask me")
     request = await_request(caller)

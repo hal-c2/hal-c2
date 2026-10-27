@@ -503,41 +503,49 @@ defmodule HalC2.Acp.ThreadRuntime do
     params = params || %{}
     {bridge, state} = mcp_bridge(state)
 
-    answer =
-      cond do
-        bridge == nil ->
-          {:error, "The hal-c2 MCP server is not available in this session."}
+    cond do
+      bridge == nil ->
+        Connection.respond(
+          conn,
+          id,
+          {:error,
+           %{
+             "code" => -32603,
+             "message" => "The hal-c2 MCP server is not available in this session."
+           }}
+        )
 
-        String.ends_with?(method, "connect") ->
+      String.ends_with?(method, "connect") ->
+        # Local bookkeeping only; answering inline cannot stall the runtime.
+        answer =
           case HalC2.Mcp.OverAcp.connect(bridge, params["serverId"]) do
             {:ok, connection_id} -> {:ok, %{"connectionId" => connection_id}}
             {:error, message} -> {:error, message}
           end
 
-        String.ends_with?(method, "disconnect") ->
+        respond_mcp(conn, id, answer)
+
+      String.ends_with?(method, "disconnect") ->
+        answer_mcp(conn, id, fn ->
           case HalC2.Mcp.OverAcp.disconnect(bridge, params["connectionId"]) do
             :ok -> {:ok, %{}}
             {:error, message} -> {:error, message}
           end
+        end)
 
-        true ->
-          case HalC2.Mcp.OverAcp.message(
-                 bridge,
-                 params["connectionId"],
-                 params["method"],
-                 params["params"]
-               ) do
-            {:ok, result} -> {:ok, result}
-            {:error, message} -> {:error, message}
-          end
-      end
-
-    case answer do
-      {:ok, result} ->
-        Connection.respond(conn, id, {:ok, result})
-
-      {:error, message} ->
-        Connection.respond(conn, id, {:error, %{"code" => -32603, "message" => message}})
+      true ->
+        # A tool call over HTTP, up to the ACP wait: answered off this
+        # process so interrupts, updates and orchestration calls keep
+        # flowing, and a tool that calls back into this runtime cannot
+        # deadlock it.
+        answer_mcp(conn, id, fn ->
+          HalC2.Mcp.OverAcp.message(
+            bridge,
+            params["connectionId"],
+            params["method"],
+            params["params"]
+          )
+        end)
     end
 
     {:noreply, state}
@@ -548,14 +556,20 @@ defmodule HalC2.Acp.ThreadRuntime do
     params = params || %{}
     {bridge, state} = mcp_bridge(state)
 
-    if bridge,
-      do:
-        HalC2.Mcp.OverAcp.notification(
-          bridge,
-          params["connectionId"],
-          params["method"],
-          params["params"]
-        )
+    if bridge do
+      spawn(fn ->
+        try do
+          HalC2.Mcp.OverAcp.notification(
+            bridge,
+            params["connectionId"],
+            params["method"],
+            params["params"]
+          )
+        catch
+          :exit, _ -> :ok
+        end
+      end)
+    end
 
     {:noreply, state}
   end
@@ -760,9 +774,14 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   # The agent's permission mode is set when it starts, so a new mode means a new process.
+  # So does a changed MCP credential: the header, env and bridge the live
+  # session carries would otherwise keep a token the flipped setting revoked.
   defp ensure_session(%{conn: conn, session_id: sid, agent: agent, mode: mode} = state, turn)
-       when conn != nil and sid != nil and agent == turn.ids.driver and mode == turn.runtime_mode,
-       do: {:ok, state}
+       when conn != nil and sid != nil and agent == turn.ids.driver and mode == turn.runtime_mode do
+    if HalC2.Mcp.prepared?(state.thread_id, Entities.instance(turn.ids)),
+      do: {:ok, state},
+      else: ensure_session(%{state | conn: nil, session_id: nil}, turn)
+  end
 
   defp ensure_session(state, turn) do
     driver = turn.ids.driver
@@ -811,6 +830,9 @@ defmodule HalC2.Acp.ThreadRuntime do
   # A new agent process for `instance`, initialized; OpenCode's serves its HTTP API.
   defp launch(state, instance, mode, cwd) do
     if state.conn, do: Connection.stop(state.conn)
+    # The old session's MCP-over-ACP connections end with it; the next one
+    # starts a fresh bridge with the credential this launch prepares.
+    state = close_mcp_bridge(state)
     state = %{state | conn: nil, session_id: nil, server: nil}
 
     with {:ok, command, env} <- HalC2.Acp.command(instance, mode),
@@ -965,6 +987,28 @@ defmodule HalC2.Acp.ThreadRuntime do
     HalC2.Mcp.AcpServers.build(state.capabilities, server).servers
   end
 
+  # Runs `answer` off the runtime and responds with its result; a dead
+  # bridge or connection answers with an error instead of never answering.
+  defp answer_mcp(conn, id, answer) do
+    spawn(fn ->
+      result =
+        try do
+          answer.()
+        rescue
+          _ -> {:error, "The hal-c2 MCP bridge is no longer available."}
+        catch
+          :exit, _ -> {:error, "The hal-c2 MCP bridge is no longer available."}
+        end
+
+      respond_mcp(conn, id, result)
+    end)
+  end
+
+  defp respond_mcp(conn, id, {:ok, result}), do: Connection.respond(conn, id, {:ok, result})
+
+  defp respond_mcp(conn, id, {:error, message}),
+    do: Connection.respond(conn, id, {:error, %{"code" => -32603, "message" => message}})
+
   # The thread's MCP-over-ACP bridge, started on its first connection.
   defp mcp_bridge(state) do
     cond do
@@ -975,7 +1019,7 @@ defmodule HalC2.Acp.ThreadRuntime do
         {nil, state}
 
       true ->
-        case HalC2.Mcp.for_agent(state.thread_id, Entities.instance(state.turn.ids)) do
+        case HalC2.Mcp.current(state.thread_id, Entities.instance(state.turn.ids)) do
           %{url: url, authorization: authorization} ->
             {:ok, bridge} =
               HalC2.Mcp.OverAcp.start_link(endpoint: url, authorization: authorization)
@@ -2601,9 +2645,12 @@ defmodule HalC2.Acp.ThreadRuntime do
     }
   end
 
+  # A read, never a preparation: a prompt must not rotate the credential the
+  # live session's header, environment and bridge still carry. A flipped
+  # access setting relaunches at the next `ensure_session/2` instead.
   defp instruction_state(state, turn) do
     instance = Entities.instance(turn.ids)
-    server = HalC2.Mcp.for_agent(state.thread_id, instance)
+    server = HalC2.Mcp.current(state.thread_id, instance)
 
     %{
       interaction_mode: Map.get(turn, :interaction_mode) || "default",
