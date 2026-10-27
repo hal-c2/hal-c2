@@ -70,6 +70,7 @@ Rectangle {
     TapHandler {
         objectName: "titleTap"
         enabled: strip.framelessChrome
+        // ljos-allow(focus-pointer-only): a double click on the title bar is the pointer's shortcut for the window controls' Maximize button, which the keyboard reaches
         onDoubleTapped: strip.window.visibility === Window.Maximized ? strip.window.showNormal() : strip.window.showMaximized()
     }
 
@@ -120,6 +121,7 @@ Rectangle {
                 elide: Text.ElideRight
                 Accessible.role: Accessible.Button
                 Accessible.name: qsTr("New thread in project")
+                Accessible.onPressAction: Shell.dispatch("workspace.newThread")
                 // The whole name of a project cut short.
                 ToolTip.visible: projectHover.hovered && truncated
                 ToolTip.delay: 500
@@ -160,6 +162,17 @@ Rectangle {
 
                 Component.onCompleted: handledRenameRequest = strip.ready ? strip.model.renameRequestId : 0
 
+                function openMenu() {
+                    if (!strip.ready || strip.model.isDraft) {
+                        return;
+                    }
+                    const p = titleSlot.mapToItem(null, 0, titleSlot.height + 4);
+                    Shell.dispatch("workspace.titleMenu", {
+                        x: p.x,
+                        y: p.y
+                    });
+                }
+
                 function startEditing() {
                     editing = true;
                     titleEditor.text = strip.model.threadTitle;
@@ -172,6 +185,9 @@ Rectangle {
                 Layout.minimumWidth: Math.min(Math.ceil(titleRow.implicitWidth), 40 + titleRow.spacing + 14)
                 implicitHeight: 28
                 implicitWidth: titleRow.implicitWidth
+                Accessible.role: Accessible.Button
+                Accessible.name: threadLabel.text
+                Accessible.onPressAction: openMenu()
                 // The whole title, which a narrow header cuts short.
                 ToolTip.visible: titleHover.hovered && threadLabel.truncated
                 ToolTip.delay: 500
@@ -200,16 +216,7 @@ Rectangle {
                 TapHandler {
                     enabled: !titleSlot.editing
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    onTapped: eventPoint => {
-                        if (!strip.ready || strip.model.isDraft) {
-                            return;
-                        }
-                        const p = titleSlot.mapToItem(null, 0, titleSlot.height + 4);
-                        Shell.dispatch("workspace.titleMenu", {
-                            x: p.x,
-                            y: p.y
-                        });
-                    }
+                    onTapped: titleSlot.openMenu()
                     onDoubleTapped: {
                         if (strip.ready && !strip.model.isDraft) {
                             titleSlot.startEditing();
@@ -250,6 +257,7 @@ Rectangle {
                         Behavior on opacity {
                             NumberAnimation {
                                 duration: 120
+                                easing.type: Easing.OutCubic
                             }
                         }
                     }

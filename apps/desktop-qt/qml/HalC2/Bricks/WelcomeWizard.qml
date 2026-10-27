@@ -58,6 +58,7 @@ Item {
             Layout.fillWidth: true
             horizontalAlignment: Text.AlignHCenter
             text: wizard.recovery === "settings" ? qsTr("Could not read settings") : qsTr("Still connecting")
+            wrapMode: Text.Wrap
             font.pixelSize: Math.round(18 * Theme.fontScale)
             font.weight: Font.DemiBold
             color: wizard.foreground
@@ -609,6 +610,7 @@ Item {
             Layout.preferredWidth: 28
             horizontalAlignment: Text.AlignRight
             text: parent.item.threadCount ?? 0
+            elide: Text.ElideRight
             font.pixelSize: Math.round(11 * Theme.fontScale)
             color: wizard.muted
         }
@@ -616,6 +618,7 @@ Item {
             Layout.preferredWidth: 28
             horizontalAlignment: Text.AlignRight
             text: parent.item.age ?? ""
+            elide: Text.ElideRight
             font.pixelSize: Math.round(11 * Theme.fontScale)
             color: wizard.muted
         }
@@ -725,6 +728,7 @@ Item {
                         objectName: "onboardingSelectedCount"
                         Layout.fillWidth: true
                         text: qsTr("%1 of %2 selected").arg(wizard.importState.selectedCount ?? 0).arg(wizard.importState.total ?? 0)
+                        wrapMode: Text.Wrap
                         font.pixelSize: Math.round(11 * Theme.fontScale)
                         color: wizard.muted
                     }

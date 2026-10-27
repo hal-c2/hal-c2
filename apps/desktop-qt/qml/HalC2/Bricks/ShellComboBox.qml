@@ -155,6 +155,7 @@ ComboBox {
                 from: 1
                 to: 0
                 duration: 90
+                easing.type: Easing.InCubic
             }
         }
 

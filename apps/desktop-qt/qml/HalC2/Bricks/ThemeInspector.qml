@@ -32,6 +32,8 @@ Item {
 
     visible: Themes.inspecting
     focus: visible
+    Accessible.role: Accessible.Pane
+    Accessible.name: qsTr("Pick a colour")
     onVisibleChanged: if (visible) forceActiveFocus()
     Keys.onEscapePressed: Themes.inspecting = false
 
