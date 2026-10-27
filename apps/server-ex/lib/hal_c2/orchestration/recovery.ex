@@ -188,7 +188,7 @@ defmodule HalC2.Orchestration.Recovery do
   end
 
   defp continuation(thread_id, run, text) do
-    HalC2.Orchestration.dispatch(%{
+    command = %{
       "type" => "message.dispatch",
       "commandId" => "command:restart-continuation:#{run["id"]}",
       "threadId" => thread_id,
@@ -199,7 +199,13 @@ defmodule HalC2.Orchestration.Recovery do
       "dispatchMode" => %{"type" => "start_immediately"},
       "createdBy" => "agent",
       "creationSource" => "server"
-    })
+    }
+
+    HalC2.Orchestration.Effects.enqueue(
+      thread_id,
+      "provider-runtime.continue",
+      %{"command" => command}
+    )
   end
 
   defp background_text([command]),

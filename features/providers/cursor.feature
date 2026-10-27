@@ -1,5 +1,6 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/2829
+#   https://github.com/pingdotgg/t3code/pull/13328 (Cursor build-date ranges, dropped below)
 #   docs/user/cursor.md (including Replay And Live Testing, dropped)
 #   apps/server-ex/lib/hal_c2/acp.ex (cursor agent: MC + cursor-acp, HAL_C2_CURSOR_CREDENTIALS, --mode)
 #   apps/server-ex/lib/hal_c2/acp/auth.ex, apps/server-ex/lib/hal_c2/acp/url_auth.ex (server.acceptAcpRegistryUrlAuth)
@@ -22,6 +23,14 @@ Feature: Cursor
 
   Background:
     Given a connected environment with the project "shop"
+
+  # Cursor runs through the Cursor SDK with no binary to install (see the header), so no
+  # installed version exists for a compatibility range to judge. Revisit if the SDK reports one.
+  @dropped
+  Scenario: Cursor's build date is judged against a compatibility range
+    Given Cursor reports the build "2026.05.08"
+    When the MC checks its providers
+    Then Cursor is reported as a known broken version for this HAL-C2 release
 
   Scenario: Cursor does nothing until the user enables it
     Given Cursor is not enabled on the MC
@@ -443,3 +452,10 @@ Feature: Cursor
     Given the project has a Cursor skill whose header says the user cannot start it
     When the user opens the skill list in a Cursor thread
     Then the skill is listed as one the user cannot start
+
+  # features/settings/subagents.feature: the setting is not wired for Cursor yet.
+  @backlog @mc
+  Scenario: Cursor's own subagents are left as they are when agents use HAL-C2 workers
+    Given the subagents setting is HAL-C2 workers
+    When a Cursor session is started
+    Then Cursor starts as usual, because it has no switch for its subagents

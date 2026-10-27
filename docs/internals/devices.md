@@ -2,7 +2,7 @@
 
 The MC owns simulators and emulators the way it owns terminals: discovery, streaming, and agent
 access all run there, and every client reaches them through the environment connection. This is
-what makes the Device panel work over Tailscale and HAL-C2 Connect, and across a cluster: each
+what makes the Device panel work over Tailscale, and across a cluster: each
 machine is its own host, and the MC a client is connected to relays to the MC that owns the device.
 
 ## Two external tools, one seam

@@ -36,7 +36,7 @@
 #   apps/desktop-qt/src/native/PairingExchange.cpp (reading a link, a link nobody typed, spending its token)
 #   apps/desktop-qt/src/native/ConnectionHealthController.cpp (an MC of another protocol, trace id)
 #   apps/desktop-qt/qml/HalC2/Bricks/ConnectionNotice.qml (try again, copy trace ID)
-# Shared pairing and relay behaviour lives in features/connections/. This file covers the
+# Shared pairing behaviour lives in features/connections/. This file covers the
 # phone journey: first launch, scanning a code, a link that opens the app to pair, and managing
 # environments from a phone.
 
@@ -417,7 +417,8 @@ Feature: Pairing a phone with environments
     Then the user is told the environment could not be updated, with the reason
     And what the user typed is still in the form
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: An environment managed by HAL-C2 Connect is not edited by hand
     Given the phone uses "Office Mac" through HAL-C2 Connect
     When the user opens the details of "Office Mac"
@@ -425,57 +426,66 @@ Feature: Pairing a phone with environments
     And its label and address cannot be changed
     And the user can still reconnect it and remove it from the phone
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Signing in to HAL-C2 Connect offers to set up relayed environments
     Given the user has environments registered with HAL-C2 Connect
     When the user signs in to HAL-C2 Connect on the phone
     Then the user is offered to set up HAL-C2 Connect
     And the registered environments are listed to enable
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: The user enables a relayed environment during setup
     Given the HAL-C2 Connect setup lists "Office Mac"
     When the user enables "Office Mac"
     Then "Office Mac" is added to the phone through the relay
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: The user can decline HAL-C2 Connect setup for good
     Given the HAL-C2 Connect setup is showing
     When the user asks not to see it again
     Then the setup does not reappear for that account on this phone
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: A relayed environment can be removed from this phone only
     Given the phone uses "Office Mac" through HAL-C2 Connect
     When the user removes "Office Mac" from this phone
     Then "Office Mac" is no longer listed on this phone
     And "Office Mac" stays registered with HAL-C2 Connect
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Only a directly paired environment can be linked to HAL-C2 Connect
     Given the phone reaches "Office Mac" only through the relay
     Then the user is not offered to link "Office Mac" to HAL-C2 Connect
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: The user deregisters a server from their HAL-C2 Connect profile
     Given "Old Laptop" is registered with the user's HAL-C2 Connect account
     When the user deregisters "Old Laptop" and confirms
     Then "Old Laptop" is no longer registered
 
   # Likely already implemented: apps/mobile/src/features/cloud/HalC2ConnectProfilePage.tsx
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: The registered servers say when they were linked
     Given "Old Laptop" is registered with the user's HAL-C2 Connect account without a link date
     When the user opens their registered servers
     Then "Old Laptop" says its link date is unavailable
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: The registered servers say they are loading
     Given the user's registered servers are being fetched
     When the user opens their registered servers
     Then the user is told the environments are loading
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Registered servers that cannot be loaded say why and can be refreshed
     Given HAL-C2 Connect cannot be reached
     When the user opens their registered servers
@@ -484,35 +494,40 @@ Feature: Pairing a phone with environments
     When the user pulls down to refresh
     Then the phone asks HAL-C2 Connect for the registered servers again
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: An account with no registered servers says how to link one
     Given the user has no server registered with HAL-C2 Connect
     When the user opens their registered servers
     Then the user is told no servers are registered
     And the user is told to link a server from its own settings
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Only one server is deregistered at a time
     Given "Old Laptop" and "Old Desktop" are registered with the user's HAL-C2 Connect account
     And the user confirmed deregistering "Old Laptop"
     When the deregistration is still in progress
     Then "Old Desktop" cannot be deregistered yet
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Signing out of HAL-C2 Connect removes the relayed environments from the phone
     Given the phone uses "Office Mac" through HAL-C2 Connect
     When the user signs out of HAL-C2 Connect
     Then "Office Mac" is no longer listed on this phone
     And "Office Mac" stays registered with HAL-C2 Connect
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Signing out of HAL-C2 Connect forgets the phone's relay sign-in
     Given the phone has used the relay with the account "alice"
     When the user signs out of HAL-C2 Connect
     Then the phone no longer holds a relay credential for "alice"
     And the phone is no longer registered for agent activity alerts under "alice"
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Relayed environments already on the phone stay listed without a HAL-C2 Connect session
     Given the phone has "Office Mac" saved through HAL-C2 Connect
     And the app build has no HAL-C2 Connect
@@ -520,45 +535,52 @@ Feature: Pairing a phone with environments
     Then "Office Mac" is listed and can be switched off or removed
     And no other environments of the account are offered
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: The set up of HAL-C2 Connect is closed when the user signs out before it opens
     Given the user has just signed in to HAL-C2 Connect
     When the user signs out before the setup is shown
     Then the setup is not shown
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: The set up of HAL-C2 Connect is shown when the phone cannot tell whether it was declined
     Given the phone cannot read whether the user declined the setup for this account
     When the user signs in to HAL-C2 Connect
     Then the user is offered to set up HAL-C2 Connect
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: The set up of HAL-C2 Connect asks a signed-out user to sign in
     Given the setup of HAL-C2 Connect is showing
     And the user signed out of HAL-C2 Connect
     Then the user is told to sign in to their HAL-C2 account to set up HAL-C2 Connect
     And the user is not offered to decline the setup
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: The set up of HAL-C2 Connect refreshes the account's environments when pulled down
     Given the setup of HAL-C2 Connect is showing
     When the user pulls down to refresh
     Then the phone asks HAL-C2 Connect for the account's environments again
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: A build without HAL-C2 Connect closes its setup
     Given the app build has no HAL-C2 Connect
     When a link opens the setup of HAL-C2 Connect
     Then the setup closes straight away
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: The account's environments say they are loading
     Given the user is signed in to HAL-C2 Connect
     And the account's environments are being fetched
     When the user opens the list of environments
     Then the user is told the linked cloud environments are loading
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: Environments of the account that cannot be loaded say why and can be tried again
     Given the user is signed in to HAL-C2 Connect
     And HAL-C2 Connect cannot be reached
@@ -569,7 +591,8 @@ Feature: Pairing a phone with environments
     When the user tries again
     Then the phone asks HAL-C2 Connect for the account's environments again
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario Outline: An environment of the account says what is known of its relay
     Given the account has "Office Mac" whose relay <state>
     When the user opens the list of environments
@@ -582,7 +605,8 @@ Feature: Pairing a phone with environments
       | reports it is online       | available, relay online             |
       | reports it is offline      | that the relay is offline           |
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: An environment of the account can be inspected for its error
     Given the account has "Old Laptop" whose relay reports an error
     When the user taps "Old Laptop"
@@ -607,7 +631,8 @@ Feature: Pairing a phone with environments
     Then the user is told to use compatible versions of the app and server
     And the phone does not keep trying to sync it
 
-  @backlog @mobile
+  # HAL-C2 Connect was removed; remote access is LAN pairing, Tailscale, SSH and clustering.
+  @dropped @mobile
   Scenario: A short-lived relay token is not kept on the phone
     Given the phone uses "Office Mac" through HAL-C2 Connect
     When the app is closed and opened again

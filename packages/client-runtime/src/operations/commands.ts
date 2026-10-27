@@ -32,6 +32,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 
 import { getInitialServerConfig, request } from "../rpc/client.ts";
+import { diffCheckpoints } from "../state/threadCheckpoints.ts";
 import { latestUnheldRun } from "../state/threadExecution.ts";
 
 interface CommandMetadata {
@@ -848,11 +849,12 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
       projection.checkpoints.find(
         (candidate) => candidate.id === input.checkpointId && candidate.scopeId === input.scopeId,
       ) ??
-      projection.checkpoints.findLast((candidate) =>
-        input.turnCount === 0
-          ? candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null
-          : candidate.appRunOrdinal === input.turnCount,
-      );
+      (input.turnCount === 0
+        ? projection.checkpoints.findLast(
+            (candidate) => candidate.ordinalWithinScope === 0 && candidate.appRunOrdinal === null,
+          )
+        : // A turn count is a position among the diff checkpoints, not a run ordinal.
+          diffCheckpoints(projection)[(input.turnCount ?? 0) - 1]);
     if (checkpoint === undefined || checkpoint.status !== "ready") {
       const target =
         input.checkpointId === undefined

@@ -544,7 +544,7 @@ defmodule HalC2.Slack do
 
   def handle_call(:disconnect, _from, state) do
     state = supersede(state)
-    HalC2.Connect.Secrets.delete(@secret)
+    HalC2.Secrets.delete(@secret)
     state = %{state | gen: state.gen + 1, want: nil, tokens: nil, error: nil, retries: 0}
     state = state |> lose() |> phase(:off) |> drive() |> publish()
     {:reply, {:ok, view(state)}, state}
@@ -628,7 +628,7 @@ defmodule HalC2.Slack do
     if job.tokens != state.tokens do
       {bot, app} = job.tokens
 
-      HalC2.Connect.Secrets.put(
+      HalC2.Secrets.put(
         @secret,
         JSON.encode!(%{"botToken" => bot, "appToken" => app})
       )
@@ -648,7 +648,7 @@ defmodule HalC2.Slack do
 
   # A user's tokens Slack refused are not kept; the stored ones it now refuses are forgotten.
   defp settle(state, job, {:error, :refused, message}) do
-    HalC2.Connect.Secrets.delete(@secret)
+    HalC2.Secrets.delete(@secret)
     state = %{state | tokens: nil, error: message, dirty: true} |> phase(:failed)
     if job.from, do: GenServer.reply(job.from, {:error, message})
     state
@@ -660,7 +660,7 @@ defmodule HalC2.Slack do
 
     cond do
       from != nil ->
-        HalC2.Connect.Secrets.delete(@secret)
+        HalC2.Secrets.delete(@secret)
         GenServer.reply(from, {:error, message})
         %{state | tokens: nil} |> phase(:failed)
 
@@ -744,7 +744,7 @@ defmodule HalC2.Slack do
   end
 
   defp stored_tokens do
-    with bytes when is_binary(bytes) <- HalC2.Connect.Secrets.get(@secret),
+    with bytes when is_binary(bytes) <- HalC2.Secrets.get(@secret),
          {:ok, %{"botToken" => bot, "appToken" => app}} when is_binary(bot) and is_binary(app) <-
            JSON.decode(bytes) do
       {bot, app}

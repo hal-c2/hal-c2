@@ -32,9 +32,13 @@ defmodule HalC2.Git do
   # left, and the task stays linked so killing the caller takes both. Exits are
   # trapped around the yield, so a task that exits abnormally reports
   # `{:exit, reason}` here instead of taking the caller with it.
-  defp within(nil, fun), do: {:ok, fun.()}
+  @doc """
+  Runs `fun` in a task given `ms` to finish (`nil` runs it in place):
+  `{:ok, result}`, `{:exit, reason}` or `:timeout`.
+  """
+  def within(nil, fun), do: {:ok, fun.()}
 
-  defp within(ms, fun) do
+  def within(ms, fun) do
     trap = Process.flag(:trap_exit, true)
     task = Task.async(fun)
 

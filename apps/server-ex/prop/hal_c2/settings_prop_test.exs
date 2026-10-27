@@ -141,9 +141,14 @@ defmodule HalC2.SettingsPropTest do
   defp stale_version(%{version: version}),
     do: oneof([-1, version + 1, version + 7] ++ if(version > 0, do: [version - 1], else: []))
 
+  # Documents sometimes carry the subagents choice, which `Settings.hal_c2_subagents?/0` reads.
   defp doc do
-    let {doc, shared} <- {resize(4, entity()), resize(2, map(oneof(@shared), shared_value()))},
-        do: Map.merge(doc, shared)
+    let {entity, shared, choice} <-
+          {resize(4, entity()), resize(2, map(oneof(@shared), shared_value())),
+           oneof([:unset, "provider", "hal-c2"])} do
+      doc = Map.merge(entity, shared)
+      if choice == :unset, do: doc, else: Map.put(doc, "nativeSubagents", choice)
+    end
   end
 
   defp shared_value, do: oneof(["x", "y", true])
@@ -353,11 +358,18 @@ defmodule HalC2.SettingsPropTest do
   def postcondition(_state, {:call, _, :update_raises, _}, result),
     do: match?({:error, _}, result)
 
-  # `settings/0` reads the table a second time, so a racing writer can land in between.
-  def postcondition(state, {:call, _, :read, _}, {{doc, version}, via_settings, alive?}),
-    do:
-      alive? and doc == state.doc and version == state.version and
-        (state.parallel or via_settings == state.doc)
+  # `settings/0` reads the table a second time, and so does `hal_c2_subagents?/0`, so a
+  # racing writer can land in between.
+  def postcondition(
+        state,
+        {:call, _, :read, _},
+        {{doc, version}, via_settings, alive?, hal_c2_subagents?}
+      ) do
+    alive? and doc == state.doc and version == state.version and
+      (state.parallel or
+         (via_settings == state.doc and
+            hal_c2_subagents? == (state.doc["nativeSubagents"] == "hal-c2")))
+  end
 
   def postcondition(state, {:call, _, :saved, _}, result) do
     case state.file do
@@ -437,7 +449,9 @@ defmodule HalC2.SettingsPropTest do
 
   def read do
     server = Process.whereis(Settings)
-    {Settings.get(), Settings.settings(), is_pid(server) and Process.alive?(server)}
+
+    {Settings.get(), Settings.settings(), is_pid(server) and Process.alive?(server),
+     Settings.hal_c2_subagents?()}
   end
 
   def saved, do: Settings.saved()

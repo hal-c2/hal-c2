@@ -202,9 +202,6 @@ Feature: Settings search and navigation
         | the app cannot manage this machine's server      | tailscale          | Tailscale HTTPS        |
         | no connected environment has provider settings   | usage providers    | Usage providers        |
         | no connected environment has provider settings   | health check       | Health check interval  |
-        | HAL-C2 Connect is not set up for this app        | managed tunnel     | HAL-C2 Connect         |
-        | the local environment is turned off              | managed tunnel     | HAL-C2 Connect         |
-        | the local environment is turned off              | push notifications | Publish agent activity |
 
     @desktop
     Scenario: A search result inside a folded section opens the fold
@@ -231,7 +228,6 @@ Feature: Settings search and navigation
         | long lines         | Word wrap              |
         | battery saver      | Background activity    |
         | binary path        | Providers              |
-        | push notifications | Publish agent activity |
         | pull request template | Follow change request templates |
 
     @backlog @desktop

@@ -13,6 +13,7 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
   import ExUnit.Assertions
 
   alias HalC2.Test.AcpFixtures, as: Acp
+  alias HalC2.Test.FakeAcp
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
 
@@ -313,6 +314,49 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     ctx = ops(context)
     {reply, ctx} = World.call(ctx, "server.searchAcpRegistry", %{"query" => query}, "ops")
     Map.put(ctx, :reply, reply)
+  end
+
+  step "the registry lists Kimi CLI", context do
+    ctx = context |> Acp.serve_registry()
+
+    Acp.publish(ctx, [
+      Map.merge(Acp.acme_agent(ctx, id: "kimi"), %{
+        "name" => "Kimi CLI",
+        "version" => "1.52.0",
+        "repository" => "https://github.com/MoonshotAI/kimi-cli"
+      })
+    ])
+  end
+
+  step "the registry lists Kimi Code {word}", %{args: [version]} = context do
+    ctx = context |> Acp.serve_registry()
+
+    Acp.publish(ctx, [
+      Map.merge(Acp.acme_agent(ctx, id: "kimi"), %{
+        "name" => "Kimi Code",
+        "version" => version,
+        "repository" => "https://github.com/MoonshotAI/kimi-code"
+      })
+    ])
+  end
+
+  step "Kimi is offered as the registry's Kimi Code {word}", %{args: [version]} = context do
+    assert {:ok, %{"agents" => [%{"id" => "kimi", "version" => ^version}]}} = context.reply
+    context
+  end
+
+  step "Kimi is offered as Kimi Code, checked against its checksum", context do
+    assert {:ok, %{"agents" => [kimi]}} = context.reply
+
+    assert %{
+             "id" => "kimi",
+             "name" => "Kimi Code",
+             "version" => "2.3.1",
+             "repository" => "https://github.com/MoonshotAI/kimi-code",
+             "integrity" => "sha256"
+           } = kimi
+
+    context
   end
 
   # The client marks a result as added when one of its instances runs that agent.
@@ -957,6 +1001,29 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     context
   end
 
+  step "{string} offers models through the session model list", %{args: [_]} = context do
+    ctx = acme(context, %{"legacyModels" => true})
+    assert [%{"slug" => "acme/fast"}, %{"slug" => "acme/smart"}] = Acp.check("acme")["models"]
+    ctx = run_on_acme(ctx, "hello", model: "acme/fast")
+    Acp.await_runs(thread(ctx), 1)
+    ctx
+  end
+
+  step "{string} resumes its sessions without the model list", %{args: [_]} = context do
+    Acp.control(context, "acme", %{"resumeWithoutModels" => true})
+  end
+
+  step "the agent's session uses the new model through set_model", context do
+    Acp.follow_up(context, context.thread, "which model")
+    Acp.await_runs(thread(context), 2)
+    assert Acp.assistant_text(thread(context)) =~ "model: acme/smart"
+
+    assert %{"params" => %{"modelId" => "acme/smart"}} =
+             List.last(Acp.requests(context, "acme", "session/set_model"))
+
+    context
+  end
+
   step "the agent's session uses the new model for the next turn", context do
     Acp.follow_up(context, context.thread, "which model")
     Acp.await_runs(thread(context), 2)
@@ -1442,6 +1509,48 @@ defmodule HalC2.Steps.Providers.AcpRegistry do
     text = Acp.assistant_text(thread(context))
     assert text == "[ACP image (image/png)]"
     refute text =~ "iVBORw0KGgo"
+    context
+  end
+
+  # --- Kimi and the subagents setting --------------------------------------------------
+
+  step "Kimi CLI is offered HAL-C2's tools", context do
+    Mc.ensure(HalC2.Mcp)
+
+    config = %{
+      "turns" => FakeAcp.turns(),
+      "capabilities" => %{"mcpCapabilities" => %{"http" => true}}
+    }
+
+    context = FakeAcp.install(context, "kimi", config)
+    World.put_app_env(:acp_commands, %{"kimi" => [context.fakes["kimi"].bin]})
+
+    FakeAcp.settings(fn settings ->
+      put_in(settings, [Access.key("providerInstances", %{}), "kimi"], %{
+        "driver" => "acpRegistry",
+        "enabled" => true,
+        "config" => %{"agentId" => "kimi"}
+      })
+    end)
+
+    context
+  end
+
+  step "the user sends a Kimi thread its first message", context do
+    context = context |> FakeAcp.thread("Kimi work") |> FakeAcp.send_message("hello")
+    FakeAcp.await_run(context, "completed")
+    context
+  end
+
+  step ~r/^Kimi is (?<told>told|not told) to delegate with "(?<tool>[^"]+)" instead of using its own subagents$/,
+       %{args: [told, tool]} = context do
+    assert [%{"params" => %{"prompt" => [%{"text" => text} | _]}}] =
+             FakeAcp.received(context, "session/prompt", "kimi")
+
+    assert text =~ "<hal_c2_orchestration_instructions>"
+    delegate = ~r/built-in subagents\. Delegate child work with `#{tool}`/
+
+    if told == "told", do: assert(text =~ delegate), else: refute(text =~ delegate)
     context
   end
 end

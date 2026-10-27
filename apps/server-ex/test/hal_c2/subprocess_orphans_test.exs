@@ -371,6 +371,20 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert Orphans.ps_outcome({"garbage", 0}) == :unknown
   end
 
+  # Without a `ps` no port opens, so there is nothing to hand an exit.
+  @tag skip: !System.find_executable("ps") && "needs a ps"
+  test "reading a process with ps hands a caller that traps exits no exit" do
+    # A provider session stops on any `:EXIT`, so on macOS every turn ended at
+    # once ("Claude exited") when tracking its program read `ps`.
+    Process.flag(:trap_exit, true)
+    me = String.to_integer(System.pid())
+    assert {:ok, {_state, _started, _group}} = Orphans.ps_process_result(me)
+    # The port either is still linked or has already sent its exit.
+    {:links, links} = Process.info(self(), :links)
+    refute Enum.any?(links, &is_port/1)
+    refute_received {:EXIT, _, _}
+  end
+
   test "a program that ends takes its record with it" do
     tracker = boot(:mc)
     {:ok, sub} = Subprocess.start(["sh", "-c", @echo])

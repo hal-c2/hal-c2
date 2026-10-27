@@ -446,7 +446,7 @@ defmodule HalC2.Acp do
     instances()
     |> Enum.filter(&enabled?/1)
     |> Task.async_stream(
-      fn id -> read(id, locked(id, fn -> start_read(id) end)) end,
+      fn id -> read(id, locked(id, fn -> start_read(id) end), :disk) end,
       timeout: :infinity,
       max_concurrency: 4
     )
@@ -459,7 +459,7 @@ defmodule HalC2.Acp do
     # Checked again under the lock, which a listing takes only when no read is under way.
     if not loading?(id) do
       generation = locked(id, fn -> if not loading?(id), do: start_read(id) end)
-      if generation, do: Task.start(fn -> read(id, generation) end)
+      if generation, do: Task.start(fn -> read(id, generation, :disk) end)
     end
   end
 
@@ -519,11 +519,16 @@ defmodule HalC2.Acp do
   # report what a live session currently offers (or that its account is gone),
   # which stays authoritative for that session until the probe `forget/1`
   # triggers publishes over it.
-  defp read(id, generation) do
+  # A `:disk` read is a status check (at boot, or a listing's first look):
+  # Antigravity answers it from the installed runtime on disk, launching
+  # nothing, where other agents are still read from a throwaway session. A
+  # manual `reload/1` reads with `:spawn`.
+  defp read(id, generation, mode \\ :spawn) do
     dir = Path.join(System.tmp_dir!(), "hal-c2-acp-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
 
     Process.put(staged_key(id), [])
+    Process.put(:antigravity_disk_check, mode == :disk)
 
     try do
       result = read_agent(id, dir)
@@ -548,6 +553,12 @@ defmodule HalC2.Acp do
       HalC2.Settings.notify_providers()
     end
   end
+
+  defp error_message(_id, {:error, :antigravity_health_timeout}),
+    do: "Antigravity did not respond to its local health check within 90 seconds."
+
+  defp error_message(_id, {:error, :antigravity_health_failed}),
+    do: "Antigravity could not complete its local health check."
 
   defp error_message(id, {:error, :unauthenticated}), do: signed_out_message(id)
   defp error_message(_id, {:error, reason}), do: describe(reason)
@@ -641,6 +652,41 @@ defmodule HalC2.Acp do
     end
   end
 
+  # Antigravity's agent unpacks about a gigabyte per launch, so a status
+  # check (a `:disk` read) never starts it: the runtime resolved on disk is
+  # installed and versioned enough, and account access stays unchecked until
+  # a session or a manual read. Its models come from its sign-in and
+  # sessions (`HalC2.Acp.Antigravity.account/1`).
+  defp read_agent(id, dir, "antigravity", _entry) do
+    if Process.get(:antigravity_disk_check) do
+      case HalC2.Acp.Antigravity.resolve(HalC2.Acp.Antigravity.config(id)["binaryPath"]) do
+        {:ok, found} ->
+          stage(id, :version, found.version || "unknown")
+
+          stage(id, :capabilities, %{
+            "loadSession" => true,
+            "promptCapabilities" => %{
+              "image" => true,
+              "audio" => true,
+              "embeddedContext" => true
+            },
+            "sessionCapabilities" => %{"list" => %{}, "resume" => %{}}
+          })
+
+          stage(id, :auth_methods, 1)
+          stage(id, :meta, %{})
+          stage(id, :config, [])
+          stage(id, :models, [])
+
+        {:error, _} ->
+          stage(id, :models, [])
+          :ok
+      end
+    else
+      antigravity_probe(id, dir)
+    end
+  end
+
   # Pi's models, commands and skills come from Pi's own RPC mode (`HalC2.Pi`). Pi may
   # stop at a startup prompt only a live session can answer, so a failed read still
   # offers "Pi default"; refused launch arguments are the provider's error.
@@ -717,6 +763,53 @@ defmodule HalC2.Acp do
         end
       end)
     end
+  end
+
+  # A manual read does start the runtime: only `initialize`, as a session
+  # would need a Google login. Ninety seconds without an answer, or any
+  # other failure to start, is the health check failing.
+  defp antigravity_probe(id, dir) do
+    with {:ok, command, env} <- command(id),
+         {:ok, conn} <-
+           Connection.start_link(cmd: command, handler: self(), cd: dir, env: env, dialect: :v2) do
+      try do
+        case call_health(conn) do
+          {:ok, init} ->
+            stage(id, :version, get_in(init, ["agentInfo", "version"]) || "unknown")
+            stage(id, :capabilities, init["agentCapabilities"] || %{})
+            stage(id, :auth_methods, length(init["authMethods"] || []))
+            stage(id, :meta, init["_meta"] || %{})
+            stage(id, :config, [])
+            stage(id, :models, [])
+            :ok
+
+          {:error, _} = error ->
+            error
+        end
+      after
+        Connection.stop(conn)
+        HalC2.Acp.Antigravity.SessionFiles.release(HalC2.Acp.Antigravity.runtime_tmp(env))
+      end
+    else
+      {:error, detail} when is_binary(detail) -> {:error, detail}
+      {:error, _} -> {:error, :antigravity_health_failed}
+    end
+  end
+
+  defp call_health(conn) do
+    Connection.call(
+      conn,
+      "initialize",
+      initialize_params(),
+      HalC2.Acp.Antigravity.health_timeout()
+    )
+    |> case do
+      {:ok, _} = ok -> ok
+      _ -> {:error, :antigravity_health_failed}
+    end
+  catch
+    :exit, {:timeout, _} -> {:error, :antigravity_health_timeout}
+    :exit, _ -> {:error, :antigravity_health_failed}
   end
 
   # An OpenCode server run elsewhere (`serverUrl`, with `serverPassword` as the
@@ -1155,6 +1248,9 @@ defmodule HalC2.Acp do
              do: fun.(conn, init)
       after
         Connection.stop(conn)
+
+        if driver(id) == "antigravity",
+          do: HalC2.Acp.Antigravity.SessionFiles.release(HalC2.Acp.Antigravity.runtime_tmp(env))
       end
     end
   end
@@ -1524,7 +1620,10 @@ defmodule HalC2.Acp do
 
   # "Hugging Face/DeepSeek V3" is the model "DeepSeek V3" of the provider "Hugging Face".
   defp models(session) do
-    option = Enum.find(session["configOptions"] || [], &(&1["id"] == "model")) || %{}
+    option =
+      Enum.find(session["configOptions"] || [], &(&1["id"] == "model")) ||
+        model_option(session["models"] || %{})
+
     current = option["currentValue"]
 
     for %{"value" => slug} = model <- option["options"] || [] do
@@ -1543,5 +1642,16 @@ defmodule HalC2.Acp do
       }
       |> then(&if(sub, do: Map.put(&1, "subProvider", sub), else: &1))
     end
+  end
+
+  # Older ACP agents, including Kimi, advertise models outside configOptions.
+  defp model_option(models) do
+    %{
+      "currentValue" => models["currentModelId"],
+      "options" =>
+        for %{"modelId" => id} = model <- models["availableModels"] || [] do
+          %{"value" => id, "name" => model["name"] || id, "_meta" => model["_meta"]}
+        end
+    }
   end
 end

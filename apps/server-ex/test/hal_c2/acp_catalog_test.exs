@@ -164,4 +164,20 @@ defmodule HalC2.Acp.CatalogTest do
     assert {:ok, %{"agents" => [%{"id" => "fake-agent"}]}} =
              HalC2.Acp.Catalog.search(%{"query" => ""})
   end
+
+  # An MC that loads new code keeps the index it read before: the new code's entries
+  # still apply to it.
+  test "an index read before an upgrade runs Kimi Code", %{base: base, sha: sha} do
+    kimi_cli =
+      fake(base, sha, %{
+        "id" => "kimi",
+        "name" => "Kimi CLI",
+        "repository" => "https://github.com/MoonshotAI/kimi-cli"
+      })
+
+    now = System.system_time(:millisecond)
+    :persistent_term.put({HalC2.Acp.Catalog, :index}, {now, [kimi_cli]})
+
+    assert %{name: "Kimi Code", version: "2.3.1"} = HalC2.Acp.Catalog.describe("kimi")
+  end
 end

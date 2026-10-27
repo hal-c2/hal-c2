@@ -44,14 +44,17 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     assert %{"relationshipToParent" => "subagent", "parentThreadId" => ^parent_id} =
              StreamState.get(child, "thread")[child_id]["lineage"]
 
-    assert [context.task] ==
+    # The child's one message is the task after the MC's worker preamble.
+    assert [text] =
              for(
                %{"role" => "user", "text" => text} <- StreamState.list(child, "message"),
                do: text
              )
 
-    # The provider was given the task alone, with none of the parent's conversation.
-    assert context.task in World.started_turns(context)
+    assert String.ends_with?(text, "\nTask:\n" <> context.task)
+
+    # The provider was given that message alone, with none of the parent's conversation.
+    assert text in World.started_turns(context)
     context
   end
 
@@ -118,7 +121,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
   step "the parent receives {string} once its own run is over", %{args: [text]} = context do
     title = World.current(context)
 
-    assert %{"structuredContent" => %{"status" => "completed", "summary" => nil}} =
+    assert %{"structuredContent" => %{"status" => "completed", "summary" => ^text}} =
              Task.await(context.waiting, 5_000)
 
     assert_result_runs(context, title, text)
@@ -193,6 +196,46 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     context
   end
 
+  step "the parent's notification names the worker's thread and carries {string}",
+       %{args: [result]} = context do
+    state = World.stream(context, World.current(context))
+    child_id = context.delegated["childThreadId"]
+
+    assert [message] =
+             Enum.filter(StreamState.list(state, "message"), &(&1["delegatedCompletion"] != nil))
+
+    assert %{
+             "workerThreadId" => ^child_id,
+             "workerTitle" => title,
+             "detail" => ^result
+           } = message["notification"]
+
+    assert title != ""
+    context
+  end
+
+  step "the worker's first message says it is from the parent", context do
+    child_id = context.delegated["childThreadId"]
+    parent_id = World.thread_id(context, World.current(context))
+
+    assert [%{"senderThreadId" => ^parent_id, "createdBy" => "agent"}] =
+             for(
+               ["message", _, %{"role" => "user"} = message] <- read_thread(context, child_id),
+               do: message
+             )
+
+    context
+  end
+
+  step "the user can open the parent", context do
+    parent_id = World.thread_id(context, World.current(context))
+
+    assert [%{"id" => ^parent_id}] =
+             for(["thread", ^parent_id, thread] <- read_thread(context, parent_id), do: thread)
+
+    context
+  end
+
   step "a subagent sent a message to its parent", context do
     context = World.working_thread(context, World.current(context))
     HalC2.Test.Mc.ensure(HalC2.Mcp)
@@ -253,6 +296,11 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
 
   step "the agent delegated work to a subagent on the model {string}",
        %{args: [model]} = context do
+    # The model is one this MC offers for Codex (a custom model in settings), so
+    # naming it is asking for an advertised model.
+    context =
+      World.update_settings(context, %{"providers" => %{"codex" => %{"customModels" => [model]}}})
+
     context = World.working_thread(context, World.current(context))
     HalC2.Test.Mc.ensure(HalC2.Mcp)
     result = delegate(context, %{"task" => "answer from gate", "target" => %{"model" => model}})
@@ -498,20 +546,16 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     context
   end
 
+  # Ends the parent's turn as the agent ending it does (a steer it answers), not
+  # as the user stopping it: a stop would also stop the task waking it later.
   defp stop_run(context, run) do
     title = World.current(context)
-
-    {:ok, _} =
-      HalC2.Orchestration.dispatch(%{
-        "type" => "run.interrupt",
-        "threadId" => World.thread_id(context, title),
-        "runId" => run["id"]
-      })
+    World.send_turn(context, title, "say Carrying on")
 
     World.await_thread(
       context,
       title,
-      &(StreamState.get(&1, "run")[run["id"]]["status"] == "interrupted")
+      &(StreamState.get(&1, "run")[run["id"]]["status"] == "completed")
     )
   end
 

@@ -31,6 +31,7 @@ defmodule HalC2.ScheduledTasksProofTest do
       "HalC2.ScheduledTasks handle_info {:run_done, _, _}" => ~w(run-done stale),
       "HalC2.ScheduledTasks handle_info {:DOWN, _, :process, _, _}" =>
         ~w(run-down watcher-down stale),
+      "HalC2.ScheduledTasks handle_info {:run_timeout, _}" => "run-timeout",
       "HalC2.ScheduledTasks state :tasks" => "tsk",
       "HalC2.ScheduledTasks state :runs" => "run",
       "HalC2.ScheduledTasks state :watchers" => "watching",
@@ -39,6 +40,7 @@ defmodule HalC2.ScheduledTasksProofTest do
     abstracts: %{
       "HalC2.ScheduledTasks.start_link/1" => "starts the process crash and restart stand for",
       "HalC2.ScheduledTasks.list/1" => @plain,
+      "HalC2.ScheduledTasks.run_timeout_ms/0" => @plain,
       "HalC2.ScheduledTasks handle_call :list" => @plain,
       "HalC2.ScheduledTasks.next_run/2" => "aims a run; the model counts ticks",
       "HalC2.ScheduledTasks handle_info _" => "ignores what it does not know, as stale does",
@@ -46,7 +48,7 @@ defmodule HalC2.ScheduledTasksProofTest do
         "where the tasks are saved; the model keeps them across a crash without a file"
     },
     environment: %{
-      "fire" => "fire/2 returns: the prompt is sent",
+      "fire" => "fire/3 returns: the prompt is sent",
       "fire-dies" => "the run's process exits, perhaps once the prompt was sent",
       "advance" => "the clock moves on",
       "crash" => "the scheduler stops: its runs table and timer go, and its runs with it",
@@ -59,6 +61,7 @@ defmodule HalC2.ScheduledTasksProofTest do
         "A task that is already running cannot be started again",
         "Deleting a task during its run ends the run",
         "A run cut off by shutdown is marked failed",
+        "A run that never finishes is timed out after an hour",
         "The user runs a task now",
         "Pausing a task stops its runs and resuming schedules it again",
         "Editing a task that no longer exists fails",
@@ -73,10 +76,11 @@ defmodule HalC2.ScheduledTasksProofTest do
   # Two tasks, each due soon; the second is a task alone, with more of everything else.
   @starts ["one(3, 1, 4)", "seeded(1, 1, 2)"]
 
-  # Rules the code's own steps do not need; the fair ones are the code's, and `fire`
-  # (the prompt is sent) is what B3 makes an assumption: a run that never returns
-  # keeps its task running for good, as no run has a timeout.
-  @fair ~w(tick run-done run-down stale fire restart watcher-down unsubscribe)
+  # Rules the code's own steps do not need; the fair ones are the code's. `fire`
+  # (the prompt is sent) is not one of them: a run that never returns is ended
+  # by the scheduler's own `run-timeout`, which is fair, so nothing below
+  # assumes a prompt is ever sent.
+  @fair ~w(tick run-done run-down run-timeout stale restart watcher-down unsubscribe)
 
   for init <- @starts do
     test "a run's result is applied only to the task record that started it, from #{init}",
@@ -108,16 +112,17 @@ defmodule HalC2.ScheduledTasksProofTest do
     refute_reachable(proof, "hushed(3, 1, 4)", "unasked", [])
   end
 
-  test "an MC without automatic actions still answers a run_now caller, if prompts are sent",
+  test "an MC without automatic actions still answers a run_now caller, even if its prompt is never sent",
        %{proof: proof} do
     assert_ltl(proof, "hushed(1, 1, 2)", "[] (waiting(1) -> <> answered(1))", fair: @fair)
   end
 
-  test "a run_now caller waiting on a run gets its reply, if prompts are sent", %{proof: proof} do
+  test "a run_now caller waiting on a run gets its reply, even if its prompt is never sent",
+       %{proof: proof} do
     assert_ltl(proof, "one(1, 1, 2)", "[] (waiting(1) -> <> answered(1))", fair: @fair)
   end
 
-  test "a started run is recorded in the end, if prompts are sent", %{proof: proof} do
+  test "a started run is recorded in the end, even if its prompt is never sent", %{proof: proof} do
     formula = "[] (entered(1) -> <> ~ entered(1)) /\\ [] (entered(2) -> <> ~ entered(2))"
     assert_ltl(proof, "one(1, 1, 2)", formula, fair: @fair)
   end

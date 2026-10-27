@@ -7,7 +7,8 @@ defmodule HalC2.MuseRuntimePropTest do
   until stopped, asks to run a
   command (once, or for two requirements in turn) or asks a question; steer the running
   turn; approve or decline the command;
-  answer the question; interrupt the
+  answer the question; switch the running turn's access, which on full access answers its
+  open command prompt; interrupt the
   turn; crash the runtime mid-turn; have `muse serve` exit under it, idle or mid-turn;
   release the idle thread's session as IdleSessions does.
 
@@ -165,7 +166,8 @@ defmodule HalC2.MuseRuntimePropTest do
   # turn: the running turn's %{msg, kind}, kind :wait | :delegate | :hold | :finish | :shell | :ask, :guarded for a
   # command with two requirements (:shell once the first is approved), or :workflow for a
   # workflow child's :guarded command;
-  # mode: the thread's runtime mode; full access runs every command without asking;
+  # mode: the thread's runtime mode; full access runs every command without asking, and
+  # switching a running :shell turn to it answers the open prompt;
   # history: what Muse's session has been sent, oldest first;
   # replies: the replies naming that history, in order.
   def initial_state,
@@ -186,7 +188,7 @@ defmodule HalC2.MuseRuntimePropTest do
       {6,
        {:call, __MODULE__, :send,
         [msg, oneof([:say, :wait, :delegate, :hold, :finish, :shell, :guarded, :workflow, :ask])]}},
-      {1, {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access))]}},
+      {1, {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access)), false]}},
       {1, {:call, __MODULE__, :release, []}},
       {1, {:call, __MODULE__, :host_exit, []}}
     ]
@@ -202,11 +204,24 @@ defmodule HalC2.MuseRuntimePropTest do
             []
 
           kind when kind in [:wait, :delegate, :hold, :finish] ->
-            [{3, {:call, __MODULE__, :steer, [msg]}}]
-
-          kind when kind in [:shell, :guarded, :workflow] ->
             [
-              {3, {:call, __MODULE__, :approve, [kind == :shell]}},
+              {3, {:call, __MODULE__, :steer, [msg]}},
+              {1,
+               {:call, __MODULE__, :set_mode, [oneof(~w(approval-required full-access)), false]}}
+            ]
+
+          # Full access answers the command's open prompt, so the turn runs to its end.
+          :shell ->
+            [
+              {3, {:call, __MODULE__, :approve, [true]}},
+              {3, {:call, __MODULE__, :decline, []}},
+              {1, {:call, __MODULE__, :set_mode, ["full-access", true]}},
+              {1, {:call, __MODULE__, :set_mode, ["approval-required", false]}}
+            ]
+
+          kind when kind in [:guarded, :workflow] ->
+            [
+              {3, {:call, __MODULE__, :approve, [false]}},
               {3, {:call, __MODULE__, :decline, []}}
             ]
 
@@ -220,8 +235,14 @@ defmodule HalC2.MuseRuntimePropTest do
     frequency(if(turn == nil, do: idle, else: busy))
   end
 
-  def precondition(%{turn: turn}, {:call, _, fun, _}) when fun in [:send, :release, :set_mode],
+  def precondition(%{turn: turn}, {:call, _, fun, _}) when fun in [:send, :release],
     do: turn == nil
+
+  # A running turn takes a new mode at once; `ends?` says full access answered its prompt.
+  def precondition(%{turn: turn}, {:call, _, :set_mode, [mode, ends?]}),
+    do:
+      (turn == nil or turn.kind in [:wait, :delegate, :hold, :finish, :shell]) and
+        ends? == (match?(%{kind: :shell}, turn) and mode == "full-access")
 
   def precondition(%{turn: turn}, {:call, _, :steer, _}),
     do: match?(%{kind: k} when k in [:wait, :delegate, :hold, :finish], turn)
@@ -289,7 +310,11 @@ defmodule HalC2.MuseRuntimePropTest do
   def next_state(state, _result, {:call, _, :interrupt, _}), do: end_turn(state, "interrupted")
   def next_state(state, _result, {:call, _, :crash, _}), do: end_turn(state, "failed")
   def next_state(state, _result, {:call, _, :release, _}), do: state
-  def next_state(state, _result, {:call, _, :set_mode, [mode]}), do: %{state | mode: mode}
+
+  def next_state(state, _result, {:call, _, :set_mode, [mode, true]}),
+    do: end_turn(%{state | mode: mode}, "completed")
+
+  def next_state(state, _result, {:call, _, :set_mode, [mode, false]}), do: %{state | mode: mode}
 
   def next_state(%{turn: nil} = state, _result, {:call, _, :host_exit, _}), do: state
   def next_state(state, _result, {:call, _, :host_exit, _}), do: end_turn(state, "failed")
@@ -359,8 +384,9 @@ defmodule HalC2.MuseRuntimePropTest do
     reply(result, if(ends?, do: [run_of(msg)], else: []))
   end
 
-  def set_mode(mode) do
+  def set_mode(mode, ends?) do
     Process.put(:mode, mode)
+    ending = if ends?, do: active_runs(), else: []
 
     Orchestration.dispatch(%{
       "type" => "thread.runtime-mode.set",
@@ -368,7 +394,7 @@ defmodule HalC2.MuseRuntimePropTest do
       "threadId" => @tid,
       "runtimeMode" => mode
     })
-    |> reply([])
+    |> reply(ending)
   end
 
   def steer(msg) do

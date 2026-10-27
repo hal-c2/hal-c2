@@ -11,6 +11,13 @@ defmodule HalC2.PullRequests.Discovery do
   get a few sweeps to. Only GitHub checkouts are asked, through `gh`. A branch's
   answer is believed for a minute while its pull request is open and five otherwise,
   and failures back off. `sweep/0` runs a sweep now and returns when it is done.
+
+  A thread in its own worktree whose branch shows no open pull request may have pushed
+  its commit under another name (`git push origin HEAD:fix/x`). The open pull requests
+  whose head is the worktree's commit are asked for the same way, and linked as ones the
+  thread created (`HalC2.PullRequests.Opened`), not as its branch pull request: a
+  worktree split into several pull requests keeps each, and one the user unlinked stays
+  unlinked.
   """
 
   use GenServer
@@ -19,7 +26,7 @@ defmodule HalC2.PullRequests.Discovery do
 
   alias HalC2.Orchestration
   alias HalC2.Projection.PullRequests, as: Links
-  alias HalC2.PullRequests.GitHub
+  alias HalC2.PullRequests.{GitHub, Opened}
 
   @interval 60_000
   @backfill_attempts 5
@@ -173,35 +180,46 @@ defmodule HalC2.PullRequests.Discovery do
         end
       end)
 
-    # A fresh answer replaces a cached one, but a failing branch keeps backing off.
     wanted =
       for %{group: [%{"branch" => branch} | _]} = p <- placed,
           branch != nil,
-          (case state.lookups[{p.cwd, branch}] do
-             nil -> true
-             %{answer: :error} = failed -> failed.expires <= now
-             _ -> p.fresh?
-           end),
+          wanted?(state.lookups[{p.cwd, branch}], p.fresh?, now),
           uniq: true,
           do: {p.cwd, branch}
 
-    state = fetch(state, wanted)
+    state = fetch(state, wanted, &GitHub.branch_pull_request/2)
 
     placed =
       Enum.map(placed, fn p ->
         fetched? = {p.cwd, hd(p.group)["branch"]} in wanted
-        Map.merge(p, %{detected: detected(state, p), fetched?: fetched?})
+        p = Map.merge(p, %{detected: detected(state, p), fetched?: fetched?})
+        Map.put(p, :head, head(p))
       end)
 
+    heads =
+      for %{head: {:head, _} = head} = p <- placed,
+          wanted?(state.lookups[{p.cwd, head}], p.fresh?, now),
+          uniq: true,
+          do: {p.cwd, head}
+
+    state = fetch(state, heads, fn cwd, {:head, sha} -> GitHub.head_pull_requests(cwd, sha) end)
     summaries = previous_summaries(placed)
-    Enum.reduce(placed, state, &plan(&1, &2, summaries))
+    state = Enum.reduce(placed, state, &plan(&1, &2, summaries))
+    Enum.each(placed, &link_heads(state, &1))
+    state
   end
 
-  # Asks `gh` about each wanted branch, a few at a time, and remembers the answers.
-  defp fetch(state, wanted) do
+  # A fresh answer replaces a cached one, but a failing look-up keeps backing off.
+  defp wanted?(nil, _fresh?, _now), do: true
+  defp wanted?(%{answer: :error} = failed, _fresh?, now), do: failed.expires <= now
+  defp wanted?(_cached, fresh?, _now), do: fresh?
+
+  # Asks `gh` about each wanted branch or commit, a few at a time, and remembers the
+  # answers.
+  defp fetch(state, wanted, lookup) do
     wanted
     |> Task.async_stream(
-      fn {cwd, branch} -> {{cwd, branch}, GitHub.branch_pull_request(cwd, branch)} end,
+      fn {cwd, key} -> {{cwd, key}, lookup.(cwd, key)} end,
       max_concurrency: 8,
       timeout: :infinity
     )
@@ -210,9 +228,9 @@ defmodule HalC2.PullRequests.Discovery do
 
       entry =
         case answer do
-          {:ok, pr} ->
-            ttl = if pr && pr["state"] == "open", do: @open_ttl, else: @quiet_ttl
-            %{answer: pr, failures: 0, expires: now + ttl}
+          {:ok, found} ->
+            ttl = if open?(found), do: @open_ttl, else: @quiet_ttl
+            %{answer: found, failures: 0, expires: now + ttl}
 
           {:error, _} ->
             failures = ((state.lookups[key] || %{})[:failures] || 0) + 1
@@ -224,6 +242,59 @@ defmodule HalC2.PullRequests.Discovery do
     end)
   end
 
+  defp open?(%{"state" => "open"}), do: true
+  defp open?([_ | _]), do: true
+  defp open?(_found), do: false
+
+  # `{:head, sha}` of the thread's own worktree when its branch shows no open pull
+  # request and HEAD is a commit made in that worktree, else nil. Threads in the project
+  # folder share its checkout, so its commit says nothing about them; nor does a commit
+  # the worktree only moved onto (where it started, a fast-forward, a reset), which is
+  # someone else's, such as a stacked worktree's parent pull request. HEAD's reflog
+  # tells them apart: a commit made here has an entry that created it.
+  defp head(%{group: [%{"worktreePath" => worktree} | _], detected: {:ok, found}} = p)
+       when is_binary(worktree) do
+    with false <- open?(found),
+         true <- p.cwd == worktree and worktree != p.project["workspaceRoot"],
+         %{kind: "github"} <- p.remote,
+         {:ok, log} <- HalC2.Git.ok(worktree, ["reflog", "show", "--format=%H %gs", "HEAD", "--"]),
+         [<<sha::binary-size(40), _::binary>> | _] = moves <- String.split(log, "\n", trim: true),
+         true <- Enum.any?(moves, &made?(&1, sha)),
+         do: {:head, sha},
+         else: (_ -> nil)
+  end
+
+  defp head(_p), do: nil
+
+  # A reflog entry that created commit `sha`: a commit, a cherry-pick or revert, a
+  # rebase replaying it, or a merge that made a merge commit.
+  @made ~r/^(?:commit|cherry-pick|revert)\b|\((?:pick|reword|edit|squash|fixup|continue)\):|: Merge made by /
+  defp made?(<<sha::binary-size(40), " ", subject::binary>>, sha),
+    do: Regex.match?(@made, subject)
+
+  defp made?(_entry, _sha), do: false
+
+  # Links the open pull requests headed by the worktree's commit to each thread in it.
+  defp link_heads(state, %{head: {:head, _} = head} = p) do
+    with %{answer: [_ | _] = prs} <- state.lookups[{p.cwd, head}],
+         [_ | _] = urls <- for(pr <- prs, own?(p, pr["url"]), do: pr["url"]) do
+      Enum.each(p.group, &Opened.link(&1["id"], urls, &1))
+    end
+  end
+
+  defp link_heads(_state, _p), do: :ok
+
+  # Whether `url` is a pull request of the project's own repository.
+  defp own?(p, url) do
+    case Links.parse_change_request_url(url) do
+      nil ->
+        false
+
+      parsed ->
+        parsed.host == p.remote.host and parsed.repository == String.downcase(p.remote.repository)
+    end
+  end
+
   # `{:ok, pull request or nil}` when the branch's answer belongs to the project's own
   # repository, `:mismatch` when it does not, `:error` when there is none. A default
   # branch counts only while its pull request is open: merged ones there are reverse
@@ -233,11 +304,8 @@ defmodule HalC2.PullRequests.Discovery do
   defp detected(state, %{group: [%{"branch" => branch} | _]} = p) do
     case state.lookups[{p.cwd, branch}] do
       %{answer: %{} = pr} ->
-        parsed = Links.parse_change_request_url(pr["url"])
-
         cond do
-          parsed == nil or parsed.host != p.remote.host or
-              parsed.repository != String.downcase(p.remote.repository) ->
+          not own?(p, pr["url"]) ->
             :mismatch
 
           pr["state"] != "open" and default_branch?(p.cwd, branch) ->

@@ -206,6 +206,46 @@ defmodule HalC2.McpTest do
     assert text =~ "parent_not_active"
   end
 
+  # Two delegate_task calls with one request key, the second let through while
+  # the first is held just before recording its task: the claim in the record's
+  # transaction is what keeps it to one task and one child.
+  test "two delegations with one request key racing start one task" do
+    {caller, tool} = caller("wait for it")
+    test_pid = self()
+    Application.put_env(:hal_c2, :delegation_hook, {__MODULE__, :starting_gate, [test_pid]})
+    on_exit(fn -> Application.delete_env(:hal_c2, :delegation_hook) end)
+
+    args = %{"task" => "hello", "mode" => "async", "clientRequestId" => "race-1"}
+    first = Task.async(fn -> tool.("delegate_task", args) end)
+    assert_receive {:starting, first_pid}, 5_000
+    second = Task.async(fn -> tool.("delegate_task", args) end)
+    assert_receive {:starting, second_pid}, 5_000
+    send(first_pid, :go)
+    send(second_pid, :go)
+
+    assert {:ok, %{"taskId" => task_id, "childThreadId" => child_id}} =
+             Task.await(first, 10_000)
+
+    assert {:ok, %{"taskId" => ^task_id, "childThreadId" => ^child_id}} =
+             Task.await(second, 10_000)
+
+    assert [%{"id" => ^task_id, "childThreadId" => ^child_id}] =
+             StreamState.list(current(caller), "subagent")
+  end
+
+  @doc false
+  def starting_gate(test_pid, :starting, _id) do
+    send(test_pid, {:starting, self()})
+
+    receive do
+      :go -> :ok
+    after
+      10_000 -> :ok
+    end
+  end
+
+  def starting_gate(_test_pid, _stage, _id), do: :ok
+
   # --- helpers ----------------------------------------------------------------------------
 
   # A running thread of the project and a function calling tools as its agent.

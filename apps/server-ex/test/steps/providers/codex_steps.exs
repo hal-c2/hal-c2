@@ -952,6 +952,76 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  step "Codex is started with its subagent features left on", context do
+    refute get_in(codex_thread_config(context), ["features"])
+    context
+  end
+
+  step "Codex is started with its subagent features turned off", context do
+    assert get_in(codex_thread_config(context), ["features"]) ==
+             %{"multi_agent" => false, "multi_agent_v2" => false}
+
+    context
+  end
+
+  step "Codex is told to delegate with {string}", %{args: [tool]} = context do
+    start =
+      World.await_provider_log(context, "codex", &(get_in(&1, ["in", "method"]) == "turn/start"))
+
+    assert get_in(start, [
+             "in",
+             "params",
+             "collaborationMode",
+             "settings",
+             "developer_instructions"
+           ]) =~
+             "Delegate child work with `#{tool}`"
+
+    context
+  end
+
+  step "the user sends another message to the Codex thread", context do
+    {{:ok, _}, context} = World.send_message(context, @thread, "again")
+    World.await_runs(context, @thread, ["completed", "completed"])
+    context
+  end
+
+  step "every Codex turn of the thread is told to delegate with {string}",
+       %{args: [tool]} = context do
+    starts =
+      context
+      |> World.provider_log("codex")
+      |> Enum.filter(&(get_in(&1, ["in", "method"]) == "turn/start"))
+
+    assert length(starts) == 2
+
+    for start <- starts,
+        do:
+          assert(
+            get_in(start, [
+              "in",
+              "params",
+              "collaborationMode",
+              "settings",
+              "developer_instructions"
+            ]) =~
+              "Delegate child work with `#{tool}`"
+          )
+
+    context
+  end
+
+  defp codex_thread_config(context) do
+    start =
+      World.await_provider_log(
+        context,
+        "codex",
+        &(get_in(&1, ["in", "method"]) == "thread/start")
+      )
+
+    get_in(start, ["in", "params", "config"]) || %{}
+  end
+
   step "a Codex thread with three turns", context do
     context
     |> World.fake_providers()

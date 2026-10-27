@@ -316,7 +316,73 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
     context
   end
 
+  # The fake Codex reports `command` as a finished command item that printed the pull
+  # request's address on a line of its own, as `gh pr create` does.
+  step "the agent in {string} runs {string} and it prints pull request {int}",
+       %{args: [title, command, number]} = context do
+    url = "https://github.com/acme/shop/pull/#{number}"
+    output = "\nCreating pull request for feature/tax into main in acme/shop\n\n#{url}\n"
+    run = JSON.encode!(%{"command" => command, "output" => output})
+
+    context
+    |> thread(title)
+    |> World.run_turn(title, "run command #{run}")
+    |> Map.merge(%{expected_source: "created", command: command})
+  end
+
+  step "{string} still has no linked pull request", %{args: [title]} = context do
+    items = HalC2.StreamState.list(World.state(context, title), "turn-item")
+    assert Enum.any?(items, &(&1["input"] == context.command and &1["output"] =~ "/pull/"))
+    assert (World.thread(context, title)["pullRequests"] || []) == []
+    context
+  end
+
   # --- discovery -----------------------------------------------------------------------
+
+  step "{string} works in a worktree of its own on the branch {string}",
+       %{args: [title, branch]} = context do
+    context
+    |> World.worktree_thread(title, @repository, %{"branch" => branch})
+    |> Map.put(:branch, branch)
+  end
+
+  step "its own commit was pushed as the open pull request {int} from the branch {string}",
+       %{args: [number, head_branch]} = context do
+    World.commit!(context.worktree.path, %{"tax.txt" => "10%\n"}, "Charge tax")
+    head_answer(context, number, head_branch)
+  end
+
+  step "the commit it started from heads the open pull request {int} from the branch {string}",
+       %{args: [number, head_branch]} = context do
+    head_answer(context, number, head_branch)
+  end
+
+  step "it fast-forwarded to a newer commit that heads the open pull request {int} from the branch {string}",
+       %{args: [number, head_branch]} = context do
+    path = context.worktree.path
+    newer = World.git!(path, ["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "Parent work"])
+    World.git!(path, ~w(merge --ff-only #{newer}))
+    head_answer(context, number, head_branch)
+  end
+
+  step "the thread's pull requests are looked for", context do
+    context = discovery(context)
+    :ok = HalC2.PullRequests.Discovery.sweep()
+    assert World.cli_calls(context, "--head #{context.branch}") != []
+    context
+  end
+
+  step "{string} links no pull request and its commit is not asked about",
+       %{args: [title]} = context do
+    assert (World.thread(context, title)["pullRequests"] || []) == []
+    assert World.cli_calls(context, "/pulls") == []
+    context
+  end
+
+  step "{string} shows no pull request as its branch's", %{args: [title]} = context do
+    assert World.thread(context, title)["branchPullRequest"] == nil
+    context
+  end
 
   step "{string} is on the branch {string} with no linked pull request",
        %{args: [title, branch]} = context do
@@ -570,6 +636,29 @@ defmodule HalC2.Steps.SourceControl.PullRequestThreads do
         }
       ]
     })
+  end
+
+  # `gh pr list --head` finds nothing for the thread's branch; GitHub's pull requests of
+  # the worktree's commit name the open pull request `number` from `head_branch`.
+  defp head_answer(context, number, head_branch) do
+    sha = World.git!(context.worktree.path, ~w(rev-parse HEAD))
+
+    context
+    |> World.cli_rules([
+      %{"args" => ["pr list", "--head #{context.branch}"], "stdout" => []},
+      %{
+        "args" => ["commits/#{sha}/pulls"],
+        "stdout" => [
+          %{
+            "number" => number,
+            "html_url" => "https://github.com/acme/shop/pull/#{number}",
+            "state" => "open",
+            "head" => %{"sha" => sha, "ref" => head_branch}
+          }
+        ]
+      }
+    ])
+    |> Map.put(:expected_source, "created")
   end
 
   defp thread(context, title) do

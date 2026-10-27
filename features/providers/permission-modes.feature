@@ -201,6 +201,8 @@ Feature: Permission modes
     When the user opens the permission mode choices
     Then auto is not offered
 
+  # A provider that can change a running turn's access takes it at once instead; Muse
+  # Code does (providers/muse.feature).
   @tui
   Scenario: Changing the mode mid-thread applies from the next turn
     Given a supervised thread with a running turn
@@ -214,8 +216,11 @@ Feature: Permission modes
     When the user switches the thread to supervised
     Then the next turn asks before commands and file changes
 
+  # The thread takes it at once, not with the next message: a turn waiting on
+  # approvals blocks the composer, and the provider may apply it to that turn.
   @desktop @mobile @backlog-mobile
   Scenario: The permission mode can be changed from the desktop and mobile composers
     Given a supervised thread
     When the user switches the thread to auto-accept edits on desktop or mobile
-    Then the next turn runs in auto-accept edits
+    Then the thread is in auto-accept edits at once
+    And the next turn runs in auto-accept edits

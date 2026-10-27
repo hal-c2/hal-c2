@@ -20,7 +20,7 @@ The values are upstream's, and we owe T3 Code and its maintainers the product th
 
 - **Open.** The code and the reasoning are public.
 - **Performance.** Audit for regressions: too much data over websockets, CSS animations spiking the GPU, lists that are hard to render. Every change considers its performance cost.
-- **Remote ready.** The websocket layer (the MC) is what makes LAN, Tailscale, and HAL-C2 Connect (a self-hosted relay, also in this repo) work. New features must work over all of them.
+- **Remote ready.** The websocket layer (the MC) is what makes LAN and Tailscale work. New features must work over all of them.
 - **Multi-surface.** Desktop (Qt), mobile (QML), and the TUI, all against the MC. Features reach every surface where reasonable.
 - **Small systems.** Do not preserve complexity because it exists, and do not add machinery because it looks impressive. Understand the real constraint, then build the smallest model that makes the correct behavior unsurprising. Measure twice, cut once, and yagni. Honor the developer's intent minimally and realistically.
 
@@ -58,7 +58,7 @@ The most common defect in this repo is a change that works on the path you teste
 - **Providers.** Codex, Claude, Cursor, Grok, OpenCode, and Antigravity each have an adapter. Provider-shaped features need a decision per adapter, even if the decision is "not supported here".
 - **Contracts.** Anything crossing the wire is typed in `packages/contracts`; the MC and the QML clients follow the same RPC names (see `features/parity/`).
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
-- **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.
+- **Connection modes.** Local, LAN, and Tailscale behave differently. Multi-device and multi-environment cases are real.
 - **Docs.** Check whether the change makes existing guidance inaccurate. Apply the [documentation rules](#documentation) before adding anything.
 
 ## Dev servers
@@ -138,12 +138,11 @@ Full glossary with file links: `docs/internals/glossary.md`
 
 - `apps/server-ex` - the MC (Elixir/OTP): run and test with `mise exec -- mix ...`; read its README first.
 - `apps/desktop-qt` - the Qt/QML desktop. `apps/mobile-qt` - the QML mobile client, the desktop's C++ and bricks with a phone layout; read `docs/internals/mobile-qt.md` first. `apps/tui` - the QML TUI on opentui-qml; its scenarios run with `TUI_FEATURES="<globs>.feature" bun test ./features/runner.ts`.
-- `apps/marketing` is the site. `infra/relay` is the HAL-C2 Connect relay. `plugins/` holds the plugins. `native/` holds native helpers such as the SnapShot capture helpers and libghostty-vt.
+- `apps/marketing` is the site. `plugins/` holds the plugins. `native/` holds native helpers such as the SnapShot capture helpers and libghostty-vt.
 - `features/` - the Gherkin behaviour ledger; see `features/README.md`.
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
 - `packages/client-runtime` - client protocol and state code the TUI uses; the Qt clients' C++ mirrors parts of it.
-- `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency.
 
 ## Taste
 

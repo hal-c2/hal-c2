@@ -276,9 +276,8 @@ const CONNECTED_STATE: SupervisorConnectionState = {
 /**
  * A minimal {@link EnvironmentSupervisor} for the TUI. It maintains a single
  * connection to the MC, re-minting a fresh websocket URL on every (re)connect
- * attempt via the host-provided `mintSocketUrl`. We reuse the heavy
- * `client-runtime` RPC client + reducers but skip its multi-environment relay
- * machinery, which the TUI does not need.
+ * attempt via the host-provided `mintSocketUrl`, and drives the
+ * `client-runtime` RPC client and reducers.
  */
 export const makeTuiSupervisor = (options: Omit<TuiOptions, "logPath">) =>
   Effect.gen(function* () {

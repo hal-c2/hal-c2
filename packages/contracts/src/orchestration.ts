@@ -266,6 +266,13 @@ export const ThreadPullRequestLinkSource = Schema.Literals([
 ]);
 export type ThreadPullRequestLinkSource = typeof ThreadPullRequestLinkSource.Type;
 
+const ThreadPullRequestActivity = Schema.Struct({
+  at: IsoDateTime,
+  author: Schema.String,
+  kind: Schema.Literals(["review", "comment"]),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
 /**
  * Host state persisted on a link by the sync reactor; null until first sync. The overview
  * fields are optional: a host whose cheap read lacks them leaves them out, and snapshots
@@ -288,6 +295,11 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
   reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
   mergeability: Schema.optional(PullRequestMergeability),
+  // The newest published review or comment from a trusted author; null when there is none.
+  activity: Schema.optional(Schema.NullOr(ThreadPullRequestActivity)),
+  // The newest by the account the MC reads the host as, kept apart because it may be the
+  // agent's own.
+  ownActivity: Schema.optional(Schema.NullOr(ThreadPullRequestActivity)),
 });
 export type ThreadPullRequestSnapshot = typeof ThreadPullRequestSnapshot.Type;
 
@@ -325,6 +337,17 @@ export const ThreadPullRequestLink = Schema.Struct({
   linkedAt: IsoDateTime,
   snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
   stack: Schema.NullOr(ThreadPullRequestStack),
+  // What the thread's agent was last told of the pull request, so the MC wakes it only
+  // for news (HalC2.PullRequests.Wakes). Absent until the first snapshot.
+  heard: Schema.optional(
+    Schema.Struct({
+      state: Schema.optional(PullRequestState),
+      checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
+      mergeability: Schema.optional(Schema.NullOr(PullRequestMergeability)),
+      checksFailed: Schema.optional(Schema.Boolean),
+      activityAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+    }),
+  ),
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
 

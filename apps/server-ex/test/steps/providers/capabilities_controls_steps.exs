@@ -358,7 +358,10 @@ defmodule HalC2.Steps.Providers.CapabilitiesControls do
     assert run["status"] == "completed"
 
     assert [item] = for(i <- StreamState.list(state, "turn-item"), i["type"] == "subagent", do: i)
-    assert %{"runId" => run_id, "status" => "completed"} = item
+    # An Antigravity batch goes idle when its turn completes (its own ledger);
+    # other providers' subagents complete with it.
+    assert %{"runId" => run_id, "status" => status} = item
+    assert status in ["completed", "idle"]
     assert run_id == run["id"]
     assert inspect(item) =~ "provider_native"
     assert inspect(item) =~ context.subagent_expected.prompt

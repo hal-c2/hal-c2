@@ -20,9 +20,17 @@ defmodule HalC2.Mcp do
 
   use GenServer
 
+  @workers_only "\n\nThe user keeps agents to HAL-C2's workers: do not use this provider's built-in subagents. Delegate child work with `delegate_task`, so the user can see it.\n"
+
   @table __MODULE__.Credentials
   @protocol "2025-06-18"
   @liveness_ms 24 * 60 * 60 * 1_000
+
+  # Why `delegate_task` refuses a native subagent: a task's result comes back as a
+  # message to its owner's thread, which wakes that thread's agent, never a subagent.
+  @subagent_delegation "A native subagent can't own HAL-C2 workers: nothing can wake it " <>
+                         "when they finish. Work that fans out must itself be started " <>
+                         "with delegate_task."
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -67,8 +75,51 @@ defmodule HalC2.Mcp do
     if Process.whereis(__MODULE__) && allowed, do: server(thread_id, instance)
   end
 
-  @doc "What agents are told about the tools, for their system or developer prompt."
-  def instructions do
+  @doc """
+  How long a provider's MCP client waits on one tool call, in milliseconds: past the
+  longest wait an HAL-C2 tool accepts (an hour), so a wait ends with its own result
+  instead of the client's 60-second default.
+  """
+  def tool_timeout_ms, do: 3_900_000
+
+  @doc """
+  The longest a waiting tool (`hal_c2_thread_wait`, `delegate_task` in wait mode) may
+  block for a caller on provider `instance`. Claude and Codex are given `tool_timeout_ms/0`;
+  the other providers take their MCP servers over ACP, which has no field for a tool
+  timeout, so they keep their client's 60 s default and a wait is clamped under it
+  (`:acp_max_wait_ms`, which tests shorten).
+  """
+  def max_wait_ms(instance) do
+    driver =
+      Enum.find_value(
+        HalC2.Environment.providers(),
+        &(&1["instanceId"] == instance && &1["driver"])
+      )
+
+    if driver in ["claudeAgent", "codex"],
+      do: 3_600_000,
+      else: Application.get_env(:hal_c2, :acp_max_wait_ms, 55_000)
+  end
+
+  @doc """
+  Whether an agent session given `mcp` (`for_agent/2`) is kept to HAL-C2's workers: the
+  user chose so (`nativeSubagents`) and the agent has the tools to delegate with. An
+  adapter reads it once per session, for both the provider tool it takes away and
+  `instructions/1`, so the two cannot disagree.
+  """
+  def workers_only?(nil), do: false
+
+  def workers_only?(_mcp),
+    do: Process.whereis(HalC2.Settings) != nil and HalC2.Settings.hal_c2_subagents?()
+
+  @doc """
+  What agents are told about the tools, for their system or developer prompt. For a
+  session kept to HAL-C2's workers (`workers_only?/1`) it ends by saying so.
+  """
+  def instructions(workers_only \\ false)
+  def instructions(true), do: instructions(false) <> @workers_only
+
+  def instructions(false) do
     case :persistent_term.get({__MODULE__, :instructions}, nil) do
       nil ->
         text = File.read!(Application.app_dir(:hal_c2, "priv/mcp_instructions.md"))
@@ -145,7 +196,8 @@ defmodule HalC2.Mcp do
 
       "tools/call" ->
         %{"name" => name} = params = request["params"] || %{}
-        {200, result(id, call(name, params["arguments"] || %{}, caller))}
+        tool_use = get_in(params, ["_meta", "claudecode/toolUseId"])
+        {200, result(id, call(name, params["arguments"] || %{}, caller, tool_use))}
 
       _ ->
         {200, rpc_error(id, -32601, "Method not found: #{method}")}
@@ -160,13 +212,20 @@ defmodule HalC2.Mcp do
   end
 
   # A tool's answer as MCP content; a failure is an error result the agent can read.
-  defp call(name, arguments, caller) do
+  # `tool_use` is the provider's id for the call, which Claude sends.
+  defp call(name, arguments, caller, tool_use) do
     answer =
-      if Enum.any?(HalC2.Mcp.Tools.list(), &(&1["name"] == name)),
-        do: HalC2.Mcp.Tools.call(name, arguments, caller),
-        else:
+      cond do
+        name == "delegate_task" and native_subagent?(caller, tool_use) ->
+          {:error, "capability_denied", @subagent_delegation}
+
+        Enum.any?(HalC2.Mcp.Tools.list(), &(&1["name"] == name)) ->
+          HalC2.Mcp.Tools.call(name, arguments, caller)
+
+        true ->
           HalC2.Plugins.call_tool(name, arguments, caller.thread_id) ||
             HalC2.Mcp.Tools.call(name, arguments, caller)
+      end
 
     case answer do
       {:ok, value} ->
@@ -184,6 +243,13 @@ defmodule HalC2.Mcp do
         %{"content" => [%{"type" => "text", "text" => JSON.encode!(failure)}], "isError" => true}
     end
   end
+
+  # A Claude subagent shares its thread's credential, so its calls arrive as the
+  # thread's; Claude names the tool call, which the runtime knows as the subagent's.
+  defp native_subagent?(_caller, nil), do: false
+
+  defp native_subagent?(%{thread_id: thread_id}, tool_use),
+    do: HalC2.Claude.ThreadRuntime.subagent_tool?(thread_id, tool_use)
 
   defp result(id, result), do: %{"jsonrpc" => "2.0", "id" => id, "result" => result}
 

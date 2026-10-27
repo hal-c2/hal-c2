@@ -244,7 +244,6 @@ defmodule HalC2.Rpc do
   def handle("terminal.restart", input), do: HalC2.Terminal.restart(input)
   def handle("terminal.close", input), do: HalC2.Terminal.close(input)
   def handle("terminal.list", input), do: HalC2.Terminal.list(input)
-  def handle("cloud.getRelayClientStatus", _), do: {:ok, HalC2.Connect.RelayClient.resolve()}
   # This machine's cluster (`HalC2.Cluster`); a client joins it to another with an invite.
   def handle("cluster.status", _input), do: {:ok, HalC2.Cluster.status()}
   def handle("cluster.invite", input), do: cluster(HalC2.Cluster.invite(input || %{}))
@@ -374,8 +373,6 @@ defmodule HalC2.Rpc do
       when m in ~w(createPairingLink revokePairingLink revokeClient revokeOtherClients),
       do: "access:write"
 
-  def required_scope("cloud.getRelayClientStatus"), do: "relay:read"
-  def required_scope("cloud." <> _), do: "relay:write"
   def required_scope("cluster.status"), do: "access:read"
   def required_scope("cluster." <> _), do: "access:write"
 

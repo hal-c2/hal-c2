@@ -11,10 +11,6 @@ may differ from the device running the app.
 
 You can add more computers before continuing:
 
-- **HAL-C2 Connect** connects computers that are signed in to your account.
-  Run `mix hal_c2.connect` on each computer you want to add (see
-  [HAL-C2 Connect](./remote-access.md#hal-c2-connect)), and keep its MC running so the computer
-  stays available.
 - **Add a computer** connects directly to an MC on your network or tailnet.
   Run `pair --tailscale` on that computer (`./hal-c2-mc-<version>-<platform> pair --tailscale`
   with the [installed MC file](./install.md#command-line), `mix hal_c2.pair --tailscale` from a
@@ -22,8 +18,7 @@ You can add more computers before continuing:
   For a LAN address, start the MC with `HAL_C2_MC_HOST=<address>` and run
   `pair http://<address>:<port>` the same way.
 
-Saved computers and computers discovered through HAL-C2 Connect are selected by
-default. Uncheck any you do not want to set up; this does not disconnect them.
+Saved computers and computers in your cluster are selected by default. Uncheck any you do not want to set up; this does not disconnect them.
 Continue when your selected computers are connected. Setup checks
 agents across the selected computers, then offers project import grouped by computer.
 
