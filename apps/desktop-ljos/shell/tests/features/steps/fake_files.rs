@@ -8,13 +8,12 @@
 //! steps of its own.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::io::{Read, Write};
-use std::net::Shutdown;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use fancy_regex::{Regex, RegexBuilder};
 use serde_json::{Value, json};
 
-use crate::fake_mc::{FakeMc, Rpc};
+use crate::fake_mc::{Download, FakeMc, Rpc};
 use crate::harness::Steps;
 
 pub struct FakeFiles {
@@ -27,12 +26,8 @@ pub struct FakeFiles {
     pub fail_once: HashSet<String>,
     pub cannot_list: bool,
     pub read_fails_once: HashSet<String>,
-    /// Files whose next download from their signed address fails.
-    pub load_fails_once: HashSet<String>,
-    /// The file each signed address serves, by its token; the paths
-    /// downloaded.
-    pub signed_files: HashMap<String, String>,
-    pub downloaded: Vec<String>,
+    /// What the signed addresses serve ([`FakeFiles::downloads`]).
+    downloads: Arc<Mutex<Downloads>>,
     /// The name searches (projects.searchEntries) the MC has received.
     pub searches: usize,
     /// A file larger than the MC reads whole, by its full size in bytes.
@@ -52,14 +47,31 @@ impl Default for FakeFiles {
             fail_once: HashSet::new(),
             cannot_list: false,
             read_fails_once: HashSet::new(),
-            load_fails_once: HashSet::new(),
-            signed_files: HashMap::new(),
-            downloaded: Vec::new(),
+            downloads: Arc::default(),
             searches: 0,
             truncated: HashMap::new(),
             home: "/home/sam".into(),
             folders: BTreeSet::new(),
         }
+    }
+}
+
+/// The files the signed addresses serve, shared with the fake MC's I/O
+/// thread, which answers their downloads.
+#[derive(Default)]
+pub struct Downloads {
+    /// Files whose next download fails.
+    pub load_fails_once: HashSet<String>,
+    /// The file each signed address serves, by its token: its path and its
+    /// bytes when signed.
+    signed: HashMap<String, (String, Vec<u8>)>,
+    /// The paths downloaded.
+    pub downloaded: Vec<String>,
+}
+
+impl FakeFiles {
+    pub fn downloads(&self) -> MutexGuard<'_, Downloads> {
+        self.downloads.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -90,8 +102,20 @@ pub fn sign_file(mc: &mut FakeMc, rpc: &Rpc) -> bool {
         mc.refuse(rpc, "Workspace file was not found.");
         return true;
     }
-    let token = format!("file-{}", fake.signed_files.len() + 1);
-    fake.signed_files.insert(token.clone(), path.clone());
+    let body = if is_image(&path) {
+        png()
+    } else {
+        fake.files
+            .get(&path)
+            .or_else(|| fake.outside.get(&path))
+            .cloned()
+            .unwrap_or_default()
+            .into_bytes()
+    };
+    let mut downloads = fake.downloads();
+    let token = format!("file-{}", downloads.signed.len() + 1);
+    downloads.signed.insert(token.clone(), (path.clone(), body));
+    drop(downloads);
     let name = path.rsplit('/').next().unwrap_or_default();
     let now = chrono::Utc::now().timestamp_millis();
     mc.reply(
@@ -110,6 +134,14 @@ fn png() -> Vec<u8> {
         image::ImageFormat::Png,
     );
     bytes
+}
+
+fn not_found() -> Download {
+    Download {
+        status: 404,
+        content_type: "text/plain",
+        body: Vec::new(),
+    }
 }
 
 fn entry(fake: &FakeFiles, path: &str) -> Value {
@@ -134,53 +166,26 @@ fn utf16(line: &str, byte: usize) -> usize {
 
 fn extension(mc: &mut FakeMc) {
     // A signed file's bytes, or a 404 once when its download fails.
-    mc.on_raw("/api/assets/file-", |mc, mut stream, head| {
-        // The request is read, as it is not the MC's to keep.
-        let mut buffer = vec![0u8; head.len()];
-        let _ = stream.read(&mut buffer);
-        let token = head
-            .lines()
-            .next()
-            .and_then(|line| line.split(' ').nth(1))
-            .and_then(|target| target.split('/').nth(3))
-            .unwrap_or_default()
-            .to_owned();
-        let fake = fake_files(mc);
-        let path = fake.signed_files.get(&token).cloned().unwrap_or_default();
-        if path.is_empty() || fake.load_fails_once.remove(&path) {
-            let _ = stream.write_all(
-                b"HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
-            );
-        } else {
-            fake.downloaded.push(path.clone());
-            let image = is_image(&path);
-            let body = if image {
-                png()
-            } else {
-                fake.files
-                    .get(&path)
-                    .or_else(|| fake.outside.get(&path))
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_bytes()
-            };
-            let kind = if image {
+    let downloads = fake_files(mc).downloads.clone();
+    mc.on_download("/api/assets/file-", move |target| {
+        let token = target.split('/').nth(3).unwrap_or_default();
+        let mut downloads = downloads.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((path, body)) = downloads.signed.get(token).cloned() else {
+            return not_found();
+        };
+        if downloads.load_fails_once.remove(&path) {
+            return not_found();
+        }
+        downloads.downloaded.push(path.clone());
+        Download {
+            status: 200,
+            content_type: if is_image(&path) {
                 "image/png"
             } else {
                 "application/octet-stream"
-            };
-            let _ = stream.write_all(
-                format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
-                    body.len()
-                )
-                .as_bytes(),
-            );
-            let _ = stream.write_all(&body);
+            },
+            body,
         }
-        let _ = stream.flush();
-        let _ = stream.shutdown(Shutdown::Both);
-        Ok(())
     });
     mc.on_rpc("projects.listEntries", |mc, rpc| {
         let folder = rpc.payload["directoryPath"]
