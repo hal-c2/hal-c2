@@ -55,6 +55,10 @@ Rectangle {
         objectName: "threadDetailsRelation"
         Layout.fillWidth: true
         implicitHeight: 40
+        // No vertical padding: the two lines are taller than the style's
+        // padding leaves, so the row would hang them low instead of centring.
+        topPadding: 0
+        bottomPadding: 0
         hoverEnabled: true
         Accessible.name: modelData.relation + " " + modelData.title
         onClicked: Shell.dispatch("rightPanel.openThread", {
