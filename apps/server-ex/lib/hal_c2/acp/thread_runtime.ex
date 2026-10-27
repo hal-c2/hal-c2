@@ -3061,6 +3061,8 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp released(state) do
     Registry.update_value(@registry, state.thread_id, fn _ -> nil end)
     release_temp(state)
+    # The session's MCP-over-ACP connections end with it, not at the next launch.
+    state = close_mcp_bridge(state)
     %{state | temp_dir: nil}
   end
 
