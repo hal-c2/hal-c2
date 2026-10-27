@@ -9,10 +9,14 @@ defmodule HalC2.AntigravitySessionFilesTest do
     stale = Path.join(SessionFiles.temp_dir(profile), "run-stale")
     File.mkdir_p!(stale)
 
-    launched =
-      Task.async(fn -> SessionFiles.runtime_dir(profile) end) |> Task.await()
+    task = Task.async(fn -> SessionFiles.runtime_dir(profile) end)
+    assert {:ok, first} = Task.await(task)
 
-    assert {:ok, first} = launched
+    # The table belongs to the SessionFiles owner, never to the launcher:
+    # in this environment nothing has started it yet, so the launch did.
+    owner = Process.whereis(SessionFiles)
+    assert is_pid(owner) and owner != task.pid
+    assert :ets.info(:hal_c2_antigravity_live_temp, :owner) == owner
     assert File.dir?(first)
     refute File.exists?(stale)
 

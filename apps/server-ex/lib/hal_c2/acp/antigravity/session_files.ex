@@ -24,7 +24,14 @@ defmodule HalC2.Acp.Antigravity.SessionFiles do
   # dies with its owner, and the processes that launch runtimes are
   # short-lived. In the MC it runs under `HalC2.Supervisor`; anywhere else
   # the first use starts it, unlinked, so a launcher never owns the table.
-  def start_link(_opts), do: GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+  # An unsupervised instance started by `table/0` in the window after this
+  # process died is adopted, not fought over the name.
+  def start_link(_opts) do
+    case GenServer.start_link(__MODULE__, :ok, name: __MODULE__) do
+      {:error, {:already_started, pid}} -> {:ok, pid}
+      other -> other
+    end
+  end
 
   @impl true
   def init(:ok) do
