@@ -82,21 +82,18 @@ libc = "0.2"
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
-# The window's title bar and the Dock's icon (src/macos_window.rs), as Ljós's
-# host reaches AppKit.
+# The window's title bar (src/macos_window.rs), as Ljós's host reaches
+# AppKit.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6.5", default-features = false, features = ["std"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
-    "NSApplication",
     "NSButton",
     "NSControl",
-    "NSImage",
     "NSResponder",
     "NSView",
     "NSWindow",
 ] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSData"] }
 
 [dev-dependencies]
 # `testing`: a window without a platform, on a virtual clock, to show items

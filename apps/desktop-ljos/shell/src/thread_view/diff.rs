@@ -652,6 +652,18 @@ fn pair_lines(file: &mut File) {
     file.pairs = pairs;
 }
 
+/// What a row has for a role that is not its kind's: the role type's empty
+/// value, so a delegate's typed required property gets one.
+// TODO(ljos#143): undefined would do once it no longer stops the delegate.
+fn blank(role: &str) -> Value {
+    match role {
+        "file" | "additions" | "deletions" | "oldLine" | "newLine" => Value::Int(0),
+        "binary" | "expanded" => Value::Bool(false),
+        _ if ROLES.contains(&role) => Value::from(""),
+        _ => Value::Undefined,
+    }
+}
+
 impl RowSource for Diff {
     fn roles(&self) -> &'static [&'static str] {
         ROLES
@@ -683,7 +695,7 @@ impl RowSource for Diff {
                 "additions" => Value::Int(int(file.additions)),
                 "deletions" => Value::Int(int(file.deletions)),
                 "expanded" => Value::Bool(file.expanded),
-                _ => Value::Undefined,
+                _ => blank(role),
             };
         };
         let (left, right) = if self.split {
@@ -714,7 +726,7 @@ impl RowSource for Diff {
             "rightSign" if self.split && !hunk => text(sign_of(right)),
             "rightText" | "rightSign" => Value::from(""),
             "expanded" => Value::Bool(file.expanded),
-            _ => Value::Undefined,
+            _ => blank(role),
         }
     }
 

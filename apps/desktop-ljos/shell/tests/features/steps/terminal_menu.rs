@@ -192,8 +192,8 @@ fn point_on(world: &World, brick: &Brick, terminal: ObjectId, link: &str) -> Out
     ))
 }
 
-/// The shell prints a line with `link` in it and the user clicks the link.
-fn follow(world: &mut World, printed: &str, link: &str, modifiers: Modifiers) -> Outcome {
+/// The shell prints a line with `link` in it; where the link is drawn.
+fn show_link(world: &mut World, printed: &str, link: &str) -> Outcome<(f64, f64)> {
     let (brick, terminal) = drawn_terminal(world)?;
     let thread_id = shown_thread(world);
     print(
@@ -208,8 +208,27 @@ fn follow(world: &mut World, printed: &str, link: &str, modifiers: Modifiers) ->
         move |w| call(w, terminal, "text").contains(&wanted),
         move |_| format!("the terminal to draw \"{shown}\""),
     )?;
-    let (x, y) = point_on(world, &brick, terminal, link)?;
+    point_on(world, &brick, terminal, link)
+}
+
+/// The shell prints a line with `link` in it and the user clicks the link.
+fn follow(world: &mut World, printed: &str, link: &str, modifiers: Modifiers) -> Outcome {
+    let (x, y) = show_link(world, printed, link)?;
     world.click_at_with(x, y, MouseButtons::LEFT, modifiers)?;
+    world.sync()
+}
+
+/// A finger's tap at (x, y), as the window hands a touch screen's to the
+/// scene's handlers: a press and release of a `PointerDevice.TouchScreen`'s
+/// `PointerDevice.Finger`.
+fn tap_with_finger(world: &mut World, x: f64, y: f64) -> Outcome {
+    let finger = |mut event: PointerEvent| {
+        event.source.device = 0x2;
+        event.source.pointer = 0x2;
+        event
+    };
+    world.pointer(|now| finger(PointerEvent::press(x, y, now)))?;
+    world.pointer(|now| finger(PointerEvent::release(x, y, now)))?;
     world.sync()
 }
 
@@ -575,6 +594,14 @@ pub fn register(steps: &mut Steps) {
                 &c[0],
                 Modifiers::empty(),
             )
+        },
+    );
+    steps.step(
+        &format!("the user taps {Q} in the terminal on a touch screen"),
+        |world, c, _| {
+            let printed = format!("Server ready at {} (press h for help)", c[0]);
+            let (x, y) = show_link(world, &printed, &c[0])?;
+            tap_with_finger(world, x, y)
         },
     );
     steps.step("the address opens in the system browser", |world, _, _| {

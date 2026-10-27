@@ -222,8 +222,6 @@ fn main() -> ExitCode {
         App::new("HAL-C2")
             // The Wayland app id and X11 class by which docks find the
             // entry's icon and compositor rules find the window.
-            // TODO(ljos#129): the icon itself, for runs with no entry
-            // installed, and on X11, Windows and macOS's Dock.
             .desktop_file_name(APP_ID)
             .quit_on_last_window_closed(false)
             .register(hal_c2_shell::register)
@@ -656,6 +654,7 @@ fn run(app: App, options: Options) -> Result<(), String> {
                 }
             });
             hal_c2_shell::start(&engine, &options.launch, mc);
+            hal_c2_shell::platform_window::give_application_icon(&engine);
             // TODO(#569): desktop-qt's ShellWindows shows another window
             // for `window.new` and the "New window" command, and reopens the
             // saved ones, here:
