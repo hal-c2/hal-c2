@@ -41,20 +41,41 @@ defmodule HalC2.Rpc do
   end
 
   # One thread's entities at once, for a client that needs its projection without
-  # subscribing (a socket holds one subscription per stream).
-  def handle("hal-c2.threadRows", %{"threadId" => thread_id}) do
+  # subscribing (a socket holds one subscription per stream). With `"bounded"`,
+  # only its newest turns (`HalC2.Projection.History`) and the cursor for the
+  # pages before them; with `"cursor"`, that page.
+  def handle("hal-c2.threadRows", %{"threadId" => thread_id} = input) do
     state = HalC2.Streams.state(thread_id)
 
-    {:ok,
-     %{
-       "rows" =>
-         for(
-           {kind, id, entity} <- HalC2.StreamState.rows(state),
-           do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]
-         ),
-       "offset" => state.seq,
-       "at" => state.updated_at
-     }}
+    cond do
+      is_binary(input["cursor"]) ->
+        case HalC2.Projection.History.page_before(state, input["cursor"]) do
+          {:ok, page} ->
+            {:ok, history_reply(state, page)}
+
+          :invalid_cursor ->
+            {:error,
+             %{
+               "_tag" => "InvalidThreadHistoryCursorError",
+               "message" => "Invalid thread history cursor."
+             }}
+        end
+
+      input["bounded"] == true ->
+        {:ok, history_reply(state, HalC2.Projection.History.bounded(state))}
+
+      true ->
+        {:ok,
+         %{
+           "rows" =>
+             for(
+               {kind, id, entity} <- HalC2.StreamState.rows(state),
+               do: [kind, id, HalC2.Web.Wire.entity(kind, entity)]
+             ),
+           "offset" => state.seq,
+           "at" => state.updated_at
+         }}
+    end
   end
 
   # Moving a thread to another machine of the cluster (`HalC2.ThreadMove`), and finding
@@ -292,6 +313,17 @@ defmodule HalC2.Rpc do
     do: {:ok, %{"revokedCount" => HalC2.Auth.revoke_other_clients(session)}}
 
   def handle("hal-c2.revokeClient", _input, _session), do: {:error, "a sessionId is required"}
+
+  defp history_reply(state, page) do
+    %{
+      "rows" => page.rows,
+      "offset" => state.seq,
+      "at" => state.updated_at,
+      "historyCursor" => page.cursor,
+      "hasMoreHistory" => page.has_more,
+      "payloadBudgetExceeded" => page.over_budget
+    }
+  end
 
   defp cluster({:ok, _} = ok), do: ok
 

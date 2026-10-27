@@ -16,13 +16,14 @@ defmodule HalC2.Web.Wire do
   rules starts over.
   """
 
-  @version 2
+  @version 3
   @max_detail 32_768
   @cut_keys ~w(prompt progress result)
   @max_dynamic 16_384
   @dropped %{
     "command_execution" => ~w(output),
-    "file_change" => ~w(diffStr oldStr newStr)
+    "file_change" => ~w(diffStr oldStr newStr),
+    "handoff" => ~w(summary)
   }
 
   @doc "Changes whenever what `entity/2` or `patch/4` leave out does."
@@ -151,10 +152,12 @@ defmodule HalC2.Web.Wire do
   # --- turn items ----------------------------------------------------------------
 
   defp turn_item(%{"type" => "command_execution"} = item) do
-    item |> Map.delete("output") |> failed(item["exitCode"], item["outputIndicatesFailure"])
+    item |> Map.delete("output") |> failed(item)
   end
 
   defp turn_item(%{"type" => "file_change"} = item), do: Map.drop(item, @dropped["file_change"])
+
+  defp turn_item(%{"type" => "handoff"} = item), do: Map.drop(item, @dropped["handoff"])
 
   defp turn_item(%{"type" => "subagent"} = item) do
     Enum.reduce(@cut_keys, item, fn key, item ->
@@ -162,20 +165,33 @@ defmodule HalC2.Web.Wire do
     end)
   end
 
+  # The raw output of a provider-defined tool stays stored; what crosses is the
+  # ids its result named and whether it failed (`compact_dynamic/1`).
   defp turn_item(%{"type" => "dynamic_tool"} = item) do
-    Enum.reduce(~w(input output), item, fn key, item ->
-      if Map.has_key?(item, key), do: Map.put(item, key, summarize(item[key])), else: item
-    end)
+    item =
+      if Map.has_key?(item, "input"),
+        do: Map.put(item, "input", summarize(item["input"])),
+        else: item
+
+    case Map.fetch(item, "output") do
+      {:ok, output} ->
+        case compact_dynamic(output) do
+          nil -> Map.delete(item, "output")
+          compact -> Map.put(item, "output", compact)
+        end
+
+      :error ->
+        item
+    end
   end
 
   defp turn_item(item), do: item
 
   defp turn_item_patch(type, patch, _was) when is_map_key(@dropped, type) do
+    # A command's failure is read from the output being dropped, before it goes.
+    failed? = type == "command_execution" and patch_failed?(patch)
     patch = drop(patch, @dropped[type])
-
-    if type == "command_execution",
-      do: failed_patch(patch),
-      else: patch
+    if failed?, do: set(patch, "outputIndicatesFailure", true), else: patch
   end
 
   # Sets are cut first: `cut_appends/2` measures an append against the set it follows
@@ -186,8 +202,20 @@ defmodule HalC2.Web.Wire do
     |> cut_appends(was)
   end
 
-  defp turn_item_patch("dynamic_tool", patch, _was),
-    do: map_set(patch, ~w(input output), &summarize/1)
+  defp turn_item_patch("dynamic_tool", patch, _was) do
+    patch = map_set(patch, ~w(input), &summarize/1)
+
+    case patch do
+      %{"s" => %{"output" => output}} ->
+        case compact_dynamic(output) do
+          nil -> patch |> drop(~w(output)) |> unset("output")
+          compact -> set(patch, "output", compact)
+        end
+
+      _ ->
+        drop(patch, ~w(output))
+    end
+  end
 
   defp turn_item_patch(_type, patch, _was), do: patch
 
@@ -253,17 +281,43 @@ defmodule HalC2.Web.Wire do
   defp text_size(text) when is_binary(text), do: byte_size(text)
   defp text_size(_text), do: 0
 
-  # A command that failed says so without its output.
-  defp failed(item, exit_code, flagged) do
-    if flagged == true or (is_integer(exit_code) and exit_code != 0),
-      do: Map.put(item, "outputIndicatesFailure", true),
-      else: item
+  # A command that failed says so without its output. Some providers report
+  # completion even when the output itself describes a failure, so the output
+  # (its first `@max_detail` bytes) is read before it is left behind.
+  defp failed(item, stored) do
+    if stored["outputIndicatesFailure"] == true or
+         (is_integer(stored["exitCode"]) and stored["exitCode"] != 0) or
+         output_indicates_failure?(stored["output"]),
+       do: Map.put(item, "outputIndicatesFailure", true),
+       else: item
   end
 
-  defp failed_patch(%{"s" => %{"exitCode" => code}} = patch) when is_integer(code) and code != 0,
-    do: set(patch, "outputIndicatesFailure", true)
+  defp patch_failed?(patch) do
+    set = if is_map(patch["s"]), do: patch["s"], else: %{}
+    appended = if is_map(patch["a"]), do: patch["a"], else: %{}
 
-  defp failed_patch(patch), do: patch
+    set["outputIndicatesFailure"] == true or
+      (is_integer(set["exitCode"]) and set["exitCode"] != 0) or
+      output_indicates_failure?(set["output"]) or
+      output_indicates_failure?(appended["output"])
+  end
+
+  defp output_indicates_failure?(output) when is_binary(output) do
+    text = binary_part(output, 0, min(byte_size(output), @max_detail))
+
+    Regex.match?(
+      ~r/file not found|no files found|enoent|no such file|commandnotfoundexception|command not found|is not recognized as the name of a cmdlet|a parameter cannot be found that matches parameter name/i,
+      text
+    ) or
+      (Regex.match?(~r/cannot find path/i, text) and
+         Regex.match?(~r/because it does not exist/i, text)) or
+      (Regex.match?(~r/is not recognized/i, text) and Regex.match?(~r/the term '/i, text)) or
+      Regex.match?(~r/<exited with exit code\s+[1-9]\d*\s*>/i, text) or
+      Regex.match?(~r/exit(?:ed)? with exit code\s+[1-9]\d*/i, text) or
+      Regex.match?(~r/exit code\s*[:\s]\s*[1-9]\d*\b/i, text)
+  end
+
+  defp output_indicates_failure?(_output), do: false
 
   defp handoff(handoff),
     do: handoff |> Map.drop(~w(history delivery)) |> Map.put("summaryText", "")
@@ -279,7 +333,8 @@ defmodule HalC2.Web.Wire do
     prefix <> "\n… output truncated for transport"
   end
 
-  # A value past the limit becomes the first line of it, marked as cut.
+  # A value past the limit becomes its first non-blank line (whitespace runs
+  # collapsed, at most 160 characters), marked as cut.
   defp summarize(value) do
     json = if is_binary(value), do: value, else: JSON.encode!(value)
 
@@ -291,11 +346,198 @@ defmodule HalC2.Web.Wire do
         |> String.trim_leading()
         |> String.split("\n", parts: 2)
         |> hd()
-        |> String.slice(0, 160)
+        |> String.split()
+        |> Enum.join(" ")
 
-      %{"summary" => if(line == "", do: "Large tool output", else: line), "truncated" => true}
+      summary =
+        cond do
+          line == "" -> "Large tool output"
+          String.length(line) <= 160 -> line
+          true -> (line |> String.slice(0, 159) |> String.trim_trailing()) <> "…"
+        end
+
+      %{"summary" => summary, "truncated" => true}
     end
   end
+
+  # --- dynamic tool results ----------------------------------------------------
+  #
+  # What a provider-defined tool's result keeps on the wire: the ids it named
+  # (`threadId`, `messageId`, `taskId`, `scheduledTaskId`, a `thread`'s or
+  # `threads`' ids, a rolled-back status) and whether it failed. Everything
+  # else stays stored. The result may be wrapped (JSON text, content blocks,
+  # `structuredContent`), so it is unwrapped within a small read budget; a
+  # result too large or deep to read within it keeps only its failure.
+
+  @max_parsed_bytes 16_384
+  @max_metadata_bytes 8_192
+  @max_id_length 256
+  @max_threads 100
+  @max_content_blocks 32
+  @max_envelope_depth 4
+  @max_envelope_nodes 128
+  @dynamic_ids ~w(threadId messageId taskId scheduledTaskId)
+
+  defp compact_dynamic(value) do
+    budget = %{bytes: @max_parsed_bytes, nodes: @max_envelope_nodes, exceeded: false}
+    {result, budget} = read_result(value, budget, 0)
+    output = if result.failed, do: %{"isError" => true}, else: %{}
+    output = if budget.exceeded, do: output, else: compact_ids(output, result[:data])
+
+    output =
+      if byte_size(JSON.encode!(output)) > @max_metadata_bytes,
+        do: Map.drop(output, ~w(threads threadId status)),
+        else: output
+
+    if output == %{}, do: nil, else: output
+  end
+
+  defp compact_ids(output, nil), do: output
+
+  defp compact_ids(output, data) do
+    output =
+      Enum.reduce(@dynamic_ids, output, fn key, output ->
+        case bounded_id(data[key]) do
+          nil -> output
+          id -> Map.put(output, key, id)
+        end
+      end)
+
+    output =
+      if data["status"] == "rolled_back",
+        do: Map.put(output, "status", "rolled_back"),
+        else: output
+
+    output =
+      case data["thread"] do
+        %{} = thread ->
+          case bounded_id(thread["threadId"]) do
+            nil -> output
+            id -> Map.put(output, "thread", %{"threadId" => id})
+          end
+
+        _ ->
+          output
+      end
+
+    case data["threads"] do
+      threads when is_list(threads) ->
+        case compact_threads(threads) do
+          {:ok, kept} ->
+            Map.put(output, "threads", kept)
+
+          # A partial batch or a top-level id would turn an unknown creation
+          # count into a confidently wrong one in a client's summary.
+          :incomplete ->
+            Map.drop(output, ~w(threadId status))
+        end
+
+      _ ->
+        output
+    end
+  end
+
+  defp compact_threads(threads) when length(threads) > @max_threads, do: :incomplete
+
+  defp compact_threads(threads) do
+    Enum.reduce_while(threads, {:ok, []}, fn
+      %{} = entry, {:ok, kept} ->
+        id = bounded_id(entry["threadId"])
+        rolled_back? = entry["status"] == "rolled_back"
+
+        if id == nil and not rolled_back? do
+          {:halt, :incomplete}
+        else
+          kept_entry =
+            %{}
+            |> then(&if(id, do: Map.put(&1, "threadId", id), else: &1))
+            |> then(&if(rolled_back?, do: Map.put(&1, "status", "rolled_back"), else: &1))
+
+          {:cont, {:ok, kept ++ [kept_entry]}}
+        end
+
+      _entry, _acc ->
+        {:halt, :incomplete}
+    end)
+  end
+
+  defp bounded_id(value) when is_binary(value) do
+    if String.length(value) <= @max_id_length and String.trim(value) != "", do: value
+  end
+
+  defp bounded_id(_value), do: nil
+
+  # Unwraps a tool result to `{envelope, budget}`: the envelope is
+  # `%{failed: boolean}` plus `data:` (the innermost result object) when one
+  # was found within the budget.
+  defp read_result(_value, budget, depth) when depth > @max_envelope_depth,
+    do: {%{failed: false}, %{budget | exceeded: true}}
+
+  defp read_result(value, %{nodes: nodes} = budget, depth) do
+    budget = %{budget | nodes: nodes - 1}
+
+    if nodes <= 0,
+      do: {%{failed: false}, %{budget | exceeded: true}},
+      else: read_value(value, budget, depth)
+  end
+
+  defp read_value(value, budget, depth) when is_binary(value) do
+    cond do
+      String.length(value) > budget.bytes or byte_size(value) > budget.bytes ->
+        {%{failed: false}, %{budget | exceeded: true}}
+
+      true ->
+        case JSON.decode(value) do
+          {:ok, parsed} ->
+            read_result(parsed, %{budget | bytes: budget.bytes - byte_size(value)}, depth + 1)
+
+          _ ->
+            {%{failed: false}, budget}
+        end
+    end
+  end
+
+  defp read_value(blocks, budget, depth) when is_list(blocks) do
+    if length(blocks) > @max_content_blocks do
+      {%{failed: false}, %{budget | exceeded: true}}
+    else
+      Enum.reduce_while(blocks, {%{failed: false}, budget}, fn block, {envelope, budget} ->
+        text = if is_map(block), do: block["text"]
+        nested = if is_map(text), do: text["text"] || text, else: text
+        {result, budget} = read_result(nested, budget, depth + 1)
+
+        envelope =
+          envelope
+          |> Map.put(:failed, envelope.failed or result.failed)
+          |> then(
+            &if(Map.has_key?(&1, :data) or not Map.has_key?(result, :data),
+              do: &1,
+              else: Map.put(&1, :data, result.data)
+            )
+          )
+
+        if budget.exceeded, do: {:halt, {envelope, budget}}, else: {:cont, {envelope, budget}}
+      end)
+    end
+  end
+
+  defp read_value(%{} = value, budget, depth) do
+    failed =
+      value["isError"] == true or value["is_error"] == true or
+        value["_tag"] == "OrchestratorMcpFailure" or
+        (Map.has_key?(value, "error") and value["error"] != nil)
+
+    content = value["structuredContent"] || value["content"]
+
+    if content != nil do
+      {nested, budget} = read_result(content, budget, depth + 1)
+      {%{nested | failed: failed or nested.failed}, budget}
+    else
+      {%{data: value, failed: failed}, budget}
+    end
+  end
+
+  defp read_value(_value, budget, _depth), do: {%{failed: false}, budget}
 
   # --- patches -----------------------------------------------------------------------
 
@@ -308,6 +550,9 @@ defmodule HalC2.Web.Wire do
 
   defp set(patch, key, value),
     do: Map.update(patch, "s", %{key => value}, &Map.put(&1, key, value))
+
+  defp unset(patch, key),
+    do: Map.update(patch, "u", [key], &Enum.uniq([key | &1]))
 
   defp map_set(%{"s" => set} = patch, keys, fun) do
     %{

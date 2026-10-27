@@ -308,6 +308,12 @@ defmodule HalC2.Shell do
       end)
 
     put_subscriber(pid, :client)
+
+    # The rows above go out as they stand; a project whose repository identity
+    # has not been resolved (or whose checkout's origin changed since) is
+    # resolved behind them, and its row follows as an update of its own.
+    identify_repositories()
+
     {:reply, %{mcs: mcs, rows: rows}, state}
   end
 

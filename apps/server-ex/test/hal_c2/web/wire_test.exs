@@ -169,4 +169,95 @@ defmodule HalC2.Web.WireTest do
     command = %{"id" => "i", "type" => "command_execution"}
     assert Wire.replay_patch("turn-item", %{"s" => %{"output" => "x"}}, command) == nil
   end
+
+  test "a command whose output reports a failure is sent as failed, without the output" do
+    item = %{
+      "id" => "i",
+      "type" => "command_execution",
+      "exitCode" => 0,
+      "output" => "bash: frobnicate: command not found"
+    }
+
+    sent = Wire.entity("turn-item", item)
+    refute Map.has_key?(sent, "output")
+    assert sent["outputIndicatesFailure"] == true
+    assert sent["exitCode"] == 0
+
+    patch = %{"s" => %{"output" => "ENOENT: no such file or directory", "exitCode" => 0}}
+
+    assert Wire.patch("turn-item", patch, "command_execution", nil) ==
+             %{"s" => %{"exitCode" => 0, "outputIndicatesFailure" => true}}
+
+    ok = %{item | "output" => "all done"}
+    refute Map.has_key?(Wire.entity("turn-item", ok), "outputIndicatesFailure")
+  end
+
+  test "a handoff item is sent without its summary" do
+    item = %{
+      "id" => "i",
+      "type" => "handoff",
+      "summary" => "the story so far",
+      "fromProviderInstanceIds" => ["codex"],
+      "toProviderInstanceId" => "claudeAgent",
+      "toModel" => "opus"
+    }
+
+    sent = Wire.entity("turn-item", item)
+    refute Map.has_key?(sent, "summary")
+    assert sent["fromProviderInstanceIds"] == ["codex"]
+    assert sent["toModel"] == "opus"
+
+    assert Wire.patch("turn-item", %{"s" => %{"summary" => "x"}}, "handoff", nil) == nil
+  end
+
+  test "a dynamic tool result keeps the ids it named and its failure, not the raw output" do
+    item = %{
+      "id" => "i",
+      "type" => "dynamic_tool",
+      "input" => %{"title" => "t"},
+      "output" => %{
+        "threadId" => "th-1",
+        "isError" => true,
+        "transcript" => String.duplicate("long ", 100)
+      }
+    }
+
+    sent = Wire.entity("turn-item", item)
+    assert sent["output"] == %{"isError" => true, "threadId" => "th-1"}
+    assert sent["input"] == %{"title" => "t"}
+
+    wrapped = %{
+      item
+      | "output" => %{
+          "content" => [%{"type" => "text", "text" => ~s({"taskId":"task-9","detail":"raw"})}]
+        }
+    }
+
+    assert Wire.entity("turn-item", wrapped)["output"] == %{"taskId" => "task-9"}
+
+    nameless = %{item | "output" => %{"detail" => "nothing a summary names"}}
+    refute Map.has_key?(Wire.entity("turn-item", nameless), "output")
+
+    patch = %{"s" => %{"output" => %{"threadId" => "th-2", "raw" => "x"}}}
+
+    assert Wire.patch("turn-item", patch, "dynamic_tool", nil) ==
+             %{"s" => %{"output" => %{"threadId" => "th-2"}}}
+
+    patch = %{"s" => %{"output" => %{"raw" => "x"}}}
+    assert Wire.patch("turn-item", patch, "dynamic_tool", nil) == %{"u" => ["output"]}
+  end
+
+  test "a large dynamic tool input is sent as its first non-blank line, marked truncated" do
+    big = "\n\n  do   the\tthing " <> String.duplicate("x", 20_000)
+    item = %{"id" => "i", "type" => "dynamic_tool", "input" => big}
+
+    assert Wire.entity("turn-item", item)["input"] ==
+             %{
+               "summary" => "do the thing " <> String.duplicate("x", 146) <> "…",
+               "truncated" => true
+             }
+
+    small = %{"id" => "i", "type" => "dynamic_tool", "input" => "short"}
+    assert Wire.entity("turn-item", small)["input"] == "short"
+  end
 end
