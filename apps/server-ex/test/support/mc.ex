@@ -3450,6 +3450,8 @@ defmodule HalC2.Test.Mc.World do
           {HalC2.Codex.Provider, :version},
           {HalC2.Claude.Provider, :version},
           {HalC2.Claude.Provider, :models},
+          {HalC2.Claude.Provider, :capabilities},
+          {HalC2.Claude.Provider, :health},
           {HalC2.ProviderUpdates, "codex"},
           {HalC2.ProviderUpdates, "claudeAgent"},
           # The update a scenario was offered, and how its last update went.

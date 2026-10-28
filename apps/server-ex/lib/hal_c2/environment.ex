@@ -105,8 +105,9 @@ defmodule HalC2.Environment do
 
   defp refresh(input) do
     case input do
-      # Antigravity's skills come from the workspace's folders (`HalC2.Acp.Antigravity.skills/2`),
-      # Codex's from its app-server for that folder (`HalC2.Codex.Provider.refresh_workspace/2`).
+      # Antigravity's and Claude's skills come from the workspace's folders
+      # (`HalC2.Acp.Antigravity.skills/2`, `HalC2.Claude.Skills`), Codex's from
+      # its app-server for that folder (`HalC2.Codex.Provider.refresh_workspace/2`).
       %{"cwd" => cwd, "instanceId" => id} when is_binary(cwd) and is_binary(id) ->
         cond do
           HalC2.Acp.driver(id) == "antigravity" ->
@@ -125,6 +126,9 @@ defmodule HalC2.Environment do
                    "cause" => detail
                  }}
             end
+
+          id in HalC2.Claude.Provider.instances() ->
+            HalC2.Claude.Provider.refresh_workspace(id, cwd)
 
           HalC2.Settings.known_instance?(id, "codex") ->
             case HalC2.Codex.Provider.refresh_workspace(id, cwd) do

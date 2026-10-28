@@ -33,7 +33,7 @@ defmodule HalC2.Claude.Session do
   @spec answer_permission(
           GenServer.server(),
           String.t(),
-          :allow | {:allow, map} | {:allow_session, [map]} | {:deny, String.t()}
+          :allow | {:allow, map} | {:allow_session, [map]} | {:deny, String.t()} | :cancel
         ) :: :ok
   def answer_permission(session, request_id, decision),
     do: GenServer.cast(session, {:answer_permission, request_id, decision})

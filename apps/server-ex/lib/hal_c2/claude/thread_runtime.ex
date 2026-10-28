@@ -38,9 +38,23 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   @state_version 11
 
-  @signed_out "Claude could not authenticate. For subscription login, run `claude auth login` " <>
-                "on this environment's machine, then start a new thread. For API-key " <>
-                "authentication, check this instance's configured credentials."
+  # How to sign in, naming where when this instance runs under its own config
+  # directory: the login has to land in the directory Claude will be pointed at.
+  defp signed_out_message(turn) do
+    where =
+      case HalC2.Claude.Provider.home_path(Entities.instance(turn.ids)) do
+        nil ->
+          ""
+
+        home ->
+          " from #{JSON.encode!(Map.get(turn, :cwd) || "")}, with CLAUDE_CONFIG_DIR " <>
+            "set to #{JSON.encode!(HalC2.Claude.Provider.expand_home(home))}"
+      end
+
+    "Claude could not authenticate. For subscription login, run `claude auth login` " <>
+      "on this environment's machine#{where}, then start a new thread. For API-key " <>
+      "authentication, check this instance's configured credentials."
+  end
 
   # runtimeMode -> the CLI's permission mode; prompts it raises become approval
   # requests the user answers in the client. In auto, Claude Code's classifier
@@ -66,6 +80,35 @@ defmodule HalC2.Claude.ThreadRuntime do
   # The messages a subagent sends under its tool call (`parent_tool_use_id`).
   @sidechain ~w(assistant user stream_event)
   @task_status %{"completed" => "completed", "failed" => "failed", "stopped" => "cancelled"}
+
+  # Why Claude ended a turn, in the user's words, by the `terminal_reason` its
+  # `result` carries. A known reason fails even a result Claude calls a success.
+  @terminal_errors %{
+    "api_error" => "Claude gave up after repeated API errors.",
+    "malformed_tool_use_exhausted" => "Claude gave up after repeated malformed tool calls.",
+    "budget_exhausted" => "Claude stopped: the turn's token budget was exhausted.",
+    "structured_output_retry_exhausted" =>
+      "Claude could not produce the requested structured output.",
+    "tool_deferred_unavailable" =>
+      "Claude could not resume a deferred tool call: the tool is no longer available.",
+    "turn_setup_failed" => "Claude could not start the turn.",
+    "blocking_limit" => "Claude stopped: a usage limit blocked the request.",
+    "rapid_refill_breaker" =>
+      "Claude stopped: the context refilled too quickly after compaction.",
+    "prompt_too_long" => "Claude stopped: the prompt exceeds the model's context window.",
+    "image_error" => "Claude stopped: an image in the conversation could not be processed.",
+    "model_error" => "Claude stopped: the model returned an error."
+  }
+
+  # The windows a usage-limit pause names, by Claude's `rateLimitType`.
+  @limit_labels %{
+    "five_hour" => "5-hour",
+    "seven_day" => "7-day",
+    "seven_day_opus" => "7-day Opus",
+    "seven_day_sonnet" => "7-day Sonnet",
+    "seven_day_overage_included" => "7-day model",
+    "overage" => "overage"
+  }
 
   # The subagent tool, taken from the CLI for a session kept to HAL-C2's workers
   # (`HalC2.Mcp.workers_only?/1`). Part of the launch, so a change restarts the CLI when
@@ -213,6 +256,8 @@ defmodule HalC2.Claude.ThreadRuntime do
        # Claude's task ids -> the tool use id of their work, or nil for a task that is
        # not work (ambient, a foreground command) or has ended.
        tasks: %{},
+       # Task ids that already ended, so late progress cannot reopen them.
+       finished_tasks: MapSet.new(),
        # The latest turn's ids, which work Claude starts between turns joins.
        last_ids: nil,
        # The run the latest turn ran as, also one that failed to start: the run a
@@ -272,6 +317,7 @@ defmodule HalC2.Claude.ThreadRuntime do
       turn.model
       |> Provider.launch(Map.get(turn, :options, %{}), Entities.instance(ids))
       |> auto_compact(Entities.instance(ids))
+      |> with_launch_args(Entities.instance(ids))
       |> Map.put(:mcp, HalC2.Mcp.for_agent(state.thread_id, Entities.instance(ids)))
       |> then(&Map.put(&1, :disallowed_tools, disallowed_tools(&1.mcp)))
       |> Map.put(:instance, Entities.instance(ids))
@@ -292,15 +338,22 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     session = state.session
 
-    # A model the installed CLI is too old for is refused here, naming the version.
+    # A model the installed CLI is too old for is refused here, naming the version,
+    # as are launch arguments that cannot be read.
     opened =
-      case Provider.too_old(turn.model, Entities.instance(ids)) do
-        nil -> open_session(state, turn)
-        message -> {:error, {:too_old, message}}
+      cond do
+        message = turn.launch[:launch_error] ->
+          {:error, {:refused, message}}
+
+        message = Provider.too_old(turn.model, Entities.instance(ids)) ->
+          {:error, {:refused, message}}
+
+        true ->
+          open_session(state, turn)
       end
 
     case opened do
-      {:error, {:too_old, message}} ->
+      {:error, {:refused, message}} ->
         finish(state, "failed", message)
         {:reply, :ok, %{state | turn: nil, last_ids: last_ids}}
 
@@ -361,8 +414,7 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   def handle_call(:interrupt, _from, %{turn: turn, session: session} = state)
       when turn != nil and session != nil do
-    Session.control(session, "interrupt")
-    {:reply, :ok, %{state | interrupted: true}}
+    {:reply, :ok, interrupt_now(state)}
   end
 
   # Between turns, stopping the thread stops the work it left running in the background,
@@ -439,9 +491,13 @@ defmodule HalC2.Claude.ThreadRuntime do
 
       {{:permission, control_id, tool, suggestions}, requests} ->
         decision = response["decision"] || "decline"
+        cancelled? = decision == "cancel" or response["dismissed"] == true
 
         answer =
           case decision do
+            _ when cancelled? ->
+              :cancel
+
             "accept" ->
               :allow
 
@@ -453,9 +509,30 @@ defmodule HalC2.Claude.ThreadRuntime do
           end
 
         Session.answer_permission(state.session, control_id, answer)
-        state = resolve_request(%{state | requests: requests}, request_id, decision)
+
+        state =
+          resolve_request(
+            %{state | requests: requests},
+            request_id,
+            decision,
+            if(cancelled?, do: "cancelled", else: "resolved")
+          )
+
+        # Cancelling an approval stops the turn instead of carrying on without
+        # the tool.
+        state = if cancelled?, do: interrupt_now(state), else: state
         {:reply, :ok, state}
     end
+  end
+
+  # Claude gets ten seconds to end the turn itself after an interrupt; after that
+  # the run is settled as interrupted here (`:settle_interrupt`).
+  defp interrupt_now(%{turn: turn, session: session} = state)
+       when turn != nil and session != nil do
+    Session.control(session, "interrupt")
+    settle = Application.get_env(:hal_c2, :claude_interrupt_timeout_ms, 10_000)
+    Process.send_after(self(), {:settle_interrupt, turn.ids.run}, settle)
+    %{state | interrupted: true}
   end
 
   # What a CLI stopped for another instance's (`ensure_session/2`) had already sent
@@ -509,13 +586,17 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   def handle_info({:claude, _session, {:permission, id, tool, input, context}}, state) do
-    {kind, prompt} =
+    kind =
       cond do
-        tool == "Bash" -> {"command", input["command"]}
-        tool in @file_tools -> {"file-change", input["file_path"]}
-        tool in ["Read", "Glob", "Grep"] -> {"file-read", input["file_path"] || input["pattern"]}
-        true -> {"permission", tool}
+        tool in @file_tools -> "file-change"
+        tool in ["Read", "Glob", "Grep", "LS"] -> "file-read"
+        # Bash, the subagent and web tools, and any tool HAL-C2 does not know.
+        true -> "command"
       end
+
+    prompt =
+      context["title"] || context["description"] || context["decision_reason"] ||
+        summarize_tool(tool, input)
 
     {state, request_id} = open_request(flush(state), id, kind, prompt)
     request = {:permission, id, tool, context["permission_suggestions"]}
@@ -535,11 +616,25 @@ defmodule HalC2.Claude.ThreadRuntime do
     {:noreply, %{state | requests: Map.put(state.requests, request_id, request)}}
   end
 
+  # A turn Claude has not ended ten seconds after it was stopped is settled as
+  # interrupted; its CLI is stopped, so the next turn resumes the conversation.
+  def handle_info({:settle_interrupt, run_id}, state) do
+    if state.turn && state.turn.ids.run == run_id && state.interrupted do
+      state = end_turn(state, "interrupted", nil)
+      if state.session, do: GenServer.stop(state.session)
+      {:noreply, %{state | session: nil, interrupted: false}}
+    else
+      {:noreply, state}
+    end
+  end
+
   def handle_info({:EXIT, session, _reason}, %{session: session} = state) do
     state =
-      if state.turn,
-        do: end_turn(state, "failed", "Claude exited"),
-        else: end_work(state, "failed")
+      cond do
+        state.turn && state.interrupted -> end_turn(state, "interrupted", nil)
+        state.turn -> end_turn(state, "failed", "Claude exited")
+        true -> end_work(state, "failed")
+      end
 
     # A wake waiting for its run ends there, cut short.
     wake = if match?(%{buffer: [_ | _]}, state.wake), do: %{state.wake | open: false}
@@ -548,6 +643,34 @@ defmodule HalC2.Claude.ThreadRuntime do
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
   def handle_info(_other, state), do: {:noreply, state}
+
+  # What an approval reads: the tool and what it would act on — its command or
+  # its file, else its input — with the summary cut at 400 characters.
+  defp summarize_tool(tool, input) do
+    first = fn keys ->
+      Enum.find_value(keys, fn key ->
+        case input[key] do
+          value when is_binary(value) and value != "" -> value
+          _ -> nil
+        end
+      end)
+    end
+
+    cond do
+      command = first.(["command", "cmd", "script"]) ->
+        "#{tool}: #{String.slice(command, 0, 400)}"
+
+      path = first.(["file_path", "path", "filename", "fileName"]) ->
+        "#{tool}: #{String.slice(path, 0, 400)}"
+
+      true ->
+        serialized = JSON.encode!(input)
+
+        if String.length(serialized) <= 400,
+          do: "#{tool}: #{serialized}",
+          else: "#{tool}: #{String.slice(serialized, 0, 397)}..."
+    end
+  end
 
   # The process runs the background work, so it ends with it: released when idle, or
   # stopped with its thread. Its writes may fail when the MC itself is stopping; the
@@ -567,6 +690,7 @@ defmodule HalC2.Claude.ThreadRuntime do
        state
        |> Map.put_new(:work, %{})
        |> Map.put_new(:tasks, %{})
+       |> Map.put_new(:finished_tasks, MapSet.new())
        |> Map.put_new(:last_ids, nil)
        |> Map.put_new_lazy(:last_run, fn -> state[:last_ids][:run] end)
        |> Map.put_new(:usage_instance, nil)
@@ -589,6 +713,7 @@ defmodule HalC2.Claude.ThreadRuntime do
     launch
     |> Map.put_new_lazy(:mcp, fn -> HalC2.Mcp.for_agent(thread_id, Entities.instance(ids)) end)
     |> Map.put_new(:disallowed_tools, [])
+    |> Map.put_new(:context_window, 200_000)
     |> Map.put_new(:instance, :unknown)
   end
 
@@ -706,31 +831,114 @@ defmodule HalC2.Claude.ThreadRuntime do
   # The message, with where its files are; images go inline as content blocks.
   defp claude_content(turn) do
     attachments = Map.get(turn, :attachments, [])
+    images = HalC2.Attachments.native_images(attachments)
 
-    text =
-      turn.text
-      |> Provider.prompt(turn.launch.prompt_effort)
-      |> HalC2.Attachments.prompt_text(attachments)
+    image_blocks =
+      for {mime, data} <- images,
+          do: %{
+            "type" => "image",
+            "source" => %{"type" => "base64", "media_type" => mime, "data" => data}
+          }
 
-    case HalC2.Attachments.native_images(attachments) do
-      [] ->
-        text
+    # A `$skill` mention runs as Claude's own `/skill` command: the command is
+    # the last block (where Claude expands it), after any leading text and the
+    # message's images. Skills are re-read at each send, as they change
+    # mid-session; one that may not run for the user stays plain text.
+    names =
+      HalC2.Claude.Skills.user_invocable_names(
+        turn.launch[:instance] || Entities.instance(turn[:ids] || %{}),
+        Map.get(turn, :cwd)
+      )
 
-      images ->
-        [%{"type" => "text", "text" => text}] ++
-          for {mime, data} <- images,
-              do: %{
-                "type" => "image",
-                "source" => %{"type" => "base64", "media_type" => mime, "data" => data}
-              }
+    case HalC2.Claude.Skills.dispatch(turn.text, names) do
+      nil ->
+        text =
+          turn.text
+          |> Provider.prompt(turn.launch.prompt_effort)
+          |> HalC2.Attachments.prompt_text(attachments)
+
+        if images == [], do: text, else: [%{"type" => "text", "text" => text}] ++ image_blocks
+
+      {leading, command} ->
+        leading =
+          (leading || "")
+          |> Provider.prompt(turn.launch.prompt_effort)
+          |> HalC2.Attachments.prompt_text(attachments)
+
+        Enum.reject(
+          [
+            if(leading != "", do: %{"type" => "text", "text" => leading})
+          ] ++
+            image_blocks ++ [%{"type" => "text", "text" => command}],
+          &is_nil/1
+        )
     end
   end
 
-  # Plan mode, or the thread's runtime mode.
+  # The instance's configured launch arguments reach the CLI, less the permission
+  # flags among them: a `--permission-mode` (or `--dangerously-skip-permissions`)
+  # there wins over the thread's mode instead of going to the CLI twice. Claude
+  # is asked for summaries of its thinking unless thinking is off or the launch
+  # arguments already say how thinking is shown.
+  defp with_launch_args(launch, instance) do
+    case Provider.launch_args(instance) do
+      {:ok, args} ->
+        {override, rest} = take_permission_flag(args)
+
+        summaries? =
+          launch.settings["alwaysThinkingEnabled"] != false and
+            not Enum.any?(rest, &String.starts_with?(&1, "--thinking-display"))
+
+        settings =
+          if summaries?,
+            do: Map.put(launch.settings, "showThinkingSummaries", true),
+            else: launch.settings
+
+        launch
+        |> Map.put(:settings, settings)
+        |> Map.put(:extra_args, rest)
+        |> Map.put(:permission_override, override)
+        |> Map.put(:thinking_summaries, summaries?)
+
+      {:error, message} ->
+        launch
+        |> Map.put(:extra_args, [])
+        |> Map.put(:launch_error, "Claude could not start: #{message}")
+    end
+  end
+
+  defp take_permission_flag(args), do: take_permission_flag(args, nil, [])
+
+  defp take_permission_flag([], override, rest), do: {override, Enum.reverse(rest)}
+
+  defp take_permission_flag(["--permission-mode", mode | rest], _override, kept),
+    do: take_permission_flag(rest, mode, kept)
+
+  defp take_permission_flag(["--permission-mode=" <> mode | rest], _override, kept),
+    do: take_permission_flag(rest, mode, kept)
+
+  defp take_permission_flag(["--dangerously-skip-permissions" | rest], override, kept),
+    do: take_permission_flag(rest, override || "bypassPermissions", kept)
+
+  defp take_permission_flag(["--dangerously-skip-permissions=" <> value | rest], override, kept) do
+    override = if value in ["true", ""], do: override || "bypassPermissions", else: override
+    take_permission_flag(rest, override, kept)
+  end
+
+  defp take_permission_flag([arg | rest], override, kept),
+    do: take_permission_flag(rest, override, [arg | kept])
+
+  # A permission flag in the launch arguments, else plan mode, else a read-only
+  # run's never-ask, else the thread's runtime mode.
   defp permission_mode(turn) do
-    if Map.get(turn, :interaction_mode) == "plan",
-      do: "plan",
-      else: Map.get(@permission_modes, turn.runtime_mode, "default")
+    launch = Map.get(turn, :launch) || %{}
+
+    cond do
+      launch[:permission_override] -> launch[:permission_override]
+      Map.get(turn, :interaction_mode) == "plan" -> "plan"
+      Map.get(turn, :read_only) -> "dontAsk"
+      true -> Map.get(@permission_modes, turn.runtime_mode, "default")
+    end
   end
 
   # A session carried from another machine that this Claude cannot open (a newer
@@ -888,8 +1096,17 @@ defmodule HalC2.Claude.ThreadRuntime do
       resume_at: fork_or(turn, :turn, Map.get(turn, :head)),
       fork_session: Map.get(turn, :fork) != nil,
       partial_messages: true,
+      thinking_display: Map.get(turn.launch, :thinking_summaries, false),
+      tools: if(Map.get(turn, :read_only), do: ["Read", "Glob", "Grep"]),
+      # Claude can open a message's attached files where the MC saved them.
+      add_dirs: [HalC2.Attachments.dir()],
       mcp: turn.launch.mcp,
+      mcp_allowed:
+        if(Map.get(turn, :read_only) and turn.launch.mcp,
+          do: HalC2.Mcp.Tools.read_only_allowed()
+        ),
       disallowed_tools: Map.get(turn.launch, :disallowed_tools, []),
+      extra_args: Map.get(turn.launch, :extra_args, []),
       # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude.
       env: session_env(turn),
       log: state.thread_id
@@ -909,7 +1126,19 @@ defmodule HalC2.Claude.ThreadRuntime do
   # unless told otherwise, which cuts HAL-C2's waiting tools short.
   @doc false
   def session_env(turn) do
-    Enum.to_list(HalC2.Settings.instance_env(Entities.instance(turn.ids))) ++
+    instance = Entities.instance(turn.ids)
+
+    # An instance with its own Claude home runs under it. Only the config
+    # directory is pointed there, never HOME: on macOS the saved login lives in
+    # the keychain under HOME, and Claude would not find it signed in.
+    home =
+      case HalC2.Claude.Provider.home_path(instance) do
+        nil -> []
+        path -> [{"CLAUDE_CONFIG_DIR", HalC2.Claude.Provider.expand_home(path)}]
+      end
+
+    Enum.to_list(HalC2.Settings.instance_env(instance)) ++
+      home ++
       if(turn.launch.mcp,
         do: [{"MCP_TOOL_TIMEOUT", to_string(HalC2.Mcp.tool_timeout_ms())}],
         else: []
@@ -917,12 +1146,13 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   # The `claude` the turn's instance runs: its binary path in settings, else the one on PATH.
-  defp command(turn),
-    do:
-      HalC2.Settings.instance_command(
-        Entities.instance(turn.ids),
-        Application.get_env(:hal_c2, :claude_command) || ["claude"]
-      )
+  defp command(turn) do
+    Entities.instance(turn.ids)
+    |> HalC2.Settings.instance_command(
+      Application.get_env(:hal_c2, :claude_command) || ["claude"]
+    )
+    |> HalC2.Claude.Provider.resolve_command()
+  end
 
   # A fork's first turn resumes the source session at the fork point, as a new session.
   defp fork_or(%{fork: %{} = fork}, key, _default), do: Map.fetch!(fork, key)
@@ -1093,30 +1323,21 @@ defmodule HalC2.Claude.ThreadRuntime do
         do: end_work(state, tool, status, task["summary"], summary: true),
         else: state
 
-    %{state | tasks: Map.delete(state.tasks, task["task_id"])}
+    %{
+      state
+      | tasks: Map.delete(state.tasks, task["task_id"]),
+        finished_tasks: MapSet.put(Map.get(state, :finished_tasks, MapSet.new()), task["task_id"])
+    }
   end
 
   # A task Claude started without telling this runtime (between turns, or before it
-  # was upgraded to record them) is recorded on its first progress.
+  # was upgraded to record them) is recorded on its first progress. Progress for a
+  # task that already ended is late and does not reopen it.
   defp message(%{"type" => "system", "subtype" => "task_progress"} = task, state) do
-    state =
-      if is_map_key(state.tasks, task["task_id"]), do: state, else: task_started(state, task)
-
-    text = non_empty(task["summary"], non_empty(task["description"], ""))
-
-    case state.tasks[task["task_id"]] do
-      tool when is_map_key(state.work, tool) and text != "" ->
-        case state.work[tool] do
-          %{sub: %{} = sub} = work ->
-            sub = NativeSubagent.progress(sub, text, thinking: true)
-            put_in(state.work[tool], %{work | sub: sub})
-
-          _ ->
-            state
-        end
-
-      _ ->
-        state
+    if MapSet.member?(Map.get(state, :finished_tasks, MapSet.new()), task["task_id"]) do
+      state
+    else
+      task_progress(task, state)
     end
   end
 
@@ -1204,12 +1425,32 @@ defmodule HalC2.Claude.ThreadRuntime do
     # The last assistant message is where a rollback to this turn resumes.
     state = if message["uuid"], do: put_in(state.turn[:head], message["uuid"]), else: state
 
+    # The context meter reads the last request's usage, not the turn's total.
+    state =
+      with nil <- message["parent_tool_use_id"],
+           %{} = usage <- get_in(message, ["message", "usage"]) do
+        state = put_in(state.turn[:last_usage], usage)
+        put_in(state.turn[:compacted], false)
+      else
+        _ -> state
+      end
+
     # A signed-out CLI answers with an auth error; the turn fails with how to sign in.
     state =
       if message["error"] == "authentication_failed" and message["parent_tool_use_id"] == nil and
            state.turn != nil,
-         do: put_in(state.turn[:auth_failure], @signed_out),
+         do: put_in(state.turn[:auth_failure], signed_out_message(state.turn)),
          else: state
+
+    # An answer Claude could not give for a usage limit ends the turn as one.
+    state =
+      if message["error"] == "rate_limit" and message["parent_tool_use_id"] == nil and
+           state.turn != nil,
+         do: put_in(state.turn[:rate_limited], true),
+         else: state
+
+    # An answer after a retry means the request went through.
+    state = recover_retry(state)
 
     {blocks, placed} = placed(state.placed, id, content)
 
@@ -1219,15 +1460,18 @@ defmodule HalC2.Claude.ThreadRuntime do
     |> Map.put(:blocks, %{})
   end
 
-  defp message(%{"type" => "user", "message" => %{"content" => content}}, state)
+  defp message(%{"type" => "user", "message" => %{"content" => content}} = message, state)
        when is_list(content) do
-    Enum.reduce(content, state, fn
-      %{"type" => "tool_result", "tool_use_id" => tool_id} = result, state ->
-        tool_result(state, tool_id, result)
+    state =
+      Enum.reduce(content, state, fn
+        %{"type" => "tool_result", "tool_use_id" => tool_id} = result, state ->
+          tool_result(state, tool_id, result)
 
-      _, state ->
-        state
-    end)
+        _, state ->
+          state
+      end)
+
+    web_results(state, content, message["tool_use_result"])
   end
 
   # The part of a steered turn that the new message cut short; the turn goes on.
@@ -1270,30 +1514,314 @@ defmodule HalC2.Claude.ThreadRuntime do
       end)
     end
 
-    state
+    # The usage above stands until a post-compaction request reports its own.
+    state = put_in(state.turn[:last_usage], nil)
+    put_in(state.turn[:compacted], true)
   end
 
   defp message(%{"type" => "result", "terminal_reason" => reason}, %{steered: true} = state)
        when reason in ["aborted_streaming", "aborted_tools"] and not state.interrupted,
        do: %{state | steered: false}
 
+  # Claude changed model rather than answer on the refused one: its own notice is
+  # shown and the turn carries on.
+  defp message(
+         %{"type" => "system", "subtype" => "model_refusal_fallback"} = message,
+         %{turn: turn} = state
+       )
+       when turn != nil do
+    text = non_empty(message["content"], "Claude switched models after a refusal.")
+    native = message["uuid"] || "model-fallback:#{turn.ids.provider_turn}"
+
+    state
+    |> flush()
+    |> ensure_item(native, :notice, %{"title" => text, "message" => text})
+    |> finish_item(native, "completed", & &1)
+  end
+
+  # Claude is retrying a failed API request: one work-log entry for the turn, which
+  # every later attempt of that request updates.
+  defp message(%{"type" => "system", "subtype" => "api_retry"} = message, %{turn: turn} = state)
+       when turn != nil,
+       do: retry_item(state, message)
+
   defp message(%{"type" => "result"} = result, state) do
     state = %{state | steered: false}
+    reason = result["terminal_reason"]
+    aborted = reason in ["aborted_streaming", "aborted_tools"]
+
+    failed? =
+      result["is_error"] == true or result["subtype"] != "success" or
+        Map.has_key?(@terminal_errors, reason) or result["api_error_status"] in [429, 529]
 
     status =
       cond do
-        state.interrupted -> "interrupted"
-        result["is_error"] == true or result["subtype"] != "success" -> "failed"
+        state.interrupted or aborted -> "interrupted"
+        failed? -> "failed"
         true -> "completed"
       end
 
+    state = record_usage(state, result)
+
+    # A turn Claude answered only in its result shows that as the answer.
+    state = if status == "completed", do: result_answer(state, result), else: state
+
     failure =
-      if status == "failed", do: state.turn[:auth_failure] || failure(result, state.turn)
+      cond do
+        status != "failed" -> nil
+        state.turn[:auth_failure] -> auth_failure(state.turn[:auth_failure], result)
+        true -> failure(result, state.turn)
+      end
 
     end_turn(state, status, failure)
   end
 
   defp message(_message, state), do: state
+
+  defp task_progress(task, state) do
+    state =
+      if is_map_key(state.tasks, task["task_id"]), do: state, else: task_started(state, task)
+
+    text = non_empty(task["summary"], non_empty(task["description"], ""))
+
+    case state.tasks[task["task_id"]] do
+      tool when is_map_key(state.work, tool) and text != "" ->
+        case state.work[tool] do
+          %{sub: %{} = sub} = work ->
+            sub = NativeSubagent.progress(sub, text, thinking: true)
+            put_in(state.work[tool], %{work | sub: sub})
+
+          _ ->
+            state
+        end
+
+      _ ->
+        state
+    end
+  end
+
+  # A web search's pages, from the structured `tool_use_result` Claude sends with
+  # the result (falling back to the `Links:` list in its text), go on the search
+  # step with their titles and addresses.
+  defp web_results(state, content, extra) do
+    block =
+      Enum.find(content, fn
+        %{"type" => "tool_result", "tool_use_id" => id} ->
+          match?(%{kind: :web}, state.items[id])
+
+        _ ->
+          false
+      end)
+
+    results = web_result_pages(extra) || web_result_pages(block && block["content"])
+
+    case {block, results} do
+      {%{"tool_use_id" => tool_id}, [_ | _]} ->
+        %{id: item_id} = state.items[tool_id]
+
+        commit(state, fn stream ->
+          [
+            Orchestration.upsert(
+              stream,
+              "turn-item",
+              item_id,
+              &Map.put(&1, "results", results)
+            )
+          ]
+        end)
+
+        state
+
+      _ ->
+        state
+    end
+  end
+
+  defp web_result_pages(%{"results" => results}) when is_list(results) do
+    pages =
+      Enum.flat_map(results, fn
+        %{"content" => content} when is_list(content) -> content
+        other -> [other]
+      end)
+      |> web_pages()
+
+    if pages == [], do: nil, else: pages
+  end
+
+  defp web_result_pages(content) when is_list(content) do
+    flat =
+      Enum.flat_map(content, fn
+        %{"content" => inner} when is_list(inner) -> inner
+        other -> [other]
+      end)
+
+    nonempty(web_pages(flat)) ||
+      Enum.find_value(flat, fn
+        %{"text" => text} -> web_result_pages(text)
+        text when is_binary(text) -> web_result_pages(text)
+        _ -> nil
+      end)
+  end
+
+  defp web_result_pages(text) when is_binary(text) do
+    case Regex.run(~r/Links: (\[.+\])/s, text) do
+      [_, json] ->
+        case JSON.decode(json) do
+          {:ok, pages} when is_list(pages) -> web_pages(pages) |> nonempty()
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp web_result_pages(_other), do: nil
+
+  defp web_pages(list) do
+    for %{"title" => title, "url" => url} <- list,
+        is_binary(title) and is_binary(url),
+        do: %{"title" => title, "url" => url}
+  end
+
+  defp nonempty([]), do: nil
+  defp nonempty(list), do: list
+
+  # The retry entry closes as recovered once Claude answers again.
+  defp recover_retry(%{turn: turn} = state) when turn != nil do
+    native = "terminal-failure:#{turn.ids.provider_turn}"
+
+    if Map.has_key?(state.items, native) do
+      state
+      |> finish_item(native, "completed", &Map.put(&1, "title", "Provider recovered"))
+      |> Map.update!(:items, &Map.delete(&1, native))
+    else
+      state
+    end
+  end
+
+  defp recover_retry(state), do: state
+
+  # The context meter: what the last request used is its input, cached and output
+  # tokens, out of the model's context window (`Provider.launch/3`). The result's
+  # own usage totals every request of the turn, so it only stands in when no
+  # assistant message reported per-request usage — and never over the usage a
+  # compaction in this turn already wrote.
+  defp record_usage(state, result) do
+    usage =
+      state.turn[:last_usage] ||
+        if state.turn[:compacted], do: nil, else: result["usage"]
+
+    if is_map(usage), do: write_usage(state, usage), else: state
+  end
+
+  defp write_usage(state, usage) do
+    count = fn key -> trunc(usage[key] || 0) end
+
+    input =
+      count.("input_tokens") + count.("cache_creation_input_tokens") +
+        count.("cache_read_input_tokens")
+
+    token_usage = %{
+      "usedTokens" => input + count.("output_tokens"),
+      "maxTokens" => state.turn.launch.context_window,
+      "inputTokens" => input,
+      "cachedInputTokens" => count.("cache_read_input_tokens"),
+      "outputTokens" => count.("output_tokens"),
+      "reasoningOutputTokens" => 0,
+      "updatedAt" => Entities.now()
+    }
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(
+          stream,
+          "provider-turn",
+          state.turn.ids.provider_turn,
+          &Map.put(&1, "tokenUsage", token_usage)
+        )
+      ]
+    end)
+
+    state
+  end
+
+  defp result_answer(state, result) do
+    text = non_empty(result["result"], "")
+    answered? = Enum.any?(state.items, fn {_, item} -> item.kind == :assistant end)
+
+    if text == "" or answered? do
+      state
+    else
+      id = result["uuid"] || "result:#{state.turn.ids.provider_turn}"
+
+      state
+      |> flush()
+      |> ensure_item(id, :assistant)
+      |> finish_item(id, "completed", &Map.merge(&1, %{"text" => text, "streaming" => false}))
+    end
+  end
+
+  defp auth_failure(message, result) do
+    %{
+      "class" => "provider_error",
+      "message" => message,
+      "code" =>
+        if(result["api_error_status"],
+          do: "api_error_#{result["api_error_status"]}",
+          else: "authentication_failed"
+        ),
+      "retryable" => nil
+    }
+  end
+
+  # The turn's retry entry, as Codex's runtime keeps its own: created on the first
+  # attempt and updated in place, so the work log shows one entry per request.
+  defp retry_item(state, retry) do
+    native = "terminal-failure:#{state.turn.ids.provider_turn}"
+    status = retry["error_status"]
+    error = retry["error"]
+
+    failure = %{
+      "class" =>
+        cond do
+          status == 429 -> "usage_limit"
+          status == nil -> "transport_error"
+          true -> "provider_error"
+        end,
+      "message" =>
+        if(is_binary(error) and error != "",
+          do: "Claude API #{String.replace(error, "_", " ")}.",
+          else: "Claude is retrying a failed API request."
+        ),
+      "code" => if(status, do: "api_error_#{status}", else: error),
+      "retryable" => true
+    }
+
+    attempt = %{
+      "attempt" => max(trunc(retry["attempt"] || 1), 1),
+      "maxAttempts" => max(trunc(retry["max_retries"] || 1), 1),
+      "retryDelayMs" => max(trunc(retry["retry_delay_ms"] || 0), 0)
+    }
+
+    state =
+      state
+      |> flush()
+      |> ensure_item(native, :error, %{"title" => "Provider retry", "failure" => failure})
+
+    %{id: item_id} = state.items[native]
+    at = Entities.now()
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "turn-item", item_id, fn item ->
+          Map.merge(item, %{"failure" => failure, "retry" => attempt, "updatedAt" => at})
+        end)
+      ]
+    end)
+
+    state
+  end
 
   # A rejected window pauses Claude inside the turn; the turn's end reports it as a
   # usage limit resetting at the latest window's reset.
@@ -1308,9 +1836,11 @@ defmodule HalC2.Claude.ThreadRuntime do
 
     limits = Map.get(state.turn, :limits, %{})
 
+    blocked? = info["status"] == "rejected" and not overage?
+
     limits =
       cond do
-        info["status"] == "rejected" and not overage? ->
+        blocked? ->
           Map.put(limits, type, reset_at(info["resetsAt"]))
 
         info["status"] in ["allowed", "allowed_warning"] or overage? ->
@@ -1320,8 +1850,68 @@ defmodule HalC2.Claude.ThreadRuntime do
           limits
       end
 
-    put_in(state.turn[:limits], limits)
+    state = put_in(state.turn[:limits], limits)
+    if blocked?, do: announce_limit(state, type, info["resetsAt"]), else: state
   end
+
+  # A window that refused the turn pauses it: the thread says so once per window
+  # and reset in the turn, with the wait when the reset can be trusted (a time
+  # still ahead, within thirty days). Warnings never announce a pause.
+  defp announce_limit(state, type, resets_at) do
+    announced = Map.get(state.turn, :announced_limits, MapSet.new())
+    key = "#{type}:#{resets_at || "unknown"}"
+
+    if MapSet.member?(announced, key) do
+      state
+    else
+      label = @limit_labels[type]
+      wait = limit_wait(resets_at)
+
+      text =
+        cond do
+          label && wait ->
+            "Claude usage limit reached. This turn is paused until the #{label} " <>
+              "limit resets in #{wait}."
+
+          label ->
+            "Claude usage limit reached. This turn is paused until the #{label} limit resets."
+
+          wait ->
+            "Claude usage limit reached. This turn is paused until the limit resets in #{wait}."
+
+          true ->
+            "Claude usage limit reached. This turn is paused until the limit resets."
+        end
+
+      native = "usage-limit:#{state.turn.ids.provider_turn}:#{key}"
+
+      state
+      |> flush()
+      |> ensure_item(native, :notice, %{"title" => text, "message" => text})
+      |> finish_item(native, "completed", & &1)
+      |> put_in([:turn, :announced_limits], MapSet.put(announced, key))
+    end
+  end
+
+  # The wait until an epoch-seconds reset, rounded up to minutes and shown as
+  # `40m`, `3h` or `2h 5m`; nil for a reset that is missing, past, or over
+  # thirty days away.
+  defp limit_wait(seconds) when is_number(seconds) and seconds > 0 do
+    left = trunc(seconds) - System.system_time(:second)
+
+    if left > 0 and left <= 30 * 24 * 60 * 60 do
+      minutes = ceil(left / 60)
+      hours = div(minutes, 60)
+
+      cond do
+        hours == 0 -> "#{minutes}m"
+        rem(minutes, 60) == 0 -> "#{hours}h"
+        true -> "#{hours}h #{rem(minutes, 60)}m"
+      end
+    end
+  end
+
+  defp limit_wait(_seconds), do: nil
 
   defp reset_at(seconds) when is_number(seconds) and seconds > 0,
     do: HalC2.Projection.JS.iso(trunc(seconds * 1000))
@@ -1358,15 +1948,19 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
-  # A turn stopped by a usage limit fails with a structured `usage_limit` failure.
+  # A failed turn's structured failure. A turn stopped by a usage limit reports the
+  # latest window's reset, or none when any window's reset is unknown.
   defp failure(result, turn) do
     limits = Map.get(turn, :limits, %{})
     reason = result["terminal_reason"]
     api_status = result["api_error_status"]
+    shown = user_facing_error(result)
+    structured = @terminal_errors[reason]
 
     limited? =
       reason == "blocking_limit" or (result["subtype"] == "success" and api_status == 429) or
-        (limits != %{} and (result["subtype"] != "success" or api_status in [nil, 429]) and
+        ((limits != %{} or turn[:rate_limited] == true) and
+           (result["subtype"] != "success" or api_status in [nil, 429]) and
            reason in [nil, "api_error", "blocking_limit"])
 
     if limited? do
@@ -1375,15 +1969,47 @@ defmodule HalC2.Claude.ThreadRuntime do
       %{
         "class" => "usage_limit",
         "message" =>
-          result["result"] ||
+          shown || structured || api_status_message(api_status) ||
             "Claude usage limit reached. Send the message again once the limit resets.",
         "code" =>
           if(api_status, do: "api_error_#{api_status}", else: reason || result["subtype"]),
-        "retryable" => nil,
+        "retryable" => if(api_status == 429, do: true),
         "resetAt" => if(resets != [] and nil not in resets, do: Enum.max(resets))
       }
     else
-      result["result"] || result["subtype"]
+      %{
+        "class" => "provider_error",
+        "message" =>
+          shown || structured || api_status_message(api_status) || result["result"] ||
+            joined_errors(result) || result["subtype"] || "Claude reported an error.",
+        "code" =>
+          cond do
+            api_status -> "api_error_#{api_status}"
+            result["subtype"] == "success" -> reason || "sdk_result_error"
+            true -> result["subtype"]
+          end,
+        "retryable" => if(api_status in [429, 529], do: true)
+      }
+    end
+  end
+
+  defp api_status_message(529), do: "Claude API is overloaded (529). Try again shortly."
+  defp api_status_message(429), do: "Claude API rate limit reached. Try again later."
+  defp api_status_message(_status), do: nil
+
+  # The first of a result's errors meant for the user; Claude's own diagnostic
+  # records (`[ede_diagnostic]…`) are not shown.
+  defp user_facing_error(result) do
+    Enum.find(List.wrap(result["errors"]), fn
+      error when is_binary(error) -> not String.starts_with?(error, "[ede_diagnostic]")
+      _ -> false
+    end)
+  end
+
+  defp joined_errors(result) do
+    case List.wrap(result["errors"]) |> Enum.filter(&is_binary/1) do
+      [] -> nil
+      errors -> Enum.join(errors, "\n")
     end
   end
 
@@ -1707,9 +2333,30 @@ defmodule HalC2.Claude.ThreadRuntime do
         {:web, %{"patterns" => Enum.filter([input["query"], input["url"]], &is_binary/1)}}
 
       true ->
-        {:tool, %{"toolName" => name, "input" => input}}
+        {:tool,
+         %{"toolName" => name, "input" => input}
+         |> then(fn fields ->
+           case viewed_image_path(name, input) do
+             nil -> fields
+             path -> Map.put(fields, "viewedImagePath", path)
+           end
+         end)}
     end
   end
+
+  @image_extensions ~w(.avif .gif .ico .jpeg .jpg .png .svg .webp)
+
+  # An image Claude reads in the workspace is previewed from its tool call, by path.
+  defp viewed_image_path(name, input) when name in ["Read", "Read file"] do
+    path = String.trim(input["file_path"] || input["path"] || "")
+    image? = String.downcase(Path.extname(path)) in @image_extensions
+
+    if path != "" and String.length(path) <= 4096 and
+         not String.contains?(path, ["\n", "\r"]) and image?,
+       do: path
+  end
+
+  defp viewed_image_path(_name, _input), do: nil
 
   # Where a tool's result goes on its item.
   defp result_field(:command), do: "output"
@@ -1846,6 +2493,9 @@ defmodule HalC2.Claude.ThreadRuntime do
   # whether it runs in the background. Other tasks (a workflow, say) show as subagents.
   # Ambient tasks, such as watchers, are not activity.
   defp task_started(state, %{"task_id" => task_id} = task) do
+    state =
+      Map.update(state, :finished_tasks, MapSet.new(), &MapSet.delete(&1, task_id))
+
     tool = task["tool_use_id"] || task_id
     background? = task["is_backgrounded"] == true
 

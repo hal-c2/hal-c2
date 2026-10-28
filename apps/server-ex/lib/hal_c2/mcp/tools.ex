@@ -40,6 +40,26 @@ defmodule HalC2.Mcp.Tools do
   # How long the MC a thread moved to has to answer a send, stop or read.
   @owner_timeout :timer.minutes(2)
 
+  # The tools a run that may only read is pre-approved for, as Claude names them
+  # (`mcp__hal-c2__<tool>`): the advertised ones that only read, mirroring the
+  # read-only annotations upstream's Claude adapter cross-checks.
+  @read_only ~w(orchestrator_capabilities list_scheduled_tasks hal_c2_thread_list
+                hal_c2_thread_wait hal_c2_pending_request_list hal_c2_pending_request_read
+                hal_c2_thread_configuration hal_c2_thread_transfers hal_c2_worktree_status
+                hal_c2_worktree_list hal_c2_project_list hal_c2_project_read
+                hal_c2_thread_search hal_c2_preview_list hal_c2_environment_read
+                hal_c2_queue_list hal_c2_queue_read list_thread_pull_requests)
+
+  @doc "The read-only tools' Claude names, of those this MC advertises."
+  @spec read_only_allowed() :: [String.t()]
+  def read_only_allowed do
+    advertised = MapSet.new(list(), & &1["name"])
+
+    for name <- @read_only,
+        MapSet.member?(advertised, name),
+        do: "mcp__hal-c2__" <> name
+  end
+
   @doc "The advertised tools (MCP `tools/list`)."
   def list do
     names =

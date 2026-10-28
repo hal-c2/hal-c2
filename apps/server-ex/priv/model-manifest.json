@@ -9,6 +9,15 @@
       "ranges": [{ "range": "<1.14.19", "status": "broken" }]
     },
     {
+      "driver": "claudeAgent",
+      "halC2Range": ">=0.0.42",
+      "recommendedRange": ">=2.1.280",
+      "ranges": [
+        { "range": "<2.1.111", "status": "unsupported" },
+        { "range": ">=2.1.111 <2.1.280", "status": "graceful" }
+      ]
+    },
+    {
       "driver": "codex",
       "halC2Range": ">=0",
       "ranges": [{ "range": "0.128.0", "status": "broken" }]

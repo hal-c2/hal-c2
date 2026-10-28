@@ -19,12 +19,16 @@ const QString kMarkdown = QStringLiteral("# Tax line\n\n- Add the line\n- Test i
 const QString kPlanningTitle = QStringLiteral("Plan the tax line");
 
 const Steps steps([] {
+  // The providers features' Background (codex.feature, claude.feature): the
+  // fake MC serves the one project, and the phone is paired with it.
   step(S("a connected environment with the project %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
     world.mc.projects.clear();
     world.mc.threads.clear();
     world.mc.projects.insert(c[0], {{S("id"), c[0]}, {S("title"), c[0]}, {S("workspaceRoot"), S("/work/") + c[0]},
                                      {S("scripts"), QJsonArray()}, {S("createdAt"), S("2026-09-01T09:00:00Z")},
                                      {S("updatedAt"), S("2026-09-01T09:00:00Z")}});
+    pairWithEnvironment(world);
+    threadList(world);
   });
 
   step(S("Codex proposed a plan and marked it finished"), [](World& world, const Captures&, const Table&) {
