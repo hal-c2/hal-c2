@@ -151,14 +151,14 @@ Feature: Agents working with threads through MCP tools
     Then those settings change
     And settings outside the allowed list are left alone
 
-  @backlog @mc
+  @mc
   Scenario: Long custom writing instructions are cut when an agent reads the environment
     Given the writing style has custom instructions of 5,000 characters
     When the agent of "caller" reads the environment
     Then the custom instructions arrive cut to 4,000 characters
     And they are flagged as truncated
 
-  @backlog @mc
+  @mc
   Scenario Outline: A credential from another environment cannot reach this one's preferences
     Given a credential that was issued by another environment
     When its agent <action>
@@ -183,7 +183,7 @@ Feature: Agents working with threads through MCP tools
     And its first run waits until the worktree is ready
 
   # Legacy: apps/server/src/mcp/toolkits/project/tools.ts and handlers.ts (hal_c2_thread_launch)
-  @backlog @mc
+  @mc
   Scenario: A launch that names no workspace starts in the project root, not in the caller's worktree
     Given thread "caller" works in worktree "/work/x" on branch "feature/x"
     When the agent of "caller" launches a thread in "demo" without saying where it works
@@ -191,7 +191,7 @@ Feature: Agents working with threads through MCP tools
     And it does not share the caller's worktree or branch
 
   # Legacy: apps/server/src/mcp/toolkits/project/tools.ts, attachment/tools.ts (input schemas)
-  @backlog @mc
+  @mc
   Scenario Outline: A launch or an attachment send over the input limits is refused
     When the agent of "caller" <request>
     Then the tool refuses the input as invalid
@@ -315,7 +315,7 @@ Feature: Agents working with threads through MCP tools
     When the agent of "caller" reads the configuration of "t2"
     Then it receives the model selection, runtime mode and interaction mode of "t2"
 
-  @mc @backlog
+  @mc
   Scenario: Listing or reading a thread shows whether it can settle
     Given thread "t2" has a settlement decision
     When the agent of "caller" lists or reads "t2"
@@ -380,26 +380,26 @@ Feature: Agents working with threads through MCP tools
     And each provider instance with its models, options and whether it can run a child task and why not
     And that batches hold at most 20 threads
 
-  @backlog @mc
+  @mc
   Scenario: A thread the user attached as context can be read from another project
     Given the user attached thread "elsewhere" of another project to a message of "caller"
     When the agent of "caller" reads "elsewhere"
     Then it receives the thread's messages
     But listing, sending to or interrupting "elsewhere" is still refused
 
-  @backlog @mc
+  @mc
   Scenario: A thread an agent attached does not widen what the agent can read
     Given a message written by an agent of "caller" carries a context record naming thread "elsewhere" of another project
     When the agent of "caller" reads "elsewhere"
     Then the tool fails with code "thread_not_found"
 
-  @backlog @mc
+  @mc
   Scenario: A deleted thread cannot be read
     Given thread "t2" was deleted
     When the agent of "caller" reads "t2"
     Then the tool fails with code "thread_not_found" saying "Thread t2 is no longer available."
 
-  @backlog @mc
+  @mc
   Scenario Outline: Interrupting a thread says what happened
     Given <situation>
     When the agent of "caller" interrupts "t2"
@@ -411,13 +411,13 @@ Feature: Agents working with threads through MCP tools
       | "t2" has no turn running                               | no_active_run                     |
       | the agent names a run of "t2" that already finished    | that run's final status           |
 
-  @backlog @mc
+  @mc
   Scenario: Repeating a send with the same request key delivers it once
     Given the agent of "caller" sent "run the tests" to "t2" with request key "k1"
     When it repeats the send with request key "k1"
     Then "t2" received the message once
 
-  @backlog @mc
+  @mc
   Scenario: Repeating an interrupt with the same request key interrupts once
     Given the agent of "caller" interrupted "t2" with request key "k1"
     When it repeats the interrupt with request key "k1"

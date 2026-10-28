@@ -153,7 +153,12 @@ defmodule HalC2.Orchestration do
   # A receipt only answers for the thread the command acted on (its `threadId`, or the
   # `parentThreadId` a delegated task or created-thread record belongs to), so the same
   # id aimed at another thread is refused rather than answered with work done elsewhere.
-  defp dispatch_once(%{"commandId" => id} = command) when is_binary(id) do
+  @doc """
+  `dispatch/1` answered once per command id: a repeat returns the first
+  outcome without deciding again. The RPC entry and the MCP tools whose
+  request key makes a call retryable dispatch through here.
+  """
+  def dispatch_once(%{"commandId" => id} = command) when is_binary(id) do
     key = "command-receipt:" <> id
     thread_id = command["threadId"] || command["parentThreadId"] || command["targetThreadId"]
 
@@ -192,7 +197,7 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  defp dispatch_once(command), do: dispatch(command)
+  def dispatch_once(command), do: dispatch(command)
 
   @spec dispatch(map) :: {:ok, map} | {:error, String.t()}
   def dispatch(%{"type" => "message.dispatch", "threadId" => thread_id} = command) do

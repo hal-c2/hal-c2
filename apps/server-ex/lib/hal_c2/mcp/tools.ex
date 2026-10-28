@@ -149,6 +149,7 @@ defmodule HalC2.Mcp.Tools do
         &(args["includeSubagents"] != false or
             get_in(&1, ["lineage", "relationshipToParent"]) != "subagent")
       )
+      |> Enum.filter(&(not is_boolean(args["settled"]) or settled?(&1) == args["settled"]))
 
     cursor = args["cursor"] || 0
     page = Enum.slice(threads, cursor, args["limit"] || 50)
@@ -164,7 +165,7 @@ defmodule HalC2.Mcp.Tools do
   end
 
   def run("hal_c2_thread_read", args, %{row: me} = caller) do
-    with {:ok, row} <- project_thread(me, args["threadId"]),
+    with {:ok, row} <- readable_thread(me, args["threadId"]),
          :here <- on_owner(row, "hal_c2_thread_read", args, caller) do
       state = stream(row["id"])
       view = args["view"] || "messages"
@@ -289,30 +290,35 @@ defmodule HalC2.Mcp.Tools do
 
   # --- environment and projects ------------------------------------------------------
 
-  def run("hal_c2_environment_read", _args, %{row: me}) do
-    environment = HalC2.Environment.descriptor()
+  def run("hal_c2_environment_read", _args, %{row: me} = caller) do
+    with :ok <- own_environment(caller) do
+      environment = HalC2.Environment.descriptor()
+      {settings, _version} = HalC2.Settings.get()
 
-    {:ok,
-     %{
-       "environmentId" => environment["environmentId"],
-       "label" => environment["label"],
-       "platform" => environment["platform"],
-       "currentThreadId" => me["id"],
-       "currentProjectId" => me["projectId"],
-       "providers" =>
-         for provider <- HalC2.Environment.providers(), provider["enabled"] != false do
-           %{
-             "providerInstanceId" => provider["instanceId"],
-             "driver" => provider["driver"],
-             "status" => provider["status"],
-             "models" => for(model <- provider["models"] || [], do: model["slug"])
-           }
-         end
-     }}
+      {:ok,
+       %{
+         "environmentId" => environment["environmentId"],
+         "label" => environment["label"],
+         "platform" => environment["platform"],
+         "preferences" => preferences(settings),
+         "currentThreadId" => me["id"],
+         "currentProjectId" => me["projectId"],
+         "providers" =>
+           for provider <- HalC2.Environment.providers(), provider["enabled"] != false do
+             %{
+               "providerInstanceId" => provider["instanceId"],
+               "driver" => provider["driver"],
+               "status" => provider["status"],
+               "models" => for(model <- provider["models"] || [], do: model["slug"])
+             }
+           end
+       }}
+    end
   end
 
   def run("hal_c2_environment_preferences_update", args, caller) do
-    with :ok <- live(caller),
+    with :ok <- own_environment(caller),
+         :ok <- live(caller),
          :ok <-
            unrestricted(caller, "Preference updates require a live full-access/default thread.") do
       patch =
@@ -484,6 +490,59 @@ defmodule HalC2.Mcp.Tools do
     end
   end
 
+  # The environment tools act on this MC's preferences, so a credential another
+  # environment issued — its stamp names a different environment id — is refused
+  # even where the token is otherwise honoured. A caller minted before
+  # credentials carried the stamp has none and keeps its access.
+  defp own_environment(caller) do
+    case Map.get(caller, :environment_id) do
+      nil -> :ok
+      id -> if id == HalC2.Environment.id(), do: :ok, else: foreign_credential()
+    end
+  end
+
+  defp foreign_credential,
+    do: {:error, "capability_denied", "This credential belongs to another environment."}
+
+  # A thread `hal_c2_thread_read` may show the caller: one of its project, or one
+  # the user attached to the caller's conversation as context, of any project.
+  # A deleted one the caller could otherwise read says it is gone, not missing.
+  defp readable_thread(me, nil), do: {:ok, me}
+
+  defp readable_thread(%{"projectId" => project} = me, id) do
+    case HalC2.Shell.row(node(), id) do
+      {"thread", row} ->
+        cond do
+          row["projectId"] != project and not user_attached?(me, id) ->
+            {:error, "thread_not_found", "The thread was not found in the calling project."}
+
+          row["deletedAt"] != nil ->
+            {:error, "thread_not_found", "Thread #{id} is no longer available."}
+
+          true ->
+            {:ok, row}
+        end
+
+      _ ->
+        {:error, "thread_not_found", "The thread was not found in the calling project."}
+    end
+  end
+
+  # Only records on messages the user wrote count: an agent cannot widen its own
+  # reach by writing a `thread` context record naming a thread elsewhere.
+  defp user_attached?(me, thread_id) do
+    me["id"]
+    |> stream()
+    |> StreamState.list("message")
+    |> Enum.any?(fn message ->
+      message["role"] == "user" and message["createdBy"] == "user" and
+        Enum.any?(
+          get_in(message, ["context", "records"]) || [],
+          &(&1["kind"] == "thread" and &1["threadId"] == thread_id)
+        )
+    end)
+  end
+
   @doc """
   A thread the caller may change: of its project, with the caller running and the
   target's modes no broader than its own.
@@ -594,24 +653,57 @@ defmodule HalC2.Mcp.Tools do
     |> Enum.sort_by(&(&1["updatedAt"] || ""), :desc)
   end
 
+  # Whether the thread is settled: moved out of the active list by the user or
+  # by automatic settlement (`thread.settle` records the override either way).
+  defp settled?(row), do: row["settledOverride"] == "settled"
+
+  # The settlement a list or read answer carries: whether the thread settled and
+  # when, and why it can or cannot settle now — the blockers automatic
+  # settlement itself checks (`HalC2.Orchestration.Settlement.candidate?/2`).
+  defp settlement(row) do
+    settled = settled?(row)
+
+    blocker =
+      cond do
+        settled -> "already settled"
+        row["archivedAt"] != nil -> "archived"
+        row["settledOverride"] == "active" -> "kept active by the user"
+        row["pinnedAt"] != nil -> "pinned"
+        row["pendingRuntimeRequest"] != nil -> "waiting on the user"
+        row["activityRunStatus"] != nil -> "has a run in progress"
+        (row["pendingBackgroundTasks"] || []) != [] -> "has background work"
+        true -> nil
+      end
+
+    %{
+      "settled" => settled,
+      "settledAt" => if(settled, do: row["settledAt"]),
+      "canSettle" => blocker == nil,
+      "settlementReason" => blocker || "nothing is running or pending"
+    }
+  end
+
   @doc "A thread as `hal_c2_thread_list` lists it."
   def list_item(row) do
-    %{
-      "threadId" => row["id"],
-      "title" => row["title"],
-      "status" => row["activityRunStatus"] || row["status"],
-      "providerInstanceId" => row["providerInstanceId"],
-      "model" => get_in(row, ["modelSelection", "model"]),
-      "runtimeMode" => row["runtimeMode"],
-      "interactionMode" => row["interactionMode"],
-      "branch" => row["branch"],
-      "worktreePath" => row["worktreePath"],
-      "activeRunId" => row["activeRunId"],
-      "latestRunId" => row["latestRunId"],
-      "archived" => row["archivedAt"] != nil,
-      "parentThreadId" => get_in(row, ["lineage", "parentThreadId"]),
-      "updatedAt" => row["updatedAt"]
-    }
+    Map.merge(
+      %{
+        "threadId" => row["id"],
+        "title" => row["title"],
+        "status" => row["activityRunStatus"] || row["status"],
+        "providerInstanceId" => row["providerInstanceId"],
+        "model" => get_in(row, ["modelSelection", "model"]),
+        "runtimeMode" => row["runtimeMode"],
+        "interactionMode" => row["interactionMode"],
+        "branch" => row["branch"],
+        "worktreePath" => row["worktreePath"],
+        "activeRunId" => row["activeRunId"],
+        "latestRunId" => row["latestRunId"],
+        "archived" => row["archivedAt"] != nil,
+        "parentThreadId" => get_in(row, ["lineage", "parentThreadId"]),
+        "updatedAt" => row["updatedAt"]
+      },
+      settlement(row)
+    )
   end
 
   defp run_summary(run),
@@ -672,7 +764,15 @@ defmodule HalC2.Mcp.Tools do
   end
 
   defp dispatch_message(row, sender, args) do
-    message_id = "message:mcp:" <> HalC2.Environment.uuid4()
+    # A retry with the same request key names the same message and command, so
+    # the command receipt answers it without delivering the message twice.
+    key = args["clientRequestId"]
+
+    message_id =
+      if key,
+        do: "message:mcp:#{sender}:#{key}",
+        else: "message:mcp:" <> HalC2.Environment.uuid4()
+
     active = row["activeRunId"]
 
     mode =
@@ -699,7 +799,7 @@ defmodule HalC2.Mcp.Tools do
         "creationSource" => "mcp"
       }
 
-      with {:ok, _} <- orchestration(Orchestration.dispatch(command)) do
+      with {:ok, _} <- orchestration(Orchestration.dispatch_once(command)) do
         run = message_run(row["id"], message_id)
 
         {:ok,
@@ -721,26 +821,65 @@ defmodule HalC2.Mcp.Tools do
         on_mc(mc, __MODULE__, :interrupt, [id, args], @owner_timeout)
 
       {"thread", _row} ->
-        # From the stream: the sidebar row trails a run's start.
-        run =
-          args["runId"] ||
-            stream(id)
-            |> StreamState.list("run")
-            |> Enum.find_value(
-              &(&1["status"] in ~w(preparing starting running waiting) && &1["id"])
-            )
+        # From the stream: the sidebar row trails a run's start. A run that
+        # already finished, and a thread with none running, answer what
+        # happened without another side effect.
+        runs = StreamState.list(stream(id), "run")
 
-        with {:ok, _} <-
-               orchestration(
-                 Orchestration.dispatch(%{
-                   "type" => "run.interrupt",
-                   "commandId" =>
-                     "command:mcp:" <> (args["clientRequestId"] || HalC2.Environment.uuid4()),
-                   "threadId" => id,
-                   "runId" => run
-                 })
-               ),
-             do: {:ok, %{"threadId" => id, "runId" => run, "interrupted" => true}}
+        named = args["runId"] && Enum.find(runs, &(&1["id"] == args["runId"]))
+
+        active =
+          Enum.find(
+            runs,
+            &(&1["status"] in ~w(preparing starting running waiting) and
+                (args["runId"] == nil or &1["id"] == args["runId"]))
+          )
+
+        cond do
+          active != nil ->
+            run = active["id"]
+
+            with {:ok, _} <-
+                   orchestration(
+                     Orchestration.dispatch_once(%{
+                       "type" => "run.interrupt",
+                       "commandId" =>
+                         "command:mcp:interrupt:" <>
+                           (args["clientRequestId"] || HalC2.Environment.uuid4()),
+                       "threadId" => id,
+                       "runId" => run
+                     })
+                   ) do
+              {:ok,
+               %{
+                 "threadId" => id,
+                 "runId" => run,
+                 "status" => "interrupt_requested",
+                 "interrupted" => true
+               }}
+            end
+
+          named != nil ->
+            {:ok,
+             %{
+               "threadId" => id,
+               "runId" => named["id"],
+               "status" => named["status"],
+               "interrupted" => false
+             }}
+
+          args["runId"] != nil ->
+            {:error, "invalid_request", "Run #{args["runId"]} was not found in the thread."}
+
+          true ->
+            {:ok,
+             %{
+               "threadId" => id,
+               "runId" => nil,
+               "status" => "no_active_run",
+               "interrupted" => false
+             }}
+        end
 
       nil ->
         {:error, "thread_not_found", "The thread was not found."}

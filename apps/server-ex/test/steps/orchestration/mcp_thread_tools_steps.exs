@@ -470,11 +470,12 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
   end
 
   step "the agent of {string} interrupts {string}", %{args: [caller, thread]} = context do
-    result =
-      World.mcp_tool(context, caller, "hal_c2_thread_interrupt", %{
-        "threadId" => World.thread_id(context, thread)
-      })
+    arguments = %{"threadId" => World.thread_id(context, thread)}
 
+    arguments =
+      if context[:named_run], do: Map.put(arguments, "runId", context.named_run), else: arguments
+
+    result = World.mcp_tool(context, caller, "hal_c2_thread_interrupt", arguments)
     Map.put(context, :mcp_result, result)
   end
 
@@ -1388,6 +1389,476 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
              context.mcp_result
 
     context
+  end
+
+  # --- backlog: environment, limits, settlement, attached and deleted threads -----
+
+  step ~r/^the writing style has custom instructions of 5,000 characters$/, context do
+    instructions = String.duplicate("Be brief. ", 500)
+    assert String.length(instructions) == 5_000
+    {settings, version} = HalC2.Settings.get()
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        Map.put(settings, "sourceControlWritingStyle", %{
+          "mode" => "custom",
+          "customInstructions" => instructions,
+          "followChangeRequestTemplates" => true
+        }),
+        version
+      )
+
+    Map.put(context, :instructions, instructions)
+  end
+
+  step ~r/^the custom instructions arrive cut to 4,000 characters$/, context do
+    assert {:ok, result} = context.mcp_result
+    style = get_in(result, ["preferences", "sourceControlWritingStyle"])
+    assert style["customInstructions"] == String.slice(context.instructions, 0, 4_000)
+    Map.put(context, :style, style)
+  end
+
+  step "they are flagged as truncated", context do
+    assert context.style["truncated"] == true
+    context
+  end
+
+  # The credential a different environment issued: the caller's live credential,
+  # restamped with another environment's id, as a token minted there would carry.
+  step "a credential that was issued by another environment", context do
+    %{authorization: "Bearer " <> token} =
+      HalC2.Mcp.server(World.thread_id(context, "caller"), "codex")
+
+    [{^token, caller, alive}] = :ets.lookup(HalC2.Mcp.Credentials, token)
+
+    :ets.insert(
+      HalC2.Mcp.Credentials,
+      {token, %{caller | environment_id: "another-environment"}, alive}
+    )
+
+    Map.put(context, :foreign_caller, "caller")
+  end
+
+  step ~r/^its agent (?<action>reads the environment|updates the preferences)$/,
+       %{args: [action]} = context do
+    {tool, arguments} =
+      case action do
+        "reads the environment" ->
+          {"hal_c2_environment_read", %{}}
+
+        "updates the preferences" ->
+          {"hal_c2_environment_preferences_update", %{"defaultThreadEnvMode" => "worktree"}}
+      end
+
+    Map.put(
+      context,
+      :mcp_result,
+      World.mcp_tool(context, context.foreign_caller, tool, arguments)
+    )
+  end
+
+  step "thread {string} works in worktree {string} on branch {string}",
+       %{args: [thread, path, branch]} = context do
+    context = World.patch_thread(context, thread, %{"worktreePath" => path, "branch" => branch})
+
+    World.await_row(
+      World.thread_id(context, thread),
+      &(&1["worktreePath"] == path and &1["branch"] == branch)
+    )
+
+    context
+  end
+
+  step "the agent of {string} launches a thread in {string} without saying where it works",
+       %{args: [caller, project]} = context do
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_launch", %{
+        "projectId" => World.project(context, project).id,
+        "title" => "Rooted",
+        "message" => "say rooted"
+      })
+
+    assert {:ok, %{"threadId" => id}} = result
+    context |> Map.put(:mcp_result, result) |> put_in([:threads, "new"], id)
+  end
+
+  step "the new thread works in the project root with no worktree", context do
+    thread = World.thread(context, "new")
+    assert thread["worktreePath"] == nil
+    context
+  end
+
+  step "it does not share the caller's worktree or branch", context do
+    thread = World.thread(context, "new")
+    caller = World.thread(context, "caller")
+    assert caller["worktreePath"] == "/work/x"
+    refute thread["worktreePath"] == caller["worktreePath"]
+    refute thread["branch"] == caller["branch"]
+    context
+  end
+
+  step ~r/^the agent of "(?<caller>[^"]+)" (?<request>launches a thread with a message of 120,001 characters|launches a thread with 9 attachments|sends 9 attachments to "t2"|sends no attachments to "t2"|sends attachments to "t2" with a message of 120,001 characters)$/,
+       %{args: [caller, request]} = context do
+    oversized = String.duplicate("x", 120_001)
+
+    attachment = fn i ->
+      %{
+        "type" => "file",
+        "id" => "pending-limit-#{i}",
+        "name" => "n#{i}.txt",
+        "mimeType" => "text/plain",
+        "sizeBytes" => 1
+      }
+    end
+
+    nine = Enum.map(1..9, attachment)
+    t2 = World.thread_id(context, "t2")
+
+    context =
+      context
+      |> Map.put(:threads_before, project_thread_ids(context))
+      |> Map.put(
+        :messages_before,
+        length(StreamState.list(World.state(context, "t2"), "message"))
+      )
+
+    result =
+      case request do
+        "launches a thread with a message of 120,001 characters" ->
+          World.mcp_tool(context, caller, "hal_c2_thread_launch", %{
+            "title" => "Too long",
+            "message" => oversized
+          })
+
+        "launches a thread with 9 attachments" ->
+          World.mcp_tool(context, caller, "hal_c2_thread_launch", %{
+            "title" => "Too many",
+            "message" => "look",
+            "attachments" => nine
+          })
+
+        ~s(sends 9 attachments to "t2") ->
+          World.mcp_tool(context, caller, "hal_c2_thread_send_attachments", %{
+            "threadId" => t2,
+            "message" => "look",
+            "attachments" => nine
+          })
+
+        ~s(sends no attachments to "t2") ->
+          World.mcp_tool(context, caller, "hal_c2_thread_send_attachments", %{
+            "threadId" => t2,
+            "message" => "look",
+            "attachments" => []
+          })
+
+        ~s(sends attachments to "t2" with a message of 120,001 characters) ->
+          World.mcp_tool(context, caller, "hal_c2_thread_send_attachments", %{
+            "threadId" => t2,
+            "message" => oversized,
+            "attachments" => [attachment.(1)]
+          })
+      end
+
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "the tool refuses the input as invalid", context do
+    assert {:error, "invalid_request", _message} = context.mcp_result
+    context
+  end
+
+  step "no thread is created and nothing is sent", context do
+    assert project_thread_ids(context) == context.threads_before
+
+    assert length(StreamState.list(World.state(context, "t2"), "message")) ==
+             context.messages_before
+
+    context
+  end
+
+  step "thread {string} has a settlement decision", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.settle",
+        "commandId" => "cmd-settle-#{System.unique_integer([:positive])}",
+        "threadId" => id,
+        "settledAt" => World.iso_from_now(0)
+      })
+
+    World.await_row(id, &(&1["settledOverride"] == "settled" and &1["settledAt"] != nil))
+    context
+  end
+
+  step "the agent of {string} lists or reads {string}", %{args: [caller, thread]} = context do
+    listed = World.mcp_tool(context, caller, "hal_c2_thread_list", %{})
+
+    read =
+      World.mcp_tool(context, caller, "hal_c2_thread_read", %{
+        "threadId" => World.thread_id(context, thread)
+      })
+
+    context
+    |> Map.put(:listed, listed)
+    |> Map.put(:mcp_result, read)
+    |> Map.put(:settled_thread, thread)
+  end
+
+  step "the response includes the settlement state of {string}", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+    assert {:ok, %{"threads" => threads}} = context.listed
+    listed = Enum.find(threads, &(&1["threadId"] == id))
+    assert listed["settled"] == true
+    assert is_binary(listed["settledAt"])
+    assert {:ok, %{"thread" => read}} = context.mcp_result
+    assert read["settled"] == true
+    assert read["settledAt"] == listed["settledAt"]
+    Map.merge(context, %{listed_item: listed, read_thread: read})
+  end
+
+  step "it says why {string} can or cannot settle", %{args: [_thread]} = context do
+    for item <- [context.listed_item, context.read_thread] do
+      assert item["canSettle"] == false
+      assert item["settlementReason"] == "already settled"
+    end
+
+    context
+  end
+
+  step "the user attached thread {string} of another project to a message of {string}",
+       %{args: [elsewhere, caller]} = context do
+    context
+    |> attachable_elsewhere(elsewhere)
+    |> attach_as_context(caller, elsewhere, %{})
+  end
+
+  step "a message written by an agent of {string} carries a context record naming thread {string} of another project",
+       %{args: [caller, elsewhere]} = context do
+    context
+    |> attachable_elsewhere(elsewhere)
+    |> attach_as_context(caller, elsewhere, %{"createdBy" => "agent", "creationSource" => "mcp"})
+  end
+
+  step "it receives the thread's messages", context do
+    assert {:ok, result} = context.mcp_result
+    assert result["thread"]["threadId"] == World.thread_id(context, "elsewhere")
+    assert Enum.any?(result["items"], &(&1["text"] == "say from elsewhere"))
+    context
+  end
+
+  step "listing, sending to or interrupting {string} is still refused",
+       %{args: [elsewhere]} = context do
+    id = World.thread_id(context, elsewhere)
+
+    assert {:ok, %{"threads" => threads}} =
+             World.mcp_tool(context, "caller", "hal_c2_thread_list")
+
+    refute id in Enum.map(threads, & &1["threadId"])
+
+    assert {:error, "thread_not_found", _} =
+             World.mcp_tool(context, "caller", "hal_c2_thread_send", %{
+               "threadId" => id,
+               "message" => "say hi"
+             })
+
+    assert {:error, "thread_not_found", _} =
+             World.mcp_tool(context, "caller", "hal_c2_thread_interrupt", %{"threadId" => id})
+
+    context
+  end
+
+  step "thread {string} was deleted", %{args: [thread]} = context do
+    id = World.thread_id(context, thread)
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.delete",
+        "commandId" => "cmd-delete-#{System.unique_integer([:positive])}",
+        "threadId" => id
+      })
+
+    World.await_row(id, &(&1["deletedAt"] != nil))
+    Map.put(context, :deleted_thread, thread)
+  end
+
+  step "the tool fails with code {string} saying {string}", %{args: [code, saying]} = context do
+    # The saying names the scenario's thread; the tool names it by its id.
+    [_, name] = Regex.run(~r/^Thread (\S+) is no longer available\.$/, saying)
+    expected = "Thread #{World.thread_id(context, name)} is no longer available."
+    assert {:error, ^code, ^expected} = context.mcp_result
+    context
+  end
+
+  step "{string} has no turn running", %{args: [thread]} = context do
+    refute Enum.any?(World.runs(context, thread), &(&1["status"] in @active))
+    context
+  end
+
+  step "the agent names a run of {string} that already finished", %{args: [thread]} = context do
+    assert %{"status" => "completed", "id" => run_id} =
+             World.finish_turn(context, thread, "say finished")
+
+    Map.merge(context, %{named_run: run_id, finished_thread: thread})
+  end
+
+  step ~r/^the answer's status is (?<status>interrupt_requested|no_active_run|that run's final status)$/,
+       %{args: [status]} = context do
+    assert {:ok, result} = context.mcp_result
+
+    expected =
+      case status do
+        "that run's final status" ->
+          World.runs(context, context.finished_thread)
+          |> Enum.find(&(&1["id"] == context.named_run))
+          |> Map.fetch!("status")
+
+        other ->
+          other
+      end
+
+    assert result["status"] == expected
+    context
+  end
+
+  step "the agent of {string} sent {string} to {string} with request key {string}",
+       %{args: [caller, text, thread, key]} = context do
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_send", %{
+        "threadId" => World.thread_id(context, thread),
+        "message" => text,
+        "clientRequestId" => key
+      })
+
+    assert {:ok, %{"messageId" => _}} = result
+    Map.merge(context, %{sent_once: result, sent_text: text, sent_to: thread, sent_from: caller})
+  end
+
+  step "it repeats the send with request key {string}", %{args: [key]} = context do
+    result =
+      World.mcp_tool(context, context.sent_from, "hal_c2_thread_send", %{
+        "threadId" => World.thread_id(context, context.sent_to),
+        "message" => context.sent_text,
+        "clientRequestId" => key
+      })
+
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "{string} received the message once", %{args: [thread]} = context do
+    assert {:ok, repeat} = context.mcp_result
+    assert {:ok, first} = context.sent_once
+    assert repeat["messageId"] == first["messageId"]
+
+    delivered =
+      World.state(context, thread)
+      |> StreamState.list("message")
+      |> Enum.filter(&(&1["text"] == context.sent_text))
+
+    assert length(delivered) == 1
+    context
+  end
+
+  step "the agent of {string} interrupted {string} with request key {string}",
+       %{args: [caller, thread, key]} = context do
+    context = start_waiting(context, thread)
+
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_interrupt", %{
+        "threadId" => World.thread_id(context, thread),
+        "clientRequestId" => key
+      })
+
+    assert {:ok, %{"status" => "interrupt_requested", "runId" => run_id}} = result
+    Map.merge(context, %{interrupted_run: run_id, interrupt_caller: caller})
+  end
+
+  step "it repeats the interrupt with request key {string}", %{args: [key]} = context do
+    result =
+      World.mcp_tool(context, context.interrupt_caller, "hal_c2_thread_interrupt", %{
+        "threadId" => World.thread_id(context, "t2"),
+        "clientRequestId" => key
+      })
+
+    Map.put(context, :mcp_result, result)
+  end
+
+  step "the turn of {string} was interrupted once", %{args: [thread]} = context do
+    assert {:ok, _} = context.mcp_result
+    run_id = context.interrupted_run
+
+    World.await_state(context, thread, fn state ->
+      StreamState.get(state, "run")[run_id]["status"] == "interrupted"
+    end)
+
+    requests =
+      World.state(context, thread)
+      |> StreamState.list("turn-item")
+      |> Enum.filter(&(&1["type"] == "run_interrupt_request" and &1["runId"] == run_id))
+
+    assert length(requests) == 1
+
+    transitions =
+      Enum.filter(World.events(context, thread), fn event ->
+        event.kind == "run" and event.entity == run_id and
+          get_in(event.patch, ["s", "status"]) == "interrupted"
+      end)
+
+    assert length(transitions) == 1
+    context
+  end
+
+  # A thread in another project with a message of its own, named for attachment.
+  defp attachable_elsewhere(context, elsewhere) do
+    context =
+      context
+      |> World.create_project("another")
+      |> World.create_thread(elsewhere, "another")
+
+    assert %{"status" => "completed"} =
+             World.finish_turn(context, elsewhere, "say from elsewhere")
+
+    context
+  end
+
+  # Sends a message to `caller` carrying a `thread` context record for
+  # `elsewhere`; `fields` says who wrote it (the user by default).
+  defp attach_as_context(context, caller, elsewhere, fields) do
+    record = %{
+      "contextId" => "ctx-elsewhere",
+      "kind" => "thread",
+      "threadId" => World.thread_id(context, elsewhere),
+      "title" => elsewhere
+    }
+
+    fields = Map.put(fields, "context", %{"records" => [record]})
+
+    context =
+      World.send_turn(
+        context,
+        caller,
+        "See [#{elsewhere}](hal-c2-context://v1/thread/ctx-elsewhere)",
+        fields
+      )
+
+    World.await_state(context, caller, fn state ->
+      Enum.any?(StreamState.list(state, "message"), fn message ->
+        Enum.any?(
+          get_in(message, ["context", "records"]) || [],
+          &(&1["threadId"] == record["threadId"])
+        )
+      end)
+    end)
+
+    context
+  end
+
+  defp project_thread_ids(context) do
+    project = World.project(context, "demo").id
+
+    for {{_mc, id}, {"thread", row}} <- HalC2.Shell.rows(),
+        row["projectId"] == project and row["deletedAt"] == nil,
+        do: id
   end
 
   # --- helpers ---------------------------------------------------------------------

@@ -468,7 +468,14 @@ defmodule HalC2.Mcp do
 
   defp mint(thread_id, instance, capabilities) do
     token = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
-    caller = %{thread_id: thread_id, instance: instance, capabilities: capabilities}
+
+    caller = %{
+      thread_id: thread_id,
+      instance: instance,
+      capabilities: capabilities,
+      environment_id: HalC2.Environment.id()
+    }
+
     :ets.insert(@table, {token, caller, System.monotonic_time(:millisecond)})
     token
   end
