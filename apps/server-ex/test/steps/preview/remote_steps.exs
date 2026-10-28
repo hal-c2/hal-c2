@@ -157,7 +157,15 @@ defmodule HalC2.Steps.Preview.Remote do
   end
 
   step "the request fails with {string}", %{args: [reason]} = context do
-    assert %{"t" => "error", "reason" => ^reason} = context.error_frame
+    # A forward's error frame, or another request's RPC reply
+    # (`context.reply`, as the linked-threads steps leave it).
+    if Map.has_key?(context, :error_frame) do
+      assert %{"t" => "error", "reason" => ^reason} = context.error_frame
+    else
+      assert {:error, _error, _detail} = context.reply
+      assert inspect(context.reply) =~ reason
+    end
+
     context
   end
 

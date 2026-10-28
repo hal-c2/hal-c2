@@ -79,9 +79,14 @@ defmodule HalC2.Shell do
 
   @doc "One row as `{kind, row}`, or `nil`."
   def row(mc, id) do
-    case :ets.lookup(@table, {mc, id}) do
-      [{_, row}] -> row
-      [] -> nil
+    # Without the shell (tools, some tests) there are no rows, as in `rows/0`.
+    if :ets.whereis(@table) == :undefined do
+      nil
+    else
+      case :ets.lookup(@table, {mc, id}) do
+        [{_, row}] -> row
+        [] -> nil
+      end
     end
   end
 
