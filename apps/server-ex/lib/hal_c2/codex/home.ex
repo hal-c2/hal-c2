@@ -67,8 +67,17 @@ defmodule HalC2.Codex.Home do
     File.mkdir_p!(shadow)
     for directory <- @shared_directories, do: File.mkdir_p!(Path.join(shared, directory))
 
-    # A login that is a link would be the shared home's: the account keeps its own.
-    for name <- @private, symlink?(Path.join(shadow, name)), do: File.rm!(Path.join(shadow, name))
+    # A model cache that is a link would be the shared home's: it goes. A login that
+    # is a link refuses the home instead: removing it could lose the account's own.
+    if symlink?(Path.join(shadow, "models_cache.json")),
+      do: File.rm!(Path.join(shadow, "models_cache.json"))
+
+    if symlink?(Path.join(shadow, "auth.json")) do
+      throw(
+        {:shadow_home,
+         "Codex shadow home private entry 'auth.json' at '#{Path.join(shadow, "auth.json")}' must be a real file, not a symlink."}
+      )
+    end
 
     shared
     |> File.ls!()
@@ -82,6 +91,8 @@ defmodule HalC2.Codex.Home do
   rescue
     error in File.Error ->
       {:error, "Codex shadow home could not be prepared: " <> Exception.message(error)}
+  catch
+    {:shadow_home, message} -> {:error, message}
   end
 
   defp link_entry(target, link, name) do
