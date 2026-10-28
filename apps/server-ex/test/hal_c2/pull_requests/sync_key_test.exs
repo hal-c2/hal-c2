@@ -9,9 +9,9 @@ defmodule HalC2.PullRequests.SyncKeyTest do
 
   alias HalC2.PullRequests
 
-  # `sync_key/1` reads the project through the shell; without one (a tool, a
-  # test) it answers nil instead of raising on the missing table.
-  test "a reference whose project cannot be read is not identified" do
+  # The missing-table branch itself is covered where the table can be taken
+  # away (`HalC2.ShellRestartTest`); here, an unknown project is not identified.
+  test "a reference whose project is not known is not identified" do
     assert PullRequests.sync_key(%{
              "projectId" => "no-such-project",
              "repository" => "acme/web",
