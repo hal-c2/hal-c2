@@ -271,7 +271,7 @@ Feature: Claude
     Then the thread lists the monitor as background work
     And the monitor is not shown as a command
 
-  @shared
+  @shared @backlog-tui
   Scenario: A Claude monitor stays listed while the next turn runs
     Given Claude starts a monitor in the thread
     When the user sends another message and its turn is running

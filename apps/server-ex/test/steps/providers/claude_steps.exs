@@ -2915,7 +2915,8 @@ defmodule HalC2.Steps.Providers.Claude do
     context
   end
 
-  step ~r/^Claude reports the subagent (?<reported>.+)$/, %{args: [reported]} = context do
+  step ~r/^Claude reports the subagent (?<reported>completed with a result|stopped|ended any other way)$/,
+       %{args: [reported]} = context do
     case reported do
       "completed with a result" -> subagent_notification(context, "completed", "3 files")
       "stopped" -> subagent_notification(context, "stopped", "")
