@@ -1229,7 +1229,7 @@ defmodule HalC2.Codex.ThreadRuntime do
           {Connection.call(state.conn, "thread/rollback", %{
              "threadId" => id,
              "numTurns" => count
-           }), nil}
+           }), %{"message" => "thread/revert did not return the trimmed thread"}}
       end
 
     case result do
