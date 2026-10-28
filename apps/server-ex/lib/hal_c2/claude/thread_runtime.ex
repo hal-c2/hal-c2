@@ -342,6 +342,10 @@ defmodule HalC2.Claude.ThreadRuntime do
     # as are launch arguments that cannot be read.
     opened =
       cond do
+        # A fork point Claude cannot honour (`HalC2.Orchestration.Handoff.fork_boundary/3`).
+        message = get_in(turn, [:fork, :error]) ->
+          {:error, {:refused, message}}
+
         message = turn.launch[:launch_error] ->
           {:error, {:refused, message}}
 
