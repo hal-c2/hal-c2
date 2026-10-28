@@ -41,6 +41,8 @@ defmodule HalC2Plugins.IssueTracker do
   @roles ~w(prioritising followingUp summarising implementing)
   @prompts ~w(prioritisePrompt followUpPrompt summarisePrompt implementPrompt)
   @kept_finished 50
+  # An apply claim older than this is stale: its caller is gone or wedged.
+  @stale_claim_ms 5 * 60_000
 
   # --- extension ------------------------------------------------------------------------
 
@@ -667,6 +669,7 @@ defmodule HalC2Plugins.IssueTracker do
        looking: nil,
        timer: nil,
        runs: runs,
+       claims: %{},
        snapshot: %{
          "repositories" => [],
          "issues" => [],
@@ -744,18 +747,26 @@ defmodule HalC2Plugins.IssueTracker do
   end
 
   # Claims a proposed run for applying: while it is `applying`, a second apply
-  # and a dismiss are refused by their own status checks.
-  def handle_call({:claim_apply, run_id}, _from, state) do
-    case Enum.find(state.runs, &(&1["id"] == run_id)) do
-      nil ->
+  # and a dismiss are refused by their own status checks. The claiming caller
+  # is monitored, so an apply that raises or whose caller dies releases the
+  # claim instead of stranding the run; a claim gone stale can be taken over.
+  def handle_call({:claim_apply, run_id}, {caller, _} = _from, state) do
+    run = Enum.find(state.runs, &(&1["id"] == run_id))
+    now = System.system_time(:millisecond)
+    claim = state.claims[run_id]
+
+    cond do
+      run == nil ->
         {:reply, {:error, "There is no run #{run_id}."}, state}
 
-      %{"status" => status} when status != "proposed" ->
-        {:reply, {:error, "That run is #{status}, not proposed."}, state}
+      run["status"] == "proposed" ->
+        claim(state, run, caller, now)
 
-      run ->
-        run = Map.put(run, "status", "applying")
-        {:reply, {:ok, run}, put_runs(state, replaced(state.runs, run))}
+      (run["status"] == "applying" and claim) && now - claim.at > @stale_claim_ms ->
+        claim(state, run, caller, now)
+
+      true ->
+        {:reply, {:error, "That run is #{run["status"]}, not proposed."}, state}
     end
   end
 
@@ -768,7 +779,7 @@ defmodule HalC2Plugins.IssueTracker do
         |> Map.put("done", Enum.uniq((run["done"] || []) ++ done))
       end)
 
-    state = put_runs(state, replaced(state.runs, run))
+    state = state |> release_claim(run_id) |> put_runs(replaced(state.runs, run))
     {:reply, run, state}
   end
 
@@ -781,7 +792,26 @@ defmodule HalC2Plugins.IssueTracker do
         |> Map.put("done", Enum.uniq((run["done"] || []) ++ done))
       end)
 
-    {:reply, :ok, put_runs(state, replaced(state.runs, run))}
+    {:reply, :ok, state |> release_claim(run_id) |> put_runs(replaced(state.runs, run))}
+  end
+
+  defp claim(state, run, caller, now) do
+    state = release_claim(state, run["id"])
+    ref = Process.monitor(caller)
+    claims = Map.put(state.claims, run["id"], %{pid: caller, ref: ref, at: now})
+    run = Map.put(run, "status", "applying")
+    {:reply, {:ok, run}, put_runs(%{state | claims: claims}, replaced(state.runs, run))}
+  end
+
+  defp release_claim(state, run_id) do
+    case state.claims[run_id] do
+      nil ->
+        state
+
+      %{ref: ref} ->
+        Process.demonitor(ref, [:flush])
+        %{state | claims: Map.delete(state.claims, run_id)}
+    end
   end
 
   def handle_call({:discard, run_id}, _from, state) do
@@ -882,6 +912,20 @@ defmodule HalC2Plugins.IssueTracker do
         else: Map.put(changes, "problem", "Looking failed: #{inspect(reason)}")
 
     {:noreply, publish(%{state | looking: nil, timer: timer}, changes)}
+  end
+
+  # The caller holding an apply claim died: its run is proposed again, the
+  # operations it did reach GitHub with stayed on the run, so a retry is safe.
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    case Enum.find(state.claims, fn {_run_id, claim} -> claim.ref == ref end) do
+      nil ->
+        {:noreply, state}
+
+      {run_id, _claim} ->
+        run = change_run(state, run_id, &Map.put(&1, "status", "proposed"))
+
+        {:noreply, state |> release_claim(run_id) |> put_runs(replaced(state.runs, run))}
+    end
   end
 
   def handle_info(_message, state), do: {:noreply, state}

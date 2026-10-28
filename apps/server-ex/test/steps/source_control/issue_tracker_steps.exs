@@ -147,7 +147,16 @@ defmodule HalC2.Steps.SourceControl.IssueTracker do
   end
 
   step "GitHub is asked only for issues labelled {string}", %{args: [label]} = context do
-    asked = GitHubIssues.graphql_calls(context, "issues(first: $first")
+    # Not GitHubIssues.graphql_calls/2: it pattern-matches every call's stdin
+    # as a GraphQL body, and a call logged with none (seen on CI) crashes it.
+    asked =
+      for call <- World.cli_calls(context, "api graphql"),
+          {:ok, %{"query" => query, "variables" => variables}} <- [
+            JSON.decode(call["stdin"] || "")
+          ],
+          String.contains?(query, "issues(first: $first"),
+          do: variables
+
     assert Enum.any?(asked, &(&1["labels"] == [label])), inspect(asked)
     context
   end
