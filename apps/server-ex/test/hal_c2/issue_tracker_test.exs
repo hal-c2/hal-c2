@@ -206,6 +206,19 @@ defmodule HalC2.IssueTrackerTest do
       assert Triage.issue_line(slim) =~ "blocked by acme/api#5"
     end
 
+    test "a branch that is taken gets the next free suffix" do
+      assert Triage.free_branch("issue-7-add-limits", []) == "issue-7-add-limits"
+
+      assert Triage.free_branch("issue-7-add-limits", ["issue-7-add-limits"]) ==
+               "issue-7-add-limits-2"
+
+      assert Triage.free_branch("issue-7-add-limits", [
+               "issue-7-add-limits",
+               "issue-7-add-limits-2"
+             ]) ==
+               "issue-7-add-limits-3"
+    end
+
     test "fill leaves an unknown name as written, and branches are named for their issue" do
       assert Triage.fill("Do {{number}} of {{repository}}", %{"number" => "7"}) ==
                "Do 7 of {{repository}}"

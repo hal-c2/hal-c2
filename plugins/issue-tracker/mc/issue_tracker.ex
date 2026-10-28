@@ -135,26 +135,40 @@ defmodule HalC2Plugins.IssueTracker do
       when is_binary(repository) and is_integer(number),
       do: implement(repository, number, context.settings)
 
-  # Applying is the only triage path that asks GitHub for anything. What could
-  # not be done keeps the run proposed and names the issues that failed.
+  # Applying is the only triage path that asks GitHub for anything. The run is
+  # claimed first (proposed → applying), so two applies cannot run at once and
+  # a dismiss cannot land mid-apply. Each operation that reaches GitHub is
+  # recorded on the run; a retry after a partial failure replays only the
+  # rest, so nothing is posted or set twice. What could not be done keeps the
+  # run proposed and names the issues that failed.
   def call("apply", %{"runId" => run_id}, _context) do
-    with {:ok, run} <- GenServer.call(__MODULE__, {:run, run_id}),
-         :ok <- proposed(run),
-         {:ok, current} <- current_labels(run),
-         operations = Triage.operations(run["report"], current),
-         [] <- apply_operations(operations) do
-      {:ok, GenServer.call(__MODULE__, {:applied, run_id})}
-    else
-      {:error, _} = error ->
-        error
+    with {:ok, run} <- GenServer.call(__MODULE__, {:claim_apply, run_id}) do
+      done_before = run["done"] || []
 
-      failures when is_list(failures) ->
-        message =
-          "Part of the proposal did not reach GitHub: " <>
-            Enum.map_join(failures, "; ", fn {key, why} -> "#{key}: #{why}" end)
+      {done, failures} =
+        case current_labels(run) do
+          {:ok, current} ->
+            run["report"]
+            |> Triage.operations(current)
+            |> Enum.reject(&(operation_tag(&1) in done_before))
+            |> apply_operations()
 
-        GenServer.call(__MODULE__, {:apply_failed, run_id, message})
-        {:error, message}
+          {:error, message} ->
+            {[], [{"reading the issues", message}]}
+        end
+
+      case failures do
+        [] ->
+          {:ok, GenServer.call(__MODULE__, {:applied, run_id, done})}
+
+        _ ->
+          message =
+            "Part of the proposal did not reach GitHub: " <>
+              Enum.map_join(failures, "; ", fn {key, why} -> "#{key}: #{why}" end)
+
+          GenServer.call(__MODULE__, {:apply_failed, run_id, message, done})
+          {:error, message}
+      end
     end
   end
 
@@ -162,9 +176,6 @@ defmodule HalC2Plugins.IssueTracker do
     do: GenServer.call(__MODULE__, {:discard, run_id})
 
   def call(method, _input, _context), do: {:error, "issue-tracker has no method #{method}."}
-
-  defp proposed(%{"status" => "proposed"}), do: :ok
-  defp proposed(%{"status" => status}), do: {:error, "That run is #{status}, not proposed."}
 
   # A thread this plugin started finished a turn: an unreported triage run fails,
   # and how an implementing thread went shows beside its issue.
@@ -313,6 +324,7 @@ defmodule HalC2Plugins.IssueTracker do
       "createdAt" => System.system_time(:millisecond),
       "summary" => nil,
       "report" => nil,
+      "done" => [],
       "error" => nil
     }
 
@@ -443,7 +455,7 @@ defmodule HalC2Plugins.IssueTracker do
              "workspaceStrategy" => %{
                "type" => "worktree",
                "baseRef" => "HEAD",
-               "branch" => Triage.branch(number, issue["title"]),
+               "branch" => free_branch(project["root"], Triage.branch(number, issue["title"])),
                "startFromOrigin" => false
              },
              "initialMessage" => %{"text" => prompt, "attachments" => []}
@@ -476,13 +488,24 @@ defmodule HalC2Plugins.IssueTracker do
 
   defp current_labels(_run), do: {:ok, %{}}
 
+  # `{done, failures}`: the tags of the operations that reached GitHub, in
+  # order, and what each failed one was refused with.
   defp apply_operations(operations) do
-    for operation <- operations,
-        {:error, message} <- [apply_operation(operation)],
-        do: {operation_key(operation), message}
+    Enum.reduce(operations, {[], []}, fn operation, {done, failures} ->
+      case apply_operation(operation) do
+        :ok -> {[operation_tag(operation) | done], failures}
+        {:error, message} -> {done, [{operation_key(operation), message} | failures]}
+      end
+    end)
+    |> then(fn {done, failures} -> {Enum.reverse(done), Enum.reverse(failures)} end)
   end
 
   defp operation_key({_, repository, number, _}), do: Triage.key(repository, number)
+
+  # An operation's identity across retries: setting an issue's labels once is
+  # the same operation, as is posting its comment.
+  defp operation_tag({kind, repository, number, _}),
+    do: "#{kind}:#{Triage.key(repository, number)}"
 
   defp apply_operation({:labels, repository, number, labels}) do
     with {:ok, project} <- host_project(repository),
@@ -544,6 +567,22 @@ defmodule HalC2Plugins.IssueTracker do
     if found,
       do: {:ok, found},
       else: {:error, "No GitHub project is on this MC to read #{repository} through."}
+  end
+
+  # Implementing an issue again must not reuse the branch the first thread
+  # took: the first name `git worktree add -b` can still take in this checkout.
+  defp free_branch(root, base) do
+    taken =
+      case System.cmd("git", ["-C", root, "branch", "--format=%(refname:short)"],
+             stderr_to_stdout: true
+           ) do
+        {out, 0} -> String.split(out, "\n", trim: true)
+        _ -> []
+      end
+
+    Triage.free_branch(base, taken)
+  rescue
+    _ -> base
   end
 
   defp today, do: Date.utc_today() |> Date.to_iso8601()
@@ -614,17 +653,24 @@ defmodule HalC2Plugins.IssueTracker do
   def init(settings) do
     send(self(), :poll)
     saved = read_state()
+    # An apply this process did not live to finish leaves its run claimed;
+    # proposed again, its done operations still on it, is where a retry goes.
+    runs =
+      Enum.map(saved["runs"] || [], fn
+        %{"status" => "applying"} = run -> Map.put(run, "status", "proposed")
+        run -> run
+      end)
 
     {:ok,
      %{
        settings: settings,
        looking: nil,
        timer: nil,
-       runs: saved["runs"] || [],
+       runs: runs,
        snapshot: %{
          "repositories" => [],
          "issues" => [],
-         "runs" => saved["runs"] || [],
+         "runs" => runs,
          "threads" => saved["threads"] || %{},
          "checkedAt" => nil,
          "looking" => true,
@@ -697,16 +743,44 @@ defmodule HalC2Plugins.IssueTracker do
     end
   end
 
-  def handle_call({:applied, run_id}, _from, state) do
+  # Claims a proposed run for applying: while it is `applying`, a second apply
+  # and a dismiss are refused by their own status checks.
+  def handle_call({:claim_apply, run_id}, _from, state) do
+    case Enum.find(state.runs, &(&1["id"] == run_id)) do
+      nil ->
+        {:reply, {:error, "There is no run #{run_id}."}, state}
+
+      %{"status" => status} when status != "proposed" ->
+        {:reply, {:error, "That run is #{status}, not proposed."}, state}
+
+      run ->
+        run = Map.put(run, "status", "applying")
+        {:reply, {:ok, run}, put_runs(state, replaced(state.runs, run))}
+    end
+  end
+
+  def handle_call({:applied, run_id, done}, _from, state) do
     run =
-      change_run(state, run_id, &(&1 |> Map.put("status", "applied") |> Map.put("error", nil)))
+      change_run(state, run_id, fn run ->
+        run
+        |> Map.put("status", "applied")
+        |> Map.put("error", nil)
+        |> Map.put("done", Enum.uniq((run["done"] || []) ++ done))
+      end)
 
     state = put_runs(state, replaced(state.runs, run))
     {:reply, run, state}
   end
 
-  def handle_call({:apply_failed, run_id, message}, _from, state) do
-    run = change_run(state, run_id, &Map.put(&1, "error", message))
+  def handle_call({:apply_failed, run_id, message, done}, _from, state) do
+    run =
+      change_run(state, run_id, fn run ->
+        run
+        |> Map.put("status", "proposed")
+        |> Map.put("error", message)
+        |> Map.put("done", Enum.uniq((run["done"] || []) ++ done))
+      end)
+
     {:reply, :ok, put_runs(state, replaced(state.runs, run))}
   end
 
@@ -824,7 +898,9 @@ defmodule HalC2Plugins.IssueTracker do
 
   # Finished runs beyond the latest few are dropped; running and proposed ones stay.
   defp put_runs(state, runs) do
-    {open, finished} = Enum.split_with(runs, &(&1["status"] in ["running", "proposed"]))
+    {open, finished} =
+      Enum.split_with(runs, &(&1["status"] in ["running", "proposed", "applying"]))
+
     runs = open ++ Enum.take(finished, @kept_finished)
     state = publish(%{state | runs: runs}, %{"runs" => runs})
     write_state(state)
@@ -902,7 +978,7 @@ defmodule HalC2Plugins.IssueTracker do
         for {repository, project, result} <- results do
           %{
             "repository" => repository,
-            "project" => project && project["repository"] == repository && project["title"],
+            "project" => if(project && project["repository"] == repository, do: project["title"]),
             "truncated" => match?({:ok, %{"truncated" => true}}, result)
           }
         end,

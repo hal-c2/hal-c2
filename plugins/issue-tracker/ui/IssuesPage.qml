@@ -115,6 +115,8 @@ Item {
             return qsTr("Running");
         case "proposed":
             return qsTr("Waiting for you");
+        case "applying":
+            return qsTr("Applying…");
         case "applied":
             return qsTr("Applied");
         case "done":

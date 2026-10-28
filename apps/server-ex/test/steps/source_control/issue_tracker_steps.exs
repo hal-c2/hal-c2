@@ -391,6 +391,57 @@ defmodule HalC2.Steps.SourceControl.IssueTracker do
     context
   end
 
+  step "a proposed summarising run on \#{int} with a comment and the label {string}",
+       %{args: [number, label]} = context do
+    context =
+      answers(context, context.repository, [
+        issue(context.repository, number, %{"title" => "Add limits", "body" => "Limits."})
+      ])
+
+    context =
+      start_run(context, "summarise", %{"repository" => context.repository, "number" => number})
+
+    report!(context, %{
+      "summary" => "Summarised.",
+      "items" => [
+        %{
+          "repository" => context.repository,
+          "number" => number,
+          "comment" => "The short of it: per-key limits.",
+          "labels" => [label]
+        }
+      ]
+    })
+
+    assert run!(context)["status"] == "proposed"
+    context
+  end
+
+  step "GitHub accepts labelling \#{int} again", %{args: [number]} = context do
+    World.cli_rules(context, [
+      %{
+        "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
+        "stdout" => %{"number" => number}
+      }
+    ])
+  end
+
+  step "the comment was posted exactly once", context do
+    calls = GitHubIssues.rest_calls(context, "POST", "/comments")
+    assert length(calls) == 1, inspect(calls)
+    context
+  end
+
+  step "another thread in a new worktree of {string} starts on \#{int}",
+       %{args: [project, _number]} = context do
+    [second, first] = context.implement_threads
+    first_path = await_worktree(first)
+    second_path = await_worktree(second)
+    assert second_path != first_path
+    assert thread(second)["projectId"] == World.project(context, project).id
+    context
+  end
+
   step "its agent reports a comment for \#{int}", %{args: [number]} = context do
     result =
       tool(context, "issue_tracker_report", %{
@@ -750,7 +801,21 @@ defmodule HalC2.Steps.SourceControl.IssueTracker do
 
     assert {:ok, %{"threadId" => thread}} = reply
     World.await_row(thread, & &1, 10_000)
-    Map.put(context, :thread, thread)
+
+    context
+    |> Map.put(:thread, thread)
+    |> Map.update(:implement_threads, [thread], &[thread | &1])
+  end
+
+  defp await_worktree(thread_id) do
+    World.await_stream(
+      thread_id,
+      fn state ->
+        thread = HalC2.StreamState.get(state, "thread")[thread_id]
+        thread && thread["worktreePath"]
+      end,
+      15_000
+    )
   end
 
   defp assert_run(context, action) do

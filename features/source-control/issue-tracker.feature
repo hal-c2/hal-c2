@@ -183,6 +183,19 @@ Feature: Issue tracker
       Then GitHub is asked to label #9 "backend" and "priority: high"
       And the run stays proposed, told #7 failed
 
+    @mc
+    Scenario: Applying again after a partial failure posts nothing twice
+      Given a proposed summarising run on #7 with a comment and the label "summary"
+      And GitHub refuses to label #7
+      When the user applies the proposal
+      Then GitHub is asked to comment "The short of it: per-key limits." on #7
+      And the run stays proposed, told #7 failed
+      When GitHub accepts labelling #7 again
+      And the user applies the proposal
+      Then GitHub is asked to label #7 "backend" and "summary"
+      And the comment was posted exactly once
+      And the triage run is applied
+
   Rule: Implementing an issue is work in a thread of its own
 
     @mc @desktop @backlog-desktop
@@ -196,6 +209,12 @@ Feature: Issue tracker
     Scenario: The last implementing thread of an issue shows beside it
       Given an implementing thread on #7 whose turn has finished
       Then #7 shows its implementing thread done
+
+    @mc
+    Scenario: Implementing the same issue again starts fresh work
+      Given an implementing thread on #7 whose turn has finished
+      When the user asks to implement #7
+      Then another thread in a new worktree of "api" starts on #7
 
     @mc
     Scenario: Implementing an issue of a repository with no project on the MC says so

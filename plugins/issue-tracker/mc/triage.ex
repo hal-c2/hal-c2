@@ -266,6 +266,14 @@ defmodule HalC2Plugins.IssueTracker.Triage do
   def queue_text([]), do: "No open issues."
   def queue_text(issues), do: Enum.map_join(issues, "\n", &issue_line/1)
 
+  @doc "The first of `base`, `base-2`, `base-3`, … that is not in `taken`."
+  def free_branch(base, taken) do
+    Enum.find_value(Stream.iterate(1, &(&1 + 1)), fn
+      1 -> base not in taken && base
+      n -> "#{base}-#{n}" not in taken && "#{base}-#{n}"
+    end)
+  end
+
   @doc "The branch an implementing thread works on: `issue-7-add-limits`."
   def branch(number, title) do
     slug =
