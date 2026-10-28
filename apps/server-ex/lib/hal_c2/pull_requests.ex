@@ -789,15 +789,67 @@ defmodule HalC2.PullRequests do
     end
   end
 
+  @doc """
+  The host-level key (`%{"host", "repository", "number"}`) a checkout-scoped
+  reference (`%{"projectId", "repository", "number"}`, with `"host"` when it
+  names one) belongs to, or nil when it cannot be identified. The host is the
+  reference's own when it names one, else its project's checkout's. A host
+  whose tools select a repository by its bare name (Azure DevOps) can only
+  key such a reference through the project's own repository, under its
+  canonical `org/project/_git/name` on `dev.azure.com`, however the checkout
+  was cloned.
+  """
+  def sync_key(ref) do
+    identity =
+      if ref["projectId"], do: Enum.find(projects(), &(&1.id == ref["projectId"]))
+
+    sync_key(ref, identity)
+  end
+
+  @doc "As `sync_key/1`, with the project's checkout (`%{host, repository, kind}`) given."
+  def sync_key(ref, identity) do
+    alias HalC2.Projection.PullRequests, as: Links
+
+    repository = String.trim(ref["repository"] || "")
+    number = ref["number"]
+
+    canonical =
+      if identity do
+        Links.normalize(%{
+          "host" => identity.host,
+          "repository" => identity.repository,
+          "number" => number
+        })
+      end
+
+    cond do
+      identity && identity.kind == "azure-devops" && !String.contains?(repository, "/") ->
+        selector = canonical["repository"] |> String.split("/") |> List.last()
+        host = ref["host"] && ref["host"] |> String.trim() |> String.downcase()
+
+        if String.downcase(repository) == selector && host in [nil, canonical["host"]],
+          do: canonical
+
+      true ->
+        host =
+          (ref["host"] && ref["host"] |> String.trim() |> String.downcase()) ||
+            (canonical && canonical["host"])
+
+        if host do
+          Links.normalize(%{"host" => host, "repository" => repository, "number" => number})
+        end
+    end
+  end
+
   @doc "`pullRequests.linkedThreads`: this MC's threads linked to the pull request."
   def linked_threads(ref) do
-    repository = String.downcase(String.trim(ref["repository"] || ""))
+    {host, repository} =
+      case sync_key(ref) do
+        %{"host" => host, "repository" => repository} ->
+          {host, repository}
 
-    host =
-      cond do
-        is_binary(ref["host"]) -> String.downcase(ref["host"])
-        project = Enum.find(projects(), &(&1.id == ref["projectId"])) -> project.host
-        true -> nil
+        nil ->
+          {nil, String.downcase(String.trim(ref["repository"] || ""))}
       end
 
     threads =
@@ -818,12 +870,17 @@ defmodule HalC2.PullRequests do
       )
 
     {:ok, %{"threads" => threads}}
+  rescue
+    _ -> refuse("linkedThreads", "Could not load linked threads.")
+  catch
+    _, _ -> refuse("linkedThreads", "Could not load linked threads.")
   end
 
   defp linked?(link, host, repository, number) do
-    link["source"] != "stack-dismissed" and link["number"] == number and
-      String.downcase(link["host"] || "") == host and
-      String.downcase(link["repository"] || "") == repository
+    normalized = HalC2.Projection.PullRequests.normalize(link)
+
+    link["source"] != "stack-dismissed" and
+      normalized == %{"host" => host, "repository" => repository, "number" => number}
   end
 
   # --- projects -----------------------------------------------------------------------
