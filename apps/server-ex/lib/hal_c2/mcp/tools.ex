@@ -332,7 +332,7 @@ defmodule HalC2.Mcp.Tools do
           do: project(row)
 
     cursor = args["cursor"] || 0
-    page = Enum.slice(projects, cursor, args["limit"] || 50)
+    page = Enum.slice(projects, cursor, args["limit"] || 20)
 
     {:ok,
      %{
