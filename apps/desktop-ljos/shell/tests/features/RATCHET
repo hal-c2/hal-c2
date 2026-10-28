@@ -1726,6 +1726,7 @@ threads/creating.feature: A new thread started while the list is scoped to a pro
 threads/creating.feature: A new thread starts in the project the user is looking at
 threads/creating.feature: A new thread uses the project default model when the project has one
 threads/creating.feature: A new worktree needs a base branch
+threads/creating.feature: A request to several models cut off by a quit comes back to its draft once
 threads/creating.feature: A thread cannot start from an empty task
 threads/creating.feature: Changing a draft's project picks an environment that has it
 threads/creating.feature: Each background start into a new worktree gets its own worktree
@@ -1880,6 +1881,7 @@ threads/sidebar-list.feature: Active threads are listed newest first
 threads/sidebar-list.feature: An open settled plugin thread stays listed
 threads/sidebar-list.feature: Hiding and showing the thread list
 threads/sidebar-list.feature: Jump hints appear while holding the modifier
+threads/sidebar-list.feature: Moving through the list with the keyboard [Enter, "Beta" opens]
 threads/sidebar-list.feature: Opening a draft from the list
 threads/sidebar-list.feature: Opening a thread from the list
 threads/sidebar-list.feature: Projects are ordered by recent use unless arranged by hand
@@ -1962,6 +1964,14 @@ threads/titles.feature: Renaming a thread from the desktop and phone
 threads/titles.feature: The title cannot be regenerated on an environment that needs an update
 threads/titles.feature: The title cannot be regenerated twice at once
 threads/unread-and-status.feature: A project shows the most urgent state of its threads
+threads/unread-and-status.feature: A thread row names its state [finished work the user has not seen, Done]
+threads/unread-and-status.feature: A thread row names its state [had its last run fail, Failed]
+threads/unread-and-status.feature: A thread row names its state [has a queued turn waiting to start, Waiting]
+threads/unread-and-status.feature: A thread row names its state [has an agent working, Working]
+threads/unread-and-status.feature: A thread row names its state [has hit a usage limit, Limited]
+threads/unread-and-status.feature: A thread row names its state [is waiting for an answer to a question, Input]
+threads/unread-and-status.feature: A thread row names its state [is waiting for an approval, Approval]
+threads/unread-and-status.feature: A thread row names its state [woke early from a snooze, Woke]
 threads/unread-and-status.feature: A working thread shows how long it has been working
 threads/unread-and-status.feature: Marking a thread unread from its menu
 threads/unread-and-status.feature: Marking several threads unread
@@ -2105,7 +2115,10 @@ timeline/runs-and-queue.feature: A sent message says how it reached the agent [s
 timeline/runs-and-queue.feature: A sent message shows its images
 timeline/runs-and-queue.feature: A usage limit is one warning line naming when to retry
 timeline/runs-and-queue.feature: An image is still shown after its address stops working
+timeline/scrolling-and-links.feature: A bare web address in a message can be opened
+timeline/scrolling-and-links.feature: A link in a reply opens only on a Ctrl-click [https://example.com/docs, holding Ctrl (Cmd on macOS), "https://example.com/docs" is opened]
 timeline/scrolling-and-links.feature: A link in a reply opens only on a Ctrl-click [https://example.com/docs, without holding Ctrl, nothing is opened]
+timeline/scrolling-and-links.feature: A link in a reply opens only on a Ctrl-click [src/cart.ts, holding Ctrl (Cmd on macOS), "src/cart.ts" is opened]
 timeline/scrolling-and-links.feature: A link in a reply opens only on a Ctrl-click [src/cart.ts, without holding Ctrl, nothing is opened]
 timeline/scrolling-and-links.feature: A link's menu in a reply opens or copies it [https://example.com/docs, Open link, Copy link, https://example.com/docs, "https://example.com/docs" opens in the system browser]
 timeline/scrolling-and-links.feature: A link's menu in a reply opens or copies it [src/cart.ts:12:3, Open file, Copy path, src/cart.ts, the Files tab shows "src/cart.ts" at line 12]

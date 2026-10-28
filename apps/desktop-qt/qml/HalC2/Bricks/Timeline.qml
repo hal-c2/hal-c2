@@ -30,11 +30,6 @@ Item {
     id: root
 
     property var model: null
-    // Another thread starts over at once; its rows follow a moment later.
-    onModelChanged: {
-        view.restart();
-        Qt.callLater(view.adopt);
-    }
     // Whether the agent is working and what the indicator says; the model's
     // own when it has them.
     property bool working: root.model !== null && root.model.working === true
@@ -515,7 +510,7 @@ Item {
         }
         onMovementStarted: settlingIndex = -1
         Connections {
-            target: view.model
+            target: root.model
             ignoreUnknownSignals: true
             function onRowsAboutToBeInserted(parent, first, last) {
                 if (first === 0)
@@ -565,16 +560,7 @@ Item {
         topMargin: 12
         bottomMargin: 12
         boundsBehavior: Flickable.StopAtBounds
-        // root.model, taken on its own a moment after it changes. Ljós keeps
-        // the old model's rows at the new one's indices when a ListView's
-        // model is replaced in the same change that resizes it, and changing
-        // threads often does (the working line, the composer's height):
-        // hal-c2/ljos-ui#142.
-        model: null
-        function adopt() {
-            model = root.model;
-        }
-        Component.onCompleted: adopt()
+        model: root.model
         onModelChanged: restart()
         ScrollBar.vertical: ScrollBar {
             id: scrollBar
