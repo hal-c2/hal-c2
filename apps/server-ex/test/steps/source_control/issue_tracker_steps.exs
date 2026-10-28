@@ -426,6 +426,34 @@ defmodule HalC2.Steps.SourceControl.IssueTracker do
     context
   end
 
+  # A label whose name is not text makes building the apply's operations raise
+  # in the caller, as a GitHub answer in an unexpected shape could.
+  step "GitHub answers a malformed label for \#{int}", %{args: [number]} = context do
+    GitHubIssues.lists(context, context.repository, [
+      issue(context.repository, number, %{"labels" => %{"nodes" => [%{"name" => 123}]}})
+    ])
+  end
+
+  step "GitHub answers \#{int} normally again", %{args: [number]} = context do
+    GitHubIssues.lists(context, context.repository, [
+      issue(context.repository, number, %{
+        "title" => "Flaky test",
+        "labels" => %{"nodes" => [%{"name" => "priority: low"}, %{"name" => "backend"}]}
+      })
+    ])
+  end
+
+  step "the user is told applying raised", context do
+    assert {:error, _, _} = context.reply
+    assert inspect(context.reply) =~ "Applying raised"
+    context
+  end
+
+  step "the run is proposed again", context do
+    assert run!(context)["status"] == "proposed"
+    context
+  end
+
   step "GitHub accepts labelling \#{int} again", %{args: [number]} = context do
     World.cli_rules(context, [
       %{

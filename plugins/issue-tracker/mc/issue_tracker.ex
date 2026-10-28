@@ -140,36 +140,44 @@ defmodule HalC2Plugins.IssueTracker do
   # Applying is the only triage path that asks GitHub for anything. The run is
   # claimed first (proposed → applying), so two applies cannot run at once and
   # a dismiss cannot land mid-apply. Each operation that reaches GitHub is
-  # recorded on the run; a retry after a partial failure replays only the
-  # rest, so nothing is posted or set twice. What could not be done keeps the
-  # run proposed and names the issues that failed.
+  # recorded on the run as it lands; a retry after a partial failure replays
+  # only the rest, so nothing is posted or set twice. What could not be done
+  # keeps the run proposed and names the issues that failed. A raise or exit
+  # anywhere in here settles the same way — this caller is rescued by the
+  # plugin host and stays alive, so the claim's monitor alone would strand it.
   def call("apply", %{"runId" => run_id}, _context) do
     with {:ok, run} <- GenServer.call(__MODULE__, {:claim_apply, run_id}) do
-      done_before = run["done"] || []
+      try do
+        done_before = run["done"] || []
 
-      {done, failures} =
-        case current_labels(run) do
-          {:ok, current} ->
-            run["report"]
-            |> Triage.operations(current)
-            |> Enum.reject(&(operation_tag(&1) in done_before))
-            |> apply_operations()
+        failures =
+          case current_labels(run) do
+            {:ok, current} ->
+              run["report"]
+              |> Triage.operations(current)
+              |> Enum.reject(&(operation_tag(&1) in done_before))
+              |> apply_operations(run_id)
 
-          {:error, message} ->
-            {[], [{"reading the issues", message}]}
+            {:error, message} ->
+              [{"reading the issues", message}]
+          end
+
+        case failures do
+          [] ->
+            {:ok, GenServer.call(__MODULE__, {:applied, run_id})}
+
+          _ ->
+            message =
+              "Part of the proposal did not reach GitHub: " <>
+                Enum.map_join(failures, "; ", fn {key, why} -> "#{key}: #{why}" end)
+
+            GenServer.call(__MODULE__, {:apply_failed, run_id, message})
+            {:error, message}
         end
-
-      case failures do
-        [] ->
-          {:ok, GenServer.call(__MODULE__, {:applied, run_id, done})}
-
-        _ ->
-          message =
-            "Part of the proposal did not reach GitHub: " <>
-              Enum.map_join(failures, "; ", fn {key, why} -> "#{key}: #{why}" end)
-
-          GenServer.call(__MODULE__, {:apply_failed, run_id, message, done})
-          {:error, message}
+      rescue
+        e -> settle_raised(run_id, "Applying raised: " <> Exception.message(e))
+      catch
+        :exit, reason -> settle_raised(run_id, "Applying raised: " <> inspect(reason))
       end
     end
   end
@@ -490,16 +498,30 @@ defmodule HalC2Plugins.IssueTracker do
 
   defp current_labels(_run), do: {:ok, %{}}
 
-  # `{done, failures}`: the tags of the operations that reached GitHub, in
-  # order, and what each failed one was refused with.
-  defp apply_operations(operations) do
-    Enum.reduce(operations, {[], []}, fn operation, {done, failures} ->
+  # What each failed operation was refused with. One that lands is recorded on
+  # the run as it lands, so even an apply that raises partway has its done
+  # operations kept where a retry can skip them.
+  defp apply_operations(operations, run_id) do
+    Enum.reduce(operations, [], fn operation, failures ->
       case apply_operation(operation) do
-        :ok -> {[operation_tag(operation) | done], failures}
-        {:error, message} -> {done, [{operation_key(operation), message} | failures]}
+        :ok ->
+          GenServer.cast(__MODULE__, {:op_done, run_id, operation_tag(operation)})
+          failures
+
+        {:error, message} ->
+          [{operation_key(operation), message} | failures]
       end
     end)
-    |> then(fn {done, failures} -> {Enum.reverse(done), Enum.reverse(failures)} end)
+    |> Enum.reverse()
+  end
+
+  # A raised apply settles as a failed one; if even settling exits (the server
+  # is gone), the claim is reset when the plugin next starts.
+  defp settle_raised(run_id, message) do
+    GenServer.call(__MODULE__, {:apply_failed, run_id, message})
+    {:error, message}
+  catch
+    :exit, _ -> {:error, message}
   end
 
   defp operation_key({_, repository, number, _}), do: Triage.key(repository, number)
@@ -748,8 +770,8 @@ defmodule HalC2Plugins.IssueTracker do
 
   # Claims a proposed run for applying: while it is `applying`, a second apply
   # and a dismiss are refused by their own status checks. The claiming caller
-  # is monitored, so an apply that raises or whose caller dies releases the
-  # claim instead of stranding the run; a claim gone stale can be taken over.
+  # is monitored, so an apply whose caller dies releases the claim instead of
+  # stranding the run; a claim gone stale can be taken over.
   def handle_call({:claim_apply, run_id}, {caller, _} = _from, state) do
     run = Enum.find(state.runs, &(&1["id"] == run_id))
     now = System.system_time(:millisecond)
@@ -770,48 +792,23 @@ defmodule HalC2Plugins.IssueTracker do
     end
   end
 
-  def handle_call({:applied, run_id, done}, _from, state) do
+  def handle_call({:applied, run_id}, _from, state) do
     run =
       change_run(state, run_id, fn run ->
-        run
-        |> Map.put("status", "applied")
-        |> Map.put("error", nil)
-        |> Map.put("done", Enum.uniq((run["done"] || []) ++ done))
+        run |> Map.put("status", "applied") |> Map.put("error", nil)
       end)
 
     state = state |> release_claim(run_id) |> put_runs(replaced(state.runs, run))
     {:reply, run, state}
   end
 
-  def handle_call({:apply_failed, run_id, message, done}, _from, state) do
+  def handle_call({:apply_failed, run_id, message}, _from, state) do
     run =
       change_run(state, run_id, fn run ->
-        run
-        |> Map.put("status", "proposed")
-        |> Map.put("error", message)
-        |> Map.put("done", Enum.uniq((run["done"] || []) ++ done))
+        run |> Map.put("status", "proposed") |> Map.put("error", message)
       end)
 
     {:reply, :ok, state |> release_claim(run_id) |> put_runs(replaced(state.runs, run))}
-  end
-
-  defp claim(state, run, caller, now) do
-    state = release_claim(state, run["id"])
-    ref = Process.monitor(caller)
-    claims = Map.put(state.claims, run["id"], %{pid: caller, ref: ref, at: now})
-    run = Map.put(run, "status", "applying")
-    {:reply, {:ok, run}, put_runs(%{state | claims: claims}, replaced(state.runs, run))}
-  end
-
-  defp release_claim(state, run_id) do
-    case state.claims[run_id] do
-      nil ->
-        state
-
-      %{ref: ref} ->
-        Process.demonitor(ref, [:flush])
-        %{state | claims: Map.delete(state.claims, run_id)}
-    end
   end
 
   def handle_call({:discard, run_id}, _from, state) do
@@ -857,6 +854,37 @@ defmodule HalC2Plugins.IssueTracker do
       end
 
     {:reply, offered, state}
+  end
+
+  defp claim(state, run, caller, now) do
+    state = release_claim(state, run["id"])
+    ref = Process.monitor(caller)
+    claims = Map.put(state.claims, run["id"], %{pid: caller, ref: ref, at: now})
+    run = Map.put(run, "status", "applying")
+    {:reply, {:ok, run}, put_runs(%{state | claims: claims}, replaced(state.runs, run))}
+  end
+
+  defp release_claim(state, run_id) do
+    case state.claims[run_id] do
+      nil ->
+        state
+
+      %{ref: ref} ->
+        Process.demonitor(ref, [:flush])
+        %{state | claims: Map.delete(state.claims, run_id)}
+    end
+  end
+
+  # One operation of the claimed apply reached GitHub. Kept in memory until the
+  # apply settles and writes the runs out; a crash in between replays at most
+  # the operations since the last settle.
+  def handle_cast({:op_done, run_id, tag}, state) do
+    run =
+      change_run(state, run_id, fn run ->
+        Map.put(run, "done", Enum.uniq((run["done"] || []) ++ [tag]))
+      end)
+
+    {:noreply, %{state | runs: replaced(state.runs, run)}}
   end
 
   @impl GenServer

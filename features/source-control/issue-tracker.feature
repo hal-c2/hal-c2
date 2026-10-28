@@ -141,6 +141,17 @@ Feature: Issue tracker
       Then the run is proposed with the summary and #11 named
       And GitHub is asked for nothing
 
+    @mc
+    Scenario: An apply that raises leaves the run proposed, not applying
+      Given a proposed prioritising run with #9 "high" and #7 "low"
+      And GitHub answers a malformed label for #9
+      When the user applies the proposal
+      Then the user is told applying raised
+      And the run is proposed again
+      When GitHub answers #9 normally again
+      And the user applies the proposal
+      Then the triage run is applied
+
     @mc @desktop @backlog-desktop
     Scenario: A proposal the user dismisses reaches nothing
       Given a proposed follow-up run on #7 with the comment "Which limits, and per what?"
