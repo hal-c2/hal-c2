@@ -475,11 +475,18 @@ impl Process {
 
 impl Drop for Process {
     /// ~LocalTranscriber: asks the helper to stop, kills it a second later,
-    /// and leaves nothing of its group.
+    /// and leaves nothing of its group. The second is waited out on a
+    /// thread of its own: the one dropping it is the UI's.
     fn drop(&mut self) {
-        if !self.has_exited() {
-            signal_group(i64::from(self.pid), false);
-            let (lock, cv) = &*self.exited;
+        let pid = i64::from(self.pid);
+        if self.has_exited() {
+            signal_group(pid, true);
+            return;
+        }
+        signal_group(pid, false);
+        let exited = self.exited.clone();
+        std::thread::spawn(move || {
+            let (lock, cv) = &*exited;
             let (exited, _) = cv
                 .wait_timeout_while(
                     lock.lock().unwrap_or_else(PoisonError::into_inner),
@@ -488,8 +495,8 @@ impl Drop for Process {
                 )
                 .unwrap_or_else(PoisonError::into_inner);
             drop(exited);
-        }
-        signal_group(i64::from(self.pid), true);
+            signal_group(pid, true);
+        });
     }
 }
 

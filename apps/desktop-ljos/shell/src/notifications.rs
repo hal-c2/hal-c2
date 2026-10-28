@@ -32,6 +32,9 @@ type Activated = Arc<dyn Fn(String) + Send + Sync>;
 #[derive(Default)]
 struct State {
     enabled: bool,
+    /// The bus is being connected to and the service looked for, on the
+    /// worker: what is shown meanwhile waits for it.
+    connecting: bool,
     /// The service's unique owner, empty while there is none. A notification
     /// id belongs to one daemon, not to the reusable well-known name, so
     /// calls and the signals believed go to and from this owner.
@@ -78,9 +81,11 @@ pub struct NativeNotifications {
 
 impl NativeNotifications {
     /// On the session bus; unsupported without one. `on_activated` gets the
-    /// key of a clicked notification, on the listener thread.
+    /// key of a clicked notification, on the listener thread. Every D-Bus
+    /// call, connecting included, is made on a thread of its own: the caller
+    /// is the UI's.
     pub fn session(on_activated: impl Fn(String) + Send + Sync + 'static) -> Self {
-        Self::on(Connection::session().ok(), on_activated)
+        Self::start(|| Connection::session().ok(), on_activated)
     }
 
     /// On `bus`, or unsupported for `None`.
@@ -88,36 +93,66 @@ impl NativeNotifications {
         bus: Option<Connection>,
         on_activated: impl Fn(String) + Send + Sync + 'static,
     ) -> Self {
-        let state = Arc::new(Mutex::new(State::default()));
-        let Some(bus) = bus else {
-            return Self { state, jobs: None };
-        };
-        let activated: Activated = Arc::new(on_activated);
-        // Subscribed before the owner is read, so no change is missed.
-        let signals = subscribe(&bus);
-        let owner = DBusProxy::new(&bus)
-            .ok()
-            .and_then(|dbus| {
-                let name = BusName::try_from(SERVICE).ok()?;
-                dbus.get_name_owner(name).ok()
-            })
-            .map(|o| o.to_string())
-            .unwrap_or_default();
-        lock(&state).owner = owner;
-        if let Some(signals) = signals {
-            let state = state.clone();
-            let _ = std::thread::Builder::new()
-                .name("notifications-signals".into())
-                .spawn(move || listen(signals, &state, &activated));
+        match bus {
+            Some(bus) => Self::start(move || Some(bus), on_activated),
+            None => Self {
+                state: Arc::default(),
+                jobs: None,
+            },
         }
+    }
+
+    fn start(
+        connect: impl FnOnce() -> Option<Connection> + Send + 'static,
+        on_activated: impl Fn(String) + Send + Sync + 'static,
+    ) -> Self {
+        let state = Arc::new(Mutex::new(State {
+            connecting: true,
+            ..State::default()
+        }));
+        let activated: Activated = Arc::new(on_activated);
         let (jobs, inbox) = mpsc::channel();
         let worker_state = state.clone();
-        let _ = std::thread::Builder::new()
+        let started = std::thread::Builder::new()
             .name("notifications-calls".into())
-            .spawn(move || work(&bus, &inbox, &worker_state));
+            .spawn(move || {
+                let state = worker_state;
+                let Some(bus) = connect() else {
+                    let mut s = lock(&state);
+                    s.connecting = false;
+                    // What was shown meanwhile went nowhere.
+                    s.last_error = UNSUPPORTED.into();
+                    return;
+                };
+                // Subscribed before the owner is read, so no change is missed.
+                let signals = subscribe(&bus);
+                let owner = DBusProxy::new(&bus)
+                    .ok()
+                    .and_then(|dbus| {
+                        let name = BusName::try_from(SERVICE).ok()?;
+                        dbus.get_name_owner(name).ok()
+                    })
+                    .map(|o| o.to_string())
+                    .unwrap_or_default();
+                {
+                    let mut s = lock(&state);
+                    s.owner = owner;
+                    s.connecting = false;
+                }
+                if let Some(signals) = signals {
+                    let state = state.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("notifications-signals".into())
+                        .spawn(move || listen(signals, &state, &activated));
+                }
+                work(&bus, &inbox, &state);
+            });
+        if started.is_err() {
+            lock(&state).connecting = false;
+        }
         Self {
             state,
-            jobs: Some(jobs),
+            jobs: started.is_ok().then_some(jobs),
         }
     }
 
@@ -141,7 +176,8 @@ impl NativeNotifications {
         }
     }
 
-    /// Whether a notification service is there.
+    /// Whether a notification service is there; false until the worker
+    /// has looked.
     pub fn supported(&self) -> bool {
         !lock(&self.state).owner.is_empty()
     }
@@ -159,7 +195,11 @@ impl NativeNotifications {
         if !s.enabled || key.is_empty() {
             return false;
         }
-        let Some(jobs) = self.jobs.as_ref().filter(|_| !s.owner.is_empty()) else {
+        let Some(jobs) = self
+            .jobs
+            .as_ref()
+            .filter(|_| s.connecting || !s.owner.is_empty())
+        else {
             s.last_error = UNSUPPORTED.into();
             return false;
         };
@@ -257,9 +297,11 @@ impl Presenter for NativeNotifications {
         }
     }
 
-    /// Without a notification service nothing could be shown.
+    /// Without a notification service nothing could be shown; not known
+    /// while it is being looked for.
     fn permitted(&self) -> Option<bool> {
-        Some(self.supported())
+        let connecting = lock(&self.state).connecting;
+        (!connecting).then(|| self.supported())
     }
 }
 
@@ -353,6 +395,16 @@ fn work(bus: &Connection, inbox: &mpsc::Receiver<Job>, state: &Mutex<State>) {
                 generation,
                 body,
             } => {
+                // Shown while the service was still being looked for.
+                let owner = if owner.is_empty() {
+                    lock(state).owner.clone()
+                } else {
+                    owner
+                };
+                if owner.is_empty() {
+                    lock(state).last_error = UNSUPPORTED.into();
+                    continue;
+                }
                 let reply = bus
                     .call_method(Some(owner.as_str()), PATH, Some(SERVICE), "Notify", &body)
                     .and_then(|reply| reply.body().deserialize::<u32>());

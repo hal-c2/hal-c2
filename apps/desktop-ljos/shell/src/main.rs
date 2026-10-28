@@ -590,6 +590,9 @@ enum Message {
 
 /// The window, until it closes.
 fn run(app: App, options: Options) -> Result<(), String> {
+    // Read once and kept. On macOS and Windows that runs a command, which
+    // the UI thread's first ask would otherwise wait for.
+    std::thread::spawn(hal_c2_shell::this_machine::id);
     let config = ShellConfig::new("HAL-C2").with_size(options.size.0 as f32, options.size.1 as f32);
     app.shell_config(config)
         .on_message(|_: &Engine, _: Message| {})

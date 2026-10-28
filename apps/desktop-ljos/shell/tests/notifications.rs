@@ -114,6 +114,8 @@ impl Bus {
         let n = NativeNotifications::on(Some(self.connect()), move |key| {
             let _ = clicked.lock().unwrap().send(key);
         });
+        // The service is looked for on the worker.
+        n.flush();
         (n, clicks)
     }
 }
@@ -225,6 +227,20 @@ fn a_notification_carries_the_alert() {
              \"Fix &lt;b&gt; &amp; &quot;c&quot;\" [\"default\", \"Open thread\"] \
              [desktop-entry=\"hal-c2\" suppress-sound=true] timeout=-1"]
     );
+    assert_eq!(n.last_error(), "");
+}
+
+// The service is looked for on the worker, not by the caller: what is shown
+// before it is found still reaches it.
+#[test]
+fn a_notification_shown_while_the_service_is_looked_for_reaches_it() {
+    let bus = Bus::start("early");
+    let service = bus.service();
+    let n = NativeNotifications::on(Some(bus.connect()), |_| {});
+    n.set_enabled(true);
+    assert!(n.show("tax", "Thread completed", "Tax fix", true, -1));
+    n.flush();
+    assert_eq!(service.calls().len(), 1);
     assert_eq!(n.last_error(), "");
 }
 

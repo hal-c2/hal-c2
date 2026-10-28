@@ -322,43 +322,57 @@ pub struct System {
 
 impl System {
     /// On the session bus; every call fails without one. `wake` runs on a
-    /// thread of the wire's whenever [`Wire::arrive`] has something.
+    /// thread of the wire's whenever [`Wire::arrive`] has something. Every
+    /// D-Bus call, connecting included, is made on a thread of the wire's:
+    /// the caller is the UI's.
     pub fn new(wake: impl Fn() + Send + Sync + 'static) -> System {
-        System::on(Connection::session().ok(), wake)
+        System::start(|| Connection::session().ok(), wake)
     }
 
     /// On `bus`, or failing for `None`.
     pub fn on(bus: Option<Connection>, wake: impl Fn() + Send + Sync + 'static) -> System {
+        System::start(move || bus, wake)
+    }
+
+    fn start(
+        connect: impl FnOnce() -> Option<Connection> + Send + 'static,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> System {
         let shared = Arc::new(Shared {
             inbox: Mutex::new(Vec::new()),
             wake: Box::new(wake),
         });
-        let Some(bus) = bus else {
-            return System { shared, jobs: None };
-        };
-        let unique = bus
-            .unique_name()
-            .map(|name| name.to_string())
-            .unwrap_or_default();
-        // Subscribed before any call, so no answer is missed.
-        if let Some(signals) = subscribe(&bus) {
-            let shared = shared.clone();
-            let unique = unique.clone();
-            let _ = std::thread::Builder::new()
-                .name("snap-shot-signals".into())
-                .spawn(move || {
-                    for message in signals.flatten() {
-                        if let Some(input) = parse(&message, &unique) {
-                            shared.push(input);
-                        }
-                    }
-                });
-        }
-        let (jobs, inbox) = mpsc::channel();
+        let (jobs, inbox) = mpsc::channel::<Call>();
         let worker = shared.clone();
-        let _ = std::thread::Builder::new()
+        let started = std::thread::Builder::new()
             .name("snap-shot-calls".into())
             .spawn(move || {
+                let Some(bus) = connect() else {
+                    for call in inbox {
+                        if let Some(answer) = unanswered(&call) {
+                            worker.push(answer);
+                        }
+                    }
+                    return;
+                };
+                let unique = bus
+                    .unique_name()
+                    .map(|name| name.to_string())
+                    .unwrap_or_default();
+                // Subscribed before any call, so no answer is missed.
+                if let Some(signals) = subscribe(&bus) {
+                    let shared = worker.clone();
+                    let unique = unique.clone();
+                    let _ = std::thread::Builder::new()
+                        .name("snap-shot-signals".into())
+                        .spawn(move || {
+                            for message in signals.flatten() {
+                                if let Some(input) = parse(&message, &unique) {
+                                    shared.push(input);
+                                }
+                            }
+                        });
+                }
                 for call in inbox {
                     if let Call::Load { uri } = &call {
                         worker.push(Input::Loaded(load(uri)));
@@ -371,37 +385,45 @@ impl System {
             });
         System {
             shared,
-            jobs: Some(jobs),
+            jobs: started.is_ok().then_some(jobs),
         }
+    }
+}
+
+/// What a call is answered with when there is no bus: what the portal would
+/// have said is "no".
+fn unanswered(call: &Call) -> Option<Input> {
+    let no = || "No desktop portal is running.".to_owned();
+    match call {
+        Call::Load { uri } => Some(Input::Loaded(load(uri))),
+        Call::Properties => Some(Input::Properties(None)),
+        Call::Version { generation } => Some(Input::Version {
+            generation: *generation,
+            version: None,
+        }),
+        Call::Screenshot { token, .. }
+        | Call::CreateSession { token, .. }
+        | Call::BindShortcuts { token, .. } => Some(Input::Replied {
+            token: token.clone(),
+            handle: Err(no()),
+        }),
+        _ => None,
     }
 }
 
 impl Wire for System {
     fn send(&mut self, call: Call) {
-        let Some(jobs) = &self.jobs else {
-            // No bus: what the portal would have said is "no".
-            let no = || "No desktop portal is running.".to_owned();
-            let answer = match &call {
-                Call::Load { uri } => Some(Input::Loaded(load(uri))),
-                Call::Properties => Some(Input::Properties(None)),
-                Call::Version { generation } => Some(Input::Version {
-                    generation: *generation,
-                    version: None,
-                }),
-                Call::Screenshot { token, .. }
-                | Call::CreateSession { token, .. }
-                | Call::BindShortcuts { token, .. } => Some(Input::Replied {
-                    token: token.clone(),
-                    handle: Err(no()),
-                }),
-                _ => None,
-            };
-            if let Some(answer) = answer {
-                self.shared.push(answer);
+        match &self.jobs {
+            Some(jobs) => {
+                let _ = jobs.send(call);
             }
-            return;
-        };
-        let _ = jobs.send(call);
+            // No worker thread could be started.
+            None => {
+                if let Some(answer) = unanswered(&call) {
+                    self.shared.push(answer);
+                }
+            }
+        }
     }
 
     fn arrive(&mut self) -> Vec<Input> {
