@@ -437,10 +437,10 @@ defmodule HalC2.Web.Socket do
         {:error, "MC unavailable: #{reason}"}
 
       kind, reason ->
-        # The client is told, and so is the log: a failure only a client saw is lost.
-        message = Exception.format(kind, reason)
-        Logger.error("#{method} failed: #{message}")
-        {:error, message}
+        # The log gets the reason and the client plain words: a crash term in a toast
+        # tells the user nothing, and a failure only a client saw is lost.
+        Logger.error("#{method} failed: #{Exception.format(kind, reason)}")
+        {:error, "The MC failed to finish this; its log has the details."}
     end
   end
 

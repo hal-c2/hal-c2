@@ -95,7 +95,7 @@ defmodule HalC2.Muse.ThreadRuntime do
   def respond(thread_id, request_id, response) do
     case lookup(thread_id) do
       nil -> {:error, "no pending request"}
-      pid -> GenServer.call(pid, {:respond, request_id, response}, 35_000)
+      pid -> HalC2.RuntimeRespond.call(pid, request_id, response, 35_000)
     end
   end
 

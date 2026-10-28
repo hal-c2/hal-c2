@@ -128,7 +128,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   @spec respond(String.t(), String.t(), map) :: :ok | {:error, String.t()}
   def respond(thread_id, request_id, response) do
     case Registry.lookup(HalC2.Claude.Registry, thread_id) do
-      [{pid, _}] -> GenServer.call(pid, {:respond, request_id, response})
+      [{pid, _}] -> HalC2.RuntimeRespond.call(pid, request_id, response)
       [] -> {:error, "no pending request"}
     end
   end

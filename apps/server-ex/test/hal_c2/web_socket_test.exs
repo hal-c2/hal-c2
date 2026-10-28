@@ -914,9 +914,11 @@ defmodule HalC2.Web.SocketTest do
 
         {error, _, _client} = WsClient.recv_until(client, &(&1["t"] == "rpc.error"))
         assert %{"id" => 1} = error
+        # The crash term goes to the log, not to the user.
+        refute inspect(error) =~ "** ("
       end)
 
-    assert log =~ "[error] hal-c2.threadRows failed: "
+    assert log =~ "[error] hal-c2.threadRows failed: ** ("
   end
 
   test "an MC without a feature fails that subscription, not the socket", %{port: port} do
