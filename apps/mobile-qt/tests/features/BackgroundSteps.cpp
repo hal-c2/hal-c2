@@ -39,14 +39,8 @@ QString describeAgents(World& world) {
 const Steps steps([] {
   using S = QString;
 
-  // The feature's Background: paired with the environment, whose project
-  // "shop" the fake MC serves (haveThread's threads live in it).
-  step(S("a connected environment with the project %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
-    expect(c[0] == S("shop"), S("the fake MC serves the project \"shop\", not \"%1\"").arg(c[0]));
-    pairWithEnvironment(world);
-    threadList(world);
-  });
-
+  // The feature's Background is PlanSteps' connected-environment step: the
+  // fake MC serves the project "shop" (haveThread's threads live in it).
   step(S("Claude starts a monitor in the thread"), [](World& world, const Captures&, const Table&) {
     // Room for the desktop layout, whose right panel carries the Agents tab.
     world.resize(960, 600);
