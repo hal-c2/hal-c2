@@ -53,7 +53,9 @@ defmodule HalC2.IssueTrackerClaimsTest do
 
     caller =
       spawn(fn ->
-        assert {:ok, %{"status" => "applying"}} = GenServer.call(IssueTracker, {:claim_apply, "run-1"})
+        assert {:ok, %{"status" => "applying"}} =
+                 GenServer.call(IssueTracker, {:claim_apply, "run-1"})
+
         send(test, :claimed)
         Process.sleep(:infinity)
       end)
@@ -84,7 +86,9 @@ defmodule HalC2.IssueTrackerClaimsTest do
       put_in(state, [Access.key!(:claims), "run-1", Access.key!(:at)], 0)
     end)
 
-    assert {:ok, %{"status" => "applying"}} = GenServer.call(IssueTracker, {:claim_apply, "run-1"})
+    assert {:ok, %{"status" => "applying"}} =
+             GenServer.call(IssueTracker, {:claim_apply, "run-1"})
+
     assert :ok = GenServer.call(IssueTracker, {:apply_failed, "run-1", "settled by the test"})
     assert status() == "proposed"
 
