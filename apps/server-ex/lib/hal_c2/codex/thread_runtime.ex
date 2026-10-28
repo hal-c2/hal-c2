@@ -1373,7 +1373,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     source = thread["source"] || %{}
 
     if thread["threadSource"] == "memory_consolidation" or
-         source["subAgent"] == "memory_consolidation" do
+         match?(%{"subAgent" => "memory_consolidation"}, source) do
       %{state | memory_threads: Map.put(state.memory_threads, thread["id"], true)}
     else
       state

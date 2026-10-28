@@ -359,6 +359,10 @@ Feature: Codex
     Then the user sees that error
     And no new Codex conversation is started
 
+  Scenario: Ordinary Codex thread sources do not crash a running turn
+    When Codex announces a thread with the source "vscode"
+    Then the active turn continues without a runtime failure
+
   Scenario: Codex's memory consolidation is not shown as a subagent
     When Codex consolidates its memories in the background during a turn
     Then the thread shows no subagent for it
