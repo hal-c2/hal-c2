@@ -224,7 +224,7 @@ defmodule HalC2.Orchestration.Handoff do
     # forking the whole conversation would carry turns past the fork point.
     native_branch? =
       native? and
-        (match?({:native, _turn}, boundary) or match?({:trim, _count}, boundary) or
+        (match?({:native, _turn}, boundary) or match?({:trim, _count, _before}, boundary) or
            (boundary in [nil, :unknown] and turn_ref != nil and
               (driver not in ~w(codex claudeAgent) or turn_ref["nativeId"] != nil)))
 
@@ -256,10 +256,10 @@ defmodule HalC2.Orchestration.Handoff do
             {:native, native_turn} ->
               %{thread: thread_ref["nativeId"], turn: native_turn}
 
-            {:trim, count} when count > 0 ->
-              %{thread: thread_ref["nativeId"], turn: nil, trim: count}
+            {:trim, count, before} when count > 0 ->
+              %{thread: thread_ref["nativeId"], turn: nil, trim: count, before: before}
 
-            {:trim, _count} ->
+            {:trim, _count, _before} ->
               %{thread: thread_ref["nativeId"], turn: nil}
 
             # No provider turns are recorded for the source (a thread from
@@ -303,9 +303,11 @@ defmodule HalC2.Orchestration.Handoff do
   @doc """
   Where a Codex or Claude native fork at `point` (a transfer's source point)
   cuts its source's conversation, from the provider turns the MC recorded for
-  the source: `{:native, turn}` cuts after that native turn, `{:trim, count}`
-  forks the whole conversation and drops `count` turns from the copy (Codex,
-  whose selected turn predates native turn references), `:unknown` when no
+  the source: `{:native, turn}` cuts after that native turn,
+  `{:trim, count, before}` forks the whole conversation and drops the
+  `count` turns from the copy, cutting before the native turn `before` where
+  the provider can (Codex, whose selected turn predates native turn
+  references), `:unknown` when no
   provider turns are recorded at all, and `{:error, message}` when the fork
   point cannot be honoured — the turn is not in the provider thread's turns,
   or (Claude) no message position was recorded for it while later turns exist.
@@ -343,21 +345,27 @@ defmodule HalC2.Orchestration.Handoff do
         run_status = Map.new(StreamState.list(source, "run"), &{&1["id"], &1["status"]})
 
         after_boundary =
-          Enum.count(turns, fn turn ->
+          turns
+          |> Enum.filter(fn turn ->
             status = run_status[attempt_run[turn["runAttemptId"]]]
 
             turn["providerThreadId"] == boundary["providerThreadId"] and
               turn["ordinal"] > boundary["ordinal"] and turn["status"] in @finished and
               status in [nil | @finished]
           end)
+          |> Enum.sort_by(& &1["ordinal"])
+
+        # The first turn still in the conversation after the boundary: where
+        # a paginated copy is cut (`thread/revert`), as a rewind cuts there.
+        before = get_in(List.first(after_boundary) || %{}, ["nativeTurnRef", "nativeId"])
 
         cond do
           is_binary(native) and native != "" and
               not (driver == "claudeAgent" and String.starts_with?(native, "turn:")) ->
             {:native, native}
 
-          driver == "codex" or after_boundary == 0 ->
-            {:trim, after_boundary}
+          driver == "codex" or after_boundary == [] ->
+            {:trim, length(after_boundary), before}
 
           true ->
             {:error,

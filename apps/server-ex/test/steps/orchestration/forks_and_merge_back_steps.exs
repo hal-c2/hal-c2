@@ -112,6 +112,11 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
     codex_legacy(context, false)
   end
 
+  step "Codex keeps the forked conversation as paginated history it cannot cut before a turn",
+       context do
+    context |> codex_legacy(false) |> codex_env("FAKE_CODEX_NO_REVERT", "1")
+  end
+
   defp no_turn_reference(context, thread, n) do
     turn = provider_turn(World.state(context, thread), run(World.state(context, thread), n))
     assert turn, "run #{n} of #{thread} has no provider turn"
@@ -124,11 +129,14 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
     |> snapshot_source(thread)
   end
 
-  defp codex_legacy(context, legacy?) do
+  defp codex_legacy(context, legacy?),
+    do: codex_env(context, "FAKE_CODEX_LEGACY", legacy? && "1")
+
+  defp codex_env(context, var, value) do
     case Application.get_env(:hal_c2, :codex_command) do
       ["env" | rest] ->
-        rest = Enum.reject(rest, &String.starts_with?(&1, "FAKE_CODEX_LEGACY="))
-        rest = if legacy?, do: ["FAKE_CODEX_LEGACY=1" | rest], else: rest
+        rest = Enum.reject(rest, &String.starts_with?(&1, "#{var}="))
+        rest = if value, do: ["#{var}=#{value}" | rest], else: rest
         Application.put_env(:hal_c2, :codex_command, ["env" | rest])
 
       other ->
@@ -634,6 +642,30 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
 
   step "the conversation of {string} keeps every turn", %{args: [thread]} = context do
     assert conversation(context, thread) == context.source_snapshot
+    context
+  end
+
+  step "Codex cuts the forked conversation before the turn after run {int}",
+       %{args: [n]} = context do
+    fork = context.run_title
+    finished(context, fork)
+    source = World.state(context, context.source_thread)
+    before = provider_turn(source, run(source, n + 1))["nativeTurnRef"]["nativeId"]
+
+    assert [revert] = World.codex_requests(context, "thread/revert")
+    assert revert["beforeTurnId"] == before
+    assert String.starts_with?(revert["threadId"], "forked-")
+    assert World.codex_requests(context, "thread/rollback") == []
+
+    assert Enum.any?(
+             StreamState.list(World.state(context, fork), "provider-thread"),
+             &(get_in(&1, ["nativeThreadRef", "nativeId"]) ==
+                 "native-thread-1-before-#{before}")
+           )
+
+    assert %{"status" => "consumed", "resolution" => %{"strategy" => "native_fork"}} =
+             transfer(context, fork, "fork")
+
     context
   end
 

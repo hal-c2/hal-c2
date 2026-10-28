@@ -31,11 +31,16 @@ defmodule HalC2.ForkBoundaryPropTest do
     end
   end
 
-  defp expected(_driver, :recorded, _after, _recorded_after), do: {:native, "native-1"}
-  defp expected("codex", :missing, after_count, _recorded_after), do: {:trim, after_count}
-  defp expected("claudeAgent", :missing, 0, _recorded_after), do: {:trim, 0}
+  defp expected(_driver, :recorded, _after, _total_after), do: {:native, "native-1"}
 
-  defp expected("claudeAgent", :missing, _after, _recorded_after) do
+  # The cut is before the first turn still in the conversation (run 2's,
+  # the rolled-back ones being the newest).
+  defp expected("codex", :missing, after_count, _total_after),
+    do: {:trim, after_count, if(after_count > 0, do: "native-2")}
+
+  defp expected("claudeAgent", :missing, 0, _total_after), do: {:trim, 0, nil}
+
+  defp expected("claudeAgent", :missing, _after, _total_after) do
     {:error,
      "Cannot fork Claude thread from that turn: no message position was recorded for that turn."}
   end
@@ -43,7 +48,7 @@ defmodule HalC2.ForkBoundaryPropTest do
   # No recorded turns at all: the boundary is unknown, not an error.
   defp expected(_driver, :gone, _after, 0), do: :unknown
 
-  defp expected(driver, :gone, _after, _recorded_after) do
+  defp expected(driver, :gone, _after, _total_after) do
     label = if driver == "codex", do: "Codex", else: "Claude"
 
     {:error,

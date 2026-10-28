@@ -557,6 +557,9 @@ for line in sys.stdin:
     elif method == "thread/fork":
         thread_id = f"forked-{params['threadId']}-at-{params.get('lastTurnId')}"
         send({"id": mid, "result": {"thread": {"id": thread_id}}})
+    elif method == "thread/revert" and os.environ.get("FAKE_CODEX_NO_REVERT"):
+        # FAKE_CODEX_NO_REVERT: cutting paginated history before a turn is refused.
+        send({"id": mid, "error": {"code": -32600, "message": "thread/revert is not available"}})
     elif method == "thread/revert" and paginated and page_size and int(params["beforeTurnId"].rsplit("-", 1)[1]) <= turns - page_size:
         send({"id": mid, "error": {"code": -32600, "message": f"{params['beforeTurnId']} is not on the latest history page"}})
     elif method == "thread/revert" and paginated:

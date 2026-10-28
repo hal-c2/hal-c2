@@ -149,10 +149,19 @@ Feature: Forking a thread and merging work back
     And the conversation of "t1" keeps every turn
 
   @mc @plugin-codex
-  Scenario: Codex cannot trim a fork whose history is paginated
+  Scenario: Codex trims a fork whose history is paginated before the first later turn
     Given "f1" is a fork of "t1" at run 1 on "codex"
     And the MC holds no Codex turn reference for run 1
     And Codex keeps the forked conversation as paginated history
+    When the user sends "Try again" to "f1" on "codex"
+    Then Codex cuts the forked conversation before the turn after run 1
+    And the conversation of "t1" keeps every turn
+
+  @mc @plugin-codex
+  Scenario: Codex cannot trim a fork whose paginated history it cannot cut
+    Given "f1" is a fork of "t1" at run 1 on "codex"
+    And the MC holds no Codex turn reference for run 1
+    And Codex keeps the forked conversation as paginated history it cannot cut before a turn
     When the user sends "Try again" to "f1" on "codex"
     Then the run fails saying the fork point cannot be honoured on paginated history
 

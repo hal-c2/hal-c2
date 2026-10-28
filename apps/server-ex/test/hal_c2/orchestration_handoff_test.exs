@@ -227,7 +227,7 @@ defmodule HalC2.Orchestration.HandoffTest do
   end
 
   test "Codex trims the turns after a fork point it kept no reference for" do
-    assert Handoff.fork_boundary(fork_source(nil), @point, "codex") == {:trim, 1}
+    assert Handoff.fork_boundary(fork_source(nil), @point, "codex") == {:trim, 1, "native-2"}
   end
 
   test "Claude cannot fork from a turn with no recorded message position" do
@@ -246,8 +246,8 @@ defmodule HalC2.Orchestration.HandoffTest do
         patch: %{"s" => %{"id" => "run-2", "ordinal" => 2, "status" => "rolled_back"}}
       })
 
-    assert Handoff.fork_boundary(source, @point, "codex") == {:trim, 0}
-    assert Handoff.fork_boundary(source, @point, "claudeAgent") == {:trim, 0}
+    assert Handoff.fork_boundary(source, @point, "codex") == {:trim, 0, nil}
+    assert Handoff.fork_boundary(source, @point, "claudeAgent") == {:trim, 0, nil}
   end
 
   test "no recorded provider turns at all is unknown, not an error" do

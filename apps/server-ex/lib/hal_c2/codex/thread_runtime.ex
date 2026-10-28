@@ -1143,9 +1143,9 @@ defmodule HalC2.Codex.ThreadRuntime do
   # A fork's first turn starts from a copy of the source thread, cut after its turn;
   # a session carried from another machine is forked whole from its rollout's path.
   # A fork at a turn with no native reference (`trim`) is taken whole and then
-  # trimmed with `thread/rollback`, which paginated history rejects: there the
-  # fork point cannot be honoured, and the turn fails saying so. Only the copy
-  # is ever rolled back; the source conversation keeps every turn.
+  # trimmed (`trim_fork/4`); where neither way of cutting works the turn
+  # fails saying so. Only the copy is ever cut; the source conversation
+  # keeps every turn.
   defp ensure_native_thread(state, %{fork: %{thread: source, turn: last} = fork} = turn) do
     state = workers_only(state, turn)
 
@@ -1196,11 +1196,34 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
-  defp trim_fork(state, %{trim: count}, source, id) when is_integer(count) and count > 0 do
-    case Connection.call(state.conn, "thread/rollback", %{
-           "threadId" => id,
-           "numTurns" => count
-         }) do
+  # Paginated history cuts before a turn (`thread/revert`, as `rewind/2` cuts
+  # it); legacy history only takes a count (`thread/rollback`). Neither
+  # cutting the copy fails the fork rather than running on the whole copy.
+  defp trim_fork(state, %{trim: count} = fork, source, id)
+       when is_integer(count) and count > 0 do
+    reverted =
+      if fork[:before] do
+        Connection.call(state.conn, "thread/revert", %{
+          "threadId" => id,
+          "beforeTurnId" => fork.before
+        })
+      else
+        {:error, :no_turn_to_cut_before}
+      end
+
+    result =
+      case reverted do
+        {:ok, %{"thread" => %{"id" => _id}}} = ok ->
+          ok
+
+        _cannot_revert ->
+          Connection.call(state.conn, "thread/rollback", %{
+            "threadId" => id,
+            "numTurns" => count
+          })
+      end
+
+    case result do
       {:ok, %{"thread" => %{"id" => trimmed}}} ->
         {:ok, %{state | native_thread_id: trimmed}}
 
@@ -1208,7 +1231,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       # on the whole copy would silently carry the turns after the fork point.
       {:ok, _other} ->
         {:error,
-         "Cannot fork Codex thread #{source} at that turn: thread/rollback did not return the trimmed thread.",
+         "Cannot fork Codex thread #{source} at that turn: Codex did not return the trimmed thread.",
          state}
 
       {:error, reason} ->
