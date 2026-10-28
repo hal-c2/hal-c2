@@ -1995,6 +1995,8 @@ defmodule HalC2.Orchestration do
         Enum.find(runs, &(&1["status"] in @active_statuses))
 
     latest = Enum.max_by(runs, &(&1["ordinal"] || 0), fn -> nil end)
+    thread = StreamState.get(state, "thread")[thread_id]
+    deleted? = thread != nil and thread["deletedAt"] != nil
 
     cond do
       # A turn still being handed to its provider, or one nothing drives any
@@ -2008,7 +2010,7 @@ defmodule HalC2.Orchestration do
       # and the stop counts as done rather than an error to retry. A run that
       # failed or was cancelled is a different answer: nothing was stopped.
       run != nil and latest != nil and run["id"] == latest["id"] and
-          run["status"] == "completed" ->
+        run["status"] == "completed" and not deleted? ->
         :ok
 
       true ->

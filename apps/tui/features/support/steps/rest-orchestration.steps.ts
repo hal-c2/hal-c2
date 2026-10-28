@@ -544,7 +544,8 @@ step("Claude starts a monitor in the thread", async (ctx: TurnWorld) => {
 });
 
 step("the user sends another message and its turn is running", async (ctx: TurnWorld) => {
-  await startRun(ctx, 0);
+  // A second turn starts and stays running; the monitor's background listing stays.
+  await startRun(ctx, 10);
 });
 
 step("the thread lists the monitor as background work", async (ctx: TurnWorld) => {

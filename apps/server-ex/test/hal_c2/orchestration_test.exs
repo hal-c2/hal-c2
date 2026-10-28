@@ -2232,6 +2232,24 @@ defmodule HalC2.OrchestrationTest do
       assert [%{"status" => "interrupted"}] = commands(thread_id)
     end
 
+    # The completed-stop grace is for a live thread whose turn ended as the stop
+    # arrived; a deleted thread refuses the stop (the orchestration property's
+    # delete-then-interrupt_run counterexample).
+    test "an interrupt pinned to a deleted thread's completed run is refused" do
+      thread_id = launch("start the dev server in the background")
+      [%{"id" => run_id}] = thread_id |> await_run("completed") |> StreamState.list("run")
+
+      assert {:ok, _} =
+               Orchestration.dispatch(%{"type" => "thread.delete", "threadId" => thread_id})
+
+      assert {:error, "no running turn"} =
+               Orchestration.dispatch(%{
+                 "type" => "run.interrupt",
+                 "threadId" => thread_id,
+                 "runId" => run_id
+               })
+    end
+
     # The latest run went to another provider; the command an earlier Codex run left
     # is still the thread's latest run's to stop, as the client's stop names it.
     test "an interrupt pinned to a later run on another provider stops the command",
