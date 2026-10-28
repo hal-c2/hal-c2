@@ -22,12 +22,14 @@ namespace {
 
 // The entity kinds the timeline reads; the stream's others (nodes, provider
 // sessions, ...) are left out. Plans and the user's messages are kept for the
-// composer (turnChanged), checkpoints for the diff panel (checkpointsChanged)
+// composer (turnChanged), provider threads for its context meter
+// (contextUsageChanged), checkpoints for the diff panel (checkpointsChanged)
 // and a reply's revert (checkpointOf), subagents for the Agents tab
 // (agentsChanged); they draw no rows.
 const QSet<QString> kKinds{QStringLiteral("turn-item"),       QStringLiteral("run"),  QStringLiteral("run-attempt"),
                            QStringLiteral("runtime-request"), QStringLiteral("plan"), QStringLiteral("message"),
-                           QStringLiteral("checkpoint"),      QStringLiteral("subagent")};
+                           QStringLiteral("checkpoint"),      QStringLiteral("subagent"),
+                           QStringLiteral("provider-thread")};
 // The kinds a window bounds (HalC2.Streams.View): the client holds those of
 // the runs from its floor on. The rest are held whole.
 const QSet<QString> kWindowed{QStringLiteral("turn-item"), QStringLiteral("message")};
@@ -349,6 +351,29 @@ void TimelineModel::setStatus(const QString& status, const QString& problem) {
   emit statusChanged();
 }
 
+// The latest run's provider thread's reported context occupancy, as a
+// percent of its window. It is the provider conversation's, not the
+// model's: changing the model on the same thread leaves it reading what it
+// read until the provider reports new usage.
+QString TimelineModel::contextUsage() const {
+  QJsonObject latest;
+  for (const QJsonObject& run : m_entities.value(QStringLiteral("run"))) {
+    if (latest.isEmpty() || run.value(QLatin1String("ordinal")).toInt() > latest.value(QLatin1String("ordinal")).toInt()) {
+      latest = run;
+    }
+  }
+  if (latest.isEmpty()) return {};
+  const QJsonObject providerThread =
+      m_entities.value(QStringLiteral("provider-thread"))
+          .value(latest.value(QLatin1String("providerThreadId")).toString());
+  const QJsonObject usage = providerThread.value(QLatin1String("contextUsage")).toObject();
+  const QJsonValue used = usage.value(QLatin1String("usedTokens"));
+  const QJsonValue maxTokens = usage.value(QLatin1String("maxTokens"));
+  if (!used.isDouble() || !maxTokens.isDouble() || maxTokens.toDouble() <= 0) return {};
+  const int percent = int(std::clamp(std::round(100.0 * used.toDouble() / maxTokens.toDouble()), 0.0, 100.0));
+  return QStringLiteral("%1%").arg(percent);
+}
+
 QString TimelineModel::workingLabel() const {
   if (!working()) return {};
   const qint64 seconds = std::max<qint64>(0, m_workingSince.secsTo(m_now()));
@@ -528,6 +553,7 @@ void TimelineModel::everythingChanged(const QSet<QString>& changed) {
   emit turnChanged();
   emit checkpointsChanged();
   emit agentsChanged();
+  emit contextUsageChanged();
   emit workspaceChanged();
 }
 
@@ -704,6 +730,8 @@ void TimelineModel::events(const QJsonArray& events) {
     structural |= apply(event.at(1).toString(), event.at(2).toString(), event.at(3).toObject(), changed);
   }
   if (m_turnTouched) emit turnChanged();
+  // A provider thread's reported usage rides with runs and attempts.
+  if (m_turnTouched) emit contextUsageChanged();
   if (m_checkpointsTouched) emit checkpointsChanged();
   if (m_agentsTouched) emit agentsChanged();
   // A subagent's row shows its entity's model, status and latest words.

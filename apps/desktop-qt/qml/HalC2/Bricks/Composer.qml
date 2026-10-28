@@ -1062,6 +1062,21 @@ Rectangle {
                             selectedModel: composer.ready ? composer.model.selectedModel : null
                         }
 
+                        // How full the provider conversation's context is; it
+                        // is the conversation's, so a model change on the same
+                        // thread leaves it reading what it read.
+                        Label {
+                            id: contextUsage
+                            objectName: "contextUsage"
+
+                            visible: composer.ready && composer.model.contextUsage !== null
+                            color: composer.muted
+                            font.family: Theme.fontPrompt.length > 0 ? Theme.fontPrompt : Application.font.family
+                            font.pixelSize: 12
+                            text: composer.ready && composer.model.contextUsage !== null ? qsTr("%1 context").arg(composer.model.contextUsage) : ""
+                            Accessible.name: qsTr("Context used")
+                        }
+
                         RowLayout {
                             visible: composer.effortOption !== null
                             spacing: 4

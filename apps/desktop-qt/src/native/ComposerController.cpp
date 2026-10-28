@@ -2956,6 +2956,9 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   const auto orNull = [](const QString& value) { return value.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(value); };
   return QVariantMap{
       {QStringLiteral("target"), target},
+      // How full the provider conversation's context is ("80%"), from its
+      // provider thread's reported usage; null until it reports any.
+      {QStringLiteral("contextUsage"), orNull(m_timeline ? m_timeline->contextUsage() : QString())},
       {QStringLiteral("routeKind"), isDraft ? QStringLiteral("draft") : QStringLiteral("server")},
       // The branch and worktree controls under the composer: a new thread's,
       // and kept once it has started only when the user asks (Composer context).

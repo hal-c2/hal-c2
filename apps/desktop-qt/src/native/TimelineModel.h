@@ -44,6 +44,10 @@ class TimelineModel : public QAbstractListModel {
   Q_PROPERTY(QDateTime workingSince READ workingSince NOTIFY workingChanged)
   Q_PROPERTY(bool hasEarlier READ hasEarlier NOTIFY earlierChanged)
   Q_PROPERTY(bool loadingEarlier READ loadingEarlier NOTIFY earlierChanged)
+  // How full the provider conversation's context is, as the composer shows
+  // it ("80%"), or empty until the provider reports usage. The latest run's
+  // provider thread holds it, so it survives a model change on that thread.
+  Q_PROPERTY(QString contextUsage READ contextUsage NOTIFY contextUsageChanged)
 
 public:
   enum Role {
@@ -136,6 +140,7 @@ public:
   void setStatus(const QString& status, const QString& problem = {});
   bool working() const { return m_workingSince.isValid(); }
   QDateTime workingSince() const { return m_workingSince; }
+  QString contextUsage() const;
   // "Working for 12s", from the clock; the brick asks once a second.
   Q_INVOKABLE QString workingLabel() const;
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
@@ -233,6 +238,7 @@ signals:
   void countChanged();
   void statusChanged();
   void workingChanged();
+  void contextUsageChanged();
   // After a snapshot, or events that touched runs, requests, plans or the
   // request and user message items: what entities() gives the composer.
   void turnChanged();

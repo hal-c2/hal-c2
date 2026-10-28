@@ -24,6 +24,7 @@
 namespace {
 
 const QStringList kDefaultGlobs{
+    QStringLiteral("mc/orchestration/provider-handoff.feature:Context occupancy survives a model change"),
     QStringLiteral("mobile/pairing-and-environments.feature"),
     QStringLiteral("mobile/home-and-thread-list.feature"),
     QStringLiteral("mobile/composer.feature"),

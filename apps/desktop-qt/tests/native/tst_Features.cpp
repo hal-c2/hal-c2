@@ -20,6 +20,7 @@ namespace {
 
 const QStringList kDefaultGlobs{
     QStringLiteral("desktop/native-*.feature"),
+    QStringLiteral("mc/orchestration/provider-handoff.feature:Context occupancy survives a model change"),
     QStringLiteral("connections/cluster.feature"),
     QStringLiteral("timeline/streaming.feature"),
     QStringLiteral("timeline/tool-calls.feature"),
