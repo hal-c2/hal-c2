@@ -154,7 +154,18 @@ defmodule HalC2.Codex.Provider do
 
     # No notify here: a refresh probes every agent and tells clients once they
     # are all read (`HalC2.Environment.probe/2`), and a list told mid-refresh
-    # would show an agent being re-read with no models yet.
+    # would show an agent being re-read with no models yet. The boot check
+    # tells clients itself (`boot/0`).
+  end
+
+  @doc """
+  The boot check, run once as the MC starts: a client that connected while
+  the MC booted still holds the unchecked entry, so what the check found is
+  told again — there is no refresh to tell it for this one.
+  """
+  def boot do
+    load()
+    HalC2.Settings.notify_providers()
   end
 
   defp probe(id) do

@@ -321,6 +321,11 @@ Feature: Codex
     When the user opens the provider list
     Then Codex is shown with a warning that its status has not been checked in this session yet
 
+  Scenario: A client connected at boot is told Codex's checked status
+    Given a client is subscribed before Codex is checked
+    When the MC's boot check of Codex runs
+    Then the client is told Codex's checked status without asking again
+
   Scenario: A disabled Codex says it is disabled in settings
     Given Codex is turned off in the provider settings
     When the user opens the provider list

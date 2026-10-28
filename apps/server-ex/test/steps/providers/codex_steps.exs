@@ -1435,6 +1435,28 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  step "a client is subscribed before Codex is checked", context do
+    context = World.fake_providers(context)
+    World.reset_provider_caches()
+    # The subscription's first list is the unchecked one; it stays subscribed.
+    {providers, context} = World.provider_list(context)
+    assert codex(providers)["status"] == "warning"
+    context
+  end
+
+  step "the MC's boot check of Codex runs", context do
+    HalC2.Codex.Provider.boot()
+    context
+  end
+
+  step "the client is told Codex's checked status without asking again", context do
+    {frame, client} =
+      Mc.await(World.client(context), &(&1["t"] == "config.providers"), 10_000)
+
+    assert %{"models" => [_ | _]} = codex(frame["providers"])
+    World.put_client(context, client)
+  end
+
   step "Codex is turned off in the provider settings", context do
     context = World.fake_providers(context)
     World.merge_settings(%{"providers" => %{"codex" => %{"enabled" => false}}})
