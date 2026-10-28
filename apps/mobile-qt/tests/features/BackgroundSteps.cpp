@@ -39,10 +39,9 @@ QString describeAgents(World& world) {
 const Steps steps([] {
   using S = QString;
 
-  // The feature's Background registers the project (PlanSteps.cpp); pairing
-  // is this step's, as there.
+  // The feature's Background is PlanSteps' connected-environment step: the
+  // fake MC serves the project "shop" (haveThread's threads live in it).
   step(S("Claude starts a monitor in the thread"), [](World& world, const Captures&, const Table&) {
-    pairWithEnvironment(world);
     // Room for the desktop layout, whose right panel carries the Agents tab.
     world.resize(960, 600);
     world.waitFor([&] { return world.find(S("desktopLayout")) != nullptr; },
