@@ -1135,8 +1135,17 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  # A fork point Codex cannot honour (`HalC2.Orchestration.Handoff.fork_boundary/3`)
+  # fails the fork's first turn before Codex is asked for anything.
+  defp ensure_native_thread(state, %{fork: %{error: message}}),
+    do: {:error, message, state}
+
   # A fork's first turn starts from a copy of the source thread, cut after its turn;
   # a session carried from another machine is forked whole from its rollout's path.
+  # A fork at a turn with no native reference (`trim`) is taken whole and then
+  # trimmed with `thread/rollback`, which paginated history rejects: there the
+  # fork point cannot be honoured, and the turn fails saying so. Only the copy
+  # is ever rolled back; the source conversation keeps every turn.
   defp ensure_native_thread(state, %{fork: %{thread: source, turn: last} = fork} = turn) do
     state = workers_only(state, turn)
 
@@ -1147,7 +1156,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       |> then(&if(fork[:path], do: Map.put(&1, "path", fork[:path]), else: &1))
 
     case Connection.call(state.conn, "thread/fork", params) do
-      {:ok, %{"thread" => %{"id" => id}}} -> {:ok, %{state | native_thread_id: id}}
+      {:ok, %{"thread" => %{"id" => id}}} -> trim_fork(state, fork, source, id)
       {:error, reason} -> {:error, reason, state}
     end
   end
@@ -1186,6 +1195,30 @@ defmodule HalC2.Codex.ThreadRuntime do
         {:error, reason, state}
     end
   end
+
+  defp trim_fork(state, %{trim: count}, source, id) when is_integer(count) and count > 0 do
+    case Connection.call(state.conn, "thread/rollback", %{
+           "threadId" => id,
+           "numTurns" => count
+         }) do
+      {:ok, %{"thread" => %{"id" => trimmed}}} ->
+        {:ok, %{state | native_thread_id: trimmed}}
+
+      {:ok, _other} ->
+        {:ok, %{state | native_thread_id: id}}
+
+      {:error, reason} ->
+        if String.contains?(String.downcase(rpc_message(reason)), "paginated") do
+          {:error,
+           "Cannot fork Codex thread #{source} at that turn: the source turn has no native Codex turn reference, and the forked thread uses paginated history which rejects thread/rollback.",
+           state}
+        else
+          {:error, reason, state}
+        end
+    end
+  end
+
+  defp trim_fork(state, _fork, _source, id), do: {:ok, %{state | native_thread_id: id}}
 
   # The wordings with which Codex says a thread is gone (`CodexSessionRuntime.ts`
   # `isRecoverableThreadResumeError`).

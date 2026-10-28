@@ -127,7 +127,7 @@ Feature: Forking a thread and merging work back
 
   # ClaudeAdapterV2.ts resolveClaudeForkCursor, CodexAdapterV2.ts resolveCodexForkBoundary:
   # a native fork needs the provider's own mark for the run it forks at.
-  @backlog @mc
+  @mc
   Scenario Outline: A native fork whose fork point the provider cannot find fails the fork's first run
     Given "f1" is a fork of "t1" at run 1 on "<provider>"
     And <missing>
@@ -140,7 +140,7 @@ Feature: Forking a thread and merging work back
       | codex       | run 1's turn is not in the provider's conversation for "t1"    |
       | claudeAgent | the provider recorded no message position for run 1's turn     |
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: Codex forks at a run it kept no reference for by trimming the later turns
     Given "f1" is a fork of "t1" at run 1 on "codex"
     And the MC holds no Codex turn reference for run 1
@@ -148,7 +148,7 @@ Feature: Forking a thread and merging work back
     Then Codex forks the whole conversation and drops the turns after run 1 from the fork
     And the conversation of "t1" keeps every turn
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: Codex cannot trim a fork whose history is paginated
     Given "f1" is a fork of "t1" at run 1 on "codex"
     And the MC holds no Codex turn reference for run 1

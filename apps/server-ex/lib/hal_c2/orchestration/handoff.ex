@@ -210,44 +210,149 @@ defmodule HalC2.Orchestration.Handoff do
     # An ACP agent's driver is its instance's id.
     kind = if driver in @native_forks, do: driver, else: HalC2.Acp.driver(driver)
 
-    if kind in @native_forks and thread_ref["driver"] == driver and turn_ref != nil and
-         (transfer["sourceProviderInstanceId"] || driver) == instance do
-      settled =
-        settle(state, transfer, run_id, at, %{
-          "status" => "consumed",
-          "resolution" => %{"strategy" => "native_fork", "providerThreadRef" => thread_ref}
-        })
+    native? =
+      kind in @native_forks and thread_ref != nil and thread_ref["driver"] == driver and
+        (transfer["sourceProviderInstanceId"] || driver) == instance
 
-      fork = %{thread: thread_ref["nativeId"], turn: turn_ref["nativeId"]}
+    boundary =
+      if native? and driver in ~w(codex claudeAgent) do
+        fork_boundary(HalC2.Streams.state(transfer["sourceThreadId"]), point, driver)
+      end
 
-      fork =
-        if kind in ~w(pi opencode),
-          do: Map.put(fork, :before, next_turn(transfer, turn_ref)),
-          else: fork
+    # A boundary the source's recorded turns cannot confirm (:unknown) falls
+    # back to the transfer's own turn ref, and without one to the transcript:
+    # forking the whole conversation would carry turns past the fork point.
+    native_branch? =
+      native? and
+        (match?({:native, _turn}, boundary) or match?({:trim, _count}, boundary) or
+           (boundary in [nil, :unknown] and turn_ref != nil and
+              (driver not in ~w(codex claudeAgent) or turn_ref["nativeId"] != nil)))
 
-      {fork, nil, [settled]}
-    else
-      history = transcript(state, ordinal)
-      handoff_id = "context-handoff:#{transfer["id"]}"
+    cond do
+      match?({:error, _message}, boundary) ->
+        {:error, message} = boundary
 
-      settled =
-        settle(state, transfer, run_id, at, %{
-          "status" => "consumed",
-          "resolution" => %{"strategy" => "portable_context", "contextHandoffId" => handoff_id}
-        })
+        failed =
+          Orchestration.upsert(state, "context-transfer", transfer["id"], fn entity ->
+            Map.merge(entity, %{
+              "status" => "failed",
+              "error" => message,
+              "targetRunId" => run_id,
+              "updatedAt" => at
+            })
+          end)
 
-      handoff =
-        handoff(
-          handoff_id,
-          transfer,
-          ids,
-          {1, ordinal - 1},
-          "full_thread_summary",
-          history,
-          at
-        )
+        {%{error: message}, nil, [failed]}
 
-      {nil, history, [settled, handoff]}
+      native_branch? ->
+        settled =
+          settle(state, transfer, run_id, at, %{
+            "status" => "consumed",
+            "resolution" => %{"strategy" => "native_fork", "providerThreadRef" => thread_ref}
+          })
+
+        fork =
+          case boundary do
+            {:native, native_turn} ->
+              %{thread: thread_ref["nativeId"], turn: native_turn}
+
+            {:trim, count} when count > 0 ->
+              %{thread: thread_ref["nativeId"], turn: nil, trim: count}
+
+            {:trim, _count} ->
+              %{thread: thread_ref["nativeId"], turn: nil}
+
+            # No provider turns are recorded for the source (a thread from
+            # before they were, say): the transfer's own refs are all there is.
+            _unknown_or_other_driver ->
+              %{thread: thread_ref["nativeId"], turn: turn_ref && turn_ref["nativeId"]}
+          end
+
+        fork =
+          if kind in ~w(pi opencode),
+            do: Map.put(fork, :before, next_turn(transfer, turn_ref)),
+            else: fork
+
+        {fork, nil, [settled]}
+
+      true ->
+        history = transcript(state, ordinal)
+        handoff_id = "context-handoff:#{transfer["id"]}"
+
+        settled =
+          settle(state, transfer, run_id, at, %{
+            "status" => "consumed",
+            "resolution" => %{"strategy" => "portable_context", "contextHandoffId" => handoff_id}
+          })
+
+        handoff =
+          handoff(
+            handoff_id,
+            transfer,
+            ids,
+            {1, ordinal - 1},
+            "full_thread_summary",
+            history,
+            at
+          )
+
+        {nil, history, [settled, handoff]}
+    end
+  end
+
+  @doc """
+  Where a Codex or Claude native fork at `point` (a transfer's source point)
+  cuts its source's conversation, from the provider turns the MC recorded for
+  the source: `{:native, turn}` cuts after that native turn, `{:trim, count}`
+  forks the whole conversation and drops `count` turns from the copy (Codex,
+  whose selected turn predates native turn references), `:unknown` when no
+  provider turns are recorded at all, and `{:error, message}` when the fork
+  point cannot be honoured — the turn is not in the provider thread's turns,
+  or (Claude) no message position was recorded for it while later turns exist.
+  """
+  def fork_boundary(source, point, driver) do
+    turns = StreamState.list(source, "provider-turn")
+
+    attempts =
+      for attempt <- StreamState.list(source, "run-attempt"),
+          attempt["runId"] == point["runId"],
+          into: MapSet.new(),
+          do: attempt["id"]
+
+    boundary = Enum.find(turns, &MapSet.member?(attempts, &1["runAttemptId"]))
+
+    label = if driver == "codex", do: "Codex", else: "Claude"
+
+    cond do
+      turns == [] ->
+        :unknown
+
+      boundary == nil ->
+        {:error,
+         "Cannot fork #{label} thread from that turn: the source turn was not found in the provider's conversation."}
+
+      true ->
+        native = get_in(boundary, ["nativeTurnRef", "nativeId"])
+
+        after_boundary =
+          Enum.count(
+            turns,
+            &(&1["providerThreadId"] == boundary["providerThreadId"] and
+                &1["ordinal"] > boundary["ordinal"] and &1["status"] in @finished)
+          )
+
+        cond do
+          is_binary(native) and native != "" and
+              not (driver == "claudeAgent" and String.starts_with?(native, "turn:")) ->
+            {:native, native}
+
+          driver == "codex" or after_boundary == 0 ->
+            {:trim, after_boundary}
+
+          true ->
+            {:error,
+             "Cannot fork Claude thread from that turn: no message position was recorded for that turn."}
+        end
     end
   end
 
