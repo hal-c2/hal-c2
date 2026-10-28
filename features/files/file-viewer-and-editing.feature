@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/11425
 #   apps/server-ex/lib/hal_c2/workspace.ex (read_file, write_file, path checks)
 #   apps/server-ex/lib/hal_c2/rpc.ex (required_scope/2: a write by full path needs terminal:operate)
 #   apps/server-ex/lib/hal_c2/attachments.ex (assets.createUrl: the signed address a media file previews from)
@@ -234,6 +235,13 @@ Feature: Viewing and editing files
       When the user opens "data/orders.csv" rendered
       Then each of those is shown as a single cell
       And a leading byte order mark is not shown as text
+
+    # Legacy: packages/shared/src/delimitedPreview.ts (a final quoted empty record with no line ending)
+    @backlog @desktop
+    Scenario: A table keeps a final quoted empty row that has no line ending
+      Given "data/orders.csv" ends with a row whose only cell is an empty quoted value and no line ending
+      When the user opens "data/orders.csv" rendered
+      Then that empty row is shown after the last data row
 
     # Legacy: packages/shared/src/delimitedPreview.ts (filePreviewDelimiter)
     @backlog @desktop

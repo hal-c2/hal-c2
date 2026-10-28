@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13355
 #   apps/desktop-qt/host/main.ts (desktop host: MC lifecycle, the ready line)
 #   apps/desktop-qt/host/elixirMc.ts (the MC's access token, found through its runtime record when attached)
 #   apps/desktop-qt/host/main.test.ts (these scenarios, by name, against a fake MC)
@@ -305,6 +306,15 @@ Feature: The desktop app runs its own MC
         | traces  |
         | metrics |
         | logs    |
+
+    # The standard telemetry switch wins over every endpoint, saved or set in the environment.
+    @backlog @desktop
+    Scenario: The standard telemetry switch stops every export, even to a saved endpoint
+      Given the saved settings name a traces endpoint
+      And the environment sets the standard telemetry switch to "true"
+      When the user starts the desktop app
+      Then the app exports nothing to any endpoint
+      And its trace files and log output are still written
 
     # Legacy: apps/desktop/src/backend/DesktopBackendManager.ts (restart delay, readiness timeout)
     @backlog @desktop

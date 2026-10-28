@@ -54,11 +54,23 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Codex.ThreadRuntime handle_call {:start_turn, _}" => ~w(take started refused),
       "HalC2.Codex.ThreadRuntime handle_call {:interrupt, _}" =>
         ~w(interrupted stale-pin no-turn stop-work),
+      # The same interrupt carrying the caller's stop id, so a stop its caller
+      # gave up waiting for (and recorded as cancelled) delivers nothing: when it
+      # is delivered it behaves as {:interrupt, _} does, and when it is not, the
+      # interrupt step is simply never taken.
+      "HalC2.Codex.ThreadRuntime handle_call {:interrupt, _, _}" =>
+        ~w(interrupted stale-pin no-turn stop-work),
+      # The deadline after an interrupt Codex never answered: the interrupted end
+      # of that same run, arriving without Codex acknowledging it.
+      "HalC2.Codex.ThreadRuntime handle_info {:interrupt_deadline, _}" => "interrupted",
       "HalC2.Codex.ThreadRuntime handle_call :interrupt" => ~w(interrupted no-turn stop-work),
       "HalC2.Codex.ThreadRuntime handle_call :release" => ~w(release-idle keep-turn),
       "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:notification, _, _}}" =>
         ~w(finish halt),
       "HalC2.Codex.ThreadRuntime handle_info {:EXIT, _, _}" => ~w(exit unwork),
+      # Output that is not the protocol at all: the app-server session is closed
+      # and the turn fails, as when the app-server exits under it.
+      "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:invalid, _}}" => ~w(exit unwork),
       "HalC2.Orchestration.TurnWatch.claim/2" => "started",
       "HalC2.Orchestration.TurnWatch.release/1" => "release",
       "HalC2.Orchestration.TurnWatch.driven?/1" => ~w(end-abandoned interrupt-undriven),
