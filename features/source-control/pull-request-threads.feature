@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13061
 #   docs/user/source-control.md (Linked pull requests)
 #   packages/contracts/src/git.ts (GitResolvePullRequestInput, GitPreparePullRequestThreadInput, GitPreparePullRequestThreadResult)
 #   packages/contracts/src/rpc.ts (git.resolvePullRequest, git.preparePullRequestThread, pullRequests.linkedThreads, pullRequests.preview)
@@ -359,6 +360,12 @@ Feature: Threads that work on or link pull requests
   Scenario: A thread links several pull requests across repositories
     When the user links "acme/shop" pull request 42 and "acme/api" pull request 7 to "Tax work"
     Then "Tax work" lists both pull requests
+
+  @backlog @desktop @mobile
+  Scenario: Each linked pull request names its repository, even when two share a number
+    Given "Tax work" links pull request 42 of "acme/shop" and pull request 42 of "acme/api"
+    When the user looks at the thread's linked pull requests
+    Then each row names its pull request's repository
 
   @mc
   Scenario: The agent links the pull request it opened

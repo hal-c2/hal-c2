@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/12613
 #   packages/contracts/src/review.ts (ReviewDiffPreviewInput, ReviewDiffPreviewResult, ReviewDiffFileContentsInput)
 #   packages/contracts/src/rpc.ts (review.getDiffPreview, review.getDiffFileContents)
 #   apps/server-ex/lib/hal_c2/review.ex
@@ -49,6 +50,15 @@ Feature: Reviewing working tree and branch changes
     Given the user staged "src/cart.ts" and left "src/tax.ts" untracked
     When the user reviews the working tree
     Then "src/cart.ts" is still the only staged file afterwards
+
+  # The review must not trust a copied index's timestamps to tell an unchanged file from a new one.
+  @backlog @mc
+  Scenario: An untracked file edited again within the same second shows its newest content
+    Given the user has an untracked file "src/tax.ts" of 40 bytes
+    And the user reviews the working tree once
+    When the user rewrites "src/tax.ts" within the same second, to 40 bytes with different content
+    And the user reviews the working tree again
+    Then the review shows the newest content of "src/tax.ts"
 
   @mc
   Scenario: Reviewing the branch against its base
