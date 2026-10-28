@@ -3092,6 +3092,20 @@ Red"} <- StreamState.get(state, "message")[message],
     context
   end
 
+  step "Codex announces a thread with the source {string}", %{args: [source]} = context do
+    context = start_waiting(context)
+    World.codex_notify(context, @thread, "thread/started", %{
+      "thread" => %{"id" => "ordinary", "source" => source}
+    })
+    context
+  end
+
+  step "the active turn continues without a runtime failure", context do
+    {pid, _} = World.codex_runtime(context, @thread)
+    assert :sys.get_state(pid).turn != nil
+    context
+  end
+
   step "Codex consolidates its memories in the background during a turn", context do
     context = start_waiting(context)
 
