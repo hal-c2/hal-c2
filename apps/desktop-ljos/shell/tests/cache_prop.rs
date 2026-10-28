@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use hal_c2_shell::cache::{
-    Cursor, Entity, LocalCache, ShellMcUpdate, ShellRow, Thread, ThreadUpdate,
+    Cursor, Entity, LocalCache, Shell, ShellMcUpdate, ShellRow, Thread, ThreadUpdate,
 };
 use proptest::prelude::*;
 use serde_json::{Map, Value, json};
@@ -228,7 +228,11 @@ proptest! {
                     }]);
                 }
                 Op::ReadShell { origin } => {
-                    let shell = cache.shell(origin.map_or("", |o| ORIGINS[o]));
+                    let read = Rc::new(RefCell::new(None));
+                    let slot = read.clone();
+                    cache.shell(origin.map_or("", |o| ORIGINS[o]), move |s| *slot.borrow_mut() = Some(s));
+                    cache.drain();
+                    let shell: Shell = read.borrow_mut().take().expect("drain runs the reply");
                     let read: Mcs = shell.mcs.iter().map(|mc| (
                         mc.mc.clone(),
                         (mc.rev, mc.rows.iter().map(|r| (r.id.clone(), r.fields["n"].as_i64().unwrap())).collect()),

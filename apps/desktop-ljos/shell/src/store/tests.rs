@@ -181,6 +181,13 @@ fn cached(dir: &std::path::Path) -> ShellStore {
     ShellStore::new(Some(Rc::new(LocalCache::open(Some(dir)))))
 }
 
+/// What the cache answered the store's last read with, held as the shell's
+/// loop does once it is woken.
+fn kept(store: &mut ShellStore) -> Changes {
+    store.cache().cloned().unwrap().drain();
+    store.take_kept()
+}
+
 #[test]
 fn kept_rows_preview_until_the_mc_answers_and_resume_from_their_version() {
     let dir = tempfile::tempdir().unwrap();
@@ -195,14 +202,13 @@ fn kept_rows_preview_until_the_mc_answers_and_resume_from_their_version() {
         // Dropped with a change unflushed: it is written then.
     }
     let mut store = cached(dir.path());
-    let opened = store.open(&format!("{ORIGIN}/some/path?q=1"));
+    // Nothing waits on the cache: its rows come in later.
     assert_eq!(
-        opened,
-        Changes {
-            changed: true,
-            origin_changed: false
-        }
+        store.open(&format!("{ORIGIN}/some/path?q=1")),
+        Changes::default()
     );
+    assert!(keys(&store).is_empty());
+    assert_eq!(kept(&mut store), Changes::changed(true));
     assert!(store.previewing() && !store.synchronized());
     assert_eq!(keys(&store), ["env-a:t1", "env-a:t2", "env-a:t3"]);
     assert_eq!(store.have(), json!({"mc-a": ["e1", 6]}));
@@ -220,7 +226,8 @@ fn kept_rows_preview_until_the_mc_answers_and_resume_from_their_version() {
     // Kept the same way: what the next start sees.
     drop(store);
     let mut store = cached(dir.path());
-    assert!(store.show_kept().changed);
+    store.show_kept();
+    assert!(kept(&mut store).changed);
     assert_eq!(store.origin(), ORIGIN);
     assert_eq!(keys(&store), ["env-a:t1", "env-a:t3"]);
 }
@@ -243,7 +250,30 @@ fn another_origin_shows_nothing_of_the_first() {
     assert!(keys(&store).is_empty());
     assert!(!store.previewing());
     // show_kept is only for a store that has no origin yet.
-    assert_eq!(store.show_kept(), Changes::default());
+    store.show_kept();
+    assert_eq!(kept(&mut store), Changes::default());
+}
+
+#[test]
+fn kept_rows_for_where_the_store_no_longer_is_are_not_held() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let mut store = cached(dir.path());
+        store.open(ORIGIN);
+        store.apply(&snapshot());
+    }
+    // Opened elsewhere before the first answer came in.
+    let mut store = cached(dir.path());
+    store.open(ORIGIN);
+    store.open("http://10.0.0.2:3773");
+    assert_eq!(kept(&mut store), Changes::default());
+    assert!(keys(&store).is_empty() && !store.previewing());
+    // Its MC answered first.
+    let mut store = cached(dir.path());
+    store.open(ORIGIN);
+    store.apply(&frame(json!({"t": "shell", "mcs": [], "rows": []})));
+    assert_eq!(kept(&mut store), Changes::default());
+    assert!(keys(&store).is_empty() && store.synchronized());
 }
 
 #[test]
@@ -282,12 +312,17 @@ fn clearing_lets_go_of_everything() {
     let mut store = cached(dir.path());
     store.open(ORIGIN);
     store.apply(&snapshot());
-    assert!(store.clear());
+    let cleared = Rc::new(Cell::new(false));
+    let done = cleared.clone();
+    store.clear(move |ok| done.set(ok));
+    kept(&mut store);
+    assert!(cleared.get());
     assert!(store.synchronized() && keys(&store).is_empty());
     assert_eq!(store.origin(), "");
     drop(store);
     let mut store = cached(dir.path());
-    assert_eq!(store.open(ORIGIN), Changes::default());
+    store.open(ORIGIN);
+    assert_eq!(kept(&mut store), Changes::default());
     assert!(!store.previewing());
 }
 

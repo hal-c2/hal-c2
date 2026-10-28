@@ -6,17 +6,17 @@
 //!
 //! ```ignore
 //! let cache = LocalCache::open(&paths.cache);
-//! cache.shell("")                                   // the sidebar, at startup
+//! cache.shell("", move |shell| { ... });           // the sidebar, at startup
 //! cache.load_thread(key, move |thread| { ... });    // runs in deliver()
 //! cache.store_thread(update);                       // queued; one transaction per batch
 //! ```
 //!
-//! Every statement runs on one worker thread that owns the connection. The
-//! calling thread only waits for it in `shell`, `clear` and `drain`. Work is
-//! done in the order it was asked for, so a read sees the writes before it.
-//! `load_thread` replies come back to the owner, who runs them with
-//! [`LocalCache::deliver`] once the wake given to [`LocalCache::set_wake`]
-//! says there are some.
+//! Every statement runs on one worker thread that owns the connection, and
+//! the owner's thread is the UI's, so nothing but `drain` (tests and a
+//! render, which have no event loop) waits for it. Work is done in the order
+//! it was asked for, so a read sees the writes before it. Replies come back
+//! to the owner, who runs them with [`LocalCache::deliver`] once the wake
+//! given to [`LocalCache::set_wake`] says there are some.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -135,8 +135,15 @@ pub struct ShellMcUpdate {
 }
 
 type Job = Box<dyn FnOnce(&mut Worker) + Send>;
-type Reply = Box<dyn FnOnce(Thread)>;
+type Reply = Box<dyn FnOnce(Answer)>;
 type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// What the worker sends back for a reply.
+enum Answer {
+    Thread(Thread),
+    Shell(Shell),
+    Cleared(bool),
+}
 
 enum Msg {
     /// Batched with the jobs around it into one transaction.
@@ -149,7 +156,7 @@ enum Msg {
 struct Open {
     tx: Sender<Msg>,
     thread: Option<JoinHandle<()>>,
-    replies: Receiver<(u64, Thread)>,
+    replies: Receiver<(u64, Answer)>,
 }
 
 /// The cache. `!Send`: it lives on the thread that owns the UI.
@@ -158,7 +165,7 @@ pub struct LocalCache {
     wake: Arc<Mutex<Option<Wake>>>,
     pending: RefCell<HashMap<u64, Reply>>,
     /// Replies for a cache that is not open, which still come later.
-    unopened: RefCell<VecDeque<Reply>>,
+    unopened: RefCell<VecDeque<Box<dyn FnOnce()>>>,
     next: Cell<u64>,
 }
 
@@ -176,9 +183,9 @@ impl Default for LocalCache {
 }
 
 impl LocalCache {
-    /// Opens `<dir>/client-cache.sqlite`, creating it. Without it (no
-    /// directory, a file that cannot be written) nothing is kept and every
-    /// read comes back empty.
+    /// Opens `<dir>/client-cache.sqlite`, creating it, on the worker: the
+    /// caller does not wait. Without it (no directory, a file that cannot
+    /// be written) nothing is kept and every read comes back empty.
     pub fn open(dir: Option<&Path>) -> LocalCache {
         let mut cache = LocalCache::default();
         let Some(dir) = dir.filter(|d| !d.as_os_str().is_empty()) else {
@@ -190,7 +197,6 @@ impl LocalCache {
         let path = dir.join(FILE);
         let (tx, rx) = mpsc::channel::<Msg>();
         let (reply_tx, replies) = mpsc::channel();
-        let (opened_tx, opened_rx) = mpsc::channel();
         let wake = cache.wake.clone();
         let thread = std::thread::Builder::new()
             .name("hal-c2-cache".into())
@@ -202,27 +208,23 @@ impl LocalCache {
                     replies: reply_tx,
                     wake,
                 };
-                let opened = worker.open();
-                let _ = opened_tx.send(opened);
-                if opened {
-                    worker.serve(rx);
-                }
+                // One that cannot be opened still answers, with nothing.
+                worker.open();
+                worker.serve(rx);
             });
-        let Ok(thread) = thread else {
-            return cache;
-        };
-        if opened_rx.recv().unwrap_or(false) {
+        if let Ok(thread) = thread {
             cache.open = Some(Open {
                 tx,
                 thread: Some(thread),
                 replies,
             });
-        } else {
-            let _ = thread.join();
         }
         cache
     }
 
+    /// Whether it has a worker, so reads may find something: given a
+    /// directory, even before the worker has opened the file, and when it
+    /// could not.
     pub fn is_open(&self) -> bool {
         self.open.is_some()
     }
@@ -234,6 +236,10 @@ impl LocalCache {
     /// loop's wake.
     pub fn set_wake(&self, wake: impl Fn() + Send + Sync + 'static) {
         *self.wake.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(wake));
+        // For a reply that may have come in before there was a wake.
+        if !self.pending.borrow().is_empty() || !self.unopened.borrow().is_empty() {
+            self.wake();
+        }
     }
 
     fn wake(&self) {
@@ -249,40 +255,63 @@ impl LocalCache {
         }
     }
 
-    /// Runs `job` on the worker after what was asked for so far, outside any
-    /// transaction, and waits for what it returns.
-    fn control<T: Send + 'static>(
+    /// Runs `job` on the worker after what was asked for so far, and
+    /// `reply` with what it returns in a later [`LocalCache::deliver`],
+    /// never from inside the call. A cache that is not open answers
+    /// `unopened`. A reply whose owner may be gone by then holds it weakly
+    /// (desktop-qt's `context`).
+    fn ask(
         &self,
-        job: impl FnOnce(&mut Worker) -> T + Send + 'static,
-    ) -> Option<T> {
-        let open = self.open.as_ref()?;
-        let (tx, rx) = mpsc::sync_channel(1);
-        open.tx
-            .send(Msg::Control(Box::new(move |worker| {
-                let _ = tx.send(job(worker));
-            })))
-            .ok()?;
-        rx.recv().ok()
+        msg: fn(Job) -> Msg,
+        job: impl FnOnce(&mut Worker) -> Answer + Send + 'static,
+        reply: impl FnOnce(Answer) + 'static,
+        unopened: Answer,
+    ) {
+        let Some(open) = &self.open else {
+            // Never synchronous, so callers see one order either way.
+            self.unopened
+                .borrow_mut()
+                .push_back(Box::new(move || reply(unopened)));
+            self.wake();
+            return;
+        };
+        let id = self.next.get();
+        self.next.set(id + 1);
+        self.pending.borrow_mut().insert(id, Box::new(reply));
+        let _ = open.tx.send(msg(Box::new(move |worker: &mut Worker| {
+            let answer = job(worker);
+            let _ = worker.replies.send((id, answer));
+            let wake = worker
+                .wake
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            if let Some(wake) = wake {
+                wake();
+            }
+        })));
     }
 
     /// The sidebar last stored: the one MC's the client was last opened at,
     /// or with a non-empty `origin` that MC's, another's being dropped.
-    /// Blocks until it is read.
-    pub fn shell(&self, origin: &str) -> Shell {
-        let Some(open) = &self.open else {
-            return Shell::default();
-        };
-        let (tx, rx) = mpsc::sync_channel(1);
+    pub fn shell(&self, origin: &str, reply: impl FnOnce(Shell) + 'static) {
         let origin = origin.to_owned();
-        let _ = open.tx.send(Msg::Job(Box::new(move |worker: &mut Worker| {
-            let shell = if worker.usable() {
-                worker.read_shell(origin)
-            } else {
-                Shell::default()
-            };
-            let _ = tx.send(shell);
-        })));
-        rx.recv().unwrap_or_default()
+        self.ask(
+            Msg::Job,
+            move |worker| {
+                Answer::Shell(if worker.usable() {
+                    worker.read_shell(origin)
+                } else {
+                    Shell::default()
+                })
+            },
+            move |answer| {
+                if let Answer::Shell(shell) = answer {
+                    reply(shell);
+                }
+            },
+            Answer::Shell(Shell::default()),
+        );
     }
 
     pub fn store_shell(&self, origin: &str, mcs: Vec<ShellMcUpdate>) {
@@ -305,36 +334,25 @@ impl LocalCache {
         });
     }
 
-    /// `reply` runs in a later [`LocalCache::deliver`] on this thread, never
-    /// from inside the call. A reply whose owner may be gone by then holds
-    /// it weakly (desktop-qt's `context`).
+    /// The copy kept of `key`, to `reply` as [`LocalCache::ask`] says.
     pub fn load_thread(&self, key: &str, reply: impl FnOnce(Thread) + 'static) {
-        let Some(open) = &self.open else {
-            // Never synchronous, so callers see one order either way.
-            self.unopened.borrow_mut().push_back(Box::new(reply));
-            self.wake();
-            return;
-        };
-        let id = self.next.get();
-        self.next.set(id + 1);
-        self.pending.borrow_mut().insert(id, Box::new(reply));
         let key = key.to_owned();
-        let _ = open.tx.send(Msg::Job(Box::new(move |worker: &mut Worker| {
-            let thread = if !worker.usable() || worker.lost.threads.contains(&key) {
-                Thread::default()
-            } else {
-                worker.read_thread(&key)
-            };
-            let _ = worker.replies.send((id, thread));
-            let wake = worker
-                .wake
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
-            if let Some(wake) = wake {
-                wake();
-            }
-        })));
+        self.ask(
+            Msg::Job,
+            move |worker| {
+                Answer::Thread(if !worker.usable() || worker.lost.threads.contains(&key) {
+                    Thread::default()
+                } else {
+                    worker.read_thread(&key)
+                })
+            },
+            move |answer| {
+                if let Answer::Thread(thread) = answer {
+                    reply(thread);
+                }
+            },
+            Answer::Thread(Thread::default()),
+        );
     }
 
     pub fn store_thread(&self, update: ThreadUpdate) {
@@ -425,39 +443,54 @@ impl LocalCache {
     }
 
     /// Starts the database over, so nothing kept stays on disk: the client
-    /// left its MC for good. Blocks until it is done. False when the file
-    /// could be neither removed nor emptied: what it holds is not read, but
-    /// is still on disk.
-    pub fn clear(&self) -> bool {
-        if self.open.is_none() {
-            return true;
-        }
-        self.control(|worker| worker.start_over()).unwrap_or(false)
+    /// left its MC for good. `reply` hears false when the file could be
+    /// neither removed nor emptied: what it holds is not read, but is still
+    /// on disk.
+    pub fn clear(&self, reply: impl FnOnce(bool) + 'static) {
+        self.ask(
+            Msg::Control,
+            |worker| Answer::Cleared(worker.start_over()),
+            move |answer| {
+                if let Answer::Cleared(cleared) = answer {
+                    reply(cleared);
+                }
+            },
+            Answer::Cleared(true),
+        );
     }
 
-    /// Runs the `load_thread` replies that are ready.
+    /// Runs the replies that are ready.
     pub fn deliver(&self) {
         loop {
             let reply = self.unopened.borrow_mut().pop_front();
             match reply {
-                Some(reply) => reply(Thread::default()),
+                Some(reply) => reply(),
                 None => break,
             }
         }
         let Some(open) = &self.open else { return };
-        while let Ok((id, thread)) = open.replies.try_recv() {
+        while let Ok((id, answer)) = open.replies.try_recv() {
             // The borrow ends before the reply runs: it may load again.
             let reply = self.pending.borrow_mut().remove(&id);
             if let Some(reply) = reply {
-                reply(thread);
+                reply(answer);
             }
         }
     }
 
-    /// Returns once everything asked for so far is done and every
-    /// `load_thread` reply has run. Tests and shutdown wait on this.
+    /// Returns once everything asked for so far is done and every reply has
+    /// run. It blocks, so only tests and a render, which have no event loop
+    /// to wake, call it; never the UI thread of a running shell.
     pub fn drain(&self) {
-        let _ = self.control(|_| ());
+        if let Some(open) = &self.open {
+            let (tx, rx) = mpsc::sync_channel(1);
+            let job: Job = Box::new(move |_| {
+                let _ = tx.send(());
+            });
+            if open.tx.send(Msg::Control(job)).is_ok() {
+                let _ = rx.recv();
+            }
+        }
         self.deliver();
     }
 }
@@ -490,7 +523,7 @@ struct Worker {
     db: Option<Connection>,
     path: PathBuf,
     lost: Lost,
-    replies: Sender<(u64, Thread)>,
+    replies: Sender<(u64, Answer)>,
     wake: Arc<Mutex<Option<Wake>>>,
 }
 

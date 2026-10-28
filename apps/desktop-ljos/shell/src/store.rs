@@ -144,6 +144,11 @@ pub struct ShellStore {
     synchronized: bool,
     snapshots: u64,
     problem: String,
+    /// Which read of the cache's kept rows counts: an earlier one comes back
+    /// for a store that has since moved on.
+    asked: u64,
+    /// What the cache answered the latest read with, until [`ShellStore::take_kept`].
+    kept: Rc<RefCell<Option<(u64, cache::Shell)>>>,
 }
 
 impl ShellStore {
@@ -158,23 +163,19 @@ impl ShellStore {
         self.cache.as_ref()
     }
 
-    /// Before the shell knows where its MC is: holds the rows kept for the
-    /// MC it was last opened at.
-    pub fn show_kept(&mut self) -> Changes {
-        let Some(cache) = self.cache.clone().filter(|_| self.origin.is_empty()) else {
-            return Changes::default();
-        };
-        let kept = cache.shell("");
-        if kept.origin.is_empty() {
-            return Changes::default();
+    /// Before the shell knows where its MC is: asks the cache for the rows
+    /// kept for the MC it was last opened at, held by
+    /// [`ShellStore::take_kept`].
+    pub fn show_kept(&mut self) {
+        if let Some(cache) = self.cache.clone().filter(|_| self.origin.is_empty()) {
+            self.ask_kept(&cache, "");
         }
-        let origin = kept.origin.clone();
-        Changes::changed(self.hold(kept, origin))
     }
 
-    /// The shell is being opened at `origin`: the rows last kept for it are
-    /// held until its MC answers ([`ShellStore::previewing`]). Another
-    /// origin's rows go.
+    /// The shell is being opened at `origin`: what was held goes, and the
+    /// rows last kept for it are asked for, held by
+    /// [`ShellStore::take_kept`] until its MC answers
+    /// ([`ShellStore::previewing`]). Another origin's rows go.
     pub fn open(&mut self, origin: &str) -> Changes {
         let key = origin_key(origin);
         // The MC whose rows are held, kept or its own, stays as it is.
@@ -183,16 +184,44 @@ impl ShellStore {
         }
         self.flush();
         let another = !self.origin.is_empty();
-        let kept = self
-            .cache
-            .as_ref()
-            .map(|c| c.shell(&key))
-            .unwrap_or_default();
-        let changed = self.hold(kept, key);
+        let changed = self.hold(cache::Shell::default(), key.clone());
+        if let Some(cache) = self.cache.clone() {
+            self.ask_kept(&cache, &key);
+        }
         Changes {
             changed,
             origin_changed: another,
         }
+    }
+
+    fn ask_kept(&mut self, cache: &LocalCache, origin: &str) {
+        self.asked += 1;
+        let (asked, inbox) = (self.asked, self.kept.clone());
+        cache.shell(origin, move |shell| {
+            *inbox.borrow_mut() = Some((asked, shell))
+        });
+    }
+
+    /// Holds the rows the cache answered [`ShellStore::open`] or
+    /// [`ShellStore::show_kept`] with, once it has (after
+    /// [`LocalCache::deliver`]), unless the store has moved on since: opened
+    /// elsewhere, cleared, or its MC answered first.
+    pub fn take_kept(&mut self) -> Changes {
+        let Some((asked, kept)) = self.kept.borrow_mut().take() else {
+            return Changes::default();
+        };
+        if asked != self.asked || self.synchronized || !self.mcs.is_empty() {
+            return Changes::default();
+        }
+        let origin = if self.origin.is_empty() {
+            kept.origin.clone()
+        } else {
+            self.origin.clone()
+        };
+        if origin.is_empty() {
+            return Changes::default();
+        }
+        Changes::changed(self.hold(kept, origin))
     }
 
     /// Takes the rows the cache kept for `origin` in place of the ones held.
@@ -303,15 +332,20 @@ impl ShellStore {
     }
 
     /// The shell left its MC: every machine and row goes, here and in the
-    /// cache. It reads as synchronized, an empty cluster. False when what the
-    /// cache kept could not be deleted.
-    pub fn clear(&mut self) -> bool {
+    /// cache. It reads as synchronized, an empty cluster. `done` hears false
+    /// when what the cache kept could not be deleted.
+    pub fn clear(&mut self, done: impl FnOnce(bool) + 'static) {
         self.forget();
-        self.cache.as_ref().is_none_or(|c| c.clear())
+        match &self.cache {
+            Some(cache) => cache.clear(done),
+            None => done(true),
+        }
     }
 
     /// [`ShellStore::clear`] without the cache.
     fn forget(&mut self) {
+        // A read of kept rows in flight is for what is gone.
+        self.asked += 1;
         // Nothing of it is owed to the cache any more.
         self.flush_due = false;
         self.unsaved.clear();
@@ -857,16 +891,27 @@ pub fn open(engine: &Engine, origin: &str) {
 /// [`ShellStore::show_kept`] on the engine's store.
 pub fn show_kept(engine: &Engine) {
     if let Some(store) = get(engine) {
-        let changes = store.borrow_mut().show_kept();
-        settle(engine, changes);
+        store.borrow_mut().show_kept();
     }
 }
 
-/// [`ShellStore::clear`] on the engine's store; false when the cache could
-/// not be emptied.
-pub fn clear(engine: &Engine) -> bool {
+/// Runs the cache's replies that are ready ([`LocalCache::deliver`]), and
+/// holds the kept rows among them ([`ShellStore::take_kept`]).
+pub fn deliver(engine: &Engine) {
+    let Some(store) = get(engine) else { return };
+    let cache = store.borrow().cache().cloned();
+    if let Some(cache) = cache {
+        cache.deliver();
+    }
+    let changes = store.borrow_mut().take_kept();
+    settle(engine, changes);
+}
+
+/// [`ShellStore::clear`] on the engine's store; `done` hears false when the
+/// cache could not be emptied.
+pub fn clear(engine: &Engine, done: impl FnOnce(bool) + 'static) {
     let Some(store) = get(engine) else {
-        return true;
+        return done(true);
     };
     store.borrow_mut().forget();
     // The threads shown go first (ThreadStore, on the origin change), so
@@ -878,9 +923,11 @@ pub fn clear(engine: &Engine) -> bool {
             origin_changed: true,
         },
     );
-    let emptied = cache(engine).is_none_or(|c| c.clear());
+    match cache(engine) {
+        Some(cache) => cache.clear(done),
+        None => done(true),
+    }
     settle(engine, Changes::changed(true));
-    emptied
 }
 
 /// Writes what waits for the cache now (on exit, before a render).

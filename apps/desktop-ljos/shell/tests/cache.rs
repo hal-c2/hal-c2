@@ -77,6 +77,22 @@ fn load(cache: &LocalCache, key: &str) -> Thread {
     found.borrow_mut().take().expect("drain runs the reply")
 }
 
+fn kept_shell(cache: &LocalCache, origin: &str) -> cache::Shell {
+    let read = Rc::new(RefCell::new(None));
+    let slot = read.clone();
+    cache.shell(origin, move |shell| *slot.borrow_mut() = Some(shell));
+    cache.drain();
+    read.borrow_mut().take().expect("drain runs the reply")
+}
+
+fn clear(cache: &LocalCache) -> bool {
+    let cleared = Rc::new(RefCell::new(None));
+    let slot = cleared.clone();
+    cache.clear(move |done| *slot.borrow_mut() = Some(done));
+    cache.drain();
+    cleared.borrow_mut().take().expect("drain runs the reply")
+}
+
 fn open(dir: &Path) -> LocalCache {
     LocalCache::open(Some(dir))
 }
@@ -245,7 +261,7 @@ fn clearing_leaves_nothing_on_disk() {
     cache.store_thread(copy("env-a:thread-kept", 10));
     cache.drain();
     assert!(on_disk(dir.path(), b"thread-kept"));
-    assert!(cache.clear());
+    assert!(clear(&cache));
     assert!(!load(&cache, "env-a:thread-kept").found());
     assert!(!on_disk(dir.path(), b"thread-kept"));
 }
@@ -265,7 +281,7 @@ fn a_cache_that_cannot_be_removed_is_emptied() {
     cache.store_thread(copy("env-a:thread-kept", 10));
     cache.drain();
     chmod(dir.path(), 0o500);
-    let cleared = cache.clear();
+    let cleared = clear(&cache);
     let found = load(&cache, "env-a:thread-kept").found();
     chmod(dir.path(), 0o700);
     assert!(cleared);
@@ -293,7 +309,7 @@ fn a_cache_that_cannot_be_emptied_is_not_read() {
         chmod(file, 0o400);
     }
     chmod(dir.path(), 0o500);
-    let cleared = cache.clear();
+    let cleared = clear(&cache);
     let found = load(&cache, "env-a:thread-kept").found();
     chmod(dir.path(), 0o700);
     for file in &files {
@@ -321,8 +337,8 @@ fn the_thread_list_is_kept_by_origin_with_its_versions() {
     let origin = "http://127.0.0.1:3780";
     {
         let cache = open(dir.path());
-        assert!(cache.shell(origin).mcs.is_empty());
-        assert!(cache.shell("").origin.is_empty());
+        assert!(kept_shell(&cache, origin).mcs.is_empty());
+        assert!(kept_shell(&cache, "").origin.is_empty());
         cache.store_shell(
             origin,
             vec![
@@ -376,8 +392,8 @@ fn the_thread_list_is_kept_by_origin_with_its_versions() {
     }
     let cache = open(dir.path());
     // Before the client knows its MC, the one it was last opened at.
-    assert_eq!(cache.shell("").origin, origin);
-    let shell = cache.shell(origin).mcs;
+    assert_eq!(kept_shell(&cache, "").origin, origin);
+    let shell = kept_shell(&cache, origin).mcs;
     assert_eq!(shell.len(), 1);
     assert_eq!(shell[0].mc, "mc-a");
     assert_eq!(shell[0].epoch, "epoch-1");
@@ -402,13 +418,13 @@ fn the_thread_list_is_kept_by_origin_with_its_versions() {
             ..Default::default()
         }],
     );
-    let shell = cache.shell(origin).mcs;
+    let shell = kept_shell(&cache, origin).mcs;
     assert_eq!(shell[0].rows.len(), 1);
     assert_eq!(shell[0].epoch, "epoch-2");
     // Opened at another MC, the client holds nothing of this one any more.
-    assert!(cache.shell("http://127.0.0.1:3781").mcs.is_empty());
-    assert!(cache.shell(origin).mcs.is_empty());
-    assert!(cache.shell("").origin.is_empty());
+    assert!(kept_shell(&cache, "http://127.0.0.1:3781").mcs.is_empty());
+    assert!(kept_shell(&cache, origin).mcs.is_empty());
+    assert!(kept_shell(&cache, "").origin.is_empty());
 }
 
 // A change that cannot be written leaves a copy that no longer matches its
@@ -472,7 +488,7 @@ fn a_thread_list_that_missed_a_change_is_never_read() {
     };
     let cache = open(dir.path());
     cache.store_shell(origin, change(true, 2, "t1"));
-    assert_eq!(cache.shell(origin).mcs.len(), 1);
+    assert_eq!(kept_shell(&cache, origin).mcs.len(), 1);
 
     tamper(
         dir.path(),
@@ -484,17 +500,17 @@ fn a_thread_list_that_missed_a_change_is_never_read() {
     cache.store_shell(origin, change(false, 3, "bad"));
     // Its version still says 2 and its rows are whole as of 2, but the MC
     // was told the client holds 3.
-    assert!(cache.shell(origin).mcs.is_empty());
+    assert!(kept_shell(&cache, origin).mcs.is_empty());
     cache.store_shell(origin, change(false, 4, "t4"));
-    assert!(cache.shell(origin).mcs.is_empty());
+    assert!(kept_shell(&cache, origin).mcs.is_empty());
 
     // Once it can be dropped it is. One changed row is not the MC's rows.
     tamper(dir.path(), &["DROP TRIGGER refuse_drop"]);
     cache.store_shell(origin, change(false, 5, "t5"));
-    assert!(cache.shell(origin).mcs.is_empty());
+    assert!(kept_shell(&cache, origin).mcs.is_empty());
     // All of its rows are.
     cache.store_shell(origin, change(true, 6, "t6"));
-    let shell = cache.shell(origin).mcs;
+    let shell = kept_shell(&cache, origin).mcs;
     assert_eq!(shell.len(), 1);
     assert_eq!(shell[0].rev, 6);
     assert_eq!(shell[0].rows.len(), 1);
@@ -547,7 +563,7 @@ fn without_a_directory_nothing_is_kept() {
     assert!(!*answered.borrow());
     cache.drain();
     assert!(*answered.borrow());
-    assert!(cache.shell("http://127.0.0.1:3780").mcs.is_empty());
+    assert!(kept_shell(&cache, "http://127.0.0.1:3780").mcs.is_empty());
 }
 
 #[test]

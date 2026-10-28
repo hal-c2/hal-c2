@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use hal_c2_shell::cache::LocalCache;
 use hal_c2_shell::mc::Frame;
-use hal_c2_shell::store::ShellStore;
+use hal_c2_shell::store::{Changes, ShellStore};
 use proptest::prelude::*;
 use serde_json::{Value, json};
 
@@ -50,6 +50,8 @@ enum Op {
     Reconnect,
     Flush,
     Restart,
+    /// A start whose MC answers before the cache has said what it kept.
+    RestartLate,
 }
 
 fn op() -> impl Strategy<Value = Op> {
@@ -66,6 +68,7 @@ fn op() -> impl Strategy<Value = Op> {
         2 => Just(Op::Reconnect),
         1 => Just(Op::Flush),
         1 => Just(Op::Restart),
+        1 => Just(Op::RestartLate),
     ]
 }
 
@@ -166,9 +169,19 @@ fn snapshot(machines: &[Machine], have: &Value) -> Frame {
     frame(json!({"t": "shell", "mcs": mcs, "rows": rows}))
 }
 
-fn open(dir: &Path) -> ShellStore {
-    let mut store = ShellStore::new(Some(Rc::new(LocalCache::open(Some(dir)))));
+/// A store opened at the MC, before the cache has said what it kept: that
+/// comes in later, as the shell's loop delivers it.
+fn opening(dir: &Path) -> (ShellStore, Rc<LocalCache>) {
+    let cache = Rc::new(LocalCache::open(Some(dir)));
+    let mut store = ShellStore::new(Some(cache.clone()));
     store.open(ORIGIN);
+    (store, cache)
+}
+
+fn open(dir: &Path) -> ShellStore {
+    let (mut store, cache) = opening(dir);
+    cache.drain();
+    store.take_kept();
     store
 }
 
@@ -312,6 +325,17 @@ proptest! {
                     connected = false;
                     prop_assert_eq!(summary(&store), held);
                     prop_assert!(!store.synchronized());
+                    vec![]
+                }
+                Op::RestartLate => {
+                    drop(store);
+                    let cache;
+                    (store, cache) = opening(dir.path());
+                    connected = true;
+                    store.apply(&snapshot(&machines, &store.have()));
+                    // Too late: the MC's rows stand.
+                    cache.drain();
+                    prop_assert_eq!(store.take_kept(), Changes::default());
                     vec![]
                 }
             };

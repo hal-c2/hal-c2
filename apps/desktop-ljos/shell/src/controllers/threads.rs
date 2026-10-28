@@ -141,11 +141,10 @@ pub fn set_wake(engine: &Engine, wake: impl Fn() + Send + Sync + 'static) {
     });
 }
 
-/// Shows the copies the cache has loaded, and follows their threads.
+/// Shows what the cache has answered: the sidebar it kept, and the copies of
+/// threads it loaded, which are then followed.
 pub fn deliver(engine: &Engine) {
-    if let Some(cache) = store::cache(engine) {
-        cache.deliver();
-    }
+    store::deliver(engine);
     // Each window's, to its own store.
     controller::each_window(engine, |engine| {
         let loaded = std::mem::take(&mut *shared(engine).loaded.borrow_mut());

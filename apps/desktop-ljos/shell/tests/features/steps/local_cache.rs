@@ -422,7 +422,13 @@ pub fn register(steps: &mut Steps) {
             );
             // Nor is its thread list kept for a later start.
             let origin = hal_c2_shell::store::cache(world.engine())
-                .map(|cache| cache.shell("").origin)
+                .map(|cache| {
+                    let read = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+                    let slot = read.clone();
+                    cache.shell("", move |shell| *slot.borrow_mut() = shell.origin);
+                    cache.drain();
+                    read.take()
+                })
                 .unwrap_or_default();
             expect!(
                 origin.is_empty(),
