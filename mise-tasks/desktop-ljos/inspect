@@ -3,4 +3,6 @@
 #MISE dir="{{config_root}}/apps/desktop-ljos"
 set -euo pipefail
 export LJOS_MCP="${LJOS_MCP:-inspect,input,mutate,eval}"
+# A turn past 100 ms warns on stderr with what it ran (off in release builds otherwise).
+export LJOS_TURN_BUDGET_MS="${LJOS_TURN_BUDGET_MS:-100}"
 exec "$(dirname "$0")/_default" "$@"

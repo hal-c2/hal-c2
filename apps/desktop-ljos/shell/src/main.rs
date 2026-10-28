@@ -608,6 +608,11 @@ fn run(app: App, options: Options) -> Result<(), String> {
             let handle = setup.handle();
             let engine = setup.engine().clone();
             report_warnings(&engine);
+            // A turn that runs long says which of these it ran.
+            setup.name_messages(|message| match message {
+                Message::Wake => "Wake",
+                Message::Activated(_) => "Activated",
+            });
             // One wake-up however much waits: the events themselves queue
             // beside the inbox (see mc.rs, folders/watch.rs).
             let folders_handle = handle.clone();
