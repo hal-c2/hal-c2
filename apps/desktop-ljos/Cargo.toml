@@ -23,3 +23,11 @@ serde_json = "1"
 codegen-units = 1
 lto = "thin"
 strip = true
+
+# desktop-ljos:inspect's build: release code with its symbols and line tables
+# kept, so a stack sampled from a stuck UI thread names its functions. Its own
+# profile, so switching between it and a plain run does not rebuild either.
+[profile.inspect]
+inherits = "release"
+strip = false
+debug = "line-tables-only"

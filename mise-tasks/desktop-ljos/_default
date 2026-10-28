@@ -23,15 +23,17 @@ fi
 # The window reloads the checkout's bricks and the config dir's shell.qml as they
 # are saved (shell/src/runtime.rs), so a dev run needs no rebuild for QML.
 features=()
+profile=release
 # LJOS_MCP (desktop-ljos:inspect) serves Ljós's inspector; its token file goes to
 # target/ljos below this directory (or LJOS_MCP_DIR), where desktop-ljos:observe
-# and desktop-ljos:attach look.
-[[ -z ${LJOS_MCP:-} ]] || features=(--features mcp)
+# and desktop-ljos:attach look. It builds with symbols (Cargo.toml's inspect
+# profile) so a stack taken from a stuck UI thread (eu-stack -p PID) reads.
+[[ -z ${LJOS_MCP:-} ]] || { features=(--features mcp); profile=inspect; }
 # macOS names an app in the Dock and the app switcher by its bundle: the build
 # runs from one made beside it (shell/macos/Info.plist), with desktop-qt's icon.
 if [[ $(uname -s) == Darwin ]]; then
-  mise exec -- cargo build --release -q -p hal_c2_shell "${features[@]+"${features[@]}"}"
-  out="${CARGO_TARGET_DIR:-target}/release"
+  mise exec -- cargo build --profile "$profile" -q -p hal_c2_shell "${features[@]+"${features[@]}"}"
+  out="${CARGO_TARGET_DIR:-target}/$profile"
   app="$out/HAL-C2.app/Contents"
   icon=../../assets/prod/black-universal-1024.png
   mkdir -p "$app/MacOS" "$app/Resources"
@@ -50,4 +52,4 @@ if [[ $(uname -s) == Darwin ]]; then
   ln -f "$out/hal-c2-ljos" "$app/MacOS/hal-c2-ljos"
   exec "$app/MacOS/hal-c2-ljos" "${args[@]}"
 fi
-exec mise exec -- cargo run --release -q -p hal_c2_shell "${features[@]+"${features[@]}"}" -- "${args[@]}"
+exec mise exec -- cargo run --profile "$profile" -q -p hal_c2_shell "${features[@]+"${features[@]}"}" -- "${args[@]}"

@@ -590,6 +590,14 @@ enum Message {
 
 /// The window, until it closes.
 fn run(app: App, options: Options) -> Result<(), String> {
+    // An inspected shell lets any of the user's processes sample its stacks
+    // (eu-stack -p PID), not only its parent as Yama's ptrace_scope=1 has it:
+    // a UI thread stuck in a turn answers no inspector tool.
+    #[cfg(all(feature = "mcp", target_os = "linux"))]
+    // SAFETY: prctl with these arguments only changes who may ptrace this process.
+    unsafe {
+        libc::prctl(libc::PR_SET_PTRACER, libc::PR_SET_PTRACER_ANY, 0, 0, 0);
+    }
     // Read once and kept. On macOS and Windows that runs a command, which
     // the UI thread's first ask would otherwise wait for.
     std::thread::spawn(hal_c2_shell::this_machine::id);

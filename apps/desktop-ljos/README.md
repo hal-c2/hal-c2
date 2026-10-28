@@ -70,6 +70,9 @@ desktop-ljos:observe` opens Ljós's observer on it (processes, mailboxes, object
 picked), and `mise run desktop-ljos:attach` serves its inspector on stdio for an MCP client. The last two run
 Ljós's own `ljos` command, built at the pinned rev by `mise run desktop-ljos:cli`.
 
+A UI thread stuck in a turn answers no inspector tool. `desktop-ljos:inspect` builds with symbols (the `inspect`
+profile, in `target/inspect`) and lets your own processes attach, so `eu-stack -p <pid> -1` shows where it is.
+
 ## Tests
 
 ```sh
