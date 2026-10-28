@@ -230,12 +230,14 @@ Feature: MC self-update and hot upgrades
     # Each MC takes the bundle from whichever peer offers it first, not only the first MC.
     And the other two fetch it from a peer that already has it
 
+  # A supervisor's tree only changes at start, but the modules calling it load new code
+  # at once: left on its old code, its newer functions are missing from them.
   @mc
   Scenario: A developer reloads changed modules into running MCs
     Given MCs started from a checkout
     When a developer reloads them after editing code
     Then only modules whose code changed are loaded
-    And the report lists modules that need a restart
+    And a changed supervisor's functions load, and the report lists it to restart for
 
   @mc
   Scenario: A reload starts the services the MC's new code adds
@@ -251,14 +253,14 @@ Feature: MC self-update and hot upgrades
     Given MCs started from a checkout
     When a developer reloads the local MC with its own access token
     Then only modules whose code changed are loaded
-    And the report lists modules that need a restart
+    And a changed supervisor's functions load, and the report lists it to restart for
 
   @mc
   Scenario: A developer reloads the MC from a checkout it was not started from
     Given another checkout holds edited code the MC was not started from
     When a developer reloads the local MC from that checkout
     Then only modules whose code changed are loaded
-    And the report lists modules that need a restart
+    And a changed supervisor's functions load, and the report lists it to restart for
 
   @mc
   Scenario: A reload from a directory without a build is refused

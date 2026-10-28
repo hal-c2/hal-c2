@@ -186,8 +186,9 @@ defmodule HalC2.Upgrade do
 
   @doc """
   Loads what changed after `mix compile`, for MCs run from source
-  (`mix hal_c2.upgrade --dev`). Supervisors are left alone: they only take
-  effect at start, so they are reported to restart for instead.
+  (`mix hal_c2.upgrade --dev`). A supervisor's code loads too, so the modules calling
+  it find its functions, but its tree only changes at start: it is reported to restart
+  for.
 
   `build` is the build directory (`_build/dev`) of the checkout that asks. When it is
   not the one this MC started from, a worktree's say, the MC moves to that build: its
@@ -232,12 +233,12 @@ defmodule HalC2.Upgrade do
       |> Enum.map(fn {mod, file} -> {mod, File.read!(file)} end)
       |> Enum.filter(fn {mod, bin} -> loaded_md5(mod) != beam_md5(bin) end)
 
-    {restart, hot} = Enum.split_with(beams, &restart_module?/1)
+    restart = for {mod, _} = beam <- beams, restart_module?(beam), do: mod
     services = services()
 
-    with {:ok, report} <- HalC2.Hot.reload(hot) do
-      pending = run_after_hot_update(hot, services)
-      {:ok, Map.put(report, :needs_restart, Enum.map(restart, &elem(&1, 0)) ++ pending)}
+    with {:ok, report} <- HalC2.Hot.reload(beams, unmigrated: restart) do
+      pending = run_after_hot_update(beams, services)
+      {:ok, Map.put(report, :needs_restart, restart ++ pending)}
     end
   end
 
