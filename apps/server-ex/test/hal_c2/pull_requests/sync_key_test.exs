@@ -9,6 +9,16 @@ defmodule HalC2.PullRequests.SyncKeyTest do
 
   alias HalC2.PullRequests
 
+  # `sync_key/1` reads the project through the shell; without one (a tool, a
+  # test) it answers nil instead of raising on the missing table.
+  test "a reference whose project cannot be read is not identified" do
+    assert PullRequests.sync_key(%{
+             "projectId" => "no-such-project",
+             "repository" => "acme/web",
+             "number" => 7
+           }) == nil
+  end
+
   @github %{host: "github.com", repository: "acme/app", kind: "github"}
   @azure %{host: "dev.azure.com", repository: "org/project/_git/web", kind: "azure-devops"}
 
