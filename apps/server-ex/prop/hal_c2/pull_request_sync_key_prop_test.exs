@@ -35,7 +35,14 @@ defmodule HalC2.PullRequestSyncKeyPropTest do
   property "every Azure DevOps spelling keys the checkout's own repository to the canonical key",
     numtests: HalC2.Prop.numtests(100) do
     forall {identity, parts} <- azure_identity() do
-      forall host <- oneof([nil, "dev.azure.com", "DEV.AZURE.COM"]) do
+      forall host <-
+               oneof([
+                 nil,
+                 "dev.azure.com",
+                 "DEV.AZURE.COM",
+                 "ssh.dev.azure.com",
+                 "#{parts.org}.visualstudio.com"
+               ]) do
         ref =
           %{"repository" => parts.repo, "number" => 7}
           |> then(&if host, do: Map.put(&1, "host", host), else: &1)

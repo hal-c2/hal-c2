@@ -800,10 +800,20 @@ defmodule HalC2.PullRequests do
   was cloned.
   """
   def sync_key(ref) do
-    identity =
-      if ref["projectId"], do: Enum.find(projects(), &(&1.id == ref["projectId"]))
-
+    identity = if ref["projectId"], do: identity_for(ref["projectId"])
     sync_key(ref, identity)
+  end
+
+  # The one project's checkout identity (`remote/1` on its root only), so a
+  # reference is resolved without asking git about every project on the MC.
+  defp identity_for(id) do
+    case HalC2.Shell.row(node(), id) do
+      {"project", %{"workspaceRoot" => root} = project} when is_binary(root) ->
+        if project["deletedAt"] == nil, do: remote(root)
+
+      _ ->
+        nil
+    end
   end
 
   @doc "As `sync_key/1`, with the project's checkout (`%{host, repository, kind}`) given."
@@ -825,7 +835,9 @@ defmodule HalC2.PullRequests do
     cond do
       identity && identity.kind == "azure-devops" && !String.contains?(repository, "/") ->
         selector = canonical["repository"] |> String.split("/") |> List.last()
-        host = ref["host"] && ref["host"] |> String.trim() |> String.downcase()
+
+        host =
+          ref["host"] && ref["host"] |> String.trim() |> String.downcase() |> azure_host()
 
         if String.downcase(repository) == selector && host in [nil, canonical["host"]],
           do: canonical
@@ -839,6 +851,14 @@ defmodule HalC2.PullRequests do
           Links.normalize(%{"host" => host, "repository" => repository, "number" => number})
         end
     end
+  end
+
+  # Every Azure DevOps host spelling names the one canonical host.
+  defp azure_host(host) do
+    if host in ["ssh.dev.azure.com", "vs-ssh.visualstudio.com"] or
+         String.ends_with?(host, [".dev.azure.com", ".visualstudio.com"]),
+       do: "dev.azure.com",
+       else: host
   end
 
   @doc "`pullRequests.linkedThreads`: this MC's threads linked to the pull request."
@@ -871,9 +891,13 @@ defmodule HalC2.PullRequests do
 
     {:ok, %{"threads" => threads}}
   rescue
-    _ -> refuse("linkedThreads", "Could not load linked threads.")
+    error ->
+      Logger.warning("linked threads could not be loaded: #{Exception.message(error)}")
+      refuse("linkedThreads", "Could not load linked threads.")
   catch
-    _, _ -> refuse("linkedThreads", "Could not load linked threads.")
+    kind, reason ->
+      Logger.warning("linked threads could not be loaded: #{kind} #{inspect(reason)}")
+      refuse("linkedThreads", "Could not load linked threads.")
   end
 
   defp linked?(link, host, repository, number) do

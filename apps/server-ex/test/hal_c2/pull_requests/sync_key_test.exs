@@ -32,6 +32,15 @@ defmodule HalC2.PullRequests.SyncKeyTest do
              %{"repository" => "web", "number" => 7, "host" => "unrelated.test"},
              @azure
            ) == nil
+
+    for host <- ["org.visualstudio.com", "ssh.dev.azure.com", "vs-ssh.visualstudio.com"] do
+      assert PullRequests.sync_key(
+               %{"repository" => "web", "number" => 7, "host" => host},
+               @azure
+             ) ==
+               %{"host" => "dev.azure.com", "repository" => "org/project/_git/web", "number" => 7},
+             "host: #{host}"
+    end
   end
 
   test "every spelling of an Azure DevOps remote names the same pull request" do
