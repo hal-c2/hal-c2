@@ -3094,9 +3094,11 @@ Red"} <- StreamState.get(state, "message")[message],
 
   step "Codex announces a thread with the source {string}", %{args: [source]} = context do
     context = start_waiting(context)
+
     World.codex_notify(context, @thread, "thread/started", %{
       "thread" => %{"id" => "ordinary", "source" => source}
     })
+
     context
   end
 
