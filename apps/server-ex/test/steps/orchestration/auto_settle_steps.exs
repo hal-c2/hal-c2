@@ -238,10 +238,15 @@ defmodule HalC2.Steps.Orchestration.AutoSettle do
   end
 
   step "a minute passes", context do
-    id = World.thread_id(context, "t1")
-    send(context.settlement, :tick)
-    World.await_row(id, &(&1["settledOverride"] == "settled"))
-    Map.put(context, :settle_swept, true)
+    if context[:settlement] do
+      id = World.thread_id(context, "t1")
+      send(context.settlement, :tick)
+      World.await_row(id, &(&1["settledOverride"] == "settled"))
+      Map.put(context, :settle_swept, true)
+    else
+      # The pull-request-links file shares this wording for discovery's tick.
+      HalC2.Steps.Orchestration.PullRequestLinks.minute_passes(context)
+    end
   end
 
   step "the MC decided to settle {string} from a snapshot", %{args: [thread]} = context do
