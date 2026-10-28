@@ -792,23 +792,34 @@ defmodule HalC2Plugins.IssueTracker do
     end
   end
 
-  def handle_call({:applied, run_id}, _from, state) do
-    run =
-      change_run(state, run_id, fn run ->
-        run |> Map.put("status", "applied") |> Map.put("error", nil)
-      end)
+  # Only the claim's holder settles it: after a stale takeover the original
+  # caller is still alive, and its late settle must not release the new claim
+  # or flip the run's status under the apply now running.
+  def handle_call({:applied, run_id}, {caller, _} = _from, state) do
+    if holder?(state, run_id, caller) do
+      run =
+        change_run(state, run_id, fn run ->
+          run |> Map.put("status", "applied") |> Map.put("error", nil)
+        end)
 
-    state = state |> release_claim(run_id) |> put_runs(replaced(state.runs, run))
-    {:reply, run, state}
+      state = state |> release_claim(run_id) |> put_runs(replaced(state.runs, run))
+      {:reply, run, state}
+    else
+      {:reply, Enum.find(state.runs, &(&1["id"] == run_id)), state}
+    end
   end
 
-  def handle_call({:apply_failed, run_id, message}, _from, state) do
-    run =
-      change_run(state, run_id, fn run ->
-        run |> Map.put("status", "proposed") |> Map.put("error", message)
-      end)
+  def handle_call({:apply_failed, run_id, message}, {caller, _} = _from, state) do
+    if holder?(state, run_id, caller) do
+      run =
+        change_run(state, run_id, fn run ->
+          run |> Map.put("status", "proposed") |> Map.put("error", message)
+        end)
 
-    {:reply, :ok, state |> release_claim(run_id) |> put_runs(replaced(state.runs, run))}
+      {:reply, :ok, state |> release_claim(run_id) |> put_runs(replaced(state.runs, run))}
+    else
+      {:reply, :ok, state}
+    end
   end
 
   def handle_call({:discard, run_id}, _from, state) do
@@ -854,6 +865,13 @@ defmodule HalC2Plugins.IssueTracker do
       end
 
     {:reply, offered, state}
+  end
+
+  defp holder?(state, run_id, caller) do
+    case state.claims[run_id] do
+      %{pid: ^caller} -> true
+      _ -> false
+    end
   end
 
   defp claim(state, run, caller, now) do

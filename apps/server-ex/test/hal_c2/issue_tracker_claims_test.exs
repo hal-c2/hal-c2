@@ -50,6 +50,7 @@ defmodule HalC2.IssueTrackerClaimsTest do
 
   test "a dead claiming caller releases its run back to proposed" do
     test = self()
+    assert {:ok, _} = HalC2.Plugins.subscribe_topic(self(), "issue-tracker", "tracker")
 
     caller =
       spawn(fn ->
@@ -66,7 +67,45 @@ defmodule HalC2.IssueTrackerClaimsTest do
     ref = Process.monitor(caller)
     Process.exit(caller, :kill)
     assert_receive {:DOWN, ^ref, :process, ^caller, _}
-    assert eventually(fn -> status() == "proposed" end)
+
+    # The release publishes the run proposed again on the tracker's topic.
+    assert_receive {:hal_c2_plugin_topic, _mc, "issue-tracker", "tracker",
+                    %{"runs" => [%{"status" => "proposed"}]}}
+  end
+
+  test "a settle from a caller that no longer holds the claim is ignored" do
+    test = self()
+
+    first =
+      spawn(fn ->
+        assert {:ok, _} = GenServer.call(IssueTracker, {:claim_apply, "run-1"})
+        send(test, :claimed)
+
+        receive do
+          :settle ->
+            GenServer.call(IssueTracker, {:applied, "run-1"})
+            send(test, :settled)
+        end
+
+        Process.sleep(:infinity)
+      end)
+
+    assert_receive :claimed
+
+    :sys.replace_state(IssueTracker, fn state ->
+      put_in(state, [Access.key!(:claims), "run-1", Access.key!(:at)], 0)
+    end)
+
+    assert {:ok, %{"status" => "applying"}} =
+             GenServer.call(IssueTracker, {:claim_apply, "run-1"})
+
+    send(first, :settle)
+    assert_receive :settled
+    assert status() == "applying"
+
+    assert :ok = GenServer.call(IssueTracker, {:apply_failed, "run-1", "settled by the holder"})
+    assert status() == "proposed"
+    Process.exit(first, :kill)
   end
 
   test "a stale claim can be taken over while its caller still lives" do
@@ -101,12 +140,5 @@ defmodule HalC2.IssueTrackerClaimsTest do
     |> Map.fetch!("runs")
     |> Enum.find(&(&1["id"] == "run-1"))
     |> Map.fetch!("status")
-  end
-
-  defp eventually(fun, attempts \\ 100)
-  defp eventually(_fun, 0), do: false
-
-  defp eventually(fun, attempts) do
-    if fun.(), do: true, else: Process.sleep(10) && eventually(fun, attempts - 1)
   end
 end
