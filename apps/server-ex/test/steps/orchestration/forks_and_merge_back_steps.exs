@@ -673,6 +673,8 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
     message = failed_run_message(context, context.run_title)
     assert message =~ "Cannot fork Codex", "the failed run says #{inspect(message)}"
     assert message =~ "paginated history"
+    # Why the cut could not be made, not only that the fallback was rejected.
+    assert message =~ "thread/revert failed"
     assert "thread/rollback" in World.codex_methods(context)
     context
   end

@@ -1211,16 +1211,25 @@ defmodule HalC2.Codex.ThreadRuntime do
         {:error, :no_turn_to_cut_before}
       end
 
-    result =
+    # The revert error is kept: when the rollback fallback also fails, it
+    # names why the cut could not be made, where the rollback error on
+    # paginated history only ever says rollback is rejected there.
+    {result, revert_error} =
       case reverted do
         {:ok, %{"thread" => %{"id" => _id}}} = ok ->
-          ok
+          {ok, nil}
 
-        _cannot_revert ->
-          Connection.call(state.conn, "thread/rollback", %{
-            "threadId" => id,
-            "numTurns" => count
-          })
+        {:error, reason} ->
+          {Connection.call(state.conn, "thread/rollback", %{
+             "threadId" => id,
+             "numTurns" => count
+           }), reason}
+
+        {:ok, _unconfirmed} ->
+          {Connection.call(state.conn, "thread/rollback", %{
+             "threadId" => id,
+             "numTurns" => count
+           }), nil}
       end
 
     case result do
@@ -1236,8 +1245,12 @@ defmodule HalC2.Codex.ThreadRuntime do
 
       {:error, reason} ->
         if String.contains?(String.downcase(rpc_message(reason)), "paginated") do
+          revert =
+            if revert_error not in [nil, :no_turn_to_cut_before],
+              do: " thread/revert failed: #{rpc_message(revert_error)}."
+
           {:error,
-           "Cannot fork Codex thread #{source} at that turn: the source turn has no native Codex turn reference, and the forked thread uses paginated history which rejects thread/rollback.",
+           "Cannot fork Codex thread #{source} at that turn: the source turn has no native Codex turn reference, and the forked thread uses paginated history which rejects thread/rollback.#{revert}",
            state}
         else
           {:error, reason, state}
