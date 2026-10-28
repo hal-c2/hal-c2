@@ -237,6 +237,19 @@ defmodule HalC2.Orchestration.HandoffTest do
     assert {:error, _} = Handoff.fork_boundary(fork_source("turn:1"), @point, "claudeAgent")
   end
 
+  test "turns of runs rolled back since are not after the boundary" do
+    source =
+      HalC2.StreamState.apply_event(fork_source(nil), %{
+        seq: 100,
+        kind: "run",
+        entity: "run-2",
+        patch: %{"s" => %{"id" => "run-2", "ordinal" => 2, "status" => "rolled_back"}}
+      })
+
+    assert Handoff.fork_boundary(source, @point, "codex") == {:trim, 0}
+    assert Handoff.fork_boundary(source, @point, "claudeAgent") == {:trim, 0}
+  end
+
   test "no recorded provider turns at all is unknown, not an error" do
     assert Handoff.fork_boundary(state([]), @point, "codex") == :unknown
   end

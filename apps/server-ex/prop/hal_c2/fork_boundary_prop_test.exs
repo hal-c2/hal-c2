@@ -19,26 +19,31 @@ defmodule HalC2.ForkBoundaryPropTest do
   }
 
   property "the boundary follows the recorded turns", numtests: HalC2.Prop.numtests(100) do
-    forall {driver, first, after_count} <-
-             {oneof(["codex", "claudeAgent"]), oneof([:recorded, :missing, :gone]), integer(0, 4)} do
-      Handoff.fork_boundary(source(first, after_count), @point, driver) ==
-        expected(driver, first, after_count)
+    forall {driver, first, after_count, rolled} <-
+             {oneof(["codex", "claudeAgent"]), oneof([:recorded, :missing, :gone]), integer(0, 4),
+              integer(0, 4)} do
+      # Of the turns after the boundary, the newest `rolled` are runs the
+      # source has since rolled back: they are no longer in its conversation.
+      rolled = min(rolled, after_count)
+
+      Handoff.fork_boundary(source(first, after_count, rolled), @point, driver) ==
+        expected(driver, first, after_count - rolled, after_count)
     end
   end
 
-  defp expected(_driver, :recorded, _after), do: {:native, "native-1"}
-  defp expected("codex", :missing, after_count), do: {:trim, after_count}
-  defp expected("claudeAgent", :missing, 0), do: {:trim, 0}
+  defp expected(_driver, :recorded, _after, _recorded_after), do: {:native, "native-1"}
+  defp expected("codex", :missing, after_count, _recorded_after), do: {:trim, after_count}
+  defp expected("claudeAgent", :missing, 0, _recorded_after), do: {:trim, 0}
 
-  defp expected("claudeAgent", :missing, _after) do
+  defp expected("claudeAgent", :missing, _after, _recorded_after) do
     {:error,
      "Cannot fork Claude thread from that turn: no message position was recorded for that turn."}
   end
 
   # No recorded turns at all: the boundary is unknown, not an error.
-  defp expected(_driver, :gone, 0), do: :unknown
+  defp expected(_driver, :gone, _after, 0), do: :unknown
 
-  defp expected(driver, :gone, _after) do
+  defp expected(driver, :gone, _after, _recorded_after) do
     label = if driver == "codex", do: "Codex", else: "Claude"
 
     {:error,
@@ -47,7 +52,7 @@ defmodule HalC2.ForkBoundaryPropTest do
 
   # Run 1's provider turn (absent for :gone, referenceless for :missing) and
   # `after_count` finished turns after it, all on one provider thread.
-  defp source(first, after_count) do
+  defp source(first, after_count, rolled) do
     turn = fn ordinal, native ->
       {"provider-turn",
        %{
@@ -68,9 +73,15 @@ defmodule HalC2.ForkBoundaryPropTest do
       end
 
     later =
-      for ordinal <- 2..(after_count + 1)//1,
-          after_count > 0,
-          do: turn.(ordinal, "native-#{ordinal}")
+      Enum.flat_map(Enum.to_list(2..(after_count + 1)//1), fn ordinal ->
+        status = if ordinal > after_count + 1 - rolled, do: "rolled_back", else: "completed"
+
+        [
+          {"run-attempt", %{"id" => "attempt-#{ordinal}", "runId" => "run-#{ordinal}"}},
+          {"run", %{"id" => "run-#{ordinal}", "ordinal" => ordinal, "status" => status}},
+          turn.(ordinal, "native-#{ordinal}")
+        ]
+      end)
 
     ([{"run-attempt", %{"id" => "attempt-1", "runId" => "run-1"}}, first] ++ later)
     |> Enum.filter(& &1)

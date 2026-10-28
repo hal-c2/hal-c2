@@ -334,12 +334,22 @@ defmodule HalC2.Orchestration.Handoff do
       true ->
         native = get_in(boundary, ["nativeTurnRef", "nativeId"])
 
+        # Turns of runs the source has since rolled back are no longer in the
+        # provider's conversation, though their provider turns stay completed:
+        # they are not after the boundary there.
+        attempt_run =
+          Map.new(StreamState.list(source, "run-attempt"), &{&1["id"], &1["runId"]})
+
+        run_status = Map.new(StreamState.list(source, "run"), &{&1["id"], &1["status"]})
+
         after_boundary =
-          Enum.count(
-            turns,
-            &(&1["providerThreadId"] == boundary["providerThreadId"] and
-                &1["ordinal"] > boundary["ordinal"] and &1["status"] in @finished)
-          )
+          Enum.count(turns, fn turn ->
+            status = run_status[attempt_run[turn["runAttemptId"]]]
+
+            turn["providerThreadId"] == boundary["providerThreadId"] and
+              turn["ordinal"] > boundary["ordinal"] and turn["status"] in @finished and
+              status in [nil | @finished]
+          end)
 
         cond do
           is_binary(native) and native != "" and

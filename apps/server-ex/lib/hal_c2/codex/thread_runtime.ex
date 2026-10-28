@@ -1204,8 +1204,12 @@ defmodule HalC2.Codex.ThreadRuntime do
       {:ok, %{"thread" => %{"id" => trimmed}}} ->
         {:ok, %{state | native_thread_id: trimmed}}
 
+      # An answer naming no trimmed thread has not confirmed the trim: running
+      # on the whole copy would silently carry the turns after the fork point.
       {:ok, _other} ->
-        {:ok, %{state | native_thread_id: id}}
+        {:error,
+         "Cannot fork Codex thread #{source} at that turn: thread/rollback did not return the trimmed thread.",
+         state}
 
       {:error, reason} ->
         if String.contains?(String.downcase(rpc_message(reason)), "paginated") do
