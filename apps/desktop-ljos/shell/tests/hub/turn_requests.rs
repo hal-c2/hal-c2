@@ -1,6 +1,6 @@
 //! The TurnRequests brick as a turn's last question or queued message goes:
-//! the write that hides a card must not also empty its Repeater, which on
-//! Ljós never returns (hal-c2/ljos-ui#162).
+//! one write hides its card and empties the Repeater inside it, which on Ljós
+//! once never returned (hal-c2/ljos-ui#162).
 
 use hal_c2_shell::bridge::Bridge;
 use hal_c2_shell::qml::Roots;

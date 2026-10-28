@@ -36,32 +36,6 @@ Item {
     property var picks: ({})
     property var typed: ({})
     property string answering: ""
-    // What the cards' Repeaters show. A card that hides keeps the rows it
-    // showed until it shows again: on Ljós, one change that hides an item and
-    // empties a Repeater inside it never returns (hal-c2/ljos-ui#162), and a
-    // turn's write does both when its last approval, question or queued
-    // message goes. Assigned from handlers, the emptying is a later write.
-    property var shownOptions: []
-    property var shownQuestions: []
-    property var shownQueue: []
-    property var shownWaiting: []
-
-    function keepShown() {
-        if (approval !== null)
-            shownOptions = approval.options;
-        if (question !== null)
-            shownQuestions = question.questions;
-        if (queue.length + waiting.length > 0) {
-            shownQueue = queue;
-            shownWaiting = waiting;
-        }
-    }
-
-    onApprovalChanged: keepShown()
-    onQuestionChanged: keepShown()
-    onQueueChanged: keepShown()
-    onWaitingChanged: keepShown()
-    Component.onCompleted: keepShown()
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
@@ -70,11 +44,11 @@ Item {
     readonly property int maximumCardWidth: 768
     readonly property int gutter: 20
 
-    // Whether the turn waits on anything. The strip stays visible and is no
-    // height without it: each card hides itself, and on Ljós a card shown in the
-    // same change as a hidden strip stays hidden (hal-c2/ljos-ui#146).
+    // Whether the turn waits on anything. The height follows this and not
+    // `visible`, which a host may bind to more than this.
     readonly property bool pending: approval !== null || question !== null || plan !== null || queue.length > 0 || waiting.length > 0
 
+    visible: pending
     implicitHeight: pending ? column.implicitHeight + 8 : 0
 
     onQuestionChanged: {
@@ -226,7 +200,7 @@ Item {
                     spacing: 6
 
                     Repeater {
-                        model: requests.shownOptions
+                        model: requests.approval?.options ?? []
 
                         delegate: ShellButton {
                             required property var modelData
@@ -236,7 +210,7 @@ Item {
                             implicitHeight: 28
                             primary: index === 0
                             text: modelData.label
-                            enabled: requests.approval !== null && requests.approval.canRespond && !requests.approval.responding
+                            enabled: requests.approval.canRespond && !requests.approval.responding
                             ToolTip.visible: hovered && modelData.warning.length > 0
                             ToolTip.text: modelData.warning
                             onClicked: Shell.dispatch("composer.approval.respond", {
@@ -249,7 +223,7 @@ Item {
 
                 // The provider's warnings, next to the option they apply to.
                 Repeater {
-                    model: requests.shownOptions.filter(option => option.warning.length > 0)
+                    model: (requests.approval?.options ?? []).filter(option => option.warning.length > 0)
 
                     delegate: Text {
                         required property var modelData
@@ -279,7 +253,7 @@ Item {
                 spacing: 8
 
                 Repeater {
-                    model: requests.shownQuestions
+                    model: requests.question?.questions ?? []
 
                     delegate: ColumnLayout {
                         id: questionItem
@@ -646,7 +620,7 @@ Item {
                         spacing: 0
 
                         Repeater {
-                            model: requests.shownQueue
+                            model: requests.queue
 
                             delegate: RowLayout {
                                 id: queued
@@ -709,7 +683,7 @@ Item {
 
                         // The agent's own: nothing to edit, steer with or remove.
                         Repeater {
-                            model: requests.shownWaiting
+                            model: requests.waiting
 
                             // Indented, without an icon: a Shape is not clipped
                             // by the list's scroll.
