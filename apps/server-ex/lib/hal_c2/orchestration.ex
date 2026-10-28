@@ -1233,10 +1233,47 @@ defmodule HalC2.Orchestration do
   # A runtime that released itself as idle just before this run began stops with the
   # call unanswered (or is gone by the call); a new one takes the turn.
   defp start_turn(thread_id, turn) do
+    # A thread handed to another provider leaves that provider's process
+    # behind: the one it left stops.
+    stop_other_runtimes(thread_id, turn.ids.instance)
     runtime(turn.ids.instance).start_turn(thread_id, turn)
   catch
     :exit, {reason, _} when reason in [{:shutdown, :released}, :noproc] ->
       runtime(turn.ids.instance).start_turn(thread_id, turn)
+  end
+
+  @runtime_registries %{
+    HalC2.Codex.ThreadRuntime => HalC2.Codex.Registry,
+    HalC2.Claude.ThreadRuntime => HalC2.Claude.Registry,
+    HalC2.Acp.ThreadRuntime => HalC2.Acp.Registry,
+    HalC2.Pi.ThreadRuntime => HalC2.Pi.Registry,
+    HalC2.Muse.ThreadRuntime => HalC2.Muse.Registry
+  }
+
+  defp stop_other_runtimes(thread_id, instance) do
+    keep = @runtime_registries[runtime(instance)]
+
+    # Work a provider left running in the background is still its process's
+    # to finish; only an idle one stops when the thread leaves it.
+    busy =
+      case HalC2.Shell.row(node(), thread_id) do
+        {"thread", row} -> (row["pendingBackgroundTasks"] || []) != []
+        _ -> false
+      end
+
+    for registry <- @session_registries,
+        registry != keep,
+        not busy,
+        Process.whereis(registry) != nil,
+        {pid, _} <- Registry.lookup(registry, thread_id) do
+      try do
+        GenServer.stop(pid, :shutdown)
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    :ok
   end
 
   # A worktree the storage sweep removed comes back at the same path from the
@@ -2943,7 +2980,9 @@ defmodule HalC2.Orchestration do
 
   # Switching a thread with a conversation to another provider hands the
   # conversation over as context; a provider that cannot receive one refuses
-  # the switch in its name.
+  # the switch in its name. An instance that cannot run at all (turned off)
+  # refuses it outright, and a live ACP session that offers no model switch
+  # refuses a model change it cannot take.
   defp refusal(type, command, thread, state)
        when type in ["provider.switch", "thread.model-selection.set"] do
     target = get_in(command, ["modelSelection", "instanceId"])
@@ -2953,15 +2992,39 @@ defmodule HalC2.Orchestration do
       thread["activeProviderThreadId"] != nil or
         StreamState.get(state, "provider-thread") != %{}
 
-    if is_binary(target) and target != current and conversation? do
-      case HalC2.Orchestration.CommandPolicy.ensure(target, :context_handoff) do
-        :ok -> nil
-        {:error, message} -> {:error, message}
-      end
+    cond do
+      is_binary(target) and
+          not HalC2.Settings.instance_enabled?(target, driver_for(target)) ->
+        {:error, "The target provider instance is unavailable."}
+
+      type == "thread.model-selection.set" and acp_model_locked?(command, thread, current) ->
+        {:error, "The active ACP session does not expose a model-switch capability."}
+
+      is_binary(target) and target != current and conversation? ->
+        case HalC2.Orchestration.CommandPolicy.ensure(target, :context_handoff) do
+          :ok -> nil
+          {:error, message} -> {:error, message}
+        end
+
+      true ->
+        nil
     end
   end
 
   defp refusal(_type, _command, _thread, _state), do: nil
+
+  # A model change on the thread's own ACP agent, whose live session offers
+  # no way to switch models (no model list, no model config option).
+  defp acp_model_locked?(command, thread, current) do
+    target = get_in(command, ["modelSelection", "instanceId"])
+    model = get_in(command, ["modelSelection", "model"])
+
+    is_binary(current) and target in [nil, current] and is_binary(model) and
+      model != get_in(thread, ["modelSelection", "model"]) and
+      HalC2.Acp.agent?(current) and
+      HalC2.Acp.ThreadRuntime.session_live?(thread["id"]) and
+      not HalC2.Acp.ThreadRuntime.model_switchable?(thread["id"])
+  end
 
   defp future?(iso) when is_binary(iso) do
     case DateTime.from_iso8601(iso) do
@@ -3223,19 +3286,106 @@ defmodule HalC2.Orchestration do
          false <- Enum.any?(runs, &(&1["status"] in @active_statuses)),
          %{} = next <- Enum.find(queued_runs(state), &(&1["queueHeld"] != true)),
          %{} = message <- StreamState.get(state, "message")[next["userMessageId"]] do
-      {changes, result} = new_run(state, thread, runs, message, next)
-      # The started run leaves the queue; the rest move up.
-      rest = queued_runs(state) |> Enum.reject(&(&1["id"] == next["id"]))
-
-      positions =
-        for {run, position} <- Enum.with_index(rest, 1),
-            change = upsert(state, "run", run["id"], &Map.put(&1, "queuePosition", position)),
-            do: change
-
-      {changes ++ positions, result}
+      # A queued run whose provider cannot take the handoff its start needs
+      # fails where it sits, in its own name; the thread stays on the
+      # provider it was on and the queue goes on behind it.
+      if queued_handoff_unsupported?(state, thread, runs, next) do
+        failed = fail_queued_handoff(state, thread, next)
+        {changes, result} = decide_next(applied(state, failed), thread_id)
+        {failed ++ changes, result}
+      else
+        start_queued(state, thread, runs, message, next)
+      end
     else
       _ -> {[], :idle}
     end
+  end
+
+  defp start_queued(state, thread, runs, message, next) do
+    {changes, result} = new_run(state, thread, runs, message, next)
+    # The started run leaves the queue; the rest move up.
+    rest = queued_runs(state) |> Enum.reject(&(&1["id"] == next["id"]))
+
+    positions =
+      for {run, position} <- Enum.with_index(rest, 1),
+          change = upsert(state, "run", run["id"], &Map.put(&1, "queuePosition", position)),
+          do: change
+
+    {changes ++ positions, result}
+  end
+
+  # Whether starting the queued run `run` would hand the conversation to a
+  # provider that cannot receive one: it has history behind it on another
+  # instance, no native conversation of its own to resume (a shared home's
+  # conversation is its own), and its provider cannot take a handoff.
+  defp queued_handoff_unsupported?(state, thread, runs, run) do
+    instance = run["providerInstanceId"] || get_in(run, ["modelSelection", "instanceId"])
+    driver = driver_for(instance)
+
+    finished =
+      runs
+      |> Enum.filter(&(&1["status"] in ~w(completed interrupted failed)))
+      |> Enum.sort_by(& &1["ordinal"])
+
+    target_thread =
+      StreamState.get(state, "provider-thread")[
+        Entities.provider_thread_id(instance, thread["id"])
+      ]
+
+    fresh? =
+      target_thread == nil or
+        get_in(target_thread, ["nativeThreadRef", "nativeId"]) == nil
+
+    cwd = thread["worktreePath"] || project_root(thread["projectId"]) || File.cwd!()
+
+    finished != [] and fresh? and
+      List.last(finished)["providerInstanceId"] != instance and
+      carried_native_ref(state, driver, instance, cwd) == nil and
+      not HalC2.Orchestration.CommandPolicy.instance_supports?(instance, :context_handoff)
+  end
+
+  # The queued run fails in place with why, and leaves the queue.
+  defp fail_queued_handoff(state, thread, run) do
+    at = Entities.now()
+    instance = run["providerInstanceId"] || get_in(run, ["modelSelection", "instanceId"])
+
+    ids = %{
+      thread: thread["id"],
+      run: run["id"],
+      root_node: run["rootNodeId"],
+      provider_thread: run["providerThreadId"]
+    }
+
+    id = "turn-item:handoff-unsupported:#{run["id"]}"
+
+    Enum.reject(
+      [
+        upsert(
+          state,
+          "run",
+          run["id"],
+          &Map.merge(&1, %{"status" => "failed", "queuePosition" => nil, "completedAt" => at})
+        ),
+        create(
+          "turn-item",
+          id,
+          Entities.turn_item(ids, id, "error", next_ordinal(state), "failed", at, %{
+            "title" => "Context handoff unsupported",
+            "failure" => %{
+              "class" => "provider_error",
+              "code" => "context_handoff_unsupported",
+              "message" =>
+                HalC2.Orchestration.UserFacingErrors.capability_message(
+                  instance,
+                  :context_handoff
+                ),
+              "retryable" => false
+            }
+          })
+        )
+      ],
+      &is_nil/1
+    )
   end
 
   # Records the user's message and a new run, and returns what the provider needs to
@@ -3273,7 +3423,7 @@ defmodule HalC2.Orchestration do
       reason = model_locked(thread, command) ->
         {[], {:error, reason}}
 
-      reason = handoff_refusal(state, thread, command) ->
+      reason = handoff_refusal(state, thread, runs, command) ->
         {[], {:error, reason}}
 
       get_in(command, ["dispatchMode", "type"]) == "defer_start" ->
@@ -3350,12 +3500,16 @@ defmodule HalC2.Orchestration do
   end
 
   # A message naming another provider instance hands the conversation over as
-  # context at its turn; one that cannot receive a handoff refuses the message.
-  defp handoff_refusal(state, thread, command) do
+  # context at its turn; one that cannot receive a handoff refuses a message
+  # that would start at once. Behind an active run the message queues, and
+  # its run is judged when it starts (`queued_handoff_unsupported?/4`): what
+  # the turns ahead of it produce is part of what it would be handed.
+  defp handoff_refusal(state, thread, runs, command) do
     target = get_in(command, ["modelSelection", "instanceId"])
     current = thread["providerInstanceId"] || get_in(thread, ["modelSelection", "instanceId"])
+    active? = Enum.any?(runs, &(&1["status"] in @active_statuses))
 
-    if is_binary(target) and target != current and
+    if is_binary(target) and target != current and not active? and
          StreamState.get(state, "provider-thread") != %{} do
       case HalC2.Orchestration.CommandPolicy.ensure(target, :context_handoff) do
         :ok -> nil
@@ -3615,6 +3769,69 @@ defmodule HalC2.Orchestration do
   # Two Claude instances whose config directories resolve to the same home share
   # Claude Code's own sessions, so a run moved between them resumes the native
   # thread the other instance started instead of starting a new conversation.
+  # A new session on an instance at its usage limit starts on another
+  # instance of the same provider that is not: the thread's sessions spread
+  # across the provider's accounts instead of failing on the spent one. A
+  # session the thread already has on the chosen instance stays there.
+  defp spread_instance(state, thread_id, instance, driver, selection) do
+    existing =
+      StreamState.get(state, "provider-thread")[
+        Entities.provider_thread_id(instance, thread_id)
+      ]
+
+    configured =
+      (HalC2.Settings.settings()["providerInstances"] || %{})
+      |> Enum.filter(fn {_id, config} -> config["driver"] == driver end)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.sort()
+
+    with nil <- existing,
+         true <- at_usage_limit?(instance),
+         [next | _] <-
+           Enum.reject(
+             [driver] ++ configured,
+             &(&1 == instance or at_usage_limit?(&1) or
+                 not HalC2.Settings.instance_enabled?(&1, driver))
+           ) do
+      {next, driver_for(next), Map.put(selection, "instanceId", next)}
+    else
+      _ -> {instance, driver, selection}
+    end
+  end
+
+  defp at_usage_limit?(instance) do
+    case HalC2.ProviderUsageLimits.get(instance) do
+      %{"windows" => windows} -> Enum.any?(windows, &((&1["usedPercent"] || 0) >= 100))
+      _ -> false
+    end
+  end
+
+  # A Codex instance on a shared home (its own account there, through a
+  # shadow home) continues a conversation another account of that home had:
+  # the sessions are the home's, whichever login runs them.
+  defp carried_native_ref(state, "codex", instance, _cwd) do
+    case HalC2.Codex.Home.shared(instance) do
+      nil ->
+        nil
+
+      home ->
+        state
+        |> StreamState.list("provider-thread")
+        |> Enum.find_value(fn other ->
+          other_instance = other["providerInstanceId"] || "codex"
+
+          other_home =
+            HalC2.Codex.Home.shared(other_instance) ||
+              Path.join(HalC2.Paths.user_home(), ".codex")
+
+          if other["nativeThreadRef"] != nil and other_instance != instance and
+               (other["driver"] || driver_for(other_instance)) == "codex" and
+               other_home == home,
+             do: other["nativeThreadRef"]
+        end)
+    end
+  end
+
   defp carried_native_ref(state, "claudeAgent", instance, cwd) do
     home = HalC2.Claude.Provider.config_dir(instance, cwd)
 
@@ -3676,6 +3893,12 @@ defmodule HalC2.Orchestration do
 
     instance = selection["instanceId"] || thread["providerInstanceId"] || "codex"
     driver = driver_for(instance)
+
+    # A session this thread does not have yet spreads to another instance of
+    # the same provider when the chosen one is at its usage limit.
+    {instance, driver, selection} =
+      spread_instance(state, thread_id, instance, driver, selection)
+
     provider_thread_id = Entities.provider_thread_id(instance, thread_id)
     session_id = Entities.provider_session_id(instance, thread_id)
     cwd = thread["worktreePath"] || project_root(thread["projectId"]) || File.cwd!()
@@ -3706,6 +3929,23 @@ defmodule HalC2.Orchestration do
         (provider_thread["providerInstanceId"] || driver) != instance
 
     provider_thread = if foreign, do: nil, else: provider_thread
+
+    # A first run on an instance that shares another's home continues that
+    # instance's native thread (see `carried_native_ref/4`).
+    carried_ref =
+      if provider_thread == nil,
+        do: carried_native_ref(state, driver, instance, cwd)
+
+    plan_thread =
+      provider_thread ||
+        if(carried_ref, do: %{"nativeThreadRef" => carried_ref})
+
+    handoff =
+      HalC2.Orchestration.Handoff.plan(state, plan_thread, ids, ordinal, at,
+        text: command["text"] || "",
+        attachments: command["attachments"] || []
+      )
+
     scope_id = HalC2.Checkpoint.scope_id(thread_id)
 
     # One root checkpoint scope per thread; it follows the latest run.
@@ -3801,10 +4041,16 @@ defmodule HalC2.Orchestration do
               instance
             )
             |> then(fn record ->
-              case carried_native_ref(state, driver, instance, cwd) do
-                nil -> record
-                ref -> Map.put(record, "nativeThreadRef", ref)
-              end
+              record =
+                case carried_ref do
+                  nil -> record
+                  ref -> Map.put(record, "nativeThreadRef", ref)
+                end
+
+              # A `/compact` first run leaves its handoff waiting here.
+              if handoff.deferred,
+                do: Map.put(record, "handoffDeferred", true),
+                else: record
             end)
           )
         ]
@@ -3846,9 +4092,16 @@ defmodule HalC2.Orchestration do
                   Entities.run(ids, ordinal, selection, at)
                   |> Map.drop(["requestedAt"])
                   |> Map.put("queueHeld", false)
+                  |> Map.put("contextHandoffId", handoff.item && handoff.item.handoff_id)
                 )
               ),
-            else: create("run", ids.run, Entities.run(ids, ordinal, selection, at))
+            else:
+              create(
+                "run",
+                ids.run,
+                Entities.run(ids, ordinal, selection, at)
+                |> Map.put("contextHandoffId", handoff.item && handoff.item.handoff_id)
+              )
           ),
           create("run-attempt", ids.attempt, Entities.attempt(ids)),
           create(
@@ -3871,6 +4124,34 @@ defmodule HalC2.Orchestration do
                 |> with_message_fields(command)
               )
           ),
+          # The handoff this run receives shows in the timeline just before
+          # its message.
+          if(handoff.item,
+            do:
+              create(
+                "turn-item",
+                "turn-item:handoff:#{ids.run}",
+                Entities.turn_item(
+                  ids,
+                  "turn-item:handoff:#{ids.run}",
+                  "handoff",
+                  next_ordinal(state),
+                  "completed",
+                  at,
+                  %{
+                    "contextHandoffId" => handoff.item.handoff_id,
+                    "fromProviderThreadIds" => handoff.item.from_provider_thread_ids,
+                    "toProviderThreadId" => handoff.item.to_provider_thread_id,
+                    "fromProviderInstanceIds" => handoff.item.from_provider_instance_ids,
+                    "toProviderInstanceId" => instance,
+                    "fromModelSelections" => handoff.item.from_model_selections,
+                    "toModel" => selection["model"],
+                    "strategy" => handoff.item.strategy,
+                    "summary" => handoff.item.summary
+                  }
+                )
+              )
+          ),
           create(
             "turn-item",
             "turn-item:user:#{message_id}",
@@ -3880,7 +4161,7 @@ defmodule HalC2.Orchestration do
               # A prepared run's message was shown while its workspace was prepared.
               (StreamState.get(state, "turn-item")["turn-item:user:#{message_id}"] || %{})[
                 "ordinal"
-              ] || next_ordinal(state),
+              ] || next_ordinal(state) + if(handoff.item, do: 1, else: 0),
               at,
               command,
               if(queued && queued["status"] == "queued", do: "queued_turn", else: "turn_start")
@@ -3890,18 +4171,23 @@ defmodule HalC2.Orchestration do
         |> Enum.reject(&is_nil/1)
       )
 
-    # A first run on an instance that shares another's Claude home continues
-    # that instance's native thread (see `carried_native_ref/4`).
-    carried_ref =
-      if provider_thread == nil,
-        do: carried_native_ref(state, driver, instance, cwd)
+    # A delivery the MC could not confirm: the old native conversation goes,
+    # and this run starts a new one with the whole thread handed over again.
+    replaced =
+      if handoff.replace_native and provider_thread do
+        [
+          upsert(
+            state,
+            "provider-thread",
+            provider_thread_id,
+            &Map.merge(&1, %{"nativeThreadRef" => nil, "contextUsage" => nil})
+          )
+        ]
+      else
+        []
+      end
 
-    provider_thread =
-      provider_thread ||
-        if(carried_ref, do: %{"nativeThreadRef" => carried_ref})
-
-    handoff =
-      HalC2.Orchestration.Handoff.plan(state, provider_thread, ids, ordinal, at)
+    provider_thread = plan_thread
 
     turn = %{
       ids: ids,
@@ -3936,11 +4222,19 @@ defmodule HalC2.Orchestration do
       # A run confined to reading the workspace, which providers that can
       # confine a run (Claude's `--tools`) honour.
       read_only: command["readOnly"] == true,
-      native_thread_id: get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]),
+      # The attributed history for a provider that takes it as its own, and
+      # the user's own words to send once it has.
+      history: handoff.history,
+      user_text: HalC2.ComposerContext.for_provider(text, command["context"]),
+      native_thread_id:
+        if(handoff.replace_native,
+          do: nil,
+          else: get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"])
+        ),
       head: get_in(provider_thread || %{}, ["nativeConversationHeadRef", "nativeId"])
     }
 
-    {changes ++ handoff.changes, {:ok, turn}}
+    {changes ++ replaced ++ handoff.changes, {:ok, turn}}
   end
 
   # Runs are numbered in the order they leave the queue, which is what checkpoints (ref

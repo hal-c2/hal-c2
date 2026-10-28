@@ -152,6 +152,8 @@ def rollout_history():
 # lives in another home.
 INSTANCE = os.environ.get("FAKE_CODEX_INSTANCE")
 thread_id = f"{INSTANCE}-thread-1" if INSTANCE else "native-thread-1"
+# Items handed over as a thread's own history (`thread/inject_items`), by thread id.
+injected = {}
 # Current Codex keeps paginated history, which only rewinds with thread/revert.
 paginated = os.environ.get("FAKE_CODEX_LEGACY") != "1"
 # FAKE_CODEX_PAGE_SIZE=N keeps N turns per history page; thread/revert only reaches the latest page.
@@ -245,6 +247,11 @@ for line in sys.stdin:
         send({"id": mid, "result": {"data": [{"cwd": cwds, "skills": skills} for cwds in params.get("cwds", [])]}})
     elif method == "feedback/upload":
         send({"id": mid, "result": {"threadId": f"feedback-for-{params['threadId']}"}})
+    elif method == "thread/inject_items" and not os.environ.get("FAKE_CODEX_NO_INJECT"):
+        # History taken as this thread's own; with FAKE_CODEX_NO_INJECT the fake is a
+        # Codex too old for it and the unknown-method error below answers instead.
+        injected.setdefault(params["threadId"], []).extend(params.get("items", []))
+        send({"id": mid, "result": {}})
     elif method == "thread/resume" and os.environ.get("FAKE_CODEX_RESUME_ERROR"):
         send({"id": mid, "error": {"code": -32600, "message": os.environ["FAKE_CODEX_RESUME_ERROR"]}})
     elif method in ("thread/start", "thread/resume"):
@@ -338,7 +345,7 @@ for line in sys.stdin:
             say(ctx, text)
             continue
         if "where are we" in text:
-            where = f"on {thread_id} history {'<conversation_history>' in prompt} merged {'<merged_work>' in prompt}"
+            where = f"on {thread_id} history {'<conversation_history>' in prompt or bool(injected.get(thread_id))} merged {'<merged_work>' in prompt}"
             if SESSIONS:
                 where += " earlier [" + " | ".join(rollout_history()[:-1]) + "]"
             send({"method": "item/started", "params": {**ctx, "item": {"type": "agentMessage", "id": "msg-where", "text": ""}}})

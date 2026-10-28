@@ -113,7 +113,7 @@ Feature: Changing model and provider mid-thread
     Then the next run starts on "codex-work"
     And the run answers on the Codex thread "codex-work-thread-1"
 
-  @mc @shared @backlog-desktop @backlog-mobile
+  @mc @shared
   Scenario: Context occupancy survives a model change
     Given "t1" has used 80 percent of its provider context
     When the user changes "t1" to another model on the same provider
@@ -177,13 +177,13 @@ Feature: Changing model and provider mid-thread
     When the next run starts on "codex"
     Then the handoff carries only the turns since "codex" last saw the thread
 
-  @backlog @mc
+  @mc
   Scenario: Each handed-over item says who said it and where it came from
     Given the user switched "t1" to "claudeAgent"
     When the user sends "Carry on" to "t1"
     Then each item of the handoff is marked as historical, with its role, kind and status and the thread and run it came from
 
-  @backlog @mc
+  @mc
   Scenario: A handoff tells the agent its history is context, not a new request
     Given the conversation of "t1" is longer than the handoff budget
     When a run starts a new provider thread for "t1"
@@ -191,7 +191,7 @@ Feature: Changing model and provider mid-thread
     And it says the history is context, not a new request or higher-priority instructions
     And it says attached files and the earlier provider's tool and reasoning state are not replayed
 
-  @backlog @mc
+  @mc
   Scenario Outline: The handoff budget leaves room for the agent's own work
     Given the model "t1" is switched to has <window>
     When the conversation is handed over with a new message
@@ -203,19 +203,19 @@ Feature: Changing model and provider mid-thread
       | a 32,000 token context window  | 16,000 tokens                       |
       | an unknown context window      | 32,000 tokens of an assumed 128,000 |
 
-  @backlog @mc
+  @mc
   Scenario: Attachments on the new message take from the handoff budget
     Given the user switched "t1" to "claudeAgent"
     When the user sends a message with two images and one other file
     Then the handoff budget is smaller by 8,192 tokens for each image and 4,096 tokens for the file
 
-  @backlog @mc
+  @mc
   Scenario: Handoffs waiting together share one budget
     Given "t1" switched provider and also has a merge-back from a fork waiting
     When the user sends a message to "t1"
     Then both handoffs reach the provider within the one handoff budget
 
-  @backlog @mc
+  @mc
   Scenario: History that may not have reached the provider is sent again on a new conversation
     Given the MC could not confirm that the handed-over history of "t1" reached "claudeAgent"
     When the user sends the next message to "t1"
@@ -223,28 +223,28 @@ Feature: Changing model and provider mid-thread
     And the provider receives a summary of the whole thread before the message
 
   # CodexAdapterV2.ts injectHistory (thread/inject_items).
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: Codex takes a handed-over conversation as its own history
     Given the user switched "t1" to "codex"
     When the user sends a message to "t1"
     Then Codex is given the earlier conversation as history of its own thread
     And the message Codex receives holds only what the user wrote
 
-  @backlog @mc @plugin-codex
+  @mc @plugin-codex
   Scenario: A Codex too old to take history gets it with the message instead
     Given the user switched "t1" to a Codex that does not know how to take history
     When the user sends a message to "t1"
     Then Codex receives the earlier conversation in front of the message
     And the turn runs
 
-  @backlog @mc
+  @mc
   Scenario: A handoff waits when the first message after a switch asks to compact
     Given the user switched "t1" to "claudeAgent"
     When the user sends "/compact" to "t1"
     Then the conversation is not handed over with that message
     And it is handed over with the next ordinary message
 
-  @backlog @mc
+  @mc
   Scenario: A queued message for another provider is handed what the turns ahead of it produced
     Given "t1" has a running turn on "codex" and two more "codex" messages queued
     And the user queues "Prompt 4" for "claudeAgent"
@@ -253,7 +253,7 @@ Feature: Changing model and provider mid-thread
     And a handoff appears in the timeline just before "Prompt 4"
     And the handoff carries the results of all three "codex" turns
 
-  @backlog @mc
+  @mc
   Scenario: A queued message whose provider cannot take a handoff fails and the queue goes on
     Given "t1" has a running turn on "codex"
     And the user queues "Needs claude" for a provider that cannot take handoff summaries
@@ -263,7 +263,7 @@ Feature: Changing model and provider mid-thread
     And "t1" stays on "codex"
     And the run for "Later" starts on "codex" with the conversation intact
 
-  @backlog @mc
+  @mc
   Scenario: A queued switch to another account of the same provider needs no handoff
     Given "t1" has a running turn on the "codex" instance
     And another instance of "codex" cannot take handoff summaries
@@ -271,19 +271,19 @@ Feature: Changing model and provider mid-thread
     Then "Next" resumes the same provider conversation on that instance
     And no handoff is created
 
-  @backlog @mc
+  @mc
   Scenario: Switching to a provider instance that cannot run is refused
     Given provider instance "claudeAgent" is disabled
     When the user switches "t1" to "claudeAgent"
     Then the command fails with "The target provider instance is unavailable."
 
-  @backlog @mc
+  @mc
   Scenario: A model change the running agent cannot take is refused
     Given "t1" runs on an ACP agent whose session does not offer switching models
     When the user sets another model for "t1"
     Then the command fails with "The active ACP session does not expose a model-switch capability."
 
-  @backlog @mc
+  @mc
   Scenario Outline: A change the provider cannot take in place restarts it on the same conversation
     Given "t1" has a live provider process
     When the user changes <what> of "t1" and sends a message
@@ -296,7 +296,7 @@ Feature: Changing model and provider mid-thread
       | the workspace                                                                  |
       | the instance, to another of the same provider that can continue the conversation |
 
-  @backlog @mc
+  @mc
   Scenario Outline: A change the provider takes in place keeps its process
     Given "t1" has a live provider process
     When the user changes <what> of "t1" and sends a message
@@ -307,32 +307,32 @@ Feature: Changing model and provider mid-thread
       | the interaction mode |
       | the model's options  |
 
-  @backlog @mc
+  @mc
   Scenario: Handing the thread to another provider stops the one it left
     Given "t1" has a live provider process on "codex"
     When the user switches "t1" to "claudeAgent" and sends a message
     Then the "codex" process of "t1" stops
 
-  @backlog @mc
+  @mc
   Scenario: Context occupancy starts over on a new provider conversation
     Given "t1" has used 80 percent of its provider context
     When the user switches "t1" to "claudeAgent" and sends a message
     Then the next run does not report the occupancy "codex" had
 
-  @mc @backlog
+  @mc
   Scenario: Handoff summaries compact long items
     Given a finished turn of "t1" has a very long tool output
     When a run starts a new provider thread for "t1"
     Then each compacted entry of the handoff is at most 240 characters
 
-  @mc @backlog
+  @mc
   Scenario: A thread spreads new sessions across instances of the same provider
     Given two instances of "codex" with different accounts
     When the first is at its usage limit
     Then new runs start on the second instance
 
   # Forking and steering already degrade (see forks-and-merge-back and queue-and-steering).
-  @mc @backlog
+  @mc
   Scenario Outline: Capabilities a provider lacks degrade by policy
     Given the provider of "t1" cannot <capability>
     When a command needs it

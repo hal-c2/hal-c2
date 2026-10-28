@@ -58,6 +58,25 @@ defmodule HalC2.Acp.ThreadRuntime do
   def start_turn(thread_id, turn),
     do: thread_id |> ensure() |> GenServer.call({:start_turn, turn}, 120_000)
 
+  @doc "Whether this thread has a live ACP session process."
+  def session_live?(thread_id), do: lookup(thread_id) != nil
+
+  @doc """
+  Whether the thread's live session can switch models: when it opened, its
+  agent advertised models to switch between (a model list or a model config
+  option, which `remember_model/2` keeps as the session's options). A
+  session that advertised none exposes no model-switch capability. No live
+  session is not a refusal: the next one opens on the new model.
+  """
+  def model_switchable?(thread_id) do
+    case lookup(thread_id) do
+      nil -> true
+      pid -> :sys.get_state(pid) |> Map.get(:options, []) |> Kernel.!=([])
+    end
+  catch
+    :exit, _ -> true
+  end
+
   @spec interrupt(String.t(), String.t() | nil) :: :ok | {:error, String.t()}
   def interrupt(thread_id, run_id) do
     case lookup(thread_id) do

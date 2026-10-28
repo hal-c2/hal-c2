@@ -797,8 +797,11 @@ defmodule HalC2.Codex.ThreadRuntime do
   # --- turn lifecycle -------------------------------------------------------------
 
   defp begin_turn(state, turn) do
+    state = restart_session(state, turn)
+
     with {:ok, state} <- connect(state, turn),
          {:ok, state, turn} <- open_thread(state, turn),
+         {:ok, state, turn} <- inject_history(state, turn),
          {:ok, native_turn} <- start_native_turn(state, turn) do
       at = Entities.now()
       ids = Map.put(turn.ids, :provider_turn, "provider-turn:codex:#{native_turn}")
@@ -967,6 +970,132 @@ defmodule HalC2.Codex.ThreadRuntime do
       "" -> error["message"] || "Codex reported an error"
       details -> details
     end
+  end
+
+  # A change the session cannot take in place (runtime mode, workspace, or
+  # another account of the same home) restarts the app-server and resumes
+  # the same native conversation on it; a model or options change and an
+  # interaction-mode change are turn-scoped and keep the process
+  # (`HalC2.Orchestration.SessionTransition`).
+  defp restart_session(state, turn) do
+    snapshot = session_snapshot(turn)
+
+    # Another instance's app-server is `connect/2`'s to replace: it settles
+    # what the old one left before it stops.
+    restart? =
+      HalC2.Orchestration.SessionTransition.decide(
+        state[:session_snapshot],
+        snapshot,
+        true
+      ) == :restart_and_resume and
+        get_in(state[:session_snapshot] || %{}, [:selection, "instanceId"]) ==
+          snapshot.selection["instanceId"]
+
+    state = Map.put(state, :session_snapshot, snapshot)
+
+    if restart? and state.conn != nil do
+      Process.unlink(state.conn)
+      stop_conn(state.conn)
+      %{state | conn: nil, conn_instance: nil, native_thread_id: nil}
+    else
+      state
+    end
+  end
+
+  defp session_snapshot(turn) do
+    instance = Entities.instance(turn.ids)
+
+    %{
+      driver: "codex",
+      continuation: HalC2.Orchestration.SessionTransition.continuation("codex", instance),
+      selection: %{
+        "instanceId" => instance,
+        "model" => turn.model,
+        "options" =>
+          Enum.map(turn.options || %{}, fn {id, value} -> %{"id" => id, "value" => value} end)
+      },
+      runtime_mode: turn.runtime_mode,
+      workspace: turn.cwd
+    }
+  end
+
+  # Codex takes a handed-over conversation as history of its own thread
+  # (`thread/inject_items`), so the message it receives holds only what the
+  # user wrote. A Codex too old for that says so before changing anything
+  # (-32601), and the history rides in front of the message instead, as it
+  # was already put there. Any other failure may or may not have landed:
+  # the delivery stays pending, the turn fails, and the next run starts a
+  # new conversation rather than risk sending the history twice or never.
+  defp inject_history(state, turn) do
+    if turn[:history], do: do_inject_history(state, turn), else: {:ok, state, turn}
+  end
+
+  defp do_inject_history(state, turn) do
+    items =
+      [
+        %{
+          "type" => "message",
+          "role" => "user",
+          "content" => [%{"type" => "input_text", "text" => turn.history.context}]
+        }
+      ] ++
+        Enum.map(turn.history.messages, fn message ->
+          %{
+            "type" => "message",
+            "role" => message["role"],
+            "content" => [
+              %{
+                "type" => if(message["role"] == "user", do: "input_text", else: "output_text"),
+                "text" => HalC2.Orchestration.Handoff.render_historical(message)
+              }
+            ]
+          }
+        end)
+
+    settle_delivery(state, turn, "pending")
+
+    case Connection.call(state.conn, "thread/inject_items", %{
+           "threadId" => state.native_thread_id,
+           "items" => items
+         }) do
+      {:ok, _} ->
+        settle_delivery(state, turn, "injected")
+        {:ok, state, %{turn | text: turn.user_text}}
+
+      {:error, %{"code" => -32601}} ->
+        settle_delivery(state, turn, "inline")
+        {:ok, state, turn}
+
+      {:error, reason} ->
+        {:error, reason, state}
+    end
+  end
+
+  # The delivery is settled before the injection is attempted and after it
+  # lands, so one the MC cannot account for stays visibly pending.
+  defp settle_delivery(state, turn, status) do
+    at = Entities.now()
+    handoff_id = turn.history.handoff_id
+
+    commit(state, fn stream ->
+      [
+        Orchestration.upsert(stream, "context-handoff", handoff_id, fn entity ->
+          if entity do
+            Map.merge(entity, %{
+              "updatedAt" => at,
+              "delivery" => %{
+                "nativeThreadId" => state.native_thread_id,
+                "status" => status,
+                "itemIds" => Enum.map(turn.history.messages, & &1["itemId"])
+              }
+            })
+          end
+        end)
+      ]
+      |> Enum.reject(&is_nil/1)
+    end)
+
+    :ok
   end
 
   # The end of a turn let go of before it started (`begin_turn/2`).

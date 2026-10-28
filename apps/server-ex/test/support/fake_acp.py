@@ -294,6 +294,13 @@ for line in sys.stdin:
         new = "acp-%d-%d" % (os.getpid(), sessions) if os.environ.get("FAKE_ACP_SESSIONS") else "acp-%d" % sessions
         sid = params.get("sessionId") or new
         # FAKE_ACP_MODELS: a JSON list of model names to offer instead of the fake's own.
+        # FAKE_ACP_NO_MODELS offers none: a session with no model switch to take.
+        if os.environ.get("FAKE_ACP_NO_MODELS"):
+            result = {"configOptions": []}
+            if method == "session/new": result["sessionId"] = sid
+            cwds[sid] = params.get("cwd") or os.getcwd()
+            send({"id": mid, "result": result})
+            continue
         names = json.loads(os.environ.get("FAKE_ACP_MODELS", "null")) or ["Fake/One", "Fake/Two"]
         options = [{"value": n.lower().replace(" ", "-"), "name": n} for n in names]
         result = {"configOptions": [{"id": "model", "currentValue": options[0]["value"], "options": options}]}

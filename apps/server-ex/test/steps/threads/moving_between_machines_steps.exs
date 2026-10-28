@@ -559,8 +559,14 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   end
 
   step "{string} stays on {string}", %{args: [title, machine]} = context do
-    assert Machines.machine(context, machine) == :local
-    not_moved!(context, title)
+    # A provider-handoff scenario stays on a provider instance, not a machine.
+    if (context[:machines] || %{})[machine] do
+      assert Machines.machine(context, machine) == :local
+      not_moved!(context, title)
+    else
+      assert World.thread(context, title)["providerInstanceId"] == machine
+      context
+    end
   end
 
   step "the agent {string} runs on is not signed in on {string}",

@@ -200,6 +200,10 @@ for line in sys.stdin:
             f.write(json.dumps(text) + "\n")
     send({"type": "system", "subtype": "init", "session_id": session, "model": "claude-haiku"})
     record("user", text)
+    # The script plays from the user's message, not from the context the MC hands
+    # off ahead of it (`<conversation_history>`, `<imported_history>`, ...).
+    handed_history = "<conversation_history>" in text
+    text = re.sub(r"\A(?:<(\w+)>\n.*?\n</\1>\n\n)+", "", text, flags=re.S)
     # "usage limit until EPOCH": the plan's five-hour window rejects the turn until then.
     if text.startswith("usage limit until "):
         resets = int(text.rsplit(" ", 1)[1])
@@ -309,7 +313,7 @@ for line in sys.stdin:
         send({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key · Please run /login", "session_id": session})
         continue
     if "where are we" in text:
-        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {'<conversation_history>' in text}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
+        send({"type": "assistant", "session_id": session, "uuid": f"uuid-{turn}", "message": {"id": f"m{turn}w", "role": "assistant", "content": [{"type": "text", "text": f"resumed at {resume_at} fork {'--fork-session' in sys.argv} history {handed_history}" + (f" earlier [{' | '.join(earlier)}]" if SESSIONS else "")}]}})
         send({"type": "result", "subtype": "success", "is_error": False, "result": "done", "session_id": session})
         continue
     if "approve" in text and mode == "auto":

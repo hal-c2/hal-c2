@@ -3631,8 +3631,15 @@ defmodule HalC2.Steps.Providers.Claude do
   end
 
   step "the turn runs", context do
-    World.await_runs(context, @thread, ["completed"])
-    assert "Hello from claude" in World.replies(context, @thread)
+    # Another file's scenario names its own thread in the context; Claude's
+    # own scenarios run on @thread and expect Claude's answer.
+    thread = context[:thread] || @thread
+    World.await_latest_run(context, thread, "completed")
+
+    if thread == @thread do
+      assert "Hello from claude" in World.replies(context, @thread)
+    end
+
     context
   end
 
