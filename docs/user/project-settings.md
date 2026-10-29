@@ -59,7 +59,9 @@ project crumb.
 The Project category, shown while a project is selected, holds the project's name, icon, actions,
 checkouts and removal. Actions belong to a project: editing them creates the project's own list
 on each selected environment, and reset returns to the environment's shared list. A project's
-`hal-c2.json` actions can be imported there.
+`hal-c2.json` actions can be imported there. A new worktree runs the project's action marked to run
+on worktree creation; when the project has none, it runs the first one marked in the `hal-c2.json`
+of the branch being checked out, imported or not.
 
 Settings a repository can also declare in `hal-c2.json`, such as the workspace for new threads,
 resolve in one order: a project override, then the environment setting, then `hal-c2.json`, then the

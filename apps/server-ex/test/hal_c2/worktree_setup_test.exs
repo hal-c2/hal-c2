@@ -200,6 +200,137 @@ defmodule HalC2.WorktreeSetupTest do
     assert File.read!(Path.join(snapshot["worktreePath"], "setup.txt")) == "ready\n"
   end
 
+  # The repository's own hal-c2.json lists a PowerShell variant after the POSIX one.
+  @project_file JSON.encode!(%{
+                  "scripts" => [
+                    %{"name" => "Dev", "command" => "echo dev"},
+                    %{
+                      "name" => " Setup Worktree ",
+                      "command" => "echo file > setup.txt",
+                      "runOnWorktreeCreate" => true,
+                      "async" => false
+                    },
+                    %{
+                      "name" => "Setup Worktree (Windows)",
+                      "command" => "New-Item -ItemType File -Path setup.txt",
+                      "runOnWorktreeCreate" => true
+                    }
+                  ]
+                })
+
+  test "a new worktree runs the setup script its hal-c2.json marks", %{repo: repo} do
+    commit(repo, "hal-c2.json", @project_file)
+    project(repo, [])
+
+    snapshot = launch("list the files") |> await_phase("done")
+
+    assert %{"status" => "done", "detail" => "exited with 0"} =
+             Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+
+    assert %{"name" => "Setup Worktree", "command" => "echo file > setup.txt"} =
+             snapshot["setupScript"]
+
+    assert File.read!(Path.join(snapshot["worktreePath"], "setup.txt")) == "file\n"
+  end
+
+  test "a saved setup script wins over hal-c2.json", %{repo: repo} do
+    commit(repo, "hal-c2.json", @project_file)
+
+    project(repo, [
+      %{
+        "id" => "setup",
+        "name" => "Setup",
+        "command" => "echo saved > setup.txt",
+        "icon" => "configure",
+        "runOnWorktreeCreate" => true,
+        "async" => false
+      }
+    ])
+
+    snapshot = launch("list the files") |> await_phase("done")
+    assert File.read!(Path.join(snapshot["worktreePath"], "setup.txt")) == "saved\n"
+  end
+
+  test "hal-c2.json is read from the new worktree, not the project folder", %{repo: repo} do
+    File.write!(Path.join(repo, "hal-c2.json"), @project_file)
+    project(repo, [])
+
+    snapshot = launch("list the files") |> await_phase("done")
+    assert %{"status" => "skipped"} = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+  end
+
+  test "a malformed hal-c2.json runs no setup script", %{repo: repo} do
+    commit(
+      repo,
+      "hal-c2.json",
+      ~s({"scripts": [{"name": "Setup", "command": "echo file > setup.txt", "runOnWorktreeCreate": true})
+    )
+
+    project(repo, [])
+
+    snapshot = launch("list the files") |> await_phase("done")
+    assert %{"status" => "skipped"} = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+    refute File.exists?(Path.join(snapshot["worktreePath"], "setup.txt"))
+
+    assert [%{"status" => "completed"}] =
+             await_completed(snapshot["threadId"]) |> StreamState.list("run")
+  end
+
+  test "which setup script a new worktree runs", %{tmp_dir: dir} do
+    worktree = Path.join(dir, "checkout")
+    File.mkdir_p!(worktree)
+    setup = &HalC2.WorktreeSetup.setup_script(%{"id" => "p1", "scripts" => &1}, worktree)
+    marked = &%{"name" => &1, "command" => "echo #{&1}", "runOnWorktreeCreate" => true}
+
+    assert setup.([]) == nil
+
+    # The legacy t3.json, with comments and a trailing comma as the clients allow.
+    File.write!(Path.join(worktree, "t3.json"), """
+    // shared with the team
+    {"scripts": [{"name": "Old", "command": "echo old", "runOnWorktreeCreate": true},]}
+    """)
+
+    assert %{"name" => "Old"} = setup.([])
+
+    File.write!(Path.join(worktree, "hal-c2.json"), @project_file)
+    assert %{"name" => "Setup Worktree"} = setup.([])
+
+    # Saved actions without a setup script leave it to the file.
+    assert %{"name" => "Setup Worktree"} = setup.([%{"name" => "Dev", "command" => "echo dev"}])
+    assert %{"name" => "Saved"} = setup.([marked.("Saved")])
+
+    # A project's own list in settings, then the environment's defaults, count as saved.
+    {_, version} = HalC2.Settings.get()
+
+    {:ok, version} =
+      HalC2.Settings.put(%{"defaultProjectScripts" => [marked.("Default")]}, version)
+
+    assert %{"name" => "Default"} = setup.([])
+    assert %{"name" => "Saved"} = setup.([marked.("Saved")])
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "defaultProjectScripts" => [marked.("Default")],
+          "projectSettingsOverrides" => %{"p1" => %{"defaultProjectScripts" => [marked.("Own")]}}
+        },
+        version
+      )
+
+    assert %{"name" => "Own"} = setup.([marked.("Saved")])
+
+    # A file that does not match the format declares nothing, scripts included.
+    for bad <- [
+          ~s({"scripts": [{"name": "Setup", "command": "  ", "runOnWorktreeCreate": true}]}),
+          ~s({"iconPath": 3, "scripts": [{"name": "Setup", "command": "x", "runOnWorktreeCreate": true}]}),
+          ~s({"scripts": [{"name": "Setup", "command": "x", "icon": "rocket", "runOnWorktreeCreate": true}]}),
+          ~s({"scripts": [{"name": "Setup", "command": "x", "runOnWorktreeCreate": "yes"}]}),
+          ~s([])
+        ] do
+      assert HalC2.ProjectFile.parse(bad) == :error
+    end
+  end
+
   test "cancelling setup removes the worktree and cancels the run", %{repo: repo} do
     project(repo, [
       %{
@@ -222,6 +353,14 @@ defmodule HalC2.WorktreeSetupTest do
     state = current(thread_id)
     assert [%{"status" => "cancelled"}] = StreamState.list(state, "run")
     assert %{"worktreePath" => nil} = StreamState.get(state, "thread")[thread_id]
+  end
+
+  defp commit(repo, file, contents) do
+    File.write!(Path.join(repo, file), contents)
+    {_, 0} = System.cmd("git", ["add", file], cd: repo)
+
+    {_, 0} =
+      System.cmd("git", ~w(-c user.email=t@t -c user.name=t commit -q -m) ++ [file], cd: repo)
   end
 
   defp await_running_script(thread_id) do

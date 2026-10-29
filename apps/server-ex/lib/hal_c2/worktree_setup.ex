@@ -332,7 +332,7 @@ defmodule HalC2.WorktreeSetup do
     submodules(root, path, set, status)
     if branch == temporary, do: rename_later(thread_id, path, branch, text)
 
-    setup = setup_script(project)
+    setup = setup_script(project, path)
     Orchestration.progress_prepared(thread_id, run_id, "setup")
 
     wait =
@@ -402,9 +402,37 @@ defmodule HalC2.WorktreeSetup do
     |> Kernel.||("hal-c2-" <> hex)
   end
 
-  # The project's script marked to run on a new worktree.
-  defp setup_script(project),
-    do: Enum.find(project["scripts"] || [], &(&1["runOnWorktreeCreate"] == true))
+  @doc """
+  The script to run in a new worktree at `path`: the one the project's saved actions
+  mark to run on worktree creation, else the one the worktree's own `hal-c2.json` marks
+  (the branch's file, which the clients read from the thread's checkout too). Like the
+  clients' import, the first marked script wins; the file has no per-platform field, so
+  a Windows variant has to come after the POSIX one.
+  """
+  def setup_script(project, path) do
+    Enum.find(saved_scripts(project), &setup?/1) ||
+      Enum.find(HalC2.ProjectFile.scripts(path), &setup?/1)
+  end
+
+  defp setup?(script), do: script["runOnWorktreeCreate"] == true
+
+  # The project's actions as the clients resolve them (`resolveProjectScripts`): its own
+  # list in settings, else the scripts its row carries, else the environment's defaults.
+  defp saved_scripts(project) do
+    {settings, _} = HalC2.Settings.get()
+
+    case get_in(settings, ["projectSettingsOverrides", project["id"], "defaultProjectScripts"]) do
+      scripts when is_list(scripts) ->
+        scripts
+
+      _ ->
+        own = project["scripts"] || []
+
+        if settings["projectSettingsFolded"] == true or own == [],
+          do: settings["defaultProjectScripts"] || [],
+          else: own
+    end
+  end
 
   # Runs the script in the thread's "setup" terminal; its exit code comes back as a
   # marker line the command prints after it.
