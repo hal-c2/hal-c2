@@ -467,7 +467,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     log = Path.join(Mc.tmp_dir(context.mc, "setup"), "cwd")
 
     context
-    |> put_setup(title, "pwd > '#{log}'; echo setup-$((6*7))", false)
+    |> put_setup(title, "pwd > '#{log}'; echo \"setup done $((6*7))\"", false)
     |> World.create_thread("Work", title)
     |> Map.put(:setup_log, log)
   end
@@ -477,7 +477,7 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     World.worktree_services()
     log = Path.join(Mc.tmp_dir(context.mc, "setup"), "cwd")
     root = World.project(context, title).root
-    commit_setup_file(root, "pwd > '#{log}'; echo setup-$((6*7))")
+    commit_setup_file(root, "pwd > '#{log}'; echo \"setup done $((6*7))\"")
 
     context
     |> World.create_thread("Work", title)
@@ -540,7 +540,9 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     key = %{"threadId" => World.thread_id(context, "Work"), "terminalId" => "setup"}
     {:ok, terminal} = HalC2.Terminal.attach(key, self())
     assert terminal["cwd"] == path
-    await_output({key["threadId"], "setup"}, "setup-42", terminal["history"] || "")
+    # Only the shell running the line prints "setup done 42": the terminal's echo of it
+    # has `$((6*7))`, and the log's path, which it also echoes, holds no space.
+    await_output({key["threadId"], "setup"}, "setup done 42", terminal["history"] || "")
     assert String.trim(File.read!(context.setup_log)) == path
     context
   end
