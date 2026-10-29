@@ -48,7 +48,9 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
-  The agents threads can run on, for a plugin that starts threads to pick from:
+  The agents threads can run on, as clients list them (`HalC2.Environment.providers/0`,
+  so `name` is the one the user gave the instance), for a plugin that starts threads
+  to pick from:
   `%{"instanceId", "name", "models" => [%{"slug", "name", "isDefault", "options"}]}`,
   where a model's `options` are its option descriptors (`%{"id", "label",
   "type", "options"}`) — reasoning effort among them — for a plugin that picks
@@ -56,7 +58,7 @@ defmodule HalC2.Plugins.Host do
   """
   def providers(_id) do
     {:ok,
-     for provider <- Plugins.providers() || [] do
+     for provider <- HalC2.Environment.providers() do
        %{
          "instanceId" => provider["instanceId"],
          "name" => provider["displayName"] || provider["instanceId"],
