@@ -22,7 +22,7 @@ class ShellStore;
 // from its own files and an unchanged one is not fetched again.
 //
 // Publishes `mcPlugins`: {environments [{id, label, plugins [PluginEntry +
-// {iconUrl, screenshotUrls [{url, caption}], settingsPageUrl}]}], pages [{key
+// {iconUrl, screenshotUrls [{url, caption}], settingsPageUrl, checking}]}], pages [{key
 // ("<plugin>/<page>"), pluginId, pageId, title, iconUrl, url, error,
 // environments [ids]}], one per page whatever runs it, threadKinds
 // {"<environment>/<plugin>/<kind>": {label, rowMark, header}} of running
@@ -31,7 +31,9 @@ class ShellStore;
 //
 // Actions: `mcPlugins.enable {environment, id}` (asks for the permissions the
 // plugin wants first, and enables it only with them), `mcPlugins.disable`,
-// `mcPlugins.restart`; what the MC refuses is toasted.
+// `mcPlugins.restart`, `mcPlugins.compile` (compiles a package's MC code without
+// enabling it; the result comes back as the entry's `compileCheck`, and `checking`
+// is true meanwhile); what the MC refuses is toasted.
 //
 // UI parts reach their MC part through the `McPlugins` singleton:
 // call(...) answers with `answered`, and watch(...) follows a topic with
@@ -112,6 +114,7 @@ private:
   QHash<QString, int> m_subscriptions;     // environment → `plugins` shape
   QHash<QString, QJsonArray> m_plugins;    // environment → PluginEntry[]
   QHash<QString, QSet<QString>> m_running;  // environment → ids of the plugins running on it
+  QSet<QString> m_checking;                // "<environment>/<id>" of the compile checks under way
   QHash<QString, Files> m_files;           // "<environment>/<id>" → files
   QHash<QString, Topic> m_topics;          // "<environment>/<id>/<topic>" → its subscription
   QHash<int, QString> m_watches;           // watch → its topic
