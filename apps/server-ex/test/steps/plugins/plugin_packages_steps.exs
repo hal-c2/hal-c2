@@ -9,6 +9,12 @@ defmodule HalC2.Steps.Plugins.Packages do
 
   alias HalC2.Steps.Plugins.Fixtures
 
+  @broken """
+  defmodule HalC2PluginFixture.Package.Broken do
+    def broken(, do: :x
+  end
+  """
+
   @png <<137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82>>
 
   @doc "The manifest of the default package `id`."
@@ -78,7 +84,10 @@ defmodule HalC2.Steps.Plugins.Packages do
   @doc """
   Writes package `id` and rescans. `opts`: `manifest` (merged over the default),
   `json` (the manifest's raw text), `mc: false` for UI parts only, `raise` (a call
-  that raises), `mark` (a file its code writes when it is compiled), `dir` (the
+  that raises), `mark` (a file its code writes when it is compiled), `memory` (a
+  `:persistent_term` key its code sets, and a process it registers under that name, when
+  it is compiled), `module` (its plugin module, default one named for `id`), `broken`
+  (a second MC file, `mc/zz_broken.ex`, with a syntax error on line 2), `dir` (the
   directory name, default `id`).
   """
   def install(context, id, opts \\ []) do
@@ -95,6 +104,7 @@ defmodule HalC2.Steps.Plugins.Packages do
       }
       |> Map.merge(Map.new(qml_paths(manifest), &{&1, "import QtQuick\nItem {}\n"}))
       |> Map.merge(if opts[:mc] == false, do: %{}, else: %{"mc/#{id}.ex" => source(id, opts)})
+      |> Map.merge(if opts[:broken], do: %{"mc/zz_broken.ex" => @broken}, else: %{})
 
     for {path, content} <- files do
       File.mkdir_p!(Path.dirname(Path.join(dir, path)))
@@ -121,9 +131,12 @@ defmodule HalC2.Steps.Plugins.Packages do
     if File.dir?(dir(context, id)), do: context, else: install(context, id)
   end
 
+  @doc "The plugin module of the default package `id`."
+  def module(id),
+    do: Module.concat(HalC2PluginFixture.Package, Macro.camelize(String.replace(id, "-", "_")))
+
   defp source(id, opts) do
-    module =
-      Module.concat(HalC2PluginFixture.Package, Macro.camelize(String.replace(id, "-", "_")))
+    module = opts[:module] || module(id)
 
     raising = opts[:raise]
 
@@ -134,6 +147,7 @@ defmodule HalC2.Steps.Plugins.Packages do
 
       @id #{inspect(id)}
       #{if mark = opts[:mark], do: "File.write!(#{inspect(mark)}, \"compiled\")"}
+      #{if key = opts[:memory], do: "Process.register(spawn(fn -> Process.sleep(:infinity) end), #{inspect(key)}); :persistent_term.put(#{inspect(key)}, :compiled)"}
 
       @impl true
       def call(method, _input, _context) when method == #{inspect(raising)},
@@ -861,6 +875,118 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
        %{args: [id]} = context do
     context = enable(context, id)
     assert File.read!(context.mark) == "compiled"
+    context
+  end
+
+  # --- checking that a package compiles ------------------------------------------------
+
+  step "the plugins directory contains the package {string} whose second MC file has a syntax error",
+       %{args: [id]} = context do
+    context |> Packages.install(id, broken: true) |> Map.put(:plugin, id)
+  end
+
+  step "the plugins directory contains the package {string} whose MC code changes the MC's memory when it is compiled",
+       %{args: [id]} = context do
+    key = :"hal_c2_compile_check_#{String.replace(id, "-", "_")}"
+    context |> Packages.install(id, memory: key) |> Map.merge(%{plugin: id, memory: key})
+  end
+
+  step "the plugins directory contains the package {string} whose MC module is the one {string} runs",
+       %{args: [id, running]} = context do
+    module = Packages.module(running)
+
+    context
+    |> Packages.install(id, module: module)
+    |> Map.put(:running_code, {running, module.module_info(:md5)})
+  end
+
+  step "{string} still runs its own code", %{args: [id]} = context do
+    {^id, md5} = context.running_code
+    assert Packages.module(id).module_info(:md5) == md5
+    {reply, context} = call(context, id, "reviews.list", %{})
+    assert {:ok, %{"reviews" => [%{"number" => 12}]}} = reply
+    context
+  end
+
+  step "the user checks that {string} compiles", %{args: [id]} = context do
+    {reply, context} = World.call(context, "plugins.compile", %{"id" => id})
+    Map.merge(context, %{reply: reply, plugin: id})
+  end
+
+  step "the user checked that {string} compiles", %{args: [id]} = context do
+    {_, context} = World.call!(context, "plugins.compile", %{"id" => id})
+    context
+  end
+
+  step "the check says {string} does not compile at line {int}",
+       %{args: [file, line]} = context do
+    assert {:ok, %{"ok" => false, "error" => error, "diagnostics" => diagnostics}} = context.reply
+
+    assert %{"line" => ^line, "severity" => "error", "message" => message} =
+             Enum.find(diagnostics, &(&1["file"] == file))
+
+    assert message != ""
+    assert error =~ "#{file}:#{line}:"
+    context
+  end
+
+  step "the check says it compiles", context do
+    assert {:ok, %{"ok" => true, "error" => nil}} = context.reply
+    context
+  end
+
+  step "{string} is listed with what the check found", %{args: [id]} = context do
+    {:ok, check} = context.reply
+    assert %{"compileCheck" => ^check, "status" => "disabled"} = Fixtures.entry(id)
+    context
+  end
+
+  step "{string} stays disabled with none of its permissions granted", %{args: [id]} = context do
+    assert %{"enabled" => false, "status" => "disabled", "permissions" => permissions} =
+             Fixtures.entry(id)
+
+    assert permissions != [] and Enum.all?(permissions, &(&1["granted"] == false))
+    assert HalC2.Plugins.granted(id) == []
+    context
+  end
+
+  step "neither {string}'s modules nor what its code did when compiled are in the MC",
+       %{args: [id]} = context do
+    refute :code.is_loaded(Packages.module(id))
+    assert :persistent_term.get(context.memory, nil) == nil
+    assert Process.whereis(context.memory) == nil
+    assert Path.wildcard(Path.join(context.mc.home, "**/*.beam")) == []
+    context
+  end
+
+  step "{string} is fixed and the MC rescans", %{args: [id]} = context do
+    File.rm!(Path.join(Packages.dir(context, id), "mc/zz_broken.ex"))
+    Fixtures.rescan(context)
+  end
+
+  step "{string} is listed with no check", %{args: [id]} = context do
+    assert %{"compileCheck" => nil} = Fixtures.entry(id)
+    context
+  end
+
+  step "{string} is listed as compiling", %{args: [id]} = context do
+    assert %{"compileCheck" => %{"ok" => true, "error" => nil}, "status" => "disabled"} =
+             Fixtures.entry(id)
+
+    context
+  end
+
+  step "a developer asks the MC over HTTP whether {string} compiles", %{args: [id]} = context do
+    Map.put(context, :answer, World.http_post(context, "/api/plugins/#{id}/compile", %{}))
+  end
+
+  step "the MC answers 422 with the file, line and message of the error", context do
+    assert {422, %{"ok" => false, "diagnostics" => diagnostics}} = context.answer
+
+    assert [%{"file" => "mc/zz_broken.ex", "line" => 2, "message" => message}] =
+             Enum.filter(diagnostics, &(&1["severity"] == "error"))
+
+    assert message != ""
     context
   end
 

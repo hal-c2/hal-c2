@@ -15,7 +15,9 @@ defmodule HalC2.PluginsPropTest do
   kill a client, crash a plugin's process once or until its supervisor gives up, crash
   a worker announced the way a host from before an update in place heard of them,
   install and turn on a package that hears Slack, hand the running plugins Slack events (`slack_event/2`, in one series, as the Slack
-  courier does) that each plugin holds until the test releases it, and kill the host
+  courier does) that each plugin holds until the test releases it, check that a
+  package's code compiles without enabling it (`plugins.compile`: what runs and is
+  loaded must be as it was, whatever the code does as it compiles), and kill the host
   itself. After every step the listing, the document, the code that is loaded and
   running, what the packages' code did at compile time, the host's monitors, and the
   events still waiting for a plugin must agree with the model: an event belongs to the
@@ -149,6 +151,7 @@ defmodule HalC2.PluginsPropTest do
         {1, {:call, __MODULE__, :restart, [held]}},
         {3, {:call, __MODULE__, :save_settings, [held, settings_input()]}},
         {3, {:call, __MODULE__, :call_plugin, [held]}},
+        {3, {:call, __MODULE__, :compile, [held]}},
         {2, {:call, __MODULE__, :file, [held, path()]}},
         {2, {:call, __MODULE__, :subscribe, [client(), topic_id(), topic()]}},
         {1, {:call, __MODULE__, :unsubscribe, [client(), topic_id(), topic()]}},
@@ -341,6 +344,11 @@ defmodule HalC2.PluginsPropTest do
   defp worker_problems(_s, next, {:call, _, :crash, [id]}, _expect, observed),
     do: worker_settings(next, id, observed.worker_settings)
 
+  defp worker_problems(_s, _next, {:call, _, :compile, _}, _expect, observed) do
+    {before, now} = observed.running_code
+    if before == now, do: [], else: [{:check_changed_running_code, before, now}]
+  end
+
   defp worker_problems(_s, _next, _call, _expect, _observed), do: []
 
   defp worker_settings(s, id, settings) do
@@ -417,7 +425,7 @@ defmodule HalC2.PluginsPropTest do
             [:accepted],
             &Map.update(&1, id, accepted || [], fn a -> a ++ (accepted || []) end)
           )
-          |> put_in([:held, id], %{e | failed: false})
+          |> put_in([:held, id], %{e | failed: false, check: nil})
           |> reconcile()
 
         if s.held[id].st == :error_code,
@@ -497,6 +505,17 @@ defmodule HalC2.PluginsPropTest do
     end
   end
 
+  # The version held is checked, from the copy it loaded from: one whose manifest was
+  # refused has none. A check that ran is listed until another version is held or the
+  # package is enabled.
+  defp act(s, {:call, _, :compile, [id]}) do
+    case s.held[id] do
+      nil -> {s, {:tag, "PluginNotFound"}}
+      %{st: :error_manifest} -> {s, {:tag, "PluginUnavailable"}}
+      e -> {put_in(s.held[id], %{e | check: compiles?(e.desc)}), {:check, compiles?(e.desc)}}
+    end
+  end
+
   defp act(s, {:call, _, :subscribe, [c, id, topic]}),
     do:
       {update_in(s.subs[c], &MapSet.put(&1, {id, topic})), {:exactly, {:ok, s.last[{id, topic}]}}}
@@ -549,7 +568,8 @@ defmodule HalC2.PluginsPropTest do
       reload_error: false,
       crashes: 0,
       restarts: 0,
-      run: nil
+      run: nil,
+      check: nil
     }
 
   defp valid?(id, {variant, _, _}), do: id != "Gamma" and variant in @valid
@@ -717,6 +737,7 @@ defmodule HalC2.PluginsPropTest do
        do: []
 
   defp reply_problems({:exactly, value}, value), do: []
+  defp reply_problems({:check, ok}, {:ok, %{"ok" => ok}}), do: []
   defp reply_problems({:file, content}, {:ok, %{"content" => content}}), do: []
   defp reply_problems(expect, reply), do: [{:reply, expect, reply}]
 
@@ -795,7 +816,8 @@ defmodule HalC2.PluginsPropTest do
         "permissions" => for(p <- perms(e), do: {p, p in c.granted}),
         "settings" =>
           if(e.st == :error_manifest, do: c.stored, else: Map.merge(@defaults, c.stored)),
-        "restarts" => e.restarts
+        "restarts" => e.restarts,
+        "compileCheck" => e.check
       }
     end
   end
@@ -919,6 +941,22 @@ defmodule HalC2.PluginsPropTest do
 
   def call_plugin(id),
     do: {Plugins.handle("call", %{"id" => id, "method" => "about"}), observe()}
+
+  # A check runs the package's code in a VM of its own: the code loaded and the processes
+  # running here are compared before and after. What the code appends to the marks file
+  # as it compiles is not undone, and is not the host compiling it, so it is dropped.
+  def compile(id) do
+    before = Map.new(@code_ids, &{&1, running_code(&1)})
+    reply = Plugins.handle("compile", %{"id" => id})
+    new_marks()
+    now = Map.new(@code_ids, &{&1, running_code(&1)})
+    {reply, Map.put(observe(), :running_code, {before, now})}
+  end
+
+  defp running_code(id) do
+    module = plugin_module(id)
+    {:code.is_loaded(module) != false and module.module_info(:md5), Process.whereis(module)}
+  end
 
   def file(id, path), do: {Plugins.handle("file", %{"id" => id, "path" => path}), observe()}
 
@@ -1125,7 +1163,8 @@ defmodule HalC2.PluginsPropTest do
       "reloadError" => entry["reloadError"] != nil,
       "permissions" => for(p <- entry["permissions"], do: {p["id"], p["granted"]}),
       "settings" => entry["settings"],
-      "restarts" => entry["restarts"]
+      "restarts" => entry["restarts"],
+      "compileCheck" => entry["compileCheck"] && entry["compileCheck"]["ok"]
     }
   end
 

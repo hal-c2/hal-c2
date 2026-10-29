@@ -321,6 +321,20 @@ defmodule HalC2.Web.Router do
     end)
   end
 
+  # Whether a package's code compiles, without enabling it (`plugins.compile`): 200 when
+  # it does, 422 with what the compiler found when it does not.
+  post "/api/plugins/:id/compile" do
+    with_scope(conn, "orchestration:operate", fn _session ->
+      case HalC2.Plugins.handle("compile", %{"id" => id}) do
+        {:ok, %{"ok" => true} = check} -> {200, check}
+        {:ok, check} -> {422, check}
+        {:error, %{"_tag" => "PluginNotFound"} = error} -> {404, error}
+        {:error, %{} = error} -> {409, error}
+        {:error, message} -> {500, %{"message" => message}}
+      end
+    end)
+  end
+
   # Threads of a T3 Code or earlier HAL-C2 install on this machine, for
   # `HalC2.Import.Picker` (`HalC2.Import.PreviousInstall`).
   get "/api/previous-installs" do

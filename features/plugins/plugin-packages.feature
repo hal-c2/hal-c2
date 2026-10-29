@@ -1,6 +1,8 @@
 # Sources:
 #   packages/contracts/src/plugin.ts (PluginManifest, PluginEntry, PLUGIN_METHODS, the plugins and plugin shapes)
-#   apps/server-ex/lib/hal_c2/plugins.ex (packages, manifest, permissions, plugins.call, plugins.file)
+#   apps/server-ex/lib/hal_c2/plugins.ex (packages, manifest, permissions, plugins.call, plugins.file, plugins.compile)
+#   apps/server-ex/lib/hal_c2/plugins/compile_check.ex (checking a package compiles without enabling it)
+#   apps/server-ex/lib/hal_c2/web/router.ex (POST /api/plugins/:id/compile)
 #   apps/server-ex/lib/hal_c2/plugins/kinds.ex (HalC2.Plugins.Extension)
 #   apps/server-ex/lib/hal_c2/plugins/host.ex (the host API a plugin calls, gated by its granted permissions)
 #   docs/user/plugins.md (plugin packages)
@@ -218,6 +220,53 @@ Feature: Plugin packages
       When the MC starts
       Then "eager" has left no mark
       And "eager" leaves its mark once the user enables it accepting its permissions
+
+  Rule: A package's code can be checked without enabling it
+    Checking compiles the package's MC code in a VM of its own, which stops when the
+    check ends: the package is granted nothing, and nothing it loads or starts reaches the
+    MC. What its code does to files when compiled is not undone, so a check is only ever
+    asked for.
+
+    @mc
+    Scenario: Checking a disabled package says where its code does not compile
+      Given the plugins directory contains the package "typo" whose second MC file has a syntax error
+      When the user checks that "typo" compiles
+      Then the check says "mc/zz_broken.ex" does not compile at line 2
+      And "typo" stays disabled
+      And "typo" is listed with what the check found
+
+    @mc
+    Scenario: Checking a package grants it nothing and leaves nothing of it in the MC
+      Given the plugins directory contains the package "eager" whose MC code changes the MC's memory when it is compiled
+      When the user checks that "eager" compiles
+      Then the check says it compiles
+      And "eager" stays disabled with none of its permissions granted
+      And neither "eager"'s modules nor what its code did when compiled are in the MC
+
+    @mc
+    Scenario: Checking a package whose module another running plugin has leaves that plugin as it was
+      Given the package "code-review" is running
+      And the plugins directory contains the package "fork" whose MC module is the one "code-review" runs
+      When the user checks that "fork" compiles
+      Then the check says it compiles
+      And "code-review" still runs its own code
+
+    @mc
+    Scenario: A new version, a check that passes, or enabling the package clears what a check found
+      Given the plugins directory contains the package "typo" whose second MC file has a syntax error
+      And the user checked that "typo" compiles
+      When "typo" is fixed and the MC rescans
+      Then "typo" is listed with no check
+      When the user checks that "typo" compiles
+      Then "typo" is listed as compiling
+      When the user enables "typo" accepting its permissions
+      Then "typo" is listed with no check
+
+    @mc
+    Scenario: A developer checks a package over HTTP
+      Given the plugins directory contains the package "typo" whose second MC file has a syntax error
+      When a developer asks the MC over HTTP whether "typo" compiles
+      Then the MC answers 422 with the file, line and message of the error
 
   Rule: A running plugin talks to its own UI
 

@@ -49,7 +49,7 @@ defmodule HalC2.Plugins do
   use GenServer
   require Logger
 
-  alias HalC2.Plugins.Package
+  alias HalC2.Plugins.{CompileCheck, Package}
 
   # The plugin API this MC offers; a plugin's manifest names the one it was built for.
   @api_version 1
@@ -148,7 +148,40 @@ defmodule HalC2.Plugins do
     end
   end
 
+  # Compiles a package's code without enabling it (`HalC2.Plugins.CompileCheck`), in the
+  # caller, so the host answers others meanwhile; the listing keeps the last result.
+  def handle("compile", %{"id" => id}) do
+    with {:ok, dir, hash} <- GenServer.call(__MODULE__, {:compile_target, id}),
+         {:ok, result} <- CompileCheck.run(dir, Path.wildcard(Path.join(dir, "mc/*.ex"))) do
+      check = %{
+        "ok" => result.ok,
+        "error" =>
+          with(
+            %{} = first <- Enum.find(result.diagnostics, &(&1.severity == "error")),
+            do: located(first)
+          ),
+        "diagnostics" =>
+          for(
+            d <- result.diagnostics,
+            do: %{
+              "file" => d.file,
+              "line" => d.line,
+              "message" => d.message,
+              "severity" => d.severity
+            }
+          ),
+        "checkedAt" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+      }
+
+      GenServer.call(__MODULE__, {:checked, id, hash, check})
+    end
+  end
+
   def handle(method, _input), do: {:error, "plugins.#{method} is not served by this MC yet"}
+
+  defp located(%{file: nil, message: message}), do: message
+  defp located(%{line: nil} = d), do: "#{d.file}: #{d.message}"
+  defp located(d), do: "#{d.file}:#{d.line}: #{d.message}"
 
   @doc """
   Sends `{:hal_c2_plugins, mc, list}` to `pid` on every change, under `ref`
@@ -685,11 +718,13 @@ defmodule HalC2.Plugins do
             if enabled, do: Map.put(config, "granted", requested), else: config
           end)
 
+          # Enabling compiles it, which says more than a check did.
           plugin = %{
             plugin
             | failed: false,
               gave_up: nil,
-              denied: if(enabled, do: [], else: plugin.denied)
+              denied: if(enabled, do: [], else: plugin.denied),
+              compile_check: if(enabled, do: nil, else: plugin.compile_check)
           }
 
           state = put_in(state.plugins[id], plugin) |> reconcile() |> push()
@@ -703,6 +738,42 @@ defmodule HalC2.Plugins do
               {:reply, {:ok, entry(plugin)}, state}
           end
         end
+    end
+  end
+
+  # The version listed, from the copy it loaded from: what enabling it would compile.
+  def handle_call({:compile_target, id}, _from, state) do
+    case state.plugins[id] do
+      nil ->
+        {:reply, not_found(id), state}
+
+      %{files: files, hash: hash} when files != nil ->
+        {:reply, {:ok, files, hash}, state}
+
+      %{package: nil} = plugin ->
+        {:reply,
+         unavailable(
+           "#{name(plugin)} is not a plugin package: it compiles when the MC looks for plugins."
+         ), state}
+
+      %{problem: {_, message}} = plugin ->
+        {:reply, unavailable("#{name(plugin)} cannot be checked: #{message}"), state}
+    end
+  end
+
+  # Kept while the listing shows the version that was checked.
+  def handle_call({:checked, id, hash, check}, _from, state) do
+    case state.plugins[id] do
+      %{hash: ^hash} = plugin ->
+        state = put_in(state.plugins[id], %{plugin | compile_check: check}) |> push()
+        {:reply, {:ok, check}, state}
+
+      nil ->
+        {:reply, not_found(id), state}
+
+      plugin ->
+        {:reply, unavailable("#{name(plugin)} changed while it was checked. Check it again."),
+         state}
     end
   end
 
@@ -919,7 +990,9 @@ defmodule HalC2.Plugins do
   @impl true
   def code_change(_old, state, _extra) do
     plugins =
-      Map.new(state.plugins, fn {id, plugin} -> {id, Map.put_new(plugin, :gave_up, nil)} end)
+      Map.new(state.plugins, fn {id, plugin} ->
+        {id, plugin |> Map.put_new(:gave_up, nil) |> Map.put_new(:compile_check, nil)}
+      end)
 
     refs =
       Map.new(state.refs, fn
@@ -1157,7 +1230,9 @@ defmodule HalC2.Plugins do
 
   defp unload_unless_ok(ok, _modules), do: ok
 
-  defp package_module(modules) do
+  @doc false
+  # Also the rule `CompileCheck` checks a package by.
+  def package_module(modules) do
     case for({module, _} <- modules, (kinds = kinds(module)) != [], do: {module, kinds}) do
       [] when modules == [] ->
         {:ok, nil, []}
@@ -1301,7 +1376,9 @@ defmodule HalC2.Plugins do
       # The package's `mc/` sources while they wait to be compiled.
       sources: [],
       # The permissions host calls were refused for, since it was last enabled.
-      denied: []
+      denied: [],
+      # What the last `plugins.compile` of this version found, as the listing shows it.
+      compile_check: nil
     }
   end
 
@@ -1643,6 +1720,7 @@ defmodule HalC2.Plugins do
       "status" => status,
       "error" => with({_, message} <- plugin.problem, do: message),
       "reloadError" => plugin.reload_error,
+      "compileCheck" => plugin.compile_check,
       "lastError" => plugin.last_error,
       "restarts" => plugin.restarts,
       "settingsSchema" => fields(plugin),
@@ -1713,6 +1791,8 @@ defmodule HalC2.Plugins do
 
   defp not_found(id),
     do: {:error, %{"_tag" => "PluginNotFound", "message" => "No plugin #{id} is installed."}}
+
+  defp unavailable(message), do: {:error, %{"_tag" => "PluginUnavailable", "message" => message}}
 
   defp push(state) do
     list = list(state)
