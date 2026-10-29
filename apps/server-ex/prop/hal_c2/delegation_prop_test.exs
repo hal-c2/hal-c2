@@ -561,8 +561,8 @@ defmodule HalC2.DelegationPropTest do
   end
 
   # The end of run `id`, reported as it ended (`status`), whatever happened to it since.
-  # With `busy`, the check of that thread exits the first time, too busy to answer:
-  # the child's before its task can settle, the caller's (checked once the task ended)
+  # With `busy`, the check of that thread exits the first time, as one restarting
+  # under it would: the child's before its task can settle, the caller's (checked once the task ended)
   # after (`Delegation.report/5` retries).
   def report(id, status, busy) do
     observe(fn ->
