@@ -418,6 +418,13 @@ Feature: Agents working with threads through MCP tools
     Then "t2" received the message once
 
   @mc
+  Scenario: Two callers may use the same request key without losing a message
+    Given thread "other" in "demo" runs in full-access mode with a turn running on "codex"
+    When the agent of "caller" sends "from caller" to "t2" with request key "status"
+    And the agent of "other" sends "from other" to "t2" with request key "status"
+    Then "t2" received both messages
+
+  @mc
   Scenario: Repeating an interrupt with the same request key interrupts once
     Given the agent of "caller" interrupted "t2" with request key "k1"
     When it repeats the interrupt with request key "k1"

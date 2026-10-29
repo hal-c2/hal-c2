@@ -1785,6 +1785,14 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
   end
 
   step "it repeats the interrupt with request key {string}", %{args: [key]} = context do
+    # The retry comes after the run has ended, as one after a lost response
+    # would: only the first call's receipt can still answer it.
+    run_id = context.interrupted_run
+
+    World.await_state(context, "t2", fn state ->
+      StreamState.get(state, "run")[run_id]["status"] == "interrupted"
+    end)
+
     result =
       World.mcp_tool(context, context.interrupt_caller, "hal_c2_thread_interrupt", %{
         "threadId" => World.thread_id(context, "t2"),
@@ -1794,8 +1802,36 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     Map.put(context, :mcp_result, result)
   end
 
+  step "the agent of {string} sends {string} to {string} with request key {string}",
+       %{args: [caller, text, thread, key]} = context do
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_send", %{
+        "threadId" => World.thread_id(context, thread),
+        "message" => text,
+        "clientRequestId" => key
+      })
+
+    Map.update(context, :keyed_sends, [{text, result}], &(&1 ++ [{text, result}]))
+  end
+
+  step "{string} received both messages", %{args: [thread]} = context do
+    ids =
+      for {_text, result} <- context.keyed_sends do
+        assert {:ok, %{"messageId" => id}} = result
+        id
+      end
+
+    assert length(Enum.uniq(ids)) == 2
+    texts = Enum.map(StreamState.list(World.state(context, thread), "message"), & &1["text"])
+    assert Enum.count(texts, &(&1 == "from caller")) == 1
+    assert Enum.count(texts, &(&1 == "from other")) == 1
+    context
+  end
+
   step "the turn of {string} was interrupted once", %{args: [thread]} = context do
-    assert {:ok, _} = context.mcp_result
+    # The retry was answered from the first call's receipt, naming its run.
+    assert {:ok, %{"status" => "interrupt_requested", "runId" => run_id}} = context.mcp_result
+    assert run_id == context.interrupted_run
     run_id = context.interrupted_run
 
     World.await_state(context, thread, fn state ->

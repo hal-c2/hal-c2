@@ -294,7 +294,7 @@ defmodule HalC2.Mcp.Tools do
   def run("hal_c2_thread_interrupt", args, %{row: me} = caller) do
     with {:ok, row} <- project_thread(me, args["threadId"]),
          :ok <- live(caller) do
-      interrupt(row["id"], args)
+      interrupt(row["id"], args, me["id"])
     end
   end
 
@@ -513,7 +513,10 @@ defmodule HalC2.Mcp.Tools do
   # The environment tools act on this MC's preferences, so a credential another
   # environment issued — its stamp names a different environment id — is refused
   # even where the token is otherwise honoured. A caller minted before
-  # credentials carried the stamp has none and keeps its access.
+  # credentials carried the stamp has none and keeps its access. No production
+  # path reaches this yet: credentials are minted into this MC's local table
+  # and the environment tools are never forwarded between MCs, so the stamp
+  # only differs when a cluster-peer token is honoured here later.
   defp own_environment(caller) do
     case Map.get(caller, :environment_id) do
       nil -> :ok
@@ -678,22 +681,11 @@ defmodule HalC2.Mcp.Tools do
   defp settled?(row), do: row["settledOverride"] == "settled"
 
   # The settlement a list or read answer carries: whether the thread settled and
-  # when, and why it can or cannot settle now — the blockers automatic
-  # settlement itself checks (`HalC2.Orchestration.Settlement.candidate?/2`).
+  # when, and why it can or cannot settle now — automatic settlement's own
+  # blockers (`HalC2.Orchestration.Settlement.blocker/2`).
   defp settlement(row) do
     settled = settled?(row)
-
-    blocker =
-      cond do
-        settled -> "already settled"
-        row["archivedAt"] != nil -> "archived"
-        row["settledOverride"] == "active" -> "kept active by the user"
-        row["pinnedAt"] != nil -> "pinned"
-        row["pendingRuntimeRequest"] != nil -> "waiting on the user"
-        row["activityRunStatus"] != nil -> "has a run in progress"
-        (row["pendingBackgroundTasks"] || []) != [] -> "has background work"
-        true -> nil
-      end
+    blocker = HalC2.Orchestration.Settlement.blocker(row, System.system_time(:millisecond))
 
     %{
       "settled" => settled,
@@ -808,7 +800,7 @@ defmodule HalC2.Mcp.Tools do
     else
       command = %{
         "type" => "message.dispatch",
-        "commandId" => "command:mcp:" <> (args["clientRequestId"] || message_id),
+        "commandId" => "command:mcp:#{sender}:" <> (args["clientRequestId"] || message_id),
         "threadId" => row["id"],
         "messageId" => message_id,
         "senderThreadId" => sender,
@@ -834,75 +826,120 @@ defmodule HalC2.Mcp.Tools do
     end
   end
 
-  @doc "Interrupts a run of a thread of this MC, or of the MC it moved to."
-  def interrupt(id, args) do
+  @doc """
+  Interrupts a run of a thread of this MC, or of the MC it moved to, on behalf
+  of `caller_id`. The retry key is scoped by caller, so one agent's key never
+  answers another's call; a retry with the same key gets the first answer back
+  from its receipt, whenever it comes.
+  """
+  def interrupt(id, args, caller_id \\ nil) do
+    command_id =
+      "command:mcp:interrupt:#{caller_id || id}:" <>
+        (args["clientRequestId"] || HalC2.Environment.uuid4())
+
     case HalC2.Shell.row(node(), id) do
       {"thread", %{"movedTo" => %{"mc" => mc}}} when is_binary(mc) ->
-        on_mc(mc, __MODULE__, :interrupt, [id, args], @owner_timeout)
+        on_mc(mc, __MODULE__, :interrupt, [id, args, caller_id], @owner_timeout)
 
       {"thread", _row} ->
-        # From the stream: the sidebar row trails a run's start. A run that
-        # already finished, and a thread with none running, answer what
-        # happened without another side effect.
-        runs = StreamState.list(stream(id), "run")
-
-        named = args["runId"] && Enum.find(runs, &(&1["id"] == args["runId"]))
-
-        active =
-          Enum.find(
-            runs,
-            &(&1["status"] in ~w(preparing starting running waiting) and
-                (args["runId"] == nil or &1["id"] == args["runId"]))
-          )
-
-        cond do
-          active != nil ->
-            run = active["id"]
-
-            with {:ok, _} <-
-                   orchestration(
-                     Orchestration.dispatch_once(%{
-                       "type" => "run.interrupt",
-                       "commandId" =>
-                         "command:mcp:interrupt:" <>
-                           (args["clientRequestId"] || HalC2.Environment.uuid4()),
-                       "threadId" => id,
-                       "runId" => run
-                     })
-                   ) do
-              {:ok,
-               %{
-                 "threadId" => id,
-                 "runId" => run,
-                 "status" => "interrupt_requested",
-                 "interrupted" => true
-               }}
-            end
-
-          named != nil ->
-            {:ok,
-             %{
-               "threadId" => id,
-               "runId" => named["id"],
-               "status" => named["status"],
-               "interrupted" => false
-             }}
-
-          args["runId"] != nil ->
-            {:error, "invalid_request", "Run #{args["runId"]} was not found in the thread."}
-
-          true ->
-            {:ok,
-             %{
-               "threadId" => id,
-               "runId" => nil,
-               "status" => "no_active_run",
-               "interrupted" => false
-             }}
+        case interrupt_receipt(args["clientRequestId"], command_id, id) do
+          {:ok, answer} -> {:ok, answer}
+          {:error, _, _} = refused -> refused
+          nil -> interrupt_now(id, args, command_id)
         end
 
       nil ->
         {:error, "thread_not_found", "The thread was not found."}
+    end
+  end
+
+  # The first answer a keyed interrupt gave, kept beside the command receipts:
+  # a retry after a lost response is answered from it, not from whatever run
+  # happens to be active (or finished) by then. A key already spent on another
+  # thread is refused, as `dispatch_once` refuses it.
+  defp interrupt_receipt(nil, _command_id, _id), do: nil
+
+  defp interrupt_receipt(_key, command_id, id) do
+    case HalC2.Store.meta(HalC2.Store.path(), "mcp-interrupt:" <> command_id) do
+      nil ->
+        nil
+
+      receipt ->
+        case JSON.decode!(receipt) do
+          %{"threadId" => ^id, "answer" => answer} ->
+            {:ok, answer}
+
+          %{"threadId" => handled} ->
+            {:error, "orchestration_error",
+             "Command #{command_id} was already handled for thread #{handled} and cannot be replayed for #{id}."}
+        end
+    end
+  end
+
+  defp keep_interrupt_receipt(nil, _command_id, _answer), do: :ok
+
+  defp keep_interrupt_receipt(_key, command_id, answer) do
+    HalC2.Store.put_meta(
+      "mcp-interrupt:" <> command_id,
+      JSON.encode!(%{"threadId" => answer["threadId"], "answer" => answer})
+    )
+
+    :ok
+  end
+
+  defp interrupt_now(id, args, command_id) do
+    # From the stream: the sidebar row trails a run's start. A run that
+    # already finished, and a thread with none running, answer what
+    # happened without another side effect.
+    runs = StreamState.list(stream(id), "run")
+    named = args["runId"] && Enum.find(runs, &(&1["id"] == args["runId"]))
+
+    active =
+      Enum.find(
+        runs,
+        &(&1["status"] in ~w(preparing starting running waiting) and
+            (args["runId"] == nil or &1["id"] == args["runId"]))
+      )
+
+    cond do
+      active != nil ->
+        run = active["id"]
+
+        with {:ok, _} <-
+               orchestration(
+                 Orchestration.dispatch_once(%{
+                   "type" => "run.interrupt",
+                   "commandId" => command_id,
+                   "threadId" => id,
+                   "runId" => run
+                 })
+               ) do
+          answer = %{
+            "threadId" => id,
+            "runId" => run,
+            "status" => "interrupt_requested",
+            "interrupted" => true
+          }
+
+          keep_interrupt_receipt(args["clientRequestId"], command_id, answer)
+          {:ok, answer}
+        end
+
+      named != nil ->
+        {:ok,
+         %{
+           "threadId" => id,
+           "runId" => named["id"],
+           "status" => named["status"],
+           "interrupted" => false
+         }}
+
+      args["runId"] != nil ->
+        {:error, "invalid_request", "Run #{args["runId"]} was not found in the thread."}
+
+      true ->
+        {:ok,
+         %{"threadId" => id, "runId" => nil, "status" => "no_active_run", "interrupted" => false}}
     end
   end
 
