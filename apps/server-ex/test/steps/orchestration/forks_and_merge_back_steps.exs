@@ -52,8 +52,128 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
 
   step "{string} is a fork of {string} at run {int} on {string}",
        %{args: [fork, source, n, driver]} = context do
-    context = fork!(context, source, fork, {:run, n})
+    context =
+      context
+      |> on_native_provider(source, driver)
+      |> fork!(source, fork, {:run, n})
+
     World.patch_thread(context, fork, %{"modelSelection" => @models[driver]})
+  end
+
+  # A fork "on" a provider that forks natively is a fork of that provider's own
+  # conversation, so the source's runs are that provider's. The Background runs
+  # "t1" on Codex; where a scenario forks it on Claude, "t1" is run again on
+  # Claude (a new thread under the same name) before the fork is taken.
+  defp on_native_provider(context, source, driver) when driver in ~w(codex claudeAgent) do
+    current = get_in(World.thread(context, source), ["modelSelection", "instanceId"])
+
+    if current == driver do
+      context
+    else
+      title = World.thread(context, source)["title"]
+      runs = length(World.runs(context, source))
+
+      context
+      |> World.create_thread(source, nil, %{
+        "title" => title,
+        "modelSelection" => @models[driver]
+      })
+      |> complete_through(source, runs)
+    end
+  end
+
+  defp on_native_provider(context, _source, _driver), do: context
+
+  # The source's provider conversation loses run `n`'s turn: the MC's record of
+  # that turn in the provider thread is gone, as when the provider has dropped
+  # it from its own history.
+  step "run {int}'s turn is not in the provider's conversation for {string}",
+       %{args: [n, thread]} = context do
+    turn = provider_turn(World.state(context, thread), run(World.state(context, thread), n))
+    assert turn, "run #{n} of #{thread} has no provider turn to lose"
+
+    context
+    |> World.put_entity(thread, "provider-turn", turn["id"], %{"d" => true})
+    |> snapshot_source(thread)
+  end
+
+  step "the provider recorded no message position for run {int}'s turn",
+       %{args: [n]} = context do
+    no_turn_reference(context, "t1", n)
+  end
+
+  # Legacy Codex history is what `thread/rollback` trims; the paginated step
+  # below takes the fork back to the fake's default paginated history.
+  step "the MC holds no Codex turn reference for run {int}", %{args: [n]} = context do
+    context |> no_turn_reference("t1", n) |> codex_legacy(true)
+  end
+
+  step "Codex keeps the forked conversation as paginated history", context do
+    codex_legacy(context, false)
+  end
+
+  step "Codex keeps the forked conversation as paginated history it cannot cut before a turn",
+       context do
+    context |> codex_legacy(false) |> codex_env("FAKE_CODEX_NO_REVERT", "1")
+  end
+
+  defp no_turn_reference(context, thread, n) do
+    turn = provider_turn(World.state(context, thread), run(World.state(context, thread), n))
+    assert turn, "run #{n} of #{thread} has no provider turn"
+    assert get_in(turn, ["nativeTurnRef", "nativeId"]), "run #{n}'s turn has no reference"
+
+    context
+    |> World.put_entity(thread, "provider-turn", turn["id"], %{
+      "s" => %{"nativeTurnRef" => nil}
+    })
+    |> snapshot_source(thread)
+  end
+
+  defp codex_legacy(context, legacy?),
+    do: codex_env(context, "FAKE_CODEX_LEGACY", legacy? && "1")
+
+  defp codex_env(context, var, value) do
+    case Application.get_env(:hal_c2, :codex_command) do
+      ["env" | rest] ->
+        rest = Enum.reject(rest, &String.starts_with?(&1, "#{var}="))
+        rest = if value, do: ["#{var}=#{value}" | rest], else: rest
+        Application.put_env(:hal_c2, :codex_command, ["env" | rest])
+
+      other ->
+        flunk("the fake Codex command is not env-wrapped: #{inspect(other)}")
+    end
+
+    context
+  end
+
+  # What the provider's conversation for `thread` is, so a later step can say
+  # the fork left it as it was.
+  defp snapshot_source(context, thread) do
+    Map.merge(context, %{source_thread: thread, source_snapshot: conversation(context, thread)})
+  end
+
+  defp conversation(context, thread) do
+    state = World.state(context, thread)
+
+    %{
+      turns:
+        state
+        |> StreamState.list("provider-turn")
+        |> Enum.map(
+          &{&1["id"], &1["ordinal"], &1["status"], get_in(&1, ["nativeTurnRef", "nativeId"])}
+        )
+        |> Enum.sort(),
+      threads:
+        state
+        |> StreamState.list("provider-thread")
+        |> Enum.map(&{&1["id"], get_in(&1, ["nativeThreadRef", "nativeId"])})
+        |> Enum.sort(),
+      runs:
+        state
+        |> StreamState.list("run")
+        |> Enum.map(&{&1["ordinal"], &1["status"]})
+        |> Enum.sort()
+    }
   end
 
   step "{string} is a fork of {string} at run {int} and has completed run {int}",
@@ -472,6 +592,113 @@ defmodule HalC2.Steps.Orchestration.ForksAndMergeBack do
 
     assert text =~ "write run-2.txt"
     context
+  end
+
+  step "the run fails saying the thread cannot be forked from that turn", context do
+    message = failed_run_message(context, context.run_title)
+    assert message =~ "Cannot fork", "the failed run says #{inspect(message)}"
+    assert message =~ "from that turn"
+    assert %{"status" => "failed"} = transfer(context, context.run_title, "fork")
+    context
+  end
+
+  step "the provider's conversation for {string} is unchanged", %{args: [thread]} = context do
+    assert conversation(context, thread) == context.source_snapshot
+    context
+  end
+
+  step "Codex forks the whole conversation and drops the turns after run {int} from the fork",
+       %{args: [n]} = context do
+    fork = context.run_title
+    finished(context, fork)
+
+    # The fork was taken whole (no turn to cut after), then trimmed by the
+    # number of finished turns after run `n`.
+    assert [fork_params | _] = Enum.reverse(World.codex_requests(context, "thread/fork"))
+    refute Map.has_key?(fork_params, "lastTurnId")
+
+    after_fork =
+      context
+      |> World.state(context.source_thread)
+      |> StreamState.list("provider-turn")
+      |> Enum.count(&(&1["ordinal"] > n and &1["status"] == "completed"))
+
+    assert after_fork > 0
+    assert [rollback] = World.codex_requests(context, "thread/rollback")
+    assert rollback["numTurns"] == after_fork
+    assert String.starts_with?(rollback["threadId"], "forked-")
+
+    assert Enum.any?(
+             StreamState.list(World.state(context, fork), "provider-thread"),
+             &(get_in(&1, ["nativeThreadRef", "nativeId"]) ==
+                 "native-thread-1-dropped-#{after_fork}")
+           )
+
+    assert %{"status" => "consumed", "resolution" => %{"strategy" => "native_fork"}} =
+             transfer(context, fork, "fork")
+
+    context
+  end
+
+  step "the conversation of {string} keeps every turn", %{args: [thread]} = context do
+    assert conversation(context, thread) == context.source_snapshot
+    context
+  end
+
+  step "Codex cuts the forked conversation before the turn after run {int}",
+       %{args: [n]} = context do
+    fork = context.run_title
+    finished(context, fork)
+    source = World.state(context, context.source_thread)
+    before = provider_turn(source, run(source, n + 1))["nativeTurnRef"]["nativeId"]
+
+    assert [revert] = World.codex_requests(context, "thread/revert")
+    assert revert["beforeTurnId"] == before
+    assert String.starts_with?(revert["threadId"], "forked-")
+    assert World.codex_requests(context, "thread/rollback") == []
+
+    assert Enum.any?(
+             StreamState.list(World.state(context, fork), "provider-thread"),
+             &(get_in(&1, ["nativeThreadRef", "nativeId"]) ==
+                 "native-thread-1-before-#{before}")
+           )
+
+    assert %{"status" => "consumed", "resolution" => %{"strategy" => "native_fork"}} =
+             transfer(context, fork, "fork")
+
+    context
+  end
+
+  step "the run fails saying the fork point cannot be honoured on paginated history", context do
+    message = failed_run_message(context, context.run_title)
+    assert message =~ "Cannot fork Codex", "the failed run says #{inspect(message)}"
+    assert message =~ "paginated history"
+    # Why the cut could not be made, not only that the fallback was rejected.
+    assert message =~ "thread/revert failed"
+    assert "thread/rollback" in World.codex_methods(context)
+    context
+  end
+
+  # Waits for the thread's newest run to fail and joins what its failed run
+  # says (its error items' failures).
+  defp failed_run_message(context, thread) do
+    World.await_latest_run(context, thread, "failed", 10_000)
+    state = World.state(context, thread)
+    last = state |> StreamState.list("run") |> Enum.max_by(& &1["ordinal"])
+    assert last["status"] == "failed"
+
+    items =
+      state
+      |> StreamState.list("turn-item")
+      |> Enum.filter(&(&1["runId"] == last["id"]))
+      |> Enum.flat_map(fn item ->
+        [get_in(item, ["failure", "message"]), item["output"], item["title"]]
+      end)
+
+    # A turn that failed to start says why on its provider session.
+    sessions = state |> StreamState.list("provider-session") |> Enum.map(& &1["lastError"])
+
+    (items ++ sessions) |> Enum.filter(&is_binary/1) |> Enum.join("\n")
   end
 
   # --- outcomes: merging back ----------------------------------------------------

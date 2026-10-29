@@ -415,7 +415,7 @@ defmodule HalC2.Steps.Timeline.PlansAndSubagents do
     assert [%{"status" => "pending", "kind" => "command"}] =
              for(["runtime-request", ^request_id, request] <- context.parent_rows, do: request)
 
-    assert [%{"prompt" => "npm test", "status" => status}] =
+    assert [%{"prompt" => "Bash: npm test", "status" => status}] =
              for(
                [
                  "turn-item",

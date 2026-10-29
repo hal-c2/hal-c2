@@ -52,11 +52,41 @@ defmodule HalC2.Codex.ThreadRuntime do
   def start_turn(thread_id, turn),
     do: thread_id |> ensure() |> GenServer.call({:start_turn, turn}, 60_000)
 
+  @queued_stop "Codex did not start the queued turn within 10 seconds; Stop could not be delivered."
+
   @spec interrupt(String.t(), String.t() | nil) :: :ok | {:error, String.t()}
   def interrupt(thread_id, run_id) do
     case Registry.lookup(HalC2.Codex.Registry, thread_id) do
-      [{pid, _}] -> GenServer.call(pid, {:interrupt, run_id}, 15_000)
-      [] -> {:error, "no active Codex turn in this thread"}
+      [{pid, _}] ->
+        # A turn Codex has not started yet keeps this call queued in the runtime
+        # behind its start: it is delivered as soon as the turn starts, and a turn
+        # that never starts fails the stop rather than holding it forever. The
+        # queued call carries an id the runtime checks, so a timed-out stop is
+        # not delivered late after all.
+        id = System.unique_integer([:positive])
+        budget = Application.get_env(:hal_c2, :codex_interrupt_timeout_ms, 10_000)
+
+        try do
+          GenServer.call(pid, {:interrupt, run_id, id}, budget)
+        catch
+          :exit, {:timeout, _} ->
+            now = System.monotonic_time(:millisecond)
+
+            cancelled =
+              :persistent_term.get({__MODULE__, :cancelled_stops}, %{})
+              |> Enum.filter(fn {_id, at} -> is_integer(at) and now - at < 60_000 end)
+              |> Map.new()
+              |> Map.put(id, now)
+
+            :persistent_term.put({__MODULE__, :cancelled_stops}, cancelled)
+            {:error, @queued_stop}
+
+          :exit, _ ->
+            {:error, "no active Codex turn in this thread"}
+        end
+
+      [] ->
+        {:error, "no active Codex turn in this thread"}
     end
   end
 
@@ -210,7 +240,30 @@ defmodule HalC2.Codex.ThreadRuntime do
        background: %{},
        # The run the latest turn ran as, also one that failed to start: the run a
        # client names to stop the commands left running between turns.
-       last_run: nil
+       last_run: nil,
+       # Native threads Codex runs to consolidate its memories: their work is not
+       # this thread's, and none of it is shown.
+       memory_threads: %{},
+       # The turn's final-answer items, the ones Codex tags `final_answer`
+       # (`finals`: their native ids, `final_first`: the first one's,
+       # `final_texts`: what they said, `suppressed`: later ones held back until
+       # they finish, `commentary`: items Codex tagged as commentary). A message
+       # with no phase is neither: it streams as any message does.
+       final_first: nil,
+       finals: %{},
+       final_texts: %{},
+       suppressed: %{},
+       commentary: %{},
+       # Dynamic tool calls Codex marked persistent: native id -> turn item handle.
+       # They stay running after a completed turn, like background commands.
+       persistent: %{},
+       # The native turn a stop was delivered for, and whether a stop settled the
+       # last turn (a subagent starting under it is interrupted at once).
+       interrupting: nil,
+       stopped: false,
+       # A usage-limit failure whose reset Codex had not named when the turn
+       # stopped: `%{item: failure item id}` while its reset is still unknown.
+       usage_failure: nil
      }}
   end
 
@@ -239,11 +292,27 @@ defmodule HalC2.Codex.ThreadRuntime do
 
     # The threads this turn's subagents run in (`spawnAgent`): native thread id ->
     # `%{sub: NativeSubagent handle, done: bool}`.
-    state = Map.put(state, :subagents, %{})
+    state =
+      Map.merge(state, %{
+        subagents: %{},
+        final_first: nil,
+        finals: %{},
+        final_texts: %{},
+        suppressed: %{},
+        commentary: %{},
+        interrupting: nil,
+        stopped: false,
+        usage_failure: nil
+      })
 
     case begin_turn(state, turn) do
       {:ok, state} ->
         {:reply, :ok, state}
+
+      {:error, %{"message" => "Codex App Server process exited" <> _}, state} ->
+        Logger.warning("codex turn failed to start: the app-server exited")
+        finish(state, "failed", "The provider stopped while starting the turn.")
+        {:reply, :ok, %{state | turn: nil}}
 
       # The app-server exited before the turn began.
       {:error, :closed, state} ->
@@ -292,6 +361,18 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   def handle_call({:interrupt, _run_id}, from, state), do: handle_call(:interrupt, from, state)
 
+  # A stop whose caller already timed out (`interrupt/2`) is not delivered late.
+  def handle_call({:interrupt, run_id, id}, from, state) do
+    cancelled = :persistent_term.get({__MODULE__, :cancelled_stops}, %{})
+
+    if cancelled[id] do
+      :persistent_term.put({__MODULE__, :cancelled_stops}, Map.delete(cancelled, id))
+      {:reply, {:error, @queued_stop}, state}
+    else
+      handle_call({:interrupt, run_id}, from, state)
+    end
+  end
+
   def handle_call(:interrupt, _from, %{turn: %{native_turn_id: turn_id}} = state)
       when is_binary(turn_id) do
     Connection.call(state.conn, "turn/interrupt", %{
@@ -299,7 +380,20 @@ defmodule HalC2.Codex.ThreadRuntime do
       "turnId" => turn_id
     })
 
-    {:reply, :ok, state}
+    # The turn's subagents stop with it, each on its own native thread.
+    for {thread, entry} <- Map.get(state, :subagents, %{}),
+        entry[:turn_id] != nil do
+      Connection.call(state.conn, "turn/interrupt", %{
+        "threadId" => thread,
+        "turnId" => entry.turn_id
+      })
+    end
+
+    # A turn Codex does not end within the deadline is settled as interrupted
+    # here; what it sends for the turn afterwards is not the thread's.
+    deadline = Application.get_env(:hal_c2, :codex_interrupt_deadline_ms, 10_000)
+    Process.send_after(self(), {:interrupt_deadline, turn_id}, deadline)
+    {:reply, :ok, %{state | interrupting: turn_id, stopped: true}}
   end
 
   # Between turns, stopping the thread stops the commands it left running.
@@ -400,6 +494,22 @@ defmodule HalC2.Codex.ThreadRuntime do
         state = resolve_request(%{state | requests: requests}, request_id, decision)
         {:reply, :ok, state}
 
+      {{:legacy, rpc_id}, requests} ->
+        decision = response["decision"] || "decline"
+
+        legacy =
+          case decision do
+            "accept" -> "approved"
+            "acceptForSession" -> "approved_for_session"
+            "acceptAlways" -> "approved_for_session"
+            "cancel" -> "abort"
+            _ -> "denied"
+          end
+
+        Connection.respond(state.conn, rpc_id, {:ok, %{"decision" => legacy}})
+        state = resolve_request(%{state | requests: requests}, request_id, decision)
+        {:reply, :ok, state}
+
       {rpc_id, requests} ->
         decision = response["decision"] || "decline"
         # Codex has no "always"; the closest is for the rest of the session.
@@ -419,28 +529,71 @@ defmodule HalC2.Codex.ThreadRuntime do
   def handle_info({:json_rpc, _conn, {:notification, method, params}}, state),
     do: {:noreply, notification(method, params || %{}, state)}
 
+  # Codex may not pile up requests on the user: with 32 already waiting, another
+  # is refused at once and the waiting ones are unaffected.
+  def handle_info({:json_rpc, conn, {:request, id, method, _params}}, state)
+      when method in [
+             "item/commandExecution/requestApproval",
+             "item/fileChange/requestApproval",
+             "item/permissions/requestApproval",
+             "execCommandApproval",
+             "applyPatchApproval",
+             "item/tool/requestUserInput",
+             "mcpServer/elicitation/request"
+           ] and map_size(state.requests) >= 32 do
+    Connection.respond(
+      conn,
+      id,
+      {:error, %{"code" => -32001, "message" => "Too many Codex requests are already active."}}
+    )
+
+    {:noreply, state}
+  end
+
   def handle_info({:json_rpc, _conn, {:request, id, method, params}}, %{turn: turn} = state)
       when turn != nil and
              method in [
                "item/commandExecution/requestApproval",
                "item/fileChange/requestApproval",
-               "item/permissions/requestApproval"
+               "item/permissions/requestApproval",
+               "execCommandApproval",
+               "applyPatchApproval"
              ] do
     {kind, prompt} =
       case method do
         "item/commandExecution/requestApproval" ->
-          {"command", params["reason"] || params["command"]}
+          {"command", reason_or(params, params["command"])}
 
         "item/fileChange/requestApproval" ->
-          {"file-change", params["reason"]}
+          {"file-change", file_change_prompt(params)}
+
+        # An older Codex's approvals: its command is a list of words, and its patch
+        # lists the files the way `file_change_prompt/1` reads them.
+        "execCommandApproval" ->
+          command =
+            case params["command"] do
+              words when is_list(words) -> Enum.join(words, " ")
+              command -> command
+            end
+
+          {"command", reason_or(params, command)}
+
+        "applyPatchApproval" ->
+          {"file-change", file_change_prompt(params)}
 
         _ ->
           {permissions_kind(params["permissions"]), params["reason"]}
       end
 
-    native = params["approvalId"] || params["itemId"] || "request-#{id}"
+    native =
+      params["approvalId"] || params["itemId"] || params["callId"] || "request-#{id}"
+
     {state, request_id} = open_request(flush(state), native, kind, prompt)
-    {:noreply, %{state | requests: Map.put(state.requests, request_id, id)}}
+
+    answer =
+      if method in ["execCommandApproval", "applyPatchApproval"], do: {:legacy, id}, else: id
+
+    {:noreply, %{state | requests: Map.put(state.requests, request_id, answer)}}
   end
 
   def handle_info(
@@ -511,7 +664,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     Connection.respond(
       conn,
       id,
-      {:error, %{"code" => -32601, "message" => "#{method} is not supported"}}
+      {:error, %{"code" => -32601, "message" => "Method not found: #{method}"}}
     )
 
     {:noreply, state}
@@ -524,6 +677,29 @@ defmodule HalC2.Codex.ThreadRuntime do
     state = end_background(state, "failed")
     # The native thread was loaded in that app-server; the next one resumes it.
     {:noreply, %{state | conn: nil, native_thread_id: nil}}
+  end
+
+  def handle_info({:interrupt_deadline, turn_id}, %{turn: %{native_turn_id: turn_id}} = state) do
+    {:noreply, end_turn(state, "interrupted", nil)}
+  end
+
+  def handle_info({:interrupt_deadline, _turn_id}, state), do: {:noreply, state}
+
+  # Output that is not a protocol message at all ends the session: the turn fails
+  # rather than waits on a connection HAL-C2 can no longer read. A message that
+  # decodes but is not one HAL-C2 knows is `{:invalid, decoded}` and is skipped.
+  def handle_info({:json_rpc, conn, {:invalid, line}}, %{conn: conn} = state)
+      when is_binary(line) do
+    Process.unlink(conn)
+    stop_conn(conn)
+    state = %{state | conn: nil, native_thread_id: nil}
+
+    state =
+      if state.turn,
+        do: end_turn(state, "failed", "Codex sent output that is not a protocol message"),
+        else: state
+
+    {:noreply, end_background(state, "failed")}
   end
 
   def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
@@ -562,6 +738,16 @@ defmodule HalC2.Codex.ThreadRuntime do
      |> Map.put_new(:background, %{})
      |> Map.put_new(:last_run, nil)
      |> Map.put_new(:workers_only, false)
+     |> Map.put_new(:memory_threads, %{})
+     |> Map.put_new(:final_first, nil)
+     |> Map.put_new(:finals, %{})
+     |> Map.put_new(:final_texts, %{})
+     |> Map.put_new(:suppressed, %{})
+     |> Map.put_new(:commentary, %{})
+     |> Map.put_new(:persistent, %{})
+     |> Map.put_new(:interrupting, nil)
+     |> Map.put_new(:stopped, false)
+     |> Map.put_new(:usage_failure, nil)
      |> Map.put(:instance, instance)
      |> Map.put_new(:conn_instance, :unknown)
      |> Map.put(:v, @state_version)}
@@ -704,6 +890,87 @@ defmodule HalC2.Codex.ThreadRuntime do
            })
   end
 
+  # An approval's reason when Codex gave one, else what it wants to do.
+  defp reason_or(params, fallback) do
+    case params["reason"] do
+      reason when is_binary(reason) -> if String.trim(reason) == "", do: fallback, else: reason
+      _ -> fallback
+    end
+  end
+
+  # What a file-change approval is for when Codex gives no reason: each file with
+  # what would be done to it (the first 20, the rest counted), or the folder it
+  # wants to write under (`codexFileChangeApprovalPrompt`).
+  defp file_change_prompt(params) do
+    case reason_or(params, nil) do
+      reason when is_binary(reason) ->
+        reason
+
+      _ ->
+        entries =
+          (params["fileChanges"] || %{})
+          |> Enum.sort_by(fn {path, _change} -> path end)
+
+        cond do
+          entries != [] ->
+            described =
+              for {path, change} <- Enum.take(entries, 20) do
+                move = if change["type"] == "update", do: change["move_path"]
+
+                if move,
+                  do: "#{change["type"]} #{path} -> #{move}",
+                  else: "#{change["type"]} #{path}"
+              end
+
+            remaining = length(entries) - length(described)
+            lines = Enum.join(described, "\n")
+            if remaining > 0, do: "#{lines}\n+#{remaining} more", else: lines
+
+          is_binary(params["grantRoot"]) and String.trim(params["grantRoot"]) != "" ->
+            String.trim(params["grantRoot"])
+
+          true ->
+            nil
+        end
+    end
+  end
+
+  # The text of a Codex user message item, from its content parts.
+  defp user_message_text(content) when is_list(content) do
+    content
+    |> Enum.map(fn
+      %{"type" => "text", "text" => text} when is_binary(text) -> text
+      _ -> ""
+    end)
+    |> Enum.join("")
+  end
+
+  defp user_message_text(_content), do: ""
+
+  # Codex's `spawnAgent` tool: each thread it starts is a subagent of this turn.
+
+  # A persistent tool call that ends after its turn: its item, kept running since,
+  # finishes with what the call came back with.
+  defp persistent_done(state, native, item) do
+    {handle, persistent} = Map.pop(state.persistent, native)
+    fields = tool_fields(item)
+    status = if item["status"] == "failed", do: "failed", else: "completed"
+
+    state = %{state | persistent: persistent, items: Map.put(state.items, native, handle)}
+    state = finish_item(state, native, status, &Map.merge(&1, fields))
+    %{state | items: Map.delete(state.items, native)}
+  end
+
+  # Codex's fuller explanation when it gives one, else its short message.
+  defp error_text(error) do
+    case String.trim(error["additionalDetails"] || "") do
+      "" -> error["message"] || "Codex reported an error"
+      details -> details
+    end
+  end
+
+  # The end of a turn let go of before it started (`begin_turn/2`).
+
   defp rpc_message(%{"message" => message}) when is_binary(message), do: message
   defp rpc_message(reason), do: inspect(reason)
 
@@ -721,7 +988,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     env = Enum.to_list(HalC2.Settings.instance_env(instance))
 
     with {:ok, args} <- launch_args(instance),
-         {:ok, home} <- HalC2.Codex.Home.env(instance),
+         {:ok, home} <- home_env(instance),
          env = home ++ env,
          {:ok, conn} <-
            Connection.start_link(
@@ -729,13 +996,14 @@ defmodule HalC2.Codex.ThreadRuntime do
              handler: self(),
              cd: turn.cwd,
              env: env,
-             log: turn.ids.thread
+             log: turn.ids.thread,
+             program: "Codex App Server"
            ),
          {:ok, _} <-
            Connection.call(conn, "initialize", %{
              "clientInfo" => %{
-               "name" => "hal_c2_elixir",
-               "title" => "HAL-C2",
+               "name" => "hal_c2_desktop",
+               "title" => "HAL-C2 Desktop",
                "version" => "0.1.0"
              },
              "capabilities" => %{
@@ -782,6 +1050,19 @@ defmodule HalC2.Codex.ThreadRuntime do
 
   # The instance's launch arguments follow `app-server`.
   defp launch_args(instance), do: HalC2.Codex.Provider.launch_args(instance)
+
+  # A shadow home that cannot be made fails the turn before Codex starts: running
+  # against the shared home instead would sign the turn in as another account.
+  defp home_env(instance) do
+    case HalC2.Codex.Home.env(instance) do
+      {:ok, env} ->
+        {:ok, env}
+
+      {:error, reason} ->
+        Logger.warning("codex shadow home not prepared: #{reason}")
+        {:error, "Failed to materialize the Codex shadow home."}
+    end
+  end
 
   # A session carried from another machine that this Codex cannot open (a newer
   # Codex wrote it, say) starts a new thread with the handoff instead, and the user
@@ -854,8 +1135,17 @@ defmodule HalC2.Codex.ThreadRuntime do
     end
   end
 
+  # A fork point Codex cannot honour (`HalC2.Orchestration.Handoff.fork_boundary/3`)
+  # fails the fork's first turn before Codex is asked for anything.
+  defp ensure_native_thread(state, %{fork: %{error: message}}),
+    do: {:error, message, state}
+
   # A fork's first turn starts from a copy of the source thread, cut after its turn;
   # a session carried from another machine is forked whole from its rollout's path.
+  # A fork at a turn with no native reference (`trim`) is taken whole and then
+  # trimmed (`trim_fork/4`); where neither way of cutting works the turn
+  # fails saying so. Only the copy is ever cut; the source conversation
+  # keeps every turn.
   defp ensure_native_thread(state, %{fork: %{thread: source, turn: last} = fork} = turn) do
     state = workers_only(state, turn)
 
@@ -866,7 +1156,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       |> then(&if(fork[:path], do: Map.put(&1, "path", fork[:path]), else: &1))
 
     case Connection.call(state.conn, "thread/fork", params) do
-      {:ok, %{"thread" => %{"id" => id}}} -> {:ok, %{state | native_thread_id: id}}
+      {:ok, %{"thread" => %{"id" => id}}} -> trim_fork(state, fork, source, id)
       {:error, reason} -> {:error, reason, state}
     end
   end
@@ -886,9 +1176,103 @@ defmodule HalC2.Codex.ThreadRuntime do
         else: Connection.call(state.conn, "thread/start", params)
 
     case result do
-      {:ok, %{"thread" => %{"id" => id}}} -> {:ok, %{state | native_thread_id: id}}
-      {:error, reason} -> {:error, reason, state}
+      {:ok, %{"thread" => %{"id" => id}}} ->
+        {:ok, %{state | native_thread_id: id}}
+
+      # A conversation Codex can no longer find (its rollout was cleaned up, say)
+      # starts fresh: HAL-C2 keeps the thread's history, Codex a new conversation.
+      {:error, reason} when turn.native_thread_id != nil ->
+        if recoverable_resume?(reason) do
+          case Connection.call(state.conn, "thread/start", params) do
+            {:ok, %{"thread" => %{"id" => id}}} -> {:ok, %{state | native_thread_id: id}}
+            {:error, reason} -> {:error, reason, state}
+          end
+        else
+          {:error, reason, state}
+        end
+
+      {:error, reason} ->
+        {:error, reason, state}
     end
+  end
+
+  # Paginated history cuts before a turn (`thread/revert`, as `rewind/2` cuts
+  # it); legacy history only takes a count (`thread/rollback`). Neither
+  # cutting the copy fails the fork rather than running on the whole copy.
+  defp trim_fork(state, %{trim: count} = fork, source, id)
+       when is_integer(count) and count > 0 do
+    reverted =
+      if fork[:before] do
+        Connection.call(state.conn, "thread/revert", %{
+          "threadId" => id,
+          "beforeTurnId" => fork.before
+        })
+      else
+        {:error, :no_turn_to_cut_before}
+      end
+
+    # The revert error is kept: when the rollback fallback also fails, it
+    # names why the cut could not be made, where the rollback error on
+    # paginated history only ever says rollback is rejected there.
+    {result, revert_error} =
+      case reverted do
+        {:ok, %{"thread" => %{"id" => _id}}} = ok ->
+          {ok, nil}
+
+        {:error, reason} ->
+          {Connection.call(state.conn, "thread/rollback", %{
+             "threadId" => id,
+             "numTurns" => count
+           }), reason}
+
+        {:ok, _unconfirmed} ->
+          {Connection.call(state.conn, "thread/rollback", %{
+             "threadId" => id,
+             "numTurns" => count
+           }), %{"message" => "thread/revert did not return the trimmed thread"}}
+      end
+
+    case result do
+      {:ok, %{"thread" => %{"id" => trimmed}}} ->
+        {:ok, %{state | native_thread_id: trimmed}}
+
+      # An answer naming no trimmed thread has not confirmed the trim: running
+      # on the whole copy would silently carry the turns after the fork point.
+      {:ok, _other} ->
+        {:error,
+         "Cannot fork Codex thread #{source} at that turn: Codex did not return the trimmed thread.",
+         state}
+
+      {:error, reason} ->
+        if String.contains?(String.downcase(rpc_message(reason)), "paginated") do
+          revert =
+            if revert_error not in [nil, :no_turn_to_cut_before],
+              do: " thread/revert failed: #{rpc_message(revert_error)}."
+
+          {:error,
+           "Cannot fork Codex thread #{source} at that turn: the source turn has no native Codex turn reference, and the forked thread uses paginated history which rejects thread/rollback.#{revert}",
+           state}
+        else
+          {:error, reason, state}
+        end
+    end
+  end
+
+  defp trim_fork(state, _fork, _source, id), do: {:ok, %{state | native_thread_id: id}}
+
+  # The wordings with which Codex says a thread is gone (`CodexSessionRuntime.ts`
+  # `isRecoverableThreadResumeError`).
+  @recoverable_resume [
+    "not found",
+    "missing thread",
+    "no such thread",
+    "unknown thread",
+    "does not exist",
+    "no rollout found"
+  ]
+  defp recoverable_resume?(reason) do
+    message = reason |> rpc_message() |> String.downcase()
+    Enum.any?(@recoverable_resume, &String.contains?(message, &1))
   end
 
   # The thread's settings, with HAL-C2's own MCP server for the agent when allowed.
@@ -950,13 +1334,22 @@ defmodule HalC2.Codex.ThreadRuntime do
       "collaborationMode" => %{
         "mode" => if(Map.get(turn, :interaction_mode) == "plan", do: "plan", else: "default"),
         # A read, never a preparation: rotating here would strand the
-        # header this thread's config already carries.
+        # header this thread's config already carries. HAL-C2's orchestration
+        # instructions steer the agent to work, so a plan turn — which must not
+        # do the work — does not get them.
         "settings" =>
-          if(HalC2.Mcp.current(state.thread_id, Entities.instance(turn.ids)),
+          if(
+            HalC2.Mcp.current(state.thread_id, Entities.instance(turn.ids)) &&
+              Map.get(turn, :interaction_mode) != "plan",
             do: %{
               "model" => turn.model,
               "developer_instructions" =>
                 HalC2.Mcp.Instructions.for_session(
+                  # The sections follow what this thread's credential may
+                  # reach, as an ACP session's do, never tools it lacks.
+                  capabilities:
+                    HalC2.Mcp.capabilities(state.thread_id, Entities.instance(turn.ids)) ||
+                      HalC2.Mcp.agent_access(state.thread_id),
                   runtime: %{
                     harness: "Codex",
                     model: turn.model,
@@ -990,9 +1383,46 @@ defmodule HalC2.Codex.ThreadRuntime do
       HalC2.ProviderUsageLimits.Codex.windows(snapshot)
     )
 
-    if snapshot["limitId"] in [nil, "codex"],
-      do: Map.put(state, :rate_limits, Map.merge(Map.get(state, :rate_limits) || %{}, snapshot)),
-      else: state
+    state =
+      if snapshot["limitId"] in [nil, "codex"],
+        do:
+          Map.put(state, :rate_limits, Map.merge(Map.get(state, :rate_limits) || %{}, snapshot)),
+        else: state
+
+    # A turn that stopped on a limit before Codex named its reset learns it from
+    # this report; a reset already named does not move.
+    case Map.get(state, :usage_failure) do
+      %{item: item_id} ->
+        snapshot = Map.get(state, :rate_limits) || snapshot
+        at = DateTime.utc_now()
+
+        case usage_limit_reset(snapshot, at) do
+          nil ->
+            state
+
+          reset ->
+            message = usage_limit_message(snapshot, at)
+
+            commit(state, fn stream ->
+              [
+                Orchestration.upsert(stream, "turn-item", item_id, fn item ->
+                  failure =
+                    Map.merge(item["failure"] || %{}, %{
+                      "message" => message,
+                      "resetAt" => reset
+                    })
+
+                  Map.put(item, "failure", failure)
+                end)
+              ]
+            end)
+
+            Map.put(state, :usage_failure, nil)
+        end
+
+      _ ->
+        state
+    end
   end
 
   # A background command ended, between turns or during a later one. Its output
@@ -1005,39 +1435,108 @@ defmodule HalC2.Codex.ThreadRuntime do
        when is_map_key(state.background, native),
        do: state
 
+  # A persistent tool call ending after its turn: its item ends with it.
+  defp notification("item/completed", %{"item" => %{"id" => native} = item}, state)
+       when is_map_key(state.persistent, native) and not is_map_key(state.items, native),
+       do: persistent_done(state, native, item)
+
+  # Codex consolidating its memories runs a thread of its own in the background:
+  # none of its work is this thread's, and none of it is shown.
+  defp notification("thread/started", %{"thread" => thread}, state) do
+    source = thread["source"] || %{}
+
+    if thread["threadSource"] == "memory_consolidation" or
+         match?(%{"subAgent" => "memory_consolidation"}, source) do
+      %{state | memory_threads: Map.put(state.memory_threads, thread["id"], true)}
+    else
+      state
+    end
+  end
+
+  defp notification("thread/closed", %{"threadId" => thread}, state)
+       when is_map_key(state.memory_threads, thread) do
+    %{state | memory_threads: Map.delete(state.memory_threads, thread)}
+  end
+
+  defp notification(_method, %{"threadId" => thread}, state)
+       when is_map_key(state.memory_threads, thread),
+       do: state
+
+  # A subagent starting work under a turn the user stopped is interrupted at once.
+  defp notification(
+         "turn/started",
+         %{"threadId" => thread, "turn" => %{"id" => turn_id}},
+         %{turn: nil, stopped: true, subagents: subagents} = state
+       )
+       when is_map_key(subagents, thread) do
+    Connection.call(state.conn, "turn/interrupt", %{"threadId" => thread, "turnId" => turn_id})
+    entry = subagents[thread]
+
+    sub = HalC2.Orchestration.NativeSubagent.finish(entry.sub, "interrupted", entry[:final])
+    entry = %{entry | sub: sub, done: true}
+
+    %{state | subagents: Map.put(subagents, thread, entry)}
+  end
+
   defp notification(_method, _params, %{turn: nil} = state), do: state
 
   # A subagent's own thread reports under its thread id: its answer goes to its child
   # thread, and nothing it says (its `turn/completed` least of all) is this turn's.
   defp notification(method, %{"threadId" => thread} = params, %{subagents: subagents} = state)
        when is_map_key(subagents, thread) do
-    entry = subagents[thread]
+    entry =
+      subagents[thread]
+      |> Map.put_new(:final, nil)
+      |> Map.put(
+        :turn_id,
+        params["turnId"] || get_in(params, ["turn", "id"]) || subagents[thread][:turn_id]
+      )
 
-    sub =
+    entry =
       case {method, params} do
         {"item/agentMessage/delta", %{"delta" => delta}} when is_binary(delta) ->
-          HalC2.Orchestration.NativeSubagent.append(entry.sub, delta)
+          %{entry | sub: HalC2.Orchestration.NativeSubagent.append(entry.sub, delta)}
 
-        {"item/completed", %{"item" => %{"type" => "agentMessage", "text" => text}}}
-        when is_binary(text) and entry.sub.text == "" ->
-          HalC2.Orchestration.NativeSubagent.append(entry.sub, text)
+        # A message Codex sends a subagent that finished its first task: the
+        # subagent runs again, with the message in its thread from its parent.
+        {"item/completed", %{"item" => %{"type" => "userMessage"} = item}} when entry.done ->
+          text = user_message_text(item["content"])
+
+          entity =
+            HalC2.StreamState.get(HalC2.Streams.state(state.thread_id), "subagent")[entry.sub.id]
+
+          if text != "" and entity do
+            sub = HalC2.Orchestration.NativeSubagent.resume(state.turn.ids, entity, text)
+            %{entry | sub: sub, done: false, final: nil}
+          else
+            entry
+          end
+
+        {"item/completed", %{"item" => %{"type" => "agentMessage", "text" => text} = item}}
+        when is_binary(text) ->
+          entry =
+            if item["phase"] == "commentary", do: entry, else: %{entry | final: text}
+
+          if entry.sub.text == "" do
+            %{entry | sub: HalC2.Orchestration.NativeSubagent.append(entry.sub, text)}
+          else
+            entry
+          end
 
         _ ->
-          entry.sub
+          entry
       end
 
-    %{state | subagents: Map.put(subagents, thread, %{entry | sub: sub})}
+    %{state | subagents: Map.put(subagents, thread, entry)}
   end
 
-  # Codex's `spawnAgent` tool: each thread it starts is a subagent of this turn.
   defp notification(
          "item/" <> event,
          %{"item" => %{"type" => "collabAgentToolCall"} = item},
          state
        )
        when event in ["started", "completed"] do
-    state = spawned(flush(state), item)
-    if event == "completed", do: subagent_states(state, item), else: state
+    state |> flush() |> spawned(item) |> subagent_states(item)
   end
 
   # Another turn's item that is not running any more (a command stopped with its
@@ -1050,12 +1549,33 @@ defmodule HalC2.Codex.ThreadRuntime do
        when turn_id != current,
        do: state
 
+  # A turn's first final answer streams as it comes; a later one is held back
+  # until it finishes, when a repeat of an earlier answer (or an empty one) is
+  # dropped instead of shown twice.
   defp notification(
          "item/started",
-         %{"item" => %{"type" => "agentMessage", "id" => native}},
+         %{"item" => %{"type" => "agentMessage", "id" => native} = item},
          state
-       ),
-       do: ensure_item(state, native, :assistant)
+       ) do
+    case item["phase"] do
+      "commentary" ->
+        state
+        |> Map.put(:commentary, Map.put(state.commentary, native, true))
+        |> ensure_item(native, :assistant)
+
+      "final_answer" ->
+        state = Map.put(state, :finals, Map.put(state.finals, native, true))
+
+        if state.final_first in [nil, native] do
+          state |> Map.put(:final_first, native) |> ensure_item(native, :assistant)
+        else
+          Map.put(state, :suppressed, Map.put(state.suppressed, native, true))
+        end
+
+      _ ->
+        ensure_item(state, native, :assistant)
+    end
+  end
 
   defp notification("item/started", %{"item" => %{"type" => "commandExecution"} = item}, state) do
     state
@@ -1075,8 +1595,15 @@ defmodule HalC2.Codex.ThreadRuntime do
        do: ensure_item(state, native, :web, %{"patterns" => web_patterns(item)})
 
   defp notification("item/started", %{"item" => %{"type" => type, "id" => native} = item}, state)
-       when type in ["mcpToolCall", "dynamicToolCall"],
-       do: ensure_item(state, native, :tool, tool_fields(item))
+       when type in ["mcpToolCall", "dynamicToolCall"] do
+    state = ensure_item(state, native, :tool, tool_fields(item))
+
+    if type == "dynamicToolCall" and get_in(item, ["arguments", "persistent"]) == true do
+      Map.put(state, :persistent, Map.put(state.persistent, native, state.items[native]))
+    else
+      state
+    end
+  end
 
   defp notification("item/plan/delta", %{"itemId" => native, "delta" => delta}, state),
     do: state |> ensure_item(native, :plan) |> buffer(native, "markdown", delta)
@@ -1104,8 +1631,15 @@ defmodule HalC2.Codex.ThreadRuntime do
     write_todo(state, "turn-plan:#{params["turnId"]}", steps, explanation)
   end
 
-  defp notification("item/agentMessage/delta", %{"itemId" => native, "delta" => delta}, state),
-    do: state |> ensure_item(native, :assistant) |> buffer(native, "text", delta)
+  defp notification(
+         "item/agentMessage/delta",
+         %{"itemId" => native, "delta" => delta},
+         state
+       ) do
+    if state.suppressed[native],
+      do: state,
+      else: state |> ensure_item(native, :assistant) |> buffer(native, "text", delta)
+  end
 
   defp notification("item/reasoning/" <> _, %{"itemId" => native, "delta" => delta}, state),
     do: state |> ensure_item(native, :reasoning) |> buffer(native, "text", delta)
@@ -1214,11 +1748,10 @@ defmodule HalC2.Codex.ThreadRuntime do
         %{state | failure: failure}
 
       true ->
-        %{state | failure: error["message"] || "Codex reported an error"}
+        %{state | failure: error_text(error)}
     end
   end
 
-  # The end of a turn let go of before it started (`begin_turn/2`).
   defp notification(
          "turn/completed",
          %{"turn" => %{"id" => id}},
@@ -1233,7 +1766,18 @@ defmodule HalC2.Codex.ThreadRuntime do
         do: turn["status"],
         else: "failed"
 
-    end_turn(state, status, state.failure || get_in(turn, ["error", "message"]))
+    # A turn that finishes while it is being stopped was stopped: Codex reporting
+    # it completed a moment before it acknowledges the stop does not unstop it.
+    status =
+      if status == "completed" and Map.get(state, :interrupting) == turn["id"],
+        do: "interrupted",
+        else: status
+
+    end_turn(
+      state,
+      status,
+      state.failure || if(turn["error"], do: error_text(turn["error"]))
+    )
   end
 
   defp notification(_method, _params, state), do: state
@@ -1351,17 +1895,66 @@ defmodule HalC2.Codex.ThreadRuntime do
     state =
       case status do
         "completed" ->
-          to_background(state)
+          state |> to_background() |> to_persistent()
 
         _ ->
           for {_native, process} <- state.running, do: terminate_terminal(state, process)
-          state = %{state | running: %{}}
+
+          state = %{
+            state
+            | running: %{},
+              persistent: Map.drop(Map.get(state, :persistent, %{}), Map.keys(state.items))
+          }
+
           if status == "interrupted", do: end_background(state, status), else: state
+      end
+
+    # The turn's subagents end with an interrupted or failed turn; a completed
+    # turn's were settled by Codex's own reports of them.
+    state =
+      if status in ["interrupted", "failed"] do
+        subagents =
+          for {thread, entry} <- Map.get(state, :subagents, %{}), into: %{} do
+            if entry.done do
+              {thread, entry}
+            else
+              sub = HalC2.Orchestration.NativeSubagent.finish(entry.sub, status, entry[:final])
+              {thread, %{entry | sub: sub, done: true}}
+            end
+          end
+
+        Map.put(state, :subagents, subagents)
+      else
+        state
+      end
+
+    # A usage-limit stop whose reset Codex had not named learns it from a later
+    # report (`notification("account/rateLimits/updated", ...)`).
+    state =
+      case failure do
+        %{"class" => "usage_limit", "resetAt" => nil} ->
+          item =
+            HalC2.Orchestration.TurnWriter.item_id(
+              state.turn.ids,
+              "terminal-failure:#{Map.get(state.turn.ids, :provider_turn, state.turn.ids.run)}"
+            )
+
+          Map.put(state, :usage_failure, %{item: item})
+
+        _ ->
+          state
       end
 
     state = close_open_items(state, status)
     finish(state, status, failure)
-    %{state | turn: nil, items: %{}, requests: %{}}
+    %{state | turn: nil, items: %{}, requests: %{}, interrupting: nil}
+  end
+
+  # Tool calls Codex marked persistent outlive a completed turn: they leave its
+  # items, so its end does not close them, and their own end finishes them later.
+  defp to_persistent(state) do
+    persistent = Map.get(state, :persistent, %{})
+    %{state | items: Map.drop(state.items, Map.keys(persistent))}
   end
 
   # The model options the user picked: reasoning effort and service tier.
@@ -1577,9 +2170,36 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp terminate_terminal(_state, _process), do: :ok
 
   defp complete_item(state, %{"type" => "agentMessage", "id" => native} = item) do
-    finish_item(state, native, "completed", fn entity ->
-      Map.merge(entity, %{"text" => item["text"] || entity["text"], "streaming" => false})
-    end)
+    text = item["text"] || ""
+    final? = Map.get(state, :finals, %{})[native] == true
+
+    cond do
+      # A held-back final answer that repeats an earlier one, or says nothing,
+      # adds nothing to the thread; a different one is shown now that it is whole.
+      state.suppressed[native] ->
+        state = Map.put(state, :suppressed, Map.delete(state.suppressed, native))
+
+        if text == "" or state.final_texts[text] do
+          state
+        else
+          state
+          |> Map.put(:final_texts, Map.put(state.final_texts, text, true))
+          |> ensure_item(native, :assistant)
+          |> finish_item(native, "completed", fn entity ->
+            Map.merge(entity, %{"text" => text, "streaming" => false})
+          end)
+        end
+
+      true ->
+        state =
+          if final?,
+            do: Map.put(state, :final_texts, Map.put(state.final_texts, text, true)),
+            else: state
+
+        finish_item(state, native, "completed", fn entity ->
+          Map.merge(entity, %{"text" => item["text"] || entity["text"], "streaming" => false})
+        end)
+    end
   end
 
   # The completed plan item is authoritative over its streamed deltas.
@@ -1672,6 +2292,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   defp spawned(state, _item), do: Map.put_new(state, :subagents, %{})
 
   @agent_status %{
+    "pendingInit" => "pending",
+    "running" => "running",
     "interrupted" => "interrupted",
     "completed" => "completed",
     "errored" => "failed",
@@ -1680,15 +2302,26 @@ defmodule HalC2.Codex.ThreadRuntime do
   }
 
   # Where each agent of a collab tool call stands; one that ended ends its subagent
-  # with what it said last.
+  # with what it said last, and a late older report does not reopen it.
   defp subagent_states(state, item) do
     subagents =
       for {thread, agent} <- item["agentsStates"] || %{}, reduce: state.subagents do
         subagents ->
           with %{done: false, sub: sub} = entry <- subagents[thread],
                status when is_binary(status) <- @agent_status[agent["status"]] do
-            sub = HalC2.Orchestration.NativeSubagent.finish(sub, status, agent["message"])
-            Map.put(subagents, thread, %{entry | sub: sub, done: true})
+            if status in ["pending", "running"] do
+              sub = HalC2.Orchestration.NativeSubagent.show(sub, status)
+              Map.put(subagents, thread, %{entry | sub: sub})
+            else
+              sub =
+                HalC2.Orchestration.NativeSubagent.finish(
+                  sub,
+                  status,
+                  agent["message"] || entry[:final]
+                )
+
+              Map.put(subagents, thread, %{entry | sub: sub, done: true})
+            end
           else
             _ -> subagents
           end
@@ -1727,6 +2360,7 @@ defmodule HalC2.Codex.ThreadRuntime do
       end
 
     tool_fields("#{item["server"]}.#{item["tool"]}", item["arguments"], output)
+    |> Map.merge(HalC2.Codex.ToolPresentation.fields(item))
   end
 
   defp tool_fields(item) do

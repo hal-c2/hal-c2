@@ -223,7 +223,11 @@ defmodule HalC2.ProviderUpdates do
           package <> "@latest"
         ]
 
-      driver == "claudeAgent" and String.contains?(real, "/claude/") ->
+      # Claude's own installer puts `claude` in the user's `.local/bin`, linked to
+      # the version it keeps under `.local/share/claude`; it updates itself.
+      driver == "claudeAgent" and
+          (String.contains?(real, "/claude/") or
+             String.ends_with?(path, "/.local/bin/claude")) ->
         [path, "update"]
 
       true ->

@@ -140,7 +140,7 @@ Feature: Pull requests linked to a thread
     When the MC applies a discovered pull request for "t1"
     Then the command fails with "Thread t1 is archived."
 
-  @backlog @mc
+  @mc
   Scenario Outline: The MC looks for a branch's pull request when the thread changes
     When <trigger>
     Then the MC looks for the pull request of the branch of "t1"
@@ -155,7 +155,7 @@ Feature: Pull requests linked to a thread
       | a checkpoint of "t1" is captured          |
       | a minute passes                           |
 
-  @backlog @mc
+  @mc
   Scenario: Threads on the same branch and worktree cost one branch look-up
     Given thread "t2" exists in "demo" on branch "feature/x" in the same worktree as "t1"
     When the MC looks for branch pull requests
@@ -163,33 +163,33 @@ Feature: Pull requests linked to a thread
     And both "t1" and "t2" record the pull request it answered
 
   # Settled threads are otherwise left alone: threads/pull-request-links.feature.
-  @backlog @mc
+  @mc
   Scenario: A settled thread with no branch pull request is looked up when the MC starts
     Given thread "t1" is settled and records no branch pull request
     And pull request "acme/app#7" exists for "feature/x"
     When the MC starts
     Then thread "t1" records "acme/app#7" as its branch pull request
 
-  @backlog @mc
+  @mc
   Scenario: The start-up look-up for a settled thread gives up after five failures
     Given thread "t1" is settled and records no branch pull request
     And the host cannot be reached
     When the MC starts and five look-ups for "t1" have failed
     Then the MC no longer looks for the branch pull request of "t1" on its periodic sweep
 
-  @backlog @mc
+  @mc
   Scenario: A pull request that belongs to another repository is not recorded
     Given the branch "feature/x" has a pull request in a repository that is not the one of "demo"
     When the MC looks for branch pull requests
     Then thread "t1" records no branch pull request
 
-  @backlog @mc
+  @mc
   Scenario: A project that is not a recognised repository gets no branch look-up
     Given the folder of "demo" has no remote the MC recognises
     When the MC looks for branch pull requests
     Then the host is not asked about "feature/x"
 
-  @backlog @mc
+  @mc
   Scenario: Discovery reads from the project folder when the worktree is gone
     Given thread "t1" is in a worktree that has been removed
     When the MC looks for branch pull requests
@@ -197,7 +197,7 @@ Feature: Pull requests linked to a thread
 
   # A thread in the project folder shares its checkout, so a branch that stops
   # showing a pull request there says nothing about work that already landed.
-  @backlog @mc
+  @mc
   Scenario Outline: A branch that stops showing a pull request keeps only finished ones
     Given thread "t1" has no worktree of its own and records "acme/app#7" as its branch pull request
     And "acme/app#7" is <state>
@@ -210,27 +210,27 @@ Feature: Pull requests linked to a thread
       | closed | still records "acme/app#7" as its branch pull request |
       | open   | records no branch pull request                       |
 
-  @backlog @mc
+  @mc
   Scenario: A thread in its own worktree drops the branch pull request once the branch shows none
     Given thread "t1" is in its own worktree and records the merged "acme/app#7" as its branch pull request
     When the MC looks for branch pull requests and finds none for "feature/x"
     Then thread "t1" records no branch pull request
 
-  @backlog @mc
+  @mc
   Scenario: A finished legacy link gives way to the branch's new open pull request
     Given thread "t1" has only the legacy single link, to the merged "acme/app#7"
     And a new pull request "acme/app#9" is open for "feature/x"
     When the MC looks for branch pull requests
     Then the linked pull request of "t1" is "acme/app#9"
 
-  @backlog @mc
+  @mc
   Scenario: An open legacy link is not replaced by the branch's pull request
     Given thread "t1" has only the legacy single link, to the open "acme/app#7"
     And a new pull request "acme/app#9" is open for "feature/x"
     When the MC looks for branch pull requests
     Then the linked pull request of "t1" is still "acme/app#7"
 
-  @backlog @mc
+  @mc
   Scenario Outline: A discovery result that went stale during the look-up is thrown away
     Given the MC found "acme/app#7" for the branch of "t1"
     And <change> before the result was recorded
@@ -244,29 +244,26 @@ Feature: Pull requests linked to a thread
       | the folder of "demo" was changed             |
       | project "demo" was deleted                   |
 
-  @backlog @mc
+  @mc
   Scenario: One branch look-up that fails does not stop the others
     Given thread "t2" exists in "demo" on branch "feature/y" with pull request "acme/app#8"
     And the look-up for "feature/x" fails
     When the MC looks for branch pull requests
     Then thread "t2" records "acme/app#8" as its branch pull request
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/pull_requests/sync.ex
-  @mc @backlog
+  @mc
   Scenario: Threads sharing a pull request cost one host read per sweep
     Given pull request "acme/app#12" is linked to "t1" and to "t2"
     When the sync sweep runs
     Then the host is asked about "acme/app#12" once
     And both "t1" and "t2" show the state it answered
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/pull_requests/sync.ex
-  @mc @backlog
+  @mc
   Scenario: A pull request linked to a thread is read without waiting for the next sweep
     When a client links pull request "acme/app#12" to "t1"
     Then the MC reads "acme/app#12" from the host and records its state on "t1"
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/pull_requests/sync.ex
-  @mc @backlog
+  @mc
   Scenario Outline: Closed and settled pull requests are read on a slow cadence
     Given pull request "acme/app#12" is linked to "t1" and its last read said <state>
     And "t1" is <thread>
@@ -281,23 +278,20 @@ Feature: Pull requests linked to a thread
       | closed | active    | a minute   | is not asked   |
       | closed | active    | 15 minutes | is asked       |
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/pull_requests/sync.ex
-  @mc @backlog
+  @mc
   Scenario: A closed pull request that was reopened is noticed
     Given pull request "acme/app#12" is linked to "t1" and its last read said closed
     And "acme/app#12" was reopened on the host
     When the sync sweep runs 15 minutes after the last read
     Then thread "t1" shows "acme/app#12" as open
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/pull_requests/sync.ex
-  @mc @backlog
+  @mc
   Scenario: Archived threads' pull requests are not read
     Given pull request "acme/app#12" is linked only to the archived thread "t1"
     When the sync sweep runs
     Then the host is not asked about "acme/app#12"
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/pull_requests/sync.ex
-  @mc @backlog
+  @mc
   Scenario: A host that cannot be reached leaves the last known state in place
     Given pull request "acme/app#12" is linked to "t1" with the state "open"
     And the host cannot be reached
@@ -306,8 +300,7 @@ Feature: Pull requests linked to a thread
     And no event is recorded
     And the sweep goes on to the other linked pull requests
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/pull_requests/sync.ex
-  @mc @backlog
+  @mc
   Scenario: A stack the host failed to report is asked for again on the next sweep
     Given pull request "acme/app#12" changed state on the host
     And the host answers the state of "acme/app#12" but fails to report its stack
@@ -316,15 +309,14 @@ Feature: Pull requests linked to a thread
     When the host recovers and the sync sweep runs again
     Then thread "t1" shows the new state and the layers of the stack
 
-  # Likely already implemented: apps/server-ex/lib/hal_c2/pull_requests/sync.ex
-  @mc @backlog
+  @mc
   Scenario: A refresh asked for during a host read is not lost
     Given the MC is reading "acme/app#12" from the host
     When a client asks to refresh "acme/app#12"
     And the read in flight finishes
     Then the next sweep reads "acme/app#12" again, even if its last read was a minute ago
 
-  @mc @backlog
+  @mc
   Scenario: Asking which threads are linked to a pull request lists live and archived ones
     Given pull request "acme/app#12" on "github.com" is linked to thread "t1"
     And pull request "acme/app#12" on "github.com" is linked to the archived thread "t2"
@@ -333,14 +325,14 @@ Feature: Pull requests linked to a thread
     Then "t1" and "t2" are listed
     And "t3" is not listed
 
-  @mc @backlog
+  @mc
   Scenario: Linked threads are listed most recently updated first
     Given "t1" and "t2" are both linked to pull request "acme/app#12"
     And "t2" was updated more recently than "t1"
     When a client asks which threads are linked to "acme/app#12"
     Then "t2" comes before "t1"
 
-  @mc @backlog
+  @mc
   Scenario Outline: A pull request is told apart from lookalikes in other places
     Given thread "t9" is linked to a pull request <other>
     When a client asks which threads are linked to pull request 12 of "acme/app" on "github.com"
@@ -353,26 +345,26 @@ Feature: Pull requests linked to a thread
       | numbered 12 in "acme/app" on "gitlab.com"  |
       | numbered 12 in "acme/app" on "forge.test:4000" |
 
-  @mc @backlog
+  @mc
   Scenario: A stack layer the user dismissed from a thread does not make the thread linked
     Given pull request "acme/app#12" is a layer of the stack of "t1"
     And the user dismissed it from "t1"
     When a client asks which threads are linked to "acme/app#12"
     Then "t1" is not listed
 
-  @mc @backlog
+  @mc
   Scenario: A thread that only has the legacy single link is still listed
     Given thread "t1" carries only the legacy single link to "acme/app#12"
     When a client asks which threads are linked to "acme/app#12" on "github.com"
     Then "t1" is listed
 
-  @mc @backlog
+  @mc
   Scenario: Linked threads that cannot be read are reported
     Given the MC cannot read its thread records
     When a client asks which threads are linked to "acme/app#12"
     Then the request fails with "Could not load linked threads."
 
-  @mc @backlog
+  @mc
   Scenario Outline: A reference tied to a checkout gets the host it belongs to
     Given the project's checkout is on <provider>
     When a client names pull request <number> of "<repository>" <host>
@@ -384,7 +376,7 @@ Feature: Pull requests linked to a thread
       | GitHub       | 7      | acme/web   | on "gitlab.com"             | acme/web                 | gitlab.com      |
       | Azure DevOps | 7      | web        | without a host              | org/project/_git/web     | dev.azure.com   |
 
-  @mc @backlog
+  @mc
   Scenario Outline: An Azure DevOps reference only names the checkout's own repository
     Given the project's checkout is the Azure DevOps repository "web" of "org/project"
     When a client names pull request 7 of "<repository>" <host>
@@ -395,7 +387,7 @@ Feature: Pull requests linked to a thread
       | other      | without a host            |
       | web        | on "unrelated.test"       |
 
-  @mc @backlog
+  @mc
   Scenario Outline: Every spelling of an Azure DevOps host names the same pull request
     Given the project's checkout was cloned from "<remote>"
     When a client names pull request 7 of "web"

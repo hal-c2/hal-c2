@@ -32,6 +32,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("mobile/tablet-and-hardware-keyboard.feature"),
     QStringLiteral("threads/sidebar-list.feature:Very long settled*"),
     QStringLiteral("threads/sidebar-list.feature:*plugin*"),
+    QStringLiteral("providers/codex.feature:A plan Codex marked finished*"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

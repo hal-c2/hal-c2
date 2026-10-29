@@ -3446,9 +3446,12 @@ defmodule HalC2.Test.Mc.World do
   def reset_provider_caches do
     for key <- [
           {HalC2.Codex.Provider, :models},
+          {HalC2.Codex.Provider, :status},
           {HalC2.Codex.Provider, :version},
           {HalC2.Claude.Provider, :version},
           {HalC2.Claude.Provider, :models},
+          {HalC2.Claude.Provider, :capabilities},
+          {HalC2.Claude.Provider, :health},
           {HalC2.ProviderUpdates, "codex"},
           {HalC2.ProviderUpdates, "claudeAgent"},
           # The update a scenario was offered, and how its last update went.

@@ -48,11 +48,15 @@ defmodule HalC2.Claude.Protocol do
       if(opts[:resume] && opts[:fork_session], do: ["--fork-session"], else: []) ++
       if(opts[:persist_session] == false, do: ["--no-session-persistence"], else: []) ++
       if(opts[:partial_messages] == true, do: ["--include-partial-messages"], else: []) ++
+      if(opts[:thinking_display], do: ["--thinking-display", "summarized"], else: []) ++
+      if(opts[:tools] in [nil, []], do: [], else: ["--tools", Enum.join(opts[:tools], ",")]) ++
+      Enum.flat_map(List.wrap(opts[:add_dirs]), &["--add-dir", &1]) ++
       mcp_args(opts[:mcp], opts[:disallowed_tools] not in [nil, []], opts) ++
       if(opts[:disallowed_tools] in [nil, []],
         do: [],
         else: ["--disallowedTools", Enum.join(opts[:disallowed_tools], ",")]
-      )
+      ) ++
+      List.wrap(opts[:extra_args])
   end
 
   # HAL-C2's own MCP server, its tools allowed without a prompt, and what it is for.
@@ -69,11 +73,19 @@ defmodule HalC2.Claude.Protocol do
       }
     }
 
+    # A read-only run pre-approves only HAL-C2's reading tools, so it cannot
+    # silently start threads or schedule tasks; others pre-approve them all.
+    allowed =
+      case opts[:mcp_allowed] do
+        [_ | _] = names -> Enum.join(names, ",")
+        _ -> "mcp__hal-c2"
+      end
+
     [
       "--mcp-config",
       JSON.encode!(config),
       "--allowedTools",
-      "mcp__hal-c2",
+      allowed,
       "--append-system-prompt",
       # The orchestration instructions in the system prompt, the user's own
       # messages sent as written; runtime context names the harness, the
@@ -112,7 +124,7 @@ defmodule HalC2.Claude.Protocol do
 
   @spec permission_reply(
           String.t(),
-          :allow | {:allow, map} | {:allow_session, [map]} | {:deny, String.t()},
+          :allow | {:allow, map} | {:allow_session, [map]} | {:deny, String.t()} | :cancel,
           map
         ) :: iodata
   def permission_reply(request_id, decision, original_input) do
@@ -134,6 +146,14 @@ defmodule HalC2.Claude.Protocol do
 
         {:deny, message} ->
           %{"behavior" => "deny", "message" => message}
+
+        # The user cancelled the approval: Claude is told so and stops the turn.
+        :cancel ->
+          %{
+            "behavior" => "deny",
+            "message" => "User cancelled tool execution.",
+            "interrupt" => true
+          }
       end
 
     control_success(request_id, body)

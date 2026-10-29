@@ -35,7 +35,8 @@ defmodule HalC2.PullRequests.Sync do
   Reads a pull request (`%{"repository", "number"}`, with `"host"` when known) again
   on the next sweep, which starts now, even when its snapshot is terminal.
   """
-  def request(ref), do: GenServer.cast(__MODULE__, {:request, ref})
+  def request(ref),
+    do: GenServer.cast(__MODULE__, {:request, HalC2.PullRequests.sync_key(ref) || ref})
 
   @impl true
   def init(opts) do

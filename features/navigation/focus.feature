@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/11580
 #   docs/user/keyboard-focus.md
 #   apps/desktop-qt/qml/HalC2/Bricks/Sidebar.qml (list keyboard navigation)
 #   apps/desktop-qt/qml/HalC2/Bricks/SettingsNav.qml
@@ -263,3 +264,27 @@ Feature: Keyboard focus and keyboard-only use
       Given the timeline shows tool calls and a subagent
       Then each tool call is announced by its label
       And a subagent is announced by its title, its status and its latest line, as a link when it has a thread
+
+    # A switch that does not report its state reads as off to a screen reader.
+    @backlog @desktop @mobile
+    Scenario Outline: A switch tells screen readers whether it is on, off or mixed
+      Given a switch is <state>
+      When a screen reader reads the switch
+      Then it is announced as <announced>
+
+      Examples:
+        | state     | announced |
+        | on        | on        |
+        | off       | off       |
+        | partly on | mixed     |
+
+    @backlog @desktop @mobile
+    Scenario Outline: Turning a switch announces its new state
+      Given a screen reader is following a switch that is <before>
+      When the user turns the switch <after>
+      Then the screen reader announces it as <after>
+
+      Examples:
+        | before | after |
+        | off    | on    |
+        | on     | off   |

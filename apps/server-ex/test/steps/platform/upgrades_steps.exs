@@ -758,14 +758,17 @@ defmodule HalC2.Steps.Platform.Upgrades do
   end
 
   step "only modules whose code changed are loaded", context do
-    assert {:ok, %{changed: [HalC2.Patch]}} = context.report
+    assert {:ok, %{changed: changed}} = context.report
+    assert Enum.sort(changed) == [HalC2.Patch, HalC2.Streams]
     assert function_exported?(HalC2.Patch, :__hal_c2_variant__, 0)
     context
   end
 
-  step "the report lists modules that need a restart", context do
+  step "a changed supervisor's functions load, and the report lists it to restart for",
+       context do
     assert {:ok, %{needs_restart: [HalC2.Streams]}} = context.report
-    refute function_exported?(HalC2.Streams, :__hal_c2_variant__, 0)
+    assert function_exported?(HalC2.Streams, :__hal_c2_variant__, 0)
+    assert Process.whereis(HalC2.Streams)
     context
   end
 

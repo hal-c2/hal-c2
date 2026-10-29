@@ -33,3 +33,8 @@ node_modules/
 
 # pnpm content-addressable store; never belongs in the repo.
 .pnpm-store/
+
+# Rust build output and the XDG data dir agents are pointed at. Neither is
+# tracked, and both were landing in HAL-C2 checkpoints (18 GB of them).
+target/
+.xdg-data/

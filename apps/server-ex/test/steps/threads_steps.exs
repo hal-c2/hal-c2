@@ -181,14 +181,19 @@ defmodule HalC2.Steps.Threads do
   end
 
   step "the user un-settles {string}", %{args: [thread]} = context do
-    {{:ok, _}, context} =
-      World.dispatch(context, %{
-        "type" => "thread.unsettle",
-        "threadId" => World.thread_id(context, thread)
-      })
+    if String.contains?(context[:file] || "", "pull-request-links") do
+      # Discovery watches for this un-settle; its steps arrange that first.
+      HalC2.Steps.Orchestration.PullRequestLinks.un_settle_trigger(context, thread)
+    else
+      {{:ok, _}, context} =
+        World.dispatch(context, %{
+          "type" => "thread.unsettle",
+          "threadId" => World.thread_id(context, thread)
+        })
 
-    World.await_row(World.thread_id(context, thread), &(&1["settledOverride"] == "active"))
-    context
+      World.await_row(World.thread_id(context, thread), &(&1["settledOverride"] == "active"))
+      context
+    end
   end
 
   step "the settle sweep runs", context do
