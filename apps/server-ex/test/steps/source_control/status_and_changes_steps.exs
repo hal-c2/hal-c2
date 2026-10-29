@@ -188,10 +188,20 @@ defmodule HalC2.Steps.SourceControl.StatusAndChanges do
   end
 
   step "{int} seconds pass", %{args: [seconds]} = context do
-    {message, remaining} = elapse(context)
-    assert message == :fetch
-    assert remaining <= seconds * 1_000
-    context
+    if root = context[:codex_skills_read] do
+      # A Codex skills read (providers/codex.feature) is bounded at 20 seconds of
+      # its own; asking for the folder's skills is what waits it out.
+      reply = HalC2.Environment.refresh_providers(%{"cwd" => root, "instanceId" => "codex"})
+
+      context
+      |> Map.merge(%{reply: reply, skills_cwd: root})
+      |> Map.delete(:codex_skills_read)
+    else
+      {message, remaining} = elapse(context)
+      assert message == :fetch
+      assert remaining <= seconds * 1_000
+      context
+    end
   end
 
   step "the MC fetches from the remote and the ahead and behind counts are updated",

@@ -601,6 +601,9 @@ export function presentTuiThread(projection: OrchestrationV2ThreadProjection): O
     turnItems: projection.turnItems,
     activeProviderThreadId: thread.activeProviderThreadId,
     runs: projection.runs,
+    // The timeline lists work that is still running, so a monitor from a
+    // settled turn stays listed while the next turn runs.
+    listDuringActiveRun: true,
   });
   const latestRun = deriveLatestThreadRun(settled);
   const runtime = deriveThreadRuntime(settled);

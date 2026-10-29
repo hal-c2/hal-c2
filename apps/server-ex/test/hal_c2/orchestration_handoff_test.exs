@@ -181,6 +181,79 @@ defmodule HalC2.Orchestration.HandoffTest do
              )
   end
 
+  # The source of a fork at run 1, with run 2 after it on one provider thread.
+  # `first` is run 1's native turn id (nil: none was recorded; :gone: its
+  # provider turn is not recorded at all).
+  defp fork_source(first) do
+    turn = fn ordinal, native ->
+      {"provider-turn",
+       %{
+         "id" => "pturn-#{ordinal}",
+         "providerThreadId" => "pthread-1",
+         "runAttemptId" => "attempt-#{ordinal}",
+         "nativeTurnRef" => %{"driver" => "x", "nativeId" => native},
+         "ordinal" => ordinal,
+         "status" => "completed"
+       }}
+    end
+
+    state(
+      [
+        {"run-attempt", %{"id" => "attempt-1", "runId" => "run-1"}},
+        {"run-attempt", %{"id" => "attempt-2", "runId" => "run-2"}},
+        if(first == :gone, do: nil, else: turn.(1, first)),
+        turn.(2, "native-2")
+      ]
+      |> Enum.filter(& &1)
+    )
+  end
+
+  @point %{
+    "runId" => "run-1",
+    "providerThreadRef" => %{"driver" => "x", "nativeId" => "native-thread-1"}
+  }
+
+  test "a native fork cuts after the recorded turn" do
+    assert Handoff.fork_boundary(fork_source("native-1"), @point, "codex") ==
+             {:native, "native-1"}
+
+    assert Handoff.fork_boundary(fork_source("native-1"), @point, "claudeAgent") ==
+             {:native, "native-1"}
+  end
+
+  test "a fork point whose turn is not recorded cannot be honoured" do
+    assert {:error, message} = Handoff.fork_boundary(fork_source(:gone), @point, "codex")
+    assert message =~ "Cannot fork Codex thread from that turn"
+  end
+
+  test "Codex trims the turns after a fork point it kept no reference for" do
+    assert Handoff.fork_boundary(fork_source(nil), @point, "codex") == {:trim, 1, "native-2"}
+  end
+
+  test "Claude cannot fork from a turn with no recorded message position" do
+    assert {:error, message} = Handoff.fork_boundary(fork_source(nil), @point, "claudeAgent")
+    assert message =~ "no message position was recorded"
+    # A synthetic turn id is no position either.
+    assert {:error, _} = Handoff.fork_boundary(fork_source("turn:1"), @point, "claudeAgent")
+  end
+
+  test "turns of runs rolled back since are not after the boundary" do
+    source =
+      HalC2.StreamState.apply_event(fork_source(nil), %{
+        seq: 100,
+        kind: "run",
+        entity: "run-2",
+        patch: %{"s" => %{"id" => "run-2", "ordinal" => 2, "status" => "rolled_back"}}
+      })
+
+    assert Handoff.fork_boundary(source, @point, "codex") == {:trim, 0, nil}
+    assert Handoff.fork_boundary(source, @point, "claudeAgent") == {:trim, 0, nil}
+  end
+
+  test "no recorded provider turns at all is unknown, not an error" do
+    assert Handoff.fork_boundary(state([]), @point, "codex") == :unknown
+  end
+
   test "the note that messages were left out counts against the budget" do
     # The two requests and the newest answer are 60,000 characters with what joins them,
     # so they no longer fit once the note is counted.

@@ -1848,8 +1848,10 @@ defmodule HalC2.Orchestration do
     # A provider plugin that cannot stop a turn is not asked; `interrupt_undriven/2`
     # says so. A bundled provider's runtime is its plugin module, which `runtimes/2`
     # does not list.
+    active = active_runtime(thread_id, run_id)
+
     asked =
-      case active_runtime(thread_id, run_id) do
+      case active do
         nil ->
           runtimes(:interrupt, 2)
 
@@ -1859,8 +1861,41 @@ defmodule HalC2.Orchestration do
             else: []
       end
 
-    stopped = Enum.filter(asked, &interrupted?(&1, thread_id, run_id))
-    if stopped != [], do: :ok, else: interrupt_undriven(thread_id, run_id)
+    results = Enum.map(asked, &interrupt_result(&1, thread_id, run_id))
+
+    cond do
+      :ok in results ->
+        :ok
+
+      # A runtime that refuses the stop with a reason of its own — not that it
+      # has no turn, but that the stop could not be delivered to the one it has
+      # (the provider has not started it yet) — surfaces that reason: the turn
+      # is the runtime's to run on, not an undriven one to abandon.
+      active != nil and match?([{:error, _}], results) and
+          not no_turn?(hd(results)) ->
+        hd(results)
+
+      true ->
+        interrupt_undriven(thread_id, run_id)
+    end
+  end
+
+  defp no_turn?({:error, message}),
+    do: String.starts_with?(message, "no active") or String.starts_with?(message, "no running")
+
+  # A runtime's answer to a stop: `:ok`, its `{:error, message}`, or `:gone` for
+  # one that died as it was asked (its turn is `interrupt_undriven/2`'s to end).
+  defp interrupt_result(runtime, thread_id, run_id) do
+    case runtime.interrupt(thread_id, run_id) do
+      :ok -> :ok
+      {:error, message} when is_binary(message) -> {:error, message}
+      _ -> :gone
+    end
+  rescue
+    error in ArgumentError ->
+      if error.message =~ "unknown registry", do: :gone, else: reraise(error, __STACKTRACE__)
+  catch
+    :exit, _ -> :gone
   end
 
   # The runtime of the pinned run if it is active, or of the active run for a stop
@@ -1956,18 +1991,6 @@ defmodule HalC2.Orchestration do
     Logger.debug("a session call read as stopped exited with #{inspect(why)}")
   end
 
-  # A runtime that dies as it is asked leaves its turn to `interrupt_undriven/2`, and
-  # one whose registry is not running (an MC started without it) holds nothing to stop.
-  defp interrupted?(runtime, thread_id, run_id) do
-    runtime.interrupt(thread_id, run_id) == :ok
-  rescue
-    # Any other error out of an adapter is a bug, and must not read as nothing to stop.
-    error in ArgumentError ->
-      if error.message =~ "unknown registry", do: false, else: reraise(error, __STACKTRACE__)
-  catch
-    :exit, _ -> false
-  end
-
   defp interrupt_undriven(thread_id, run_id) do
     state = HalC2.Streams.state(thread_id)
     runs = StreamState.list(state, "run")
@@ -1977,6 +2000,8 @@ defmodule HalC2.Orchestration do
         Enum.find(runs, &(&1["status"] in @active_statuses))
 
     latest = Enum.max_by(runs, &(&1["ordinal"] || 0), fn -> nil end)
+    thread = StreamState.get(state, "thread")[thread_id]
+    deleted? = thread != nil and thread["deletedAt"] != nil
 
     cond do
       # A turn still being handed to its provider, or one nothing drives any
@@ -1990,7 +2015,7 @@ defmodule HalC2.Orchestration do
       # and the stop counts as done rather than an error to retry. A run that
       # failed or was cancelled is a different answer: nothing was stopped.
       run != nil and latest != nil and run["id"] == latest["id"] and
-          run["status"] == "completed" ->
+        run["status"] == "completed" and not deleted? ->
         :ok
 
       true ->
@@ -3592,6 +3617,27 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # Two Claude instances whose config directories resolve to the same home share
+  # Claude Code's own sessions, so a run moved between them resumes the native
+  # thread the other instance started instead of starting a new conversation.
+  defp carried_native_ref(state, "claudeAgent", instance, cwd) do
+    home = HalC2.Claude.Provider.config_dir(instance, cwd)
+
+    state
+    |> StreamState.list("provider-thread")
+    |> Enum.find_value(fn other ->
+      if other["nativeThreadRef"] != nil and
+           (other["driver"] || driver_for(other["providerInstanceId"] || "claudeAgent")) ==
+             "claudeAgent" and
+           (other["providerInstanceId"] || "claudeAgent") != instance and
+           HalC2.Claude.Provider.config_dir(other["providerInstanceId"] || "claudeAgent", cwd) ==
+             home,
+         do: other["nativeThreadRef"]
+    end)
+  end
+
+  defp carried_native_ref(_state, _driver, _instance, _cwd), do: nil
+
   # Points the relocated runs, their attempts and their provider turns at their new
   # provider threads; nodes and turn items stay as they were (`relocated/4`).
   defp references(state, runs) do
@@ -3759,6 +3805,12 @@ defmodule HalC2.Orchestration do
               driver,
               instance
             )
+            |> then(fn record ->
+              case carried_native_ref(state, driver, instance, cwd) do
+                nil -> record
+                ref -> Map.put(record, "nativeThreadRef", ref)
+              end
+            end)
           )
         ]
       end
@@ -3843,6 +3895,16 @@ defmodule HalC2.Orchestration do
         |> Enum.reject(&is_nil/1)
       )
 
+    # A first run on an instance that shares another's Claude home continues
+    # that instance's native thread (see `carried_native_ref/4`).
+    carried_ref =
+      if provider_thread == nil,
+        do: carried_native_ref(state, driver, instance, cwd)
+
+    provider_thread =
+      provider_thread ||
+        if(carried_ref, do: %{"nativeThreadRef" => carried_ref})
+
     handoff =
       HalC2.Orchestration.Handoff.plan(state, provider_thread, ids, ordinal, at)
 
@@ -3876,6 +3938,9 @@ defmodule HalC2.Orchestration do
       # A turn the provider started by itself, whose output its runtime already has
       # (a Claude wake, `HalC2.Claude.ThreadRuntime`): the message is not sent to it.
       wake: command["providerWake"] == true,
+      # A run confined to reading the workspace, which providers that can
+      # confine a run (Claude's `--tools`) honour.
+      read_only: command["readOnly"] == true,
       native_thread_id: get_in(provider_thread || %{}, ["nativeThreadRef", "nativeId"]),
       head: get_in(provider_thread || %{}, ["nativeConversationHeadRef", "nativeId"])
     }

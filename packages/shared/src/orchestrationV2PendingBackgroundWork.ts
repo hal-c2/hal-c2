@@ -126,6 +126,11 @@ function nativeTaskIdFromTurnItem(item: PendingBackgroundWorkTurnItem): string {
  * Excludes turn items whose run resolves to `rolled_back` (abandoned work);
  * items with a null or absent run id stay eligible (matches SQL shell path).
  * Does not consult subagent entities (those double-count turn items).
+ *
+ * With `listDuringActiveRun`, the same sources feed a listing of work that
+ * is still running (not the post-settlement wait): while a run is active the
+ * roster and the items of other runs stay listed, and only the active run's
+ * own items — its foreground work — are dropped.
  */
 export function derivePendingBackgroundWork(input: {
   readonly latestRun: PendingBackgroundWorkRun | null | undefined;
@@ -139,17 +144,23 @@ export function derivePendingBackgroundWork(input: {
    * pass projection runs so policy cannot drift.
    */
   readonly runs?: ReadonlyArray<PendingBackgroundWorkRun>;
+  /** List still-running work while a run is active instead of waiting for settlement. */
+  readonly listDuringActiveRun?: boolean;
 }): ReadonlyArray<PendingBackgroundWorkTask> {
-  const hasActiveRun =
-    input.hasActiveRun ??
-    input.runs?.some(
-      (run) => run.status === "preparing" || run.status === "starting" || run.status === "running",
-    ) ??
-    false;
-  if (hasActiveRun) {
+  const activeRunIds = new Set(
+    (input.runs ?? [])
+      .filter(
+        (run) =>
+          run.status === "preparing" || run.status === "starting" || run.status === "running",
+      )
+      .map((run) => String(run.id)),
+  );
+  const hasActiveRun = input.hasActiveRun ?? activeRunIds.size > 0;
+  const listing = input.listDuringActiveRun === true && hasActiveRun;
+  if (hasActiveRun && !listing) {
     return [];
   }
-  if (!isLatestRunSettledForBackgroundWait(input.latestRun)) {
+  if (!listing && !isLatestRunSettledForBackgroundWait(input.latestRun)) {
     return [];
   }
 
@@ -190,6 +201,15 @@ export function derivePendingBackgroundWork(input: {
     // Null/absent run id stays eligible; only known rolled_back runs drop.
     const itemRunId = item.runId;
     if (itemRunId !== undefined && itemRunId !== null && rolledBackRunIds.has(String(itemRunId))) {
+      continue;
+    }
+    // While listing during a run, that run's own items are its foreground work.
+    if (
+      listing &&
+      itemRunId !== undefined &&
+      itemRunId !== null &&
+      activeRunIds.has(String(itemRunId))
+    ) {
       continue;
     }
 

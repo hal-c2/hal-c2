@@ -820,8 +820,9 @@ bool TimelineModel::apply(const QString& kind, const QString& id, const QJsonObj
     m_workspaceTouched = true;
   }
   const bool replaced = patch.value(QLatin1String("d")).toBool();
-  // A command starting, settling or going away; not its streamed output.
-  if (type == QLatin1String("command_execution") &&
+  // A command or a background tool starting, settling or going away; not its
+  // streamed output.
+  if ((type == QLatin1String("command_execution") || type == QLatin1String("dynamic_tool")) &&
       (!existed || !next || replaced || patch.contains(QLatin1String("s")) || patch.contains(QLatin1String("u")))) {
     m_agentsTouched = true;
   }

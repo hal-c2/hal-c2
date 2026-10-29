@@ -88,9 +88,14 @@ defmodule HalC2.ScheduledTasksProofTest do
       refute_reachable(proof, unquote(init), "mixed", [])
     end
 
-    test "a task never has two runs at once, in the table or as processes, from #{init}",
-         %{proof: proof} do
+    # Two searches, two tests: each gets its own Maude, so neither pays for the
+    # states the other explored (HalC2.Proof's setup), and neither can starve
+    # the other of the test's time budget on a slow runner.
+    test "a task never has two runs at once in the table, from #{init}", %{proof: proof} do
       refute_reachable(proof, unquote(init), "twoEntries", [])
+    end
+
+    test "a task never has two runs at once as processes, from #{init}", %{proof: proof} do
       refute_reachable(proof, unquote(init), "twoRunners", [])
     end
 

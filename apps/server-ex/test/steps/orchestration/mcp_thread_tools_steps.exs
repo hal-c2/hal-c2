@@ -1177,6 +1177,17 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
 
   step ~r/^"(?<thread>[^"]+)" is (?<result>unpinned|settled|unsettled|snoozed|not snoozed|unarchived|marked unread)$/,
        %{args: [thread, result]} = context do
+    # In pull-request-links these arrange the state discovery and the sync
+    # cadence then observe, rather than awaiting a tool's doing.
+    if String.contains?(context[:file] || "", "pull-request-links") and
+         result in ["settled", "unarchived"] do
+      HalC2.Steps.Orchestration.PullRequestLinks.arrange_state(context, thread, result)
+    else
+      await_organized(context, thread, result)
+    end
+  end
+
+  defp await_organized(context, thread, result) do
     action =
       case result do
         "unpinned" -> "unpin"

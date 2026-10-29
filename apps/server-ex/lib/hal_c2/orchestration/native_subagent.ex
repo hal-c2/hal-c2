@@ -281,6 +281,23 @@ defmodule HalC2.Orchestration.NativeSubagent do
     sub
   end
 
+  @doc "Shows the subagent as `status` while it runs: its entity, node and turn item."
+  def show(sub, status) do
+    at = Entities.now()
+    put = &Map.merge(&1, %{"status" => status, "updatedAt" => at})
+
+    HalC2.Streams.transact(sub.thread, :thread, fn state ->
+      {[
+         Orchestration.upsert(state, "subagent", sub.id, put),
+         Orchestration.upsert(state, "node", sub.id, put),
+         Orchestration.upsert(state, "turn-item", sub.item, put)
+       ]
+       |> Enum.filter(&is_tuple/1), :ok}
+    end)
+
+    sub
+  end
+
   @doc "Shows what the running subagent is doing now, on its entity and its turn item."
   def progress(sub, text, opts \\ []) do
     at = Entities.now()

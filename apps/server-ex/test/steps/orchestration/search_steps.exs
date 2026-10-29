@@ -154,7 +154,14 @@ defmodule HalC2.Steps.Orchestration.Search do
   end
 
   step "{string} comes before {string}", %{args: [first, second]} = context do
-    ids = Enum.map(matches(context), & &1["threadId"])
+    # A search's matches, or another listing of names (`context.listing`,
+    # as the linked-threads steps leave it).
+    ids =
+      case context.reply do
+        {:ok, %{"matches" => _}} -> Enum.map(matches(context), & &1["threadId"])
+        _ -> context.listing
+      end
+
     assert Enum.find_index(ids, &(&1 == first)) < Enum.find_index(ids, &(&1 == second))
     context
   end

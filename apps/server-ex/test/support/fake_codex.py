@@ -31,8 +31,32 @@ def trace(entry):
 trace({"argv": sys.argv[1:], "home": os.environ.get("CODEX_HOME")})
 
 def send(msg):
-    sys.stdout.write(json.dumps(msg) + "\n")
-    sys.stdout.flush()
+    # FAKE_CODEX_FRAMING plays the wire's shapes: "split" writes a message in two
+    # flushes, "crlf" ends lines as Windows does, "blank" pads them with blank
+    # lines, and "batch" flushes only when a turn or a reply ends, so several
+    # messages arrive in one read.
+    framing = os.environ.get("FAKE_CODEX_FRAMING")
+    line = json.dumps(msg)
+    if framing == "split":
+        half = len(line) // 2
+        sys.stdout.write(line[:half])
+        sys.stdout.flush()
+        time.sleep(0.05)
+        sys.stdout.write(line[half:] + "\n")
+        sys.stdout.flush()
+    elif framing == "crlf":
+        sys.stdout.write(line + "\r\n")
+        sys.stdout.flush()
+    elif framing == "blank":
+        sys.stdout.write("\n" + line + "\n\n")
+        sys.stdout.flush()
+    elif framing == "batch":
+        sys.stdout.write(line + "\n")
+        if msg.get("method") == "turn/completed" or "result" in msg or "error" in msg:
+            sys.stdout.flush()
+    else:
+        sys.stdout.write(line + "\n")
+        sys.stdout.flush()
 
 # Waits until the test creates the file NAME in FAKE_CODEX_GATE: the test's cue that it
 # saw what the reply so far wrote.
@@ -139,6 +163,21 @@ for line in sys.stdin:
     msg = json.loads(line)
     trace({"in": msg})
     method, params, mid = msg.get("method"), msg.get("params") or {}, msg.get("id")
+    # Wire test hooks: "test/hang" is a request that is never answered,
+    # "test/exit" leaves with code 1, and "test/garbage" writes a line that is
+    # not a protocol message at all.
+    if method == "test/hang":
+        continue
+    if method == "test/exit":
+        sys.exit(1)
+    if method == "test/garbage":
+        sys.stdout.write("this is not a protocol message\n")
+        sys.stdout.flush()
+        continue
+    if method == "test/flood":
+        sys.stderr.write("x" * 300_000 + "\n")
+        sys.stderr.flush()
+        continue
     if os.environ.get("FAKE_CODEX_LOG") and method:
         with open(os.environ["FAKE_CODEX_LOG"], "a") as f:
             f.write(json.dumps({"method": method, "params": params}) + "\n")
@@ -184,14 +223,30 @@ for line in sys.stdin:
             send({"method": "item/completed", "params": {**ctx, "item": {**item, "text": text}}})
         continue
     if method == "initialize":
+        # FAKE_CODEX_PROBE_ERROR is answered as the initialize call's error, and
+        # FAKE_CODEX_PROBE_HANG leaves it unanswered: a status check's two failures.
+        if os.environ.get("FAKE_CODEX_PROBE_HANG"):
+            continue
+        if os.environ.get("FAKE_CODEX_PROBE_ERROR"):
+            send({"id": mid, "error": {"code": -32000, "message": os.environ["FAKE_CODEX_PROBE_ERROR"]}})
+            continue
         send({"id": mid, "result": {"userAgent": "fake", "platformOs": "test"}})
     elif method == "model/list":
         # FAKE_CODEX_MODELS replaces the default catalogue.
         send({"id": mid, "result": {"data": json.loads(os.environ.get("FAKE_CODEX_MODELS") or "null") or [
             {"id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "GPT-6 Luna", "isDefault": True},
             {"id": "gpt-5.5", "model": "gpt-5.5", "displayName": "GPT-5.5", "isDefault": False}]}})
+    elif method == "skills/list":
+        # FAKE_CODEX_SKILLS_HANG never answers; FAKE_CODEX_SKILLS is the JSON skill list.
+        if os.environ.get("FAKE_CODEX_SKILLS_HANG"):
+            continue
+        skills = json.loads(os.environ.get("FAKE_CODEX_SKILLS") or "null") or [
+            {"name": "tidy", "path": "/skills/tidy/SKILL.md", "enabled": True, "description": "Tidy up"}]
+        send({"id": mid, "result": {"data": [{"cwd": cwds, "skills": skills} for cwds in params.get("cwds", [])]}})
     elif method == "feedback/upload":
         send({"id": mid, "result": {"threadId": f"feedback-for-{params['threadId']}"}})
+    elif method == "thread/resume" and os.environ.get("FAKE_CODEX_RESUME_ERROR"):
+        send({"id": mid, "error": {"code": -32600, "message": os.environ["FAKE_CODEX_RESUME_ERROR"]}})
     elif method in ("thread/start", "thread/resume"):
         # FAKE_CODEX_SESSION_LOG collects each thread/start and thread/resume's params.
         if os.environ.get("FAKE_CODEX_SESSION_LOG"):
@@ -233,6 +288,10 @@ for line in sys.stdin:
         rollout_append({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": prompt}]}})
         if "exit before starting" in text:
             sys.exit(1)
+        # With FAKE_CODEX_HOLD_TURN_START set, the turn is not started (and its
+        # result not sent) until the test creates the gate file "turn-start".
+        if os.environ.get("FAKE_CODEX_HOLD_TURN_START"):
+            gate("turn-start")
         send({"id": mid, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
         ctx = {"threadId": thread_id, "turnId": turn_id}
         send({"method": "turn/started", "params": {**ctx, "turn": {"id": turn_id, "status": "inProgress"}}})
@@ -267,6 +326,10 @@ for line in sys.stdin:
             waiting_ctx = ctx
             continue
         if "wait" in text or "finishing" in text or "closing" in text:
+            # FAKE_CODEX_STDERR_FLOOD writes far more than a pipe buffer holds.
+            if os.environ.get("FAKE_CODEX_STDERR_FLOOD"):
+                sys.stderr.write("x" * 300_000 + "\n")
+                sys.stderr.flush()
             waiting_ctx = ctx
             finishing = "finishing" in text
             closing = "closing" in text
@@ -494,6 +557,9 @@ for line in sys.stdin:
     elif method == "thread/fork":
         thread_id = f"forked-{params['threadId']}-at-{params.get('lastTurnId')}"
         send({"id": mid, "result": {"thread": {"id": thread_id}}})
+    elif method == "thread/revert" and os.environ.get("FAKE_CODEX_NO_REVERT"):
+        # FAKE_CODEX_NO_REVERT: cutting paginated history before a turn is refused.
+        send({"id": mid, "error": {"code": -32600, "message": "thread/revert is not available"}})
     elif method == "thread/revert" and paginated and page_size and int(params["beforeTurnId"].rsplit("-", 1)[1]) <= turns - page_size:
         send({"id": mid, "error": {"code": -32600, "message": f"{params['beforeTurnId']} is not on the latest history page"}})
     elif method == "thread/revert" and paginated:
@@ -550,6 +616,8 @@ for line in sys.stdin:
         send({"id": mid, "result": {"terminated": True}})
     elif method == "turn/interrupt":
         send({"id": mid, "result": {}})
-        send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})
+        # FAKE_CODEX_IGNORE_INTERRUPT acknowledges the stop and never ends the turn.
+        if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
+            send({"method": "turn/completed", "params": {"threadId": thread_id, "turn": {"id": params["turnId"], "status": "interrupted"}}})
     else:
         send({"id": mid, "error": {"code": -32601, "message": method}})
