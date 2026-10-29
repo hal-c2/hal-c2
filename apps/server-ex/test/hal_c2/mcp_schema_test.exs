@@ -53,6 +53,48 @@ defmodule HalC2.Mcp.SchemaTest do
     assert {:error, _} = Schema.validate(schema, %{"mode" => "a", "text" => "toolong"})
   end
 
+  test "a discriminator property picks the object branch whose bounds apply" do
+    schema = %{
+      "anyOf" => [
+        %{
+          "type" => "object",
+          "properties" => %{
+            "type" => %{"type" => "string", "enum" => ["interval"]},
+            "everyMs" => %{"type" => "integer", "minimum" => 60_000}
+          },
+          "additionalProperties" => true
+        },
+        %{
+          "type" => "object",
+          "properties" => %{
+            "type" => %{"type" => "string", "enum" => ["fixed_time"]},
+            "weekdays" => %{
+              "type" => "array",
+              "items" => %{"type" => "integer", "minimum" => 0, "maximum" => 6}
+            }
+          },
+          "additionalProperties" => true
+        }
+      ]
+    }
+
+    assert Schema.validate(schema, %{"type" => "interval", "everyMs" => 60_000}) == :ok
+    assert {:error, _} = Schema.validate(schema, %{"type" => "interval", "everyMs" => 1_000})
+    assert Schema.validate(schema, %{"type" => "fixed_time", "weekdays" => [1]}) == :ok
+    assert {:error, _} = Schema.validate(schema, %{"type" => "fixed_time", "weekdays" => [9]})
+  end
+
+  test "the advertised schedule_task schema refuses a sub-minute interval" do
+    %{"inputSchema" => schema} =
+      Enum.find(HalC2.Mcp.Tools.list(), &(&1["name"] == "schedule_task"))
+
+    good = %{"prompt" => "x", "schedule" => %{"type" => "interval", "everyMs" => 3_600_000}}
+    bad = %{"prompt" => "x", "schedule" => %{"type" => "interval", "everyMs" => 1_000}}
+
+    assert Schema.validate(schema, good) == :ok
+    assert {:error, _} = Schema.validate(schema, bad)
+  end
+
   test "every advertised tool schema accepts its empty-arguments shape when nothing is required" do
     for %{"name" => name, "inputSchema" => schema} <- HalC2.Mcp.Tools.list(),
         (schema["required"] || []) == [] do

@@ -14,8 +14,10 @@ defmodule HalC2.Mcp.Schema do
   project `title` is the folder's name), the tools ignore fields they do
   not read and values of a kind they do not use (a numeric `model` narrows
   nothing), and handlers answer values outside an `enum` with their own
-  errors ("Unknown action shout."). A type only picks which `anyOf` branch
-  a value is measured against; what is measured must fit its bounds.
+  errors ("Unknown action shout."). A type (and, between object branches,
+  a property fixed to one value, such as `type: "interval"`) only picks
+  which `anyOf` branch a value is measured against; what is measured must
+  fit its bounds.
   """
 
   @doc "`{:error, message}` naming the first offending field, or `:ok`."
@@ -34,9 +36,14 @@ defmodule HalC2.Mcp.Schema do
   defp check(_schema, _value, _at), do: :ok
 
   # Only the branches written for the value's kind measure it; a value of a
-  # kind no branch names is the handler's to ignore or answer.
+  # kind no branch names is the handler's to ignore or answer. Between
+  # object branches, a branch whose discriminator property (one fixed to a
+  # single value) is present with another value is not written for it
+  # either: otherwise `{type: "interval", everyMs: 1000}` would slip past
+  # the interval branch's minimum through the `fixed_time` branch, which
+  # never declares `everyMs`.
   defp any_of(%{"anyOf" => schemas}, value, at) do
-    case Enum.filter(schemas, &kind?(&1, value)) do
+    case Enum.filter(schemas, &(kind?(&1, value) and not discriminated_out?(&1, value))) do
       [] ->
         :ok
 
@@ -77,6 +84,34 @@ defmodule HalC2.Mcp.Schema do
   end
 
   defp kind?(_schema, _value), do: true
+
+  defp discriminated_out?(%{"properties" => properties}, value) when is_map(value) do
+    Enum.any?(properties, fn {field, schema} ->
+      case fixed_value(schema) do
+        {:ok, fixed} -> Map.has_key?(value, field) and value[field] != fixed
+        :none -> false
+      end
+    end)
+  end
+
+  defp discriminated_out?(_schema, _value), do: false
+
+  # The one value a property schema allows, when it allows exactly one.
+  defp fixed_value(%{"enum" => [only]}), do: {:ok, only}
+  defp fixed_value(%{"const" => only}), do: {:ok, only}
+
+  defp fixed_value(%{"anyOf" => schemas}) do
+    schemas
+    |> Enum.reject(&(&1["type"] == "null"))
+    |> Enum.find_value(:none, fn schema ->
+      case fixed_value(schema) do
+        {:ok, _} = fixed -> fixed
+        :none -> nil
+      end
+    end)
+  end
+
+  defp fixed_value(_schema), do: :none
 
   defp bounds(schema, value, at) when is_number(value) do
     cond do
