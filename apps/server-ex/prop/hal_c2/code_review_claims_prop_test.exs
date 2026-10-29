@@ -25,7 +25,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   - what this machine shares (`claims/1`) is the model's row for each review, a commit
     it reviewed held when the review is queued again for another head;
   - the `reviews` snapshot, `elsewhere` included, and the topic clients follow, match
-    the model;
+    the model, a review left to the laptop shown out of reach exactly while it is cut
+    off;
   - nothing is posted exactly when the connected laptop has published the reviewed
     commit or is restarting its plugin, or GitHub already has a review of that commit
     under the user's login; the review is published then, but while the laptop
@@ -742,14 +743,15 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     end
   end
 
-  # Cut off: once the plugin heard, by what it publishes when it had left a review the
-  # laptop had not started to the laptop, and by the laptop's own nodedown here otherwise.
+  # Cut off: once the plugin heard, by what it publishes when it had left a review to
+  # the laptop (one the laptop had not started gone, the rest shown out of reach), and
+  # by the laptop's own nodedown here otherwise.
   def disconnect do
     node = laptop().node
     gone = to_string(node)
+    on? = &match?(%{"node" => ^gone}, &1["elsewhere"])
     {:ok, state} = get_state(Process.whereis(@server))
-    soft? = &(match?(%{"node" => ^gone}, &1["elsewhere"]) and &1["elsewhere"]["claimed"] != true)
-    left? = Enum.any?(state.reviews, fn {_, r} -> soft?.(r) end)
+    left? = Enum.any?(state.reviews, fn {_, r} -> on?.(r) end)
     true = Node.disconnect(node)
 
     receive do
@@ -758,14 +760,22 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       10_000 -> problem("#{gone} never went down")
     end
 
-    if left?,
-      do: await_topic(&(not Enum.any?(&1["reviews"], soft?)))
+    shown? =
+      &(not on?.(&1) or (&1["elsewhere"]["claimed"] == true and &1["elsewhere"]["away"] == true))
+
+    if left?, do: await_topic(&Enum.all?(&1["reviews"], shown?))
 
     observe(:ok)
   end
 
+  # Back: once the plugin heard, by what it publishes when it had left a review to the
+  # laptop, no longer shown out of reach, and by the laptop's own nodeup here otherwise.
   def reconnect do
     node = laptop().node
+    back = to_string(node)
+    on? = &match?(%{"node" => ^back}, &1["elsewhere"])
+    {:ok, state} = get_state(Process.whereis(@server))
+    left? = Enum.any?(state.reviews, fn {_, r} -> on?.(r) end)
     true = Node.connect(node)
 
     receive do
@@ -773,6 +783,12 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     after
       10_000 -> problem("#{node} never came up")
     end
+
+    if left?,
+      do:
+        await_topic(
+          &Enum.all?(&1["reviews"], fn r -> not on?.(r) or r["elsewhere"]["away"] == false end)
+        )
 
     :global.sync()
     observe(:ok)
@@ -917,13 +933,15 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   defp review_view(r) do
     key = r["key"]
     gone = to_string(laptop().node)
+    # Shown out of reach exactly while the laptop is cut off.
+    away = gone not in Enum.map(Node.list(), &to_string/1)
 
     elsewhere =
       case r["elsewhere"] do
         nil ->
           nil
 
-        %{"machine" => "laptop", "node" => ^gone, "status" => status} = other ->
+        %{"machine" => "laptop", "node" => ^gone, "status" => status, "away" => ^away} = other ->
           {status, other["claimed"] == true}
 
         other ->

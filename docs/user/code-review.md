@@ -10,7 +10,8 @@ Each machine reviews the repositories of its own projects, with its own agents.
 When several of your machines are in one cluster and watch the same repository,
 one of them reviews each commit of a pull request; the others show the review
 with the machine it runs on, and take it over if that machine leaves before
-starting it. Machines that cannot reach each other each review on their own, and
+starting it. If that machine leaves in the middle of a review, the others show it
+as out of reach, and you can review the commit on one of them. Machines that cannot reach each other each review on their own, and
 a commit another machine already posted a review of is not posted again, and shows
 as published.
 

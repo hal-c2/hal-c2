@@ -112,6 +112,11 @@ Item {
 
     // Where another of the user's machines has the pull request's head.
     function elsewhereText(elsewhere) {
+        const where = page.elsewhereWhere(elsewhere);
+        return elsewhere.away ? qsTr("%1, out of reach").arg(where) : where;
+    }
+
+    function elsewhereWhere(elsewhere) {
         switch (elsewhere.status) {
         case "running":
             return qsTr("Reviewing on %1").arg(elsewhere.machine);
@@ -547,8 +552,9 @@ Item {
 
                         ShellButton {
                             objectName: "codeReviewRetry"
-                            // Another machine reviews this head; a review here would be a second one.
-                            visible: findings.review !== null && !findings.review.elsewhere && !["running", "queued", "publishing"].includes(findings.status)
+                            // Another machine reviews this head; a review here would be a second one,
+                            // unless that machine is out of reach and may not come back.
+                            visible: findings.review !== null && (!findings.review.elsewhere || findings.review.elsewhere.away === true) && !["running", "queued", "publishing"].includes(findings.status)
                             primary: findings.status === "ready" || findings.status === "failed"
                             enabled: page.busy === 0
                             text: findings.status === "ready" ? qsTr("Review") : findings.status === "failed" ? qsTr("Try again") : qsTr("Review again")

@@ -1317,6 +1317,43 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "{string} is reviewing \#{int}", %{args: [label, number]} = context do
+    context = open(context, number)
+    assert {:ok, _} = on_plugin(context, label, "refresh")
+    {_, context} = await_peer(context, number, &(&1["checkout"] && &1["status"] == "running"))
+    context
+  end
+
+  step "this machine shows \#{int} reviewing on {string}", %{args: [number, label]} = context do
+    context = refresh(context)
+
+    reviewing =
+      &match?(
+        %{
+          "elsewhere" => %{
+            "machine" => ^label,
+            "status" => "running",
+            "claimed" => true,
+            "away" => false
+          }
+        },
+        &1
+      )
+
+    {review, context} = await_review(context, number, reviewing)
+    assert review["status"] == "ready" and review["threadId"] == nil, inspect(review)
+    context
+  end
+
+  step "this machine shows \#{int} reviewing on {string}, which is out of reach",
+       %{args: [number, label]} = context do
+    away =
+      &match?(%{"elsewhere" => %{"machine" => ^label, "status" => "running", "away" => true}}, &1)
+
+    {_, context} = await_review(context, number, away)
+    context
+  end
+
   step "{string} reviewed \#{int}", %{args: [label, number]} = context do
     context = open(context, number)
     assert {:ok, _} = on_plugin(context, label, "refresh")

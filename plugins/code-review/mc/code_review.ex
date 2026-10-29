@@ -19,8 +19,8 @@ defmodule HalC2Plugins.CodeReview do
   leaves a pull request another machine has to it (`elsewhere` on the review), and
   a run claims its commit under a lock across the machines connected now, so of two
   that start at once one reviews and the other steps back. A commit another machine
-  started reviewing stays its own while that machine is out of reach; one it had
-  only queued is taken over. A post is under a lock too, and is not made when
+  started reviewing stays its own while that machine is out of reach, unless the user
+  asks for it here; one it had only queued is taken over. A post is under a lock too, and is not made when
   another machine says it posted that commit or the pull request already has the
   review of it; the review is published then. A machine on its own reviews as if
   there were no other.
@@ -742,22 +742,31 @@ defmodule HalC2Plugins.CodeReview do
 
   # What a machine that left had queued is no longer anyone's: those reviews are
   # looked at again, without waiting for the next look. A commit it started
-  # reviewing goes with it (`away/2`).
+  # reviewing goes with it (`away/2`), and shows it is out of reach.
   def handle_info({:nodedown, node}, state) do
     gone = to_string(node)
+    on = for {key, %{"elsewhere" => %{"node" => ^gone} = other}} <- state.reviews, do: {key, other}
 
-    case for(
-           {key, %{"elsewhere" => %{"node" => ^gone} = other}} <- state.reviews,
-           other["claimed"] != true,
-           do: key
-         ) do
-      [] ->
+    case for({key, other} <- on, other["claimed"] != true, do: key) do
+      [] when on == [] ->
         {:noreply, state}
+
+      [] ->
+        {:noreply, announce(state)}
 
       keys ->
         reviews = Enum.reduce(keys, state.reviews, &put_in(&2[&1]["elsewhere"], nil))
         {:noreply, %{state | reviews: reviews} |> look_again() |> changed()}
     end
+  end
+
+  # A machine back in reach has its reviews again: they no longer show it away.
+  def handle_info({:nodeup, node}, state) do
+    back = to_string(node)
+
+    if Enum.any?(state.reviews, fn {_key, review} -> match?(%{"node" => ^back}, review["elsewhere"]) end),
+      do: {:noreply, announce(state)},
+      else: {:noreply, state}
   end
 
   # Another machine's queued and claimed reviews changed: where the reviews this
@@ -820,14 +829,19 @@ defmodule HalC2Plugins.CodeReview do
   # that machine is out of reach: it has the review still, done or not, and takes it
   # back with it. A connected machine that no longer says so has let it go.
   defp away(review, head) do
-    with %{"claimed" => true, "node" => node} = other <- review["elsewhere"],
+    with %{"claimed" => true} = other <- review["elsewhere"],
          ^head <- review["headSha"],
-         false <- node in Enum.map(Node.list(), &to_string/1) do
+         true <- out_of_reach?(other) do
       other
     else
       _ -> nil
     end
   end
+
+  # Whether the machine another's row is from is not connected now. The user may ask
+  # for its review here then, as that machine may not come back.
+  defp out_of_reach?(%{"node" => node}), do: node not in Enum.map(Node.list(), &to_string/1)
+  defp out_of_reach?(_other), do: false
 
   # --- looking at the watched repositories ----------------------------------------------
 
@@ -1164,8 +1178,9 @@ defmodule HalC2Plugins.CodeReview do
         known && known["status"] in ~w(queued running) ->
           put(state, review)
 
-        # Another machine has this commit; an ask here is its to answer too.
-        other && reviewed != pr["headSha"] ->
+        # Another machine has this commit; an ask here is its to answer too, unless
+        # that machine is out of reach.
+        other && reviewed != pr["headSha"] && not (asked? and out_of_reach?(other)) ->
           put(state, Map.put(review, "elsewhere", other))
 
         asked? ->
@@ -2148,6 +2163,12 @@ defmodule HalC2Plugins.CodeReview do
         |> Enum.sort_by(&{Enum.find_index(@order, fn s -> s == &1["status"] end), &1["repository"], -&1["number"]})
         |> Enum.map(fn review ->
           review = Map.drop(review, ["root"])
+
+          review =
+            if review["elsewhere"],
+              do: put_in(review["elsewhere"]["away"], out_of_reach?(review["elsewhere"])),
+              else: review
+
           if review["verdict"], do: Map.put(review, "headline", headline(review)), else: review
         end),
       "problem" =>

@@ -611,6 +611,27 @@ Feature: Agent code review
       Then #12 is not reviewed on this machine and still shows it reviewed on "laptop"
 
     @mc
+    Scenario: A review its machine left in the middle can be retried on this machine
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" is reviewing #12
+      And this machine shows #12 reviewing on "laptop"
+      When "laptop" goes offline
+      Then this machine shows #12 reviewing on "laptop", which is out of reach
+      When the user retries the review of #12
+      Then #12 is reviewed on this machine
+
+    @mc
+    Scenario: A comment asking for a review its machine left in the middle starts it on this machine
+      Given "code-review" watches "acme/api" selectively with the trigger "comment command"
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" is reviewing #12
+      And this machine shows #12 reviewing on "laptop"
+      When "laptop" goes offline
+      And someone comments "/review" on #12
+      Then #12 is reviewed on this machine
+
+    @mc
     Scenario: A commit two machines reviewed while apart is posted once
       Given "code-review" watches "acme/api" automatically
       And the user's machine "laptop" in the cluster watches "acme/api" automatically too
@@ -650,3 +671,10 @@ Feature: Agent code review
       When the user opens the review of #12 on the "Reviews" page
       Then the review says "Reviewing on laptop"
       And it cannot be reviewed again on this machine
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The reviews page lets the user review here what a machine out of reach had
+      Given the review of #12 is running on the user's machine "laptop", which is out of reach
+      When the user opens the review of #12 on the "Reviews" page
+      Then the review says "Reviewing on laptop, out of reach"
+      And it can be reviewed on this machine

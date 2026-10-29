@@ -73,6 +73,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
         "a save applies from the next step: the model looks at any time, starts a queued review in the step that queues it and has no display",
       "HalC2Plugins.CodeReview handle_cast {:launched, _}" => @shown,
       "HalC2Plugins.CodeReview handle_info {:EXIT, _, _}" => @shown,
+      "HalC2Plugins.CodeReview handle_info {:nodeup, _}" =>
+        "a machine back in reach no longer shows out of reach; " <> @shown,
       "HalC2Plugins.CodeReview handle_info _" =>
         "nodeup and the rest change nothing; connect stands for a nodeup",
       "HalC2Plugins.CodeReview state :settings" => @look,
