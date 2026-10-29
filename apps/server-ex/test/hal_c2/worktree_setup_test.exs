@@ -373,10 +373,47 @@ defmodule HalC2.WorktreeSetupTest do
     assert {:run, %{"name" => "Default"}} = setup.([])
     assert {:run, %{"name" => "Saved"}} = setup.([marked.("Saved")])
 
+    # Until the legacy fields are folded, the old map comes before the row's scripts;
+    # null there meant the defaults.
+    {:ok, version} =
+      HalC2.Settings.put(
+        %{
+          "defaultProjectScripts" => [marked.("Default")],
+          "projectScriptOverrides" => %{"p1" => [marked.("Legacy")]}
+        },
+        version
+      )
+
+    assert {:run, %{"name" => "Legacy"}} = setup.([marked.("Saved")])
+
+    {:ok, version} =
+      HalC2.Settings.put(
+        %{
+          "defaultProjectScripts" => [marked.("Default")],
+          "projectScriptOverrides" => %{"p1" => nil}
+        },
+        version
+      )
+
+    assert {:run, %{"name" => "Default"}} = setup.([marked.("Saved")])
+
+    {:ok, version} =
+      HalC2.Settings.put(
+        %{
+          "defaultProjectScripts" => [marked.("Default")],
+          "projectScriptOverrides" => %{"p1" => [marked.("Legacy")]},
+          "projectSettingsFolded" => true
+        },
+        version
+      )
+
+    assert {:run, %{"name" => "Default"}} = setup.([marked.("Saved")])
+
     {:ok, _} =
       HalC2.Settings.put(
         %{
           "defaultProjectScripts" => [marked.("Default")],
+          "projectScriptOverrides" => %{"p1" => [marked.("Legacy")]},
           "projectSettingsOverrides" => %{"p1" => %{"defaultProjectScripts" => [marked.("Own")]}}
         },
         version

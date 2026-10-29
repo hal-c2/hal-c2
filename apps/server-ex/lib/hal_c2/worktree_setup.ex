@@ -438,20 +438,31 @@ defmodule HalC2.WorktreeSetup do
   defp setup?(script), do: script["runOnWorktreeCreate"] == true
 
   # The project's actions as the clients resolve them (`resolveProjectScripts`): its own
-  # list in settings, else the scripts its row carries, else the environment's defaults.
+  # list in settings, else the environment's defaults once the legacy fields are folded.
+  # Before that, the legacy `projectScriptOverrides` map (which TS clients still write
+  # back with every settings change; null there meant the defaults), else the scripts
+  # its row carries, else the defaults.
   defp saved_scripts(project) do
     {settings, _} = HalC2.Settings.get()
+    id = project["id"]
+    defaults = settings["defaultProjectScripts"] || []
+    legacy = settings["projectScriptOverrides"] || %{}
+    own = project["scripts"] || []
 
-    case get_in(settings, ["projectSettingsOverrides", project["id"], "defaultProjectScripts"]) do
-      scripts when is_list(scripts) ->
+    cond do
+      is_list(
+        scripts = get_in(settings, ["projectSettingsOverrides", id, "defaultProjectScripts"])
+      ) ->
         scripts
 
-      _ ->
-        own = project["scripts"] || []
+      settings["projectSettingsFolded"] == true ->
+        defaults
 
-        if settings["projectSettingsFolded"] == true or own == [],
-          do: settings["defaultProjectScripts"] || [],
-          else: own
+      is_map_key(legacy, id) ->
+        legacy[id] || defaults
+
+      true ->
+        if own == [], do: defaults, else: own
     end
   end
 
