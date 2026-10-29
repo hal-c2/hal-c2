@@ -113,12 +113,14 @@ defmodule HalC2.Keybindings do
   @doc """
   Writes the rules. Only `HalC2.Settings` calls it, for an edit or a member's newer
   rules (`HalC2.Settings.Shared`), so the file is read and written one change at a time.
+  Owner-only, like settings.json, however it was written last.
   """
   def write(rules) do
     file = path()
     tmp = file <> ".tmp"
     File.mkdir_p!(Path.dirname(file))
     File.write!(tmp, JSON.encode!(rules))
+    File.chmod!(tmp, 0o600)
     File.rename!(tmp, file)
   end
 
