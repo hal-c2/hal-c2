@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { PluginCompileCheck, PluginManifest, PluginSettingField } from "./plugin.ts";
+import { PluginCompileCheck, PluginEntry, PluginManifest, PluginSettingField } from "./plugin.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(PluginManifest);
 
@@ -106,5 +106,43 @@ describe("PluginCompileCheck", () => {
         checkedAt: "2026-10-29T12:00:00Z",
       }),
     ).toThrow();
+  });
+});
+
+describe("PluginEntry", () => {
+  const decode = Schema.decodeUnknownSync(PluginEntry);
+  const entry = {
+    id: "notes",
+    name: "Notes",
+    version: "1",
+    kind: null,
+    kinds: [],
+    apiVersion: 1,
+    source: "package",
+    file: null,
+    description: null,
+    author: null,
+    homepage: null,
+    license: null,
+    icon: null,
+    screenshots: [],
+    enabled: false,
+    status: "disabled",
+    error: null,
+    reloadError: null,
+    lastError: null,
+    restarts: 0,
+    runsCode: true,
+    settingsSchema: [],
+    settings: {},
+    permissions: [],
+    denied: [],
+    contributes: {},
+    revision: "1",
+  };
+
+  it("takes an entry from an MC older than the compile check", () => {
+    expect(decode(entry)).toEqual(entry);
+    expect(decode({ ...entry, compileCheck: null }).compileCheck).toBeNull();
   });
 });

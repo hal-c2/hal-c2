@@ -289,8 +289,11 @@ export const PluginEntry = Schema.Struct({
   contributes: PluginContributions,
   /** Changes whenever the package's files change; clients reload its UI parts. */
   revision: Schema.NullOr(Schema.String),
-  /** The last `plugins.compile` of the version listed, until it is enabled. */
-  compileCheck: Schema.NullOr(PluginCompileCheck),
+  /**
+   * The last `plugins.compile` of the version listed, until it is enabled. Absent from
+   * an MC older than the check, as one in a cluster can be mid-upgrade.
+   */
+  compileCheck: Schema.optionalKey(Schema.NullOr(PluginCompileCheck)),
 });
 export type PluginEntry = typeof PluginEntry.Type;
 
