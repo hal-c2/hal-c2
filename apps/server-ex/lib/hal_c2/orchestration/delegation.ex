@@ -315,7 +315,7 @@ defmodule HalC2.Orchestration.Delegation do
 
   @doc """
   `finished/3` from the end of a child's run (or of background work no provider wakes
-  itself for), tried again while a thread it reads is too busy to answer, or it fails:
+  itself for), tried again when it fails (a thread it reads restarting under it, say):
   a report given up on leaves the task to the periodic check (`settle_if_quiet/1`) or the next boot (`reconcile/2`). Retries `attempts` times, waiting twice as long each time from `backoff` ms.
   """
   def report(thread_id, run_id, status, attempts \\ 6, backoff \\ 2_000) do
