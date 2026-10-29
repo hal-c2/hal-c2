@@ -51,10 +51,22 @@ defmodule HalC2.Plugins.Host do
   The agents threads can run on, as clients list them (`HalC2.Environment.providers/0`,
   so `name` is the one the user gave the instance), for a plugin that starts threads
   to pick from:
-  `%{"instanceId", "name", "models" => [%{"slug", "name", "isDefault", "options"}]}`,
-  where a model's `options` are its option descriptors (`%{"id", "label",
-  "type", "options"}`) — reasoning effort among them — for a plugin that picks
-  a model for its threads to pick among too.
+  `%{"instanceId", "name", "driverKind", "enabled", "installed", "status",
+  "availability", "auth" => %{"status"}, "models" => [%{"slug", "name",
+  "isDefault", "options"}]}`.
+
+  `driverKind` is the driver behind the instance (`"codex"`, `"claudeAgent"`,
+  `"opencode"`, `"acpRegistry"` for an agent from the ACP registry, a provider
+  plugin's driver), the same one `orchestrator_capabilities` names, so a plugin can
+  tell what kind of agent a user-named instance is. `enabled`, `installed`, `status`
+  (`ready`, `warning`, `error`, `disabled`), `availability` (`available`,
+  `unavailable`) and `auth.status` (`authenticated`, `unauthenticated`, `unknown`)
+  are the instance's provider status, for a plugin that offers only the instances
+  that can run a thread now. An instance's settings and messages are left out.
+
+  A model's `options` are its option descriptors (`%{"id", "label", "type",
+  "options"}`) — reasoning effort among them — for a plugin that picks a model for
+  its threads to pick among too.
   """
   def providers(_id) do
     {:ok,
@@ -62,6 +74,13 @@ defmodule HalC2.Plugins.Host do
        %{
          "instanceId" => provider["instanceId"],
          "name" => provider["displayName"] || provider["instanceId"],
+         "driverKind" => provider["driver"],
+         "enabled" => provider["enabled"] != false,
+         "installed" => provider["installed"] != false,
+         "status" => provider["status"],
+         # A snapshot without one is available (`ServerProvider.availability`).
+         "availability" => provider["availability"] || "available",
+         "auth" => %{"status" => get_in(provider, ["auth", "status"]) || "unknown"},
          "models" =>
            for model <- provider["models"] || [] do
              %{
