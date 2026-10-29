@@ -140,6 +140,15 @@ SettingsPage {
             }
 
             ShellButton {
+                objectName: "mcPluginCompile"
+                // Enabling grants what it asks for; this compiles its code alone.
+                text: card.plugin.checking ? qsTr("Checking…") : qsTr("Check that it compiles")
+                visible: card.off && card.plugin.source === "package" && card.plugin.runsCode
+                enabled: !card.plugin.checking
+                onClicked: Shell.dispatch("mcPlugins.compile", { environment: card.plugin.environment, id: card.plugin.id })
+            }
+
+            ShellButton {
                 objectName: "mcPluginToggle"
                 text: card.off ? qsTr("Enable") : qsTr("Disable")
                 enabled: card.plugin.status !== "incompatible"
@@ -175,6 +184,16 @@ SettingsPage {
                 }
             }
             color: card.failed || card.plugin.status === "incompatible" ? page.errorColor : page.muted
+            wrapMode: Text.Wrap
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        Label {
+            objectName: "mcPluginCompileResult"
+            Layout.fillWidth: true
+            visible: !!card.plugin.compileCheck
+            text: card.plugin.compileCheck?.ok ? qsTr("Its code compiles.") : qsTr("Its code does not compile: %1").arg(card.plugin.compileCheck?.error ?? "")
+            color: card.plugin.compileCheck?.ok ? page.muted : page.errorColor
             wrapMode: Text.Wrap
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }
