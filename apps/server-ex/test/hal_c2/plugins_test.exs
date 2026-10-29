@@ -226,6 +226,26 @@ defmodule HalC2.PluginsTest do
     assert plugin("typo").sup == nil
   end
 
+  test "code that throws or exits as it compiles fails the check, where it did" do
+    code_package("thrown", "1", [
+      {"a.ex", "defmodule HalC2PluginsTest.Thrown do\n  throw(:not_today)\nend\n"}
+    ])
+
+    code_package("exited", "1", [
+      {"a.ex",
+       "defmodule HalC2PluginsTest.Exited do\n  def x, do: 1\n  exit({:timeout, :no})\nend\n"}
+    ])
+
+    Plugins.handle("rescan", %{})
+
+    assert {:ok, %{"ok" => false, "error" => "mc/a.ex:2: ** (throw) :not_today"}} =
+             compile("thrown")
+
+    assert %{"compileCheck" => %{"ok" => false}} = listed("thrown")
+
+    assert {:ok, %{"ok" => false, "error" => "mc/a.ex:3: ** (exit) " <> _}} = compile("exited")
+  end
+
   test "what a package's code does to the VM as it compiles stays in the check" do
     code_package("eager", "1", [
       {"a.ex",

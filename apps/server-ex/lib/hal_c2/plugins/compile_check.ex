@@ -130,7 +130,12 @@ defmodule HalC2.Plugins.CompileCheck do
         try do
           {:ok, Code.compile_file(file)}
         rescue
-          e -> {:error, e}
+          e -> {:error, e, __STACKTRACE__}
+        catch
+          # Thrown or exited by a module body or a macro: the code's failure, not the check's.
+          kind, reason ->
+            {:error, %RuntimeError{message: Exception.format_banner(kind, reason)},
+             __STACKTRACE__}
         end
       end)
 
@@ -141,10 +146,10 @@ defmodule HalC2.Plugins.CompileCheck do
         {:ok, modules, found}
 
       # A syntax error is raised with no diagnostic of its own.
-      {:error, e} ->
+      {:error, e, stacktrace} ->
         if Enum.any?(found, &(&1.severity == "error")),
           do: {:error, found},
-          else: {:error, found ++ [raised(dir, file, e)]}
+          else: {:error, found ++ [raised(dir, file, e, stacktrace)]}
     end
   end
 
@@ -164,16 +169,29 @@ defmodule HalC2.Plugins.CompileCheck do
     }
   end
 
-  defp raised(dir, file, e) do
+  defp raised(dir, file, e, stacktrace) do
     message =
       case e do
         %{description: description} when is_binary(description) -> description
         _ -> Exception.message(e)
       end
 
-    line = if is_integer(Map.get(e, :line)) and e.line > 0, do: e.line
+    line =
+      if is_integer(Map.get(e, :line)) and e.line > 0,
+        do: e.line,
+        else: line_in(stacktrace, file)
+
     file = if is_binary(Map.get(e, :file)), do: e.file, else: file
     diagnostic(relative(dir, file), line, message)
+  end
+
+  # Where in `file` code run while compiling it raised, threw or exited.
+  defp line_in(stacktrace, file) do
+    Enum.find_value(stacktrace, fn {_, _, _, location} ->
+      at = location[:file]
+      line = location[:line]
+      if at && is_integer(line) && Path.expand(to_string(at)) == Path.expand(file), do: line
+    end)
   end
 
   defp diagnostic(file, line, message),
