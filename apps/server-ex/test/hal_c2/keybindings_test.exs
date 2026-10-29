@@ -26,6 +26,7 @@ defmodule HalC2.KeybindingsTest do
 
     assert rules == [%{"key" => "mod+shift+j", "command" => "terminal.toggle"}]
     assert JSON.decode!(File.read!(path)) == rules
+    assert Bitwise.band(File.stat!(path).mode, 0o777) == 0o600
 
     {:ok, %{"rules" => []}} =
       HalC2.Keybindings.remove(%{"key" => "mod+shift+j", "command" => "terminal.toggle"})

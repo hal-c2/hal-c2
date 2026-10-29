@@ -161,6 +161,8 @@ defmodule HalC2.SettingsSharedTest do
       _ = :sys.get_state(Settings)
 
       assert HalC2.Keybindings.rules() == theirs
+      # Owner-only, as a local edit leaves it.
+      assert Bitwise.band(File.stat!(HalC2.Keybindings.path()).mode, 0o777) == 0o600
       assert Settings.shared_records() == incoming
       # The watch survived the merge that failed.
       assert_received {:hal_c2_keybindings, _, ^theirs}
@@ -184,6 +186,8 @@ defmodule HalC2.SettingsSharedTest do
       assert {%{"defaultRuntimeMode" => "full-access"}, 1} = Settings.get()
       assert JSON.decode!(File.read!(path)) == %{"defaultRuntimeMode" => "full-access"}
       assert Settings.shared_records() == ours
+      # The document written beside it before the records failed is not left there.
+      refute File.exists?(path <> ".tmp")
 
       # A later save does not stamp the member's value as this MC's edit, made now.
       File.rmdir!(tmp)

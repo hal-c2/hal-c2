@@ -431,8 +431,7 @@ defmodule HalC2.Settings do
         {shared_path(), shared}
       ]
       |> Enum.filter(& &1)
-      |> stage_all!()
-      |> Enum.each(&commit!/1)
+      |> write_all!()
 
       :ets.insert(__MODULE__, {:shared, shared})
       HalC2.Cluster.share_settings()
@@ -690,19 +689,14 @@ defmodule HalC2.Settings do
     {tmp, path}
   end
 
-  # Each of `files` staged, or none: one that cannot be removes what was staged before it.
-  defp stage_all!(files) do
-    files
-    |> Enum.reduce([], fn {path, data}, staged ->
-      try do
-        [stage!(path, data) | staged]
-      rescue
-        exception ->
-          for {tmp, _} <- [{path <> ".tmp", path} | staged], do: File.rm(tmp)
-          reraise exception, __STACKTRACE__
-      end
-    end)
-    |> Enum.reverse()
+  # Each of `files` written beside itself, then all moved into place in order, so one
+  # that cannot be written moves none. Whatever fails, nothing is left beside them.
+  defp write_all!(files) do
+    files |> Enum.map(fn {path, data} -> stage!(path, data) end) |> Enum.each(&commit!/1)
+  rescue
+    exception ->
+      for {path, _} <- files, do: File.rm(path <> ".tmp")
+      reraise exception, __STACKTRACE__
   end
 
   defp commit!({tmp, path}), do: File.rename!(tmp, path)
