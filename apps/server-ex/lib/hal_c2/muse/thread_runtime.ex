@@ -428,7 +428,11 @@ defmodule HalC2.Muse.ThreadRuntime do
   defp open_host(state, host, instance, turn) do
     state = close_host(state)
 
-    case Muse.connect(instance, turn.cwd, runtime_mode: turn.runtime_mode, log: state.thread_id) do
+    case Muse.connect(instance, turn.cwd,
+           runtime_mode: turn.runtime_mode,
+           log: state.thread_id,
+           project: turn
+         ) do
       {:ok, conn, granted} ->
         {:ok, %{state | conn: conn, host: host, mcp?: "sessionMcp" in granted}}
 

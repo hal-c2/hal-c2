@@ -254,6 +254,7 @@ defmodule HalC2.Pi.ThreadRuntime do
       instance: plan.instance,
       runtime_mode: state.mode || "approval-required",
       cwd: plan.cwd,
+      project_id: plan[:project_id],
       native_thread_id: plan.native_thread_id,
       thread_id: plan.thread_id
     }
@@ -444,6 +445,7 @@ defmodule HalC2.Pi.ThreadRuntime do
     with {:ok, argv, env} <-
            HalC2.Pi.launch(turn.instance, runtime_mode: turn.runtime_mode, mcp: mcp)
            |> launch_error(state),
+         env = HalC2.ProjectEnvironment.for_turn(turn, env, argv),
          {:ok, conn} <- connect(argv, env, turn.cwd, state) do
       state = %{state | conn: conn, instance: turn.instance, mode: turn.runtime_mode}
 
