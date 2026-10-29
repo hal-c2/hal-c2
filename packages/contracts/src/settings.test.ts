@@ -8,6 +8,7 @@ import {
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
   McSettingsDocument,
+  type ProjectSettingsOverrides,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -919,6 +920,24 @@ describe("ServerSettings worktree defaults", () => {
     );
     expect(decodeServerSettings({ worktreeSubmodules: "shallow" }).worktreeSubmodules).toBeNull();
     expect(decodeServerSettingsPatch({ worktreeSubmodules: null }).worktreeSubmodules).toBeNull();
+  });
+
+  it("leaves the project environment off unless a project picks a source it knows", () => {
+    expect(decodeServerSettings({}).projectEnvironment).toBeNull();
+    expect(decodeServerSettings({}).projectEnvironmentFile).toBe(".env");
+    expect(decodeServerSettings({ projectEnvironment: "shell" }).projectEnvironment).toBeNull();
+
+    const overrides = decodeServerSettings({
+      projectSettingsOverrides: {
+        shop: { projectEnvironment: "dotenv", projectEnvironmentFile: ".env.dev" },
+        app: { projectEnvironment: "shell" },
+      },
+    }).projectSettingsOverrides as Readonly<Record<string, ProjectSettingsOverrides>>;
+    expect(overrides.shop).toEqual({
+      projectEnvironment: "dotenv",
+      projectEnvironmentFile: ".env.dev",
+    });
+    expect(overrides.app?.projectEnvironment).toBeUndefined();
   });
 });
 
