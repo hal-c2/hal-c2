@@ -416,7 +416,11 @@ defmodule HalC2.WorktreeSetup do
 
   The user saved their actions, but anyone with a branch can write its file. So the
   file's script runs only when `root`'s own file marks one with the same command that
-  blocks the agent the same way; otherwise it is `{:skip, reason}`.
+  blocks the agent the same way; otherwise it is `{:skip, reason}`. That keeps a branch
+  from choosing the command, not from shaping what it does: the command still runs
+  against the branch's files (its `mise.toml`, `package.json`, `mix.exs`), as a saved
+  setup script does. Requiring the branch's commits to be in `root` would skip setup
+  for worktrees off feature branches, which is what `delegate_task` makes.
   """
   def setup_script(project, root, path) do
     with nil <- Enum.find(saved_scripts(project), &setup?/1),

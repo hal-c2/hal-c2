@@ -61,8 +61,10 @@ Feature: The hal-c2.json project file
     When a thread starts in a new worktree of "shop"
     Then "Setup" runs in the new worktree
 
+  # A branch cannot choose which setup command runs. The command still runs against
+  # the branch's files, the same as a saved setup script.
   @mc
-  Scenario: A branch that changes the setup script does not get it run
+  Scenario: A branch cannot change which setup command runs
     Given the checkout's hal-c2.json marks "Setup" to run on new worktrees
     And the branch "contrib" changes the command of "Setup"
     When a thread starts in a new worktree of "shop" from "contrib"
