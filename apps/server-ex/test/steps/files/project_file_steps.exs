@@ -122,8 +122,40 @@ defmodule HalC2.Steps.Files.ProjectFile do
     context
   end
 
+  step "the branch {string} changes the command of {string}", %{args: [branch, name]} = context do
+    changed = %{setup(name) | "command" => "echo 'changed' > ran.txt"}
+    commit_on_branch(context, branch, project_file([changed]))
+  end
+
+  step "the branch {string} adds a hal-c2.json marking {string} to run on new worktrees",
+       %{args: [branch, name]} = context do
+    commit_on_branch(context, branch, project_file([setup(name)]))
+  end
+
   step "a thread starts in a new worktree of {string}", %{args: [project]} = context do
     context |> World.agents() |> World.launch_in_worktree(project)
+  end
+
+  step "a thread starts in a new worktree of {string} from {string}",
+       %{args: [project, branch]} = context do
+    context
+    |> World.agents()
+    |> World.launch_in_worktree(project, "list the files", %{"baseRef" => branch})
+  end
+
+  step "the new worktree skips the setup script because it differs from the main checkout's",
+       context do
+    {snapshot, context} = setup_done(context)
+
+    assert %{
+             "status" => "skipped",
+             "detail" =>
+               "this branch's hal-c2.json setup script differs from the main checkout's, so it was not run"
+           } = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+
+    assert World.setup_stage(snapshot, "agent") == "done"
+    refute File.exists?(Path.join(snapshot["worktreePath"], "ran.txt"))
+    context
   end
 
   step "{string} runs in the new worktree", %{args: [name]} = context do
@@ -216,6 +248,15 @@ defmodule HalC2.Steps.Files.ProjectFile do
     File.write!(Path.join(root, "hal-c2.json"), text)
     World.git!(root, ~w(add hal-c2.json))
     World.git!(root, ~w(commit -q -m hal-c2.json))
+    context
+  end
+
+  # Commits hal-c2.json on a new `branch`, leaving the checkout where it was.
+  defp commit_on_branch(context, branch, text) do
+    root = World.project(context).root
+    World.git!(root, ["checkout", "-q", "-b", branch])
+    commit_hal_c2_json(context, text)
+    World.git!(root, ["checkout", "-q", "-"])
     context
   end
 

@@ -62,6 +62,19 @@ Feature: The hal-c2.json project file
     Then "Setup" runs in the new worktree
 
   @mc
+  Scenario: A branch that changes the setup script does not get it run
+    Given the checkout's hal-c2.json marks "Setup" to run on new worktrees
+    And the branch "contrib" changes the command of "Setup"
+    When a thread starts in a new worktree of "shop" from "contrib"
+    Then the new worktree skips the setup script because it differs from the main checkout's
+
+  @mc
+  Scenario: A setup script only a branch's hal-c2.json has does not run
+    Given the branch "contrib" adds a hal-c2.json marking "Setup" to run on new worktrees
+    When a thread starts in a new worktree of "shop" from "contrib"
+    Then the new worktree skips the setup script because it differs from the main checkout's
+
+  @mc
   Scenario: A saved setup script wins over hal-c2.json
     Given the checkout's hal-c2.json marks "Setup" to run on new worktrees
     And "shop" has the saved action "Install" marked to run on new worktrees
