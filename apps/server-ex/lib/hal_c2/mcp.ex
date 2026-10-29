@@ -335,7 +335,11 @@ defmodule HalC2.Mcp do
     case method do
       "initialize" ->
         session_id = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
-        :ets.insert(@sessions, {session_id, caller})
+        # Session bookkeeping never answers the handshake: a table this server
+        # has not made (new code loaded over one started before sessions were
+        # kept) must not turn every agent's connect into a 500.
+        if :ets.whereis(@sessions) != :undefined,
+          do: :ets.insert(@sessions, {session_id, caller})
 
         {200, %{"mcp-session-id" => session_id},
          result(id, %{
@@ -417,9 +421,25 @@ defmodule HalC2.Mcp do
 
   @impl true
   def init(nil) do
-    :ets.new(@table, [:named_table, :public, read_concurrency: true])
-    :ets.new(@sessions, [:named_table, :public, read_concurrency: true])
+    ensure_tables()
     {:ok, nil}
+  end
+
+  # Code loaded over this server (`HalC2.Hot`) migrates it here, never through
+  # init: a table a newer module keeps is made now, in this process, so the
+  # requests the new code answers find it there.
+  @impl true
+  def code_change(_old, state, _extra) do
+    ensure_tables()
+    {:ok, state}
+  end
+
+  defp ensure_tables do
+    for name <- [@table, @sessions], :ets.whereis(name) == :undefined do
+      :ets.new(name, [:named_table, :public, read_concurrency: true])
+    end
+
+    :ok
   end
 
   # Resolves the thread's credential on `instance`: a still-valid one whose
