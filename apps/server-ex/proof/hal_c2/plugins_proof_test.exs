@@ -11,6 +11,7 @@ defmodule HalC2.PluginsProofTest do
   @topics "topics and what a plugin publishes: not part of a plugin's lifecycle"
   @consent "permissions and the settings a plugin declares: not part of its lifecycle"
   @dispatch "decodes a client's request into the calls the model lists"
+  @checked "records what a compile check found on a plugin's entry; starts and stops nothing"
 
   use HalC2.Proof,
     model: "plugins.maude",
@@ -54,6 +55,9 @@ defmodule HalC2.PluginsProofTest do
       "HalC2.Plugins.sessions/1" => @reads,
       "HalC2.Plugins.text_backend?/1" => @reads,
       "HalC2.Plugins.tools/1" => @reads,
+      "HalC2.Plugins.package_module/1" => "the one-plugin-module rule over the modules given",
+      "HalC2.Plugins handle_call {:compile_target, _}" => @reads,
+      "HalC2.Plugins handle_call {:checked, _, _, _}" => @checked,
       "HalC2.Plugins.call_tool/3" => "runs a plugin's tool in the caller's process",
       "HalC2.Plugins.generate/3" => "runs a plugin's text generation in the caller's process",
       "HalC2.Plugins.pull_requests/2" => "asks a plugin's git host in the caller's process",
