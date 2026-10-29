@@ -75,10 +75,12 @@ defmodule HalC2.Muse do
   Starts a host for `instance` in `cwd` and completes the handshake. Returns
   `{:ok, conn, granted}` (the capabilities Muse granted) or `{:error, reason}`.
   The caller is the connection's handler. Options as `launch/2`, plus `:log` (a
-  thread id for `HalC2.ProviderLog`).
+  thread id for `HalC2.ProviderLog`) and `:project` (the turn whose project
+  environment the host gets, `HalC2.ProjectEnvironment`).
   """
   def connect(instance, cwd, opts \\ []) do
     {:ok, argv, env} = launch(instance, opts)
+    env = project_env(opts[:project], env, argv)
 
     with {:ok, conn} <-
            Connection.start_link(
@@ -113,6 +115,16 @@ defmodule HalC2.Muse do
 
   # A host that does not answer in time is stopped, not left running under a caller
   # that traps its exit.
+  # The project's environment under the host's own, never with a Meta API key: Muse
+  # signs in with its own login.
+  defp project_env(nil, env, _argv), do: env
+
+  defp project_env(turn, env, argv) do
+    turn
+    |> HalC2.ProjectEnvironment.for_turn(env, argv)
+    |> Enum.reject(fn {key, _} -> String.upcase(key) == "META_API_KEY" end)
+  end
+
   defp handshake(conn, read_only) do
     Connection.call(conn, "initialize", initialize_params(read_only), 15_000)
   catch

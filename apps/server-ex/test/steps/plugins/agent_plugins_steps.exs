@@ -1114,6 +1114,68 @@ defmodule HalC2.Steps.Plugins.AgentPlugins do
     context
   end
 
+  step "the instance {string} has an API key in its environment", %{args: [instance]} = context do
+    {settings, version} = HalC2.Settings.get()
+
+    settings =
+      update_in(settings, ["providerInstances", instance], fn config ->
+        Map.put(config, "environment", [
+          %{"name" => "ACME_API_KEY", "value" => "sk-acme-secret", "sensitive" => true}
+        ])
+      end)
+
+    {:ok, _} = HalC2.Settings.put(settings, version)
+    context
+  end
+
+  step "a plugin lists the agents threads can run on", context do
+    {:ok, providers} = HalC2.Plugins.Host.providers("host-probe")
+    Map.put(context, :host_providers, providers)
+  end
+
+  step "it sees {string} as an {string} agent that can run threads",
+       %{args: [instance, driver]} = context do
+    assert %{
+             "name" => "Acme at work",
+             "driverKind" => ^driver,
+             "enabled" => true,
+             "installed" => true,
+             "status" => "ready",
+             "availability" => "available",
+             "auth" => %{"status" => _},
+             "models" => [_]
+           } = FakeAcp.find(context.host_providers, instance)
+
+    context
+  end
+
+  step "it sees {string} as an {string} agent that is unavailable",
+       %{args: [instance, driver]} = context do
+    assert %{
+             "driverKind" => ^driver,
+             "enabled" => false,
+             "installed" => false,
+             "status" => "error",
+             "availability" => "unavailable",
+             "models" => []
+           } = FakeAcp.find(context.host_providers, instance)
+
+    context
+  end
+
+  step "it sees none of the instance's settings or environment", context do
+    listed = JSON.encode!(context.host_providers)
+
+    for secret <- ["sk-acme-secret", "ACME_API_KEY", "hi team", "greeting"],
+        do: refute(listed =~ secret)
+
+    for entry <- context.host_providers,
+        key <- ["environment", "config", "message", "unavailableReason"],
+        do: refute(Map.has_key?(entry, key))
+
+    context
+  end
+
   step "a thread that ran on a provider whose plugin was removed", context do
     context = context |> Turns.providers() |> provider_plugin("acme")
     context = launch(context, "acme", "remember the basket")

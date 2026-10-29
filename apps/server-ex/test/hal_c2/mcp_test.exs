@@ -136,6 +136,37 @@ defmodule HalC2.McpTest do
     assert HalC2.Mcp.prepared?(thread_id, "codex")
   end
 
+  # New code loaded over a running server (`HalC2.Hot`) migrates it through
+  # code_change, never init. A server started before MCP sessions were kept
+  # has no sessions table; its initialize raised, the endpoint answered 500,
+  # and no provider's MCP client could connect — so no agent tool, such as
+  # code_review_report, was ever offered. The handshake must not depend on
+  # the table, and the migration must make it.
+  test "initialize survives code loaded over a server without a sessions table" do
+    {thread_id, _tool} = caller("wait for it")
+    %{authorization: auth} = HalC2.Mcp.server(thread_id, "codex")
+
+    initialize =
+      JSON.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => 1,
+        "method" => "initialize",
+        "params" => %{"protocolVersion" => "2025-06-18"}
+      })
+
+    :ets.delete(HalC2.Mcp.Sessions)
+    assert {200, %{"mcp-session-id" => _}, _} = HalC2.Mcp.handle_request(auth, %{}, initialize)
+
+    pid = Process.whereis(HalC2.Mcp)
+    :sys.suspend(pid)
+    :ok = :sys.change_code(pid, HalC2.Mcp, nil, :hot)
+    :sys.resume(pid)
+
+    {200, %{"mcp-session-id" => session_id}, _} = HalC2.Mcp.handle_request(auth, %{}, initialize)
+    assert HalC2.Mcp.session?(session_id)
+    assert {200, _} = HalC2.Mcp.handle(auth, initialize)
+  end
+
   test "an agent answers a pending question through MCP" do
     {caller, tool} = caller("ask me")
     request = await_request(caller)

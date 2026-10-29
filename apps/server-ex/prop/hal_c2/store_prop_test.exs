@@ -5,10 +5,12 @@ defmodule HalC2.StorePropTest do
   the store's id,
   and the next `seq`. Commands append batches (some of which fail and must leave no
   trace), read streams back in every way the MC reads them, put the derived rows,
-  search the indexed messages, and restart the store, which must lose nothing it
-  acknowledged. `HalC2.StoreParallelPropTest` runs the same model with concurrent
+  search the indexed messages, hold an append up at a store too slow to take it (it
+  waits, however long, and lands once), and restart the store, which must lose nothing
+  it acknowledged. `HalC2.StoreParallelPropTest` runs the same model with concurrent
   appenders and readers, and `HalC2.StoreRestartPropTest` with concurrent writers and
-  restarts.
+  restarts, both with every write counted slow, so each waits the way a write to a
+  slow store does.
   """
 
   use ExUnit.Case, async: false
@@ -97,7 +99,14 @@ defmodule HalC2.StorePropTest do
             {1, {:call, __MODULE__, :store_path, []}},
             {3, {:call, __MODULE__, :index_messages, [stream_id(), messages(), state.clock]}}
           ]
-        ) ++ if(mode == :sequential, do: [{1, {:call, __MODULE__, :restart, []}}], else: [])
+        ) ++
+        if(mode == :sequential,
+          do: [
+            {1, {:call, __MODULE__, :restart, []}},
+            {1, {:call, __MODULE__, :stalled_append, [batches(state), at()]}}
+          ],
+          else: []
+        )
     )
   end
 
@@ -154,6 +163,9 @@ defmodule HalC2.StorePropTest do
 
   def precondition(_state, _call), do: true
 
+  def next_state(state, result, {:call, mod, :stalled_append, args}),
+    do: next_state(state, result, {:call, mod, :append, args})
+
   def next_state(state, _result, {:call, _, :append, [batches, at]}) do
     Enum.reduce(batches, state, fn {kind, id, changes}, state ->
       stream = Map.get(state.streams, id, %{kind: Atom.to_string(kind), events: []})
@@ -202,6 +214,9 @@ defmodule HalC2.StorePropTest do
     do: %{state | store_id: result}
 
   def next_state(state, _result, _call), do: state
+
+  def postcondition(state, {:call, mod, :stalled_append, args}, result),
+    do: postcondition(state, {:call, mod, :append, args}, result)
 
   def postcondition(state, {:call, _, :append, [batches, _]}, result) do
     written = batches |> Enum.map(fn {_, _, changes} -> length(changes) end) |> Enum.sum()
@@ -320,6 +335,36 @@ defmodule HalC2.StorePropTest do
 
   def append(batches, at), do: Store.append(Store, batches, at)
 
+  # An append the store does not take until it has waited past its slow threshold
+  # (none here): it keeps waiting rather than giving up, and lands once (hal-c2/hal-c2#644).
+  def stalled_append(batches, at) do
+    Application.put_env(:hal_c2, :store_slow_write_ms, 0)
+    store = Process.whereis(Store)
+    :ok = :sys.suspend(store)
+    :erlang.trace(store, true, [:receive])
+    writer = Task.async(fn -> append(batches, at) end)
+    writer_pid = writer.pid
+
+    receive do
+      {:trace, ^store, :receive, {:"$gen_call", {^writer_pid, _}, _}} -> :ok
+    end
+
+    :erlang.trace(store, false, [:receive])
+    flush_traces(store)
+    :ok = :sys.resume(store)
+    Task.await(writer, :infinity)
+  after
+    Application.delete_env(:hal_c2, :store_slow_write_ms)
+  end
+
+  defp flush_traces(store) do
+    receive do
+      {:trace, ^store, _, _} -> flush_traces(store)
+    after
+      0 -> :ok
+    end
+  end
+
   # A batch the store cannot encode, before or after the others: the whole call rolls
   # back, including a stream it would have created.
   def append_failing(batches, where, stream_id) do
@@ -375,7 +420,8 @@ end
 defmodule HalC2.StoreParallelPropTest do
   @moduledoc """
   The store's model with concurrent callers: appenders, readers and the derived-row
-  writers run at once, and some order of them must explain every result. The store is
+  writers run at once, and some order of them must explain every result. Every write
+  counts as slow, so each takes the wait a write to a slow store takes. The store is
   never restarted here, since a call to a stopped store is rightly an exit.
   """
 
@@ -395,9 +441,11 @@ defmodule HalC2.StoreParallelPropTest do
     forall cmds <- parallel_commands(__MODULE__) do
       trap_exit do
         HalC2.Prop.scratch_home("store-parallel")
+        Application.put_env(:hal_c2, :store_slow_write_ms, 0)
         HalC2.Prop.start_services([{Store, path: Store.home_path()}])
         {sequential, parallel, result} = run_parallel_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
+        Application.delete_env(:hal_c2, :store_slow_write_ms)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, sequential, parallel, result)))
@@ -418,7 +466,8 @@ defmodule HalC2.StoreRestartPropTest do
   @moduledoc """
   The store's model with concurrent writers and readers while the store restarts: a
   write waits out a restart (hal-c2/hal-c2#399), so every write is acknowledged once
-  and lands once, and some order of the calls explains every result.
+  and lands once, and some order of the calls explains every result. Every write
+  counts as slow, so the restarts also catch writes in the wait a slow store takes.
   """
 
   use ExUnit.Case, async: false
@@ -437,12 +486,14 @@ defmodule HalC2.StoreRestartPropTest do
     forall cmds <- parallel_commands(__MODULE__) do
       trap_exit do
         HalC2.Prop.scratch_home("store-restart")
+        Application.put_env(:hal_c2, :store_slow_write_ms, 0)
         sup = HalC2.Prop.start_services([{Store, path: Store.home_path()}])
         # The branches run in processes of their own, which do not have the case's
         # process dictionary.
         :persistent_term.put({__MODULE__, :services}, sup)
         {sequential, parallel, result} = run_parallel_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
+        Application.delete_env(:hal_c2, :store_slow_write_ms)
 
         (result == :ok)
         |> when_fail(IO.puts(HalC2.Prop.report(cmds, sequential, parallel, result)))

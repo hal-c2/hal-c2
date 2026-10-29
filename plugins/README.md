@@ -18,6 +18,15 @@ plugin is written, what it may ask for and what each part gets is in
 [docs/user/plugins.md](../docs/user/plugins.md#write-a-plugin); the behaviour of
 the plugin host itself is in [features/plugins/](../features/plugins/).
 
+While you write one, install it in a scratch MC (`mise run plugins:install <id>`
+puts it there and has the MC look again) and check that the `mc/` code compiles
+without enabling it, which would grant everything it asks for: **Check that it
+compiles** in Settings → Plugins, or `POST /api/plugins/<id>/compile` with an
+operator's token, which answers 200, or 422 with each error's file, line and
+message. Compiling runs the module bodies, so the check
+runs in a VM of its own that grants and keeps nothing; what the code writes to
+disk as it compiles stays written.
+
 What the MC lends a plugin, each behind a permission the user grants:
 
 - the MC's projects and agents, and threads it starts and reads;

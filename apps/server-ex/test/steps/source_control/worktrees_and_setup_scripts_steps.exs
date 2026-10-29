@@ -467,9 +467,47 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     log = Path.join(Mc.tmp_dir(context.mc, "setup"), "cwd")
 
     context
-    |> put_setup(title, "pwd > '#{log}'; echo setup-$((6*7))", false)
+    |> put_setup(title, "pwd > '#{log}'; echo \"setup done $((6*7))\"", false)
     |> World.create_thread("Work", title)
     |> Map.put(:setup_log, log)
+  end
+
+  step "the agent works in {string} without a worktree, and its hal-c2.json marks the setup script",
+       %{args: [title]} = context do
+    World.worktree_services()
+    log = Path.join(Mc.tmp_dir(context.mc, "setup"), "cwd")
+    root = World.project(context, title).root
+    commit_setup_file(root, "pwd > '#{log}'; echo \"setup done $((6*7))\"")
+
+    context
+    |> World.create_thread("Work", title)
+    |> Map.put(:setup_log, log)
+  end
+
+  step "the branch {string} changes the setup script's command", %{args: [branch]} = context do
+    root = World.project(context).root
+    World.git!(root, ["checkout", "-q", "-b", branch])
+    commit_setup_file(root, "echo changed")
+    World.git!(root, ["checkout", "-q", "-"])
+    context
+  end
+
+  step "the agent hands the thread off to a new worktree of {string}",
+       %{args: [base]} = context do
+    handoff(context, %{"branch" => "feature/pay", "baseRef" => base, "startFromOrigin" => false})
+  end
+
+  step "the handoff skips the setup script because it differs from the main checkout's",
+       context do
+    assert {:ok, %{"setupScript" => script}} = context.handoff
+
+    assert script == %{
+             "status" => "skipped",
+             "detail" =>
+               "this branch's hal-c2.json setup script differs from the main checkout's, so it was not run"
+           }
+
+    context
   end
 
   step "the agent hands the thread off to a new worktree on {string} with a continuation prompt",
@@ -502,7 +540,9 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     key = %{"threadId" => World.thread_id(context, "Work"), "terminalId" => "setup"}
     {:ok, terminal} = HalC2.Terminal.attach(key, self())
     assert terminal["cwd"] == path
-    await_output({key["threadId"], "setup"}, "setup-42", terminal["history"] || "")
+    # Only the shell running the line prints "setup done 42": the terminal's echo of it
+    # has `$((6*7))`, and the log's path, which it also echoes, holds no space.
+    await_output({key["threadId"], "setup"}, "setup done 42", terminal["history"] || "")
     assert String.trim(File.read!(context.setup_log)) == path
     context
   end
@@ -609,6 +649,14 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   # The project's one script, run when a worktree is created (`async` alongside the agent).
+  # Commits a hal-c2.json in `root` whose "Setup" runs `command` on new worktrees.
+  defp commit_setup_file(root, command) do
+    script = %{"name" => "Setup", "command" => command, "runOnWorktreeCreate" => true}
+    File.write!(Path.join(root, "hal-c2.json"), JSON.encode!(%{"scripts" => [script]}))
+    World.git!(root, ~w(add hal-c2.json))
+    World.git!(root, ~w(commit -q -m hal-c2.json))
+  end
+
   defp put_setup(context, title, command, async) do
     project = World.project(context, title)
 

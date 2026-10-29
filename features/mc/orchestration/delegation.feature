@@ -249,7 +249,7 @@ Feature: Delegating tasks to subagents
     When the subagent completes
     Then the task, its node and its turn item are "completed"
 
-  # The report of a child's end can be lost: the caller's thread too busy to take it,
+  # The report of a child's end can be lost: a thread it reads failing every retry,
   # or the MC stopping first. The child's own runs still say how the task ended.
   @mc
   Scenario: A task whose end never reached its caller settles when the MC starts
@@ -269,12 +269,13 @@ Feature: Delegating tasks to subagents
     When the MC restarts
     Then the task, its node and its turn item are "cancelled"
 
-  # A report that times out on a busy thread is tried again; it settles the task as
-  # the child's run ended, and when, not as things stood when the report was sent.
+  # A report that fails, as on a thread restarting under it, is tried again; it settles
+  # the task as the child's run ended, and when, not as things stood when the report
+  # was sent. A thread that is only busy is waited for (hal-c2/hal-c2#644).
   @mc
-  Scenario: A task whose end report timed out settles on the retry
+  Scenario: A task whose end report failed settles on the retry
     Given the agent in "parent" delegated a task without waiting
-    When the subagent completes while its caller is too busy to hear it
+    When the subagent completes and the first report of its end fails
     Then the task, its node and its turn item are "completed"
     And the task ended when its child's turn did
     And "parent" receives one wake turn

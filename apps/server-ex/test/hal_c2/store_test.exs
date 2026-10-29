@@ -14,6 +14,11 @@ defmodule HalC2.StoreTest do
 
   defp change(id), do: {"thread", id, %{"s" => %{"id" => id}}}
 
+  defp slow_after(ms) do
+    Application.put_env(:hal_c2, :store_slow_write_ms, ms)
+    on_exit(fn -> Application.delete_env(:hal_c2, :store_slow_write_ms) end)
+  end
+
   test "an append that writes nothing reports the end of the log" do
     assert {:ok, 0} = Store.append([])
     {:ok, last} = Store.append([{:thread, "t1", [change("t1"), change("t1")]}])
@@ -133,8 +138,40 @@ defmodule HalC2.StoreTest do
     assert {:ok, 1} = Store.append([{:thread, "t1", [change("t1")]}])
   end
 
-  test "the store's shutdown gives a call in hand the whole write timeout" do
+  test "the store's shutdown gives the calls in hand a minute" do
     assert Store.child_spec(path: "hal-c2.sqlite").shutdown == 60_000
+  end
+
+  # A write that took more than a minute exited its caller, and a running turn
+  # with it, on a disk that was only slow (hal-c2/hal-c2#644).
+  @tag capture_log: true
+  test "a write to a slow store waits for it, and says so once", %{path: path} do
+    slow_after(0)
+    HalC2.Test.LogTap.attach()
+    store = Process.whereis(Store)
+    :ok = :sys.suspend(store)
+    write = Task.async(fn -> Store.append([{:thread, "t1", [change("t1")]}]) end)
+
+    assert_receive {:logged, :warning, "a store append has waited 0 ms" <> _}
+    :ok = :sys.resume(store)
+
+    assert {:ok, 1} = Task.await(write)
+    refute_received {:logged, _, _}
+    assert [%{id: "t1"}] = Store.list_streams(path)
+  end
+
+  @tag capture_log: true
+  test "a store that dies under a waiting write still ends it" do
+    store = Process.whereis(Store)
+    :ok = :sys.suspend(store)
+    :erlang.trace(store, true, [:receive])
+    {writer, ref} = spawn_monitor(fn -> Store.append([{:thread, "t1", [change("t1")]}]) end)
+    assert_receive {:trace, ^store, :receive, {:"$gen_call", _, {:append, _, _}}}
+
+    Process.exit(store, :kill)
+
+    assert_receive {:DOWN, ^ref, :process, ^writer,
+                    {:killed, {GenServer, :call, [Store, {:append, _, _}, :infinity]}}}
   end
 
   test "an EXIT-shaped message naming another process leaves the store running",

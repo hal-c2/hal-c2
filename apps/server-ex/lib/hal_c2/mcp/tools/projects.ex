@@ -148,7 +148,7 @@ defmodule HalC2.Mcp.Tools.Projects do
          "setupScript" =>
            if(args["runSetupScript"] == false,
              do: %{"status" => "skipped"},
-             else: setup_script(me["id"], project, worktree["path"])
+             else: setup_script(me["id"], project, root, worktree["path"])
            ),
          "continuation" => continuation(me, args["continuationPrompt"]),
          "note" =>
@@ -272,14 +272,23 @@ defmodule HalC2.Mcp.Tools.Projects do
     result
   end
 
-  # The project's script marked to run on a new worktree, in the thread's "setup" terminal.
-  defp setup_script(thread_id, project, path) do
-    case Enum.find(project["scripts"] || [], &(&1["runOnWorktreeCreate"] == true)) do
-      nil ->
+  # The worktree's setup script (`HalC2.WorktreeSetup.setup_script/3`) in the thread's
+  # "setup" terminal, which knows where the project and the worktree are.
+  defp setup_script(thread_id, project, root, path) do
+    case HalC2.WorktreeSetup.setup_script(project, root, path) do
+      :none ->
         %{"status" => "no-script"}
 
-      script ->
-        terminal = %{"threadId" => thread_id, "terminalId" => "setup", "cwd" => path}
+      {:skip, reason} ->
+        %{"status" => "skipped", "detail" => reason}
+
+      {:run, script} ->
+        terminal = %{
+          "threadId" => thread_id,
+          "terminalId" => "setup",
+          "cwd" => path,
+          "env" => HalC2.WorktreeSetup.script_env(root, path)
+        }
 
         with {:ok, _} <- HalC2.Terminal.open(terminal),
              {:ok, _} <-

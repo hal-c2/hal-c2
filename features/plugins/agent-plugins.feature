@@ -10,6 +10,7 @@
 #   apps/server/src/provider/Drivers (one driver per provider)
 #   packages/contracts/src/providerInstance.ts (ProviderInstanceMutation, availability unavailable)
 #   packages/contracts/src/server.ts (ServerProvider capability flags)
+#   apps/server-ex/lib/hal_c2/plugins/host.ex (Host.providers: driverKind and provider status, no settings)
 
 Feature: Agent providers are plugins
   Every agent provider is a plugin. The core knows how to run a turn against the
@@ -106,6 +107,17 @@ Feature: Agent providers are plugins
     Then the instance is listed as unavailable with its settings preserved
     When the plugin is installed again
     Then "acme_work" works with the same settings
+
+  @mc
+  Scenario: A plugin is told which driver runs each agent instance
+    Given the instance "acme_work" has custom settings
+    And the instance "acme_work" has an API key in its environment
+    When a plugin lists the agents threads can run on
+    Then it sees "acme_work" as an "acme" agent that can run threads
+    And it sees none of the instance's settings or environment
+    When its plugin is removed
+    And a plugin lists the agents threads can run on
+    Then it sees "acme_work" as an "acme" agent that is unavailable
 
   @mc
   Scenario: A thread from a removed provider can continue on another provider
