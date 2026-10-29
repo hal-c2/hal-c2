@@ -888,7 +888,13 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
   step "the plugins directory contains the package {string} whose MC code changes the MC's memory when it is compiled",
        %{args: [id]} = context do
     key = :"hal_c2_compile_check_#{String.replace(id, "-", "_")}"
-    context |> Packages.install(id, memory: key) |> Map.merge(%{plugin: id, memory: key})
+    # A module no other scenario loads, as other scenarios run packages of the same id.
+    module =
+      Module.concat(HalC2PluginFixture.Checked, Macro.camelize(String.replace(id, "-", "_")))
+
+    context
+    |> Packages.install(id, memory: key, module: module)
+    |> Map.merge(%{plugin: id, memory: key, module: module})
   end
 
   step "the plugins directory contains the package {string} whose MC module is the one {string} runs",
@@ -951,8 +957,8 @@ defmodule HalC2.Steps.Plugins.PluginPackages do
   end
 
   step "neither {string}'s modules nor what its code did when compiled are in the MC",
-       %{args: [id]} = context do
-    refute :code.is_loaded(Packages.module(id))
+       %{args: [_id]} = context do
+    refute :code.is_loaded(context.module)
     assert :persistent_term.get(context.memory, nil) == nil
     assert Process.whereis(context.memory) == nil
     assert Path.wildcard(Path.join(context.mc.home, "**/*.beam")) == []
