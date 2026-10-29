@@ -365,6 +365,17 @@ defmodule HalC2.Mcp do
     end
   end
 
+  # A call outside its tool's advertised input schema never reaches the tool:
+  # refused as an `invalid_request` tool failure, as the Node server's
+  # toolkits refused it before their handlers ran. Tools this MC does not
+  # advertise (a plugin's, an unknown name) keep their own answers.
+  defp validate(name, arguments) do
+    case Enum.find(HalC2.Mcp.Tools.list(), &(&1["name"] == name)) do
+      %{"inputSchema" => schema} -> HalC2.Mcp.Schema.validate(schema, arguments)
+      _ -> :ok
+    end
+  end
+
   # Tools of the enabled tool packs and extensions (`HalC2.Plugins`) for the caller's
   # thread; HAL-C2's own keep their names.
   defp plugin_tools(caller) do
@@ -375,8 +386,13 @@ defmodule HalC2.Mcp do
   # A tool's answer as MCP content; a failure is an error result the agent can read.
   # `tool_use` is the provider's id for the call, which Claude sends.
   defp call(name, arguments, caller, tool_use) do
+    valid = validate(name, arguments)
+
     answer =
       cond do
+        match?({:error, _}, valid) ->
+          {:error, "invalid_request", elem(valid, 1)}
+
         name == "delegate_task" and native_subagent?(caller, tool_use) ->
           {:error, "capability_denied", @subagent_delegation}
 
