@@ -717,6 +717,9 @@ Rectangle {
                 readonly property var modelData: rowData
 
                 readonly property string kind: modelData.kind
+                // A pooled entry that turns from a thread into a divider updates its
+                // row's bindings before its Loader lets the row go: they read this.
+                readonly property var thread: modelData.item ?? ({})
                 readonly property bool focused: list.activeFocus && modelData.rowKey !== undefined && modelData.rowKey === list.cursorKey
 
                 width: ListView.view.width
@@ -867,25 +870,25 @@ Rectangle {
                         focused: entry.focused
                         touch: sidebar.touchRows
                         item: entry.kind === "draft" ? {
-                            title: entry.modelData.item.label,
+                            title: entry.thread.label,
                             status: "ready",
                             statusLabel: null,
                             unread: false,
                             branch: null,
                             updatedAt: null
-                        } : entry.modelData.item
-                        projectName: sidebar.projectNames[entry.modelData.item.projectKey] ?? ""
-                        projectIcon: sidebar.projectIcons[entry.modelData.item.projectKey] ?? null
-                        active: sidebar.model !== null && (entry.kind === "draft" ? entry.modelData.item.draftId === sidebar.model.activeDraftId : entry.modelData.item.key === sidebar.model.activeThreadKey)
+                        } : entry.thread
+                        projectName: sidebar.projectNames[entry.thread.projectKey] ?? ""
+                        projectIcon: sidebar.projectIcons[entry.thread.projectKey] ?? null
+                        active: sidebar.model !== null && (entry.kind === "draft" ? entry.thread.draftId === sidebar.model.activeDraftId : entry.thread.key === sidebar.model.activeThreadKey)
                         onActivated: {
                             list.cursorKey = entry.modelData.rowKey;
                             if (entry.kind === "draft") {
                                 Shell.dispatch("draft.open", {
-                                    draftId: entry.modelData.item.draftId
+                                    draftId: entry.thread.draftId
                                 });
                             } else {
                                 Shell.dispatch("thread.open", {
-                                    key: entry.modelData.item.key
+                                    key: entry.thread.key
                                 });
                             }
                         }
@@ -893,53 +896,53 @@ Rectangle {
                             const files = Shell.readImageFiles(urls);
                             if (files.length > 0) {
                                 Shell.dispatch("thread.attachFiles", {
-                                    key: entry.modelData.item.key,
+                                    key: entry.thread.key,
                                     files: files
                                 });
                             }
                         }
-                        onDragMoved: windowY => list.trackDrop(entry.modelData.item.key, windowY)
+                        onDragMoved: windowY => list.trackDrop(entry.thread.key, windowY)
                         onDragEnded: dropped => list.finishDrop(dropped)
                         onSelectionToggled: Shell.dispatch("thread.select.toggle", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onRangeSelected: Shell.dispatch("thread.select.range", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onMenuRequested: (windowX, windowY) => {
                             if (entry.kind === "draft") {
                                 Shell.dispatch("draft.menu", {
-                                    draftId: entry.modelData.item.draftId,
+                                    draftId: entry.thread.draftId,
                                     x: windowX,
                                     y: windowY
                                 });
                             } else {
                                 Shell.dispatch("thread.menu", {
-                                    key: entry.modelData.item.key,
+                                    key: entry.thread.key,
                                     x: windowX,
                                     y: windowY
                                 });
                             }
                         }
                         onSettleRequested: Shell.dispatch("thread.settle", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onUnsettleRequested: Shell.dispatch("thread.unsettle", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onUnpinRequested: Shell.dispatch("thread.unpin", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onUnsnoozeRequested: Shell.dispatch("thread.unsnooze", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                         onSnoozeRequested: (windowX, windowY) => Shell.dispatch("thread.snoozeMenu", {
-                            key: entry.modelData.item.key,
+                            key: entry.thread.key,
                             x: windowX,
                             y: windowY
                         })
                         onWokeDismissed: Shell.dispatch("thread.wokeDismiss", {
-                            key: entry.modelData.item.key
+                            key: entry.thread.key
                         })
                     }
                 }

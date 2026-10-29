@@ -201,3 +201,55 @@ Item {
     }
 }
 "#;
+
+const REUSED: &str = r#"
+import QtQuick
+import HalC2.Bricks
+
+Item {
+    width: 300
+    height: 120
+    property bool divided: false
+    property var rowData: divided ? ({ kind: "divider" })
+                                  : ({ kind: "thread", item: { threadId: "t1", title: "A thread title" } })
+    readonly property var thread: rowData.item ?? ({})
+
+    Loader {
+        width: 280
+        active: rowData.kind === "thread"
+        sourceComponent: SidebarThreadRow {
+            active: false
+            projectName: "project"
+            section: "active"
+            item: thread
+        }
+    }
+}
+"#;
+
+/// A pooled sidebar delegate turns from a thread into a divider in one
+/// write, and its row's bindings update before its Loader lets it go. Fed
+/// through `thread` as Sidebar.qml's delegate does, the row reads nothing
+/// of the item the divider does not have.
+#[test]
+fn a_row_whose_entry_turns_into_a_divider_goes_quietly() {
+    let hub = Hub::new();
+    let said = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let sink = said.clone();
+    hub.engine.set_log_handler(move |entry| sink.borrow_mut().push(entry.message.clone()));
+    let dir = tempfile::tempdir().expect("a directory for the probe");
+    std::fs::write(dir.path().join("ReusedRowProbe.qml"), REUSED).expect("the probe");
+    let mut dirs = Roots::checkout().dirs().expect("the roots are there");
+    dirs.push(dir.path().to_path_buf());
+    let snapshot = ljos::engine();
+    hal_c2_shell::register(&snapshot);
+    let paths: Vec<&std::path::Path> = dirs.iter().map(|p| p.as_path()).collect();
+    let compiled = ljos::dev::compile_quiet(&paths, Some(&snapshot)).expect("the bricks compile");
+    let (root, _window) = hub.show(compiled.source, "ReusedRowProbe");
+    hub.advance(0);
+    hub.engine.write_by_name(root, "divided", Value::Bool(true)).expect("the entry changes");
+    hub.advance(0);
+    let said = said.borrow();
+    let undefined: Vec<&String> = said.iter().filter(|m| m.contains("of undefined")).collect();
+    assert!(undefined.is_empty(), "the row read the divider's item: {undefined:?}");
+}
