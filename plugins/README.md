@@ -4,10 +4,11 @@ Each folder here is an MC plugin package: an ordinary plugin that needs nothing
 from this repository but the plugin API. Copy a folder into an MC's `plugins`
 folder to install it, or start your own from one of them.
 
-| Plugin                      | What it does                                                                                  | Uses                                                          |
-| --------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| [code-review](code-review/) | An agent reviews pull requests; you decide what reaches GitHub.                               | pull requests, threads, agent tools                           |
-| [planner](planner/)         | A plan of tasks and milestones as a Gantt chart, board or list; agents propose changes to it. | issues and boards, pull requests, threads, Slack, agent tools |
+| Plugin                          | What it does                                                                                          | Uses                                                          |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| [code-review](code-review/)     | An agent reviews pull requests; you decide what reaches GitHub.                                       | pull requests, threads, agent tools                           |
+| [planner](planner/)             | A plan of tasks and milestones as a Gantt chart, board or list; agents propose changes to it.         | issues and boards, pull requests, threads, Slack, agent tools |
+| [issue-tracker](issue-tracker/) | A triage queue over GitHub issues; agents prioritise, ask for follow-up and summarise, and you apply. | issues, threads, agent tools                                  |
 
 ## Writing one
 
