@@ -33,7 +33,8 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview.claims/1" => ~w(peers started defer post peer-claims restartingBy),
       "HalC2Plugins.CodeReview.claims_changed/0" => ~w(note peer-claims),
       "HalC2Plugins.CodeReview handle_call {:looked, _}" => ~w(polled pump),
-      "HalC2Plugins.CodeReview handle_call {:publish, _}" => ~w(publish post-lock post refused),
+      "HalC2Plugins.CodeReview handle_call {:publish, _}" =>
+        ~w(publish post-lock post refused covered),
       "HalC2Plugins.CodeReview handle_call {:published, _, _, _}" => "published",
       "HalC2Plugins.CodeReview handle_call {:report, _, _}" => "report",
       "HalC2Plugins.CodeReview handle_call {:started, _, _, _}" => "started",
@@ -41,13 +42,13 @@ defmodule HalC2.CodeReviewClaimsProofTest do
       "HalC2Plugins.CodeReview handle_cast {:elsewhere, _, _, _}" => ~w(elsewhere peer-claims),
       "HalC2Plugins.CodeReview handle_cast {:start_failed, _, _, _}" => "start-failed",
       "HalC2Plugins.CodeReview handle_info :poll" => ~w(look peers),
-      "HalC2Plugins.CodeReview handle_info {:polled, _}" => ~w(polled pump),
+      "HalC2Plugins.CodeReview handle_info {:polled, _}" => ~w(polled pump away orAway),
       "HalC2Plugins.CodeReview handle_info {:resume, _}" => ~w(resume pump),
       "HalC2Plugins.CodeReview handle_info {:DOWN, _, :process, _, _}" => "polled",
-      "HalC2Plugins.CodeReview handle_info {:nodedown, _}" => ~w(nodedown relook),
+      "HalC2Plugins.CodeReview handle_info {:nodedown, _}" => ~w(nodedown relook on),
       "HalC2Plugins.CodeReview handle_info :peer_claims" => "peer-claims",
       "HalC2Plugins.CodeReview handle_info {:elsewhere_seen, _, _, _}" =>
-        ~w(elsewhere-seen relook shown restarting),
+        ~w(elsewhere-seen relook shown restarting away orAway),
       "HalC2Plugins.CodeReview state :reviews" => ~w(rv rowOf withHeld applied queued holding),
       "HalC2Plugins.CodeReview state :looked" => "polled",
       "HalC2Plugins.CodeReview state :polling" => "poll",
@@ -115,7 +116,7 @@ defmodule HalC2.CodeReviewClaimsProofTest do
         "The review moves to another machine when its machine leaves before starting it",
         "The review moves to another machine when its machine's agent reaches its usage limit",
         "A commit two machines reviewed while apart is posted once",
-        "A commit a machine posted just before it restarted is not posted again"
+        "A commit a machine posted just before it restarted is published without posting it again"
       ]
     }
 

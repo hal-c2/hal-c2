@@ -1317,6 +1317,37 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
+  step "{string} reviewed \#{int}", %{args: [label, number]} = context do
+    context = open(context, number)
+    assert {:ok, _} = on_plugin(context, label, "refresh")
+
+    {review, context} =
+      await_peer(context, number, &(&1["checkout"] && &1["status"] == "running"))
+
+    result = peer_report(context, label, review["threadId"], findings("approve", 1))
+    assert result["isError"] != true, inspect(result)
+    {_, context} = await_peer(context, number, &(&1["status"] == "waiting"))
+    context
+  end
+
+  step "this machine shows \#{int} reviewed on {string}", %{args: [number, label]} = context do
+    context = refresh(context)
+    reviewed = &match?(%{"elsewhere" => %{"machine" => ^label, "claimed" => true}}, &1)
+    {review, context} = await_review(context, number, reviewed)
+    assert review["status"] == "ready" and review["threadId"] == nil, inspect(review)
+    context
+  end
+
+  step("this machine looks at {string} again", %{args: [_repo]} = context, do: refresh(context))
+
+  step "\#{int} is not reviewed on this machine and still shows it reviewed on {string}",
+       %{args: [number, label]} = context do
+    review = review(context.snapshot, number)
+    assert review["status"] == "ready" and review["threadId"] == nil, inspect(review)
+    assert %{"machine" => ^label, "claimed" => true} = review["elsewhere"]
+    context
+  end
+
   step "this machine shows \#{int} queued on {string}", %{args: [number, label]} = context do
     context = refresh(context)
     queued = &match?(%{"elsewhere" => %{"machine" => ^label, "status" => "queued"}}, &1)
@@ -1374,12 +1405,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
-  step "it is not posted, as {string} already posted its review of this commit",
+  step "it is published without posting it again, as {string} already posted its review of this commit",
        %{args: [label]} = context do
-    assert {:error, _, _} = context.reply
-    assert inspect(context.reply) =~ "#{label} already posted its review of this commit."
-    assert World.cli_calls(context, "pulls/12/reviews") == []
-    context
+    published_unposted(context, "#{label} already posted its review of this commit.")
   end
 
   # The plugin's server is gone and its supervisor held, so the plugin runs without
@@ -1394,11 +1422,9 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     context
   end
 
-  step "it is not posted, as the pull request already has the review of this commit", context do
-    assert {:error, _, _} = context.reply
-    assert inspect(context.reply) =~ "The review of this commit is already on the pull request."
-    assert World.cli_calls(context, "pulls/12/reviews") == []
-    context
+  step "it is published without posting it again, as the pull request already has the review of this commit",
+       context do
+    published_unposted(context, "The review of this commit is already on the pull request.")
   end
 
   step "it is not posted, as {string} is restarting code review", %{args: [label]} = context do
@@ -1409,6 +1435,15 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
   end
 
   # --- helpers ---------------------------------------------------------------------------------
+
+  # The review of #12 is published, saying `note` of why this machine posted nothing.
+  defp published_unposted(context, note) do
+    assert {:ok, _} = context.reply
+    {review, context} = await_review(context, 12, &(&1["status"] == "published"))
+    assert review["publishNote"] == note, inspect(review)
+    assert World.cli_calls(context, "pulls/12/reviews") == []
+    context
+  end
 
   # The reviews `gh pr view` gives #12's activity.
   defp activity_rule(reviews) do
@@ -1720,6 +1755,24 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
           "params" => %{"name" => "code_review_report", "arguments" => arguments}
         })
       )
+
+    result
+  end
+
+  # The tool result the report tool on machine `label` gives `thread`'s agent.
+  defp peer_report(context, label, thread, arguments) do
+    %{authorization: auth} = Machines.on(context, label, HalC2.Mcp, :server, [thread, "codex"])
+
+    request =
+      JSON.encode!(%{
+        "jsonrpc" => "2.0",
+        "id" => 1,
+        "method" => "tools/call",
+        "params" => %{"name" => "code_review_report", "arguments" => arguments}
+      })
+
+    {200, %{"result" => result}} =
+      Machines.on(context, label, HalC2.Mcp, :handle, [auth, request])
 
     result
   end

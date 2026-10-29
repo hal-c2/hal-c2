@@ -7,7 +7,9 @@ sload model-checker
 --- rows under it. Posts go under a lock of their own. Machines crash, partition, have
 --- their plugin restart, fail a checkout and hit a usage limit; the pull request gets
 --- pushes. A post first reads the pull request for the plugin's own marker of the
---- commit, so a machine that restarted before it saved its post does not post again.
+--- commit, so a machine that restarted before it saved its post does not post again,
+--- and a commit posted already is published. A review shown on a machine that started
+--- it stays shown there while that machine is out of reach.
 --- A machine paused at its agent's usage limit stops sharing the reviews it has queued.
 --- proof/hal_c2/code_review_claims_proof_test.exs maps it to the code and checks it.
 
@@ -22,8 +24,10 @@ mod CODE-REVIEW-CLAIMS is
   subsort Item < Conf .
 
   ops a b c : -> Id [ctor] .
-  --- No machine: a review no other machine has.
+  --- No machine: a review no other machine has. A bare Id is a machine that queued
+  --- the review or is restarting; on(Y) one that started it.
   op nobody : -> Ref [ctor] .
+  op on : Id -> Ref [ctor] .
   --- A look that has not read the other machines' rows yet.
   op unread : -> Seen [ctor] .
   --- Commits; nosha is a review that reviewed none.
@@ -79,7 +83,7 @@ mod CODE-REVIEW-CLAIMS is
 
   --- Messages to a machine's plugin: {:elsewhere, ...} naming the other machine,
   --- {:nodedown, node}, :peer_claims, and {:elsewhere_seen, heads, seen, restarting}.
-  op ew : Id Id -> Item [ctor] .
+  op ew : Id Ref -> Item [ctor] .
   op down : Id Id -> Item [ctor] .
   op ping : Id -> Item [ctor] .
   op sn : Id Sha Ref Ids -> Item [ctor] .
@@ -127,9 +131,6 @@ mod CODE-REVIEW-CLAIMS is
   op posted : Id Sha -> Item [ctor] .
   op repost : Id Id Sha -> Item [ctor] .
   op hurt : Id -> Item [ctor] .
-  --- A machine read that the pull request has the review of a commit: a post of it again
-  --- would be refused the same, as GitHub keeps the review, so the model makes none.
-  op onGithub : Id Sha -> Item [ctor] .
 
   op empty : -> Conf [ctor] .
   op __ : Conf Conf -> Conf [ctor assoc comm id: empty] .
@@ -139,7 +140,7 @@ mod CODE-REVIEW-CLAIMS is
   vars I J H L M : Ids .
   vars S S' : Sha .
   vars Rd Hd : MSha .
-  vars E W : Ref .
+  vars E W W' : Ref .
   var St : Status .
   vars Cl P N B : Bool .
   vars R R' : Review .
@@ -163,6 +164,11 @@ mod CODE-REVIEW-CLAIMS is
   eq a << c = true .
   eq b << c = true .
   eq X << Y = false [owise] .
+
+  --- The machine a review is shown on.
+  op who : Ref -> Ref .
+  eq who(on(X)) = X .
+  eq who(W) = W [owise] .
 
   op _in_ : Ref Ids -> Bool .
   eq X in (X & I) = true .
@@ -250,10 +256,20 @@ mod CODE-REVIEW-CLAIMS is
   eq restarting(X, C) = noids [owise] .
   --- What claim/3 steps back for: a claim at the head, or a machine restarting.
   op heldBy : Id Sha Conf -> Ref .
-  eq heldBy(X, S, C) = if hardBy(X, S, C) =/= nobody then hardBy(X, S, C) else restartingBy(X, C) fi .
+  eq heldBy(X, S, C) = if hardBy(X, S, C) =/= nobody then on(hardBy(X, S, C)) else restartingBy(X, C) fi .
   --- elsewhere/1: a claim wins over a queued one.
   op seenAt : Id Sha Conf -> Ref .
-  eq seenAt(X, S, C) = if hardBy(X, S, C) =/= nobody then hardBy(X, S, C) else softBy(X, S, C) fi .
+  eq seenAt(X, S, C) = if hardBy(X, S, C) =/= nobody then on(hardBy(X, S, C)) else softBy(X, S, C) fi .
+  --- away/2: the machine review R shows as having started it at the head S, while it
+  --- is out of reach of the machines I; a machine in reach that no longer says so let
+  --- it go.
+  op away : Review Sha Ids -> Ref .
+  eq away(rv(St, Cl, Rd, S, on(Y), Ho), S, I) = if Y in I then nobody else on(Y) fi .
+  eq away(R, S, I) = nobody [owise] .
+  --- What the other machines said, or else what X still knows of the review.
+  op orAway : Ref Review Sha Ids -> Ref .
+  eq orAway(nobody, R, S, I) = away(R, S, I) .
+  eq orAway(W, R, S, I) = W [owise] .
 
   --- share_claims/1: X's row was Ro; a change is cast to the connected machines whose
   --- plugin runs, as :peer_claims.
@@ -293,12 +309,12 @@ mod CODE-REVIEW-CLAIMS is
   --- apply_look/2 for a look that listed the head S and read W at it (cond order).
   op applied : Review Sha Ref -> Review .
   eq applied(unknown, S, nobody) = queued(rv(ready, false, nosha, S, nobody, nohold)) .
-  eq applied(unknown, S, Y) = rv(ready, false, nosha, S, Y, nohold) .
+  ceq applied(unknown, S, W) = rv(ready, false, nosha, S, W, nohold) if W =/= nobody .
   --- queued or running: the head moves, the run keeps what it checks out.
   ceq applied(rv(St, Cl, Rd, Hd, E, Ho), S, W) = rv(St, Cl, Rd, S, nobody, Ho) if active(St) .
   --- another machine has the head and this one has not reviewed it.
-  ceq applied(rv(St, Cl, Rd, Hd, E, Ho), S, Y) = rv(St, Cl, Rd, S, Y, Ho)
-    if not active(St) /\ Rd =/= S .
+  ceq applied(rv(St, Cl, Rd, Hd, E, Ho), S, W) = rv(St, Cl, Rd, S, W, Ho)
+    if not active(St) /\ Rd =/= S /\ W =/= nobody .
   --- a run that could not start waits for a retry or a push.
   eq applied(rv(failed, Cl, nosha, S, E, Ho), S, nobody) = rv(failed, Cl, nosha, S, nobody, Ho) .
   --- never reviewed: queued.
@@ -365,7 +381,7 @@ mod CODE-REVIEW-CLAIMS is
   op lose : Id Conf -> Conf .
   eq lose(X, run(X, Ph) C) = lose(X, C) .
   eq lose(X, pub(X, S, Ph) C) = lose(X, C) .
-  eq lose(X, ew(X, Y) C) = lose(X, C) .
+  eq lose(X, ew(X, W) C) = lose(X, C) .
   eq lose(X, down(X, Y) C) = lose(X, C) .
   eq lose(X, ping(X) C) = lose(X, C) .
   eq lose(X, sn(X, S, W, I) C) = lose(X, C) .
@@ -434,13 +450,14 @@ mod CODE-REVIEW-CLAIMS is
 
   --- handle_info {:polled, found}: apply_look/2, which drops a look older than the one
   --- applied last and leaves the review alone if the look began before its claim, and
-  --- pump/1; a periodic look's DOWN arms the next :poll.
+  --- pump/1; a periodic look's DOWN arms the next :poll. A machine out of reach that
+  --- started the commit has it still.
   crl [polled] :
     { mc(X, true, N, R) looks(X, L1 ; lk(K, S, W, B) ; L2) poll(X, Pl) periodic(Bu) C }
     => { pump(X, set(X, R, R', mc(X, true, N, R) looks(X, L2)
            poll(X, rearm(K == tick or ticks(L1), Bu, Pl))
            periodic(spend(K == tick or ticks(L1), Bu)) C)) }
-    if R' := (if B then R else applied(R, S, W) fi) .
+    if R' := (if B then R else applied(R, S, orAway(W, R, S, near(X, C))) fi) .
 
   --- run/2: Checkout.prepare/5 fetches the head there is now.
   rl [checkout] : run(X, fetch) gh(S) => run(X, out(S)) gh(S) .
@@ -475,13 +492,13 @@ mod CODE-REVIEW-CLAIMS is
     if heldBy(X, S, C) == nobody .
 
   --- ... or show one: the checkout goes, and {:elsewhere, ...} is cast.
-  crl [defer] : { run(X, held(S, H)) C } => { ew(X, Y) C } if Y := heldBy(X, S, C) .
+  crl [defer] : { run(X, held(S, H)) C } => { ew(X, W) C } if W := heldBy(X, S, C) /\ W =/= nobody .
 
   --- handle_cast {:elsewhere, ...}: the review is back to not started, shown elsewhere,
   --- and :peer_claims reads again a release that came first.
   rl [elsewhere] :
-    { ew(X, Y) mc(X, true, N, rv(running, Cl, Rd, Hd, E, Ho)) C }
-    => { once(ping(X), set(X, rv(running, Cl, Rd, Hd, E, Ho), rv(ready, false, Rd, Hd, Y, Ho),
+    { ew(X, W) mc(X, true, N, rv(running, Cl, Rd, Hd, E, Ho)) C }
+    => { once(ping(X), set(X, rv(running, Cl, Rd, Hd, E, Ho), rv(ready, false, Rd, Hd, W, Ho),
            mc(X, true, N, rv(running, Cl, Rd, Hd, E, Ho)) C)) } .
 
   --- handle_cast {:turn_finished, ...}: the agent's turn ended without findings ...
@@ -525,29 +542,33 @@ mod CODE-REVIEW-CLAIMS is
 
   --- handle_call {:publish, key}: the user publishes (or the report did, automatically),
   --- and the post takes [node() | Node.list()].
-  crl [publish] :
+  rl [publish] :
     { later mc(X, true, N, rv(waiting, true, S, Hd, E, Ho)) C }
     => { later set(X, rv(waiting, true, S, Hd, E, Ho), rv(publishing, true, S, Hd, E, Ho),
-           mc(X, true, N, rv(waiting, true, S, Hd, E, Ho)) pub(X, S, pwant(X & near(X, C))) C) }
-    if not seenOnGithub(X, S, C) .
-  op seenOnGithub : Id Sha Conf -> Bool .
-  eq seenOnGithub(X, S, onGithub(X, S) C) = true .
-  eq seenOnGithub(X, S, C) = false [owise] .
+           mc(X, true, N, rv(waiting, true, S, Hd, E, Ho)) pub(X, S, pwant(X & near(X, C))) C) } .
 
   crl [post-lock] : { pub(X, S, pwant(L)) C } => { pub(X, S, pheld(L ^ (X & near(X, C)), check)) C }
     if not pblocked(X, L, C) .
 
-  --- Under the post lock: a connected machine posted this commit, or is restarting its
-  --- plugin and cannot say whether it did, or the pull request has the plugin's review
-  --- of it already (posted by a machine that stopped before it saved so), and the post
-  --- is refused ...
+  --- Under the post lock: a connected machine posted this commit, or (none restarting)
+  --- the pull request has the plugin's review of it already, posted by a machine that
+  --- stopped before it saved so. The commit's review is posted: this one is published
+  --- without a post ...
   crl [post] :
     { pub(X, S, pheld(H, check)) mc(X, true, N, R) C }
-    => { set(X, R, failedPost(R, S), mc(X, true, N, R) seen(X, S, C)) }
-    if refused(X, S, C) .
-  op seen : Id Sha Conf -> Conf .
-  eq seen(X, S, ghp(S) C) = once(onGithub(X, S), ghp(S) C) .
-  eq seen(X, S, C) = C [owise] .
+    => { set(X, R, didPost(R, S), mc(X, true, N, R) C) }
+    if covered(X, S, C) .
+  --- ... or a connected machine is restarting its plugin and cannot say whether it
+  --- posted, and the post waits for the user to try again ...
+  crl [post] :
+    { pub(X, S, pheld(H, check)) mc(X, true, N, R) C }
+    => { set(X, R, failedPost(R, S), mc(X, true, N, R) C) }
+    if refused(X, S, C) and not covered(X, S, C) .
+  op covered : Id Sha Conf -> Bool .
+  eq covered(X, S, C) = publishedBy(X, S, C) =/= nobody or (restartingBy(X, C) == nobody and onPr(S, C)) .
+  op onPr : Sha Conf -> Bool .
+  eq onPr(S, ghp(S) C) = true .
+  eq onPr(S, C) = false [owise] .
   --- ... or it is posted through the host, which GitHub takes. The read of the pull
   --- request and the post are one step: under the lock no connected machine posts
   --- between them, and a machine that stops between them has not posted ...
@@ -556,9 +577,9 @@ mod CODE-REVIEW-CLAIMS is
     => { once(ghp(S), once(posted(X, S), reposted(X, S, X & ((H less X) ^ near(X, C)),
            pub(X, S, pheld(H, sent)) C))) }
     if not refused(X, S, C) .
+  --- Nothing is posted from here.
   op refused : Id Sha Conf -> Bool .
-  eq refused(X, S, ghp(S) C) = true .
-  eq refused(X, S, C) = publishedBy(X, S, C) =/= nobody or restartingBy(X, C) =/= nobody [owise] .
+  eq refused(X, S, C) = covered(X, S, C) or restartingBy(X, C) =/= nobody .
   --- ... and handle_call {:published, ...} records it if the review is still being
   --- published. A plugin that stops before then has posted all the same.
   rl [published] :
@@ -570,8 +591,8 @@ mod CODE-REVIEW-CLAIMS is
   eq didPost(rv(publishing, true, S, Hd, E, Ho), S) = rv(published, true, S, Hd, E, Ho) .
   eq didPost(R, S) = R [owise] .
 
-  --- handle_info {:nodedown, node}: a review shown on the machine that left is looked
-  --- at again at once.
+  --- handle_info {:nodedown, node}: a review shown queued on the machine that left is
+  --- looked at again at once; one it started stays shown there (on(Y)).
   rl [nodedown] :
     { down(X, Y) mc(X, true, N, rv(St, Cl, Rd, Hd, Y, Ho)) looks(X, Ls) C }
     => { mc(X, true, N, rv(St, Cl, Rd, Hd, nobody, Ho)) looks(X, relook(Ls)) C } .
@@ -593,13 +614,14 @@ mod CODE-REVIEW-CLAIMS is
   --- ... and handle_info {:elsewhere_seen, ...} shows it where they say, if its head is
   --- the one read and it is still left to them, unless no machine has it and the one it
   --- shows is restarting; one no other machine has any more is looked at again at once.
-  rl [elsewhere-seen] :
+  crl [elsewhere-seen] :
     { sn(X, S, W, I) mc(X, true, N, R) looks(X, Ls) C }
-    => { mc(X, true, N, shown(R, S, W, I))
-         looks(X, if shown(R, S, W, I) =/= R and W == nobody then relook(Ls) else Ls fi) C } .
+    => { mc(X, true, N, shown(R, S, W', I))
+         looks(X, if shown(R, S, W', I) =/= R and W' == nobody then relook(Ls) else Ls fi) C }
+    if W' := orAway(W, R, S, near(X, C)) .
   op shown : Review Sha Ref Ids -> Review .
   ceq shown(rv(St, Cl, Rd, S, E, Ho), S, W, I) = rv(St, Cl, Rd, S, W, Ho)
-    if left(rv(St, Cl, Rd, S, E, Ho)) /\ (W =/= nobody or not (E in I)) .
+    if left(rv(St, Cl, Rd, S, E, Ho)) /\ (W =/= nobody or not (who(E) in I)) .
   eq shown(R, S, W, I) = R [owise] .
 
   --- environment ----------------------------------------------------------------------

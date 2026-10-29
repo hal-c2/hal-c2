@@ -18,10 +18,12 @@ defmodule HalC2Plugins.CodeReview do
   request. A machine shares what it has queued and claimed (`claims/1`); a look
   leaves a pull request another machine has to it (`elsewhere` on the review), and
   a run claims its commit under a lock across the machines connected now, so of two
-  that start at once one reviews and the other steps back. A post is under a lock
-  too, and is not made when another machine says it posted that commit or the pull
-  request already has the review of it. A machine on its own reviews as if there
-  were no other.
+  that start at once one reviews and the other steps back. A commit another machine
+  started reviewing stays its own while that machine is out of reach; one it had
+  only queued is taken over. A post is under a lock too, and is not made when
+  another machine says it posted that commit or the pull request already has the
+  review of it; the review is published then. A machine on its own reviews as if
+  there were no other.
   """
   @behaviour HalC2.Plugins.Extension
   use GenServer
@@ -506,19 +508,24 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
-  # How posting the review of `thread_id` went; a review run again since is left alone.
-  def handle_call({:published, key, thread_id, error}, _from, state) do
+  # How posting the review of `thread_id` went: posted (nil), found posted already
+  # (`{:posted, why}`), or an error; a review run again since is left alone.
+  def handle_call({:published, key, thread_id, outcome}, _from, state) do
     case state.reviews[key] do
       %{"status" => "publishing", "threadId" => ^thread_id} = review ->
         review =
-          if error,
-            do: Map.merge(review, %{"status" => "waiting", "publishError" => error}),
-            else:
+          case outcome do
+            error when is_binary(error) ->
+              Map.merge(review, %{"status" => "waiting", "publishError" => error})
+
+            _ ->
               Map.merge(review, %{
                 "status" => "published",
                 "publishError" => nil,
-                "publishedAt" => now()
+                "publishedAt" => now(),
+                "publishNote" => with({:posted, why} <- outcome, do: why)
               })
+          end
 
         {:reply, :ok, state |> put(review) |> changed()}
 
@@ -733,12 +740,17 @@ defmodule HalC2Plugins.CodeReview do
     {:noreply, %{state | timer: arm(state)}}
   end
 
-  # What a machine that left had of the reviews is no longer anyone's: they are
-  # looked at again, without waiting for the next look.
+  # What a machine that left had queued is no longer anyone's: those reviews are
+  # looked at again, without waiting for the next look. A commit it started
+  # reviewing goes with it (`away/2`).
   def handle_info({:nodedown, node}, state) do
     gone = to_string(node)
 
-    case for({key, %{"elsewhere" => %{"node" => ^gone}}} <- state.reviews, do: key) do
+    case for(
+           {key, %{"elsewhere" => %{"node" => ^gone} = other}} <- state.reviews,
+           other["claimed"] != true,
+           do: key
+         ) do
       [] ->
         {:noreply, state}
 
@@ -772,10 +784,11 @@ defmodule HalC2Plugins.CodeReview do
       for {key, head} <- heads,
           %{"headSha" => ^head} = review <- [state.reviews[key]],
           left?(review),
-          review["elsewhere"] != seen[key],
-          seen[key] != nil or get_in(review, ["elsewhere", "node"]) not in restarting,
+          other <- [seen[key] || away(review, head)],
+          review["elsewhere"] != other,
+          other != nil or get_in(review, ["elsewhere", "node"]) not in restarting,
           into: %{},
-          do: {key, Map.put(review, "elsewhere", seen[key])}
+          do: {key, Map.put(review, "elsewhere", other)}
 
     released? = Enum.any?(reviews, fn {_key, review} -> review["elsewhere"] == nil end)
     state = %{state | reviews: Map.merge(state.reviews, reviews)}
@@ -802,6 +815,19 @@ defmodule HalC2Plugins.CodeReview do
   # A review this machine has not taken up at its head, which another may have.
   defp left?(review),
     do: review["status"] not in ~w(queued running) and review["reviewedSha"] != review["headSha"]
+
+  # Where `review` showed a commit another machine started reviewing at `head`, while
+  # that machine is out of reach: it has the review still, done or not, and takes it
+  # back with it. A connected machine that no longer says so has let it go.
+  defp away(review, head) do
+    with %{"claimed" => true, "node" => node} = other <- review["elsewhere"],
+         ^head <- review["headSha"],
+         false <- node in Enum.map(Node.list(), &to_string/1) do
+      other
+    else
+      _ -> nil
+    end
+  end
 
   # --- looking at the watched repositories ----------------------------------------------
 
@@ -950,7 +976,7 @@ defmodule HalC2Plugins.CodeReview do
     for row <- Enum.sort_by(rows, & &1["claimed"]),
         row["sha"] == heads[row["key"]],
         into: %{},
-        do: {row["key"], Map.take(row, ~w(machine node status))}
+        do: {row["key"], Map.take(row, ~w(machine node status claimed))}
   end
 
   defp pr(entry) do
@@ -1127,7 +1153,7 @@ defmodule HalC2Plugins.CodeReview do
       # still standing, where the watch's own triggers may no longer hold.
       trigger = trigger || if known && followed?(known), do: known["trigger"] || "following"
       reviewed = known && known["reviewedSha"]
-      other = found.elsewhere[pr["key"]]
+      other = found.elsewhere[pr["key"]] || (known && away(known, pr["headSha"]))
 
       cond do
         # The look began before this machine's run claimed the commit, so it may list
@@ -1461,7 +1487,7 @@ defmodule HalC2Plugins.CodeReview do
 
         case held do
           nil -> server({:started, key, thread_id, started})
-          row -> {:elsewhere, Map.take(row, ~w(machine node status)), started}
+          row -> {:elsewhere, Map.take(row, ~w(machine node status claimed)), started}
         end
       end,
       [node() | Node.list()]
@@ -1824,7 +1850,8 @@ defmodule HalC2Plugins.CodeReview do
     # post and its outcome are under one lock across the machines connected now.
     # A machine whose plugin is restarting cannot say whether it posted, so the
     # post waits for it. One that stopped between its post and saving so forgot
-    # it, so the pull request itself is read for the review last.
+    # it, so the pull request itself is read for the review last. A commit whose
+    # review is posted already is published, with why nothing was posted from here.
     :global.trans(
       {{__MODULE__, {:post, review["key"]}}, self()},
       fn ->
@@ -1839,7 +1866,7 @@ defmodule HalC2Plugins.CodeReview do
 
         result =
           cond do
-            posted -> {:error, "#{posted["machine"]} already posted its review of this commit."}
+            posted -> {:posted, "#{posted["machine"]} already posted its review of this commit."}
             restarting -> {:error, "#{restarting["machine"]} is restarting code review; try again."}
             true -> post_unless_on_github(review, input)
           end
@@ -1847,6 +1874,10 @@ defmodule HalC2Plugins.CodeReview do
         case result do
           {:ok, _} ->
             server({:published, review["key"], review["threadId"], nil})
+            {:ok, server(:snapshot)}
+
+          {:posted, _} = posted ->
+            server({:published, review["key"], review["threadId"], posted})
             {:ok, server(:snapshot)}
 
           {:error, error} ->
@@ -1864,7 +1895,7 @@ defmodule HalC2Plugins.CodeReview do
         Host.pull_requests(@id, "submitReview", input)
 
       {:ok, true} ->
-        {:error, "The review of this commit is already on the pull request."}
+        {:posted, "The review of this commit is already on the pull request."}
 
       {:error, error} ->
         {:error, "Could not read whether the review of this commit is on the pull request: #{message(error)}"}

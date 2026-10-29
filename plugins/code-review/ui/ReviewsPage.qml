@@ -132,6 +132,8 @@ Item {
             return review.error ?? "";
         if (review.status === "waiting" && review.publishError)
             return qsTr("Publishing failed: %1").arg(review.publishError);
+        if (review.status === "published" && review.publishNote)
+            return review.publishNote;
         if (review.changed)
             return qsTr("Changed since its review");
         if (review.skipped)

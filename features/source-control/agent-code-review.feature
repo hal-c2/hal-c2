@@ -601,6 +601,16 @@ Feature: Agent code review
       Then #12 is reviewed on this machine
 
     @mc
+    Scenario: A commit its machine reviewed stays that machine's when it leaves
+      Given "code-review" watches "acme/api" automatically
+      And the user's machine "laptop" in the cluster watches "acme/api" automatically too
+      And "laptop" reviewed #12
+      And this machine shows #12 reviewed on "laptop"
+      When "laptop" goes offline
+      And this machine looks at "acme/api" again
+      Then #12 is not reviewed on this machine and still shows it reviewed on "laptop"
+
+    @mc
     Scenario: A commit two machines reviewed while apart is posted once
       Given "code-review" watches "acme/api" automatically
       And the user's machine "laptop" in the cluster watches "acme/api" automatically too
@@ -609,7 +619,7 @@ Feature: Agent code review
       And both machines reviewed #12 and "laptop" posted its review
       When "laptop" is back in the cluster
       And the user publishes the review of #12
-      Then it is not posted, as "laptop" already posted its review of this commit
+      Then it is published without posting it again, as "laptop" already posted its review of this commit
 
     @mc
     Scenario: A commit is not posted while a machine that may have posted it restarts code review
@@ -624,7 +634,7 @@ Feature: Agent code review
       Then it is not posted, as "laptop" is restarting code review
 
     @mc
-    Scenario: A commit a machine posted just before it restarted is not posted again
+    Scenario: A commit a machine posted just before it restarted is published without posting it again
       Given "code-review" watches "acme/api" automatically
       And the user's machine "laptop" in the cluster watches "acme/api" automatically too
       And "laptop" is apart from this machine
@@ -632,7 +642,7 @@ Feature: Agent code review
       And both machines reviewed #12 and "laptop" posted its review but restarted before saving so
       When "laptop" is back in the cluster
       And the user publishes the review of #12
-      Then it is not posted, as the pull request already has the review of this commit
+      Then it is published without posting it again, as the pull request already has the review of this commit
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: The reviews page shows which machine reviews a pull request

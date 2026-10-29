@@ -637,7 +637,29 @@ defmodule HalC2.CodeReviewTest do
   # From the Maude model of claims between machines: a machine that posted a review
   # and stopped before it saved so loaded it as waiting, and nothing it or another
   # machine had kept said it was posted, so a publish posted the commit again.
-  test "a review GitHub already has under the login gh uses is not posted again", context do
+  test "a review GitHub already has under the login gh uses is published without posting it again",
+       context do
+    rules!(context, head: 1, reviews: [reviewed_by("monalisa")])
+    assert {:ok, _} = call("publish", %{"key" => @key})
+
+    assert %{"status" => "published", "publishError" => nil, "publishNote" => note} = review()
+    assert note =~ "already on the pull request"
+    assert posts(context) == []
+  end
+
+  test "a review of the same commit under another login does not stop the post",
+       context do
+    rules!(context, head: 1, reviews: [reviewed_by("octocat")])
+    assert {:ok, _} = call("publish", %{"key" => @key})
+    assert %{"status" => "published", "publishNote" => nil} = review()
+    assert [_] = posts(context)
+  end
+
+  # --- helpers ----------------------------------------------------------------------------
+
+  # A review of #1 waiting to be posted, and the review `login` posted of the same commit
+  # with the plugin's marker.
+  defp reviewed_by(login) do
     review = start_review()
 
     {:ok, _} =
@@ -650,26 +672,11 @@ defmodule HalC2.CodeReviewTest do
     settle()
     %{"status" => "waiting", "reviewedSha" => reviewed} = review()
 
-    posted =
-      &%{
-        "author" => %{"login" => &1},
-        "body" => "Looks right.\n\n<!-- hal-c2-code-review:#{@key}@#{reviewed} -->"
-      }
-
-    rules!(context, head: 1, reviews: [posted.("monalisa")])
-    assert {:error, %{"message" => error}} = call("publish", %{"key" => @key})
-    assert error =~ "already on the pull request"
-    assert %{"status" => "waiting"} = review()
-    assert posts(context) == []
-
-    # Another user's HAL-C2 marks its review of the commit the same way.
-    rules!(context, head: 1, reviews: [posted.("octocat")])
-    assert {:ok, _} = call("publish", %{"key" => @key})
-    assert %{"status" => "published"} = review()
-    assert [_] = posts(context)
+    %{
+      "author" => %{"login" => login},
+      "body" => "Looks right.\n\n<!-- hal-c2-code-review:#{@key}@#{reviewed} -->"
+    }
   end
-
-  # --- helpers ----------------------------------------------------------------------------
 
   # The reviews posted to pull request #1.
   defp posts(context) do

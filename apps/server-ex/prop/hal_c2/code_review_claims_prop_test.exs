@@ -26,12 +26,15 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     it reviewed held when the review is queued again for another head;
   - the `reviews` snapshot, `elsewhere` included, and the topic clients follow, match
     the model;
-  - a publish is refused, and nothing posted, exactly when the connected laptop has
-    published the reviewed commit or is restarting its plugin, or GitHub already has
-    a review of that commit under the user's login;
-  - when the laptop leaves, or tells it no longer has a review this machine left to
-    it, that review is looked at again at once; one it still has, or may have while
-    its plugin restarts, shows where it is now;
+  - nothing is posted exactly when the connected laptop has published the reviewed
+    commit or is restarting its plugin, or GitHub already has a review of that commit
+    under the user's login; the review is published then, but while the laptop
+    restarts;
+  - when the laptop leaves, a review it had only queued or not yet started is looked
+    at again at once, and one it started stays its own while it is away; when it
+    tells it no longer has a review this machine left to it, that review is looked at
+    again at once; one it still has, or may have while its plugin restarts, shows
+    where it is now;
   - paused at the usage limit, this machine shares no queued review, and the user's
     ask that ends the pause still leaves a commit the laptop claimed to the laptop.
   """
@@ -156,7 +159,8 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
   # `prs`: key → its head (1 or 2). `reviews`: key → %{status, run (the run its thread
   # is, nil before the first), seen (the head the last look saw), reviewed, claimed,
-  # elsewhere (the laptop's status where a look or a run left it to the laptop),
+  # elsewhere (`{status, claimed}` of the laptop's row where a look or a run left it
+  # to the laptop),
   # publish_error, seq (order queued), held (`{reviewed, status}` of the commit it
   # still claims since it was queued again for another head)}. `runs`: key → whether
   # each run so far launched its thread. `posts`: every post that reached GitHub,
@@ -357,14 +361,18 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     {if(tells?(m), do: peer_claims(m), else: m), :ok}
   end
 
-  # What a look had left to the laptop is looked at again once it is gone.
+  # What a look had left to the laptop and the laptop had not started is looked at
+  # again once it is gone; a commit it started stays its own.
   defp step(m, {:call, _, :disconnect, []}) do
     m = %{m | laptop: false}
 
-    if Enum.any?(m.reviews, fn {_, r} -> r.elsewhere end),
-      do:
-        {look(%{m | reviews: Map.new(m.reviews, fn {k, r} -> {k, %{r | elsewhere: nil}} end)}),
-         :ok},
+    soft =
+      for {key, %{elsewhere: {_, false}} = r} <- m.reviews,
+          into: %{},
+          do: {key, %{r | elsewhere: nil}}
+
+    if soft != %{},
+      do: {look(%{m | reviews: Map.merge(m.reviews, soft)}), :ok},
       else: {m, :ok}
   end
 
@@ -401,14 +409,14 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       %{status: :waiting, reviewed: reviewed} = r ->
         cond do
           {reviewed, "published"} in Enum.map(laptop_rows(m, key), &Tuple.delete_at(&1, 2)) ->
-            {put_review(m, key, %{r | publish_error: true}), :refused}
+            {put_review(m, key, %{r | status: :published, publish_error: false}), :refused}
 
           # The laptop cannot say whether it posted, so the post waits for it.
           m.laptop and m.restarting ->
             {put_review(m, key, %{r | publish_error: true}), :restarting}
 
           {key, reviewed} in m.posts or {key, reviewed, true} in m.github ->
-            {put_review(m, key, %{r | publish_error: true}), :on_github}
+            {put_review(m, key, %{r | status: :published, publish_error: false}), :on_github}
 
           true ->
             m = put_review(m, key, %{r | status: :published, publish_error: false})
@@ -448,7 +456,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     changed =
       for {key, r} <- m.reviews,
           r.status not in [:queued, :running] and r.reviewed != r.seen,
-          other <- [laptop_status(m, key, r.seen)],
+          other <- [laptop_status(m, key, r.seen) || away(m, r, r.seen)],
           other != r.elsewhere,
           other != nil or not (m.laptop and m.restarting),
           into: %{},
@@ -458,15 +466,20 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     if Enum.any?(changed, fn {_, r} -> r.elsewhere == nil end), do: look(m), else: m
   end
 
-  # The laptop's status of `key` at `head`, a claim over a queued one.
+  # The laptop's `{status, claimed}` of `key` at `head`, a claim over a queued one.
   defp laptop_status(m, key, head) do
     rows = for {^head, _, _} = row <- laptop_rows(m, key), do: row
 
     case Enum.sort_by(rows, &elem(&1, 2)) do
       [] -> nil
-      rows -> rows |> List.last() |> elem(1)
+      rows -> rows |> List.last() |> Tuple.delete_at(0)
     end
   end
+
+  # What `review` showed of a commit the laptop started at `head`, while the laptop
+  # is cut off: it has it still.
+  defp away(%{laptop: false}, %{elsewhere: {_, true} = other, seen: head}, head), do: other
+  defp away(_m, _review, _head), do: nil
 
   # The laptop's rows of `key` as this machine reads them, `{head, status, claimed}`,
   # a commit it holds behind a review queued again among them. One cut off, or
@@ -526,7 +539,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
       known = m.reviews[key]
       reviewed = known && known.reviewed
 
-      other = laptop_status(m, key, head)
+      other = laptop_status(m, key, head) || away(m, known, head)
 
       seen = %{(known || fresh(head)) | seen: head, elsewhere: nil}
 
@@ -590,9 +603,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
         other =
           Enum.find_value(laptop_rows(m, key), fn
-            {^head, status, true} -> status
+            {^head, status, true} -> {status, true}
             _ -> nil
-          end) || if(m.laptop and m.restarting, do: "queued")
+          end) || if(m.laptop and m.restarting, do: {"queued", false})
 
         case other do
           status when status != nil ->
@@ -729,13 +742,14 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     end
   end
 
-  # Cut off: once the plugin heard, by what it publishes when it had left a review to
-  # the laptop, and by the laptop's own nodedown here otherwise.
+  # Cut off: once the plugin heard, by what it publishes when it had left a review the
+  # laptop had not started to the laptop, and by the laptop's own nodedown here otherwise.
   def disconnect do
     node = laptop().node
     gone = to_string(node)
     {:ok, state} = get_state(Process.whereis(@server))
-    left? = Enum.any?(state.reviews, fn {_, r} -> match?(%{"node" => ^gone}, r["elsewhere"]) end)
+    soft? = &(match?(%{"node" => ^gone}, &1["elsewhere"]) and &1["elsewhere"]["claimed"] != true)
+    left? = Enum.any?(state.reviews, fn {_, r} -> soft?.(r) end)
     true = Node.disconnect(node)
 
     receive do
@@ -745,10 +759,7 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     end
 
     if left?,
-      do:
-        await_topic(
-          &(not Enum.any?(&1["reviews"], fn r -> match?(%{"node" => ^gone}, r["elsewhere"]) end))
-        )
+      do: await_topic(&(not Enum.any?(&1["reviews"], soft?)))
 
     observe(:ok)
   end
@@ -813,8 +824,17 @@ defmodule HalC2.CodeReviewClaimsPropTest do
     put_world(Process.get(:cr_world))
 
     case call("publish", %{"key" => key}) do
-      {:ok, _} ->
-        observe(:ok)
+      {:ok, snapshot} ->
+        note = Enum.find_value(snapshot["reviews"], &(&1["key"] == key && &1["publishNote"]))
+
+        observe(
+          cond do
+            note == nil -> :ok
+            note =~ "laptop already posted its review of this commit." -> :refused
+            note =~ "The review of this commit is already on the pull request." -> :on_github
+            true -> :error
+          end
+        )
 
       {:error, %{"message" => message}} ->
         observe(
@@ -900,9 +920,14 @@ defmodule HalC2.CodeReviewClaimsPropTest do
 
     elsewhere =
       case r["elsewhere"] do
-        nil -> nil
-        %{"machine" => "laptop", "node" => ^gone, "status" => status} -> status
-        other -> {:unexpected, other}
+        nil ->
+          nil
+
+        %{"machine" => "laptop", "node" => ^gone, "status" => status} = other ->
+          {status, other["claimed"] == true}
+
+        other ->
+          {:unexpected, other}
       end
 
     {key, @statuses[r["status"]], run(key, r["threadId"]), head(r["headSha"]),
