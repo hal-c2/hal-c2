@@ -21,6 +21,17 @@ defmodule HalC2.IssueTrackerClaimsTest do
   @settings Map.new(@manifest["settings"], &{&1["key"], &1["default"]})
 
   setup %{tmp_dir: dir} do
+    previous = Map.new([:home, :bundled_plugins], &{&1, Application.fetch_env(:hal_c2, &1)})
+
+    on_exit(fn ->
+      for {key, value} <- previous do
+        case value do
+          {:ok, value} -> Application.put_env(:hal_c2, key, value)
+          :error -> Application.delete_env(:hal_c2, key)
+        end
+      end
+    end)
+
     Application.put_env(:hal_c2, :home, dir)
     Application.put_env(:hal_c2, :bundled_plugins, [])
     start_supervised!(HalC2.Settings)
