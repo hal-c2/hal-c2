@@ -396,8 +396,11 @@ defmodule HalC2.Settings do
     kind, reason -> {:error, Exception.format_banner(kind, reason)}
   end
 
-  # A member's records this MC cannot write are let go, not the table every service
-  # reads: the member's next gossip brings them again.
+  # A member's records are taken up all or nothing. Every file they change is written
+  # beside itself before any is moved into place, so one this MC cannot write lets the
+  # merge go, not the table every service reads: the member's next gossip brings it
+  # again. A records file left behind its values would have them stamped later as this
+  # MC's own edit, over a newer one from another member.
   defp merge_shared(state, records) do
     # A rules file unlike its record was edited by hand since. It is stamped first, so
     # the merge weighs the edit rather than writing over it.
@@ -411,21 +414,31 @@ defmodule HalC2.Settings do
     if merged == state.shared do
       state
     else
-      # The rules file is written before the record that stamps it, like settings.json.
-      if merged["keybindings"] != state.shared["keybindings"] do
-        rules = merged["keybindings"]["value"] || []
+      rules = merged["keybindings"]["value"] || []
 
-        if rules != HalC2.Keybindings.rules() do
-          HalC2.Keybindings.write(rules)
-          HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
-        end
-      end
+      rules? =
+        merged["keybindings"] != state.shared["keybindings"] and
+          rules != HalC2.Keybindings.rules()
 
       settings = Shared.apply(state.settings, merged)
+      shared = local_shared(merged, settings, Shared.document_keys(), state)
 
-      if settings == state.settings,
-        do: put_shared(state, merged),
-        else: save(state, settings, true, merged)
+      # Moved into place records last, like a save: a crash in between then reads as a
+      # local edit of the new value.
+      [
+        rules? && {HalC2.Keybindings.path(), rules},
+        settings != state.settings && {state.path, settings},
+        {shared_path(), shared}
+      ]
+      |> Enum.filter(& &1)
+      |> stage_all!()
+      |> Enum.each(&commit!/1)
+
+      :ets.insert(__MODULE__, {:shared, shared})
+      HalC2.Cluster.share_settings()
+      state = %{state | shared: shared}
+      if rules?, do: HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
+      if settings == state.settings, do: state, else: save(state, settings, false)
     end
   rescue
     exception ->
@@ -450,21 +463,23 @@ defmodule HalC2.Settings do
     end
   end
 
-  # Saves, publishes and tells the members the records, after whatever they stamp has
-  # been written: a crash in between then reads as a local edit of the new value. So
-  # does a records file that cannot be written: the change it stamps stands, and the
-  # records stay as they were until a later change, merge or start stamps it again.
+  # Saves, publishes and tells the members the records of a local change, after whatever
+  # they stamp has been written: a crash in between then reads as a local edit of the
+  # new value. A records file that cannot be written fails neither the change nor its
+  # stamp: the records are kept and shared as made, and the next records written, or a
+  # start, which stamps at the file's time, brings the file up to them.
   defp put_shared(state, shared) when shared == state.shared, do: state
 
   defp put_shared(state, shared) do
-    write!(shared_path(), shared)
+    try do
+      write!(shared_path(), shared)
+    rescue
+      exception -> Logger.error("shared settings not saved: #{Exception.message(exception)}")
+    end
+
     :ets.insert(__MODULE__, {:shared, shared})
     HalC2.Cluster.share_settings()
     %{state | shared: shared}
-  rescue
-    exception ->
-      Logger.error("shared settings not saved: #{Exception.message(exception)}")
-      state
   end
 
   @doc "The document as settings.json holds it, for tools running beside an MC."
@@ -665,11 +680,30 @@ defmodule HalC2.Settings do
   defp publish(settings, version), do: :ets.insert(__MODULE__, {:settings, {settings, version}})
 
   # Written to a temporary file and renamed, so a crash never leaves half a file.
-  defp write!(path, settings) do
+  defp write!(path, settings), do: path |> stage!(settings) |> commit!()
+
+  defp stage!(path, settings) do
     File.mkdir_p!(Path.dirname(path))
     tmp = path <> ".tmp"
     File.write!(tmp, JSON.encode_to_iodata!(settings))
     File.chmod!(tmp, 0o600)
-    File.rename!(tmp, path)
+    {tmp, path}
   end
+
+  # Each of `files` staged, or none: one that cannot be removes what was staged before it.
+  defp stage_all!(files) do
+    files
+    |> Enum.reduce([], fn {path, data}, staged ->
+      try do
+        [stage!(path, data) | staged]
+      rescue
+        exception ->
+          for {tmp, _} <- [{path <> ".tmp", path} | staged], do: File.rm(tmp)
+          reraise exception, __STACKTRACE__
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  defp commit!({tmp, path}), do: File.rename!(tmp, path)
 end

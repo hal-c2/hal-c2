@@ -126,7 +126,7 @@ defmodule HalC2.SettingsPropTest do
             {4, {:call, __MODULE__, :drain, []}},
             {2, {:call, __MODULE__, :restart, []}},
             {4, {:call, __MODULE__, :gossip, [incoming()]}},
-            {1, {:call, __MODULE__, :gossip_unwritable, [incoming_rules()]}},
+            {2, {:call, __MODULE__, :gossip_unwritable, [unwritable(), incoming()]}},
             {2, {:call, __MODULE__, :records, []}},
             {2, {:call, __MODULE__, :bind, [rule_key()]}},
             {2, {:call, __MODULE__, :bind_racing, [rule_key(), incoming_rules()]}},
@@ -178,6 +178,8 @@ defmodule HalC2.SettingsPropTest do
     end
   end
 
+  defp unwritable, do: oneof(["keybindings.json", "settings.json", "settings-shared.json"])
+
   defp rule_key, do: oneof(["k", "j", "p"])
   defp rule(key), do: %{"key" => "mod+" <> key, "command" => "c"}
 
@@ -225,12 +227,21 @@ defmodule HalC2.SettingsPropTest do
   def next_state(%{held: true} = state, _result, {:call, _, :gossip, _}), do: state
   def next_state(state, _result, {:call, _, :gossip, [incoming]}), do: gossiped(state, incoming)
 
-  # Rules this MC cannot write are let go with the rest of what the member sent.
+  # A merge is all or nothing: one file it changes that this MC cannot write lets go of
+  # everything the member sent.
   def next_state(%{held: true} = state, _result, {:call, _, :gossip_unwritable, _}), do: state
 
-  def next_state(state, _result, {:call, _, :gossip_unwritable, [incoming]}) do
+  def next_state(state, _result, {:call, _, :gossip_unwritable, [file, incoming]}) do
     merged = gossiped(state, incoming)
-    if merged.rules == state.rules, do: merged, else: state
+
+    written? =
+      case file do
+        "keybindings.json" -> merged.rules != state.rules
+        "settings.json" -> merged.doc != state.doc
+        "settings-shared.json" -> merged.records != state.records
+      end
+
+    if written?, do: state, else: merged
   end
 
   def next_state(state, _result, {:call, _, :bind, [key]}), do: bound_rules(state, key)
@@ -528,13 +539,15 @@ defmodule HalC2.SettingsPropTest do
     :ok
   end
 
-  # A member's rules arriving when the rules file cannot be written.
-  def gossip_unwritable(records) do
-    File.mkdir_p!(HalC2.Keybindings.path() <> ".tmp")
+  # A member's records arriving when one of the files a merge writes cannot be written:
+  # `<file>.tmp` is a directory.
+  def gossip_unwritable(file, records) do
+    tmp = Path.join(HalC2.Paths.config_dir(), file <> ".tmp")
+    File.mkdir_p!(tmp)
     {result, _log} = ExUnit.CaptureLog.with_log(fn -> gossip(records) end)
     result
   after
-    File.rm_rf!(HalC2.Keybindings.path() <> ".tmp")
+    File.rm_rf!(Path.join(HalC2.Paths.config_dir(), file <> ".tmp"))
   end
 
   def records, do: Settings.shared_records()
