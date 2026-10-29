@@ -184,7 +184,7 @@ defmodule HalC2.WorktreeSetupTest do
       %{
         "id" => "setup",
         "name" => "Setup",
-        "command" => "echo ready > setup.txt",
+        "command" => ~s(echo "$HAL_C2_PROJECT_ROOT $HAL_C2_WORKTREE_PATH" > setup.txt),
         "icon" => "configure",
         "runOnWorktreeCreate" => true,
         "async" => false
@@ -197,7 +197,8 @@ defmodule HalC2.WorktreeSetupTest do
     assert %{"status" => "done", "detail" => "exited with 0"} =
              Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
 
-    assert File.read!(Path.join(snapshot["worktreePath"], "setup.txt")) == "ready\n"
+    path = snapshot["worktreePath"]
+    assert File.read!(Path.join(path, "setup.txt")) == "#{repo} #{path}\n"
   end
 
   # The repository's own hal-c2.json lists a PowerShell variant after the POSIX one.

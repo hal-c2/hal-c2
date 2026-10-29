@@ -343,7 +343,7 @@ defmodule HalC2.WorktreeSetup do
 
         script ->
           status.("setup-script", "running", %{})
-          start_script(thread_id, path, script, set)
+          start_script(thread_id, root, path, script, set)
       end
 
     # A blocking script finishes before the agent starts.
@@ -435,15 +435,26 @@ defmodule HalC2.WorktreeSetup do
   end
 
   # Runs the script in the thread's "setup" terminal; its exit code comes back as a
-  # marker line the command prints after it.
-  defp start_script(thread_id, path, script, set) do
+  # marker line the command prints after it. The script sees where the project and the
+  # worktree are, as project scripts the clients run do (the T3CODE_ names are what
+  # scripts written before the rename use). It can run before a client attaches, so
+  # nothing advertises truecolor: tools that probe for it wait on a reply nobody sends.
+  defp start_script(thread_id, root, path, script, set) do
     token = Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
 
     input = %{
       "threadId" => thread_id,
       "terminalId" => "setup",
       "cwd" => path,
-      "env" => %{"NO_COLOR" => "1", "FORCE_COLOR" => "0"}
+      "env" => %{
+        "NO_COLOR" => "1",
+        "FORCE_COLOR" => "0",
+        "COLORTERM" => "",
+        "HAL_C2_PROJECT_ROOT" => root,
+        "T3CODE_PROJECT_ROOT" => root,
+        "HAL_C2_WORKTREE_PATH" => path,
+        "T3CODE_WORKTREE_PATH" => path
+      }
     }
 
     with {:ok, _} <- terminal(:open, [input]),
