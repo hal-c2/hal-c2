@@ -789,7 +789,7 @@ defmodule HalC2.Steps.Orchestration.Delegation do
     context
   end
 
-  step "the subagent completes while its caller is too busy to hear it", context do
+  step "the subagent completes and the first report of its end fails", context do
     complete_unheard(context, fn -> :ok end)
   end
 
@@ -1278,24 +1278,36 @@ defmodule HalC2.Steps.Orchestration.Delegation do
   end
 
   defp lost_report(context, answer) do
-    parent = HalC2.Streams.ensure(World.thread_id(context, context.task_parent))
+    reporter = report_held(context, answer)
+    assert task(context)["status"] == "running"
+    Map.put(context, :reporter, reporter)
+  end
+
+  # Completes the task's child with `answer`, fails the first report of its end, as a
+  # thread it reads that restarts under it would, and holds the report at its retry.
+  # Returns the reporter, which goes on when sent `:retry`.
+  defp report_held(context, answer) do
     World.await_runs(context, "subagent", ["running"])
+    failed = :atomics.new(1, [])
+    child = World.thread_id(context, "subagent")
+    World.put_app_env(:delegation_hook, {__MODULE__, :fail_first_report, [failed, child]})
     gate = :"delegation_retry_gate_#{System.unique_integer([:positive])}"
     :ok = :logger.add_handler(gate, __MODULE__.RetryGate, %{config: self()})
-    :sys.suspend(parent)
-
-    ExUnit.Callbacks.on_exit(fn ->
-      :logger.remove_handler(gate)
-      catch_exit(:sys.resume(parent))
-    end)
+    # A failing step leaves no gate to the next scenario.
+    ExUnit.Callbacks.on_exit(fn -> :logger.remove_handler(gate) end)
 
     World.send_turn(context, "subagent", "say " <> answer)
     assert_receive {:retrying, reporter}, 15_000
     :logger.remove_handler(gate)
-    :sys.resume(parent)
-    assert task(context)["status"] == "running"
-    Map.put(context, :reporter, reporter)
+    reporter
   end
+
+  # The `:delegation_hook` of `report_held/2`.
+  def fail_first_report(failed, child, :reporting, child) do
+    if :atomics.exchange(failed, 1, 1) == 0, do: exit(:restarting)
+  end
+
+  def fail_first_report(_failed, _child, _stage, _id), do: :ok
 
   step "the subagent's session is released and the MC's periodic check runs", context do
     child = World.thread_id(context, "subagent")
@@ -2868,27 +2880,11 @@ defmodule HalC2.Steps.Orchestration.Delegation do
 
   defp number(text), do: text |> String.replace(",", "") |> String.to_integer()
 
-  # Completes the task's child with its caller's stream held, so the report of its
-  # end times out, and holds that report at its retry; `meanwhile` runs before it.
-  # The caller has no result until the retry.
+  # Completes the task's child with the first report of its end failed, and holds that
+  # report at its retry; `meanwhile` runs before it. The caller has no result until
+  # the retry.
   defp complete_unheard(context, meanwhile) do
-    parent_id = World.thread_id(context, context.task_parent)
-    parent = HalC2.Streams.ensure(parent_id)
-    World.await_runs(context, "subagent", ["running"])
-    gate = :"delegation_retry_gate_#{System.unique_integer([:positive])}"
-    :ok = :logger.add_handler(gate, __MODULE__.RetryGate, %{config: self()})
-    :sys.suspend(parent)
-
-    # A failing step leaves neither the gate nor a held stream to the next scenario.
-    ExUnit.Callbacks.on_exit(fn ->
-      :logger.remove_handler(gate)
-      catch_exit(:sys.resume(parent))
-    end)
-
-    World.send_turn(context, "subagent", "say Done")
-    assert_receive {:retrying, reporter}, 15_000
-    :logger.remove_handler(gate)
-    :sys.resume(parent)
+    reporter = report_held(context, "Done")
 
     refute Enum.any?(
              StreamState.list(World.state(context, context.task_parent), "message"),

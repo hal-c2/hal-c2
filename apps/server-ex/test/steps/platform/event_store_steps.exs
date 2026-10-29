@@ -258,6 +258,77 @@ defmodule HalC2.Steps.Platform.EventStore do
     context
   end
 
+  # --- a slow store ---------------------------------------------------------------------
+
+  step("a turn is running in the thread", context, do: World.running_turn(context, "main"))
+
+  # The fake Codex answers this turn once the scenario writes the gate file "answer".
+  step "a turn is running in the thread, about to answer", context do
+    gate = Mc.tmp_dir(context.mc, "gate")
+    fake = Path.expand("../../support/fake_codex.py", __DIR__)
+    World.put_app_env(:codex_command, ["env", "FAKE_CODEX_GATE=#{gate}", "python3", "-u", fake])
+
+    context
+    |> World.running_turn("main", "answer from gate")
+    |> Map.put(:gate, gate)
+  end
+
+  # Every write the store holds up logs at once, as one held up past the threshold does.
+  step "the store's writer is stalled", context do
+    World.put_app_env(:store_slow_write_ms, 0)
+    HalC2.Test.LogTap.attach()
+    :ok = :sys.suspend(Store)
+    ExUnit.Callbacks.on_exit(fn -> if Process.whereis(Store), do: :sys.resume(Store) end)
+    context
+  end
+
+  step "the agent answers and ends its turn", context do
+    File.write!(Path.join(context.gate, "answer"), "done")
+    context
+  end
+
+  step "the user asks to stop the turn", context do
+    test = self()
+
+    command = %{
+      "type" => "run.interrupt",
+      "commandId" => "cmd-#{System.unique_integer([:positive])}",
+      "threadId" => World.thread_id(context, "main"),
+      "runId" => context.running
+    }
+
+    spawn(fn -> send(test, {:stopped, HalC2.Orchestration.dispatch(command)}) end)
+    context
+  end
+
+  step "the MC logs that the store is slow", context do
+    assert_receive {:logged, :warning, "a store append has waited" <> _}, 5_000
+
+    assert [{runtime, _}] =
+             Registry.lookup(HalC2.Codex.Registry, World.thread_id(context, "main"))
+
+    assert Process.alive?(runtime)
+    context
+  end
+
+  step "the turn completes once the store catches up", context do
+    resume_store()
+    World.await_runs(context, "main", ["completed"])
+    context
+  end
+
+  step "the turn is interrupted once the store catches up", context do
+    resume_store()
+    assert_receive {:stopped, {:ok, _}}, 5_000
+    World.await_runs(context, "main", ["interrupted"])
+    context
+  end
+
+  defp resume_store do
+    Application.delete_env(:hal_c2, :store_slow_write_ms)
+    :ok = :sys.resume(Store)
+  end
+
   # --- snapshots ------------------------------------------------------------------------
 
   step "a thread receives 500 more events", context do

@@ -60,6 +60,9 @@ defmodule HalC2.Orchestration.Effects do
   @doc "The wait before try `attempt + 1`: 100ms doubling, capped at 30s."
   def delay(attempt), do: min(@base_delay_ms * 2 ** (attempt - 1), @max_delay_ms)
 
+  # The worker records effects in the store as it takes them, so its calls wait as
+  # long as the store's writes do (hal-c2/hal-c2#644).
+
   @doc """
   Records an effect on `lane` and runs it in the background, answering its id.
   Without a worker (an MC started without one, as in unit tests) it runs in a
@@ -70,7 +73,7 @@ defmodule HalC2.Orchestration.Effects do
     record = new_record(thread_id, type, args, lane)
 
     if Process.whereis(__MODULE__) do
-      :ok = GenServer.call(__MODULE__, {:enqueue, record, nil, nil})
+      :ok = GenServer.call(__MODULE__, {:enqueue, record, nil, nil}, :infinity)
       {:ok, record["id"]}
     else
       Task.start(fn -> execute_inline(record, nil, @max_attempts) end)
@@ -105,7 +108,7 @@ defmodule HalC2.Orchestration.Effects do
   @spec cancel(String.t()) :: :ok
   def cancel(effect_id) do
     if Process.whereis(__MODULE__),
-      do: GenServer.call(__MODULE__, {:cancel, effect_id}),
+      do: GenServer.call(__MODULE__, {:cancel, effect_id}, :infinity),
       else: :ok
   end
 
@@ -113,7 +116,7 @@ defmodule HalC2.Orchestration.Effects do
   @spec cancel_pending(String.t(), String.t(), String.t()) :: :ok
   def cancel_pending(thread_id, type, run_id) do
     if Process.whereis(__MODULE__),
-      do: GenServer.call(__MODULE__, {:cancel_matching, thread_id, type, run_id}),
+      do: GenServer.call(__MODULE__, {:cancel_matching, thread_id, type, run_id}, :infinity),
       else: :ok
   end
 
@@ -121,7 +124,7 @@ defmodule HalC2.Orchestration.Effects do
   @spec cancel_thread(String.t(), [String.t()]) :: :ok
   def cancel_thread(thread_id, except \\ []) do
     if Process.whereis(__MODULE__),
-      do: GenServer.call(__MODULE__, {:cancel_thread, thread_id, except}),
+      do: GenServer.call(__MODULE__, {:cancel_thread, thread_id, except}, :infinity),
       else: :ok
   end
 
