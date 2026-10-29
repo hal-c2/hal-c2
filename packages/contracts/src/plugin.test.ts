@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { PluginManifest, PluginSettingField } from "./plugin.ts";
+import { PluginCompileCheck, PluginManifest, PluginSettingField } from "./plugin.ts";
 
 const decodeManifest = Schema.decodeUnknownSync(PluginManifest);
 
@@ -78,5 +78,33 @@ describe("PluginManifest", () => {
     ).toMatchObject({
       default: "c",
     });
+  });
+});
+
+describe("PluginCompileCheck", () => {
+  const decode = Schema.decodeUnknownSync(PluginCompileCheck);
+
+  it("takes a failure the MC locates and one it cannot", () => {
+    const check = {
+      ok: false,
+      error: "mc/broken.ex:2: syntax error before: ')'",
+      diagnostics: [
+        { file: "mc/broken.ex", line: 2, message: "syntax error before: ')'", severity: "error" },
+        { file: null, line: null, message: "has two plugin modules", severity: "error" },
+      ],
+      checkedAt: "2026-10-29T12:00:00Z",
+    };
+    expect(decode(check)).toEqual(check);
+  });
+
+  it("refuses a severity the compiler does not give", () => {
+    expect(() =>
+      decode({
+        ok: true,
+        error: null,
+        diagnostics: [{ file: null, line: null, message: "x", severity: "fatal" }],
+        checkedAt: "2026-10-29T12:00:00Z",
+      }),
+    ).toThrow();
   });
 });

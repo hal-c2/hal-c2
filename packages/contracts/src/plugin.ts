@@ -228,6 +228,27 @@ export const PluginStatus = Schema.Literals([
 ]);
 export type PluginStatus = typeof PluginStatus.Type;
 
+/** One thing the compiler said about a package's `mc/` code; `file` is relative to it. */
+export const PluginCompileDiagnostic = Schema.Struct({
+  file: Schema.NullOr(Schema.String),
+  line: Schema.NullOr(Schema.Int),
+  message: Schema.String,
+  severity: Schema.Literals(["error", "warning", "information", "hint"]),
+});
+export type PluginCompileDiagnostic = typeof PluginCompileDiagnostic.Type;
+
+/**
+ * What `plugins.compile` found compiling a package's `mc/` code without enabling it:
+ * `error` is the first error, located, for a one-line summary.
+ */
+export const PluginCompileCheck = Schema.Struct({
+  ok: Schema.Boolean,
+  error: Schema.NullOr(Schema.String),
+  diagnostics: Schema.Array(PluginCompileDiagnostic),
+  checkedAt: Schema.String,
+});
+export type PluginCompileCheck = typeof PluginCompileCheck.Type;
+
 /** One plugin as `plugins.list` and the `plugins` shape give it. */
 export const PluginEntry = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -268,6 +289,8 @@ export const PluginEntry = Schema.Struct({
   contributes: PluginContributions,
   /** Changes whenever the package's files change; clients reload its UI parts. */
   revision: Schema.NullOr(Schema.String),
+  /** The last `plugins.compile` of the version listed, until it is enabled. */
+  compileCheck: Schema.NullOr(PluginCompileCheck),
 });
 export type PluginEntry = typeof PluginEntry.Type;
 
@@ -284,6 +307,11 @@ export const PLUGIN_METHODS = {
   saveSettings: "plugins.saveSettings",
   call: "plugins.call",
   file: "plugins.file",
+  /**
+   * Compiles a package's `mc/` code (`PluginIdInput`) in a VM of its own, granting
+   * and starting nothing, and answers a `PluginCompileCheck`.
+   */
+  compile: "plugins.compile",
 } as const;
 
 export const PluginEnableInput = Schema.Struct({
