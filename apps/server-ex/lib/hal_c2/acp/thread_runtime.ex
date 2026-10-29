@@ -917,7 +917,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   defp ensure_session(state, turn) do
     driver = turn.ids.driver
 
-    with {:ok, state} <- launch(state, driver, turn.runtime_mode, turn.cwd) do
+    with {:ok, state} <- launch(state, driver, turn.runtime_mode, turn) do
       with :ok <- authenticate(state, driver),
            {:ok, forked} <- fork_first(state, turn),
            {:ok, session_id, state} <- open_session(state, forked) do
@@ -958,8 +958,9 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
-  # A new agent process for `instance`, initialized; OpenCode's serves its HTTP API.
-  defp launch(state, instance, mode, cwd) do
+  # A new agent process for `instance` in the working directory of `context` (a turn,
+  # or a rewind's plan), initialized; OpenCode's serves its HTTP API.
+  defp launch(state, instance, mode, %{cwd: cwd} = context) do
     if state.conn, do: Connection.stop(state.conn)
     # The old session's MCP-over-ACP connections end with it; the next one
     # starts a fresh bridge with the credential this launch prepares.
@@ -978,6 +979,7 @@ defmodule HalC2.Acp.ThreadRuntime do
                HalC2.Mcp.for_agent(state.thread_id, instance)
              ).env,
          {command, env, server} = serve_opencode(instance, command, env),
+         env = HalC2.ProjectEnvironment.for_turn(context, env, command),
          {:ok, conn} <-
            Connection.start_link(
              cmd: command,
@@ -1039,7 +1041,11 @@ defmodule HalC2.Acp.ThreadRuntime do
        do: {:ok, state}
 
   defp serve(state, plan),
-    do: launch(state, plan.instance, state.mode || "approval-required", plan.cwd)
+    do:
+      launch(state, plan.instance, state.mode || "approval-required", %{
+        cwd: plan.cwd,
+        project_id: plan[:project_id]
+      })
 
   # A session carried from another machine (`HalC2.PortableSessions`) is the thread's
   # session here: the agent loads the copy by its id, as it loads any session of its own.

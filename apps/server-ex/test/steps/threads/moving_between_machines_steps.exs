@@ -1310,6 +1310,35 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     context
   end
 
+  step "{string} on {string} loads its environment from its checkout's {string}",
+       %{args: [project, machine, file]} = context do
+    %{id: id, root: root} = checkout(context, machine, project)
+    trace = Path.join(Machines.home(context, machine), "project-env-trace.jsonl")
+    File.write!(Path.join(root, file), "FAKE_CODEX_TRACE=#{trace}\n")
+    {settings, version} = Machines.on(context, machine, HalC2.Settings, :get, [])
+
+    overrides =
+      Map.put(settings["projectSettingsOverrides"] || %{}, id, %{
+        "projectEnvironment" => "dotenv",
+        "projectEnvironmentFile" => file
+      })
+
+    {:ok, _} =
+      Machines.on(context, machine, HalC2.Settings, :put, [
+        Map.put(settings, "projectSettingsOverrides", overrides),
+        version
+      ])
+
+    context
+  end
+
+  # The fake Codex writes its trace where the checkout's .env points it.
+  step "the agent on {string} has the variables of the {string} checkout's {string}",
+       %{args: [machine, _checkout, _file]} = context do
+    assert File.exists?(Path.join(Machines.home(context, machine), "project-env-trace.jsonl"))
+    context
+  end
+
   # --- moving back -----------------------------------------------------------------------
 
   step "{string} went from {string} to {string} and back to {string}",

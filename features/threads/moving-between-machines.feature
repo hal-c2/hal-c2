@@ -13,6 +13,8 @@
 #     off after that is settled by what the destination says)
 #   apps/server-ex/lib/hal_c2/thread_archive.ex (what the destination writes of a thread: a plugin's
 #     mark stays behind)
+#   apps/server-ex/lib/hal_c2/project_environment.ex (a session loads the environment of the project it
+#     runs in, on the machine it runs on)
 #   apps/server-ex/lib/hal_c2/shell.ex, apps/server-ex/lib/hal_c2/cluster.ex (cluster-wide sidebar keyed
 #     by MC, offline members keep their rows)
 #   apps/server-ex/lib/hal_c2/checkpoint.ex (checkpoints are hidden commits under
@@ -295,6 +297,15 @@ Feature: Moving a thread and its agent to another machine
       And "Alpha" moved to "desktop"
       When the user sends the first message in "Alpha" since the move
       Then the agent is told the project moved from "~/code/shop" to "~/src/shop-app"
+
+    # A project's environment setting is its machine's (settings/project-environment.feature):
+    # the destination loads its own project's, from its own checkout.
+    @mc
+    Scenario: A moved thread's agent gets the destination project's environment
+      Given "shop" on "desktop" loads its environment from its checkout's ".env"
+      And "Alpha" moved to "desktop"
+      When the user sends the first message in "Alpha" since the move
+      Then the agent on "desktop" has the variables of the "desktop" checkout's ".env"
 
     @desktop
     Scenario: A fork and its source stay related across machines

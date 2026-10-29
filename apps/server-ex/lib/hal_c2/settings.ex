@@ -58,7 +58,7 @@ defmodule HalC2.Settings do
                      textGenerationModelSelection sourceControlWriterModelSelection
                      sourceControlWritingStyle pullRequestMergeMethod sidebarAutoSettleOnMerge
                      sidebarAutoSettleAfterDays continueThreadsAfterServerUpdate
-                     responseStreamingMode)
+                     responseStreamingMode projectEnvironment projectEnvironmentFile)
 
   @doc """
   The settings as they apply to one project: its `projectSettingsOverrides` entry

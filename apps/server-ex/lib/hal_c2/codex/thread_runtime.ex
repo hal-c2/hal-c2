@@ -429,6 +429,7 @@ defmodule HalC2.Codex.ThreadRuntime do
     # A session carried from another machine is forked from its copy before rewinding.
     turn = %{
       cwd: plan.cwd,
+      project_id: plan[:project_id],
       model: plan.model,
       native_thread_id: plan.native_thread_id,
       ids: %{thread: plan.thread_id, instance: plan.instance},
@@ -984,12 +985,13 @@ defmodule HalC2.Codex.ThreadRuntime do
       )
 
     # The instance's variables in settings (such as CODEX_HOME) reach Codex, over the
-    # home its settings name (`HalC2.Codex.Home`).
+    # home its settings name (`HalC2.Codex.Home`), and both over the project's
+    # environment when the project loads it.
     env = Enum.to_list(HalC2.Settings.instance_env(instance))
 
     with {:ok, args} <- launch_args(instance),
          {:ok, home} <- home_env(instance),
-         env = home ++ env,
+         env = HalC2.ProjectEnvironment.for_turn(turn, home ++ env, cmd ++ args),
          {:ok, conn} <-
            Connection.start_link(
              cmd: cmd ++ args,
