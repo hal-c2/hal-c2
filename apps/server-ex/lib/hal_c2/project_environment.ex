@@ -8,7 +8,9 @@ defmodule HalC2.ProjectEnvironment do
   setting: `"off"`, `"auto"` or `"dotenv"`), because loading runs the checkout's own
   configuration. `"auto"` loads mise when a mise config applies to the thread's
   working directory and mise is installed, then direnv when an `.envrc` applies and
-  direnv is installed, direnv's variables over mise's. `"dotenv"` reads
+  direnv is installed. direnv runs over mise's variables, as its hook does in a
+  mise-activated shell, so a PATH it builds keeps mise's tools, and its variables win.
+  `"dotenv"` reads
   `projectEnvironmentFile` (`.env` by default), relative to the working directory.
   The working directory is the thread's worktree, not the project root, since a
   worktree's config can differ. The managers' own trust still applies: an `.envrc`
@@ -20,7 +22,7 @@ defmodule HalC2.ProjectEnvironment do
   HAL-C2 sets for the session). The project never sets a `HAL_C2_*` variable, nor one
   the launch command removes with `env -u`.
 
-  Loading runs under a timeout and never fails a launch: a manager that fails, is not
+  Loading runs under one timeout, shared by both managers, and never fails a launch: a manager that fails, is not
   trusted or runs too long leaves the session with its usual environment and a
   notice on the thread saying why. Values are secrets-adjacent, so they are never
   logged or sent to a client; the log names the loader and how many variables it set.
@@ -73,13 +75,9 @@ defmodule HalC2.ProjectEnvironment do
   def load(settings, cwd) do
     case source(settings) do
       "auto" ->
-        [&mise/1, &direnv/1]
-        |> Enum.map(& &1.(cwd))
-        |> Enum.reduce({[], []}, fn
-          :skip, acc -> acc
-          {:ok, env}, {vars, warnings} -> {overlay(vars, env), warnings}
-          {:error, warning}, {vars, warnings} -> {vars, warnings ++ [warning]}
-        end)
+        deadline = System.monotonic_time(:millisecond) + timeout()
+        {vars, _} = loaded = add({[], []}, mise(cwd, deadline))
+        add(loaded, direnv(cwd, vars, deadline))
 
       "dotenv" ->
         case dotenv(cwd, file(settings)) do
@@ -140,6 +138,10 @@ defmodule HalC2.ProjectEnvironment do
   defp unset_names(["--unset=" <> name | rest]), do: [name | unset_names(rest)]
   defp unset_names(_rest), do: []
 
+  defp add(acc, :skip), do: acc
+  defp add({vars, warnings}, {:ok, env}), do: {overlay(vars, env), warnings}
+  defp add({vars, warnings}, {:error, warning}), do: {vars, warnings ++ [warning]}
+
   # `top`'s variables over `base`'s, each name once.
   defp overlay(base, top) do
     names = MapSet.new(top, &elem(&1, 0))
@@ -148,10 +150,10 @@ defmodule HalC2.ProjectEnvironment do
 
   # --- mise --------------------------------------------------------------------------
 
-  defp mise(cwd) do
+  defp mise(cwd, deadline) do
     with config when is_binary(config) <- applies(cwd, @mise_files),
          path when is_binary(path) <- executable("mise") do
-      case run([path, "env", "--json"], cwd) do
+      case run([path, "env", "--json"], cwd, [], deadline) do
         {:ok, out} ->
           decoded("mise", out, cwd)
 
@@ -174,7 +176,8 @@ defmodule HalC2.ProjectEnvironment do
 
   # --- direnv ------------------------------------------------------------------------
 
-  defp direnv(cwd) do
+  # `base` is mise's variables, which direnv's diff and PATH build on.
+  defp direnv(cwd, base, deadline) do
     with envrc when is_binary(envrc) <- applies(cwd, [".envrc"]),
          path when is_binary(path) <- executable("direnv") do
       argv =
@@ -187,7 +190,7 @@ defmodule HalC2.ProjectEnvironment do
               [path, "export", "json"]
         end
 
-      case run(argv, cwd, [{"DIRENV_LOG_FORMAT", ""}]) do
+      case run(argv, cwd, base ++ [{"DIRENV_LOG_FORMAT", ""}], deadline) do
         {:ok, out} ->
           decoded("direnv", out, cwd)
 
@@ -260,15 +263,22 @@ defmodule HalC2.ProjectEnvironment do
     end
   end
 
-  defp run(argv, cwd, env \\ []) do
-    timeout = Application.get_env(:hal_c2, :project_environment_timeout_ms, @timeout_ms)
+  defp timeout, do: Application.get_env(:hal_c2, :project_environment_timeout_ms, @timeout_ms)
 
-    case HalC2.Git.within(timeout, fn -> collect(argv, cwd, env) end) do
-      {:ok, {:ok, 0, out, _err}} -> {:ok, out}
-      {:ok, {:ok, status, _out, err}} -> {:failed, status, err}
-      {:ok, {:error, reason}} -> {:error, reason}
-      {:exit, _reason} -> {:error, "stopped while loading"}
-      :timeout -> {:error, "took longer than #{div(timeout, 1000)} s"}
+  # Runs `argv` until `deadline` (monotonic ms); one started after it is not run.
+  defp run(argv, cwd, env, deadline) do
+    case deadline - System.monotonic_time(:millisecond) do
+      left when left > 0 ->
+        case HalC2.Git.within(left, fn -> collect(argv, cwd, env) end) do
+          {:ok, {:ok, 0, out, _err}} -> {:ok, out}
+          {:ok, {:ok, status, _out, err}} -> {:failed, status, err}
+          {:ok, {:error, reason}} -> {:error, reason}
+          {:exit, _reason} -> {:error, "stopped while loading"}
+          :timeout -> {:error, "took longer than #{div(timeout(), 1000)} s"}
+        end
+
+      _spent ->
+        {:error, "took longer than #{div(timeout(), 1000)} s"}
     end
   end
 

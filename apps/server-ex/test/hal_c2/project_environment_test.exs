@@ -144,6 +144,38 @@ defmodule HalC2.ProjectEnvironmentTest do
                {[{"A", "mise"}, {"B", "direnv"}], []}
     end
 
+    test "direnv builds on mise's variables, so a PATH it changes keeps mise's tools",
+         %{dir: dir} do
+      for {name, bin} <- [{"mise", "/mise/bin"}, {"direnv", "/envrc/bin"}] do
+        path = Path.join(dir, "path-#{name}")
+        File.write!(path, ~s(#!/bin/sh\nprintf '{"PATH":"#{bin}:%s"}' "$PATH"\n))
+        File.chmod!(path, 0o755)
+        commands = Application.get_env(:hal_c2, :project_environment_commands, %{})
+        Application.put_env(:hal_c2, :project_environment_commands, Map.put(commands, name, path))
+      end
+
+      root = checkout(dir, %{"mise.toml" => "", ".envrc" => ""})
+
+      assert ProjectEnvironment.load(%{"projectEnvironment" => "auto"}, root) ==
+               {[{"PATH", "/envrc/bin:/mise/bin:" <> System.get_env("PATH")}], []}
+    end
+
+    test "mise and direnv share one time limit", %{dir: dir} do
+      path = Path.join(dir, "slow-mise")
+      File.write!(path, "#!/bin/sh\nexec sleep 30\n")
+      File.chmod!(path, 0o755)
+      Application.put_env(:hal_c2, :project_environment_commands, %{"mise" => path})
+      fake(dir, "direnv", ~s({"A":"1"}))
+      Application.put_env(:hal_c2, :project_environment_timeout_ms, 200)
+      root = checkout(dir, %{"mise.toml" => "", ".envrc" => ""})
+
+      assert {[], [mise, direnv]} =
+               ProjectEnvironment.load(%{"projectEnvironment" => "auto"}, root)
+
+      assert mise =~ "mise took longer"
+      assert direnv =~ "direnv took longer"
+    end
+
     test "an .envrc direnv has not allowed is reported, not bypassed", %{dir: dir} do
       fake(dir, "direnv", "", "direnv: error .envrc is blocked. Run `direnv allow`", 1)
       root = checkout(dir, %{".envrc" => "export A=1"})
