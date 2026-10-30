@@ -180,23 +180,34 @@ defmodule HalC2.Push do
     {:ok, %{state | seen: seen}}
   end
 
+  # Registrations of sessions revoked while the MC was down are deleted, not kept.
   defp load do
     if Process.whereis(HalC2.Store) do
-      for {@prefix <> session, json} <- HalC2.Store.metas(HalC2.Store.path(), @prefix),
-          valid_session?(session),
-          into: %{},
-          do: {session, JSON.decode!(json)}
+      {valid, revoked} =
+        HalC2.Store.metas(HalC2.Store.path(), @prefix)
+        |> Enum.map(fn {@prefix <> session, json} -> {session, json} end)
+        |> Enum.split_with(fn {session, _} -> valid_session?(session) end)
+
+      for {session, _} <- revoked, do: unpersist(session)
+      Map.new(valid, fn {session, json} -> {session, JSON.decode!(json)} end)
     else
       %{}
     end
   end
 
+  # Held alerts of a session no longer registered are deleted.
   defp load_held(registrations) do
     if Process.whereis(HalC2.Store) do
       for {@held_prefix <> session, json} <- HalC2.Store.metas(HalC2.Store.path(), @held_prefix),
-          Map.has_key?(registrations, session),
-          into: %{},
-          do: {session, Enum.map(JSON.decode!(json), &held_alert/1)}
+          reduce: %{} do
+        held ->
+          if Map.has_key?(registrations, session) do
+            Map.put(held, session, Enum.map(JSON.decode!(json), &held_alert/1))
+          else
+            persist_held(session, [])
+            held
+          end
+      end
     else
       %{}
     end

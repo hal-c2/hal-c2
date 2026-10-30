@@ -39,8 +39,13 @@ defmodule HalC2.PushTest do
     context
   end
 
+  # Each run completes at least a millisecond after the last, as a thread's runs do:
+  # alerts tell a thread's completions apart by the millisecond.
   defp finish(context, title \\ "Fix checkout") do
-    context = World.add_run(context, title, "completed")
+    at = max(System.os_time(:millisecond), Process.get(:last_finish, 0) + 1)
+    Process.put(:last_finish, at)
+    iso = at |> DateTime.from_unix!(:millisecond) |> DateTime.to_iso8601()
+    context = World.add_run(context, title, "completed", iso)
     :ok = Push.drain()
     context
   end
@@ -147,6 +152,20 @@ defmodule HalC2.PushTest do
     assert map_size(Push.registrations()) == 1
     finish(context)
     assert [%{"title" => "Fix checkout"}] = PushPhone.alerts(phone)
+  end
+
+  test "a restart deletes what is stored for revoked sessions", %{context: context, phone: phone} do
+    context = register(context, phone)
+    registration = JSON.encode!(%{"endpoint" => "https://push.example/gone"})
+    :ok = HalC2.Store.put_meta("push:revoked-session", registration)
+    :ok = HalC2.Store.put_meta("push-held:revoked-session", "[]")
+    :ok = HalC2.Store.put_meta("push-held:unregistered-session", "[]")
+
+    Mc.restart(context.mc)
+
+    assert map_size(Push.registrations()) == 1
+    stored = HalC2.Store.metas(HalC2.Store.path(), "push")
+    assert [_] = Map.keys(stored)
   end
 
   test "unregistering stops alerts", %{context: context, phone: phone} do
