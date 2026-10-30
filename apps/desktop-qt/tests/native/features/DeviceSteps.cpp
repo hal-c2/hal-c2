@@ -1671,6 +1671,15 @@ const Steps backlogSteps([] {
     QTest::keyClick(&panel.window(), key, Qt::MetaModifier);
     world.sync();
   });
+  step(QStringLiteral("the user holds Command with %1").arg(q), [](World& world, const Captures&, const Table&) {
+    QTest::keyPress(&devicePanel(world).window(), Qt::Key_R, Qt::MetaModifier);
+    world.sync();
+  });
+  step(QStringLiteral("the user presses Command with %1 again").arg(q), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).binary.clear();
+    QTest::keyClick(&devicePanel(world).window(), Qt::Key_R, Qt::MetaModifier);
+    world.sync();
+  });
   step(QStringLiteral("the user holds Command with %1 and lets go of Command first").arg(q), [](World& world, const Captures&, const Table&) {
     Brick& panel = devicePanel(world);
     QTest::keyPress(&panel.window(), Qt::Key_R, Qt::MetaModifier);

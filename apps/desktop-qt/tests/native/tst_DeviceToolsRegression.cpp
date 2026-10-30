@@ -79,6 +79,35 @@ private slots:
     tools.setOpen(true);
     QVERIFY(tools.view().value(QStringLiteral("error")).toString().isEmpty());
   }
+
+  // A foreground feed the hub kept ending was asked for again every 2s,
+  // however long the hub stayed down.
+  void aFeedThatKeepsEndingIsAskedForLessOften() {
+    FakeMc mc;
+    McClient client;
+    mc.onRpc(QStringLiteral("device."), [](const FakeMc::Rpc&) {});
+    client.setRetryDelays({20});
+    client.open(mc.origin(), QStringLiteral("token"));
+    QVERIFY(QTest::qWaitFor([&client] { return client.isReady(); }));
+
+    // The fake MC serves no hub, so every feed ends as soon as it is asked for.
+    DeviceTools tools(&client);
+    auto* retry = tools.findChild<QTimer*>(QStringLiteral("foregroundRetry"));
+    QVERIFY(retry);
+    tools.setOpen(true);
+    tools.setTarget(mc.environmentId, QStringLiteral("/hub"), QStringLiteral("local"), QStringLiteral("phone"), QStringLiteral("ios"));
+    // The first try waits 2s; each that ends too waits twice as long.
+    QVERIFY(QTest::qWaitFor([retry] { return retry->isActive(); }));
+    QCOMPARE(retry->interval(), 2000);
+    retry->start(0);
+    QVERIFY(QTest::qWaitFor([retry] { return retry->isActive() && retry->interval() == 4000; }));
+
+    // Opening the drawer again starts over.
+    tools.setOpen(false);
+    tools.setOpen(true);
+    QVERIFY(QTest::qWaitFor([retry] { return retry->isActive(); }));
+    QCOMPARE(retry->interval(), 2000);
+  }
 };
 
 QTEST_GUILESS_MAIN(DeviceToolsRegression)

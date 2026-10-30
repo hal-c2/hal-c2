@@ -534,6 +534,16 @@ Feature: Device panel
       Then the device has both keys up
 
     @desktop
+    Scenario: A chord cut off by a dropped connection does not outlive it
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user clicked the device's screen
+      When the user holds Command with "R"
+      And the device's input connection drops with the reason "hub restarted"
+      And the input connection returns
+      And the user presses Command with "R" again
+      Then the device receives the key "r" with Command
+
+    @desktop
     Scenario: Command is the Mac's own key on a Mac
       Given the thread has the iOS Simulator "iPhone 17" open
       And the user is watching the "iPhone 17" tab

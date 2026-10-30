@@ -494,6 +494,8 @@ void DeviceStream::connectIosInput() {
     m_socket = nullptr;
     socket->disconnect(this);
     socket->deleteLater();
+    // A chord held when the socket went has no key to release on a new one.
+    m_chordUsage = -1;
     const QString reason = socket->closeReason();
     setInput(false, reason.isEmpty() ? QStringLiteral("socket closed") : reason);
     if (refused(socket)) return unauthorized();

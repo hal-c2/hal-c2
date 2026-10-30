@@ -42,6 +42,7 @@ constexpr int kEventLogLimit = 100;
 constexpr int kAxElementLimit = 500;
 constexpr int kAxTimeoutMs = 5000;
 constexpr int kForegroundRetryMs = 2000;
+constexpr int kForegroundRetryMaxMs = 30000;
 constexpr int kAxRefreshMs = 500;
 
 QString text(const QJsonObject& object, QLatin1StringView field) {
@@ -77,8 +78,8 @@ void flattenAx(const QJsonValue& node, double screenWidth, double screenHeight, 
 
 DeviceTools::DeviceTools(McClient* client, QObject* parent)
     : QObject(parent), m_client(client), m_http(new QNetworkAccessManager(this)) {
+  m_foregroundRetry.setObjectName(QStringLiteral("foregroundRetry"));
   m_foregroundRetry.setSingleShot(true);
-  m_foregroundRetry.setInterval(kForegroundRetryMs);
   connect(&m_foregroundRetry, &QTimer::timeout, this, &DeviceTools::followForeground);
   m_axTimer.setInterval(kAxRefreshMs);
   connect(&m_axTimer, &QTimer::timeout, this, &DeviceTools::fetchAx);
@@ -111,6 +112,7 @@ void DeviceTools::setTarget(const QString& environment, const QString& hubBase, 
   m_foregroundLive = false;
   m_lastForeground.clear();
   m_foregroundRetry.stop();
+  m_foregroundWait = kForegroundRetryMs;
   m_latitude.clear();
   m_longitude.clear();
   m_events.clear();
@@ -140,6 +142,7 @@ void DeviceTools::setOpen(bool open) {
   } else {
     unfollow(m_foregroundFeed);
     m_foregroundRetry.stop();
+    m_foregroundWait = kForegroundRetryMs;
     m_foregroundLive = false;
     unfollow(m_eventFeed);
     m_events.clear();
@@ -340,17 +343,20 @@ void DeviceTools::followForeground() {
     m_foreground = text(event, QLatin1String("bundleId"));
     m_foregroundKnown = true;
     m_foregroundLive = true;
+    m_foregroundWait = kForegroundRetryMs;
     if (!m_foreground.isEmpty()) m_lastForeground = m_foreground;
     publish();
   }, [this, generation] {
     // The feed ended (a hub restart, say): what it last said no longer holds,
-    // so read the app in front once and keep trying to follow it.
+    // so read the app in front once and keep trying to follow it, waiting
+    // longer after each try that ends before saying anything.
     if (generation != m_generation || !m_open) return;
     if (m_foregroundLive) {
       m_foregroundLive = false;
       read();
     }
-    m_foregroundRetry.start();
+    m_foregroundRetry.start(m_foregroundWait);
+    m_foregroundWait = std::min(m_foregroundWait * 2, kForegroundRetryMaxMs);
   });
 }
 

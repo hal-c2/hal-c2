@@ -105,7 +105,9 @@ private:
   QString m_lastForeground;
   bool m_foregroundKnown = false;
   bool m_foregroundLive = false;
-  QTimer m_foregroundRetry;
+  QTimer m_foregroundRetry{this};
+  // How long the next retry waits: it doubles while the feed keeps ending.
+  int m_foregroundWait = 2000;
 
   QString m_latitude;
   QString m_longitude;
