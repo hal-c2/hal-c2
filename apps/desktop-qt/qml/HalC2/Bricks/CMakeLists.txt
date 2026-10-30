@@ -115,6 +115,7 @@ qt_add_qml_module(hal_c2_bricks
     PluginContext.qml
     PluginThreadPart.qml
     PluginSettings.qml
+    NotificationsSettings.qml
     PairingSettings.qml
     TerminalPanel.qml
     PullRequestsPanel.qml

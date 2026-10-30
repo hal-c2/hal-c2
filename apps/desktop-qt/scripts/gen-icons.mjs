@@ -16,6 +16,8 @@ const ICONS = [
   "arrow-down",
   "arrow-right-left",
   "arrow-up",
+  "bell",
+  "bell-off",
   "bookmark",
   "bot",
   "brain",

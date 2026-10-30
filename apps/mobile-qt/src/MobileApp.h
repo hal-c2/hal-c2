@@ -6,9 +6,11 @@
 
 #include "Pairing.h"
 #include "ScanCamera.h"
+#include "push/PushSystem.h"
 #include "StoragePaths.h"
 
 class NativeShell;
+class Notifications;
 class Scanner;
 class ShellBridge;
 class ShellRuntime;
@@ -33,6 +35,8 @@ public:
     pairing::Client device = Pairing::thisDevice();
     // The camera pairing codes are scanned with; the device's own when null.
     std::shared_ptr<ScanCamera> camera;
+    // The notifications pushes come through; the device's own when null.
+    std::shared_ptr<PushSystem> pushSystem;
   };
 
   // What has to be chosen before any window: the software renderer when
@@ -62,5 +66,6 @@ private:
   std::unique_ptr<ThemeStore> m_theme;
   std::unique_ptr<ShellRuntime> m_runtime;
   std::unique_ptr<Pairing> m_pairing;
+  std::unique_ptr<Notifications> m_notifications;
   std::unique_ptr<Scanner> m_scanner;
 };

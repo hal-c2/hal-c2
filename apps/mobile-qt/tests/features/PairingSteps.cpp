@@ -130,7 +130,14 @@ const Steps steps([] {
     expect(!QFile::exists(pairingFile(world)), S("the phone already keeps a pairing"));
   });
 
-  step(S("the user opens the app"), [](World& world, const Captures&, const Table&) { world.open(); });
+  // A closed app starts; one left in the background comes back to the front.
+  step(S("the user opens the app"), [](World& world, const Captures&, const Table&) {
+    if (world.isOpen()) {
+      world.foreground();
+    } else {
+      world.open();
+    }
+  });
 
   step(S("the user is told no environments are connected"), [](World& world, const Captures&, const Table&) {
     world.item(S("pairingScreen"));

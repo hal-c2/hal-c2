@@ -57,6 +57,10 @@ var sections = [
       settings: [{ title: "Load balancing", targetId: "load-balancing", requires: "loadBalancing",
                    keywords: "automatic machine environment resources cpu memory capacity preference weight shared projects" }],
       keywords: "connections pairing link code clients revoke access remote" },
+    // Only a client that receives its MC's pushes (apps/mobile-qt) publishes `notifications`.
+    { to: "/settings/notifications", label: "Notifications", brick: "NotificationsSettings", requires: "notifications",
+      detail: "Alerts, ongoing agent activity and quiet hours",
+      keywords: "notifications notification alerts push unifiedpush ntfy distributor live activity ongoing card lock screen live update quiet hours do not disturb permission" },
     // Only a client that paired itself (apps/mobile-qt) publishes `pairing`.
     { to: "/settings/pairing", label: "Pairing", brick: "PairingSettings", requires: "pairing",
       detail: "The environment this device is paired with",

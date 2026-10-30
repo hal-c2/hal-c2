@@ -124,4 +124,5 @@ PluginPart 1.0 PluginPart.qml
 PluginContext 1.0 PluginContext.qml
 PluginThreadPart 1.0 PluginThreadPart.qml
 PluginSettings 1.0 PluginSettings.qml
+NotificationsSettings 1.0 NotificationsSettings.qml
 PairingSettings 1.0 PairingSettings.qml

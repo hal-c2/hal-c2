@@ -55,6 +55,8 @@ include(cmake/Terminal.cmake)
 hal_c2_target_terminal(hal-c2-mobile)
 include(cmake/Scanner.cmake)
 hal_c2_target_scanner(hal-c2-mobile)
+include(cmake/Push.cmake)
+hal_c2_target_push(hal-c2-mobile)
 
 target_compile_definitions(hal-c2-mobile PRIVATE
   HAL_C2_QML_SOURCE_DIR="${_hal_c2_bricks_dir}"
