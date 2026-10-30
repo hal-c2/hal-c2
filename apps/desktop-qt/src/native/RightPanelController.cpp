@@ -129,6 +129,7 @@ RightPanelController::RightPanelController(ShellBridge* bridge, McClient* client
     m_bridge->dispatch(QStringLiteral("composer.reviewComment.add"), comment);
   });
   connect(&m_devices, &ThreadDevices::opened, this, &RightPanelController::openDevice);
+  connect(&m_devices, &ThreadDevices::floated, this, &RightPanelController::floatDevice);
   connect(&m_devices, &ThreadDevices::closed, this, &RightPanelController::closeTabIn);
   connect(&m_devices, &ThreadDevices::namesChanged, this, &RightPanelController::publish);
   // The add menu offers Pull requests only while the thread has some.
@@ -251,6 +252,10 @@ bool RightPanelController::handle(const QString& action, const QVariant& payload
             m_pullRequests.link(url);
           }
         });
+  } else if (action == QLatin1String("rightPanel.rename")) {
+    renameTab(map.value(QStringLiteral("id")).toString(), map.value(QStringLiteral("title")).toString());
+  } else if (action == QLatin1String("rightPanel.unfloat")) {
+    unfloat();
   } else if (action == QLatin1String("rightPanel.activate")) {
     showTab(map.value(QStringLiteral("id")).toString());
   } else if (action == QLatin1String("rightPanel.close")) {
@@ -478,6 +483,7 @@ void RightPanelController::showTab(const QString& id) {
   } else {
     return;
   }
+  if (state.floating == id) state.floating.clear();
   state.active = id;
   state.open = true;
   update();
@@ -487,6 +493,8 @@ void RightPanelController::showTab(const QString& id) {
 bool RightPanelController::removeTab(Panel& state, const QString& id) {
   const QStringList before = state.tabs;
   if (!state.tabs.removeOne(id)) return false;
+  state.titles.remove(id);
+  if (state.floating == id) state.floating.clear();
   if (id.startsWith(kDeviceTab) && !state.dismissed.contains(id)) state.dismissed.append(id);
   if (state.active == id) {
     const qsizetype at = before.indexOf(id);
@@ -581,6 +589,33 @@ void RightPanelController::openDevice(const QString& id, bool automatic) {
   showTab(id);
 }
 
+void RightPanelController::floatDevice(const QString& id) {
+  if (!m_onThread || !panel().tabs.contains(id)) return;
+  Panel& state = panel();
+  state.floating = id;
+  state.open = false;
+  state.maximized = false;
+  update();
+}
+
+void RightPanelController::unfloat() {
+  if (!m_onThread) return;
+  Panel& state = panel();
+  if (state.floating.isEmpty()) return;
+  const QString id = state.floating;
+  state.floating.clear();
+  showTab(id);
+}
+
+void RightPanelController::renameTab(const QString& id, const QString& title) {
+  if (!m_onThread || !panel().tabs.contains(id)) return;
+  Panel& state = panel();
+  const QString trimmed = title.trimmed();
+  if (trimmed.isEmpty()) state.titles.remove(id);
+  else state.titles.insert(id, trimmed);
+  update();
+}
+
 void RightPanelController::reviewPullRequest(const QString& key) {
   if (key.isEmpty() || m_pullRequests.indexOf(key) < 0) return;
   showTab(kReviewTab + key);
@@ -663,7 +698,10 @@ void RightPanelController::update() {
   m_files.setActive(open && activeTab() == QLatin1String("files"));
   m_agents.setActive(open && activeTab() == QLatin1String("agents"));
   m_previews.setActive(open && activeTab() == QLatin1String("previews"));
-  m_devices.setTab(open && kindOf(activeTab()) == QLatin1String("device") ? activeTab() : QString());
+  // A floating device keeps streaming while the panel is closed.
+  m_devices.setTab(m_onThread && !current().floating.isEmpty()        ? current().floating
+                   : open && kindOf(activeTab()) == QLatin1String("device") ? activeTab()
+                                                                              : QString());
   // The review shows the active review tab's pull request, or the last one shown.
   if (m_onThread && kindOf(activeTab()) == QLatin1String("pull-request")) {
     const Reviewed reviewed = reviewedOf(activeTab().mid(kReviewTab.size()));
@@ -695,7 +733,9 @@ void RightPanelController::publish() {
   m_publishedOpen = state.open;
   QVariantList tabs;
   for (const QString& id : state.tabs) {
-    tabs.append(QVariantMap{{QStringLiteral("id"), id}, {QStringLiteral("kind"), kindOf(id)}, {QStringLiteral("title"), titleOf(id, m_devices)}});
+    tabs.append(QVariantMap{{QStringLiteral("id"), id},
+                            {QStringLiteral("kind"), kindOf(id)},
+                            {QStringLiteral("title"), state.titles.value(id, titleOf(id, m_devices))}});
   }
   // Terminals need the thread's place.
   auto* terminals = NativeShell::of(this)->controller<TerminalController>();
@@ -706,6 +746,7 @@ void RightPanelController::publish() {
                         {QStringLiteral("isOpen"), state.open},
                         {QStringLiteral("transitionMs"), transitionMs},
                         {QStringLiteral("activeId"), state.active},
+                        {QStringLiteral("floatingDevice"), state.floating.isEmpty() ? QVariant() : QVariant(state.floating)},
                         {QStringLiteral("tabs"), tabs},
                         {QStringLiteral("width"), m_width},
                         {QStringLiteral("maximized"), state.open && state.maximized},
@@ -814,6 +855,10 @@ void RightPanelController::setStorePath(const QString& path) {
     state.open = thread.value(QLatin1String("open")).toBool() && !state.tabs.isEmpty();
     state.details = thread.value(QLatin1String("details")).toBool();
     for (const QJsonValue& id : thread.value(QLatin1String("dismissed")).toArray()) state.dismissed.append(id.toString());
+    const QJsonObject titles = thread.value(QLatin1String("titles")).toObject();
+    for (auto it = titles.begin(); it != titles.end(); ++it) {
+      if (state.tabs.contains(it.key()) && !it.value().toString().isEmpty()) state.titles.insert(it.key(), it.value().toString());
+    }
     m_panels.insert(threadKey, state);
     m_recent.removeOne(threadKey);
     m_recent.append(threadKey);
@@ -833,11 +878,14 @@ void RightPanelController::save() {
     }
     if (tabs.isEmpty() && !state.details) continue;
     const bool terminalShown = kindOf(state.active) == QLatin1String("terminal");
+    QJsonObject titles;
+    for (auto it = state.titles.begin(); it != state.titles.end(); ++it) titles.insert(it.key(), it.value());
     threads.prepend(QJsonObject{{QStringLiteral("threadKey"), threadKey},
                                 {QStringLiteral("open"), state.open},
                                 {QStringLiteral("tabs"), tabs},
                                 {QStringLiteral("active"), terminalShown ? QJsonValue() : QJsonValue(state.active)},
                                 {QStringLiteral("details"), state.details},
+                                {QStringLiteral("titles"), titles},
                                 {QStringLiteral("dismissed"), QJsonArray::fromStringList(state.dismissed)}});
   }
   const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("width"), m_width}, {QStringLiteral("threads"), threads}})

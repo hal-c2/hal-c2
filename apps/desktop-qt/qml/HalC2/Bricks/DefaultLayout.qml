@@ -394,6 +394,67 @@ Item {
         }
     }
 
+    // A device floated over the chat: it keeps streaming and taking touches
+    // while the right panel shows something else, or is closed.
+    Rectangle {
+        id: floatingDevice
+
+        objectName: "floatingDevice"
+        visible: (Shell.state.panel?.floatingDevice ?? null) !== null && !panelView.open
+        width: 224
+        height: 452
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.rightMargin: 16
+        anchors.bottomMargin: 16
+        radius: 8
+        color: Theme.palette.color("surface", "#0f0f11")
+        border.color: Theme.palette.color("border", "#27272a")
+        z: 3
+
+        DragHandler {
+            target: floatingDevice
+            xAxis.enabled: true
+            yAxis.enabled: true
+            onActiveChanged: {
+                if (active) {
+                    floatingDevice.anchors.right = undefined;
+                    floatingDevice.anchors.bottom = undefined;
+                }
+            }
+        }
+
+        DevicePanel {
+            anchors.fill: parent
+            anchors.topMargin: 24
+            source: Panel.device
+        }
+
+        Item {
+            width: parent.width
+            height: 24
+
+            Text {
+                anchors.left: parent.left
+                anchors.leftMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("Device")
+                color: Theme.palette.color("textMuted", "#8b8b93")
+                font.pixelSize: Math.round(11 * Theme.fontScale)
+            }
+            ShellButton {
+                objectName: "floatingDeviceOpen"
+                anchors.right: parent.right
+                anchors.rightMargin: 4
+                anchors.verticalCenter: parent.verticalCenter
+                subtle: true
+                iconName: "panel-right"
+                Accessible.name: qsTr("Open in right panel")
+                onClicked: Shell.dispatch("rightPanel.unfloat")
+            }
+        }
+    }
+
     // In the window's corner, level with the buttons of the band under it.
     WindowControls {
         id: windowButtonsView

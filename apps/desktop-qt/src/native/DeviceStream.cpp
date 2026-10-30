@@ -177,6 +177,8 @@ DeviceStream::~DeviceStream() {
 void DeviceStream::setTarget(const QString& hubBase, const QString& platform, const QString& deviceId) {
   if (hubBase == m_hubBase && platform == m_platform && deviceId == m_deviceId) return;
   stop();
+  m_ticket.clear();
+  m_refreshed = false;
   m_hubBase = hubBase;
   m_platform = platform;
   m_deviceId = deviceId;
@@ -203,6 +205,8 @@ void DeviceStream::setTimeouts(int firstFrameMs, int retryMs) {
 
 void DeviceStream::reconnect() {
   stop();
+  m_ticket.clear();
+  m_refreshed = false;
   start();
 }
 
@@ -278,10 +282,37 @@ void DeviceStream::setStatus(const QString& status, const QString& detail) {
   emit statusChanged();
 }
 
-void DeviceStream::setInput(bool connected) {
-  if (connected == m_inputConnected) return;
+void DeviceStream::setInput(bool connected, const QString& detail) {
+  const QString next = connected ? QString() : detail;
+  if (connected == m_inputConnected && next == m_inputDetail) return;
   m_inputConnected = connected;
+  m_inputDetail = next;
   emit inputChanged();
+}
+
+QNetworkRequest DeviceStream::hubRequest(const QString& path, const QString& query, bool socket) const {
+  QString full = query;
+  if (!m_ticket.isEmpty()) {
+    if (!full.isEmpty()) full += QLatin1Char('&');
+    full += QStringLiteral("wsTicket=") + QString::fromLatin1(QUrl::toPercentEncoding(m_ticket));
+  }
+  return m_client->request(path, full, socket);
+}
+
+// The proxy refused the stream once: its access may simply have expired, so
+// mint a fresh ticket and start over with it. A second refusal is an error.
+void DeviceStream::refreshAccess() {
+  m_refreshed = true;
+  stop();
+  setStatus(QStringLiteral("connecting"));
+  m_client->post(this, QStringLiteral("/api/auth/websocket-ticket"), {},
+                 [this](const QJsonValue& result, const std::optional<QString>& error) {
+                   const QString ticket = result.toObject().value(QLatin1String("ticket")).toString();
+                   if (error || ticket.isEmpty())
+                     return stop(QStringLiteral("error"), QStringLiteral("The MC refused the device stream. Reconnect to try again."));
+                   m_ticket = ticket;
+                   start();
+                 });
 }
 
 // Waiting for a picture again: one must come within the first-frame timeout.
@@ -296,6 +327,7 @@ void DeviceStream::fail(const QString& detail) {
 }
 
 void DeviceStream::unauthorized() {
+  if (m_running && !m_refreshed) return refreshAccess();
   fail(QStringLiteral("The MC refused the device stream. Reconnect to try again."));
 }
 
@@ -347,7 +379,7 @@ void DeviceStream::readIosVideo() {
   if (!m_running || m_video) return;
   m_buffer.clear();
   const QString device = QString::fromLatin1(QUrl::toPercentEncoding(m_deviceId));
-  QNetworkReply* reply = m_http->get(m_client->request(vendorPath(QStringLiteral("/helper/%1/stream.avcc").arg(device))));
+  QNetworkReply* reply = m_http->get(hubRequest(vendorPath(QStringLiteral("/helper/%1/stream.avcc").arg(device))));
   m_video = reply;
   m_readStall.start();
   connect(reply, &QNetworkReply::readyRead, this, &DeviceStream::onIosVideo);
@@ -413,7 +445,7 @@ void DeviceStream::onIosVideo() {
 void DeviceStream::primeIos() {
   if (!m_running || m_prime || m_socket) return;
   const QString device = QString::fromLatin1(QUrl::toPercentEncoding(m_deviceId));
-  QNetworkReply* reply = m_http->get(m_client->request(vendorPath(QStringLiteral("/helper/%1/stream.mjpeg").arg(device))));
+  QNetworkReply* reply = m_http->get(hubRequest(vendorPath(QStringLiteral("/helper/%1/stream.mjpeg").arg(device))));
   m_prime = reply;
   auto done = [this, reply] {
     if (m_prime != reply) return;
@@ -452,14 +484,15 @@ void DeviceStream::connectIosInput() {
     m_socket = nullptr;
     socket->disconnect(this);
     socket->deleteLater();
-    setInput(false);
+    const QString reason = socket->closeReason();
+    setInput(false, reason.isEmpty() ? QStringLiteral("socket closed") : reason);
     if (refused(socket)) return unauthorized();
     retry(m_inputRetry);
   };
   connect(socket, &QWebSocket::disconnected, this, closed);
   connect(socket, &QWebSocket::errorOccurred, this, closed);
-  socket->open(m_client->request(vendorPath(QStringLiteral("/helper/ws")),
-                                 QStringLiteral("device=") + QString::fromLatin1(QUrl::toPercentEncoding(m_deviceId)), true));
+  socket->open(hubRequest(vendorPath(QStringLiteral("/helper/ws")),
+                          QStringLiteral("device=") + QString::fromLatin1(QUrl::toPercentEncoding(m_deviceId)), true));
 }
 
 // Android: one socket for video and input.
@@ -493,16 +526,17 @@ void DeviceStream::connectAndroid() {
     socket->disconnect(this);
     socket->deleteLater();
     m_decoder.reset();
-    setInput(false);
+    const QString reason = socket->closeReason();
+    setInput(false, reason.isEmpty() ? QStringLiteral("socket closed") : reason);
     if (refused(socket)) return unauthorized();
     connecting(socket->closeReason());
     retry(m_inputRetry);
   };
   connect(socket, &QWebSocket::disconnected, this, closed);
   connect(socket, &QWebSocket::errorOccurred, this, closed);
-  socket->open(m_client->request(vendorPath(QStringLiteral("/ws")),
-                                 QStringLiteral("device=%1&frame-meta=1").arg(QString::fromLatin1(QUrl::toPercentEncoding(m_deviceId))),
-                                 true));
+  socket->open(hubRequest(vendorPath(QStringLiteral("/ws")),
+                          QStringLiteral("device=%1&frame-meta=1").arg(QString::fromLatin1(QUrl::toPercentEncoding(m_deviceId))),
+                          true));
 }
 
 void DeviceStream::onAndroidMessage(const QByteArray& message) {
@@ -567,10 +601,17 @@ void DeviceStream::touch(const QString& phase, double x, double y) {
 void DeviceStream::key(int qtKey, const QString& text, bool command, bool down) {
   if (ios()) {
     const int usage = hidUsage(qtKey);
-    if (usage >= 0)
-      send(tagged(kIosKey, {{QStringLiteral("type"), down ? QStringLiteral("down") : QStringLiteral("up")},
-                            {QStringLiteral("usage"), usage}}),
-           true);
+    if (usage < 0) return;
+    // A command chord (the one shortcut the panel passes through, Cmd+R)
+    // holds the GUI modifier around the key, as a hardware keyboard would.
+    const bool chord = command && usage < 0xe0;
+    if (chord && down)
+      send(tagged(kIosKey, {{QStringLiteral("type"), QStringLiteral("down")}, {QStringLiteral("usage"), 0xe3}}), true);
+    send(tagged(kIosKey, {{QStringLiteral("type"), down ? QStringLiteral("down") : QStringLiteral("up")},
+                          {QStringLiteral("usage"), usage}}),
+         true);
+    if (chord && !down)
+      send(tagged(kIosKey, {{QStringLiteral("type"), QStringLiteral("up")}, {QStringLiteral("usage"), 0xe3}}), true);
     return;
   }
   if (!down) return;
@@ -600,4 +641,9 @@ void DeviceStream::rotate() {
   if (!ios()) return;
   const QString next = kIosOrientations.at((kIosOrientations.indexOf(m_orientation) + 1) % kIosOrientations.size());
   send(tagged(kIosOrientation, {{QStringLiteral("orientation"), next}}), true);
+}
+
+void DeviceStream::setOrientation(const QString& orientation) {
+  if (!ios() || !kIosOrientations.contains(orientation)) return;
+  send(tagged(kIosOrientation, {{QStringLiteral("orientation"), orientation}}), true);
 }

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 
+#include "DevicePanelSteps.h"
 #include "Harness.h"
 #include "NavigationController.h"
 #include "McClient.h"
@@ -226,6 +227,8 @@ const Steps steps([] {
   step(QStringLiteral("the user opens \"([^\"./:]*)\""), [](World& world, const Captures& c, const Table&) {
     // A view of the planner plugin, when the MC runs it.
     if (openPlannerView(world, c[0])) return;
+    // The Device tab's Tools drawer and Event log (DeviceSteps).
+    if (deviceOpens(world, c[0])) return;
     const QString key = ensureThread(world, c[0]);
     world.bridge().dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), key}});
   });
@@ -540,7 +543,9 @@ const Steps steps([] {
                                                                     {QStringLiteral("message"), QStringLiteral("You've hit your usage limit. It resets at 2:00 PM.")}}}});
          }
        });
-  step(QStringLiteral("the row for %1 reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  // A thread row's state word; a device row's "host · version · state" is
+  // DeviceSteps' step of the same words, told apart by the middle dots.
+  step(QStringLiteral("the row for %1 reads \"([^\"·]*)\"").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
     const auto row = rowOf(world, threadKeyOf(world, c[0]));
     expect(row && wordOf(*row) == c[1], QStringLiteral("the row reads \"%1\": %2").arg(row ? wordOf(*row) : QString(), show(row.value_or(QVariantMap()))));

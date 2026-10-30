@@ -18,6 +18,22 @@ Rectangle {
     // No screen is an undefined entry of the view: null, as the bindings compare.
     readonly property var screen: view && view.screen ? view.screen : null
     readonly property var stream: source ? source.stream : null
+    readonly property var tools: source ? source.tools : null
+    readonly property bool toolsOpen: tools !== null && tools.view.open
+    // The 3D body view, and an iPad's Magic Keyboard: panel choices, so
+    // they survive switching between the views.
+    property bool show3d: false
+    property bool keyboardAttached: false
+    readonly property bool tablet: screen !== null && String(screen.name).indexOf("iPad") >= 0
+
+    function toggleKeyboard() {
+        keyboardAttached = !keyboardAttached;
+        // A Magic Keyboard is a landscape thing: turn a portrait iPad.
+        if (keyboardAttached && stream && stream.orientation.indexOf("portrait") === 0)
+            stream.setOrientation("landscape_left");
+    }
+    // The tools sit beside the screen from this width, and over it below.
+    readonly property bool toolsBeside: width >= 720
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
     readonly property color errorColor: Theme.palette.color("error", "#ef4444")
@@ -69,6 +85,13 @@ Rectangle {
                 to: "/settings/integrations"
             })
         }
+
+        DeviceBanners {
+            width: parent.width
+            visible: root.view !== null && root.view.banners.length > 0
+            source: root.source
+            namePrefix: "deviceSetupBanner"
+        }
     }
 
     Column {
@@ -86,7 +109,7 @@ Rectangle {
             Text {
                 anchors.left: parent.left
                 anchors.leftMargin: 12
-                anchors.right: tools.left
+                anchors.right: headerTools.left
                 anchors.rightMargin: 6
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.screen ? root.screen.description : qsTr("Choose a device")
@@ -96,7 +119,7 @@ Rectangle {
             }
 
             Row {
-                id: tools
+                id: headerTools
 
                 anchors.right: parent.right
                 anchors.rightMargin: 6
@@ -136,6 +159,31 @@ Rectangle {
                     onClicked: root.stream.rotate()
                 }
                 DeviceButton {
+                    objectName: "device3dToggle"
+                    iconName: "box"
+                    Accessible.name: root.show3d ? qsTr("Show flat view") : qsTr("Show in 3D")
+                    onClicked: root.show3d = !root.show3d
+                }
+                DeviceButton {
+                    objectName: "deviceKeyboardToggle"
+                    visible: root.tablet
+                    iconName: "keyboard"
+                    Accessible.name: root.keyboardAttached ? qsTr("Detach Magic Keyboard") : qsTr("Attach Magic Keyboard")
+                    onClicked: root.toggleKeyboard()
+                }
+                DeviceButton {
+                    objectName: "deviceTools"
+                    iconName: "sliders-horizontal"
+                    Accessible.name: qsTr("Tools")
+                    onClicked: root.tools.setOpen(!root.toolsOpen)
+                }
+                DeviceButton {
+                    objectName: "deviceFloat"
+                    iconName: "picture-in-picture-2"
+                    Accessible.name: qsTr("Float device over chat")
+                    onClicked: root.source.floatDevice()
+                }
+                DeviceButton {
                     objectName: "devicePowerOff"
                     iconName: "power"
                     Accessible.name: qsTr("Power off")
@@ -160,6 +208,12 @@ Rectangle {
         Note {
             objectName: "deviceHostDetail"
             text: root.view ? root.view.hostDetail : ""
+        }
+        DeviceBanners {
+            x: 12
+            width: root.width - 24
+            visible: root.view !== null && root.view.banners.length > 0
+            source: root.source
         }
         Note {
             objectName: "deviceStarting"
@@ -211,8 +265,11 @@ Rectangle {
             id: stage
 
             objectName: "deviceStage"
-            anchors.fill: parent
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
             anchors.margins: 8
+            width: parent.width - (root.toolsOpen && root.toolsBeside ? 296 : 0)
             visible: root.screen !== null
             focus: visible
             activeFocusOnTab: true
@@ -224,9 +281,24 @@ Rectangle {
             readonly property bool sideways: turn === 90 || turn === -90
 
             // The largest box at the device's aspect that fits.
+            Loader {
+                objectName: "deviceBodyLoader"
+                anchors.fill: parent
+                active: root.show3d
+                visible: root.show3d
+                source: "DeviceBody3D.qml"
+                onLoaded: {
+                    item.stream = Qt.binding(() => root.stream);
+                    item.deviceName = Qt.binding(() => root.screen ? root.screen.name : "");
+                    item.platform = Qt.binding(() => root.screen ? root.screen.platform : "");
+                    item.keyboardAttached = Qt.binding(() => root.keyboardAttached);
+                }
+            }
+
             Item {
                 id: frame
 
+                visible: !root.show3d
                 anchors.centerIn: parent
                 width: Math.min(stage.width, stage.height * stage.aspect)
                 height: Math.min(stage.height, stage.width / stage.aspect)
@@ -241,6 +313,38 @@ Rectangle {
                     rotation: stage.turn
                     stream: root.screen ? root.stream : null
                     visible: hasFrame
+                }
+
+                // The accessibility elements, over the picture as shown.
+                Item {
+                    objectName: "deviceAxOverlay"
+                    anchors.fill: parent
+                    visible: root.tools !== null && root.tools.view.axOverlay
+
+                    Repeater {
+                        model: root.tools ? root.tools.view.axElements : []
+
+                        delegate: Rectangle {
+                            required property var modelData
+
+                            x: modelData.x * parent.width
+                            y: modelData.y * parent.height
+                            width: modelData.width * parent.width
+                            height: modelData.height * parent.height
+                            color: "transparent"
+                            border.color: Theme.palette.color("accent", "#2563eb")
+                            border.width: 1
+
+                            Text {
+                                objectName: "deviceAxLabel"
+                                anchors.left: parent.left
+                                anchors.bottom: parent.top
+                                text: modelData.label
+                                color: Theme.palette.color("accent", "#2563eb")
+                                font.pixelSize: Math.round(10 * Theme.fontScale)
+                            }
+                        }
+                    }
                 }
 
                 MouseArea {
@@ -275,9 +379,20 @@ Rectangle {
                 }
             }
 
-            // Keys go to the device, except the app's own shortcuts.
+            // Keys go to the device, except the app's own shortcuts: Ctrl
+            // chords stay with the app, and so do Command chords but for
+            // Command+R, which the device takes (upstream's one exception).
+            function appOwns(event) {
+                if (event.key === Qt.Key_Meta || event.key === Qt.Key_Control)
+                    return true;
+                if (event.modifiers & Qt.ControlModifier)
+                    return true;
+                if ((event.modifiers & Qt.MetaModifier) && event.key !== Qt.Key_R)
+                    return true;
+                return false;
+            }
             Keys.onPressed: event => {
-                if (!root.stream || (event.modifiers & Qt.ControlModifier)) {
+                if (!root.stream || stage.appOwns(event)) {
                     event.accepted = false;
                     return;
                 }
@@ -285,11 +400,11 @@ Rectangle {
                 event.accepted = true;
             }
             Keys.onReleased: event => {
-                if (!root.stream || (event.modifiers & Qt.ControlModifier)) {
+                if (!root.stream || stage.appOwns(event)) {
                     event.accepted = false;
                     return;
                 }
-                root.stream.key(event.key, event.text, false, false);
+                root.stream.key(event.key, event.text, (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) !== 0, false);
                 event.accepted = true;
             }
 
@@ -316,21 +431,68 @@ Rectangle {
                     text: qsTr("Reconnect")
                     onClicked: root.stream.reconnect()
                 }
+
+                Text {
+                    objectName: "deviceProgress"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: root.stream !== null && root.stream.status === "connecting"
+                    text: qsTr("Step 2 of 2: connect video")
+                    color: root.muted
+                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                }
             }
+
+            // A lost input connection is said over the picture, which stays.
+            Text {
+                objectName: "deviceInputStatus"
+                anchors.top: parent.top
+                anchors.topMargin: 8
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: root.stream !== null && root.stream.status === "streaming" && !root.stream.inputConnected
+                text: root.stream && root.stream.inputDetail ? qsTr("Input disconnected (%1), reconnecting…").arg(root.stream.inputDetail) : qsTr("Input disconnected, reconnecting…")
+                color: root.errorColor
+                font.pixelSize: Math.round(11 * Theme.fontScale)
+            }
+        }
+
+        // --- The tools, beside the screen when there is room, over it else ---
+
+        DeviceToolsPanel {
+            objectName: "deviceToolsPanel"
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.right: parent.right
+            width: Math.min(288, parent.width)
+            z: 2
+            visible: root.screen !== null && root.toolsOpen
+            tools: root.tools
         }
 
         // --- Waiting ---------------------------------------------------------------
 
-        Text {
-            objectName: "deviceLoading"
+        Column {
             anchors.centerIn: parent
             width: parent.width - 32
+            spacing: 8
             visible: root.screen === null && root.view !== null && root.view.loading.length > 0
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.Wrap
-            text: root.view ? root.view.loading : ""
-            color: root.muted
-            font.pixelSize: Math.round(12 * Theme.fontScale)
+
+            Text {
+                objectName: "deviceLoading"
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+                text: root.view ? root.view.loading : ""
+                color: root.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+            }
+            Text {
+                objectName: "deviceOpeningProgress"
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: root.view !== null && root.view.pendingKey.length > 0
+                text: qsTr("Step 1 of 2: open device")
+                color: root.muted
+                font.pixelSize: Math.round(11 * Theme.fontScale)
+            }
         }
 
         // --- The picker ------------------------------------------------------------
@@ -401,7 +563,7 @@ Rectangle {
                                 required property var modelData
                                 readonly property bool pending: root.view.pendingKey === modelData.key
 
-                                objectName: "deviceRow-" + modelData.id
+                                objectName: "deviceRow-" + modelData.tab
                                 width: group.width
                                 height: 46
                                 enabled: root.view.pendingKey.length === 0
@@ -464,6 +626,26 @@ Rectangle {
                     onClicked: root.source.refresh()
                 }
             }
+        }
+    }
+
+    // First use (or support turned off): the setup wizard, in front of the
+    // tab. Behind it the tab still points at the Integrations settings.
+    Rectangle {
+        anchors.fill: parent
+        visible: root.view !== null && (root.view.wizard ?? null) !== null
+        color: Qt.alpha(Theme.palette.color("canvas", "#000000"), 0.55)
+        z: 5
+
+        MouseArea {
+            anchors.fill: parent
+        }
+
+        DeviceSetup {
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 32, 440)
+            height: Math.min(implicitHeight > 0 ? implicitHeight : 560, parent.height - 32)
+            source: root.source
         }
     }
 }

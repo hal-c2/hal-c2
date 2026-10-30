@@ -34,7 +34,8 @@ std::pair<QString, QString> ThreadDevices::targetOf(const QString& tabId) {
   return {QUrl::fromPercentEncoding(parts[0].toLatin1()), QUrl::fromPercentEncoding(parts[1].toLatin1())};
 }
 
-ThreadDevices::ThreadDevices(McClient* client, QObject* parent) : QObject(parent), m_client(client), m_stream(client) {
+ThreadDevices::ThreadDevices(McClient* client, QObject* parent)
+    : QObject(parent), m_client(client), m_stream(client), m_tools(client) {
   publish();
 }
 
@@ -66,6 +67,7 @@ void ThreadDevices::setThread(const QString& environmentId, const QString& threa
 void ThreadDevices::setTab(const QString& tabId) {
   if (tabId == m_tab) return;
   const bool shown = m_tab.isEmpty() && !tabId.isEmpty();
+  if (shown) m_wizardDismissed = false;
   m_tab = tabId;
   // Showing the tab lists again.
   if (shown && m_loaded && text(m_state, QLatin1String("hostStatus")) != QLatin1String("disabled")) list();
@@ -100,6 +102,7 @@ void ThreadDevices::list(const QJsonObject& input) {
 
 void ThreadDevices::take(const QJsonObject& state) {
   m_state = state;
+  m_retrying.clear();
   const bool first = !m_loaded;
   m_loaded = true;
   if (first && !m_tab.isEmpty() && text(state, QLatin1String("hostStatus")) != QLatin1String("disabled")) list();
@@ -166,9 +169,12 @@ void ThreadDevices::retarget() {
   if (!device.isEmpty() && hasSession(hostId, deviceId)) {
     m_stream.setTarget(text(m_state, QLatin1String("hubBasePath")), text(device, QLatin1String("platform")), deviceId);
     m_stream.setActive(true);
+    m_tools.setTarget(m_environment, text(m_state, QLatin1String("hubBasePath")), hostId, deviceId,
+                      text(device, QLatin1String("platform")));
   } else {
     m_stream.setActive(false);
     m_stream.setTarget({}, {}, {});
+    m_tools.setTarget(m_environment, {}, {}, {}, {});
   }
 }
 
@@ -249,6 +255,166 @@ void ThreadDevices::dismissError() {
   publish();
 }
 
+void ThreadDevices::retryHost(const QString& hostId) {
+  if (hostId.isEmpty() || !m_retrying.isEmpty()) return;
+  m_retrying = hostId;
+  publish();
+  list({{QStringLiteral("retryHostId"), hostId}});
+}
+
+void ThreadDevices::floatDevice() {
+  if (!m_tab.isEmpty()) emit floated(m_tab);
+}
+
+void ThreadDevices::configure(const QString& pending, const QJsonObject& change) {
+  if (!m_wizardPending.isEmpty() || m_environment.isEmpty()) return;
+  m_wizardPending = pending;
+  publish();
+  const int generation = m_generation;
+  m_client->call(this, m_environment, QStringLiteral("device.configure"), change,
+                 [this, generation, pending](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (m_generation != generation) return;
+                   m_wizardPending.clear();
+                   if (!error) take(result.toObject());
+                   if (pending == QLatin1String("complete") && !error) m_wizardDismissed = true;
+                   publish();
+                 });
+}
+
+void ThreadDevices::wizardSetHub(bool on) {
+  QJsonObject change{{QStringLiteral("enabled"), on}};
+  // Turning the hub off turns agent access off with it.
+  if (!on) change.insert(QStringLiteral("agentAccessEnabled"), false);
+  configure(QStringLiteral("hub"), change);
+}
+
+void ThreadDevices::wizardSetAgent(bool on) {
+  configure(QStringLiteral("agent"), {{QStringLiteral("agentAccessEnabled"), on}});
+}
+
+void ThreadDevices::wizardCheck() {
+  if (!m_wizardPending.isEmpty()) return;
+  m_wizardPending = QStringLiteral("check");
+  publish();
+  const int generation = m_generation;
+  m_client->call(this, m_environment, QStringLiteral("device.list"), QJsonObject(),
+                 [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
+                   if (m_generation != generation) return;
+                   m_wizardPending.clear();
+                   if (!error) take(result.toObject());
+                   publish();
+                 });
+}
+
+void ThreadDevices::wizardDone() {
+  configure(QStringLiteral("complete"), {{QStringLiteral("onboardingCompleted"), true}});
+}
+
+void ThreadDevices::wizardCancel() {
+  m_wizardDismissed = true;
+  publish();
+}
+
+QVariantList ThreadDevices::banners() const {
+  QVariantList rows;
+  if (text(m_state, QLatin1String("hostStatus")) == QLatin1String("disabled")) return rows;
+  const QJsonObject statuses = m_state.value(QLatin1String("hostStatuses")).toObject();
+  for (const QJsonValue& value : m_state.value(QLatin1String("hosts")).toArray()) {
+    const QJsonObject host = value.toObject();
+    const QString id = text(host, QLatin1String("id"));
+    const QJsonObject status = statuses.value(id).toObject();
+    const QString state = text(status, QLatin1String("status"));
+    if (state != QLatin1String("installing") && state != QLatin1String("starting") && state != QLatin1String("failed")) continue;
+    const bool failed = state == QLatin1String("failed");
+    const QString fallback = failed ? QStringLiteral("Device support could not start.")
+                             : state == QLatin1String("installing") ? QStringLiteral("Installing device tools…")
+                                                                    : QStringLiteral("Starting device tools…");
+    rows.append(QVariantMap{
+        {QStringLiteral("hostId"), id},
+        {QStringLiteral("label"), text(host, QLatin1String("label"))},
+        {QStringLiteral("failed"), failed},
+        {QStringLiteral("message"), status.value(QLatin1String("detail")).toString(fallback)},
+        {QStringLiteral("advice"),
+         failed ? QStringLiteral("Check the host connection and network access, then retry. Your device settings are saved.") : QString()},
+        {QStringLiteral("canRetry"), failed && m_state.value(QLatin1String("supportsHostRetry")).toBool()},
+        {QStringLiteral("retrying"), m_retrying == id},
+    });
+  }
+  return rows;
+}
+
+QVariantMap ThreadDevices::wizardView() const {
+  const QString hostStatus = text(m_state, QLatin1String("hostStatus"));
+  const bool enabled = hostStatus != QLatin1String("disabled");
+  const bool busy = hostStatus == QLatin1String("installing") || hostStatus == QLatin1String("starting");
+  const bool ready = hostStatus == QLatin1String("ready");
+
+  QString hubStatus;
+  const bool hubPending = m_wizardPending == QLatin1String("hub") || (busy && m_wizardPending != QLatin1String("agent"));
+  if (hubPending) {
+    hubStatus = hostStatus == QLatin1String("installing") ? QStringLiteral("Installing device hub…")
+                : hostStatus == QLatin1String("starting") ? QStringLiteral("Starting device hub…")
+                                                           : QStringLiteral("Updating device hub…");
+  } else if (ready) {
+    hubStatus = QStringLiteral("Device hub is ready.");
+  }
+
+  QString agentStatus;
+  if (m_wizardPending == QLatin1String("agent")) {
+    agentStatus = hostStatus == QLatin1String("installing") ? QStringLiteral("Installing agent tools…")
+                  : hostStatus == QLatin1String("starting") ? QStringLiteral("Starting agent tools…")
+                                                             : QStringLiteral("Updating agent access…");
+  } else if (m_state.value(QLatin1String("agentAccessEnabled")).toBool() && ready) {
+    for (const QJsonValue& host : m_state.value(QLatin1String("hosts")).toArray()) {
+      if (host.toObject().value(QLatin1String("agentDeviceInstalled")).toBool()) agentStatus = QStringLiteral("Agent tools are ready.");
+    }
+  }
+
+  const auto platform = [this, ready](const QString& wanted) {
+    QJsonObject availability;
+    for (const QJsonValue& host : m_state.value(QLatin1String("hosts")).toArray()) {
+      for (const QJsonValue& entry : host.toObject().value(QLatin1String("platforms")).toArray()) {
+        if (availability.isEmpty() && text(entry.toObject(), QLatin1String("platform")) == wanted) availability = entry.toObject();
+      }
+    }
+    const QString name = wanted == QLatin1String("ios") ? QStringLiteral("iOS") : QStringLiteral("Android");
+    if (!availability.value(QLatin1String("available")).toBool()) {
+      return QVariantMap{{QStringLiteral("platform"), name},
+                         {QStringLiteral("ready"), false},
+                         {QStringLiteral("message"),
+                          availability.value(QLatin1String("reason")).toString(QStringLiteral("%1 support was not detected.").arg(name))}};
+    }
+    bool any = false;
+    for (const QJsonValue& device : m_state.value(QLatin1String("devices")).toArray())
+      any = any || text(device.toObject(), QLatin1String("platform")) == wanted;
+    if (ready && !any) {
+      return QVariantMap{{QStringLiteral("platform"), name},
+                         {QStringLiteral("ready"), false},
+                         {QStringLiteral("message"),
+                          wanted == QLatin1String("ios")
+                              ? QStringLiteral("Xcode is installed, but no iOS Simulator is available. Install a runtime in Xcode Settings → Components.")
+                              : QStringLiteral("The Android SDK is installed, but no virtual device exists. Create one in Android Studio → Device Manager.")}};
+    }
+    return QVariantMap{{QStringLiteral("platform"), name},
+                       {QStringLiteral("ready"), true},
+                       {QStringLiteral("message"), wanted == QLatin1String("ios") ? QStringLiteral("Xcode and iOS Simulator are available.")
+                                                                                   : QStringLiteral("The Android SDK and Emulator are available.")}};
+  };
+
+  return {
+      {QStringLiteral("hubOn"), enabled},
+      {QStringLiteral("hubReady"), ready},
+      {QStringLiteral("busy"), busy},
+      {QStringLiteral("pending"), m_wizardPending},
+      {QStringLiteral("hubStatus"), hubStatus},
+      {QStringLiteral("agentOn"), m_state.value(QLatin1String("agentAccessEnabled")).toBool()},
+      {QStringLiteral("agentStatus"), agentStatus},
+      {QStringLiteral("platforms"), QVariantList{platform(QStringLiteral("ios")), platform(QStringLiteral("android"))}},
+      {QStringLiteral("error"), hostStatus == QLatin1String("failed") ? text(m_state, QLatin1String("hostStatusDetail")) : QString()},
+      {QStringLiteral("canContinue"), ready && m_wizardPending.isEmpty()},
+  };
+}
+
 void ThreadDevices::publish() {
   const QString hostStatus = text(m_state, QLatin1String("hostStatus"));
   const QString hostDetail = text(m_state, QLatin1String("hostStatusDetail"));
@@ -301,6 +467,7 @@ void ThreadDevices::publish() {
       const QString hostId = text(device, QLatin1String("hostId")), id = text(device, QLatin1String("id"));
       rows.append(QVariantMap{
           {QStringLiteral("key"), keyOf(hostId, id)},
+          {QStringLiteral("tab"), tabIdOf(hostId, id)},
           {QStringLiteral("hostId"), hostId},
           {QStringLiteral("id"), id},
           {QStringLiteral("name"), text(device, QLatin1String("name"))},
@@ -362,6 +529,12 @@ void ThreadDevices::publish() {
       {QStringLiteral("error"), m_error},
       {QStringLiteral("pendingKey"), m_pending},
       {QStringLiteral("groups"), hostReady ? groups : QVariantList()},
+      {QStringLiteral("banners"), banners()},
+      {QStringLiteral("wizard"),
+       m_loaded && !m_wizardDismissed &&
+               (!m_state.value(QLatin1String("onboardingCompleted")).toBool() || hostStatus == QLatin1String("disabled"))
+           ? QVariant(wizardView())
+           : QVariant()},
       {QStringLiteral("screen"), screen},
   };
   if (view == m_view) return;

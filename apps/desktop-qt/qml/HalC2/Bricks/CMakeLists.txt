@@ -136,6 +136,10 @@ qt_add_qml_module(hal_c2_bricks
     StorageSettings.qml
     ProjectSettings.qml
     DevicePanel.qml
+    DeviceToolsPanel.qml
+    DeviceSetup.qml
+    DeviceBanners.qml
+    DeviceBody3D.qml
     OpenSourceLicenses.qml
     DiagnosticsSettings.qml
     WelcomeWizard.qml
@@ -147,4 +151,9 @@ qt_add_qml_module(hal_c2_bricks
     qmldir
     plugin/Text.qml
     icons/antigravity.png
+    models/iphone-18-pro.glb
+    models/iphone-18-pro-max.glb
+    models/ipad-pro-13-m5.glb
+    models/ipad-pro-13-m5-magic-keyboard.glb
+    models/sources.json
 )

@@ -8,6 +8,7 @@
 #include <QVariantMap>
 
 #include "DeviceStream.h"
+#include "DeviceTools.h"
 
 class McClient;
 
@@ -36,11 +37,17 @@ class McClient;
 //    error ("" or why the last open or power off failed), pendingKey,
 //    groups: [{title, devices: [{key, hostId, id, name, platform, detail,
 //    action ("Open" | "Start")}]}],
+//    banners: [{hostId, label, failed, message, advice, canRetry, retrying}]
+//    (each machine installing, starting or failed; none while support is off),
+//    wizard: null, or the first-use setup's state {hubOn, hubReady, busy,
+//    pending, hubStatus, agentOn, agentStatus, platforms: [{platform, ready,
+//    message}], error, canContinue},
 //    screen: null, or the shown tab's device {hostId, id, name, platform, description}}.
 class ThreadDevices : public QObject {
   Q_OBJECT
   Q_PROPERTY(QVariantMap view READ view NOTIFY viewChanged)
   Q_PROPERTY(DeviceStream* stream READ stream CONSTANT)
+  Q_PROPERTY(DeviceTools* tools READ tools CONSTANT)
 
 public:
   // A device tab's id, and the host and device of one ({} when not a device tab).
@@ -59,6 +66,7 @@ public:
 
   QVariantMap view() const { return m_view; }
   DeviceStream* stream() { return &m_stream; }
+  DeviceTools* tools() { return &m_tools; }
   // A device tab's title: its device's name, else "Device".
   QString titleOf(const QString& tabId) const;
 
@@ -70,6 +78,16 @@ public:
   Q_INVOKABLE void close();
   Q_INVOKABLE void refresh();
   Q_INVOKABLE void dismissError();
+  // Retry one machine whose tools failed (`device.list` with its host id).
+  Q_INVOKABLE void retryHost(const QString& hostId);
+  // Float the shown device over the chat; the panel closes (floated()).
+  Q_INVOKABLE void floatDevice();
+  // The setup wizard's switches and buttons (`device.configure`, `device.list`).
+  Q_INVOKABLE void wizardSetHub(bool on);
+  Q_INVOKABLE void wizardSetAgent(bool on);
+  Q_INVOKABLE void wizardCheck();
+  Q_INVOKABLE void wizardDone();
+  Q_INVOKABLE void wizardCancel();
 
 signals:
   void viewChanged();
@@ -81,6 +99,8 @@ signals:
   void closed(const QString& threadKey, const QString& tabId);
   // A device's name became known or changed: tab titles follow.
   void namesChanged();
+  // The panel floats `tabId`'s device over the chat and closes.
+  void floated(const QString& tabId);
 
 private:
   void follow();
@@ -93,8 +113,13 @@ private:
   void retarget();
   void publish();
 
+  void configure(const QString& pending, const QJsonObject& change);
+  QVariantMap wizardView() const;
+  QVariantList banners() const;
+
   McClient* m_client;
   DeviceStream m_stream;
+  DeviceTools m_tools;
   QString m_environment;
   QString m_thread;
   QString m_mc;
@@ -108,6 +133,12 @@ private:
   // The key ("<host>\0<device>") of the device being opened, and its name.
   QString m_pending;
   QString m_error;
+  // The host being retried, while its answer is out.
+  QString m_retrying;
+  // The wizard's request in flight ("hub", "check", "agent", "complete"),
+  // and whether the user put it away for this showing of the tab.
+  QString m_wizardPending;
+  bool m_wizardDismissed = false;
   // Each thread's sessions (with a known device) as last seen: a session
   // missing there is new. Absent until the first state, the baseline.
   QHash<QString, QSet<QString>> m_sessionsSeen;
