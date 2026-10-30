@@ -151,9 +151,7 @@ qt_add_qml_module(hal_c2_bricks
     qmldir
     plugin/Text.qml
     icons/antigravity.png
-    models/iphone-18-pro.glb
-    models/iphone-18-pro-max.glb
-    models/ipad-pro-13-m5.glb
-    models/ipad-pro-13-m5-magic-keyboard.glb
-    models/sources.json
+    models/phone.glb
+    models/tablet.glb
+    models/tablet-keyboard.glb
 )
