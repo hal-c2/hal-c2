@@ -126,6 +126,7 @@ void World::open() {
     clipboard = text;
     return true;
   });
+  m_app->bridge().setClipboardWriter([this](const QString& text) { clipboard = text; });
   m_app->start();
   QQuickWindow* shown = m_app->runtime().window();
   expect(shown != nullptr, QStringLiteral("the phone's window did not load: %1").arg(m_app->runtime().lastError()));

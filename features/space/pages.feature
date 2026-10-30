@@ -6,7 +6,7 @@
 #   apps/server-ex/lib/hal_c2/space.ex
 #   apps/server-ex/priv/mcp_tools.json (hal_c2_page_*)
 
-@mc @desktop @mobile @tui @backlog-mobile @backlog-tui
+@mc @desktop @mobile @tui @backlog-tui
 Feature: Pages in a Space
   A Space holds Pages that people and agents write together. A page is a list of
   blocks (paragraphs, headings, checklists, callouts and links to subpages), can sit
@@ -311,7 +311,7 @@ Feature: Pages in a Space
       Then the user is told text generation failed
       And the pages of "Research" are ""
 
-  @backlog-desktop
+  @backlog-desktop @backlog-mobile
   Rule: Agents write pages too
 
     Background:
