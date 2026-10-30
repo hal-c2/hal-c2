@@ -4047,5 +4047,79 @@
       "required": ["scheduledTaskId"],
       "additionalProperties": true
     }
+  },
+  {
+    "name": "hal_c2_page_list",
+    "description": "List the Spaces of this environment and the pages in each, outside the trash. Pages are shared documents the user and agents write together.",
+    "inputSchema": {
+      "type": "object",
+      "properties": { "spaceId": { "type": "string", "description": "Only this Space." } },
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_page_read",
+    "description": "Read a page of a Space: its blocks in order, its comments, and the page as Markdown.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
+        "pageId": { "type": "string" }
+      },
+      "required": ["spaceId", "pageId"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_page_block_insert",
+    "description": "Add a block to a page, written as this thread. Placed at the end unless afterBlockId is given; afterBlockId null puts it first. A page in the trash cannot be written.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
+        "pageId": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["paragraph", "heading", "checklist", "callout", "subpage_link"]
+        },
+        "text": { "type": "string" },
+        "checked": { "type": "boolean", "description": "For a checklist item." },
+        "linkedPageId": {
+          "type": "string",
+          "description": "For a subpage_link: the page it links to."
+        },
+        "afterBlockId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+      },
+      "required": ["spaceId", "pageId", "kind"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_page_block_update",
+    "description": "Change a block's text, or tick or untick a checklist item, written as this thread.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
+        "blockId": { "type": "string" },
+        "text": { "type": "string" },
+        "checked": { "type": "boolean" }
+      },
+      "required": ["spaceId", "blockId"],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "hal_c2_page_block_delete",
+    "description": "Delete a block from a page, with its comments.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spaceId": { "type": "string", "description": "The Space's id, from hal_c2_page_list." },
+        "blockId": { "type": "string" }
+      },
+      "required": ["spaceId", "blockId"],
+      "additionalProperties": true
+    }
   }
 ]

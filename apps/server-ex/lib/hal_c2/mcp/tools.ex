@@ -3,8 +3,8 @@ defmodule HalC2.Mcp.Tools do
   The tools of the `hal-c2` MCP server (`HalC2.Mcp`), each acting as the thread whose
   agent called it. Definitions come from `priv/mcp_tools.json` and, for moving threads
   between machines, `priv/mcp_mc_tools.json`; only the tools implemented here and in the
-  area modules (`HalC2.Mcp.Tools.Threads`, `Queue`, `Projects` and `PullRequests`), which
-  share the access helpers below, are advertised.
+  area modules (`HalC2.Mcp.Tools.Threads`, `Queue`, `Projects`, `PullRequests` and
+  `Pages`), which share the access helpers below, are advertised.
 
   The access rules: a caller sees only threads of its own
   project; changing another thread needs a caller that is itself running, and never
@@ -23,7 +23,8 @@ defmodule HalC2.Mcp.Tools do
     HalC2.Mcp.Tools.Threads,
     HalC2.Mcp.Tools.Queue,
     HalC2.Mcp.Tools.Projects,
-    HalC2.Mcp.Tools.PullRequests
+    HalC2.Mcp.Tools.PullRequests,
+    HalC2.Mcp.Tools.Pages
   ]
 
   @delegation ~w(delegate_task task_status task_cancel)
@@ -48,7 +49,8 @@ defmodule HalC2.Mcp.Tools do
                 hal_c2_thread_configuration hal_c2_thread_transfers hal_c2_worktree_status
                 hal_c2_worktree_list hal_c2_project_list hal_c2_project_read
                 hal_c2_thread_search hal_c2_preview_list hal_c2_environment_read
-                hal_c2_queue_list hal_c2_queue_read list_thread_pull_requests)
+                hal_c2_queue_list hal_c2_queue_read list_thread_pull_requests
+                hal_c2_page_list hal_c2_page_read)
 
   @doc "The read-only tools' Claude names, of those this MC advertises."
   @spec read_only_allowed() :: [String.t()]
