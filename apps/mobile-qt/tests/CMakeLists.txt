@@ -82,6 +82,14 @@ hal_c2_target_terminal(tst_Features)
 hal_c2_target_scanner(tst_Features)
 add_test(NAME Features COMMAND tst_Features)
 set_tests_properties(Features PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
+# The screens' own decisions, against the desktop's fake HalC2.Shell. Qt's own
+# runner first: one on PATH can be Qt 5's, which exits 1 saying nothing.
+find_program(HAL_C2_QMLTESTRUNNER NAMES qmltestrunner6 qmltestrunner HINTS "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS}")
+if(HAL_C2_QMLTESTRUNNER)
+  add_test(NAME Qml COMMAND "${HAL_C2_QMLTESTRUNNER}" -input "${CMAKE_CURRENT_SOURCE_DIR}/qml"
+    -import "${_desktop}/tests/imports" -import "${_desktop}/qml" -import "${CMAKE_CURRENT_SOURCE_DIR}/../qml")
+  set_tests_properties(Qml PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=")
+endif()
 # Regressions the property tests (prop/) found, one tst_*Regression.cpp each,
 # picked up on the next build.
 include("${_desktop}/cmake/GlobTests.cmake")
