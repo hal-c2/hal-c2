@@ -66,6 +66,9 @@ void McClient::close() {
     QWebSocket* socket = m_socket;
     m_socket = nullptr;
     socket->disconnect(this);
+    // What was sent last goes out first, as a farewell such as
+    // `hal-c2.unregisterPush`; abort() would drop it.
+    socket->flush();
     socket->abort();
     socket->deleteLater();
   }

@@ -65,6 +65,8 @@ private:
   void enable();
   void subscribe();
   void setLiveActivity(bool on);
+  // The user forgot the environment: it stops pushing to this phone.
+  void forgetEnvironment();
   // The app came to the front or left it.
   void activeChanged(bool active);
   void registerPush();

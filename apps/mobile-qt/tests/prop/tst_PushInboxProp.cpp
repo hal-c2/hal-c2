@@ -1,10 +1,13 @@
 // The phone's push inbox (src/push/PushInbox) against a model of what it must
-// show: MC messages that arrive late, early, twice, out of order, while the
-// app is open or the system forbids notifications, with the user dismissing
-// the activity card and turning live activity off and on, as time passes.
+// show: MC messages and the app's own that arrive late, early, twice, out of
+// order, while the app is open or the system forbids notifications, with the
+// user dismissing
+// the activity card, turning live activity off and on and forgetting the
+// environment, as time passes.
 // An alert shows once, only when it is fresh, allowed and the app is away;
 // the card follows the newest activity, stays away once dismissed until a run
-// starts again, and goes when its lifetime ends.
+// starts again, and goes when its lifetime ends. Each source's messages are
+// ordered against its own alone, and a card says nothing it has no value for.
 
 #include "Prop.h"
 
@@ -22,7 +25,9 @@ constexpr qint64 kStart = 1'790'000'000'000;
 struct Model {
   qint64 now = kStart;
   QSet<QString> seen;
+  // The newest activity of the MC's, and of the app's.
   qint64 lastUpdate = 0;
+  qint64 lastLocalUpdate = 0;
   bool lastActive = false;
   bool dismissed = false;
   bool live = true;
@@ -43,6 +48,7 @@ struct Sut {
     lastAlert = effects.value(QLatin1String("alert")).toObject();
     if (effects.value(QLatin1String("cancelCard")).toBool()) card.reset();
     const QJsonObject shown = effects.value(QLatin1String("card")).toObject();
+    for (auto it = shown.begin(); it != shown.end(); ++it) RC_ASSERT(!it.value().isNull() && !it.value().isUndefined());
     if (!shown.isEmpty()) card = std::pair{shown, now};
   }
 
@@ -121,6 +127,7 @@ struct Activity : Command {
   bool active = *rc::gen::arbitrary<bool>();
   Sent sent = *anySent();
   bool permitted = *rc::gen::element(true, true, true, false);
+  bool local = *rc::gen::arbitrary<bool>();
   explicit Activity(const Model&) {}
 
   QJsonObject activity(qint64 at) const {
@@ -130,8 +137,9 @@ struct Activity : Command {
   }
   void apply(Model& m) const override {
     const qint64 at = sentAt(sent, m.now);
-    if (!fresh(sent) || !permitted || at < m.lastUpdate) return;
-    m.lastUpdate = at;
+    qint64& last = local ? m.lastLocalUpdate : m.lastUpdate;
+    if (!fresh(sent) || !permitted || at < last) return;
+    last = at;
     const bool wasActive = std::exchange(m.lastActive, active);
     const qint64 until = qint64(activity(at).value(QLatin1String("expiresAt")).toDouble());
     if (until <= m.now || !m.live) {
@@ -144,15 +152,17 @@ struct Activity : Command {
   }
   void run(const Model& m, Sut& s) const override {
     const qint64 at = sentAt(sent, s.now);
-    s.show(s.inbox.deliver({{QStringLiteral("v"), 1}, {QStringLiteral("sentAt"), double(at)}, {QStringLiteral("activity"), activity(at)}},
-                           {s.now, false, permitted, 35}));
+    QJsonObject message{{QStringLiteral("v"), 1}, {QStringLiteral("sentAt"), double(at)}, {QStringLiteral("activity"), activity(at)}};
+    if (local) message.insert(QStringLiteral("local"), true);
+    s.show(s.inbox.deliver(message, {s.now, false, permitted, 36}));
     RC_ASSERT(s.lastAlert.isEmpty());
     Model next = m;
     apply(next);
     s.check(next);
   }
   void show(std::ostream& os) const override {
-    os << "Activity(" << (active ? "working" : "done") << ", sent " << name(sent) << (permitted ? "" : ", not permitted") << ")";
+    os << "Activity(" << (active ? "working" : "done") << (local ? ", the app's" : ", the MC's") << ", sent " << name(sent)
+       << (permitted ? "" : ", not permitted") << ")";
   }
 };
 
@@ -190,6 +200,25 @@ struct Live : Command {
   void show(std::ostream& os) const override { os << "Live(" << (on ? "on" : "off") << ")"; }
 };
 
+// The environment is forgotten: nothing shown before counts, and the user's
+// choices stay.
+struct Forget : Command {
+  explicit Forget(const Model&) {}
+  void apply(Model& m) const override {
+    m = Model{.now = m.now, .live = m.live};
+  }
+  void run(const Model& m, Sut& s) const override {
+    const QByteArray before = s.inbox.keys().publicKey;
+    s.show(s.inbox.forget());
+    RC_ASSERT(s.inbox.value(QStringLiteral("endpoint")).isUndefined());
+    RC_ASSERT(s.inbox.keys().publicKey != before);
+    Model next = m;
+    apply(next);
+    s.check(next);
+  }
+  void show(std::ostream& os) const override { os << "Forget"; }
+};
+
 struct Wait : Command {
   qint64 ms = *rc::gen::element(qint64(1000), 5 * kMinute, 14 * kMinute, 16 * kMinute, 121 * kMinute);
   explicit Wait(const Model&) {}
@@ -214,7 +243,7 @@ private slots:
       Model model;
       Sut sut;
       RC_ASSERT(sut.dir.isValid());
-      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Alert, Alert, Activity, Activity, Activity, Dismiss, Live, Wait, Wait>());
+      rc::state::check(model, sut, rc::state::gen::execOneOfWithArgs<Alert, Alert, Activity, Activity, Activity, Dismiss, Live, Forget, Wait, Wait>());
     }));
   }
 };

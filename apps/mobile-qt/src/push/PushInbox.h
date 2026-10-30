@@ -20,7 +20,7 @@
 // Every call answers with effects, which the platform renders as they are:
 //   {channels: [{id, name, importance}],
 //    alert?: {tag, id, channel, title, body, link, visibility, publicTitle, publicText},
-//    card?: {id, channel, title, text, lines, subtext, chip, action, dismissAction,
+//    card?: {id, channel, title, text, lines, subtext, chip?, action?, dismissAction?,
 //            ongoing, promoted, link, timeoutMs, silent, showWhen, visibility,
 //            publicTitle, publicText},
 //    cancelCard?: true}
@@ -59,12 +59,18 @@ public:
   // An encrypted message from the distributor.
   QJsonObject receive(const QByteArray& body, const Device& device);
   // A message in the clear: a decrypted one, or the activity the app works
-  // out itself from what it shows.
+  // out itself from what it shows, marked `local: true`. Each is ordered
+  // against the last from the same place, since the MC's clock is not the
+  // phone's.
   QJsonObject deliver(const QJsonObject& message, const Device& device);
   // The user swiped the card away, or tapped its dismiss action: it stays
   // away until a run starts again.
   QJsonObject dismiss();
   bool dismissed();
+  // The environment was forgotten: new keys and no endpoint, so what its MC
+  // still pushes cannot be opened, and nothing of what was shown kept. The
+  // user's choices stay.
+  QJsonObject forget();
   // The app's own choices kept beside the inbox's: the distributor, the
   // endpoint it gave (which Android's receiver writes) and quiet hours.
   QJsonValue value(const QString& key);

@@ -80,7 +80,11 @@ void followPairingLink(World& world, const QString& link) {
 
 // From home, the user opens the environment in Settings, which names it.
 void showEnvironment(World& world, const QString& name) {
-  if (world.find(QStringLiteral("pairingSettings")) == nullptr) world.tap(QStringLiteral("environment"));
+  if (world.find(QStringLiteral("pairingSettings")) == nullptr) {
+    // From a thread, back to where the environment is.
+    for (int i = 0; i < 3 && world.find(QStringLiteral("environment")) == nullptr; ++i) world.back();
+    world.tap(QStringLiteral("environment"));
+  }
   world.item(QStringLiteral("pairingSettings"));
   world.waitFor([&] { return shownText(world, QStringLiteral("environmentName")) == name; },
                 [&] { return QStringLiteral("the settings to name %1; the screen says: %2").arg(name, screenTexts(world)); });

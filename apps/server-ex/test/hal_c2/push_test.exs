@@ -166,6 +166,62 @@ defmodule HalC2.PushTest do
     assert [%{"title" => "Fix checkout"}] = PushPhone.alerts(phone)
   end
 
+  test "a thread keeps its mute when it moves to another MC", %{context: context, phone: phone} do
+    id = World.thread_id(context, "Fix checkout")
+    context |> register(phone, %{"mutedThreads" => ["env-elsewhere:#{id}"]}) |> finish()
+    assert PushPhone.alerts(phone) == []
+  end
+
+  test "what another MC had when it joins is not news", %{context: context, phone: phone} do
+    register(context, phone)
+
+    row = fn run ->
+      at = World.iso_from_now(String.to_integer(run) * 1000)
+
+      %{
+        "id" => "far",
+        "title" => "Far away",
+        "latestRunId" => run,
+        "status" => "completed",
+        "latestRunCompletedAt" => at,
+        "updatedAt" => at
+      }
+    end
+
+    send(Push, {:hal_c2_shell, {:rows, :"peer@push.invalid", [{"far", {"thread", row.("1")}}]}})
+    :ok = Push.drain()
+    assert PushPhone.alerts(phone) == []
+
+    send(Push, {:hal_c2_shell, {:rows, :"peer@push.invalid", [{"far", {"thread", row.("2")}}]}})
+    :ok = Push.drain()
+    assert [%{"title" => "Far away"}] = PushPhone.alerts(phone)
+
+    # Removed from the cluster and back: its rows are a baseline again.
+    send(Push, {:hal_c2_shell, {:mc, :"peer@push.invalid", :removed}})
+    send(Push, {:hal_c2_shell, {:rows, :"peer@push.invalid", [{"far", {"thread", row.("3")}}]}})
+    :ok = Push.drain()
+    assert length(PushPhone.alerts(phone)) == 1
+  end
+
+  test "a card for work still running is sent again before it expires", %{
+    context: context,
+    phone: phone
+  } do
+    context = register(context, phone, %{"liveActivity" => true})
+    World.add_run(context, "Fix checkout", "running")
+    :ok = Push.drain()
+    assert [%{"activity" => %{"active" => true}}] = PushPhone.messages(phone)
+
+    PushPhone.set_clock(System.os_time(:millisecond) + :timer.minutes(59))
+    :ok = Push.drain()
+    assert length(PushPhone.messages(phone)) == 1
+
+    PushPhone.set_clock(System.os_time(:millisecond) + :timer.minutes(61))
+    :ok = Push.drain()
+    assert [_, %{"activity" => %{"active" => true} = card}] = PushPhone.messages(phone)
+    assert card["expiresAt"] > System.os_time(:millisecond) + :timer.minutes(61)
+  end
+
   describe "quiet hours" do
     # 22:00 to 07:00 UTC.
     @quiet %{"start" => 1320, "end" => 420, "allowApprovals" => false, "utcOffsetMinutes" => 0}
@@ -207,6 +263,17 @@ defmodule HalC2.PushTest do
       :ok = Push.drain()
 
       assert [%{"kind" => "completed", "title" => "Add search"}] = PushPhone.alerts(phone)
+    end
+
+    test "alerts held survive a restart", %{context: context, phone: phone} do
+      PushPhone.set_clock(today(23, 0))
+      context = context |> register(phone, %{"quietHours" => @quiet}) |> finish()
+      assert PushPhone.requests(phone) == []
+
+      PushPhone.set_clock(today(7, 0) + :timer.hours(24))
+      Mc.restart(context.mc)
+      :ok = Push.drain()
+      assert [%{"title" => "Fix checkout"}] = PushPhone.alerts(phone)
     end
 
     test "approvals go through when allowed", %{context: context, phone: phone} do

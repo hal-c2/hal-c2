@@ -29,6 +29,9 @@ constexpr qint64 kMinute = 60 * 1000;
 // The MC's side of push.
 struct FakePush {
   QJsonObject registration;
+  // The last registration the phone made, kept after it unregisters, as an
+  // MC that never heard it would.
+  QJsonObject lastRegistration;
   int registrations = 0;
   int unregistrations = 0;
   // Every push, in order: where it went and what it said.
@@ -62,6 +65,7 @@ const FakeMc::Extension pushes([](FakeMc& mc) {
   mc.onRpc(S("hal-c2.registerPush"), [&mc](const FakeMc::Rpc& rpc) {
     FakePush& fake = mc.part<FakePush>();
     fake.registration = rpc.payload;
+    fake.lastRegistration = rpc.payload;
     ++fake.registrations;
     mc.reply(rpc, QJsonObject());
   });
@@ -826,7 +830,9 @@ const Steps steps([] {
     const QJsonObject card = awaitCard(
         world, [](const QJsonObject& card) { return !card.value(QLatin1String("ongoing")).toBool() && card.value(QLatin1String("text")).toString().startsWith(QLatin1String("Done")); },
         S("a card for finished work"));
-    expect(card.value(QLatin1String("chip")).isNull(), S("the finished card still has the chip %1").arg(card.value(QLatin1String("chip")).toString()));
+    for (const char* key : {"chip", "action", "dismissAction"}) {
+      expect(!card.contains(QLatin1String(key)), S("the finished card still has the %1 %2").arg(QLatin1String(key), show(card.value(QLatin1String(key)).toVariant())));
+    }
   });
 
   step(S("the result stays visible for up to 15 minutes"), [](World& world, const Captures&, const Table&) {
@@ -977,6 +983,26 @@ const Steps steps([] {
   step(S("two hours pass without a new update"), [](World& world, const Captures&, const Table&) {
     flush(world);
     world.push->clock += 120 * kMinute + 1;
+  });
+
+  step(S("%1 no longer pushes to the phone").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    const FakePush& fake = pushOf(world);
+    expect(fake.registration.isEmpty() && fake.unregistrations > 0,
+           S("%1 still has the phone registered: %2").arg(c[0], show(fake.registration.toVariantMap())));
+  });
+
+  // An MC that did not hear the phone go pushes as it did before.
+  step(S("%1 pushes an alert to the phone as it was registered").arg(kQuoted), [](World& world, const Captures&, const Table&) {
+    FakePush& fake = pushOf(world);
+    expect(!fake.lastRegistration.isEmpty(), S("the phone never registered"));
+    const QJsonObject keys = fake.lastRegistration.value(QLatin1String("keys")).toObject();
+    const QJsonObject alert{{S("id"), S("env:late:completed:run-9")}, {S("kind"), S("completed")}, {S("title"), S("Fix checkout")},
+                            {S("body"), S("Agent finished")},      {S("environmentId"), world.mc.environmentId}, {S("threadId"), S("late")}};
+    const QJsonObject message{{S("v"), 1}, {S("sentAt"), double(world.push->clock)}, {S("alert"), alert}};
+    const QByteArray body = push::encrypt(QJsonDocument(message).toJson(QJsonDocument::Compact), fromBase64Url(keys.value(QLatin1String("p256dh"))),
+                                          fromBase64Url(keys.value(QLatin1String("auth"))));
+    world.push->inFlight.append({fake.lastRegistration.value(QLatin1String("endpoint")).toString(), body});
+    world.push->deliver();
   });
 
   step(S("the lock screen activity ends"), [](World& world, const Captures&, const Table&) {

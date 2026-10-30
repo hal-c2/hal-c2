@@ -17,8 +17,9 @@ defmodule HalC2.PushPropTest do
     * an endpoint that answers 410 is dropped and gets nothing more until the phone
       registers again;
     * registrations survive a restart, and a turn that finished before the service
-      started is not alerted (pingdotgg/t3code#13340); alerts held across a restart
-      are dropped.
+      started is not alerted (pingdotgg/t3code#13340), nor is what another MC had when
+      its rows first arrive; alerts held across a restart are kept and sent when the
+      quiet hours allow.
   """
 
   use ExUnit.Case, async: false
@@ -74,7 +75,7 @@ defmodule HalC2.PushPropTest do
   # threads whose alerts a session's quiet hours hold, in order; dead: endpoints that
   # answer 410; endpoints: how many have been handed out; clock: the service's time.
   # started_at: when the service last started; appeared: threads of another MC shown so
-  # far.
+  # far; peer_known: whether the service has had that MC's rows since it started.
   def initial_state,
     do: %{
       regs: %{},
@@ -83,7 +84,8 @@ defmodule HalC2.PushPropTest do
       endpoints: 0,
       clock: @start,
       started_at: @start,
-      appeared: 0
+      appeared: 0,
+      peer_known: false
     }
 
   def command(state) do
@@ -157,18 +159,19 @@ defmodule HalC2.PushPropTest do
 
   defp step(state, {:call, _, :advance, [at]}), do: evaluate(%{state | clock: at}, [])
 
-  # Held alerts are in memory only; a restart forgets them, and the turns finished
-  # before it.
+  # Held alerts are kept beside the registrations; a restart forgets the turns finished
+  # before it, and which other MCs it has heard from.
   defp step(state, {:call, _, :restart, [at]}),
-    do: {%{state | clock: at, started_at: at, held: %{}}, %{}}
+    do: evaluate(%{state | clock: at, started_at: at, peer_known: false}, [])
 
   defp step(state, {:call, _, :finish_while_down, [_thread, at]}),
-    do: {%{state | clock: at + 1, started_at: at + 1, held: %{}}, %{}}
+    do: evaluate(%{state | clock: at + 1, started_at: at + 1, peer_known: false}, [])
 
-  # A thread first seen finished is news only if it finished after the service started.
+  # A thread first seen finished is news only if it finished after the service started,
+  # and its MC's rows came before.
   defp step(state, {:call, _, :appear, [k, at]}) do
-    state = %{state | appeared: k}
-    evaluate(state, if(at > state.started_at, do: ["n#{k}"], else: []))
+    due = if state.peer_known and at > state.started_at, do: ["n#{k}"], else: []
+    evaluate(%{state | appeared: k, peer_known: true}, due)
   end
 
   defp step(state, {:call, _, :gone, [session]}),

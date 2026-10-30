@@ -125,8 +125,8 @@ QString summary(const QJsonObject& activity, const QList<Row>& rows) {
   return failed > 0 ? QStringLiteral("Finished, %1 failed").arg(failed) : QStringLiteral("All finished");
 }
 
-QJsonValue chip(const QJsonObject& activity, const Phase* phase) {
-  if (!activity.value(QLatin1String("active")).toBool()) return QJsonValue::Null;
+// The live update's chip, for work in progress alone.
+QString chip(const QJsonObject& activity, const Phase* phase) {
   if (!phase) return QStringLiteral("Active");
   const int active = activity.value(QLatin1String("activeCount")).toInt();
   if (QLatin1String(phase->name) == QLatin1String("running") && active > 1) {
@@ -230,9 +230,10 @@ QJsonObject Inbox::deliver(const QJsonObject& message, const Device& device) {
   }
 
   const QJsonValue activityValue = message.value(QLatin1String("activity"));
-  if (activityValue.isObject() && sentAt >= qint64(state.value(QLatin1String("lastUpdate")).toDouble())) {
+  const QString lastUpdate = message.value(QLatin1String("local")).toBool() ? QStringLiteral("lastLocalUpdate") : QStringLiteral("lastUpdate");
+  if (activityValue.isObject() && sentAt >= qint64(state.value(lastUpdate).toDouble())) {
     const QJsonObject activity = activityValue.toObject();
-    state.insert(QStringLiteral("lastUpdate"), double(sentAt));
+    state.insert(lastUpdate, double(sentAt));
     const bool active = activity.value(QLatin1String("active")).toBool();
     const bool wasActive = state.value(QLatin1String("lastActive")).toBool();
     state.insert(QStringLiteral("lastActive"), active);
@@ -264,6 +265,17 @@ QJsonObject Inbox::dismiss() {
 bool Inbox::dismissed() {
   const std::lock_guard lock(g_lock);
   return load(m_path).value(QLatin1String("dismissed")).toBool();
+}
+
+QJsonObject Inbox::forget() {
+  const std::lock_guard lock(g_lock);
+  const QJsonObject state = load(m_path);
+  QJsonObject kept;
+  for (const char* key : {"distributor", "liveActivity", "quietHours"}) {
+    if (state.contains(QLatin1String(key))) kept.insert(QLatin1String(key), state.value(QLatin1String(key)));
+  }
+  save(m_path, kept);
+  return cancelCard(channels());
 }
 
 QJsonValue Inbox::value(const QString& key) {
@@ -366,9 +378,6 @@ QJsonObject card(const QJsonObject& activity, qint64 remainingMs, int sdk) {
       {QStringLiteral("text"), lines.value(0)},
       {QStringLiteral("lines"), QJsonArray::fromStringList(lines)},
       {QStringLiteral("subtext"), subtext},
-      {QStringLiteral("chip"), chip(activity, phase)},
-      {QStringLiteral("action"), active ? QJsonValue(QString::fromLatin1(phase ? phase->action : "Open")) : QJsonValue::Null},
-      {QStringLiteral("dismissAction"), active ? QJsonValue(QStringLiteral("Dismiss")) : QJsonValue::Null},
       {QStringLiteral("ongoing"), active},
       // Android 16 lifts an ongoing card to a live update in the status bar.
       {QStringLiteral("promoted"), active && sdk >= 36},
@@ -380,6 +389,12 @@ QJsonObject card(const QJsonObject& activity, qint64 remainingMs, int sdk) {
       {QStringLiteral("publicTitle"), QStringLiteral("HAL-C2")},
       {QStringLiteral("publicText"), QStringLiteral("Agent activity")},
   };
+  // Finished work has no chip and no buttons: the card is tapped or let go.
+  if (active) {
+    card.insert(QStringLiteral("chip"), chip(activity, phase));
+    card.insert(QStringLiteral("action"), QString::fromLatin1(phase ? phase->action : "Open"));
+    card.insert(QStringLiteral("dismissAction"), QStringLiteral("Dismiss"));
+  }
   return card;
 }
 

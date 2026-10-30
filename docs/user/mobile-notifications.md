@@ -21,6 +21,9 @@ To turn alerts off, use **Open system settings**: Android owns the permission.
 If the system has blocked HAL-C2, the app says so and points to the same place;
 it notices when you allow it again.
 
+Forgetting the paired machine also stops its alerts, even if it is offline at
+the time.
+
 ## Ongoing agent activity
 
 With **Ongoing agent activity** on, the phone shows one card while agents work,

@@ -370,6 +370,18 @@ Feature: Push notifications and live agent activity
     Then the lock screen activity ends
     And the phone stops receiving alerts
 
+  # What replaces signing out: forgetting the environment. An MC that is offline then never
+  # hears it, so the phone also stops being able to read what it pushes.
+  @mobile
+  Scenario: Forgetting the environment ends lock screen activity and stops its alerts
+    Given the lock screen shows agent work in progress for "Fix checkout"
+    When the user removes "My MacBook" and confirms
+    Then the lock screen activity ends
+    And "My MacBook" no longer pushes to the phone
+    When the app goes to the background
+    And "My MacBook" pushes an alert to the phone as it was registered
+    Then the phone shows no alert
+
   @mobile
   Scenario: A force-stopped Android app receives alerts again once reopened
     Given the user force-stopped the app on Android

@@ -168,6 +168,11 @@ public final class Push {
         return builder.build();
     }
 
+    // A string field, "" when it is missing or null (optString says "null").
+    private static String string(JSONObject object, String key) {
+        return object.isNull(key) ? "" : object.optString(key);
+    }
+
     private static Notification card(Context context, JSONObject card) {
         String channel = card.optString("channel");
         StringBuilder lines = new StringBuilder();
@@ -195,13 +200,13 @@ public final class Push {
         PendingIntent open = open(context, card.optString("link"));
         if (open != null) {
             builder.setContentIntent(open);
-            String action = card.optString("action");
+            String action = string(card, "action");
             if (!action.isEmpty()) builder.addAction(new Notification.Action.Builder(null, action, open).build());
         }
-        String dismissAction = card.optString("dismissAction");
+        String dismissAction = string(card, "dismissAction");
         if (!dismissAction.isEmpty()) builder.addAction(new Notification.Action.Builder(null, dismissAction, dismiss(context)).build());
         if (Build.VERSION.SDK_INT >= 36) {
-            String chip = card.optString("chip");
+            String chip = string(card, "chip");
             if (!chip.isEmpty()) builder.setShortCriticalText(chip);
             if (card.optBoolean("promoted")) {
                 // Notification.EXTRA_REQUEST_PROMOTED_ONGOING, which the

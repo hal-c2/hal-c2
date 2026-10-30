@@ -80,6 +80,7 @@ Notifications::Notifications(ShellBridge* bridge, NativeShell* shell, Pairing* p
     self->registerPush();
     self->publish();
   };
+  connect(pairing, &Pairing::forgetting, this, &Notifications::forgetEnvironment);
   connect(shell->client(), &McClient::readyChanged, this, [this](bool ready) {
     m_registered = {};
     if (ready) registerPush();
@@ -227,6 +228,25 @@ void Notifications::setLiveActivity(bool on) {
   publish();
 }
 
+void Notifications::forgetEnvironment() {
+  // The MC forgets the phone if it still hears it; one that does not pushes
+  // to an endpoint the distributor dropped, and to keys the phone no longer has.
+  McClient* client = m_shell->client();
+  if (client->isReady()) {
+    client->call(this, client->environment(), QStringLiteral("hal-c2.unregisterPush"), QJsonObject{},
+                 [](const QJsonValue&, const std::optional<QString>&) {});
+  }
+  m_registered = {};
+  m_activity = {};
+  m_pending.clear();
+  const QString distributor = m_inbox.value(QStringLiteral("distributor")).toString();
+  if (m_system->supported() && !distributor.isEmpty()) m_system->unsubscribe();
+  show(m_inbox.forget());
+  // A fresh endpoint, for the next environment paired with.
+  if (m_system->supported() && !distributor.isEmpty() && m_permission == PushSystem::Permission::Granted) m_system->subscribe(distributor);
+  publish();
+}
+
 void Notifications::activeChanged(bool active) {
   m_active = active;
   push::setForeground(active);
@@ -298,7 +318,9 @@ void Notifications::updateActivity(bool force) {
   compared.remove(QStringLiteral("expiresAt"));
   if (!force && compared == m_activity) return;
   m_activity = compared;
-  show(m_inbox.deliver({{QStringLiteral("v"), 1}, {QStringLiteral("sentAt"), double(now)}, {QStringLiteral("activity"), activity}}, device()));
+  show(m_inbox.deliver(
+      {{QStringLiteral("v"), 1}, {QStringLiteral("sentAt"), double(now)}, {QStringLiteral("local"), true}, {QStringLiteral("activity"), activity}},
+      device()));
 }
 
 void Notifications::show(const QJsonObject& effects) { m_system->show(effects); }

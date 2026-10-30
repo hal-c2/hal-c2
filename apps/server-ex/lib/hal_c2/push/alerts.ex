@@ -4,25 +4,29 @@ defmodule HalC2.Push.Alerts do
   alerts are due, the alert one push carries, the activity card, and quiet hours. Pure.
 
   Alerts fire on transitions as the desktop's `AlertController` does: each thread is
-  remembered as `%{attention, completion}`, and an alert is due when its attention (a
-  pending approval or question, a failed run) changes to something new, or its latest
-  run completes later than before. A thread seen for the first time is a baseline,
-  except for work that happened after `started_at` (upstream pingdotgg/t3code#13340):
-  threads finished before the MC started produce nothing.
+  remembered by its id as `%{attention, completion}`, and an alert is due when its
+  attention (a pending approval or question, a failed run) changes to something new, or
+  its latest run completes later than before. A thread keeps its id when it moves to
+  another MC, so what was seen of it moves too. A thread seen for the first time is a
+  baseline, except for work that happened after `started_at` (upstream
+  pingdotgg/t3code#13340): threads finished before the MC started produce nothing.
   """
 
   @title_limit 120
   @finished_kept :timer.minutes(15)
   @active_expiry :timer.hours(2)
+  # A card for work still running is sent again this long before it would expire.
+  @refresh_ahead :timer.hours(1)
   @max_rows 5
   @budget 3500
 
   @doc """
   A thread's view for alerts and activity from its sidebar `row`, or nil for a row that
-  is gone or a subagent's. `environment_id` is its MC's, `project` its project's title.
+  is gone, a subagent's, or the record a thread that moved away leaves behind.
+  `environment_id` is its MC's, `project` its project's title.
   """
   def thread(environment_id, row, project) do
-    if row["deletedAt"] == nil and not subagent?(row) do
+    if row["deletedAt"] == nil and row["movedTo"] == nil and not subagent?(row) do
       request = row["pendingRuntimeRequest"]
       status = status(row, request)
 
@@ -117,9 +121,8 @@ defmodule HalC2.Push.Alerts do
   """
   def observe(seen, threads, started_at) do
     Enum.reduce(threads, {seen, []}, fn thread, {seen, due} ->
-      prior = seen[thread.key]
-      completion = thread.completion || (prior && prior.completion)
-      seen = Map.put(seen, thread.key, %{attention: thread.attention, completion: completion})
+      prior = seen[thread.thread_id]
+      seen = remember(seen, thread, prior)
 
       case event(thread, prior, started_at) do
         nil -> {seen, due}
@@ -128,6 +131,15 @@ defmodule HalC2.Push.Alerts do
       end
     end)
     |> then(fn {seen, due} -> {seen, Enum.reverse(due)} end)
+  end
+
+  @doc "Remembers `threads` in `seen` as they are, with no alert for any of them."
+  def baseline(seen, threads),
+    do: Enum.reduce(threads, seen, &remember(&2, &1, &2[&1.thread_id]))
+
+  defp remember(seen, thread, prior) do
+    completion = thread.completion || (prior && prior.completion)
+    Map.put(seen, thread.thread_id, %{attention: thread.attention, completion: completion})
   end
 
   # First seen: only what happened after the MC started is news.
@@ -288,6 +300,15 @@ defmodule HalC2.Push.Alerts do
   def unstamped(nil), do: nil
   def unstamped(activity), do: Map.delete(activity, "expiresAt")
 
+  @doc """
+  When `activity` must be sent again though nothing in it changed, or nil: a card for
+  work still running would otherwise expire on the phone while the work goes on.
+  """
+  def refresh_at(%{"active" => true, "expiresAt" => expires_at}),
+    do: expires_at - @refresh_ahead
+
+  def refresh_at(_activity), do: nil
+
   defp finished?(thread), do: thread.phase in ~w(completed failed)
 
   defp group(%{phase: phase}) when phase in ~w(waiting_for_approval waiting_for_input), do: 0
@@ -309,40 +330,47 @@ defmodule HalC2.Push.Alerts do
     }
 
   @doc """
-  The message JSON for `alert` and `activity` (either may be nil), sent at `now`. A
-  grouped alert's body loses lines from its end, said in a last line, until the
-  message fits in #{@budget} bytes.
+  The message JSON for `alert` and `activity` (either may be nil), sent at `now`, made
+  to fit in #{@budget} bytes: a grouped alert's body loses titles from its end, said in
+  a last line, then the card loses rows from its end (its counts still say how many
+  threads there are). A message that is still over, which titles clipped to
+  #{@title_limit} characters should rule out, goes as it is.
   """
   def message(alert, activity, now) do
-    message =
-      %{"v" => 1, "sentAt" => now}
-      |> put_present("alert", alert)
-      |> put_present("activity", activity)
-
-    json = JSON.encode!(message)
-
-    if byte_size(json) < @budget or alert == nil or alert["kind"] != "grouped",
-      do: json,
-      else: message(shorten(alert), activity, now)
+    titles = if alert && alert["kind"] == "grouped", do: String.split(alert["body"], "\n")
+    fit(alert, titles, 0, activity, now)
   end
 
-  defp shorten(alert) do
-    lines = String.split(alert["body"], "\n")
-    {kept, dropped} = trim_lines(lines)
-    %{alert | "body" => Enum.join(kept ++ ["and #{dropped} more"], "\n")}
-  end
+  defp fit(alert, titles, dropped, activity, now) do
+    json = encode(with_titles(alert, titles, dropped), activity, now)
+    rows = activity && activity["rows"]
 
-  # Drops the last title, folding an earlier "and N more" into the new count.
-  defp trim_lines(lines) do
-    case Enum.split(lines, -1) do
-      {kept, ["and " <> more]} ->
-        {count, " more"} = Integer.parse(more)
-        {kept, _} = Enum.split(kept, -1)
-        {kept, count + 1}
+    cond do
+      byte_size(json) < @budget ->
+        json
 
-      {kept, [_]} ->
-        {kept, 1}
+      titles not in [nil, []] ->
+        fit(alert, Enum.drop(titles, -1), dropped + 1, activity, now)
+
+      is_list(rows) and length(rows) > 1 ->
+        fit(alert, titles, dropped, %{activity | "rows" => Enum.drop(rows, -1)}, now)
+
+      true ->
+        json
     end
+  end
+
+  defp with_titles(alert, nil, _dropped), do: alert
+  defp with_titles(alert, titles, 0), do: %{alert | "body" => Enum.join(titles, "\n")}
+
+  defp with_titles(alert, titles, dropped),
+    do: %{alert | "body" => Enum.join(titles ++ ["and #{dropped} more"], "\n")}
+
+  defp encode(alert, activity, now) do
+    %{"v" => 1, "sentAt" => now}
+    |> put_present("alert", alert)
+    |> put_present("activity", activity)
+    |> JSON.encode!()
   end
 
   defp put_present(map, _key, nil), do: map

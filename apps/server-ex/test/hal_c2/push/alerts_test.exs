@@ -87,6 +87,21 @@ defmodule HalC2.Push.AlertsTest do
     end
   end
 
+  describe "moves and new MCs" do
+    test "a moved thread is the same thread: its record left behind says nothing" do
+      {seen, []} = observe(%{}, [completed("a", @t0 + 1)], @t0 + 2)
+      assert thread(completed("a", @t0 + 1, %{"movedTo" => "env-b"})) == nil
+      moved = Alerts.thread("env-b", completed("a", @t0 + 1), "shop")
+      assert {_, []} = Alerts.observe(seen, [moved], @t0)
+    end
+
+    test "a baseline remembers threads as they are, without alerts" do
+      seen = Alerts.baseline(%{}, [thread(completed("a", @t0 + 5))])
+      assert {seen, []} = observe(seen, [completed("a", @t0 + 5)])
+      assert {_, [%{kind: "completed"}]} = observe(seen, [completed("a", @t0 + 6)])
+    end
+  end
+
   describe "startup (pingdotgg/t3code#13340)" do
     test "a thread first seen finished before the MC started is a baseline" do
       assert {seen, []} = observe(%{}, [completed("a", @t0 - :timer.hours(48))])
@@ -163,6 +178,36 @@ defmodule HalC2.Push.AlertsTest do
       %{"alert" => %{"body" => body}} = JSON.decode!(json)
       assert body =~ ~r/\nand \d+ more$/
     end
+
+    test "titles that read like the count line are titles" do
+      due =
+        for i <- 1..60,
+            do: %{
+              kind: "completed",
+              id: "#{i}",
+              title: "and #{i} more " <> String.duplicate("t", 100),
+              environment_id: "e",
+              thread_id: "t#{i}"
+            }
+
+      json = Alerts.message(Alerts.alert(due), nil, @t0)
+      assert byte_size(json) < 3500
+      %{"alert" => %{"body" => body}} = JSON.decode!(json)
+      assert String.starts_with?(body, "and 1 more ")
+      assert body =~ ~r/\nand \d+ more$/
+    end
+
+    test "an oversized card loses rows, and a message that cannot fit still goes" do
+      row = &%{"status" => "Working", "title" => String.duplicate(&1, 1000), "project" => "shop"}
+      card = %{"active" => true, "rows" => Enum.map(~w(a b c d e), row), "activeCount" => 5}
+
+      %{"activity" => fitted} = JSON.decode!(Alerts.message(nil, card, @t0))
+      assert length(fitted["rows"]) == 3
+      assert fitted["activeCount"] == 5
+
+      huge = %{card | "rows" => [row.(String.duplicate("x", 4))]}
+      %{"activity" => %{"rows" => [_]}} = JSON.decode!(Alerts.message(nil, huge, @t0))
+    end
   end
 
   describe "the activity card" do
@@ -189,12 +234,14 @@ defmodule HalC2.Push.AlertsTest do
       assert card["activeCount"] == 2
       assert card["attentionCount"] == 1
       assert card["expiresAt"] == @t0 + 1 + :timer.hours(2)
+      assert Alerts.refresh_at(card) == @t0 + 1 + :timer.hours(1)
     end
 
     test "finished rows stay 15 minutes and the card then has none" do
       threads = [thread(completed("a", @t0))]
       card = Alerts.activity(threads, @t0 + 1)
       refute card["active"]
+      assert Alerts.refresh_at(card) == nil
       assert card["expiresAt"] == @t0 + :timer.minutes(15)
       assert Alerts.next_expiry(threads, @t0 + 1) == @t0 + :timer.minutes(15)
       assert Alerts.activity(threads, @t0 + :timer.minutes(15)) == nil

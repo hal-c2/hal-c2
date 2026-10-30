@@ -11,9 +11,11 @@ defmodule HalC2.Push do
   The service follows every thread row of the cluster (`HalC2.Shell`) and works out
   alerts and the activity card (`HalC2.Push.Alerts`). Rows that change together are one
   evaluation, and the alerts due in it go out as one push per phone, grouped when there
-  are several. A phone's muted threads get no alert. Alerts due in its quiet hours are
-  held and sent at their end, except approvals and questions when it lets them through.
-  The MC records when it started, and threads that finished before it say nothing.
+  are several. A phone's muted threads get no alert, wherever they move. Alerts due in
+  its quiet hours are held, beside the registration so a restart keeps them, and sent at
+  their end, except approvals and questions when it lets them through. The MC records
+  when it started, and threads that finished before it say nothing; nor do those of an
+  MC whose rows arrive for the first time, as when it joins the cluster.
 
   `drain/0` evaluates what the shell has sent so far and returns once every push has
   been delivered or given up; tests call it instead of waiting. Options: `:clock` (a
@@ -28,6 +30,7 @@ defmodule HalC2.Push do
   alias HalC2.Push.{Alerts, WebPush}
 
   @prefix "push:"
+  @held_prefix "push-held:"
   @backoff [1_000, 2_000, 4_000, 8_000, 16_000]
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -146,16 +149,22 @@ defmodule HalC2.Push do
     if Process.whereis(HalC2.Shell), do: :ok = HalC2.Shell.subscribe(self())
     if Process.whereis(HalC2.Auth), do: {:ok, _, _} = HalC2.Auth.subscribe(self())
 
+    registrations = load()
+    shell = HalC2.Shell.rows()
+
     state = %{
       clock: clock,
       post: opts[:post] || (&WebPush.post/3),
       sleep: opts[:sleep] || (&Process.sleep/1),
       started_at: clock.(),
       seen: %{},
-      registrations: load(),
-      # Per session: the card it was last sent, and the alerts held for quiet hours.
+      # The MCs whose rows were seen: the first rows of another are a baseline.
+      known: MapSet.new([node() | for({{mc, _id}, _} <- shell, do: mc)]),
+      registrations: registrations,
+      # Per session: what of the card it was last sent, and the alerts held for quiet
+      # hours.
       sent: %{},
-      held: %{},
+      held: load_held(registrations),
       inflight: %{},
       # Thread rows the shell sent that are not evaluated yet.
       pending: [],
@@ -165,7 +174,9 @@ defmodule HalC2.Push do
     }
 
     # Everything the shell holds now is the baseline, as of startup.
-    {seen, _due} = Alerts.observe(%{}, threads(HalC2.Shell.rows()), state.started_at)
+    {seen, _due} = Alerts.observe(%{}, threads(shell), state.started_at)
+    # Alerts held before a restart go when their quiet hours allow.
+    if state.held != %{}, do: send(self(), :tick)
     {:ok, %{state | seen: seen}}
   end
 
@@ -179,6 +190,20 @@ defmodule HalC2.Push do
       %{}
     end
   end
+
+  defp load_held(registrations) do
+    if Process.whereis(HalC2.Store) do
+      for {@held_prefix <> session, json} <- HalC2.Store.metas(HalC2.Store.path(), @held_prefix),
+          Map.has_key?(registrations, session),
+          into: %{},
+          do: {session, Enum.map(JSON.decode!(json), &held_alert/1)}
+    else
+      %{}
+    end
+  end
+
+  defp held_alert(map),
+    do: Map.new(~w(id kind key title environment_id thread_id)a, &{&1, map[to_string(&1)]})
 
   defp valid_session?(session) do
     if Process.whereis(HalC2.Auth),
@@ -207,17 +232,33 @@ defmodule HalC2.Push do
   def handle_call(:drain, from, state) do
     # What the shell sent before this call is in the mailbox once its own reply is.
     if Process.whereis(HalC2.Shell), do: HalC2.Shell.sync()
-    state = state |> take_rows([]) |> evaluate_rows()
+    state = state |> take_rows() |> evaluate_rows()
     {:noreply, reply_when_idle(%{state | waiters: [from | state.waiters]})}
   end
 
   # Rows that came in so far, gathered from the mailbox so they are one evaluation.
-  defp take_rows(state, changed) do
+  defp take_rows(state) do
     receive do
-      {:hal_c2_shell, {:rows, mc, rows}} -> take_rows(state, changed ++ thread_rows(mc, rows))
+      {:hal_c2_shell, {:rows, mc, rows}} -> state |> put_rows(mc, rows) |> take_rows()
     after
-      0 -> %{state | pending: state.pending ++ changed}
+      0 -> state
     end
+  end
+
+  # An MC's first rows are what it had when it joined: remembered, not news.
+  defp put_rows(state, mc, rows) do
+    threads = thread_rows(mc, rows)
+
+    state =
+      if MapSet.member?(state.known, mc),
+        do: state,
+        else: %{
+          state
+          | seen: Alerts.baseline(state.seen, threads),
+            known: MapSet.put(state.known, mc)
+        }
+
+    %{state | pending: state.pending ++ threads}
   end
 
   defp evaluate_rows(state) do
@@ -228,13 +269,17 @@ defmodule HalC2.Push do
   @impl true
   def handle_info({:hal_c2_shell, {:rows, mc, rows}}, state) do
     # Rows already in the mailbox join these: one evaluation, so one (grouped) alert.
-    state = %{state | pending: state.pending ++ thread_rows(mc, rows)}
+    state = put_rows(state, mc, rows)
     unless state.scheduled, do: send(self(), :evaluate)
     {:noreply, %{state | scheduled: true}}
   end
 
   def handle_info(:evaluate, state), do: {:noreply, evaluate_rows(state)}
   def handle_info(:tick, state), do: {:noreply, evaluate(%{state | timer: nil}, [])}
+
+  # A machine removed from the cluster that joins again is new again.
+  def handle_info({:hal_c2_shell, {:mc, mc, :removed}}, state),
+    do: {:noreply, %{state | known: MapSet.delete(state.known, mc)}}
 
   def handle_info(
         {:hal_c2_auth_access, %{"type" => "clientRemoved", "payload" => payload}},
@@ -271,6 +316,7 @@ defmodule HalC2.Push do
 
   defp drop(state, session) do
     if Map.has_key?(state.registrations, session), do: unpersist(session)
+    if Map.get(state.held, session, []) != [], do: persist_held(session, [])
 
     %{
       state
@@ -287,6 +333,14 @@ defmodule HalC2.Push do
 
   defp unpersist(session) do
     if Process.whereis(HalC2.Store), do: :ok = HalC2.Store.delete_meta(@prefix <> session)
+  end
+
+  defp persist_held(session, held) do
+    cond do
+      Process.whereis(HalC2.Store) == nil -> :ok
+      held == [] -> :ok = HalC2.Store.delete_meta(@held_prefix <> session)
+      true -> :ok = HalC2.Store.put_meta(@held_prefix <> session, JSON.encode!(held))
+    end
   end
 
   # --- evaluation -------------------------------------------------------------------
@@ -339,11 +393,13 @@ defmodule HalC2.Push do
   end
 
   defp notify(state, session, registration, due, activity, now) do
-    muted = MapSet.new(registration["mutedThreads"])
+    # Mutes name `environment:thread`; the thread keeps its id when it moves.
+    muted = MapSet.new(registration["mutedThreads"], &(&1 |> String.split(":") |> List.last()))
     quiet = registration["quietHours"]
     # A thread muted while its alert was held is muted for that alert too.
-    mine = Enum.reject(due, &MapSet.member?(muted, &1.key))
-    held = state.held |> Map.get(session, []) |> Enum.reject(&MapSet.member?(muted, &1.key))
+    mine = Enum.reject(due, &MapSet.member?(muted, &1.thread_id))
+    was_held = Map.get(state.held, session, [])
+    held = Enum.reject(was_held, &MapSet.member?(muted, &1.thread_id))
 
     {send_now, held} =
       cond do
@@ -358,6 +414,7 @@ defmodule HalC2.Push do
           {[], held ++ mine}
       end
 
+    if held != was_held, do: persist_held(session, held)
     state = %{state | held: Map.put(state.held, session, held)}
     alert = if send_now != [], do: Alerts.alert(send_now)
 
@@ -368,17 +425,32 @@ defmodule HalC2.Push do
 
     if alert != nil or changed? do
       body = Alerts.message(alert, card, now)
-      state = %{state | sent: Map.put(state.sent, session, Alerts.unstamped(activity))}
+      state = %{state | sent: Map.put(state.sent, session, sent(activity))}
       deliver(state, session, registration, body, if(alert, do: "high", else: "normal"))
     else
       state
     end
   end
 
-  # The card to send and whether it changed since the last one sent: when nothing is
-  # left, a cleared card once.
+  # What is kept of a card sent: enough to tell whether the next one changed, and when
+  # it must go again regardless.
+  defp sent(nil), do: nil
+
+  defp sent(activity),
+    do: %{card: Alerts.unstamped(activity), refresh_at: Alerts.refresh_at(activity)}
+
+  # The card to send and whether it must go: changed since the last one sent, or about
+  # to expire on the phone while its work goes on; when nothing is left, a cleared card
+  # once.
   defp card(last, nil, now), do: {Alerts.cleared(now), last != nil}
-  defp card(last, activity, _now), do: {activity, Alerts.unstamped(activity) != last}
+
+  defp card(nil, activity, _now), do: {activity, true}
+
+  defp card(last, activity, now),
+    do:
+      {activity,
+       Alerts.unstamped(activity) != last.card or
+         (last.refresh_at != nil and now >= last.refresh_at)}
 
   defp deliver(state, session, registration, json, urgency) do
     %{"endpoint" => endpoint, "keys" => %{"p256dh" => p256dh, "auth" => auth}} = registration
@@ -420,7 +492,7 @@ defmodule HalC2.Push do
   defp delay(ms), do: ms |> max(0) |> min(:timer.hours(24))
 
   # Wakes at the next moment something changes with time alone: held alerts at the end
-  # of quiet hours, a finished row leaving the card.
+  # of quiet hours, a finished row leaving the card, a running card due again.
   defp schedule(state, all, now) do
     if state.timer, do: Process.cancel_timer(state.timer)
 
@@ -430,7 +502,9 @@ defmodule HalC2.Push do
           quiet = registration && registration["quietHours"],
           do: Alerts.quiet_end(quiet, now)
 
-    case Enum.reject([Alerts.next_expiry(all, now) | quiet_ends], &is_nil/1) do
+    refreshes = for {_session, %{refresh_at: at}} when at != nil <- state.sent, do: at
+
+    case Enum.reject([Alerts.next_expiry(all, now) | quiet_ends ++ refreshes], &is_nil/1) do
       [] -> %{state | timer: nil}
       # At most a day ahead: it evaluates again then, and a timer cannot wait for ever.
       times -> %{state | timer: Process.send_after(self(), :tick, delay(Enum.min(times) - now))}
