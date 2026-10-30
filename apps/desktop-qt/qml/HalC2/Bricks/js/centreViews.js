@@ -8,6 +8,7 @@ var views = [
     { kind: "pullRequests", brick: "PullRequestsPage" },
     { kind: "home", brick: "HomePage" },
     { kind: "usage", brick: "UsagePage" },
+    { kind: "space", brick: "SpaceWorkspace" },
 ];
 
 // The brick for a route kind, or "" for one no view draws.

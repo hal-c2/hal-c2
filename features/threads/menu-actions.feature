@@ -46,6 +46,7 @@ Feature: Running a thread's actions from its menu
         | copy                 | Copy                  |
         | project-settings     | Project settings      |
         | fork                 | Fork thread           |
+        | page-from-thread     | Create page from thread |
         | archive              | Archive thread        |
         | delete               | Delete                |
 
