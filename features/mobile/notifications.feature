@@ -1,6 +1,7 @@
 # Sources:
 #   https://github.com/pingdotgg/t3code/pull/13340
 #   docs/user/mobile-notifications.md
+#   packages/contracts/src/rpc.ts (hal-c2.registerPush, hal-c2.unregisterPush)
 #   apps/mobile/src/features/agent-awareness/ (push registration, live activity arming, channels)
 #   apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
 #   apps/mobile/modules/hal-c2-agent-notifications
@@ -15,20 +16,20 @@ Feature: Push notifications and live agent activity
   Background:
     Given the phone is paired with "My MacBook"
 
-  @backlog @mobile
+  @mobile
   Scenario: Turning on device notifications registers the phone
     When the user turns on device notifications
     And the user allows notifications when the phone asks
     Then the user is told notifications are enabled
 
-  @backlog @mobile
+  @mobile
   Scenario: Refusing the system prompt leaves notifications off
     When the user turns on device notifications
     And the user refuses notifications when the phone asks
     Then the user is told notifications are disabled
     And the user is offered to open the system settings
 
-  @backlog @mobile
+  @mobile
   Scenario: Turning off device notifications goes through the system settings
     Given device notifications are on
     When the user turns off device notifications
@@ -50,13 +51,13 @@ Feature: Push notifications and live agent activity
     When the user opens notification settings
     Then the user is asked to sign in to HAL-C2 Connect
 
-  @backlog @mobile
+  @mobile
   Scenario: An app build too old for notifications says so
     Given the installed app build cannot receive notifications
     When the user opens notification settings
     Then the user is told to install a newer app build
 
-  @backlog @mobile
+  @mobile
   Scenario Outline: The phone is alerted when an agent needs the user or is done
     Given device notifications are on
     And the app is in the background
@@ -71,7 +72,7 @@ Feature: Push notifications and live agent activity
       | asks the user a question       |
 
   # Replaces the HAL-C2 Connect relay: the MC pushes itself, through a distributor the user runs or picks.
-  @backlog @mc @mobile
+  @mc @mobile
   Scenario Outline: The MC pushes alerts through the UnifiedPush distributor the user picked
     Given the user picked "ntfy" as the phone's UnifiedPush distributor
     And device notifications are on
@@ -88,20 +89,20 @@ Feature: Push notifications and live agent activity
       | needs the user's input   |
 
   # The MC pushes on its own, so a restart must not replay work it already reported.
-  @backlog @mc @mobile
+  @mc @mobile
   Scenario: A restarted MC does not alert about work that finished before it started
     Given "My MacBook" has several threads whose turns finished days ago
     And device notifications are on
     When the MC starts
     Then no alert is pushed for those threads
 
-  @backlog @mobile
+  @mobile
   Scenario: Tapping an alert opens the thread
     Given the phone shows an alert for "Fix checkout"
     When the user taps the alert
     Then "Fix checkout" is shown
 
-  @backlog @mobile
+  @mobile
   Scenario: Tapping an alert when the app was not running opens the thread with home behind it
     Given the app is not running
     And the phone shows an alert for "Fix checkout"
@@ -109,14 +110,14 @@ Feature: Push notifications and live agent activity
     Then "Fix checkout" is shown
     And going back returns to the home screen
 
-  @backlog @mobile
+  @mobile
   Scenario: No alert is shown while the app is open
     Given device notifications are on
     And the app is in the foreground
     When an agent in "Fix checkout" finishes its turn
     Then the phone shows no alert
 
-  @backlog @mobile
+  @mobile
   Scenario: Reading the thread on another device does not silence the phone
     Given device notifications are on
     And the user is reading "Fix checkout" on the desktop
@@ -138,20 +139,20 @@ Feature: Push notifications and live agent activity
     When an agent on "Home Server" finishes its turn
     Then the phone shows no alert
 
-  @backlog @mobile
+  @mobile
   Scenario: Sending work from the phone starts a live activity
     Given live activity updates are on
     When the user sends a message in "Fix checkout"
     Then the lock screen shows that agent work is in progress
 
-  @backlog @mobile
+  @mobile
   Scenario: The live activity follows the agent and shows the result
     Given the lock screen shows agent work in progress for "Fix checkout"
     When the agent finishes its turn
     Then the lock screen shows that the agent work completed
     And the result stays visible for up to 15 minutes
 
-  @backlog @mobile
+  @mobile
   Scenario: Only one live activity is shown per phone
     Given the lock screen shows agent work in progress for "Fix checkout"
     When the user sends a message in "Add search"
@@ -164,7 +165,7 @@ Feature: Push notifications and live agent activity
     When the user sends a message in "Fix checkout"
     Then no live activity starts
 
-  @backlog @mobile
+  @mobile
   Scenario: The user turns live activity updates off and on
     Given live activity updates are on
     When the user turns live activity updates off
@@ -172,7 +173,7 @@ Feature: Push notifications and live agent activity
     When the user turns live activity updates on
     Then sending work starts a live activity
 
-  @backlog @mobile
+  @mobile
   Scenario: Dismissing the Android activity card keeps alerts on
     Given the user is on an Android phone
     And the ongoing agent activity card is showing
@@ -180,7 +181,7 @@ Feature: Push notifications and live agent activity
     Then the card is gone
     And alerts still arrive when an agent finishes
 
-  @backlog @mobile
+  @mobile
   Scenario: Android 16 promotes ongoing activity to a live update
     Given the user is on an Android 16 phone
     When the user sends a message in "Fix checkout"
@@ -205,7 +206,7 @@ Feature: Push notifications and live agent activity
     When the relay registers the phone
     Then device notifications are shown as on
 
-  @backlog @mobile
+  @mobile
   Scenario: Allowing notifications in the system settings is noticed on return
     Given the system blocks HAL-C2 notifications
     When the user allows HAL-C2 notifications in the system settings
@@ -241,7 +242,7 @@ Feature: Push notifications and live agent activity
       | 1     | 1 environment is linked for agent activity updates            |
       | 3     | 3 environments are linked for agent activity updates          |
 
-  @backlog @mobile
+  @mobile
   Scenario: Ongoing activity on Android needs notification permission
     Given the user is on an Android phone
     And the system blocks HAL-C2 notifications
@@ -274,20 +275,20 @@ Feature: Push notifications and live agent activity
     Then the user is told the phone could not be registered yet
     And live activity updates start once registration succeeds
 
-  @backlog @mobile
+  @mobile
   Scenario: Coming back to the app repairs a live activity that drifted
     Given the lock screen shows work in progress for a turn that already ended
     When the user opens the app
     Then the lock screen shows the current state of the agent work
 
-  @backlog @mobile
+  @mobile
   Scenario: Opening the app while no agent is working starts no lock screen card
     Given live activity updates are on
     And no agent is working in any environment
     When the user opens the app
     Then the lock screen shows no agent activity
 
-  @backlog @mobile
+  @mobile
   Scenario: Opening the app while an agent started elsewhere is working shows its card
     Given live activity updates are on
     And an agent in "Fix checkout" was started from the desktop and is working
@@ -333,7 +334,7 @@ Feature: Push notifications and live agent activity
     Then the phone is registered with the relay
     And the user is not asked for notification permission again
 
-  @backlog @mobile
+  @mobile
   Scenario Outline: A tapped alert that does not name a thread opens nothing
     Given the phone shows an alert whose link <problem>
     When the user taps the alert
@@ -346,14 +347,14 @@ Feature: Push notifications and live agent activity
       | is malformed                                 |
       | names neither an environment nor a thread    |
 
-  @backlog @mobile
+  @mobile
   Scenario: An alert whose link is unusable still opens the thread it names
     Given the phone shows an alert for "Fix checkout" whose link is not a thread link
     But the alert names the environment and the thread
     When the user taps the alert
     Then "Fix checkout" is shown
 
-  @backlog @mobile
+  @mobile
   Scenario: One tap on an alert opens the thread once
     Given the app was not running
     And the phone shows an alert for "Fix checkout"
@@ -369,7 +370,7 @@ Feature: Push notifications and live agent activity
     Then the lock screen activity ends
     And the phone stops receiving alerts
 
-  @backlog @mobile
+  @mobile
   Scenario: A force-stopped Android app receives alerts again once reopened
     Given the user force-stopped the app on Android
     When an agent finishes its turn
@@ -377,7 +378,7 @@ Feature: Push notifications and live agent activity
     When the user opens the app
     Then later alerts arrive again
 
-  @backlog @mobile
+  @mobile
   Scenario: An alert that reaches the phone more than ten minutes late is not shown
     Given device notifications are on
     And the app is in the background
@@ -385,7 +386,7 @@ Feature: Push notifications and live agent activity
     And the alert reaches the phone more than ten minutes after that
     Then the phone shows no alert
 
-  @backlog @mobile
+  @mobile
   Scenario: An alert delivered twice is shown only once
     Given device notifications are on
     And the app is in the background
@@ -393,7 +394,7 @@ Feature: Push notifications and live agent activity
     And the same alert is delivered again
     Then the phone shows one alert for "Fix checkout"
 
-  @backlog @mobile
+  @mobile
   Scenario: Alerts stay off while the system has blocked HAL-C2 notifications
     Given device notifications are on
     And the app is in the background
@@ -401,31 +402,31 @@ Feature: Push notifications and live agent activity
     When an agent in "Fix checkout" finishes its turn
     Then the phone shows no alert
 
-  @backlog @mobile
+  @mobile
   Scenario: A running agent's card ends when two hours pass without an update
     Given the lock screen shows agent work in progress for "Fix checkout"
     When two hours pass without a new update
     Then the lock screen activity ends
 
-  @backlog @mobile
+  @mobile
   Scenario: A status update that arrives after a newer one does not roll the card back
     Given the lock screen shows that the agent work in "Fix checkout" completed
     When an older update saying the work is still running arrives late
     Then the lock screen still shows that the agent work completed
 
-  @backlog @mobile
+  @mobile
   Scenario: A new run shows its card again after the user dismissed the last one
     Given the user dismissed the agent activity card for "Fix checkout"
     When the agent starts a new turn in "Fix checkout"
     Then the ongoing agent activity card is shown again
 
-  @backlog @mobile
+  @mobile
   Scenario: Repeated updates for a dismissed run do not bring its card back
     Given the user dismissed the agent activity card for "Fix checkout"
     When the finished update for "Fix checkout" is delivered again
     Then no agent activity card is shown
 
-  @backlog @mobile
+  @mobile
   Scenario: Activity card updates make no sound while alerts do
     Given the user is on an Android phone
     And the ongoing agent activity card is showing
@@ -433,7 +434,7 @@ Feature: Push notifications and live agent activity
     Then the card updates without a sound
     And alerts for finished agents still make a sound
 
-  @backlog @mobile
+  @mobile
   Scenario Outline: A card that needs the user offers the action that answers it
     Given the agent in "Fix checkout" <state>
     And the ongoing agent activity card is showing
@@ -446,7 +447,7 @@ Feature: Push notifications and live agent activity
       | is waiting for approval          | Approve |
       | is asking the user a question    | Answer  |
 
-  @backlog @mobile
+  @mobile
   Scenario: An alert that arrived while the app was open does not appear after it is closed
     Given device notifications are on
     And the app is in the foreground
@@ -455,7 +456,7 @@ Feature: Push notifications and live agent activity
     And the same alert is delivered again
     Then the phone shows no alert
 
-  @backlog @mobile
+  @mobile
   Scenario: An alert dropped while notifications were blocked is shown after the user allows them
     Given device notifications are on
     And the app is in the background
@@ -465,7 +466,7 @@ Feature: Push notifications and live agent activity
     And the same alert is delivered again
     Then the phone shows an alert for "Fix checkout"
 
-  @backlog @mobile
+  @mc @mobile
   Scenario: A grouped alert names every thread it covers
     Given device notifications are on
     And the app is in the background
@@ -474,7 +475,7 @@ Feature: Push notifications and live agent activity
     And the alert lists the title of each of the five threads
     And a repeat delivery of that alert does not change it
 
-  @backlog @mobile
+  @mobile
   Scenario Outline: The activity card sums up several threads in its title
     Given the ongoing agent activity card covers <threads>
     Then the card is titled "<title>"
@@ -488,32 +489,32 @@ Feature: Push notifications and live agent activity
       | two threads finished and one failed              | Finished, 1 failed |
       | three threads finished                           | All finished      |
 
-  @backlog @mobile
+  @mobile
   Scenario: The activity card counts its threads under the title
     Given the ongoing agent activity card covers two working threads in "shop"
     Then the card says "shop" and that two are active
 
-  @backlog @mobile
+  @mobile
   Scenario: The activity card for one thread names it and its project
     Given the ongoing agent activity card covers only "Fix checkout" in "shop"
     Then the card is titled "Fix checkout"
     And the card says "shop" beside its status
     And the card shows no progress bar
 
-  @backlog @mobile
+  @mobile
   Scenario: The activity card lists every thread with its status in front
     Given the ongoing agent activity card covers five threads in different states
     When the user expands the card
     Then each thread is listed on its own line with its status before its title
     And a thread's project is named when the threads are from different projects
 
-  @backlog @mobile
+  @mobile
   Scenario: The activity card shows no clock
     Given the ongoing agent activity card is showing
     When a thread is renamed while its approval is waiting
     Then the card shows no time and no running timer
 
-  @backlog @mobile
+  @mobile
   Scenario Outline: The live update chip says what the agent wants
     Given the user is on an Android 16 phone
     And the live update covers <state>
@@ -528,7 +529,7 @@ Feature: Push notifications and live agent activity
       | two agents working                  | 2 live  |
       | ten agents working                  | 9+ live |
 
-  @backlog @mobile
+  @mobile
   Scenario: A finished activity card can be swiped away and has no buttons
     Given the ongoing agent activity card shows that the agent work completed
     Then the card can be swiped away
@@ -536,20 +537,20 @@ Feature: Push notifications and live agent activity
     And the card offers no buttons
     And the card shows no live update chip
 
-  @backlog @mobile
+  @mobile
   Scenario: Android before 16 shows the activity card as an ordinary ongoing notification
     Given the user is on an Android 15 phone
     When the user sends a message in "Fix checkout"
     Then the agent activity is shown as an ongoing notification
     And the user is not offered the live update settings
 
-  @backlog @mobile
+  @mobile
   Scenario: Alerts and ongoing activity can be silenced separately in the system settings
     Given the user is on an Android phone
     When the user opens the notification settings of HAL-C2 in the system settings
     Then "Agent alerts" and "Ongoing agent activity" are listed as separate categories
 
-  @backlog @mobile
+  @mobile
   Scenario: Alerts and the activity card keep their text private while the phone is locked
     Given the user is on an Android phone
     And the phone hides sensitive notification content on the lock screen
@@ -565,7 +566,7 @@ Feature: Push notifications and live agent activity
     When an alert for the previous account arrives
     Then the phone shows no alert
 
-  @backlog @mobile
+  @mobile
   Scenario: An update stamped far in the future is ignored and does not hold back later ones
     Given device notifications are on
     When an update arrives that is dated an hour ahead
@@ -574,14 +575,14 @@ Feature: Push notifications and live agent activity
     Then the phone shows it
 
   # New behaviour: the React Native app has no per-thread mute.
-  @backlog @mobile
+  @mc @mobile
   Scenario: The user mutes alerts for one thread
     Given device notifications are on
     When the user mutes alerts for "Fix checkout"
     And an agent in "Fix checkout" finishes its turn
     Then the phone shows no alert
 
-  @backlog @mobile
+  @mc @mobile
   Scenario: The user unmutes a thread
     Given alerts for "Fix checkout" are muted
     When the user unmutes "Fix checkout"
@@ -589,13 +590,13 @@ Feature: Push notifications and live agent activity
     Then the phone shows an alert for "Fix checkout"
 
   # New behaviour: the React Native app has no quiet hours; it relies on system focus modes.
-  @backlog @mobile
+  @mc @mobile
   Scenario: Alerts wait during quiet hours
     Given the user set quiet hours from 22:00 to 07:00
     When an agent finishes its turn at 23:00
     Then the phone shows no alert until 07:00
 
-  @backlog @mobile
+  @mc @mobile
   Scenario: Approval requests break through quiet hours when the user allows it
     Given the user set quiet hours that let approval requests through
     When an agent needs approval during quiet hours
