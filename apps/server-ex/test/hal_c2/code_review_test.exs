@@ -539,7 +539,152 @@ defmodule HalC2.CodeReviewTest do
     _ = context
   end
 
+  # From the Maude model of claims between machines: a look that listed the old head
+  # was applied after the run had claimed the new one and reported, and queued the
+  # review again, which gave up its claim for another machine to start the commit.
+  test "a look begun before a run claimed its commit does not queue the review again",
+       context do
+    save_settings(%{"reviewNewPushes" => true})
+    at = System.monotonic_time()
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    settle()
+    %{"status" => reported} = review()
+
+    entry =
+      review
+      |> Map.take(
+        ~w(key repository number projectId title url author headBranch baseBranch isDraft labels reviewRequested changedLines updatedAt)
+      )
+      |> Map.put("headSha", String.duplicate("0", 40))
+
+    found = %{
+      at: at,
+      problem: nil,
+      unwatched: [],
+      entries: [entry],
+      read: [],
+      sizes: %{},
+      unknown_sizes: [],
+      asked: %{},
+      closed: [],
+      elsewhere: %{}
+    }
+
+    send(Process.whereis(@server), {:polled, found})
+    settle()
+    assert %{"status" => ^reported} = review()
+    assert %{@key => %{"claimed" => true}} = apply(@server, :claims, [[@key]])
+    _ = context
+  end
+
+  # From the Maude model of claims between machines: while the plugin restarted, its
+  # claims were gone with its server and a peer read them as none, so it started the
+  # commit this machine's review thread was still on.
+  test "a plugin restarting tells its peers it cannot say what it holds, then holds it again",
+       context do
+    start_review()
+    pid = Process.whereis(@server)
+    {:parent, sup} = Process.info(pid, :parent)
+    :sys.suspend(sup)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+
+    assert {:ok, %{"result" => :restarting}} =
+             HalC2.Plugins.Host.peer(@id, :claims, [[@key]])
+
+    :sys.resume(sup)
+    :sys.get_state(sup)
+    assert %{@key => %{"claimed" => true}} = apply(@server, :claims, [[@key]])
+    _ = context
+  end
+
+  # From the Maude model of claims between machines: a review queued again for a new
+  # push gave up its claim on the commit it had reviewed and posted, so a machine
+  # whose checkout of that commit was under way started and posted it again.
+  test "a review queued for a new push still holds the commit it reviewed", context do
+    save_settings(%{"reviewNewPushes" => true})
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    settle()
+    %{"status" => reported, "reviewedSha" => reviewed} = review()
+    push!(context, 2)
+    rules!(context, head: 2)
+    refresh()
+
+    assert %{"status" => "running", "reviewedSha" => head} = review()
+    assert head != reviewed
+
+    assert %{@key => %{"sha" => ^head, "held" => %{"sha" => ^reviewed, "status" => ^reported}}} =
+             apply(@server, :claims, [[@key]])
+  end
+
+  # From the Maude model of claims between machines: a machine that posted a review
+  # and stopped before it saved so loaded it as waiting, and nothing it or another
+  # machine had kept said it was posted, so a publish posted the commit again.
+  test "a review GitHub already has under the login gh uses is published without posting it again",
+       context do
+    rules!(context, head: 1, reviews: [reviewed_by("monalisa")])
+    assert {:ok, _} = call("publish", %{"key" => @key})
+
+    assert %{"status" => "published", "publishError" => nil, "publishNote" => note} = review()
+    assert note =~ "already on the pull request"
+    assert posts(context) == []
+  end
+
+  test "a review of the same commit under another login does not stop the post",
+       context do
+    rules!(context, head: 1, reviews: [reviewed_by("octocat")])
+    assert {:ok, _} = call("publish", %{"key" => @key})
+    assert %{"status" => "published", "publishNote" => nil} = review()
+    assert [_] = posts(context)
+  end
+
   # --- helpers ----------------------------------------------------------------------------
+
+  # A review of #1 waiting to be posted, and the review `login` posted of the same commit
+  # with the plugin's marker.
+  defp reviewed_by(login) do
+    review = start_review()
+
+    {:ok, _} =
+      HalC2.Plugins.call_tool(
+        "code_review_report",
+        %{"verdict" => "approve", "summary" => "Looks right.", "comments" => []},
+        review["threadId"]
+      )
+
+    settle()
+    %{"status" => "waiting", "reviewedSha" => reviewed} = review()
+
+    %{
+      "author" => %{"login" => login},
+      "body" => "Looks right.\n\n<!-- hal-c2-code-review:#{@key}@#{reviewed} -->"
+    }
+  end
+
+  # The reviews posted to pull request #1.
+  defp posts(context) do
+    context.dir
+    |> Path.join("gh.log")
+    |> File.stream!()
+    |> Enum.filter(&(&1 =~ "pulls/1/reviews"))
+  end
 
   # A `:streams_hook`: holds the first of the plugin's processes on its way to
   # `thread_id`'s stream until it is sent `:go`, and tells `test` it is held.
@@ -682,9 +827,28 @@ defmodule HalC2.CodeReviewTest do
     list = %{"args" => ["pr list", "--repo github.com/acme/api"], "stdout" => listing}
     list = if opts[:list], do: Map.put(list, "run", opts[:list]), else: list
 
+    reviews =
+      for r <- opts[:reviews] || [],
+          do:
+            Map.merge(
+              %{"id" => "PRR_1", "state" => "APPROVED", "submittedAt" => "2026-09-01T00:00:00Z"},
+              r
+            )
+
     rules = [
       %{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}},
       list,
+      # The pull request's reviews, read before a post, and the post.
+      %{
+        "args" => ["pr view", "author,comments,reviews,commits"],
+        "stdout" => %{
+          "author" => %{"login" => "octocat"},
+          "comments" => [],
+          "reviews" => reviews,
+          "commits" => []
+        }
+      },
+      %{"args" => ["--method POST", "pulls/1/reviews"], "stdout" => "{}"},
       # Pull request #1 read on its own, as asking for its review reads it.
       %{
         "args" => ["api graphql"],

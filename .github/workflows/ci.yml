@@ -105,7 +105,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        proof: [cluster, preview_forward, stream_relay, streams, thread_move, turns, rest]
+        proof: [cluster, code_review_claims, preview_forward, stream_relay, streams, thread_move, turns, rest]
     env:
       MIX_ENV: proof
     defaults:
@@ -138,7 +138,7 @@ jobs:
       - name: Proofs
         run: |
           if [ "${{ matrix.proof }}" = rest ]; then
-            files=$(ls proof/hal_c2/*_proof_test.exs | grep -vE '/(cluster|preview_forward|stream_relay|streams|thread_move|turns)_proof_test\.exs$')
+            files=$(ls proof/hal_c2/*_proof_test.exs | grep -vE '/(cluster|code_review_claims|preview_forward|stream_relay|streams|thread_move|turns)_proof_test\.exs$')
           else
             files=proof/hal_c2/${{ matrix.proof }}_proof_test.exs
           fi
