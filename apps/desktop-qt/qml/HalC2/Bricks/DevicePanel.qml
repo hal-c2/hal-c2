@@ -287,6 +287,11 @@ Rectangle {
                 active: root.show3d
                 visible: root.show3d
                 source: "DeviceBody3D.qml"
+                // No Qt Quick 3D here: the flat view rather than an empty stage.
+                onStatusChanged: {
+                    if (status === Loader.Error)
+                        root.show3d = false;
+                }
                 onLoaded: {
                     item.stream = Qt.binding(() => root.stream);
                     item.deviceName = Qt.binding(() => root.screen ? root.screen.name : "");
@@ -382,29 +387,42 @@ Rectangle {
             // Keys go to the device, except the app's own shortcuts: Ctrl
             // chords stay with the app, and so do Command chords but for
             // Command+R, which the device takes (upstream's one exception).
-            function appOwns(event) {
+            // On a Mac Qt reports Command as Control and Control as Meta.
+            readonly property int commandModifier: stage.commandModifierOn(Qt.platform.os)
+            function commandModifierOn(os) {
+                return os === "osx" ? Qt.ControlModifier : Qt.MetaModifier;
+            }
+            function appOwns(event, command) {
                 if (event.key === Qt.Key_Meta || event.key === Qt.Key_Control)
                     return true;
-                if (event.modifiers & Qt.ControlModifier)
+                if (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier) & ~command)
                     return true;
-                if ((event.modifiers & Qt.MetaModifier) && event.key !== Qt.Key_R)
+                if ((event.modifiers & command) && event.key !== Qt.Key_R)
                     return true;
                 return false;
             }
+            onActiveFocusChanged: {
+                if (!activeFocus && root.stream)
+                    root.stream.releaseChord();
+            }
             Keys.onPressed: event => {
-                if (!root.stream || stage.appOwns(event)) {
+                if (!root.stream || stage.appOwns(event, stage.commandModifier)) {
                     event.accepted = false;
                     return;
                 }
-                root.stream.key(event.key, event.text, (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) !== 0, true);
+                root.stream.key(event.key, event.text, (event.modifiers & stage.commandModifier) !== 0, true);
                 event.accepted = true;
             }
             Keys.onReleased: event => {
-                if (!root.stream || stage.appOwns(event)) {
+                // Letting go of Command ends a chord: a Mac sends no release
+                // for the key while Command is held.
+                if (root.stream && (event.key === Qt.Key_Meta || event.key === Qt.Key_Control))
+                    root.stream.releaseChord();
+                if (!root.stream || stage.appOwns(event, stage.commandModifier)) {
                     event.accepted = false;
                     return;
                 }
-                root.stream.key(event.key, event.text, (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) !== 0, false);
+                root.stream.key(event.key, event.text, (event.modifiers & stage.commandModifier) !== 0, false);
                 event.accepted = true;
             }
 

@@ -40,6 +40,8 @@ const QHash<QString, std::pair<double, double>> kPresets{{QStringLiteral("San Fr
                                                          {QStringLiteral("Tokyo"), {35.6762, 139.6503}}};
 constexpr int kEventLogLimit = 100;
 constexpr int kAxElementLimit = 500;
+constexpr int kAxTimeoutMs = 5000;
+constexpr int kForegroundRetryMs = 2000;
 constexpr int kAxRefreshMs = 500;
 
 QString text(const QJsonObject& object, QLatin1StringView field) {
@@ -75,6 +77,9 @@ void flattenAx(const QJsonValue& node, double screenWidth, double screenHeight, 
 
 DeviceTools::DeviceTools(McClient* client, QObject* parent)
     : QObject(parent), m_client(client), m_http(new QNetworkAccessManager(this)) {
+  m_foregroundRetry.setSingleShot(true);
+  m_foregroundRetry.setInterval(kForegroundRetryMs);
+  connect(&m_foregroundRetry, &QTimer::timeout, this, &DeviceTools::followForeground);
   m_axTimer.setInterval(kAxRefreshMs);
   connect(&m_axTimer, &QTimer::timeout, this, &DeviceTools::fetchAx);
   publish();
@@ -104,6 +109,8 @@ void DeviceTools::setTarget(const QString& environment, const QString& hubBase, 
   m_foreground.clear();
   m_foregroundKnown = false;
   m_foregroundLive = false;
+  m_lastForeground.clear();
+  m_foregroundRetry.stop();
   m_latitude.clear();
   m_longitude.clear();
   m_events.clear();
@@ -111,6 +118,7 @@ void DeviceTools::setTarget(const QString& environment, const QString& hubBase, 
   m_axOverlay = false;
   m_axTimer.stop();
   m_axElements.clear();
+  dropAx();
   if (m_open && !m_deviceId.isEmpty()) {
     read();
     followForeground();
@@ -131,6 +139,8 @@ void DeviceTools::setOpen(bool open) {
     followForeground();
   } else {
     unfollow(m_foregroundFeed);
+    m_foregroundRetry.stop();
+    m_foregroundLive = false;
     unfollow(m_eventFeed);
     m_events.clear();
     m_eventLogOpen = false;
@@ -140,6 +150,8 @@ void DeviceTools::setOpen(bool open) {
 }
 
 void DeviceTools::read() {
+  // A change out keeps its own refusal; this read reports only its own.
+  if (!m_pending) m_error.clear();
   const int generation = m_generation;
   m_client->call(this, m_environment, QStringLiteral("device.detail"),
                  QJsonObject{{QStringLiteral("hostId"), m_hostId}, {QStringLiteral("deviceId"), m_deviceId}},
@@ -285,7 +297,8 @@ QString DeviceTools::vendorPath(const QString& path) const {
   return m_hubBase + (m_platform == QLatin1String("ios") ? QStringLiteral("/vendor/serve-sim") : QStringLiteral("/vendor/serve-emu")) + path;
 }
 
-void DeviceTools::follow(Feed& feed, const QString& path, const std::function<void(const QJsonObject&)>& onEvent) {
+void DeviceTools::follow(Feed& feed, const QString& path, const std::function<void(const QJsonObject&)>& onEvent,
+                         const std::function<void()>& onEnd) {
   unfollow(feed);
   const QString device = QString::fromLatin1(QUrl::toPercentEncoding(m_deviceId));
   QNetworkReply* reply = m_http->get(m_client->request(vendorPath(path), QStringLiteral("device=") + device));
@@ -302,7 +315,10 @@ void DeviceTools::follow(Feed& feed, const QString& path, const std::function<vo
       if (!event.isEmpty()) onEvent(event);
     }
   });
-  connect(reply, &QNetworkReply::finished, this, [reply] { reply->deleteLater(); });
+  connect(reply, &QNetworkReply::finished, this, [reply, onEnd] {
+    reply->deleteLater();
+    if (onEnd) onEnd();
+  });
 }
 
 void DeviceTools::unfollow(Feed& feed) {
@@ -326,6 +342,15 @@ void DeviceTools::followForeground() {
     m_foregroundLive = true;
     if (!m_foreground.isEmpty()) m_lastForeground = m_foreground;
     publish();
+  }, [this, generation] {
+    // The feed ended (a hub restart, say): what it last said no longer holds,
+    // so read the app in front once and keep trying to follow it.
+    if (generation != m_generation || !m_open) return;
+    if (m_foregroundLive) {
+      m_foregroundLive = false;
+      read();
+    }
+    m_foregroundRetry.start();
   });
 }
 
@@ -378,23 +403,32 @@ void DeviceTools::setAxOverlay(bool on) {
   } else {
     m_axTimer.stop();
     m_axElements.clear();
+    dropAx();
   }
   publish();
 }
 
-void DeviceTools::fetchAx() {
-  if (!m_axOverlay || m_hubBase.isEmpty() || m_deviceId.isEmpty()) return;
-  const int generation = m_generation;
-  QNetworkReply* reply;
-  if (m_platform == QLatin1String("ios")) {
-    const QString device = QString::fromLatin1(QUrl::toPercentEncoding(m_deviceId));
-    reply = m_http->get(m_client->request(vendorPath(QStringLiteral("/helper/%1/ax").arg(device))));
-  } else {
-    const QString device = QString::fromLatin1(QUrl::toPercentEncoding(m_deviceId));
-    reply = m_http->get(m_client->request(vendorPath(QStringLiteral("/api/accessibility")), QStringLiteral("device=") + device));
+void DeviceTools::dropAx() {
+  if (QNetworkReply* reply = m_axReply.data()) {
+    m_axReply = nullptr;
+    reply->abort();
   }
+}
+
+void DeviceTools::fetchAx() {
+  // One at a time: a stalled hub must not pile requests up.
+  if (!m_axOverlay || m_axReply || m_hubBase.isEmpty() || m_deviceId.isEmpty()) return;
+  const int generation = m_generation;
+  const QString device = QString::fromLatin1(QUrl::toPercentEncoding(m_deviceId));
+  QNetworkRequest request = m_platform == QLatin1String("ios")
+                                ? m_client->request(vendorPath(QStringLiteral("/helper/%1/ax").arg(device)))
+                                : m_client->request(vendorPath(QStringLiteral("/api/accessibility")), QStringLiteral("device=") + device);
+  request.setTransferTimeout(kAxTimeoutMs);
+  QNetworkReply* reply = m_http->get(request);
+  m_axReply = reply;
   connect(reply, &QNetworkReply::finished, this, [this, reply, generation] {
     reply->deleteLater();
+    if (m_axReply == reply) m_axReply = nullptr;
     if (generation != m_generation || !m_axOverlay) return;
     const QJsonDocument document = QJsonDocument::fromJson(reply->readAll());
     QVariantList elements;
@@ -411,7 +445,7 @@ void DeviceTools::fetchAx() {
       const QJsonObject root = nodes.at(0).toObject().value(QLatin1String("bounds")).toObject();
       const double width = std::max(1.0, numberOr(root.value(QLatin1String("right")), 1));
       const double height = std::max(1.0, numberOr(root.value(QLatin1String("bottom")), 1));
-      for (qsizetype n = 1; n < nodes.size(); ++n) {
+      for (qsizetype n = 1; n < nodes.size() && elements.size() < kAxElementLimit; ++n) {
         const QJsonObject node = nodes.at(n).toObject();
         const QJsonObject bounds = node.value(QLatin1String("bounds")).toObject();
         const double left = numberOr(bounds.value(QLatin1String("left")), 0);

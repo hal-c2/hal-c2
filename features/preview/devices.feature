@@ -307,6 +307,28 @@ Feature: Device panel
       And the tab "iPhone 17" shows the device's screen again
 
     @desktop
+    Scenario: Access that expires again is refreshed again
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the MC refuses the stream because its access has expired
+      Then the tab "iPhone 17" shows the device's screen again
+      When the MC refuses the stream because its access has expired
+      Then the tab asks the MC for fresh access again
+      And the tab "iPhone 17" shows the device's screen again
+
+    @desktop
+    Scenario: Fresh access answered after a reconnect is not used
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      And the MC is slow to give fresh access
+      When the MC refuses the stream because its access has expired
+      And the user reconnects before the MC answers
+      And the MC answers the earlier request
+      Then the tab does not use that answer
+      When the MC answers the later request
+      Then the tab "iPhone 17" shows the device's screen again
+
+    @desktop
     Scenario: A lost input connection is shown over the picture
       Given the thread has the iOS Simulator "iPhone 17" open
       And the user is watching the "iPhone 17" tab
@@ -386,6 +408,37 @@ Feature: Device panel
       And the outlines follow the device as its screen changes
       When the user turns it off or shows another tab
       Then the outlines go away
+
+    @desktop
+    Scenario: A stalled accessibility read is not asked again
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      And the accessibility requests stall
+      When the user turns on "Overlay element frames" in the tools
+      Then no second accessibility request is out
+
+    @desktop
+    Scenario: The overlay outlines a crowded Android screen only so far
+      Given the user has the tools open for the Android Emulator "Pixel 9" with "com.example.shop" in front
+      And the device's screen has more elements than the overlay shows
+      When the user turns on "Overlay element frames" in the tools
+      Then the overlay outlines the first 500 of them
+
+    @desktop
+    Scenario: The 3D body shows a device held sideways upright
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the device reports it is held "landscape_left"
+      And the user shows the device in 3D
+      Then the 3D screen stands upright on its body
+
+    @desktop
+    Scenario: The flat view decodes at its own size after the 3D view
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user shows the device in 3D
+      And the user switches to the flat view
+      Then the picture is decoded for the flat view's size
 
     @desktop
     Scenario: Overlaying accessibility elements needs device access
@@ -473,6 +526,19 @@ Feature: Device panel
       When the user presses Command with "R"
       Then the device receives the key "r" with Command
 
+    @desktop
+    Scenario: Letting go of Command first lifts both keys on the device
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user clicked the device's screen
+      When the user holds Command with "R" and lets go of Command first
+      Then the device has both keys up
+
+    @desktop
+    Scenario: Command is the Mac's own key on a Mac
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      Then on a Mac the app keeps every Command chord but Command with "R"
+
   Rule: Closing
 
     @desktop
@@ -521,6 +587,14 @@ Feature: Device panel
       When the user floats the device over the chat
       Then the device floats over the conversation
       And the right panel closes
+
+    @desktop
+    Scenario: Opening the right panel brings a floating device home
+      Given the thread has the iOS Simulator "iPhone 17" open
+      And the user is watching the "iPhone 17" tab
+      When the user floats the device over the chat
+      And the user opens the right panel
+      Then the device no longer floats
 
   Rule: Devices an agent opens
 
@@ -817,6 +891,14 @@ Feature: Device panel
       Given the user has the tools open for "iPhone 17" with "com.example.shop" in front
       When the user opens another app on the device
       Then "Foreground" reads the other app's id
+
+    @desktop
+    Scenario: The foreground follows the device again after its feed ends
+      Given the user has the tools open for "iPhone 17" with "com.example.shop" in front
+      When the user opens another app on the device
+      Then "Foreground" reads the other app's id
+      When the foreground feed ends with "com.example.shop" in front
+      Then "com.example.shop" reads "com.example.shop"
 
     @desktop
     Scenario: No app in front is shown as a dash

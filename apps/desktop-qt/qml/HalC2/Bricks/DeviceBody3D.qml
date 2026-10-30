@@ -7,8 +7,9 @@ import HalC2.Shell
 // The device as a 3D body the user turns (DevicePanel's 3D view): a phone
 // or tablet body for an iOS device (models/, made by
 // scripts/gen-device-models.py), and a plain body of the device's family
-// when there is none or it fails to load — never an error. The live screen is a second DeviceScreen as the
-// body's screen texture, so the stream is untouched by the view.
+// when there is none or it fails to load — never an error. The live screen
+// is a second DeviceScreen as the body's screen texture, on the stream the
+// flat view uses.
 //
 // Dragging turns the body; on release it settles on the nearest turn that
 // faces its screen. An iPad's Magic Keyboard is its own model, shown when
@@ -45,16 +46,28 @@ Item {
     objectName: "deviceBody3d"
 
     // The live screen, rendered into the body's screen texture below.
-    DeviceScreen {
+    Item {
         id: textureScreen
 
-        objectName: "deviceBodyScreen"
-        width: 256
-        height: width / Math.max(root.aspect, 0.01)
-        stream: root.stream
+        width: root.landscape ? 256 * root.aspect : 256
+        height: root.landscape ? 256 : 256 / Math.max(root.aspect, 0.01)
         layer.enabled: true
         // Behind the 3D view, which covers it; the layer is what is read.
         z: -1
+
+        // iOS streams its portrait framebuffer while held sideways: the
+        // picture takes the turned box and turns into place, as in the flat view.
+        DeviceScreen {
+            readonly property int turn: root.stream ? root.stream.rotation : 0
+            readonly property bool sideways: turn === 90 || turn === -90
+
+            objectName: "deviceBodyScreen"
+            anchors.centerIn: parent
+            width: sideways ? parent.height : parent.width
+            height: sideways ? parent.width : parent.height
+            rotation: turn
+            stream: root.stream
+        }
     }
 
     View3D {

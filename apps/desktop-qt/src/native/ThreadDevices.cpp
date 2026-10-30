@@ -54,6 +54,9 @@ void ThreadDevices::setThread(const QString& environmentId, const QString& threa
     m_environment = environmentId;
     m_mc = mc;
     ++m_generation;
+    m_wizardPending.clear();
+    m_wizardError.clear();
+    m_retrying.clear();
     m_state = {};
     m_loaded = false;
     follow();
@@ -95,7 +98,12 @@ void ThreadDevices::list(const QJsonObject& input) {
   const int generation = m_generation;
   m_client->call(this, m_environment, QStringLiteral("device.list"), input,
                  [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
-                   if (m_generation != generation || error) return;
+                   if (m_generation != generation) return;
+                   if (error) {
+                     m_retrying.clear();
+                     publish();
+                     return;
+                   }
                    take(result.toObject());
                  });
 }
@@ -269,12 +277,14 @@ void ThreadDevices::floatDevice() {
 void ThreadDevices::configure(const QString& pending, const QJsonObject& change) {
   if (!m_wizardPending.isEmpty() || m_environment.isEmpty()) return;
   m_wizardPending = pending;
+  m_wizardError.clear();
   publish();
   const int generation = m_generation;
   m_client->call(this, m_environment, QStringLiteral("device.configure"), change,
                  [this, generation, pending](const QJsonValue& result, const std::optional<QString>& error) {
                    if (m_generation != generation) return;
                    m_wizardPending.clear();
+                   m_wizardError = error.value_or(QString());
                    if (!error) take(result.toObject());
                    if (pending == QLatin1String("complete") && !error) m_wizardDismissed = true;
                    publish();
@@ -295,12 +305,14 @@ void ThreadDevices::wizardSetAgent(bool on) {
 void ThreadDevices::wizardCheck() {
   if (!m_wizardPending.isEmpty()) return;
   m_wizardPending = QStringLiteral("check");
+  m_wizardError.clear();
   publish();
   const int generation = m_generation;
   m_client->call(this, m_environment, QStringLiteral("device.list"), QJsonObject(),
                  [this, generation](const QJsonValue& result, const std::optional<QString>& error) {
                    if (m_generation != generation) return;
                    m_wizardPending.clear();
+                   m_wizardError = error.value_or(QString());
                    if (!error) take(result.toObject());
                    publish();
                  });
@@ -410,7 +422,9 @@ QVariantMap ThreadDevices::wizardView() const {
       {QStringLiteral("agentOn"), m_state.value(QLatin1String("agentAccessEnabled")).toBool()},
       {QStringLiteral("agentStatus"), agentStatus},
       {QStringLiteral("platforms"), QVariantList{platform(QStringLiteral("ios")), platform(QStringLiteral("android"))}},
-      {QStringLiteral("error"), hostStatus == QLatin1String("failed") ? text(m_state, QLatin1String("hostStatusDetail")) : QString()},
+      {QStringLiteral("error"), !m_wizardError.isEmpty()                  ? m_wizardError
+                                : hostStatus == QLatin1String("failed") ? text(m_state, QLatin1String("hostStatusDetail"))
+                                                                        : QString()},
       {QStringLiteral("canContinue"), ready && m_wizardPending.isEmpty()},
   };
 }

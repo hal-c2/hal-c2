@@ -49,7 +49,10 @@ struct Model {
   int generation = 0;
   QList<Held> held;
 
-  void read() { held.append({target, generation, false, {}}); }
+  void read() {
+    if (!pending) error.clear();
+    held.append({target, generation, false, {}});
+  }
 
   void answerOne() {
     const Held call = held.takeFirst();

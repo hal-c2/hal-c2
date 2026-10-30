@@ -138,6 +138,7 @@ private:
   // The wizard's request in flight ("hub", "check", "agent", "complete"),
   // and whether the user put it away for this showing of the tab.
   QString m_wizardPending;
+  QString m_wizardError;
   bool m_wizardDismissed = false;
   // Each thread's sessions (with a known device) as last seen: a session
   // missing there is new. Absent until the first state, the baseline.

@@ -76,11 +76,13 @@ private:
     QPointer<QNetworkReply> reply;
     QByteArray buffer;
   };
-  void follow(Feed& feed, const QString& path, const std::function<void(const QJsonObject&)>& onEvent);
+  void follow(Feed& feed, const QString& path, const std::function<void(const QJsonObject&)>& onEvent,
+              const std::function<void()>& onEnd = {});
   void unfollow(Feed& feed);
   void followForeground();
   void followEventLog();
   void fetchAx();
+  void dropAx();
   void publish();
 
   McClient* m_client;
@@ -103,6 +105,7 @@ private:
   QString m_lastForeground;
   bool m_foregroundKnown = false;
   bool m_foregroundLive = false;
+  QTimer m_foregroundRetry;
 
   QString m_latitude;
   QString m_longitude;
@@ -114,6 +117,7 @@ private:
 
   bool m_axOverlay = false;
   QTimer m_axTimer;
+  QPointer<QNetworkReply> m_axReply;
   QVariantList m_axElements;
 
   QVariantMap m_view;

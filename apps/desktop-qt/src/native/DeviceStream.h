@@ -89,6 +89,8 @@ public:
   // A key (Qt::Key) going down or up, with the text it types and whether
   // ctrl or meta is held.
   Q_INVOKABLE void key(int qtKey, const QString& text, bool command, bool down);
+  // Lets go of a Command chord still held on the device, if any.
+  Q_INVOKABLE void releaseChord();
   // home, back, recents or power (iOS: home, recents as the app switcher,
   // power as lock; back does nothing).
   Q_INVOKABLE void pressButton(const QString& button);
@@ -163,6 +165,10 @@ private:
   // (its access expired); a second refusal is an error.
   QString m_ticket;
   bool m_refreshed = false;
+  // Bumped when a ticket being fetched no longer applies.
+  int m_accessEpoch = 0;
+  // The key held in a Command chord on iOS, or -1.
+  int m_chordUsage = -1;
   // The device's screen: iOS as its helper reports it, Android as its
   // pictures come.
   int m_width = 0;

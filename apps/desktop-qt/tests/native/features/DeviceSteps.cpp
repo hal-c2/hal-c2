@@ -169,6 +169,15 @@ struct FakeHub {
   // The stream's access expired: only a fresh ticket is let through.
   bool expired = false;
   int ticketRequests = 0;
+  // The one ticket an expired stream may use: the latest given out.
+  QString acceptedTicket;
+  // Ticket requests kept unanswered, while holdTickets.
+  bool holdTickets = false;
+  QList<QPair<QPointer<QTcpSocket>, QString>> heldTickets;
+  // The accessibility requests served, and whether they get an answer.
+  int axRequests = 0;
+  bool stallAx = false;
+  QJsonObject androidAx;
   // Input sockets are closed as soon as they connect.
   bool dropInputs = false;
   // The accessibility tree the hub answers, and its event feeds.
@@ -206,6 +215,13 @@ struct FakeHub {
     if (noFFmpeg) ffmpeg::pretendMissing(false);
   }
 };
+
+void answerTicket(FakeHub& hub, QTcpSocket* socket, const QString& ticket) {
+  hub.acceptedTicket = ticket;
+  const QByteArray json = QJsonDocument(QJsonObject{{QStringLiteral("ticket"), ticket}}).toJson(QJsonDocument::Compact);
+  socket->write(QStringLiteral("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %1\r\nConnection: close\r\n\r\n").arg(json.size()).toUtf8() + json);
+  socket->disconnectFromHost();
+}
 
 QJsonObject stateOf(FakeMc& mc) {
   FakeHub& hub = mc.part<FakeHub>();
@@ -419,11 +435,14 @@ FakeHub& fakeHub(World& world) {
   // Raw, like the connection-health fake's: FakeMc answers HTTP POSTs
   // through its raw handlers first.
   mc.onRaw(QStringLiteral("/api/auth/websocket-ticket"), [&mc](QTcpSocket* socket, const QByteArray& head) {
-    ++mc.part<FakeHub>().ticketRequests;
+    FakeHub& hub = mc.part<FakeHub>();
+    const QString ticket = QStringLiteral("fresh%1").arg(++hub.ticketRequests);
     socket->read(head.size());
-    const QByteArray json = QByteArrayLiteral("{\"ticket\":\"fresh\"}");
-    socket->write(QStringLiteral("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %1\r\nConnection: close\r\n\r\n").arg(json.size()).toUtf8() + json);
-    socket->disconnectFromHost();
+    if (hub.holdTickets) {
+      hub.heldTickets.append({socket, ticket});
+      return;
+    }
+    answerTicket(hub, socket, ticket);
   });
   mc.onRpc(QStringLiteral("device.open"), [&mc](const FakeMc::Rpc& rpc) {
     const auto answer = [&mc, rpc] {
@@ -475,7 +494,7 @@ const FakeMc::Extension proxy([](FakeMc& mc) {
       if (lower.startsWith("upgrade:")) upgrade = true;
     }
     hub.requests.append(target + QLatin1Char(' ') + authorization);
-    if (hub.expired && !target.contains(QLatin1String("wsTicket=fresh"))) {
+    if (hub.expired && (hub.acceptedTicket.isEmpty() || !target.contains(QStringLiteral("wsTicket=") + hub.acceptedTicket))) {
       socket->read(head.size());
       return respond(socket, 401);
     }
@@ -504,7 +523,9 @@ const FakeMc::Extension proxy([](FakeMc& mc) {
       return;
     }
     if (path.endsWith(QLatin1String("/ax")) || path.endsWith(QLatin1String("/api/accessibility"))) {
-      const QByteArray json = QJsonDocument(hub.axTree).toJson(QJsonDocument::Compact);
+      ++hub.axRequests;
+      if (hub.stallAx) return;
+      const QByteArray json = hub.androidAx.isEmpty() ? QJsonDocument(hub.axTree).toJson(QJsonDocument::Compact) : QJsonDocument(hub.androidAx).toJson(QJsonDocument::Compact);
       socket->write(QStringLiteral("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %1\r\nConnection: close\r\n\r\n").arg(json.size()).toUtf8() + json);
       socket->disconnectFromHost();
       return;
@@ -1496,6 +1517,7 @@ const Steps backlogSteps([] {
   step(QStringLiteral("the MC refuses the stream because its access has expired"), [](World& world, const Captures&, const Table&) {
     FakeHub& hub = fakeHub(world);
     hub.expired = true;
+    hub.acceptedTicket.clear();
     // The stream in flight ends; its next request is the refused one.
     for (const QPointer<QTcpSocket>& video : std::as_const(hub.videos)) {
       if (video) video->disconnectFromHost();
@@ -1504,6 +1526,40 @@ const Steps backlogSteps([] {
   });
   step(QStringLiteral("the tab asks the MC for fresh access"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return fakeHub(world).ticketRequests > 0; }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the tab asks the MC for fresh access again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return fakeHub(world).ticketRequests > 1; }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the MC is slow to give fresh access"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).holdTickets = true;
+  });
+  step(QStringLiteral("the user reconnects before the MC answers"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    world.waitFor([&] { return hub.ticketRequests == 1; }, [&] { return describe(world); });
+    deviceStream(world).reconnect();
+    // Refused again, the new connection asks for its own ticket.
+    world.waitFor([&] { return hub.ticketRequests == 2; }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the MC answers the earlier request"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    const auto first = hub.heldTickets.takeFirst();
+    answerTicket(hub, first.first, first.second);
+    expect(QTest::qWaitFor([&] { return !first.first || first.first->state() == QAbstractSocket::UnconnectedState; }, 5000), QStringLiteral("the answer was not delivered"));
+    // That the tab ignores it takes a moment to show.
+    QTest::qWait(200);
+  });
+  step(QStringLiteral("the tab does not use that answer"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    for (const QString& request : std::as_const(hub.requests)) {
+      expect(!request.contains(QLatin1String("wsTicket=fresh1")), request);
+    }
+    expect(deviceStream(world).status() == QLatin1String("connecting"), describe(world));
+  });
+  step(QStringLiteral("the MC answers the later request"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.holdTickets = false;
+    const auto last = hub.heldTickets.takeFirst();
+    answerTicket(hub, last.first, last.second);
   });
   step(QStringLiteral("the tab %1 shows the device's screen again").arg(q), [](World& world, const Captures& c, const Table&) {
     waitForScreen(world, c[0]);
@@ -1615,6 +1671,35 @@ const Steps backlogSteps([] {
     QTest::keyClick(&panel.window(), key, Qt::MetaModifier);
     world.sync();
   });
+  step(QStringLiteral("the user holds Command with %1 and lets go of Command first").arg(q), [](World& world, const Captures&, const Table&) {
+    Brick& panel = devicePanel(world);
+    QTest::keyPress(&panel.window(), Qt::Key_R, Qt::MetaModifier);
+    QTest::keyRelease(&panel.window(), Qt::Key_Meta, Qt::NoModifier);
+    world.sync();
+  });
+  step(QStringLiteral("the device has both keys up"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] {
+      int downs = 0;
+      for (const QJsonObject& key : iosInput(world, 0x06)) downs += key.value(QLatin1String("type")) == QLatin1String("down") ? 1 : -1;
+      return !iosInput(world, 0x06).isEmpty() && downs == 0;
+    }, [&] { return describeInput(world); });
+  });
+  step(QStringLiteral("on a Mac the app keeps every Command chord but Command with \"R\""), [](World& world, const Captures&, const Table&) {
+    QQuickItem* stage = devicePanel(world).item(QStringLiteral("deviceStage"));
+    QVariant command;
+    QMetaObject::invokeMethod(stage, "commandModifierOn", Q_RETURN_ARG(QVariant, command), Q_ARG(QVariant, QStringLiteral("osx")));
+    expect(command.toInt() == int(Qt::ControlModifier), QStringLiteral("on a Mac Qt calls Command Control"));
+    const auto appOwns = [&](int key, int modifiers) {
+      QVariant owns;
+      QMetaObject::invokeMethod(stage, "appOwns", Q_RETURN_ARG(QVariant, owns),
+                                Q_ARG(QVariant, QVariantMap({{QStringLiteral("key"), key}, {QStringLiteral("modifiers"), modifiers}})), Q_ARG(QVariant, command));
+      return owns.toBool();
+    };
+    expect(appOwns(Qt::Key_K, Qt::ControlModifier), QStringLiteral("Command+K went to the device"));
+    expect(!appOwns(Qt::Key_R, Qt::ControlModifier), QStringLiteral("Command+R stayed with the app"));
+    expect(appOwns(Qt::Key_R, Qt::MetaModifier), QStringLiteral("Control+R went to the device"));
+    expect(!appOwns(Qt::Key_A, Qt::NoModifier), QStringLiteral("a plain key stayed with the app"));
+  });
   step(QStringLiteral("the app handles the shortcut"), [](World& world, const Captures&, const Table&) {
     // The stage turns the key away: an event it is sent comes back unaccepted,
     // so the window's own shortcut handling sees it.
@@ -1652,6 +1737,15 @@ const Steps backlogSteps([] {
       return at(world.state(QStringLiteral("panel")), QStringLiteral("floatingDevice")).toString() == tabOf(world, QStringLiteral("iPhone 17")) &&
              deviceStream(world).status() == QLatin1String("streaming");
     }, [&] { return describe(world); });
+  });
+  step(QStringLiteral("the user opens the right panel"), [](World& world, const Captures&, const Table&) {
+    panel(world).setOpen(true);
+    world.sync();
+  });
+  step(QStringLiteral("the device no longer floats"), [](World& world, const Captures&, const Table&) {
+    const QVariant floating = at(world.state(QStringLiteral("panel")), QStringLiteral("floatingDevice"));
+    expect(floating.isNull() || floating.toString().isEmpty(), describe(world));
+    expect(panel(world).isOpen(), describe(world));
   });
   step(QStringLiteral("the right panel closes"), [](World& world, const Captures&, const Table&) {
     expect(!panel(world).isOpen(), describe(world));
@@ -2390,6 +2484,15 @@ const Steps backlogSteps([] {
     }
     world.sync();
   });
+  step(QStringLiteral("the foreground feed ends with %1 in front").arg(q), [](World& world, const Captures& c, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    hub.foregroundApp = QJsonObject{{QStringLiteral("id"), c[0]}};
+    const int before = hub.feedRequests;
+    for (const auto& feed : std::as_const(hub.feeds)) {
+      if (feed.first.endsWith(QLatin1String("/appstate")) && feed.second) feed.second->disconnectFromHost();
+    }
+    world.waitFor([&] { return hub.feedRequests > before; }, [&] { return QStringLiteral("the feed was not followed again; %1").arg(describe(world)); });
+  });
   step(QStringLiteral("\"Foreground\" reads the other app's id"), [](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return toolsView(world).value(QStringLiteral("foreground")) == QStringLiteral("com.example.other"); },
                   [&] { return show(toolsView(world)); });
@@ -2717,6 +2820,46 @@ const Steps backlogSteps([] {
   });
   step(QStringLiteral("when the drag ends the body settles on the nearest view that faces its screen"), [bodyItem](World& world, const Captures&, const Table&) {
     world.waitFor([&] { return bodyItem(world)->property("settled").toBool(); }, [&] { return describeScreen(world); });
+  });
+  step(QStringLiteral("the 3D screen stands upright on its body"), [bodyItem](World& world, const Captures&, const Table&) {
+    QQuickItem* screen = bodyItem(world)->findChild<QQuickItem*>(QStringLiteral("deviceBodyScreen"));
+    expect(screen, QStringLiteral("no screen on the body"));
+    world.waitFor([&] { return screen->rotation() != 0; }, [&] { return describe(world); });
+    expect(screen->rotation() == deviceStream(world).rotation(), describe(world));
+    QQuickItem* texture = screen->parentItem();
+    expect(texture->width() > texture->height() && screen->height() == texture->width(), describe(world));
+  });
+  step(QStringLiteral("the picture is decoded for the flat view's size"), [](World& world, const Captures&, const Table&) {
+    QQuickItem* screen = devicePanel(world).item(QStringLiteral("deviceScreen"));
+    world.waitFor([&] {
+      return screen->isVisible() && deviceStream(world).decoder()->maximumSize() == (screen->boundingRect().size() * screen->window()->effectiveDevicePixelRatio()).toSize();
+    }, [&] {
+      const QSize limit = deviceStream(world).decoder()->maximumSize();
+      return QStringLiteral("a limit of %1x%2 for a screen of %3x%4, %5").arg(limit.width()).arg(limit.height()).arg(screen->width()).arg(screen->height()).arg(screen->isVisible() ? QStringLiteral("shown") : QStringLiteral("hidden"));
+    });
+  });
+  step(QStringLiteral("the accessibility requests stall"), [](World& world, const Captures&, const Table&) {
+    fakeHub(world).stallAx = true;
+  });
+  step(QStringLiteral("no second accessibility request is out"), [](World& world, const Captures&, const Table&) {
+    FakeHub& hub = fakeHub(world);
+    world.waitFor([&] { return hub.axRequests > 0; }, [&] { return describe(world); });
+    const int asked = hub.axRequests;
+    // That nothing follows takes time to show: a few of the tools' refreshes.
+    QTest::qWait(1600);
+    expect(hub.axRequests == asked, QStringLiteral("%1 requests out").arg(hub.axRequests));
+  });
+  step(QStringLiteral("the device's screen has more elements than the overlay shows"), [](World& world, const Captures&, const Table&) {
+    QJsonArray nodes{QJsonObject{{QStringLiteral("bounds"), QJsonObject{{QStringLiteral("right"), 1000}, {QStringLiteral("bottom"), 2000}}}}};
+    for (int n = 0; n < 600; ++n) {
+      nodes.append(QJsonObject{{QStringLiteral("text"), QStringLiteral("Item %1").arg(n)},
+                               {QStringLiteral("bounds"), QJsonObject{{QStringLiteral("left"), 0}, {QStringLiteral("top"), n}, {QStringLiteral("right"), 100}, {QStringLiteral("bottom"), n + 1}}}});
+    }
+    fakeHub(world).androidAx = QJsonObject{{QStringLiteral("nodes"), nodes}};
+  });
+  step(QStringLiteral("the overlay outlines the first %1 of them").arg(QStringLiteral("(\\d+)")), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return toolsView(world).value(QStringLiteral("axElements")).toList().size() == c[0].toInt(); },
+                  [&] { return QString::number(toolsView(world).value(QStringLiteral("axElements")).toList().size()); });
   });
   step(QStringLiteral("the user shows the device in 3D"), [showIn3d](World& world, const Captures&, const Table&) { showIn3d(world); });
   step(QStringLiteral("the device has no 3D model"), [](World& world, const Captures&, const Table&) { look(world); });

@@ -678,6 +678,9 @@ void RightPanelController::openThread(const QString& threadKey) {
 void RightPanelController::update() {
   if (m_onThread) {
     Panel& state = panel();
+    // A device floats only while the panel is closed: open, the panel's
+    // active tab is what shows and takes input.
+    if (state.open) state.floating.clear();
     // A terminal tab whose terminals all ended (here, in another client, or
     // the MC's) goes: the next one shows.
     const QStringList groups = terminalGroups();

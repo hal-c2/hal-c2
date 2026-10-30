@@ -10,6 +10,7 @@
 #include <QtEndian>
 
 #include <algorithm>
+#include <utility>
 
 #include "FFmpeg.h"
 #include "McClient.h"
@@ -177,6 +178,7 @@ DeviceStream::~DeviceStream() {
 void DeviceStream::setTarget(const QString& hubBase, const QString& platform, const QString& deviceId) {
   if (hubBase == m_hubBase && platform == m_platform && deviceId == m_deviceId) return;
   stop();
+  ++m_accessEpoch;
   m_ticket.clear();
   m_refreshed = false;
   m_hubBase = hubBase;
@@ -204,6 +206,7 @@ void DeviceStream::setTimeouts(int firstFrameMs, int retryMs) {
 }
 
 void DeviceStream::reconnect() {
+  ++m_accessEpoch;
   stop();
   m_ticket.clear();
   m_refreshed = false;
@@ -252,6 +255,7 @@ void DeviceStream::start() {
 }
 
 void DeviceStream::stop(const QString& status, const QString& detail) {
+  releaseChord();
   m_running = false;
   for (QTimer* timer : {&m_firstFrame, &m_readStall, &m_videoRetry, &m_inputRetry}) timer->stop();
   for (QPointer<QNetworkReply>* slot : {&m_video, &m_prime}) {
@@ -305,8 +309,11 @@ void DeviceStream::refreshAccess() {
   m_refreshed = true;
   stop();
   setStatus(QStringLiteral("connecting"));
+  const int epoch = m_accessEpoch;
   m_client->post(this, QStringLiteral("/api/auth/websocket-ticket"), {},
-                 [this](const QJsonValue& result, const std::optional<QString>& error) {
+                 [this, epoch](const QJsonValue& result, const std::optional<QString>& error) {
+                   // Asked for another device, or before a reconnect.
+                   if (epoch != m_accessEpoch) return;
                    const QString ticket = result.toObject().value(QLatin1String("ticket")).toString();
                    if (error || ticket.isEmpty())
                      return stop(QStringLiteral("error"), QStringLiteral("The MC refused the device stream. Reconnect to try again."));
@@ -343,6 +350,9 @@ void DeviceStream::onFrame() {
   m_decodeFailures = 0;
   if (m_streaming) return;
   m_streaming = true;
+  // This access worked; tickets are short-lived, so a later refusal may
+  // again be only an expired one.
+  m_refreshed = false;
   m_firstFrame.stop();
   setStatus(QStringLiteral("streaming"));
 }
@@ -604,14 +614,16 @@ void DeviceStream::key(int qtKey, const QString& text, bool command, bool down) 
     if (usage < 0) return;
     // A command chord (the one shortcut the panel passes through, Cmd+R)
     // holds the GUI modifier around the key, as a hardware keyboard would.
-    const bool chord = command && usage < 0xe0;
-    if (chord && down)
+    // The key's release may come after the modifier's, so it ends the chord
+    // whatever modifiers it carries.
+    if (!down && usage == m_chordUsage) return releaseChord();
+    if (command && usage < 0xe0 && down && m_chordUsage < 0) {
+      m_chordUsage = usage;
       send(tagged(kIosKey, {{QStringLiteral("type"), QStringLiteral("down")}, {QStringLiteral("usage"), 0xe3}}), true);
+    }
     send(tagged(kIosKey, {{QStringLiteral("type"), down ? QStringLiteral("down") : QStringLiteral("up")},
                           {QStringLiteral("usage"), usage}}),
          true);
-    if (chord && !down)
-      send(tagged(kIosKey, {{QStringLiteral("type"), QStringLiteral("up")}, {QStringLiteral("usage"), 0xe3}}), true);
     return;
   }
   if (!down) return;
@@ -621,6 +633,13 @@ void DeviceStream::key(int qtKey, const QString& text, bool command, bool down) 
     return send(json({{QStringLiteral("type"), QStringLiteral("key")}, {QStringLiteral("keycode"), keycode}}), false);
   if (text.size() == 1 && text.at(0).isPrint() && !command)
     send(json({{QStringLiteral("type"), QStringLiteral("text")}, {QStringLiteral("text"), text}}), false);
+}
+
+void DeviceStream::releaseChord() {
+  if (m_chordUsage < 0) return;
+  const int usage = std::exchange(m_chordUsage, -1);
+  send(tagged(kIosKey, {{QStringLiteral("type"), QStringLiteral("up")}, {QStringLiteral("usage"), usage}}), true);
+  send(tagged(kIosKey, {{QStringLiteral("type"), QStringLiteral("up")}, {QStringLiteral("usage"), 0xe3}}), true);
 }
 
 void DeviceStream::pressButton(const QString& button) {
