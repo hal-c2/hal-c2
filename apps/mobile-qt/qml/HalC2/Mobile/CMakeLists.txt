@@ -19,6 +19,14 @@ qt_add_qml_module(hal_c2_mobile
     RenameThreadDialog.qml
     ScanScreen.qml
     SettingsScreen.qml
+    SpaceBlockRow.qml
+    SpaceCommentsView.qml
+    SpaceListRow.qml
+    SpacePageView.qml
+    SpacePagesView.qml
+    SpaceScreen.qml
+    SpaceSheet.qml
+    SpaceTextDialog.qml
     ThreadScreen.qml
   RESOURCES
     qmldir
