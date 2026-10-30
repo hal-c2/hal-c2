@@ -2,7 +2,8 @@ defmodule HalC2.TextGeneration do
   @moduledoc """
   Short structured text from a coding agent: commit messages and pull request
   content for `HalC2.GitActions`, branch names for `HalC2.WorktreeSetup`, and thread
-  titles for `HalC2.Orchestration`. The prompts live in `HalC2.TextGeneration.Prompts`.
+  titles for `HalC2.Orchestration`, and pages from threads for `HalC2.Space`. The
+  prompts live in `HalC2.TextGeneration.Prompts`.
 
   Commits, pull requests, and branch names are written by the project's source
   control writer model when its provider is usable, otherwise by its text
@@ -132,6 +133,27 @@ defmodule HalC2.TextGeneration do
            run(selection, cwd, prompt, schema, isolate: true, images: images(attachments)) do
       {:ok,
        %{"title" => title(out["title"]), "needsRefinement" => out["needsRefinement"] == true}}
+    end
+  end
+
+  @doc """
+  A Space page summarising a thread from its context (`Prompts.thread_context/1`),
+  written in the thread's checkout: `%{"title", "markdown"}`. `{:error,
+  {:unavailable, message}}` when no provider can write it.
+  """
+  def page_from_thread(cwd, context) do
+    case usable_selection(cwd, :text) do
+      {:ok, selection} ->
+        run(
+          selection,
+          cwd,
+          Prompts.page_from_thread(context),
+          %{"title" => :string, "markdown" => :string},
+          []
+        )
+
+      {:error, message} ->
+        {:error, {:unavailable, message}}
     end
   end
 

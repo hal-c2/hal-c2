@@ -99,7 +99,7 @@ Feature: Pages in a Space
     Scenario: Pages and their content survive a restart
       Given the page "Roadmap" reads "Ship pages"
       When the MC restarts
-      Then the page "Roadmap" reads "Ship pages"
+      Then the page "Roadmap" still reads "Ship pages"
 
   Rule: Trash
 
