@@ -239,8 +239,15 @@ void SnapShotController::applyShortcut() {
   QString problem;
   // Niri's shortcut is a binding in its config. Hyprland's is too, but it
   // reaches HAL-C2 through the portal session this opens.
-  if (enabled() && m_backend->session().mode == QLatin1String("portal") && m_backend->session().desktop != QLatin1String("niri")) {
+  const QString desktop = managed() ? m_backend->session().desktop : QString();
+  if (enabled() && m_backend->session().mode == QLatin1String("portal") && desktop != QLatin1String("niri")) {
     trigger = SnapShotBackend::portalTrigger(savedShortcut(), &problem);
+    // The keys live in Hyprland's config; the session only has to exist, and
+    // modifier pair or not, the portal needs a trigger to open it.
+    if (trigger.isEmpty() && desktop == QLatin1String("hyprland")) {
+      trigger = QStringLiteral("CTRL+SHIFT+2");
+      problem.clear();
+    }
   }
   m_shortcutProblem = problem;
   if (trigger == m_bound) return;
@@ -289,7 +296,11 @@ void SnapShotController::stopRecording() {
   m_held.clear();
   // Recording cleared the check; the shortcut recorded before it can still be saved.
   m_check.reset();
-  if (shortcutChanged() && conflict(*m_candidate).isEmpty()) m_check = check(*m_candidate);
+  if (m_candidate && managed()) {
+    m_check = check(*m_candidate);
+  } else if (shortcutChanged() && conflict(*m_candidate).isEmpty()) {
+    m_check = check(*m_candidate);
+  }
 }
 
 void SnapShotController::resetCandidate() {
@@ -575,6 +586,9 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
 
 bool SnapShotController::managed() const {
   if (!m_backend) return false;
+  // A sandbox can neither reach the compositor's config nor answer its binding.
+  const QProcessEnvironment env = SnapShotBackend::environment();
+  if (env.contains(QStringLiteral("FLATPAK_ID")) || env.contains(QStringLiteral("SNAP"))) return false;
   const QString desktop = m_backend->session().desktop;
   return m_backend->session().mode == QLatin1String("portal") && (desktop == QLatin1String("niri") || desktop == QLatin1String("hyprland"));
 }

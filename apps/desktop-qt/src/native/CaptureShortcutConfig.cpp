@@ -713,7 +713,8 @@ std::optional<CaptureShortcutConfig::Preview> CaptureShortcutConfig::preview(con
   QList<File> files{*root};
   QStringList absent;
   if (niri) {
-    const std::function<bool(const File&, int)> visit = [&](const File& file, int depth) {
+    // By value: the walk appends to `files`, which moves what they hold.
+    const std::function<bool(File, int)> visit = [&](File file, int depth) {
       qint64 total = 0;
       for (const File& item : files) total += item.bytes.size();
       if (depth > 10 || files.size() > kMaxFiles || total > kMaxBytes) {

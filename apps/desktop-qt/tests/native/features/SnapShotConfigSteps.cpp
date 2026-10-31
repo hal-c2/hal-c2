@@ -44,6 +44,11 @@ void session(World& world, const QProcessEnvironment& env);
 void shortcutRefused(const QString& reason);
 void holdShortcuts();
 QStringList binds();
+void thread(World& world);
+void pressShortcut(World& world);
+QVariantMap attachedImage(World& world);
+QVariantList draftImages(World& world);
+void pickerOnly(World& world);
 }  // namespace snapshot
 
 namespace {
@@ -102,6 +107,7 @@ struct Scene {
   QString chosen;
   QString staleId;
   QString backup;
+  std::unique_ptr<QTemporaryDir> runtime;
   std::unique_ptr<QLocalServer> niri;
   QString niriVersion = QStringLiteral("25.11.0");
   bool focusedWindow = true;
@@ -137,7 +143,7 @@ QByteArray read(const QString& path) {
 
 // A session of `desktop` with an ordinary config, Snap Shot on, in setup's
 // shortcut step.
-void open(World& world, const QString& desktop) {
+void open(World& world, const QString& desktop, bool holdBind = false) {
   compositor().niriValid = true;
   compositor().binds = QList<CaptureShortcutConfig::HyprlandBind>{};
   compositor().reload.clear();
@@ -154,6 +160,7 @@ void open(World& world, const QString& desktop) {
   scene().before = niri ? QByteArrayLiteral("binds {\n    Mod+T { spawn \"foot\"; }\n}\n") : QByteArrayLiteral("bind = SUPER, T, exec, foot\n");
   write(scene().file, scene().before);
   session(world, env);
+  if (holdBind) holdShortcuts();
   set(world, QStringLiteral("snapShotEnabled"), true);
   openPanel(world);
   send(world, QStringLiteral("setup.open"), {{QStringLiteral("step"), QStringLiteral("shortcut")}});
@@ -191,6 +198,7 @@ void save(World& world) {
 }
 
 void expectUnchanged(World& world) {
+  if (!QFileInfo(scene().file).isReadable()) QFile(scene().file).setPermissions(QFile::ReadOwner | QFile::WriteOwner);
   expect(read(scene().file) == scene().before, QStringLiteral("the config not to change; it holds %1; Snap Shot is %2").arg(QString::fromUtf8(read(scene().file)), describe(world)));
 }
 
@@ -208,8 +216,10 @@ QString diffText(World& world, const QString& kind) {
 
 // Niri's IPC: one JSON line in, one out, and the event stream.
 void serveNiri() {
+  // A socket's path has a length limit the scratch home's can pass.
+  scene().runtime = std::make_unique<QTemporaryDir>(QStringLiteral("/dev/shm/hal-c2-niri-XXXXXX"));
   scene().niri = std::make_unique<QLocalServer>();
-  expect(scene().niri->listen(scene().home->filePath(QStringLiteral("niri.sock"))), QStringLiteral("cannot listen as Niri"));
+  expect(scene().niri->listen(scene().runtime->filePath(QStringLiteral("s"))), QStringLiteral("cannot listen as Niri: %1").arg(scene().niri->errorString()));
   static QPointer<QLocalSocket> stream;
   stream = nullptr;
   QObject::connect(scene().niri.get(), &QLocalServer::newConnection, [] {
@@ -252,7 +262,7 @@ void openNiri(World& world, const QString& version, bool takeName = false) {
   scene().shots = 0;
   QProcessEnvironment env = environmentFor(QStringLiteral("niri"));
   serveNiri();
-  env.insert(QStringLiteral("NIRI_SOCKET"), scene().home->filePath(QStringLiteral("niri.sock")));
+  env.insert(QStringLiteral("NIRI_SOCKET"), scene().niri->fullServerName());
   PortalSnapShot::useBus(FakeDesktopPortal::appConnection());
   // The test's other connection on that bus holds the name, as another HAL-C2 would.
   const QString name = QStringLiteral("hal-c2.SnapShot");
@@ -311,7 +321,7 @@ const Steps steps([] {
     expectUnchanged(world);
     expect(field(world, QStringLiteral("config.review.saveLabel")) == QLatin1String("Save shortcut"), QStringLiteral("Save shortcut; Snap Shot is %1").arg(describe(world)));
     save(world);
-    expect(read(scene().file).contains("Ctrl+Alt+K"), QStringLiteral("the file to gain the binding: %1").arg(QString::fromUtf8(read(scene().file))));
+    expect(read(scene().file).contains("Ctrl+Alt+K"), QStringLiteral("the file to gain the binding: %1; Snap Shot is %2").arg(QString::fromUtf8(read(scene().file)), describe(world)));
   });
   step(QStringLiteral("the user chooses Review changes"), [](World& world, const Captures&, const Table&) {
     if (compositor().hold) {
@@ -477,8 +487,7 @@ const Steps steps([] {
     expect(!path.isEmpty() && read(path) == scene().before, QStringLiteral("a backup with the old config; Snap Shot is %1").arg(describe(world)));
   });
   step(QStringLiteral("a Hyprland session where HAL-C2's shortcut action is not registered yet"), [](World& world, const Captures&, const Table&) {
-    holdShortcuts();
-    open(world, QStringLiteral("hyprland"));
+    open(world, QStringLiteral("hyprland"), true);
   });
   step(QStringLiteral("setup says %1 while it connects").arg(q), [](World& world, const Captures& c, const Table&) {
     expect(field(world, QStringLiteral("config.connecting")) == c[0], QStringLiteral("%1; Snap Shot is %2").arg(c[0], describe(world)));
@@ -602,6 +611,8 @@ const Steps steps([] {
   });
   step(QStringLiteral("a config Niri rejects is not saved"), [](World& world, const Captures&, const Table&) {
     scene().before = read(scene().file);
+    send(world, QStringLiteral("record.start"));
+    press(world, Qt::Key_K, Qt::ControlModifier | Qt::AltModifier);
     reviewed(world);
     compositor().niriValid = false;
     save(world);
@@ -729,6 +740,73 @@ const Steps steps([] {
     });
   });
   step(QStringLiteral("the call is refused as invalid"), [](World& world, const Captures&, const Table&) { world.onSettingsPage.value(QStringLiteral("endpointError"))({}); });
+  step(QStringLiteral("the desktop app runs on Linux on Niri"), [](World& world, const Captures&, const Table&) {
+    openNiri(world, QStringLiteral("25.11.0"));
+    thread(world);
+  });
+  step(QStringLiteral("Niri has no focused window"), [](World&, const Captures&, const Table&) { scene().focusedWindow = false; });
+  step(QStringLiteral("nothing is attached and the user is told the window could not be captured"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return show(world.state(QStringLiteral("toasts"))).contains(QLatin1String("Niri has no focused window to capture.")); },
+                  [&] { return QStringLiteral("the failure; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
+    expect(draftImages(world).isEmpty(), QStringLiteral("nothing attached: %1").arg(show(draftImages(world))));
+  });
+  step(QStringLiteral("no half-finished capture is kept"), [](World&, const Captures&, const Table&) {
+    expect(scene().shots == 0, QStringLiteral("no screenshot asked of Niri"));
+  });
+  step(QStringLiteral("a Linux Wayland session on Niri"), [](World& world, const Captures&, const Table&) {
+    openNiri(world, QStringLiteral("25.11.0"));
+    thread(world);
+  });
+  step(QStringLiteral("capture works through a Niri binding"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("shortcut.managed")).toBool() && field(world, QStringLiteral("shortcut.registered")).toBool(),
+           QStringLiteral("the endpoint up; Snap Shot is %1").arg(describe(world)));
+    pressShortcut(world);
+    world.waitFor([&] { return !draftImages(world).isEmpty(); }, [&] { return QStringLiteral("the capture; Snap Shot is %1").arg(describe(world)); });
+    expect(scene().shots == 1 && attachedImage(world).value(QStringLiteral("mimeType")) == QLatin1String("image/png"), QStringLiteral("one PNG from Niri"));
+  });
+  step(QStringLiteral("HAL-C2 runs inside a (\\S+) sandbox on a (\\S+) Wayland session"), [](World& world, const Captures& c, const Table&) {
+    QProcessEnvironment env = environmentFor(c[1].toLower());
+    env.insert(c[0] == QLatin1String("Snap") ? QStringLiteral("SNAP") : QStringLiteral("FLATPAK_ID"), QStringLiteral("hal-c2"));
+    // Even with Niri's socket in reach.
+    env.insert(QStringLiteral("NIRI_SOCKET"), scene().home->filePath(QStringLiteral("s")));
+    session(world, env);
+  });
+  step(QStringLiteral("capture works through the desktop portal when it can capture a window"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("backend")) == QLatin1String("screenshot-portal") && !field(world, QStringLiteral("shortcut.managed")).toBool(),
+           QStringLiteral("the portal; Snap Shot is %1").arg(describe(world)));
+  });
+  step(QStringLiteral("otherwise the user picks the window each time"), [](World& world, const Captures&, const Table&) {
+    pickerOnly(world);
+    expect(field(world, QStringLiteral("status")) == QStringLiteral("Manual capture only — you'll choose a window each time"), QStringLiteral("the picker; Snap Shot is %1").arg(describe(world)));
+  });
+  step(QStringLiteral("no compositor config, extension or capture helper is offered"), [](World& world, const Captures&, const Table&) {
+    const QVariant config = field(world, QStringLiteral("config"));
+    expect(!config.isValid() || config.isNull(), QStringLiteral("no config; Snap Shot is %1").arg(describe(world)));
+  });
+  step(QStringLiteral("the user reviewed the changes to the Niri config"), [](World& world, const Captures&, const Table&) {
+    open(world, QStringLiteral("niri"));
+    reviewed(world);
+  });
+  step(QStringLiteral("the Niri config changed on disk afterwards"), [](World&, const Captures&, const Table&) {
+    write(scene().file, scene().before + "# edited\n");
+    scene().before = read(scene().file);
+  });
+  step(QStringLiteral("the user reviews the changes to the Hyprland config and saves them"), [](World& world, const Captures&, const Table&) {
+    compositor().hold = false;
+    reviewed(world);
+    save(world);
+  });
+  step(QStringLiteral("the config is written in one step after checking it did not change since review"), [](World&, const Captures&, const Table&) {
+    expect(read(scene().file).contains("global, hal-c2"), QStringLiteral("the binding: %1").arg(QString::fromUtf8(read(scene().file))));
+    const QStringList left = QFileInfo(scene().file).absoluteDir().entryList(QDir::Files | QDir::Hidden);
+    expect(left.size() == 2, QStringLiteral("only the config and its backup: %1").arg(left.join(u',')));
+  });
+  step(QStringLiteral("a backup of the previous config is kept"), [](World&, const Captures&, const Table&) {
+    const QDir folder = QFileInfo(scene().file).absoluteDir();
+    QStringList backups = folder.entryList(QDir::Files | QDir::Hidden);
+    backups.removeAll(QFileInfo(scene().file).fileName());
+    expect(backups.size() == 1 && read(folder.filePath(backups.first())) == scene().before, QStringLiteral("the old config kept; found %1").arg(backups.join(u',')));
+  });
   step(QStringLiteral("no capture is taken"), [](World&, const Captures&, const Table&) {
     expect(scene().shots == 0, QStringLiteral("no capture; %1 taken").arg(scene().shots));
   });
