@@ -29,6 +29,7 @@ import { createComposer } from "./composerState.ts";
 import { detailCommands } from "./detailCommands.ts";
 import { memoryMutedThreads, type MutedThreadsStore } from "./mutedThreads.ts";
 import { createFilesController } from "./filesState.ts";
+import { createSpaceController } from "./spaceState.ts";
 import {
   buildTuiLayoutState,
   composerSurfaceWidth,
@@ -139,6 +140,8 @@ export interface HostOptions {
   readonly runEditor?: (command: EditorCommand, file: string) => Promise<void>;
   /** Read an image pasted as an absolute path on this machine. */
   readonly readLocalImage?: (path: string) => Promise<Uint8Array>;
+  /** Read a Markdown file on this machine to import it as a Space page (`~` expands). */
+  readonly readLocalText?: (path: string) => Promise<string>;
   /** Decode attached images for their preview (default: `@hal-c2/opentui-image`). */
   readonly decodeImage?: ImageDecoder;
   /**
@@ -280,6 +283,8 @@ export function createHost(options: HostOptions): Host {
   let settingsOpen = false;
   // The file browser takes the conversation pane's place (FilesView).
   let filesOpen = false;
+  // So do the Spaces and their pages (SpaceView).
+  let spaceOpen = false;
   // The prompt's editor rows (the composer's 3–8, or as set by Ctrl+Up / Ctrl+Down).
   let editorRows: number | undefined;
   let popoverRows = 0;
@@ -417,7 +422,7 @@ export function createHost(options: HostOptions): Host {
       // Like ChatView, the panel hides (without closing) while settings, the
       // files, diff or image view has the conversation pane.
       rightPanel:
-        filesOpen || settingsOpen || sections?.isOpen() || threadView.paneReplaced()
+        filesOpen || spaceOpen || settingsOpen || sections?.isOpen() || threadView.paneReplaced()
           ? null
           : rightPanel,
       rightPanelFocused,
@@ -437,6 +442,7 @@ export function createHost(options: HostOptions): Host {
     if (previous?.chatWidth !== layout.chatWidth || previous?.panesRows !== layout.panesRows) {
       threadView.resize();
       files?.sync();
+      space?.sync();
       sections?.relayout();
     }
     sourceControl.resize();
@@ -583,7 +589,10 @@ export function createHost(options: HostOptions): Host {
       terminal.sync();
       clientActivity.sync();
     }
-    if (prev && prev.selection !== next.selection) files.close();
+    if (prev && prev.selection !== next.selection) {
+      files.close();
+      space.close();
+    }
     if (prev && prev.shell !== next.shell) addProject.sync();
   };
 
@@ -597,7 +606,13 @@ export function createHost(options: HostOptions): Host {
       requested === "compose"
         ? (sections?.mode() ??
           // The file browser keeps the keys when the palette over it closes.
-          (filesOpen ? files.mode() : composer?.draft() ? "newThread" : threadView.composeMode()))
+          (filesOpen
+            ? files.mode()
+            : spaceOpen
+              ? space.mode()
+              : composer?.draft()
+                ? "newThread"
+                : threadView.composeMode()))
         : requested;
     if (next === mode) return;
     mode = next;
@@ -699,6 +714,7 @@ export function createHost(options: HostOptions): Host {
     width: () => layout.chatWidth,
     setOpen: (open) => {
       filesOpen = open;
+      if (open) space.close();
       publishLayout();
       if (open) setMode("files");
       else if (mode === "files" || mode === "fileEdit") setMode(restingMode());
@@ -717,6 +733,44 @@ export function createHost(options: HostOptions): Host {
         (context.newDraft || store.getState().selection?.kind === "thread") &&
         context.attachmentCount < PROVIDER_SEND_TURN_MAX_ATTACHMENTS
       );
+    },
+  });
+  // The Spaces and their pages take the conversation pane's place too.
+  const home = options.homeDir ?? NodeOS.homedir();
+  const space = createSpaceController({
+    client,
+    height: () => layout.panesRows,
+    width: () => layout.chatWidth,
+    setOpen: (open) => {
+      spaceOpen = open;
+      if (open) {
+        // One pane at a time: the files, the settings and a settings page give way.
+        files.close();
+        sections!.close();
+        if (settingsOpen) dispatch("settings.close");
+        if (mode === "diff") dispatch("diff.close");
+      }
+      publishLayout();
+      if (open) setMode("space");
+      else if (mode === "space") setMode(restingMode());
+      palette.sync();
+    },
+    publish: (next) => state.set("space", next),
+    status: (text, kind) => store.setStatus(text, kind),
+    ask: (spec) => ask.ask(spec),
+    menu: (spec) => composer!.pick(spec),
+    copy: (text) => options.copyToClipboard?.(text) === true,
+    readLocalText:
+      options.readLocalText ??
+      ((path) => NodeFSP.readFile(path.replace(/^~(?=$|\/)/, home), "utf8")),
+    threads: () =>
+      (store.getState().shell?.threads ?? []).map((thread) => ({
+        id: thread.id,
+        title: thread.title,
+      })),
+    currentThreadId: () => {
+      const selection = store.getState().selection;
+      return selection?.kind === "thread" ? selection.id : null;
     },
   });
   // Adding a project is a page over the conversation (mode "project").
@@ -829,9 +883,14 @@ export function createHost(options: HostOptions): Host {
       palette.sync();
     },
   });
-  /** The files, add-project and terminal entries, as palette commands. */
+  /** The files, Spaces, add-project and terminal entries, as palette commands. */
   const areaCommands = (): PaletteCommand[] =>
-    [...addProject.commands(), ...files.commands(), ...terminal.commands()].map((command) => ({
+    [
+      ...addProject.commands(),
+      ...files.commands(),
+      ...space.commands(),
+      ...terminal.commands(),
+    ].map((command) => ({
       // An action offered several times (one per editor) is told apart by its title.
       id: "payload" in command ? `${command.action}:${command.title}` : command.action,
       title: command.title,
@@ -851,7 +910,7 @@ export function createHost(options: HostOptions): Host {
     question: () => threadView.question(),
     inlineImages: (options.inlineImages ?? null) !== null,
     env: options.env ?? { VISUAL: process.env.VISUAL, EDITOR: process.env.EDITOR },
-    homeDir: options.homeDir ?? NodeOS.homedir(),
+    homeDir: home,
     runEditor: options.runEditor ?? (() => Promise.reject(new Error("no editor runner"))),
     readLocalImage: options.readLocalImage ?? readLocalImageFile,
     ...(options.promptCursorToEnd ? { onTextCompleted: options.promptCursorToEnd } : {}),
@@ -929,6 +988,7 @@ export function createHost(options: HostOptions): Host {
     palette.sync();
     terminal.sync();
     files.sync();
+    space.sync();
     addProject.relayout();
     features.sync();
     state.set("status", { kind: next.statusKind, text: next.status } satisfies TuiStatusState);
@@ -1163,10 +1223,12 @@ export function createHost(options: HostOptions): Host {
         if (settingsOpen) dispatch("settings.close");
         if (mode === "diff") dispatch("diff.close");
         files.close();
+        space.close();
         return sections!.dispatch(action, payload);
       case "settings.open":
         if (mode === "diff") dispatch("diff.close");
         sections!.close();
+        space.close();
         settingsOpen = true;
         publishSettings();
         void cluster.refresh();
@@ -1308,6 +1370,7 @@ export function createHost(options: HostOptions): Host {
         if (threadView.dispatch(action, payload)) return true;
         if (sourceControl.dispatch(action, payload)) return true;
         if (files.dispatch(action, payload) || addProject.dispatch(action, payload)) return true;
+        if (space.dispatch(action, payload)) return true;
         if (cluster.dispatch(action, payload)) return true;
         if (sections!.dispatch(action, payload)) return true;
         if (loadBalancing.dispatch(action, payload)) return true;
@@ -1485,6 +1548,7 @@ export function createHost(options: HostOptions): Host {
     settled: async () => {
       await addProject.settled();
       await files.settled();
+      await space.settled();
       await terminal.settled();
       await threadView.settled();
       await cluster.settled();
@@ -1511,6 +1575,7 @@ export function createHost(options: HostOptions): Host {
       unsubscribeCluster();
       unsubscribe();
       terminal.dispose();
+      space.dispose();
       features.dispose();
       threadView.dispose();
       store.stop();

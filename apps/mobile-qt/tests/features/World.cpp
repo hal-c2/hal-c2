@@ -9,6 +9,7 @@
 #include <QPointingDevice>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QSet>
 #include <QTest>
 #include <QThread>
 #include <qpa/qwindowsysteminterface.h>
@@ -46,24 +47,32 @@ QQuickItem* search(QQuickItem* item, const std::function<bool(QQuickItem*)>& mat
 // The object named `objectName` among what `object` owns and, for an item,
 // draws: an item or not. A Popup is a QObject, owned by the window, the item
 // or the content of the popup it was declared in, and a closed popup's
-// content is in no window.
-QObject* searchObjects(QObject* object, const QString& objectName) {
+// content is in no window. A popup's content can lead back to the popup, so
+// `seen` keeps the walk from going round.
+QObject* searchObjects(QObject* object, const QString& objectName, QSet<QObject*>& seen) {
+  if (seen.contains(object)) return nullptr;
+  seen.insert(object);
   if (object->objectName() == objectName) return object;
   const auto* item = qobject_cast<QQuickItem*>(object);
   const QObjectList owned = object->children();
   for (QObject* child : owned) {
     if (qobject_cast<QQuickItem*>(child)) continue;
-    if (QObject* found = searchObjects(child, objectName)) return found;
+    if (QObject* found = searchObjects(child, objectName, seen)) return found;
   }
   if (item) {
     const QList<QQuickItem*> children = item->childItems();
     for (QQuickItem* child : children) {
-      if (QObject* found = searchObjects(child, objectName)) return found;
+      if (QObject* found = searchObjects(child, objectName, seen)) return found;
     }
   } else if (auto* content = object->property("contentItem").value<QQuickItem*>()) {
-    if (QObject* found = searchObjects(content, objectName)) return found;
+    if (QObject* found = searchObjects(content, objectName, seen)) return found;
   }
   return nullptr;
+}
+
+QObject* searchObjects(QObject* object, const QString& objectName) {
+  QSet<QObject*> seen;
+  return searchObjects(object, objectName, seen);
 }
 
 void collectTexts(QQuickItem* item, QStringList& texts) {
@@ -119,6 +128,7 @@ void World::open() {
     clipboard = text;
     return true;
   });
+  m_app->bridge().setClipboardWriter([this](const QString& text) { clipboard = text; });
   m_app->start();
   QQuickWindow* shown = m_app->runtime().window();
   expect(shown != nullptr, QStringLiteral("the phone's window did not load: %1").arg(m_app->runtime().lastError()));

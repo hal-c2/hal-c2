@@ -16,7 +16,8 @@ import {
   WS_METHODS,
 } from "@hal-c2/contracts";
 import { EnvironmentSupervisor } from "@hal-c2/client-runtime/connection";
-import { subscribe } from "@hal-c2/client-runtime/rpc";
+import { mcStream, subscribe } from "@hal-c2/client-runtime/rpc";
+import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -69,6 +70,16 @@ export interface TuiSettingsClient {
   /** This machine's resource monitor: a snapshot every few seconds while subscribed. */
   readonly subscribeResourceTelemetry: (
     onSnapshot: (snapshot: ResourceTelemetrySnapshot) => void,
+  ) => () => void;
+  /**
+   * One of this machine's MC entity streams (`spaces`, `space:<id>`): a snapshot,
+   * then each event, and a fresh snapshot after a reconnection. `onError` gets the
+   * MC's refusal, after which nothing more arrives.
+   */
+  readonly subscribeMcStream: (
+    stream: string,
+    onFrame: (frame: EntityStreamFrame) => void,
+    onError?: (message: string) => void,
   ) => () => void;
 }
 
@@ -167,6 +178,20 @@ export function makeTuiSettingsClient(
       drain(
         subscribe(WS_METHODS.subscribeResourceTelemetry, {}).pipe(
           Stream.tap((snapshot) => Effect.sync(() => onSnapshot(snapshot))),
+        ),
+      ),
+    subscribeMcStream: (stream, onFrame, onError) =>
+      drain(
+        mcStream(stream).pipe(
+          Stream.tap((frame) => Effect.sync(() => onFrame(frame))),
+          Stream.catchCause((cause) =>
+            Stream.fromEffect(
+              Effect.sync(() => {
+                const error = Cause.squash(cause);
+                onError?.(error instanceof Error ? error.message : String(error));
+              }),
+            ),
+          ),
         ),
       ),
   };

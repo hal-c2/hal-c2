@@ -512,7 +512,7 @@ void SpaceController::activate() {
   if (m_active) return;
   m_active = true;
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
-  if (auto* keys = NativeShell::of(this)->controller<KeybindingController>(); keys && m_viewed) {
+  if (auto* keys = NativeShell::of(this)->controller<KeybindingController>()) {
     keys->commands()->add(kOpen, tr("Open Space"),
                           [navigation] { navigation->open(NavigationController::Route::of(kRoute)); });
     keys->commands()->setTerms(kOpen, {QStringLiteral("space"), QStringLiteral("pages"), QStringLiteral("notes"),
@@ -624,7 +624,8 @@ void SpaceController::toast(const QString& type, const QString& title, const QSt
 
 void SpaceController::publish() {
   m_bridge->publish(QStringLiteral("space"), QVariantMap{{QStringLiteral("error"), m_error},
-                                                          {QStringLiteral("busy"), m_writing > 0}});
+                                                          {QStringLiteral("busy"), m_writing > 0},
+                                                          {QStringLiteral("written"), m_written}});
 }
 
 void SpaceController::exportPage(const QString& pageId, std::function<void(const QString&)> done) {
@@ -655,12 +656,14 @@ void SpaceController::pageFromThread(const QString& threadKey) {
         {{QStringLiteral("spaceId"), space}, {QStringLiteral("threadId"), threadId}},
         [this, space](const QJsonObject& result) {
           --m_writing;
+          // Said before the route opens: the phone's Space screen opens this page when it arrives.
+          m_written = result.value(QLatin1String("page")).toObject().value(QLatin1String("id")).toString();
           publish();
           if (auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
             navigation->open(NavigationController::Route::of(kRoute));
           }
           awaitSpace(space);
-          awaitPage(result.value(QLatin1String("page")).toObject().value(QLatin1String("id")).toString());
+          awaitPage(m_written);
           toast(QStringLiteral("success"), tr("Page written from the thread"));
         },
         [this](const QJsonObject& detail) {

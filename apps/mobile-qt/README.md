@@ -37,6 +37,8 @@ item with the `objectName`, a mouse's click or drag there, keys into what has th
 hardware keyboard's chord through the window's shortcuts, Android's Back. The Gherkin reader and
 the step registry are the desktop runner's (`apps/desktop-qt/tests/native/features/Runner.h`).
 `Pairing` is the pairing class by itself, with the links it must refuse, and `Scanner` the scanner.
+`Qml` runs `tests/qml` with `qmltestrunner` over the desktop's fake `HalC2.Shell`, for what a screen
+decides by itself.
 
 No test opens a camera. The device's is one object (`src/ScanCamera.h`), and the tests put
 `tests/FakeCamera.h` in its place: it scripts the user's answer to the system's question and

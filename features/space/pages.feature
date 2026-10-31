@@ -6,7 +6,7 @@
 #   apps/server-ex/lib/hal_c2/space.ex
 #   apps/server-ex/priv/mcp_tools.json (hal_c2_page_*)
 
-@mc @desktop @mobile @tui @backlog-mobile @backlog-tui
+@mc @desktop @mobile @tui
 Feature: Pages in a Space
   A Space holds Pages that people and agents write together. A page is a list of
   blocks (paragraphs, headings, checklists, callouts and links to subpages), can sit
@@ -191,7 +191,7 @@ Feature: Pages in a Space
     Scenario: Only a checklist item can be ticked
       Given "Roadmap" has the blocks "Plain"
       When the user ticks "Plain"
-      Then the page request is refused
+      Then the user is told only a checklist item can be ticked
 
     Scenario: The user moves a block
       Given "Roadmap" has the blocks "One, Two, Three"
@@ -311,7 +311,7 @@ Feature: Pages in a Space
       Then the user is told text generation failed
       And the pages of "Research" are ""
 
-  @backlog-desktop
+  @backlog-desktop @backlog-mobile
   Rule: Agents write pages too
 
     Background:
@@ -319,6 +319,7 @@ Feature: Pages in a Space
       And the Space "Research" with the page "Roadmap"
       And "Roadmap" has the blocks "Ship it"
 
+    @backlog-tui
     Scenario: An agent lists and reads pages
       When the agent in "Work" lists the pages of "Research"
       Then the agent sees the page "Roadmap"
@@ -334,11 +335,13 @@ Feature: Pages in a Space
       And the agent in "Work" deletes the block "Shipped"
       Then the blocks of "Roadmap" read ""
 
+    @backlog-tui
     Scenario: An agent's refused edit changes nothing
       When the agent in "Work" changes the block "Ship it" to "Shipped" and ticks it
       Then the agent is refused
       And the blocks of "Roadmap" read "Ship it"
 
+    @backlog-tui
     Scenario: An agent cannot edit a trashed page
       Given the page "Roadmap" is in the trash
       When the agent in "Work" adds the block "Agent note" to "Roadmap"

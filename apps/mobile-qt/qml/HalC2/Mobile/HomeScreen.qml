@@ -6,7 +6,7 @@ import HalC2.Bricks
 
 // The phone layout's home: every thread of the environment, grouped as the
 // desktop's sidebar groups them (the Sidebar brick over `sidebar`), under a
-// bar with the environment, settings and a new thread.
+// bar with the Spaces, the environment, settings and a new thread.
 ColumnLayout {
     id: screen
 
@@ -25,6 +25,14 @@ ColumnLayout {
     MobileBar {
         Layout.fillWidth: true
         title: qsTr("Threads")
+
+        MobileIconButton {
+            objectName: "spaces"
+            iconName: "book"
+            label: qsTr("Spaces")
+            enabled: (Shell.state.route ?? null) !== null
+            onClicked: Shell.dispatch("space.open")
+        }
 
         MobileIconButton {
             objectName: "environment"

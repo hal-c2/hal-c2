@@ -904,7 +904,7 @@ const Steps steps([] {
     look(world, idOfSpace(world, c[0]));
     act(world, QStringLiteral("space.delete"), {{QStringLiteral("spaceId"), idOfSpace(world, c[0])}});
   });
-  step(QStringLiteral("the (Space|page) request is refused"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("(?:the (?:Space|page) request is refused|the user is told only a checklist item can be ticked)"), [](World& world, const Captures&, const Table&) {
     const FakeSpaces& spaces = fake(world.mc);
     expect(!spaces.last.error.isEmpty(), QStringLiteral("the MC answered %1 with %2").arg(spaces.lastMethod, show(spaces.last.result.toVariantMap())));
     const QString said = world.state(QStringLiteral("space")).toMap().value(QStringLiteral("error")).toString();
