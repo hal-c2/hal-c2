@@ -609,6 +609,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("source-control/snap-shot.feature"),
     QStringLiteral("planning/planner.feature"),
     QStringLiteral("space/pages.feature"),
+    QStringLiteral("space/self-updating-pages.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

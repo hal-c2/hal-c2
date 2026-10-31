@@ -245,7 +245,34 @@ QVariantMap SpacePages::page() const {
           {QStringLiteral("parentPageId"), text(page, QLatin1String("parentPageId"))},
           {QStringLiteral("trashed"), !live(page)},
           {QStringLiteral("sourceThreadId"), thread},
-          {QStringLiteral("sourceThreadTitle"), thread.isEmpty() ? QString() : threadTitle(thread)}};
+          {QStringLiteral("sourceThreadTitle"), thread.isEmpty() ? QString() : threadTitle(thread)},
+          {QStringLiteral("schedule"), updateOf(page)},
+          {QStringLiteral("writtenAt"), text(page, QLatin1String("writtenAt"))}};
+}
+
+QString SpacePages::cadenceLabel(const QJsonObject& cadence) {
+  if (cadence.value(QLatin1String("type")).toString() == QLatin1String("interval")) {
+    const qint64 minutes = qint64(cadence.value(QLatin1String("everyMs")).toDouble()) / 60000;
+    if (minutes == 60) return QStringLiteral("Every hour");
+    if (minutes > 0 && minutes % 60 == 0) return QStringLiteral("Every %1 hours").arg(minutes / 60);
+    return minutes == 1 ? QStringLiteral("Every minute") : QStringLiteral("Every %1 minutes").arg(minutes);
+  }
+  static const QStringList names{QStringLiteral("Sun"), QStringLiteral("Mon"), QStringLiteral("Tue"), QStringLiteral("Wed"),
+                                 QStringLiteral("Thu"), QStringLiteral("Fri"), QStringLiteral("Sat")};
+  QStringList days;
+  const QJsonArray weekdays = cadence.value(QLatin1String("weekdays")).toArray();
+  for (const QJsonValue& day : weekdays) days.append(names.value(day.toInt()));
+  return QStringLiteral("%1 at %2")
+      .arg(days.isEmpty() || days.size() == names.size() ? QStringLiteral("Every day") : days.join(QStringLiteral(", ")),
+           cadence.value(QLatin1String("timeOfDay")).toString());
+}
+
+QVariantMap SpacePages::updateOf(const QJsonObject& page) {
+  const QJsonObject schedule = page.value(QLatin1String("schedule")).toObject();
+  if (schedule.isEmpty()) return {};
+  QVariantMap update = schedule.toVariantMap();
+  update.insert(QStringLiteral("cadenceLabel"), cadenceLabel(schedule.value(QLatin1String("cadence")).toObject()));
+  return update;
 }
 
 QString SpacePages::status() const {
@@ -756,6 +783,18 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     call(QStringLiteral("page.restore"), {{QStringLiteral("pageId"), pageId}});
   } else if (action == QLatin1String("space.page.delete")) {
     call(QStringLiteral("page.delete"), {{QStringLiteral("pageId"), pageId}});
+  } else if (action == QLatin1String("space.page.schedule.set")) {
+    QJsonObject set = pick({"spaceId", "instruction", "cadence"});
+    set.insert(QStringLiteral("pageId"), pageId);
+    call(QStringLiteral("page.schedule.set"), set);
+  } else if (action == QLatin1String("space.page.schedule.setEnabled")) {
+    QJsonObject set = pick({"spaceId", "enabled"});
+    set.insert(QStringLiteral("pageId"), pageId);
+    call(QStringLiteral("page.schedule.setEnabled"), set);
+  } else if (action == QLatin1String("space.page.schedule.runNow")) {
+    call(QStringLiteral("page.schedule.runNow"), {{QStringLiteral("pageId"), pageId}});
+  } else if (action == QLatin1String("space.page.schedule.remove")) {
+    call(QStringLiteral("page.schedule.remove"), {{QStringLiteral("pageId"), pageId}});
   } else if (action == QLatin1String("space.page.copyMarkdown")) {
     exportPage(pageId, [this](const QString& markdown) {
       m_bridge->setClipboardText(markdown);

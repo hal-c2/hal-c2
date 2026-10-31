@@ -1,4 +1,4 @@
-// Pages in a Space (features/space/pages.feature): the MC's `space.*` calls,
+// Pages in a Space (features/space/pages.feature, self-updating-pages.feature): the MC's `space.*` calls,
 // faked here as the MC answers them (lib/hal_c2/space.ex and space/*.ex),
 // its `spaces` and `space:<id>` streams (served as every `stream` is, by
 // TimelineSteps.cpp), and what SpaceController shows of them.
@@ -45,6 +45,8 @@ struct FakeSpaces {
   QSet<QString> talked;
   // How text generation answers: available, unavailable or failed.
   QString generation = QStringLiteral("available");
+  // What a run of a page's update writes.
+  QString writes;
   // The folder the last summary was written in, and the thread it was of.
   QString cwd;
   QString summarised;
@@ -438,6 +440,74 @@ void seed(FakeMc& mc) {
   if (all(mc, kIndex, QStringLiteral("space")).isEmpty()) makeSpace(mc, QStringLiteral("Personal"));
 }
 
+const QString kGenerated = QStringLiteral("generated");
+
+QJsonObject generatedOf(FakeMc& mc, const QString& space, const QString& pageId) {
+  for (const QJsonObject& block : all(mc, streamOf(space), QStringLiteral("block"))) {
+    if (text(block, QLatin1String("pageId")) == pageId && text(block, QLatin1String("kind")) == kGenerated) return block;
+  }
+  return {};
+}
+
+// A page's update (lib/hal_c2/space/schedule.ex). The fake has no clock to wait
+// on, so a run ends within its `runNow`.
+Answer schedule(FakeMc& mc, const QString& method, const QString& space, const QJsonObject& page, const QJsonObject& in) {
+  const QString stream = streamOf(space);
+  const QString pageId = text(page, QLatin1String("id"));
+  const auto answer = [&] { return Answer{{{QStringLiteral("page"), one(mc, stream, QStringLiteral("page"), pageId)}}}; };
+  const auto nextRun = [&] { return iso(now().addSecs(3600 + ++fake(mc).clock)); };
+  QJsonObject shown = page.value(QLatin1String("schedule")).toObject();
+  const auto show = [&](const QJsonObject& fields) {
+    for (auto it = fields.begin(); it != fields.end(); ++it) shown.insert(it.key(), it.value());
+    set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("schedule"), shown}});
+  };
+  if (method == QLatin1String("page.schedule.set")) {
+    if (text(in, QLatin1String("instruction")).trimmed().isEmpty()) {
+      return refused(QStringLiteral("invalid"), QStringLiteral("A page's update needs an instruction."));
+    }
+    show({{QStringLiteral("instruction"), text(in, QLatin1String("instruction")).trimmed()},
+          {QStringLiteral("cadence"), in.value(QLatin1String("cadence"))},
+          {QStringLiteral("enabled"), shown.isEmpty() || shown.value(QLatin1String("enabled")).toBool()},
+          {QStringLiteral("nextRunAt"), nextRun()},
+          {QStringLiteral("lastRunStatus"), shown.value(QLatin1String("lastRunStatus")).toString(QStringLiteral("never"))}});
+    return answer();
+  }
+  if (shown.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("This page has no update."));
+  if (method == QLatin1String("page.schedule.setEnabled")) {
+    const bool enabled = in.value(QLatin1String("enabled")).toBool();
+    show({{QStringLiteral("enabled"), enabled}, {QStringLiteral("nextRunAt"), enabled ? QJsonValue(nextRun()) : QJsonValue(QJsonValue::Null)}});
+    return answer();
+  }
+  const QJsonObject block = generatedOf(mc, space, pageId);
+  if (method == QLatin1String("page.schedule.remove")) {
+    if (!block.isEmpty()) {
+      const QList<QJsonObject> parsed = parseMarkdown(text(block, QLatin1String("text"))).second;
+      const QJsonObject first = parsed.value(0);
+      set(mc, stream, QStringLiteral("block"), text(block, QLatin1String("id")),
+          {{QStringLiteral("kind"), text(first, QLatin1String("kind"))}, {QStringLiteral("text"), text(first, QLatin1String("text"))}});
+    }
+    set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("schedule"), QJsonValue::Null}, {QStringLiteral("writtenAt"), QJsonValue::Null}});
+    return answer();
+  }
+  const QString at = stamp(mc);
+  const QString generation = fake(mc).generation;
+  if (generation != QLatin1String("available")) {
+    const QString error = generation == QLatin1String("failed") ? QStringLiteral("the model is overloaded") : QStringLiteral("No text generation provider is set up.");
+    show({{QStringLiteral("lastRunAt"), at}, {QStringLiteral("lastRunStatus"), QStringLiteral("failed")}, {QStringLiteral("lastRunError"), error}});
+    return answer();
+  }
+  if (block.isEmpty()) {
+    const Answer inserted = insertBlock(mc, space, pageId, {{QStringLiteral("kind"), QStringLiteral("paragraph")}, {QStringLiteral("text"), fake(mc).writes}},
+                                        QJsonValue::Undefined, {{QStringLiteral("type"), QStringLiteral("schedule")}});
+    set(mc, stream, QStringLiteral("block"), text(inserted.result.value(QLatin1String("block")).toObject(), QLatin1String("id")), {{QStringLiteral("kind"), kGenerated}});
+  } else {
+    set(mc, stream, QStringLiteral("block"), text(block, QLatin1String("id")), {{QStringLiteral("text"), fake(mc).writes}, {QStringLiteral("updatedAt"), at}});
+  }
+  set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("writtenAt"), at}});
+  show({{QStringLiteral("lastRunAt"), at}, {QStringLiteral("lastRunStatus"), QStringLiteral("succeeded")}, {QStringLiteral("lastRunError"), QJsonValue::Null}});
+  return answer();
+}
+
 Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
   const QString space = text(in, QLatin1String("spaceId"));
   const QString stream = streamOf(space);
@@ -536,6 +606,7 @@ Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
           {{QStringLiteral("parentPageId"), parent.isString() ? parent : QJsonValue(QJsonValue::Null)}, {QStringLiteral("updatedAt"), stamp(mc)}});
       return answer();
     }
+    if (method.startsWith(QLatin1String("page.schedule."))) return schedule(mc, method, space, page, in);
     if (method == QLatin1String("page.trash")) {
       const QString at = stamp(mc);
       set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("trashedAt"), at}, {QStringLiteral("updatedAt"), at}});
@@ -556,7 +627,12 @@ Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
       set(mc, stream, QStringLiteral("block"), blockId, fields);
       return Answer{{{QStringLiteral("block"), one(mc, stream, QStringLiteral("block"), blockId)}}};
     };
-    if (method == QLatin1String("block.update")) return write({{QStringLiteral("text"), in.value(QLatin1String("text"))}});
+    if (method == QLatin1String("block.update")) {
+      if (text(block, QLatin1String("kind")) == kGenerated) {
+        return refused(QStringLiteral("invalid"), QStringLiteral("What a page's update wrote cannot be edited by hand."));
+      }
+      return write({{QStringLiteral("text"), in.value(QLatin1String("text"))}});
+    }
     if (method == QLatin1String("block.setChecked")) {
       if (text(block, QLatin1String("kind")) != QLatin1String("checklist")) {
         return refused(QStringLiteral("invalid"), QStringLiteral("Only a checklist item can be ticked."));
@@ -828,6 +904,43 @@ Table blockTable(World& world) {
                  item ? (block.value(QStringLiteral("checked")).toBool() ? QStringLiteral("yes") : QStringLiteral("no")) : QString()});
   }
   return rows;
+}
+
+// A cadence as the update dialog and the MC write it.
+QJsonObject everyHours(const QString& hours) {
+  return {{QStringLiteral("type"), QStringLiteral("interval")}, {QStringLiteral("everyMs"), hours.toDouble() * 3600000.0}};
+}
+
+QJsonObject everyDayAt(const QString& time) {
+  return {{QStringLiteral("type"), QStringLiteral("fixed_time")}, {QStringLiteral("timeOfDay"), time}, {QStringLiteral("weekdays"), QJsonArray()}};
+}
+
+void setUpdate(World& world, const QString& page, const QString& instruction, const QJsonObject& cadence) {
+  actOnPage(world, idOfPage(world, page), QStringLiteral("space.page.schedule.set"),
+            {{QStringLiteral("instruction"), instruction}, {QStringLiteral("cadence"), cadence.toVariantMap()}});
+}
+
+void givenUpdate(World& world, const QString& page, const QJsonObject& rest, const QString& method) {
+  QJsonObject in = rest;
+  in.insert(QStringLiteral("pageId"), idOfPage(world, page));
+  given(world, method, in);
+}
+
+// `shown` holds of the page's update, as the page shows it, in time.
+void expectUpdate(World& world, const QString& page, const std::function<bool(const QVariantMap& schedule, const QVariantMap& page)>& shown, const QString& wanted) {
+  lookAtPage(world, idOfPage(world, page));
+  world.waitFor([&] {
+    const QVariantMap open = viewOf(world)->page();
+    return shown(open.value(QStringLiteral("schedule")).toMap(), open);
+  }, [&] { return QStringLiteral("%1 to show %2; the page is %3").arg(page, wanted, show(viewOf(world)->page())); });
+}
+
+// What the open page's generated part says, when it has one.
+std::optional<QString> generatedText(World& world) {
+  for (const QVariantMap& block : viewOf(world)->blocks()->rows()) {
+    if (block.value(QStringLiteral("kind")) == kGenerated) return block.value(QStringLiteral("text")).toString();
+  }
+  return std::nullopt;
 }
 
 std::optional<QVariantMap> rowOf(const SpaceRows* rows, const QString& id) {
@@ -1198,6 +1311,94 @@ const Steps steps([] {
   step(QStringLiteral("the thread %1 talked about a release plan").arg(q), [](World& world, const Captures& c, const Table&) {
     fake(world.mc).talked.insert(threadNamed(world, c[0]));
   });
+  // A page that updates itself.
+  step(QStringLiteral("the user has %1 update itself with %1 every (\\d+) hours").arg(q), [](World& world, const Captures& c, const Table&) {
+    setUpdate(world, c[0], c[1], everyHours(c[2]));
+  });
+  step(QStringLiteral("the user has %1 update itself with %1 every day at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    setUpdate(world, c[0], c[1], everyDayAt(c[2]));
+  });
+  step(QStringLiteral("%1 updates itself with %1 every (\\d+) hours").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenUpdate(world, c[0], {{QStringLiteral("instruction"), c[1]}, {QStringLiteral("cadence"), everyHours(c[2])}}, QStringLiteral("page.schedule.set"));
+  });
+  step(QStringLiteral("the updates of %1 are paused").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenUpdate(world, c[0], {{QStringLiteral("enabled"), false}}, QStringLiteral("page.schedule.setEnabled"));
+  });
+  step(QStringLiteral("the update of %1 has run").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenUpdate(world, c[0], {}, QStringLiteral("page.schedule.runNow"));
+  });
+  step(QStringLiteral("text generation writes %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world.mc).generation = QStringLiteral("available");
+    fake(world.mc).writes = c[0];
+  });
+  step(QStringLiteral("the user pauses the updates of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnPage(world, idOfPage(world, c[0]), QStringLiteral("space.page.schedule.setEnabled"), {{QStringLiteral("enabled"), false}});
+  });
+  step(QStringLiteral("the user resumes the updates of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnPage(world, idOfPage(world, c[0]), QStringLiteral("space.page.schedule.setEnabled"), {{QStringLiteral("enabled"), true}});
+  });
+  step(QStringLiteral("the user runs the update of %1 now").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnPage(world, idOfPage(world, c[0]), QStringLiteral("space.page.schedule.runNow"), {});
+  });
+  step(QStringLiteral("the user removes the update of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnPage(world, idOfPage(world, c[0]), QStringLiteral("space.page.schedule.remove"), {});
+  });
+  step(QStringLiteral("the user tries to edit the generated part of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject block = generatedOf(world.mc, current(world), idOfPage(world, c[0]));
+    expect(!block.isEmpty(), QStringLiteral("%1 has no generated part").arg(c[0]));
+    actOnBlock(world, text(block, QLatin1String("text")), QStringLiteral("space.block.update"), {{QStringLiteral("text"), QStringLiteral("Edited by hand")}});
+  });
+  step(QStringLiteral("%1 shows the instruction %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectUpdate(world, c[0], [&](const QVariantMap& update, const QVariantMap&) { return update.value(QStringLiteral("instruction")) == c[1]; },
+                 QStringLiteral("the instruction %1").arg(c[1]));
+  });
+  step(QStringLiteral("%1 shows no instruction").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectUpdate(world, c[0], [](const QVariantMap& update, const QVariantMap&) { return update.isEmpty(); }, QStringLiteral("no instruction"));
+  });
+  step(QStringLiteral("%1 shows it updates every (\\d+) hours").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString label = QStringLiteral("Every %1 hours").arg(c[1]);
+    expectUpdate(world, c[0], [&](const QVariantMap& update, const QVariantMap&) { return update.value(QStringLiteral("cadenceLabel")) == label; }, label);
+  });
+  step(QStringLiteral("%1 shows it updates every day at %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString label = QStringLiteral("Every day at %1").arg(c[1]);
+    expectUpdate(world, c[0], [&](const QVariantMap& update, const QVariantMap&) { return update.value(QStringLiteral("cadenceLabel")) == label; }, label);
+  });
+  step(QStringLiteral("%1 shows when it next runs").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectUpdate(world, c[0], [](const QVariantMap& update, const QVariantMap&) { return !update.value(QStringLiteral("nextRunAt")).toString().isEmpty(); },
+                 QStringLiteral("its next run"));
+  });
+  step(QStringLiteral("%1 shows no next run").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectUpdate(world, c[0], [](const QVariantMap& update, const QVariantMap&) { return update.value(QStringLiteral("nextRunAt")).toString().isEmpty(); },
+                 QStringLiteral("no next run"));
+  });
+  step(QStringLiteral("%1 has not been written yet").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectUpdate(world, c[0], [](const QVariantMap&, const QVariantMap& page) { return page.value(QStringLiteral("writtenAt")).toString().isEmpty(); },
+                 QStringLiteral("it has not been written"));
+  });
+  step(QStringLiteral("%1 shows when it was last written").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectUpdate(world, c[0], [](const QVariantMap&, const QVariantMap& page) { return !page.value(QStringLiteral("writtenAt")).toString().isEmpty(); },
+                 QStringLiteral("when it was last written"));
+  });
+  step(QStringLiteral("%1 shows its updates are paused").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectUpdate(world, c[0], [](const QVariantMap& update, const QVariantMap&) { return update.value(QStringLiteral("enabled")) == false; }, QStringLiteral("it is paused"));
+  });
+  step(QStringLiteral("%1 shows its updates are not paused").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectUpdate(world, c[0], [](const QVariantMap& update, const QVariantMap&) { return update.value(QStringLiteral("enabled")) == true; }, QStringLiteral("it is not paused"));
+  });
+  step(QStringLiteral("%1 shows its last run failed with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectUpdate(world, c[0], [&](const QVariantMap& update, const QVariantMap&) {
+      return update.value(QStringLiteral("lastRunStatus")) == QLatin1String("failed") && update.value(QStringLiteral("lastRunError")) == c[1];
+    }, QStringLiteral("a failed run saying %1").arg(c[1]));
+  });
+  step(QStringLiteral("the generated part of %1 reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, idOfPage(world, c[0]));
+    expectShown(world, [&] { return generatedText(world) == c[1]; }, QStringLiteral("the generated part to read %1").arg(c[1]));
+  });
+  step(QStringLiteral("%1 has no generated part").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, idOfPage(world, c[0]));
+    expectShown(world, [&] { return !generatedText(world).has_value(); }, QStringLiteral("no generated part"));
+  });
+
   step(QStringLiteral("text generation is available"), [](World& world, const Captures&, const Table&) {
     fake(world.mc).generation = QStringLiteral("available");
   });

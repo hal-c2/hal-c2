@@ -236,6 +236,120 @@ Item {
             compare(root.dispatched("space.page.rename"), [{ pageId: "page-1", title: "P" }]);
         }
 
+        function update(more) {
+            return { schedule: Object.assign({ instruction: "Summarise", cadence: { type: "interval", everyMs: 7200000 }, cadenceLabel: "Every 2 hours", enabled: true, nextRunAt: "2026-11-01T09:00:00.000Z", lastRunStatus: "never" }, more), writtenAt: "" };
+        }
+
+        function pageWith(fields) {
+            return { page: Object.assign({ id: "page-1", title: "Roadmap", parentPageId: "", trashed: false, sourceThreadId: "", sourceThreadTitle: "" }, fields) };
+        }
+
+        function test_a_page_without_an_update_shows_none() {
+            const view = root.research({});
+            verify(!findChild(view, "spacePageUpdate").visible);
+            compare(findChild(view, "spaceUpdateMenu").text, "Update itself…");
+        }
+
+        function test_the_update_says_what_it_does_and_when() {
+            const view = root.research(pageWith(update({})));
+            verify(findChild(view, "spacePageUpdate").visible);
+            compare(findChild(view, "spaceUpdateSays").text, "Summarise");
+            verify(findChild(view, "spaceUpdateWhen").text.startsWith("Every 2 hours, next run "));
+            compare(findChild(view, "spaceUpdateWritten").text, "Not written yet");
+            verify(!findChild(view, "spaceUpdateFailure").visible);
+            compare(findChild(view, "spaceUpdateMenu").text, "Change its update…");
+        }
+
+        function test_the_update_is_run_paused_and_removed_from_the_page() {
+            const view = root.research(pageWith(update({})));
+            mouseClick(findChild(view, "spaceUpdateRun"));
+            compare(dispatched("space.page.schedule.runNow"), [{ pageId: "page-1" }]);
+            mouseClick(findChild(view, "spaceUpdatePause"));
+            compare(dispatched("space.page.schedule.setEnabled"), [{ pageId: "page-1", enabled: false }]);
+            mouseClick(findChild(view, "spaceUpdateRemove"));
+            compare(dispatched("space.page.schedule.remove"), [{ pageId: "page-1" }]);
+        }
+
+        function test_a_paused_update_says_so_and_offers_to_resume() {
+            const view = root.research(pageWith(update({ enabled: false, nextRunAt: null })));
+            compare(findChild(view, "spaceUpdateWhen").text, "Every 2 hours, paused");
+            compare(findChild(view, "spaceUpdatePause").text, "Resume");
+            mouseClick(findChild(view, "spaceUpdatePause"));
+            compare(dispatched("space.page.schedule.setEnabled"), [{ pageId: "page-1", enabled: true }]);
+        }
+
+        function test_a_run_under_way_cannot_be_started_again() {
+            const view = root.research(pageWith(update({ lastRunStatus: "running" })));
+            compare(findChild(view, "spaceUpdateWritten").text, "Writing now…");
+            verify(!findChild(view, "spaceUpdateRun").enabled);
+        }
+
+        function test_a_failed_run_shows_on_the_page() {
+            const view = root.research(pageWith(update({ lastRunStatus: "failed", lastRunError: "the model is overloaded" })));
+            compare(findChild(view, "spaceUpdateFailure").text, "Last run failed: the model is overloaded");
+            verify(findChild(view, "spaceUpdateFailure").visible);
+        }
+
+        function test_a_trashed_page_shows_its_update_stopped_and_offers_nothing() {
+            const view = root.research(pageWith(Object.assign(update({ nextRunAt: null }), { trashed: true })));
+            verify(findChild(view, "spaceUpdateWhen").text.includes("stopped while this page is in the trash"));
+            verify(!findChild(view, "spaceUpdateRun").visible);
+            verify(!findChild(view, "spaceUpdateMenu").enabled);
+        }
+
+        function test_the_dialog_writes_an_interval_and_needs_an_instruction() {
+            const view = root.research({});
+            const dialog = findChild(view, "spaceUpdateDialog");
+            dialog.ask();
+            tryVerify(() => dialog.opened);
+            verify(!findChild(dialog, "spaceUpdateSave").enabled);
+            findChild(dialog, "spaceUpdateInstruction").text = " Summarise ";
+            verify(findChild(dialog, "spaceUpdateSave").enabled);
+            findChild(dialog, "spaceUpdateEvery").text = "0";
+            verify(!findChild(dialog, "spaceUpdateSave").enabled);
+            findChild(dialog, "spaceUpdateEvery").text = "3";
+            mouseClick(findChild(dialog, "spaceUpdateSave"));
+            compare(dispatched("space.page.schedule.set"), [{ pageId: "page-1", instruction: "Summarise", cadence: { type: "interval", everyMs: 10800000 } }]);
+            tryVerify(() => !dialog.visible);
+        }
+
+        function test_the_dialog_writes_a_time_of_day_and_starts_from_what_the_page_has() {
+            const view = root.research(pageWith(update({ cadence: { type: "fixed_time", timeOfDay: "07:30", weekdays: [1, 3] } })));
+            const dialog = findChild(view, "spaceUpdateDialog");
+            dialog.ask();
+            tryVerify(() => dialog.opened);
+            compare(findChild(dialog, "spaceUpdateInstruction").text, "Summarise");
+            compare(findChild(dialog, "spaceUpdateMode").currentIndex, 0);
+            compare(findChild(dialog, "spaceUpdateTime").text, "07:30");
+            findChild(dialog, "spaceUpdateTime").text = "25:00";
+            verify(!findChild(dialog, "spaceUpdateSave").enabled);
+            findChild(dialog, "spaceUpdateTime").text = "09:15";
+            mouseClick(findChild(dialog, "spaceUpdateSave"));
+            compare(dispatched("space.page.schedule.set"), [{ pageId: "page-1", instruction: "Summarise", cadence: { type: "fixed_time", timeOfDay: "09:15", weekdays: [1, 3] } }]);
+        }
+
+        function test_the_dialog_starts_from_an_interval_in_minutes() {
+            const view = root.research(pageWith(update({ cadence: { type: "interval", everyMs: 900000 } })));
+            const dialog = findChild(view, "spaceUpdateDialog");
+            dialog.ask();
+            tryVerify(() => dialog.opened);
+            compare(findChild(dialog, "spaceUpdateEvery").text, "15");
+            compare(findChild(dialog, "spaceUpdateUnit").currentIndex, 1);
+        }
+
+        function test_the_generated_part_shows_as_markdown_and_cannot_be_edited() {
+            const view = root.research({ blocks: [root.block("b1", "Mine"), root.block("b2", "Three **threads**", { kind: "generated" })] });
+            tryVerify(() => findChild(view, "spaceBlock:Three **threads**") !== null);
+            const generated = findChild(view, "spaceBlock:Three **threads**");
+            verify(!findChild(generated, "spaceBlockEditor:Three **threads**").visible);
+            tryVerify(() => findChild(generated, "spaceGenerated") !== null);
+            compare(findChild(generated, "spaceGenerated").text, "Three **threads**");
+            verify(findChild(view, "spaceBlockEditor:Mine").visible);
+            // It can still be moved, deleted and commented on.
+            verify(findChild(generated, "spaceDeleteBlock:Three **threads**").visible);
+            verify(findChild(generated, "spaceComment:Three **threads**") !== null);
+        }
+
         function test_a_page_from_a_thread_names_its_thread() {
             const view = root.research({ page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: false, sourceThreadId: "t1", sourceThreadTitle: "Work" } });
             const source = findChild(view, "spacePageSource");
