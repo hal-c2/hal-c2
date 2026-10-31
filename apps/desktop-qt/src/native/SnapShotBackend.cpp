@@ -8,6 +8,8 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 
+#include "MacPlatform.h"
+#include "MacSnapShot.h"
 #ifdef HAL_C2_HAS_DBUS
 #include "PortalSnapShot.h"
 #endif
@@ -91,6 +93,11 @@ SnapShotBackend::Platform SnapShotBackend::detect(const QProcessEnvironment& env
 }
 
 SnapShotBackend* SnapShotBackend::create(QObject* parent) {
+  // macOS captures directly, and so does a test's stand-in Mac.
+  if (MacPlatform::overridden()) return new MacSnapShot(MacPlatform::create(parent), parent);
+#ifdef Q_OS_MACOS
+  if (MacPlatform* mac = MacPlatform::create(parent)) return new MacSnapShot(mac, parent);
+#endif
 #ifdef Q_OS_LINUX
   const bool onLinux = true;
 #else
@@ -157,6 +164,19 @@ QString SnapShotBackend::portalTrigger(const QJsonObject& shortcut, QString* err
   parts.append(keysym);
   if (error) error->clear();
   return parts.join(QLatin1Char('+'));
+}
+
+void SnapShotBackend::checkShortcut(const QJsonObject& shortcut, std::function<void(const Check&)> done) {
+  if (session().mode != QLatin1String("portal")) {
+    done({false, QStringLiteral("SnapShots are not supported on this platform.")});
+    return;
+  }
+  QString problem;
+  if (portalTrigger(shortcut, &problem).isEmpty()) {
+    done({false, problem});
+    return;
+  }
+  done({true, QStringLiteral("Your desktop will confirm this shortcut when you save it.")});
 }
 
 // No audio module: the desktop's own player, from a copy of the sound in the

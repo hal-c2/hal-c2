@@ -84,7 +84,11 @@ SettingsPage {
             enabled: toggle.model?.enabled ?? false
             checked: toggle.model?.checked ?? false
             Accessible.name: toggle.heading
-            onToggled: Shell.dispatch("snapShot.set", { key: toggle.key, value: checked })
+            onToggled: {
+                Shell.dispatch("snapShot.set", { key: toggle.key, value: checked });
+                // A refusal leaves the state as it was, so nothing would move the switch back.
+                checked = Qt.binding(() => toggle.model?.checked ?? false);
+            }
         }
     }
 
@@ -169,6 +173,8 @@ SettingsPage {
         objectName: "snapShotSetup"
         Layout.fillWidth: true
         visible: snap.wizard !== null
+        // Nothing is left or stepped through while the desktop answers.
+        enabled: !(snap.wizard?.busy ?? false)
         implicitHeight: setup.implicitHeight + 32
         radius: Math.min(Theme.radius, 10)
         color: Theme.palette.color("surface", "#18181b")
@@ -216,6 +222,65 @@ SettingsPage {
             Label {
                 Layout.fillWidth: true
                 text: snap.wizard?.body ?? ""
+                color: snap.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
+            // macOS grants each permission on its own.
+            Repeater {
+                model: snap.wizard?.step === "access" ? (snap.wizard?.permissionRows ?? []) : []
+
+                RowLayout {
+                    required property var modelData
+
+                    objectName: "permission:" + modelData.id
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        Label {
+                            text: modelData.title
+                            color: Theme.palette.color("text", "#e4e4e7")
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.weight: Font.Medium
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: modelData.description
+                            color: snap.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            wrapMode: Text.Wrap
+                        }
+                    }
+
+                    Label {
+                        objectName: "allowed"
+                        visible: modelData.granted
+                        text: qsTr("Allowed")
+                        color: snap.muted
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+
+                    ShellButton {
+                        objectName: "allow"
+                        visible: !modelData.granted
+                        enabled: !(snap.wizard?.permissionsBusy ?? false)
+                        text: qsTr("Allow")
+                        onClicked: Shell.dispatch("snapShot.permission.allow", { id: modelData.id })
+                    }
+                }
+            }
+
+            Label {
+                objectName: "permissionsError"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: snap.wizard?.permissionsError ?? ""
                 color: snap.muted
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
@@ -279,6 +344,7 @@ SettingsPage {
                     objectName: "continue"
                     visible: snap.wizard?.step === "access"
                     primary: true
+                    enabled: snap.wizard?.continueEnabled ?? true
                     text: snap.wizard?.continueLabel ?? ""
                     onClicked: Shell.dispatch("snapShot.setup.continue")
                 }
@@ -347,16 +413,8 @@ SettingsPage {
             heading: qsTr("Sound")
             description: qsTr("Choose the sound played when capture starts.")
 
-            ShellButton {
-                objectName: "play"
-                visible: (snap.settings?.sound?.value ?? "off") !== "off"
-                subtle: true
-                iconName: "play"
-                Accessible.name: qsTr("Play %1").arg(snap.settings?.sound?.label ?? "")
-                onClicked: Shell.dispatch("snapShot.sound.play", { sound: snap.settings?.sound?.value })
-            }
-
             ShellComboBox {
+                id: soundChoices
                 objectName: "control"
                 outline: true
                 implicitWidth: 170
@@ -365,6 +423,25 @@ SettingsPage {
                 currentIndex: sounds.findIndex(choice => choice.value === (snap.settings?.sound?.value ?? "soft-pop"))
                 Accessible.name: qsTr("Sound")
                 onActivated: index => Shell.dispatch("snapShot.sound", { value: sounds[index].value })
+                // Right arrow hears the highlighted sound, as its row's button does.
+                Keys.onRightPressed: event => {
+                    const choice = popup.visible ? sounds[highlightedIndex] : null;
+                    event.accepted = !!choice;
+                    if (choice && choice.value !== "off")
+                        Shell.dispatch("snapShot.sound.play", { sound: choice.value });
+                }
+                // Hears a sound without choosing it; the choices stay open.
+                rowAction: ShellButton {
+                    readonly property var choice: soundChoices.sounds[parent?.row ?? 0] ?? null
+                    objectName: "play:" + (choice?.value ?? "")
+                    visible: (choice?.value ?? "off") !== "off"
+                    implicitWidth: 22
+                    implicitHeight: 22
+                    subtle: true
+                    iconName: "play"
+                    Accessible.name: qsTr("Play %1").arg(choice?.label ?? "")
+                    onClicked: Shell.dispatch("snapShot.sound.play", { sound: choice.value })
+                }
             }
         }
 
