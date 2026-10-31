@@ -66,6 +66,10 @@ var sections = [
     { to: "/settings/pairing", label: "Pairing", brick: "PairingSettings", requires: "pairing",
       detail: "The environment this device is paired with",
       keywords: "pairing paired environment machine address connection forget unpair sign out disconnect this device" },
+    // Only a client that maintains its environments itself (apps/mobile-qt) publishes `maintenance`.
+    { to: "/settings/maintenance", label: "Maintenance", brick: "MaintenanceSettings", requires: "maintenance",
+      detail: "Environment and provider updates",
+      keywords: "maintenance update updates upgrade version release channel server environment provider providers refresh codex claude" },
     { to: "/settings/archived", label: "Archive", brick: "ArchivedThreads", requires: "archivedThreads",
       detail: "Archived threads, unarchived or deleted", keywords: "archive archived threads unarchive restore delete" },
     { to: "/settings/cluster", label: "Cluster", brick: "ClusterSettings", action: "cluster.open", requires: "cluster",

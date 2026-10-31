@@ -15,6 +15,7 @@
 
 #include "ConnectionHealthController.h"
 #include "Harness.h"
+#include "Maintenance.h"
 #include "NativeShell.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
@@ -119,6 +120,12 @@ void World::open() {
     clipboard = text;
     return true;
   });
+  m_app->maintenance().setClipboardWriter([this](const QString& text) {
+    clipboard = text;
+    return true;
+  });
+  // Releases are the environment's fake index, never GitHub's.
+  m_app->maintenance().setReleaseIndex(mc.origin().toString() + QStringLiteral("/releases?page=%1"));
   m_app->start();
   QQuickWindow* shown = m_app->runtime().window();
   expect(shown != nullptr, QStringLiteral("the phone's window did not load: %1").arg(m_app->runtime().lastError()));

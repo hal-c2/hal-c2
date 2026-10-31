@@ -78,6 +78,29 @@ Builds you made yourself, or started with `HAL_C2_DISABLE_AUTO_UPDATE=1`, do not
 themselves; **Settings → General** and **Check for Updates** say why. On an Apple Silicon Mac running the
 Intel build, the next update installs the Apple Silicon build.
 
+## Update from your phone
+
+On the phone, open **Settings → Maintenance**. It lists the MC you paired with and
+the machines clustered with it, each with its HAL-C2 version.
+
+- **Check for updates** looks for the newest release on the channel that machine
+  follows (stable, preview or nightly), so a stable MC is never offered a nightly.
+- **Update to** installs that release, or the version of your app when the MC is
+  behind it. Keep the app open until it says the machine reconnected and on which
+  version. When the update notice offers to update a machine, it opens this page.
+- A machine whose MC runs inside the desktop app asks before updating, because the
+  desktop app closes and relaunches there. **Update all machines** updates the others
+  without waiting for that answer.
+- A machine that cannot update itself offers **Copy update command** instead: run
+  the copied command on that machine.
+- Each machine lists its enabled providers. **Update** installs a provider's newest
+  release on that machine and shows its progress until it ends; a provider behind on
+  several machines can be updated on all of them at once, and each machine says
+  whether its update succeeded, was already up to date, or failed and why.
+
+Nothing can be started while the phone is offline, or when its pairing does not
+allow operating the MC; the page says which.
+
 ## If an update fails
 
 Keep the client open until it reconnects or reports a failure. A release that fails its

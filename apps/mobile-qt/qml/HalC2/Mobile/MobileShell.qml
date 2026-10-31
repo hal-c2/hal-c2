@@ -133,7 +133,7 @@ ShellWindow {
         // of an environment that does not come back is here too.
         Item {
             Layout.fillWidth: true
-            Layout.preferredHeight: !notice.visible ? 0 : notice.height + 24 + (forget.visible ? forget.height + 4 : 0)
+            Layout.preferredHeight: !notice.visible ? 0 : notice.height + 24 + (forget.visible ? forget.height + 4 : 0) + (offer.visible ? offer.height + 4 : 0)
             visible: root.layout !== "pairing"
 
             ConnectionNotice {
@@ -152,6 +152,21 @@ ShellWindow {
                 tint: Theme.palette.color("error", "#ef4444")
                 text: qsTr("Forget this environment")
                 onClicked: Shell.dispatch("pairing.askToForget")
+            }
+
+            // A server behind this app is offered its update where the user is.
+            MobileButton {
+                id: offer
+
+                readonly property var machines: Shell.state.maintenance ? Shell.state.maintenance.machines : []
+
+                objectName: "connectionUpdate"
+                anchors.top: notice.bottom
+                anchors.topMargin: 4
+                anchors.right: notice.right
+                visible: notice.visible && !notice.troubled && notice.warning !== null
+                text: machines.length > 0 ? qsTr("Update %1").arg(machines[0].label) : qsTr("Update")
+                onClicked: Shell.dispatch("settings.navigate", { to: "/settings/maintenance" })
             }
         }
 
