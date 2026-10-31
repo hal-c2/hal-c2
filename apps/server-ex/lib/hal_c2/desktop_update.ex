@@ -17,6 +17,11 @@ defmodule HalC2.DesktopUpdate do
   `:desktop_install_timeout`, is recorded as the update's outcome
   (`HalC2.Upgrade.desktop_failed/1`). A requester that goes away cancels its run.
 
+  The app stops this MC to install, so a committed install is also kept in
+  `<home>/upgrades/desktop-install.json`. The MC the app starts again after a failed
+  install picks it up and takes the failure the app sends once it reconnects; the
+  connect report of an app that relaunched instead (no `requestId`) ends it quietly.
+
   The latest report is held in memory only: after a restart the desktop app's
   connect report says where it is.
 
@@ -70,7 +75,7 @@ defmodule HalC2.DesktopUpdate do
   def latest, do: GenServer.call(__MODULE__, :latest)
 
   @impl true
-  def init(nil), do: {:ok, %{host: nil, latest: nil, run: nil, install: nil}}
+  def init(nil), do: {:ok, %{host: nil, latest: nil, run: nil, install: restored_install()}}
 
   @impl true
   def handle_call({:update, progress, owner}, from, state) do
@@ -124,6 +129,7 @@ defmodule HalC2.DesktopUpdate do
     cond do
       state.run && id == state.run.id -> {:noreply, run_report(state, report)}
       state.install && id == state.install.id -> {:noreply, install_report(state, report)}
+      state.install && state.install.restored && id == nil -> {:noreply, install_done(state)}
       # The connect report, or one of a run that already ended.
       true -> {:noreply, state}
     end
@@ -172,15 +178,18 @@ defmodule HalC2.DesktopUpdate do
         }
 
         state = finish(state, {:ok, result})
-        control(state, "commitDesktopUpdate", run.id)
 
         install = %{
           id: run.id,
           from: desktop["currentVersion"],
           target: target,
+          restored: false,
           timer: deadline(install_timeout(), run.id, :install)
         }
 
+        # On disk first: the app stops this MC as soon as it is told.
+        keep_install(install)
+        control(state, "commitDesktopUpdate", run.id)
         %{state | install: install}
 
       "up-to-date" ->
@@ -256,8 +265,6 @@ defmodule HalC2.DesktopUpdate do
   defp install_report(state, _report), do: state
 
   defp install_failed(%{install: install} = state, reason) do
-    cancel_deadline(install.timer)
-
     HalC2.Upgrade.desktop_failed(%{
       "id" => install.id,
       "fromVersion" => install.from,
@@ -266,8 +273,38 @@ defmodule HalC2.DesktopUpdate do
       "reason" => reason
     })
 
+    install_done(state)
+  end
+
+  defp install_done(%{install: install} = state) do
+    cancel_deadline(install.timer)
+    File.rm(install_path())
     %{state | install: nil}
   end
+
+  defp keep_install(install) do
+    File.mkdir_p!(Path.dirname(install_path()))
+    File.write!(install_path(), JSON.encode!(Map.take(install, [:id, :from, :target])))
+  end
+
+  defp restored_install do
+    with true <- available?(),
+         {:ok, text} <- File.read(install_path()),
+         {:ok, %{"id" => id, "from" => from, "target" => target}} <- JSON.decode(text) do
+      %{
+        id: id,
+        from: from,
+        target: target,
+        restored: true,
+        timer: deadline(install_timeout(), id, :install)
+      }
+    else
+      _ -> nil
+    end
+  end
+
+  defp install_path,
+    do: Path.join([HalC2.Paths.data_dir(), "upgrades", "desktop-install.json"])
 
   # --- helpers -----------------------------------------------------------------------
 

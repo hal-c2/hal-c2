@@ -80,6 +80,13 @@ public:
         done(QStringLiteral("The download of %1 was incomplete.").arg(release.version));
         return;
       }
+      QFile written(path);
+      if (!written.open(QIODevice::ReadOnly) || !desktopUpdate::matchesDigest(written, release.sha256)) {
+        QFile::remove(path);
+        done(QStringLiteral("The download of %1 does not match its published digest.").arg(release.version));
+        return;
+      }
+      written.close();
       const QString staged = path.chopped(5);
       QFile::remove(staged);
       if (!QFile::rename(path, staged)) {

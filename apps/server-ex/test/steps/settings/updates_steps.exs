@@ -282,6 +282,63 @@ defmodule HalC2.Steps.Settings.Updates do
     ask(context)
   end
 
+  step "a client's desktop update is committed and the app stopped its MC to install", context do
+    Mc.ensure(HalC2.Settings)
+
+    ready =
+      report("downloaded", %{"downloadedVersion" => "1.2.4"}, %{"outcome" => "ready-to-install"})
+
+    context = desktop_plays(context, [{:run, ready}])
+    context = ask(context)
+    {request, context} = control(context, "commitDesktopUpdate")
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    Mc.ensure(HalC2.DesktopUpdate)
+    Mc.ensure(HalC2.Settings)
+
+    assert {200, %{"access_token" => access}} =
+             Mc.exchange(context.mc, "desktop-update-token", %{"client_label" => "HAL-C2 desktop"})
+
+    desktop = Mc.sub(Mc.connect_as(context.mc, access), 1, %{"type" => "desktopUpdateControl"})
+    context |> Map.put(:desktop, desktop) |> Map.put(:request, request)
+  end
+
+  step "the app reconnects and reports that the install failed because {string}",
+       %{args: [reason]} = context do
+    send_report(
+      context,
+      report("downloaded", %{}, %{
+        "requestId" => context.request,
+        "outcome" => "failed",
+        "reason" => reason
+      })
+    )
+  end
+
+  step "the app relaunched and reconnects", context do
+    send_report(context, report("idle"))
+  end
+
+  step "the MC's last update outcome is failed saying {string}", %{args: [reason]} = context do
+    _ = HalC2.DesktopUpdate.latest()
+    assert %{"status" => "failed", "reason" => ^reason} = HalC2.Upgrade.outcome()
+    context
+  end
+
+  step "no install is left waiting and no failure is recorded", context do
+    _ = HalC2.DesktopUpdate.latest()
+    assert :sys.get_state(HalC2.DesktopUpdate).install == nil
+    assert HalC2.Upgrade.outcome() == nil
+    context
+  end
+
+  step "the MC's descriptor says the desktop app updates it", context do
+    context = desktop_plays(context, [])
+    capabilities = HalC2.Environment.descriptor()["capabilities"]
+    assert capabilities["serverSelfUpdate"] == "desktop-managed"
+    assert capabilities["desktopAppUpdate"] == true
+    context
+  end
+
   step "the desktop app does not report an install for longer than allowed", context do
     World.put_app_env(:desktop_install_timeout, 0)
     Mc.ensure(HalC2.Settings)
@@ -417,10 +474,7 @@ defmodule HalC2.Steps.Settings.Updates do
              Mc.exchange(context.mc, "desktop-update-token", %{"client_label" => "HAL-C2 desktop"})
 
     desktop =
-      Mc.sub(Mc.connect_as(context.mc, access), 1, %{
-        "type" => "desktopUpdateControl",
-        "mc" => mc()
-      })
+      Mc.sub(Mc.connect_as(context.mc, access), 1, %{"type" => "desktopUpdateControl"})
 
     context = Map.merge(context, %{desktop: desktop, plays: plays})
     # Its connect report: once answered, its subscription before it is in place.

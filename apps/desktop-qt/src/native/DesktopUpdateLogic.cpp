@@ -1,5 +1,6 @@
 #include "DesktopUpdateLogic.h"
 
+#include <QCryptographicHash>
 #include <QHash>
 #include <QJsonDocument>
 #include <QRegularExpression>
@@ -302,6 +303,21 @@ bool showsProgress(const State& state, int percent) {
   return state.downloadPercent / 10 != percent / 10 || percent == 100;
 }
 
+namespace {
+
+// GitHub's `digest` of a release asset, "sha256:<hex>"; "" without a usable one.
+QString digestOf(const QJsonObject& asset) {
+  static const QRegularExpression sha256(QStringLiteral("^sha256:([0-9a-fA-F]{64})$"));
+  return sha256.match(asset.value(QLatin1String("digest")).toString()).captured(1).toLower();
+}
+
+}  // namespace
+
+bool matchesDigest(QIODevice& file, const QString& sha256) {
+  QCryptographicHash hash(QCryptographicHash::Sha256);
+  return hash.addData(&file) && QString::fromLatin1(hash.result().toHex()) == sha256;
+}
+
 QList<Release> parseFeed(const QByteArray& json, const QString& platform, const QString& arch) {
   QList<Release> releases;
   for (const QJsonValue& value : QJsonDocument::fromJson(json).array()) {
@@ -314,6 +330,10 @@ QList<Release> parseFeed(const QByteArray& json, const QString& platform, const 
     QJsonObject chosen;
     for (const QJsonValue& assetValue : release.value(QLatin1String("assets")).toArray()) {
       const QJsonObject asset = assetValue.toObject();
+      if (QUrl(asset.value(QLatin1String("browser_download_url")).toString()).scheme() != QLatin1String("https") ||
+          digestOf(asset).isEmpty()) {
+        continue;
+      }
       const QString name = asset.value(QLatin1String("name")).toString().toLower();
       const bool fits = platform == QLatin1String("linux") ? name.endsWith(QLatin1String(".appimage"))
                         : platform == QLatin1String("macos") ? name.endsWith(QLatin1String(".zip")) && name.contains(QLatin1String("macos"))
@@ -327,7 +347,7 @@ QList<Release> parseFeed(const QByteArray& json, const QString& platform, const 
     if (chosen.isEmpty()) continue;
     releases.append({version, release.value(QLatin1String("body")).toString(), release.value(QLatin1String("prerelease")).toBool(),
                      QUrl(chosen.value(QLatin1String("browser_download_url")).toString()),
-                     qint64(chosen.value(QLatin1String("size")).toDouble())});
+                     qint64(chosen.value(QLatin1String("size")).toDouble()), digestOf(chosen)});
   }
   std::stable_sort(releases.begin(), releases.end(),
                    [](const Release& a, const Release& b) { return compareVersions(a.version, b.version) > 0; });

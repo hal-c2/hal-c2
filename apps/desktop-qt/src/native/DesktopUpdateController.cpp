@@ -85,7 +85,10 @@ void DesktopUpdateController::activate() {
   // Where the update stands, for an MC that (re)connects; the MC asks for
   // updates on its own subscription, which the client sends again itself.
   connect(m_client, &McClient::readyChanged, this, [this](bool ready) {
-    if (ready) report(m_remote->statusReport(m_remote->activeRequestId()));
+    if (!ready) return;
+    // First: a connect report with no request would end the install this failure is about.
+    if (!m_unsentFailure.isEmpty()) report(m_unsentFailure);
+    report(m_remote->statusReport(m_remote->activeRequestId()));
   });
   m_control = m_client->subscribe(this, {{QStringLiteral("type"), QStringLiteral("desktopUpdateControl")}},
                                   [this](const QJsonObject& frame) { onControl(frame); });
@@ -103,9 +106,16 @@ void DesktopUpdateController::attach(NativeWindow* window) {
 }
 
 void DesktopUpdateController::report(const QJsonObject& payload) {
+  // A failed install comes with the MC just stopped for it: its report waits for
+  // the MC to hear it, here or once it is back.
+  const bool failure = payload.value(QLatin1String("outcome")) == QLatin1String("failed");
+  if (failure) m_unsentFailure = payload;
   if (!m_client->isReady()) return;
   // An MC the desktop app did not start refuses it; nothing to tell anyone.
-  m_client->call(this, m_client->environment(), kReport, payload, [](const QJsonValue&, const std::optional<QString>&) {});
+  QPointer<DesktopUpdateController> self(this);
+  m_client->call(this, m_client->environment(), kReport, payload, [self, failure, payload](const QJsonValue&, const std::optional<QString>& error) {
+    if (self && failure && !error && self->m_unsentFailure == payload) self->m_unsentFailure = {};
+  });
 }
 
 void DesktopUpdateController::onControl(const QJsonObject& frame) {

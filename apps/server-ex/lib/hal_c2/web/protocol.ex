@@ -32,7 +32,7 @@ defmodule HalC2.Web.Protocol do
     * `{"type": "serverUpdate", "mc": n, "input": ServerSelfUpdateInput}`: moves
       that MC to another version (`HalC2.Upgrade`), streaming its progress and
       ending after `complete`
-    * `{"type": "desktopUpdateControl", "mc": n}`: this client as the desktop app
+    * `{"type": "desktopUpdateControl", "mc"?: n}`: this client as the desktop app
       that started that MC (`HalC2.DesktopUpdate`); the update control messages
       (`DesktopUpdateControlMessage`) the MC sends it
     * `{"type": "localServers", "mc": n}`: web servers listening on that MC's
@@ -304,9 +304,14 @@ defmodule HalC2.Web.Protocol do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:server_update, mc, input}}
   end
 
+  # The desktop app subscribes before it knows its MC's name, and only the MC it
+  # started serves this shape.
   defp decode_shape(%{"type" => "desktopUpdateControl", "mc" => mc}, mcs) do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:desktop_update_control, mc}}
   end
+
+  defp decode_shape(%{"type" => "desktopUpdateControl"}, _mcs),
+    do: {:ok, {:desktop_update_control, node()}}
 
   defp decode_shape(%{"type" => "localServers", "mc" => mc}, mcs) do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:local_servers, mc}}

@@ -289,6 +289,7 @@ Feature: Updating the server, the desktop app and providers
       Examples:
         | situation                                         | reason                                                                  |
         | no update source is configured                    | Automatic updates are not available because no update feed is configured. |
+        | the update source is not https                    | Automatic updates are not available because the update feed is not https. |
         | the app runs from a development or unpacked build | Automatic updates are only available in packaged production builds.      |
         | automatic updates were turned off for this run    | Automatic updates are disabled by the HAL_C2_DISABLE_AUTO_UPDATE setting. |
         | the app on Linux is not the AppImage build        | Automatic updates on Linux require running the AppImage build.            |
@@ -472,6 +473,22 @@ Feature: Updating the server, the desktop app and providers
         | does not finish the update | did not finish the update in time        |
         | does not report an install | did not report an install result in time |
 
+    @mc
+    Scenario: An MC the desktop app started offers the update through the app
+      Then the MC's descriptor says the desktop app updates it
+
+    @mc
+    Scenario: An install that fails after the MC stopped is still recorded
+      Given a client's desktop update is committed and the app stopped its MC to install
+      When the app reconnects and reports that the install failed because "disk full"
+      Then the MC's last update outcome is failed saying "disk full"
+
+    @mc
+    Scenario: An app that relaunched leaves no failure behind
+      Given a client's desktop update is committed and the app stopped its MC to install
+      When the app relaunched and reconnects
+      Then no install is left waiting and no failure is recorded
+
     @dropped @mc
     Scenario: The MC commits a desktop update after relaunch
       Given the desktop app prepared an update and relaunched
@@ -517,6 +534,38 @@ Feature: Updating the server, the desktop app and providers
       When five minutes pass without the request being confirmed
       Then confirming it fails with "This desktop update is no longer prepared."
       And a new update request can start
+
+    @desktop
+    Scenario: A request replaces a prepared update its MC never confirmed
+      Given the desktop app prepared an update for a server's request
+      Then a new update request can start
+
+    @desktop
+    Scenario: A failed install the MC could not hear reaches it once it is back
+      Given a server's update is installing and its MC stopped for it
+      When the install fails and the connection comes back
+      Then the MC hears that request failed with the install's reason
+
+    @desktop
+    Scenario Outline: Only a download the app can verify is offered
+      Given the update feed lists a release whose asset <asset>
+      Then that release is <offered>
+
+      Examples:
+        | asset                                 | offered     |
+        | is https with a sha256 digest         | offered     |
+        | is https with no digest               | not offered |
+        | is plain http with a sha256 digest    | not offered |
+
+    @desktop
+    Scenario Outline: A download is checked against its published digest
+      Given a download whose bytes <match> the release's digest
+      Then the app <verdict> it
+
+      Examples:
+        | match        | verdict |
+        | match        | accepts |
+        | do not match | refuses |
 
     @desktop
     Scenario: Confirming an update joins an install that is already running
@@ -778,6 +827,20 @@ Feature: Updating the server, the desktop app and providers
       Then the row of "WSL · Ubuntu" says "This environment isn’t connected — try again once it reconnects."
 
   Rule: Maintaining an environment from a phone
+
+    @mobile
+    Scenario: A desktop app's install that fails is shown and can be tried again
+      Given the user updated the desktop app on "server" and is waiting for it to come back
+      When its MC says the install failed because "disk full"
+      Then the user is told "server update failed: disk full"
+      And the update of "server" can be started again
+
+    @mobile
+    Scenario: An update that never comes back on a new version stops waiting
+      Given the user updated "server" and it comes back on the same version
+      When the wait for it runs out
+      Then the user is told "server update failed: it did not come back on a new version. Try again."
+      And the update of "server" can be started again
 
     @mobile
     Scenario: The phone checks an environment's release on the channel the host follows

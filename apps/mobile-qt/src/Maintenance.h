@@ -83,6 +83,8 @@ public:
   void setAppVersion(const QString& version);
   void setClipboardWriter(std::function<bool(const QString&)> write) { m_writeClipboard = std::move(write); }
   void setReleaseIndex(const QString& url) { m_releaseIndex = url; }
+  // How long an answered server update may take to come back on another version.
+  void setReconnectDeadline(int ms) { m_reconnectDeadline = ms; }
 
 private:
   struct Machine {
@@ -120,6 +122,10 @@ private:
   void updateServer(const Machine& machine);
   // A server update the MC answered: done once the machine is back on another version.
   void settle();
+  // Waits for the machine to come back, or to say the update it answered failed.
+  void awaitReconnect(const Machine& machine, const QString& left, const QString& token);
+  void reconnectFailed(const QString& environmentId, const QString& why);
+  void endReconnect(const QString& environmentId);
   void copyCommand(const Machine& machine);
   void updateProvider(const Machine& machine, const QString& instanceId);
   void publish();
@@ -143,6 +149,14 @@ private:
   QHash<QString, QString> m_updating;
   // Server updates the MC answered, until the machine is back on another version.
   QHash<QString, QString> m_reconnecting;
+  // What each of them waits on: its deadline's run, and its config subscription.
+  struct Waiting {
+    quint64 run = 0;
+    int subscription = -1;
+  };
+  QHash<QString, Waiting> m_waiting;
+  quint64 m_waitRun = 0;
+  int m_reconnectDeadline = 180'000;
   QHash<QString, Outcome> m_outcomes;
   // Provider updates running ("<environment>\n<instance>"), and how each ended.
   QSet<QString> m_providerUpdates;

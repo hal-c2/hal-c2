@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QIODevice>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
@@ -81,10 +82,15 @@ struct Release {
   // The asset this machine installs.
   QUrl asset;
   qint64 size = 0;
+  // The asset's published digest, lowercase hex.
+  QString sha256;
 };
 // The feed's releases that are not drafts and have an asset for `platform`
-// (linux, macos) and `arch` (x64, arm64), newest first.
+// (linux, macos) and `arch` (x64, arm64), newest first. The app runs what it
+// downloads, so an asset that is not https or has no sha256 digest does not count.
 QList<Release> parseFeed(const QByteArray& json, const QString& platform, const QString& arch);
+// Whether what `file` holds from its current position has the digest.
+bool matchesDigest(QIODevice& file, const QString& sha256);
 
 struct Offer {
   Release release;

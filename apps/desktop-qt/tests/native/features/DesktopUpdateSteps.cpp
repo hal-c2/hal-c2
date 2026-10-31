@@ -6,6 +6,8 @@
 // side is the wire: `server.reportDesktopUpdateStatus` calls are recorded and
 // `desktopUpdateControl` frames are sent as the MC sends them.
 
+#include <QBuffer>
+#include <QCryptographicHash>
 #include <QJsonArray>
 #include <QJsonObject>
 
@@ -161,6 +163,8 @@ private:
 struct Fake {
   std::shared_ptr<FakeBackend> backend = std::make_shared<FakeBackend>();
   std::shared_ptr<FakeClock> clock = std::make_shared<FakeClock>();
+  QList<desktopUpdate::Release> parsed;
+  QByteArray downloadedBytes;
   int mcStops = 0;
   int mcStarts = 0;
   bool quit = false;
@@ -740,6 +744,9 @@ const Steps steps([] {
   });
 
   // Builds that cannot update.
+  step(QStringLiteral("the update source is not https"), [](World& world, const Captures&, const Table&) {
+    given(world, [](DesktopUpdater::Environment& environment) { environment.feedUrl = QStringLiteral("http://updates.example/releases"); });
+  });
   step(QStringLiteral("no update source is configured"), [](World& world, const Captures&, const Table&) {
     given(world, [](DesktopUpdater::Environment& environment) { environment.feedUrl.clear(); });
   });
@@ -1063,6 +1070,45 @@ const Steps steps([] {
     expect(fake().backend->installs == 0, QStringLiteral("the update was installed"));
   });
   step(QStringLiteral("a new update request can start"), [](World& world, const Captures&, const Table&) { prepare(world, QStringLiteral("req-2")); });
+  step(QStringLiteral("a server's update is installing and its MC stopped for it"), [](World& world, const Captures&, const Table&) {
+    prepare(world, QStringLiteral("req-1"));
+    fake().backend->holdInstall = true;
+    control(world, QStringLiteral("commitDesktopUpdate"), QStringLiteral("req-1"));
+    world.waitFor([] { return fake().backend->installing() && fake().mcStops == 1; }, QStringLiteral("the install to stop the MC"));
+  });
+  step(QStringLiteral("the install fails and the connection comes back"), [](World& world, const Captures&, const Table&) {
+    world.mc.calls.clear();
+    world.mc.drop();
+    fake().backend->installError = QStringLiteral("Could not replace /opt/hal-c2/HAL-C2.AppImage.");
+    fake().reason = *fake().backend->installError;
+    fake().backend->completeInstall();
+    world.sync();
+  });
+  step(QStringLiteral("the MC hears that request failed with the install's reason"), [](World& world, const Captures&, const Table&) {
+    const QJsonObject report = waitOutcome(world, QStringLiteral("req-1"));
+    expect(report.value(QLatin1String("outcome")) == QLatin1String("failed") && report.value(QLatin1String("reason")) == fake().reason,
+           show(report.toVariantMap()));
+  });
+  step(QStringLiteral("the update feed lists a release whose asset (.+)"), [](World&, const Captures& c, const Table&) {
+    const bool https = c[0].contains(QLatin1String("https"));
+    QJsonObject asset{{QStringLiteral("name"), QStringLiteral("HAL-C2.AppImage")},
+                      {QStringLiteral("browser_download_url"), QStringLiteral("%1://updates.example/HAL-C2.AppImage").arg(https ? QStringLiteral("https") : QStringLiteral("http"))}};
+    if (!c[0].contains(QLatin1String("no digest"))) asset.insert(QStringLiteral("digest"), QStringLiteral("sha256:") + QString(64, QLatin1Char('a')));
+    const QJsonArray feed{QJsonObject{{QStringLiteral("tag_name"), QStringLiteral("v1.4.0")}, {QStringLiteral("assets"), QJsonArray{asset}}}};
+    fake().parsed = desktopUpdate::parseFeed(QJsonDocument(feed).toJson(), QStringLiteral("linux"), QStringLiteral("x64"));
+  });
+  step(QStringLiteral("that release is (offered|not offered)"), [](World&, const Captures& c, const Table&) {
+    expect(fake().parsed.isEmpty() == (c[0] == QLatin1String("not offered")), QStringLiteral("%1 releases").arg(fake().parsed.size()));
+  });
+  step(QStringLiteral("a download whose bytes (match|do not match) the release's digest"), [](World&, const Captures& c, const Table&) {
+    fake().downloadedBytes = c[0] == QLatin1String("match") ? QByteArrayLiteral("update") : QByteArrayLiteral("tampered");
+  });
+  step(QStringLiteral("the app (accepts|refuses) it"), [](World&, const Captures& c, const Table&) {
+    QBuffer bytes(&fake().downloadedBytes);
+    bytes.open(QIODevice::ReadOnly);
+    const QString digest = QString::fromLatin1(QCryptographicHash::hash("update", QCryptographicHash::Sha256).toHex());
+    expect(desktopUpdate::matchesDigest(bytes, digest) == (c[0] == QLatin1String("accepts")), c[0]);
+  });
   step(QStringLiteral("the desktop app is already installing the downloaded version"), [](World& world, const Captures&, const Table&) {
     prepare(world, QStringLiteral("req-1"));
     fake().backend->holdInstall = true;

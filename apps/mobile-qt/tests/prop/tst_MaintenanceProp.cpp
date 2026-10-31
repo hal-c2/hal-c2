@@ -118,6 +118,7 @@ struct Sut {
       ++serverCalls[i];
       if (fails) return mc.mc.refuse(rpc, S("Disk is full"));
       const S target = rpc.payload.value(QLatin1String("targetVersion")).toString();
+      if (stays) return mc.mc.reply(rpc, QJsonObject{{S("targetVersion"), target}, {S("method"), S("hot-upgrade")}});
       mc.mc.reply(rpc, QJsonObject{{S("targetVersion"), target}, {S("method"), S("hot-upgrade")}});
       QJsonObject descriptor = mc.mc.descriptors.value(S(kIds[i]));
       descriptor.insert(S("serverVersion"), target);
@@ -260,6 +261,7 @@ struct Sut {
   std::unique_ptr<Maintenance> maintenance;
   // What the MC answers next, and what it holds.
   bool fails = false;
+  bool stays = false;
   bool hold = false;
   End end = End::Succeeded;
   struct Held {
@@ -335,6 +337,29 @@ struct Update : Command {
     s.check(next);
   }
   void show(std::ostream& os) const override { os << "Update(" << kLabels[machine] << (fails ? ", fails" : "") << ")"; }
+};
+
+// An answered update of the service that never comes back on the new version:
+// its wait runs out and the machine can be updated again.
+struct UpdateStays : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(may(m) && behindApp(m, 0)); }
+  void apply(Model& m) const override {
+    ++m.machines[0].serverCalls;
+    m.machines[0].updated = false;
+  }
+  void run(const Model& m, Sut& s) const override {
+    Model next = m;
+    apply(next);
+    s.fails = false;
+    s.stays = true;
+    s.maintenance->setReconnectDeadline(0);
+    s.dispatch(S("maintenance.update"), {{S("environment"), S(kIds[0])}});
+    RC_ASSERT(halc2::prop::until([&] { return s.settled() && s.serverCalls[0] == next.machines[0].serverCalls && !s.machine(0).value(S("outcome")).isNull(); }));
+    s.stays = false;
+    s.maintenance->setReconnectDeadline(180'000);
+    s.check(next);
+  }
+  void show(std::ostream& os) const override { os << "UpdateStays"; }
 };
 
 // "Update all machines": the service at once, the desktop host once confirmed.
@@ -553,7 +578,7 @@ private slots:
     QVERIFY(rc::check("the phone's maintenance matches its model", [] {
       Sut sut;
       rc::state::check(Model{}, sut,
-                       rc::state::gen::execOneOfWithArgs<Open, Close, Update, UpdateAll, Confirm, Cancel, UpdateProvider, Release, Disconnect, Reconnect,
+                       rc::state::gen::execOneOfWithArgs<Open, Close, Update, UpdateStays, UpdateAll, Confirm, Cancel, UpdateProvider, Release, Disconnect, Reconnect,
                                                          NewApp, NewCodex>());
     }));
   }

@@ -40,6 +40,7 @@ struct FakeUpdates {
   QList<FakeMc::Rpc> heldProviders;
   // Server updates: the version each environment comes back on, or why it fails.
   QHash<QString, QString> reconnectOn;
+  bool staysBehind = false;
   QHash<QString, QString> serverFailures;
   // The environments told to update, in order.
   QStringList serverUpdates;
@@ -95,6 +96,10 @@ const FakeMc::Extension updates([](FakeMc& mc) {
     fake.serverUpdates.append(environment);
     if (fake.serverFailures.contains(environment)) return mc.refuse(rpc, fake.serverFailures.value(environment));
     const QString target = rpc.payload.value(QLatin1String("targetVersion")).toString();
+    // Answered, and the machine stays where it is.
+    if (fake.staysBehind) {
+      return mc.reply(rpc, QJsonObject{{S("targetVersion"), target}, {S("method"), S("desktop-app")}, {S("desktopUpdateToken"), S("install-1")}});
+    }
     mc.reply(rpc, QJsonObject{{S("targetVersion"), target}, {S("method"), S("hot-upgrade")}});
     // A hot upgrade: the MC comes back on the new release and its shell says so.
     QJsonObject descriptor = mc.descriptors.value(environment);
@@ -263,6 +268,39 @@ const Steps steps([] {
     world.tap(S("maintenanceUpdate-") + kOwn);
   });
 
+  step(S("the user updated the desktop app on %1 and is waiting for it to come back").arg(kQuoted), [](World& world, const Captures&, const Table&) {
+    serverBehind(world, kDesktopHost);
+    world.mc.part<FakeUpdates>().staysBehind = true;
+    openOperable(world);
+    world.tap(S("maintenanceUpdate-") + kOwn);
+    world.tap(S("maintenanceConfirmUpdate"));
+    world.waitFor([&] { return !world.mc.subscribers(S("config")).isEmpty() && world.mc.part<FakeUpdates>().serverUpdates.size() == 1; }, S("the update to be answered"));
+    world.sync();
+  });
+  step(S("its MC says the install failed because %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
+    world.mc.part<FakeUpdates>().staysBehind = false;
+    for (const int id : world.mc.subscribers(S("config"))) {
+      world.mc.send({{S("t"), S("config.ready")}, {S("id"), id}, {S("updateOutcome"),
+                     QJsonObject{{S("id"), S("install-1")}, {S("status"), S("failed")}, {S("reason"), c[0]}}}});
+    }
+  });
+  step(S("the user updated %1 and it comes back on the same version").arg(kQuoted), [](World& world, const Captures&, const Table&) {
+    serverBehind(world);
+    world.mc.part<FakeUpdates>().staysBehind = true;
+    world.app().maintenance().setReconnectDeadline(0);
+    openOperable(world);
+    world.tap(S("maintenanceUpdate-") + kOwn);
+  });
+  step(S("the wait for it runs out"), [](World& world, const Captures&, const Table&) { world.sync(); });
+  step(S("the user is told %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) { awaitText(world, S("maintenanceOutcome-") + kOwn, c[0]); });
+  step(S("the update of %1 can be started again").arg(kQuoted), [](World& world, const Captures&, const Table&) {
+    FakeUpdates& fake = world.mc.part<FakeUpdates>();
+    fake.staysBehind = false;
+    const int before = int(fake.serverUpdates.size());
+    world.tap(S("maintenanceUpdate-") + kOwn);
+    if (world.mc.descriptors.value(kOwn).value(QLatin1String("capabilities")).toObject().value(QLatin1String("desktopAppUpdate")).toBool()) world.tap(S("maintenanceConfirmUpdate"));
+    world.waitFor([&] { return fake.serverUpdates.size() == before + 1; }, S("a second update"));
+  });
   step(S("the user is told %1 was updated and reconnected on %2").arg(kQuoted, kQuoted), [](World& world, const Captures& c, const Table&) {
     awaitText(world, S("maintenanceOutcome-") + kOwn, S("%1 was updated and reconnected on %2.").arg(c[0], c[1]));
     awaitText(world, S("maintenanceVersion-") + kOwn, S("Version %1").arg(c[1]));

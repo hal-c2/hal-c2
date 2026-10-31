@@ -6,6 +6,7 @@
 #include <QSysInfo>
 #include <QTimeZone>
 #include <QTimer>
+#include <QUrl>
 
 #ifdef Q_OS_MACOS
 #include <sys/sysctl.h>
@@ -69,6 +70,9 @@ QString DesktopUpdater::disabledReason(const Environment& environment) {
   if (environment.unexplained) return {};
   if (environment.feedUrl.trimmed().isEmpty()) {
     return QStringLiteral("Automatic updates are not available because no update feed is configured.");
+  }
+  if (QUrl(environment.feedUrl.trimmed()).scheme() != QLatin1String("https")) {
+    return QStringLiteral("Automatic updates are not available because the update feed is not https.");
   }
   if (!environment.packaged || (environment.platform != QLatin1String("linux") && environment.platform != QLatin1String("macos"))) {
     return QStringLiteral("Automatic updates are only available in packaged production builds.");
@@ -284,8 +288,9 @@ QJsonObject DesktopRemoteUpdates::statusReport(const QString& requestId, const Q
 
 void DesktopRemoteUpdates::request(const QString& requestId) {
   if (m_cancelledBeforeStart.remove(requestId)) return;
-  if (m_prepared && m_prepared->status == QLatin1String("prepared") && m_prepared->expiresAt <= m_clock->now()) m_prepared.reset();
-  if (m_prepared && m_prepared->status != QLatin1String("failed")) {
+  // Only an install under way refuses: a prepared run its MC never committed (the
+  // app's socket dropped) gives way to this one.
+  if (m_prepared && m_prepared->status == QLatin1String("committing")) {
     m_report(statusReport(requestId, QStringLiteral("failed"), QStringLiteral("A prepared desktop update is already in progress.")));
     return;
   }

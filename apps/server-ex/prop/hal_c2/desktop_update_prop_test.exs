@@ -89,9 +89,9 @@ defmodule HalC2.DesktopUpdatePropTest do
   # next: the number of the next request; started: the runs the desktop app was asked
   # for; host: whether its socket is attached; run: the run in flight `%{n, stage}`;
   # install: the committed run awaiting its result; outcome: the last recorded
-  # `{run, reason}`.
+  # `{run, reason}`; restored: the install came back from disk after a restart.
   def initial_state,
-    do: %{next: 1, started: [], host: true, run: nil, install: nil, outcome: nil}
+    do: %{next: 1, started: [], host: true, run: nil, install: nil, restored: false, outcome: nil}
 
   def command(state) do
     frequency(
@@ -102,6 +102,7 @@ defmodule HalC2.DesktopUpdatePropTest do
         {1, {:call, __MODULE__, :detach, []}},
         {1, {:call, __MODULE__, :attach, []}}
       ] ++
+        if(state.run == nil, do: [{1, {:call, __MODULE__, :restart, []}}], else: []) ++
         if(state.run,
           do: [
             {1, {:call, __MODULE__, :abandon, [state.run.n]}},
@@ -174,6 +175,13 @@ defmodule HalC2.DesktopUpdatePropTest do
     end
   end
 
+  defp step(state, {:call, _, :restart, []}),
+    do: seen(%{state | host: true, restored: state.install != nil})
+
+  # The connect report of an app that relaunched.
+  defp step(%{restored: true, install: n} = state, {:call, _, :report, [:none, _]}) when n != nil,
+    do: seen(%{state | install: nil})
+
   defp step(%{run: %{n: n}} = state, {:call, _, :report, [n, report]}),
     do: run_report(state, report)
 
@@ -229,7 +237,7 @@ defmodule HalC2.DesktopUpdatePropTest do
   defp run_report(%{run: run} = state, {_, "ready-to-install", _}) do
     stages = if run.stage == "installing", do: [], else: ["installing"]
 
-    seen(%{finish(state, nil) | install: run.n},
+    seen(%{finish(state, nil) | install: run.n, restored: false},
       stages: stages,
       replies: [{run.n, {:ok, run.n, "1.1.0"}}],
       controls: control(state, "commitDesktopUpdate", run.n)
@@ -335,6 +343,15 @@ defmodule HalC2.DesktopUpdatePropTest do
 
   def deadline(n, phase) do
     send(DesktopUpdate, {:deadline, Process.get(:ids)[n], phase})
+    observe()
+  end
+
+  # The app stopped this MC to install; it comes back with nothing but its files.
+  def restart do
+    sup = Process.get({HalC2.Prop, :services})
+    :ok = Supervisor.terminate_child(sup, DesktopUpdate)
+    {:ok, _} = Supervisor.restart_child(sup, DesktopUpdate)
+    :ok = DesktopUpdate.attach(self())
     observe()
   end
 

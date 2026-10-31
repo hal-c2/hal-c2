@@ -207,11 +207,6 @@ const Steps steps([] {
     updates(world).answers.insert(idOf(world, c[0]), u'!' + c[1]);
     clickUpdate(world, c[0]);
   });
-  step(QStringLiteral("the user is told %1 with %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    const QVariantMap toast = waitForToast(world, c[0]);
-    expect(toast.value(QStringLiteral("type")) == QLatin1String("error") && toast.value(QStringLiteral("description")) == c[1],
-           QStringLiteral("the toast is %1").arg(show(toast)));
-  });
   step(QStringLiteral("%1 keeps running on its current version").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
     const auto now = machine(world, c[0]);
@@ -240,7 +235,6 @@ const Steps steps([] {
                     updateCalls(world).isEmpty(),
                 describe(world));
        });
-  step(QStringLiteral("the user declines"), [](World& world, const Captures&, const Table&) { answer(world, false); });
   step(QStringLiteral("nothing is updated"), [](World& world, const Captures&, const Table&) {
     world.sync();
     const auto now = machine(world, updates(world).machine);

@@ -59,4 +59,5 @@ private:
   DesktopUpdater* m_updater = nullptr;
   DesktopRemoteUpdates* m_remote = nullptr;
   int m_control = -1;
+  QJsonObject m_unsentFailure;
 };

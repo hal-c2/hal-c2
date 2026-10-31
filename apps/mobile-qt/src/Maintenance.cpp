@@ -8,6 +8,7 @@
 #include <QNetworkReply>
 #include <QPointer>
 #include <QRegularExpression>
+#include <QTimer>
 
 #include "ConnectionHealthController.h"
 #include "McClient.h"
@@ -408,14 +409,14 @@ void Maintenance::updateServer(const Machine& machine) {
   m_updating.insert(machine.environmentId, machine.version);
   m_outcomes.remove(machine.environmentId);
   m_shell->client()->call(this, machine.environmentId, QStringLiteral("server.updateServer"), QJsonObject{{QStringLiteral("targetVersion"), version}},
-                          [this, machine](const QJsonValue&, const std::optional<QString>& error) {
+                          [this, machine](const QJsonValue& result, const std::optional<QString>& error) {
                             const QString left = m_updating.take(machine.environmentId);
                             if (error) {
                               const Outcome outcome{false, tr("%1 update failed: %2").arg(machine.label, *error)};
                               m_outcomes.insert(machine.environmentId, outcome);
                               m_message = outcome;
                             } else {
-                              m_reconnecting.insert(machine.environmentId, left);
+                              awaitReconnect(machine, left, result.toObject().value(QLatin1String("desktopUpdateToken")).toString());
                               settle();
                             }
                             publish();
@@ -434,7 +435,51 @@ void Maintenance::settle() {
     m_outcomes.insert(it.key(), outcome);
     m_message = outcome;
     m_releases.remove(it.key());
-    it = m_reconnecting.erase(it);
+    const QString environmentId = it.key();
+    ++it;
+    endReconnect(environmentId);
+  }
+}
+
+void Maintenance::awaitReconnect(const Machine& machine, const QString& left, const QString& token) {
+  const QString environmentId = machine.environmentId;
+  m_reconnecting.insert(environmentId, left);
+  Waiting waiting{++m_waitRun, -1};
+  QTimer::singleShot(m_reconnectDeadline, this, [this, environmentId, run = waiting.run] {
+    if (m_waiting.value(environmentId).run != run) return;
+    reconnectFailed(environmentId, tr("it did not come back on a new version. Try again."));
+  });
+  // The reply to a desktop app's update only means ready to install: its MC tells
+  // how an install that failed went, by the token it answered with.
+  if (!token.isEmpty()) {
+    waiting.subscription = m_shell->client()->subscribe(
+        this, {{QStringLiteral("type"), QStringLiteral("config")}, {QStringLiteral("environment"), environmentId}},
+        [this, environmentId, token](const QJsonObject& frame) {
+          const QJsonObject outcome = frame.value(QLatin1String("updateOutcome")).toObject();
+          if (outcome.value(QLatin1String("id")).toString() != token || outcome.value(QLatin1String("status")).toString() == QLatin1String("committed")) return;
+          const QString reason = outcome.value(QLatin1String("reason")).toString();
+          reconnectFailed(environmentId, reason.isEmpty() ? tr("the install failed.") : reason);
+        });
+  }
+  m_waiting.insert(environmentId, waiting);
+}
+
+void Maintenance::reconnectFailed(const QString& environmentId, const QString& why) {
+  if (!m_reconnecting.contains(environmentId)) return;
+  const std::optional<Machine> now = machine(environmentId);
+  const Outcome outcome{false, tr("%1 update failed: %2").arg(now ? now->label : environmentId, why)};
+  m_outcomes.insert(environmentId, outcome);
+  m_message = outcome;
+  endReconnect(environmentId);
+  publish();
+}
+
+void Maintenance::endReconnect(const QString& environmentId) {
+  m_reconnecting.remove(environmentId);
+  const Waiting waiting = m_waiting.take(environmentId);
+  // Not from inside its own frame's handler.
+  if (waiting.subscription >= 0) {
+    QMetaObject::invokeMethod(this, [client = m_shell->client(), id = waiting.subscription] { client->unsubscribe(id); }, Qt::QueuedConnection);
   }
 }
 
