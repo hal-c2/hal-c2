@@ -513,6 +513,7 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     m_wizard->error.clear();
     if (!enabled() || retry) set(QStringLiteral("snapShotEnabled"), true);
     // Try again: the desktop is asked once more, and setup moves on once it answers.
+    m_wizard->checked = retry;
     if (retry) m_backend->refresh();
     if (accessReady()) {
       stopRecording();
@@ -523,7 +524,10 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
   }
   if (action == QLatin1String("snapShot.setup.action")) {
     // Only a step the user chose: checking access never installs anything.
-    if (m_wizard) m_wizard->error.clear();
+    if (m_wizard) {
+      m_wizard->error.clear();
+      m_wizard->checked = false;
+    }
     publish();
     m_backend->perform(map.value(QStringLiteral("action")).toString());
     return true;
@@ -911,6 +915,7 @@ void SnapShotController::onApplicationState(Qt::ApplicationState state) {
 void SnapShotController::onActivated() {
   // Recording a shortcut suppresses the one held.
   if (m_recording || !enabled()) return;
+  m_backend->setEffects(setting(QStringLiteral("snapShotFlash")).toBool(), setting(QStringLiteral("snapShotAnimations")).toBool());
   m_backend->capture();
 }
 
@@ -1160,9 +1165,9 @@ QVariantMap SnapShotController::state() const {
                                     {QStringLiteral("granted"), session.permissions->accessibility}}};
     }
     const QString continueLabel = m_testing            ? tr("Working…")
-                                  : setup && !setup->actionLabel.isEmpty() ? setup->actionLabel
                                   : busy()              ? tr("Checking…")
                                   : session.permissions ? tr("Test capture and continue")
+                                  : setup && !setup->actionLabel.isEmpty() ? setup->actionLabel
                                   : ready               ? tr("Continue")
                                                         : tr("Try again");
     wizard = QVariantMap{
@@ -1177,11 +1182,11 @@ QVariantMap SnapShotController::state() const {
         {QStringLiteral("body"), body},
         {QStringLiteral("details"), !m_wizard->error.isEmpty() ? m_wizard->error
                                     : !access || session.permissions ? QString()
-                                    : setup                          ? setup->details
-                                                                     : session.message},
+                                    : setup ? setup->details
+                                            : session.message},
         // The access step's own button runs this setup step, else checks again or continues.
         {QStringLiteral("action"), access && setup ? setup->action : QString()},
-        {QStringLiteral("checkMessage"), access && setup ? setup->checkMessage : QString()},
+        {QStringLiteral("checkMessage"), access && setup && m_wizard->checked && !busy() ? setup->checkMessage : QString()},
         {QStringLiteral("advanced"), advanced},
         {QStringLiteral("attention"), !access && !ready ? tr("Capture needs attention. Go back to check access.") : QString()},
         {QStringLiteral("closeLabel"), m_wizard->wasEnabled ? tr("Close") : tr("Finish later")},

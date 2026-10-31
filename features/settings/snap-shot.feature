@@ -159,13 +159,12 @@ Feature: Snap Shot settings
       | situation                                                          | status                                               |
       | on but the capture helper is not installed                         | Install the capture helper to continue               |
       | on but the capture helper's access check failed                    | Check capture access in setup                        |
+      | on with the GNOME extension not enabled                            | Set up active-window snapshots                       |
 
-    # The Qt desktop has no GNOME extension, and does not track whether the
-    # shortcut has been seen to work from another app.
+    # The Qt desktop does not track whether the shortcut has been seen to work from another app.
     @backlog
     Examples:
       | situation                                                          | status                                               |
-      | on with the GNOME extension not enabled                            | Set up active-window snapshots                       |
       | on with a shortcut saved but never seen to work from another app   | Use your shortcut from another app                   |
 
   @desktop
@@ -384,6 +383,8 @@ Feature: Snap Shot settings
     Examples:
       | situation                                                    | message                                                                 |
       | any other desktop but Niri                                   | Capture effects aren't available on this desktop.                       |
+      | the GNOME extension is installed but is the first version    | Update the GNOME extension, then sign out and back in to enable effects. |
+      | GNOME setup has not been finished                            | Finish extension setup to enable effects.                               |
 
     Examples:
       | situation                                                    | message                                                                 |
@@ -391,13 +392,6 @@ Feature: Snap Shot settings
       | Hyprland has no helper or an outdated one                    | Install or update the capture helper to enable effects.                 |
       | KDE Plasma has its helper ready but no effects               | Capture effects aren't available on this desktop.                       |
       | KDE Plasma has no helper or an outdated one                  | Install or update the capture helper to enable effects.                 |
-
-    # The Qt desktop has no GNOME extension.
-    @backlog
-    Examples:
-      | situation                                                    | message                                                                 |
-      | the GNOME extension is installed but is the first version    | Update the GNOME extension, then sign out and back in to enable effects. |
-      | GNOME setup has not been finished                            | Finish extension setup to enable effects.                               |
 
   @desktop
   Scenario: A desktop that can only pick a window says so
@@ -466,7 +460,7 @@ Feature: Snap Shot settings
     Given setup is checking access or saving
     Then the user cannot close setup or move between its steps until it has finished
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The access step walks through the GNOME extension
     Given a GNOME session where the extension is <state>
     When the user is on the access step
@@ -482,7 +476,7 @@ Feature: Snap Shot settings
       | enabled and answering                    | Capture is ready            | Continue            |
       | failing to start                         | Couldn't set up the extension | Check again       |
 
-  @backlog @desktop
+  @desktop
   Scenario: A GNOME version the extension does not support falls back to choosing a window
     Given a GNOME version the extension does not support
     When the user is on the access step
@@ -490,6 +484,13 @@ Feature: Snap Shot settings
     And it points to Take snapshot in the command palette to choose a window
     And the user can still finish setup
 
+  @desktop
+  Scenario: The user can turn the GNOME extension off and on again from setup
+    Given the GNOME extension is enabled
+    When the user opens Advanced for the GNOME extension
+    Then they can disable the extension, and turn it back on
+
+  # The GNOME half passes in the scenario above; the helpers are other desktops'.
   @backlog @desktop
   Scenario: The user can remove what setup installed
     Given the GNOME extension is enabled
@@ -532,7 +533,7 @@ Feature: Snap Shot settings
     Then setup says "Let's try that again" and "Couldn't check snapshots. Try again to continue."
     And capture access is not reported as ready
 
-  @backlog @desktop
+  @desktop
   Scenario: An access check that changes nothing says so
     Given a GNOME session that still needs a new login
     When the user checks again
@@ -986,7 +987,7 @@ Feature: Snap Shot settings
     Then the panel clears the message and the shortcut works again
     And no restart of HAL-C2 is needed
 
-  @backlog @desktop
+  @desktop
   Scenario: Updating the GNOME extension keeps the version it replaces
     Given a GNOME session with an older HAL-C2 extension installed
     When the user updates the extension in setup
@@ -994,28 +995,28 @@ Feature: Snap Shot settings
     And the replaced version is kept in a backup folder
     And a failed update puts the old version back
 
-  @backlog @desktop
+  @desktop
   Scenario: A newer GNOME extension is not replaced by an older bundle
     Given a GNOME session with a newer HAL-C2 extension installed than the one bundled with the app
     When the user installs the extension in setup
     Then nothing is replaced
     And the user is told a newer extension is installed and to update HAL-C2 instead
 
-  @backlog @desktop
+  @desktop
   Scenario: An extension folder that is a link is left to GNOME Extensions
     Given the HAL-C2 extension's folder is a link or not a regular folder
     When the user installs the extension in setup
     Then nothing is replaced
     And the user is told to manage it in GNOME Extensions instead
 
-  @backlog @desktop
+  @desktop
   Scenario: GNOME extensions turned off by the user are not turned on for them
     Given a GNOME session where the user has turned off all user extensions
     When the user checks capture access
     Then setup tells the user to turn on Extensions in the GNOME Extensions app
     And HAL-C2 does not enable the user's other extensions
 
-  @backlog @desktop
+  @desktop
   Scenario: Installing the extension needs no download or administrator password
     Given a GNOME session where the extension is not installed
     When the user installs the extension in setup
@@ -1094,12 +1095,12 @@ Feature: Snap Shot settings
     Examples:
       | session                 | step                                     |
       | on a GNOME session      | install the KDE Plasma capture helper    |
-      | on a KDE Plasma session | install the Hyprland capture helper      |
       | on Linux without GNOME  | install the GNOME extension              |
+      | on a KDE Plasma session | install the Hyprland capture helper      |
       | on Linux                | allow screen recording the way macOS does |
       | on Linux                | test a capture the way macOS does        |
 
-    # The Qt desktop has no Windows capture yet.
+    # No step stands in for a Windows session here yet.
     @backlog
     Examples:
       | session                 | step                                     |

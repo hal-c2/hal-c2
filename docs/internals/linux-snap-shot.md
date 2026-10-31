@@ -2,13 +2,13 @@
 
 Wayland only. The Qt desktop captures through the Screenshot portal
 (`apps/desktop-qt/src/native/PortalSnapShot`), or on Niri outside a sandbox over its socket
-(`NiriSnapShot`), and never falls back to another backend on failure, cancellation, or denial.
-Session detection comes from `XDG_CURRENT_DESKTOP`: a stale `NIRI_SOCKET` or a reachable GNOME
-extension must not select another desktop's backend.
+(`NiriSnapShot`), GNOME adding its extension for the active window when the portal cannot take it,
+and never falls back to another backend on failure, cancellation, or denial. Session detection comes
+from `XDG_CURRENT_DESKTOP`: a stale `NIRI_SOCKET` or a reachable GNOME extension must not select
+another desktop's backend.
 
-The helpers in `native/` (`kde-snap-shot`, `hyprland-snap-shot`, `gnome-snap-shot`) are the
-compositor-specific backends the desktop does not call yet (`@backlog-desktop`). The traps below
-bind them when it does.
+The helpers `native/kde-snap-shot` and `native/hyprland-snap-shot` are the compositor-specific
+backends the desktop does not call yet (`@backlog-desktop`). The traps below bind them when it does.
 
 ## KDE
 
@@ -63,11 +63,14 @@ version before adding it to `metadata.json`.
 
 ## Qt desktop
 
-`apps/desktop-qt` captures through the portal (`PortalSnapShot`, over QtDBus) on GNOME and any other
-Wayland desktop without a backend of its own, with the window picker unless the portal offers the
-active-window target. Outside a sandbox, Niri captures through its socket, and KDE and Hyprland through
-their helpers (`HelperSnapShot`, `CaptureHelper`) with the shortcut still in the portal. The helpers'
-capture effects are not driven yet: setup says they are unavailable, and captures go without them.
+`apps/desktop-qt` captures through the portal (`PortalSnapShot`, over QtDBus) on any Wayland desktop
+without a backend of its own, with the window picker unless the portal offers the active-window target.
+Outside a sandbox, Niri captures through its socket, and KDE and Hyprland through their helpers
+(`HelperSnapShot`, `CaptureHelper`) with the shortcut still in the portal. The helpers' capture effects
+are not driven yet: setup says they are unavailable, and captures go without them. On GNOME
+`GnomeSnapShot` wraps the portal and installs the extension from a Qt resource; a capture takes the bus
+name on a connection of its own, so it is held only for that capture. The landing flight is not wired
+yet: captures ask only for the flash.
 
 On Niri and Hyprland the capture shortcut lives in the compositor's config, written only after the
 user reviews the diff (`CaptureShortcutConfig`). Hyprland's binding still reaches HAL-C2 through a

@@ -396,15 +396,10 @@ Feature: Snap Shot captures another app's window into the draft
     Examples:
       | desktop            | backend                                    |
       | another compositor | the desktop portal                         |
+      | GNOME              | the HAL-C2 GNOME extension                |
       | Niri               | a Niri binding                             |
       | KDE Plasma         | the capture helper                         |
       | Hyprland           | the capture helper and a Hyprland binding  |
-
-    # GNOME goes through the desktop portal on the Qt desktop for now.
-    @backlog-desktop
-    Examples:
-      | desktop            | backend                                    |
-      | GNOME              | the HAL-C2 GNOME extension                |
 
   Scenario: Other Wayland desktops choose a window each time
     Given a Linux Wayland session on a compositor without automatic capture
@@ -412,15 +407,11 @@ Feature: Snap Shot captures another app's window into the draft
     Then the user picks the window to capture
     And the attachment has no text or controls data
 
-  @backlog-desktop
-  # The Qt desktop has no GNOME extension.
   Scenario: The GNOME extension needs a new login
     Given a GNOME session where the extension was just installed
     When the user continues setup
     Then the user is asked to sign out and back in, and setup waits for that
 
-  @backlog-desktop
-  # The Qt desktop has no GNOME extension.
   Scenario: A disabled GNOME extension is explained
     Given the GNOME extension is installed but turned off
     When the user checks capture access
@@ -502,7 +493,7 @@ Feature: Snap Shot captures another app's window into the draft
       | Flatpak | GNOME      |
       | Flatpak | KDE Plasma |
 
-  @backlog @desktop
+  @desktop
   Scenario: The desktop portal is preferred to the GNOME extension
     Given a GNOME session with the HAL-C2 extension enabled
     And the desktop portal can capture a single window
@@ -563,7 +554,7 @@ Feature: Snap Shot captures another app's window into the draft
     Then no screenshot is delivered
     And the user is told snapshots are unavailable in this session
 
-  @backlog @desktop
+  @desktop
   Scenario: Two HAL-C2 instances do not capture at the same time
     Given a GNOME session with two HAL-C2 instances running
     And one instance is capturing a window

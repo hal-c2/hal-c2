@@ -17,7 +17,8 @@ class WindowsSystem;
 //
 // Linux Wayland captures through xdg-desktop-portal (PortalSnapShot): the
 // Screenshot portal's active-window target where the desktop offers it, else
-// its window picker, and the GlobalShortcuts portal for the shortcut. Niri
+// its window picker, and the GlobalShortcuts portal for the shortcut. GNOME
+// adds HAL-C2's extension in place of the picker (GnomeSnapShot). Niri
 // outside a sandbox captures over its own socket (NiriSnapShot), and KDE and
 // Hyprland through a helper executable (HelperSnapShot, CaptureHelper) with the
 // shortcut still in the portal. macOS (MacSnapShot) and Windows (WindowsSnapShot)
@@ -43,8 +44,9 @@ public:
     bool ready = false;
     // portal | direct (macOS, Windows) | unavailable
     QString mode = QStringLiteral("unavailable");
-    // A portal's: screenshot-portal (the window in front) or picker (the
-    // user chooses a window each time).
+    // A portal's: screenshot-portal (the window in front), gnome-extension
+    // (the same, once the extension is set up) or picker (the user chooses a
+    // window each time).
     QString backend;
     // gnome, kde, hyprland or niri (XDG_CURRENT_DESKTOP), else empty.
     QString desktop;
@@ -76,6 +78,12 @@ public:
     bool canRetry = true;
   };
 
+  // Whether a shortcut can be the capture shortcut, and what to tell the user.
+  struct Check {
+    bool available = false;
+    QString message;
+  };
+
   // A desktop whose capture has to be set up first (GNOME's extension, a
   // capture helper): what the access step says and offers. The controller
   // shows it as given; only perform() changes anything.
@@ -90,7 +98,7 @@ public:
     QString actionLabel;
     // What the desktop said, when it explains a failure.
     QString details;
-    // Said after checking again changed nothing; empty otherwise.
+    // What to say after the user checked again.
     QString checkMessage;
     // The capture row while capture is on and access is not ready.
     QString status;
@@ -103,12 +111,6 @@ public:
     };
     // Advanced: undoing what setup did, and the like.
     QList<Option> advanced;
-  };
-
-  // Whether a shortcut can be the capture shortcut, and what to tell the user.
-  struct Check {
-    bool available = false;
-    QString message;
   };
 
   explicit SnapShotBackend(QObject* parent = nullptr) : QObject(parent) {}
@@ -168,6 +170,8 @@ public:
   virtual void test() { emit tested({}); }
   // Plays a capture sound: soft-pop (Whoosh) or camera-shutter (Click).
   virtual void play(const QString& sound);
+  // The capture effects the user wants, for a desktop that can show them.
+  virtual void setEffects(bool flash, bool animate) { Q_UNUSED(flash); Q_UNUSED(animate); }
   // The setup this desktop needs before it captures; none by default.
   virtual std::optional<Setup> setup() const { return std::nullopt; }
   // Runs a setup step the user chose (install-extension, remove-kde-helper,
@@ -177,6 +181,7 @@ public:
 
   // Why `action` cannot run in this session.
   static QString unsupportedSetup(const QString& action);
+
   // Tests hear the sounds instead of the speakers; null restores them.
   static void setSoundPlayer(std::function<void(const QString&)> player);
 
@@ -199,6 +204,9 @@ public:
   static void setEnvironment(const std::optional<QProcessEnvironment>& env);
   static QProcessEnvironment environment();
   static void setPortalFactory(PortalFactory factory);
+  // What wraps the portal on a GNOME session.
+  using GnomeFactory = std::function<SnapShotBackend*(SnapShotBackend* portal, QObject* parent)>;
+  static void setGnomeFactory(GnomeFactory factory);
   static void setWindowsFactory(WindowsFactory factory);
 
   // The portal's trigger for a key chord ({key, metaKey, ctrlKey, shiftKey,

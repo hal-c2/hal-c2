@@ -95,6 +95,8 @@ private:
   struct Wizard {
     QString step;
     bool wasEnabled = false;
+    // The user asked to check access again, and nothing has changed since.
+    bool checked = false;
     // What went wrong in setup, shown in it.
     QString error;
   };

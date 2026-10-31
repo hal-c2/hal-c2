@@ -68,6 +68,12 @@ function(hal_c2_add_native_library)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
     target_link_libraries(hal_c2_native PUBLIC Qt6::DBus)
     target_compile_definitions(hal_c2_native PUBLIC HAL_C2_HAS_DBUS)
+    # The GNOME extension setup installs (GnomeSnapShot), as :/hal-c2/gnome-extension/*.
+    set(_hal_c2_gnome "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../../native/gnome-snap-shot")
+    set(_hal_c2_gnome_files metadata.json bundle.json extension.js captureService.js captureFeedback.js feedbackGeometry.js)
+    list(TRANSFORM _hal_c2_gnome_files PREPEND "${_hal_c2_gnome}/")
+    qt_add_resources(hal_c2_native hal_c2_native_gnome_extension PREFIX "/hal-c2/gnome-extension" BASE "${_hal_c2_gnome}"
+                     FILES ${_hal_c2_gnome_files})
   endif()
   # Snap Shot on Windows: the window in front, its hotkey and keyboard hook, its
   # flash and flight (WindowsSnapShot); not built anywhere else.

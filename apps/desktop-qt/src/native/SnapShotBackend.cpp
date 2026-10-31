@@ -10,6 +10,7 @@
 #include <QStandardPaths>
 
 #include "CaptureHelper.h"
+#include "GnomeSnapShot.h"
 #include "HelperSnapShot.h"
 #include "MacPlatform.h"
 #include "MacSnapShot.h"
@@ -28,6 +29,11 @@ std::optional<QProcessEnvironment>& environmentOverride() {
 
 SnapShotBackend::PortalFactory& portalFactory() {
   static SnapShotBackend::PortalFactory factory;
+  return factory;
+}
+
+SnapShotBackend::GnomeFactory& gnomeFactory() {
+  static SnapShotBackend::GnomeFactory factory;
   return factory;
 }
 
@@ -82,6 +88,10 @@ QProcessEnvironment SnapShotBackend::environment() {
 
 void SnapShotBackend::setPortalFactory(PortalFactory factory) {
   portalFactory() = std::move(factory);
+}
+
+void SnapShotBackend::setGnomeFactory(GnomeFactory factory) {
+  gnomeFactory() = std::move(factory);
 }
 
 void SnapShotBackend::setWindowsFactory(WindowsFactory factory) {
@@ -154,12 +164,12 @@ SnapShotBackend* SnapShotBackend::create(QObject* parent) {
       return new HelperSnapShot(platform, shortcuts, new CaptureHelper(kind, CaptureHelper::defaultPaths(kind)), parent);
     }
   }
-  if (SnapShotBackend* backend = portal(parent)) return backend;
-#ifndef HAL_C2_HAS_DBUS
-  return new UnavailableSnapShot(QStringLiteral("SnapShots are not supported on this platform."), parent);
-#else
-  return new UnavailableSnapShot(platform.message, parent);
-#endif
+  SnapShotBackend* fallback = portal(parent);
+  if (!fallback) return new UnavailableSnapShot(QStringLiteral("SnapShots are not supported on this platform."), parent);
+  if (platform.desktop != QLatin1String("gnome")) return fallback;
+  // A test's stand-in portal never reaches the real GNOME Shell.
+  if (gnomeFactory()) return gnomeFactory()(fallback, parent);
+  return portalFactory() ? fallback : GnomeSnapShot::create(fallback, parent);
 }
 
 // DesktopSnapShotSetupError's unsupported-session messages.

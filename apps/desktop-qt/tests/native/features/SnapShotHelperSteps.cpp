@@ -10,12 +10,14 @@
 #include <QTemporaryDir>
 
 #include "CaptureHelper.h"
+#include "HelperSnapShot.h"
 #include "FakeDesktopPortal.h"
 #include "Harness.h"
 #include "SnapShotBackend.h"
 #include "World.h"
 
 namespace snapshot {
+SnapShotBackend* backend(World& world);
 QVariant field(World& world, const QString& path);
 QString describe(World& world);
 void openPanel(World& world);
@@ -424,7 +426,6 @@ const Steps steps([] {
     send(world, QStringLiteral("setup.action"), {{QStringLiteral("action"), helper.installAction()}});
     waitForHelper(world);
   });
-  step(QStringLiteral("nothing is replaced"), [](World&, const Captures&, const Table&) { expectConflictsKept(); });
 
   step(QStringLiteral("the app was built without its capture helper"), [current](World& world, const Captures&, const Table&) {
     bundleMissing() = true;
@@ -507,26 +508,6 @@ const Steps steps([] {
   });
 
   // Another desktop's steps.
-  step(QStringLiteral("the desktop app runs (on a GNOME session|on a KDE Plasma session|on Linux without GNOME|on Linux)"), [](World& world, const Captures& c, const Table&) {
-    const QString desktop = c[0].contains(QLatin1String("GNOME session")) ? QStringLiteral("GNOME")
-                            : c[0].contains(QLatin1String("KDE"))         ? QStringLiteral("KDE")
-                                                                          : QStringLiteral("sway");
-    uninstall();
-    load(world, environmentOf(desktop));
-    send(world, QStringLiteral("setup.open"));
-    tellInPlace(world);
-  });
-  step(QStringLiteral("setup is asked to (.*)"), [](World& world, const Captures& c, const Table&) {
-    send(world, QStringLiteral("setup.action"), {{QStringLiteral("action"), actionFor(c[0])}});
-  });
-  step(QStringLiteral("nothing is installed, removed or changed"), [](World&, const Captures&, const Table&) {
-    expect(!QDir(scratch().dataHome()).exists(), QStringLiteral("nothing installed"));
-  });
-  step(QStringLiteral("the user is told this step is not available in this session"), [](World& world, const Captures&, const Table&) {
-    world.waitFor([&] { return field(world, QStringLiteral("wizard.details")).toString().contains(QLatin1String("requires")); },
-                  [&] { return QStringLiteral("setup to refuse; Snap Shot is %1").arg(describe(world)); });
-  });
-
   // source-control/snap-shot.feature.
   step(QStringLiteral("a Hyprland session whose capture helper fails"), [](World& world, const Captures&, const Table&) {
     desktopWith(world, CaptureHelper::Kind::Hyprland, QStringLiteral("ready"));
@@ -595,5 +576,24 @@ void resetCaptureHelpers() {
 void uninstallCaptureHelpers(World& world) {
   uninstall();
   load(world, environmentOf(CaptureHelper::Kind::Kde));
+}
+// The GNOME scenarios share these words (SnapShotGnomeSteps.cpp holds the steps).
+bool helperInUse(World& world) {
+  return dynamic_cast<HelperSnapShot*>(backend(world)) != nullptr;
+}
+void helperConflictsKept() {
+  expectConflictsKept();
+}
+void helperOnKde(World& world) {
+  uninstall();
+  load(world, environmentOf(QStringLiteral("KDE")));
+  send(world, QStringLiteral("setup.open"));
+  tellInPlace(world);
+}
+void helperNothingInstalled() {
+  expect(!QDir(scratch().dataHome()).exists(), QStringLiteral("nothing installed"));
+}
+QString setupAction(const QString& step) {
+  return actionFor(step);
 }
 }  // namespace snapshot

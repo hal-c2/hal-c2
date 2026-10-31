@@ -294,48 +294,64 @@ SettingsPage {
             }
 
             Label {
-                objectName: "checkMessage"
-                Layout.fillWidth: true
-                visible: text.length > 0
-                text: snap.wizard?.checkMessage ?? ""
-                color: snap.muted
-                font.pixelSize: Math.round(12 * Theme.fontScale)
-                wrapMode: Text.Wrap
-            }
-
-            // Advanced: undoing what setup did, and the like.
-            Repeater {
-                model: snap.wizard?.step === "access" ? (snap.wizard?.advanced ?? []) : []
-
-                delegate: ColumnLayout {
-                    required property var modelData
-                    Layout.fillWidth: true
-                    spacing: 2
-
-                    ShellButton {
-                        objectName: "advanced-" + parent.modelData.action
-                        text: parent.modelData.label
-                        onClicked: Shell.dispatch("snapShot.setup.action", { action: parent.modelData.action })
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        visible: text.length > 0
-                        text: parent.modelData.note ?? ""
-                        color: snap.muted
-                        font.pixelSize: Math.round(12 * Theme.fontScale)
-                        wrapMode: Text.Wrap
-                    }
-                }
-            }
-
-            Label {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 text: snap.wizard?.details ?? ""
                 color: Theme.palette.color("warning", "#fbbf24")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
+            }
+
+            Label {
+                objectName: "checkMessage"
+                Layout.fillWidth: true
+                visible: snap.wizard?.step === "access" && text.length > 0
+                text: snap.wizard?.checkMessage ?? ""
+                color: snap.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
+            // Advanced: undoing what setup did.
+            ColumnLayout {
+                Layout.fillWidth: true
+                visible: snap.wizard?.step === "access" && (snap.wizard?.advanced ?? []).length > 0
+                spacing: 6
+
+                ShellButton {
+                    id: advancedToggle
+                    objectName: "advanced"
+                    property bool open: false
+                    subtle: true
+                    text: open ? qsTr("Hide advanced") : qsTr("Advanced")
+                    onClicked: open = !open
+                }
+
+                Repeater {
+                    model: advancedToggle.open ? (snap.wizard?.advanced ?? []) : []
+
+                    delegate: ColumnLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        ShellButton {
+                            objectName: "advanced-" + modelData.action
+                            subtle: true
+                            text: modelData.label
+                            onClicked: Shell.dispatch("snapShot.setup.action", { action: modelData.action })
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: modelData.note ?? ""
+                            color: snap.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            wrapMode: Text.Wrap
+                        }
+                    }
+                }
             }
 
             RowLayout {
