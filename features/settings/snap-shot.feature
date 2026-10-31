@@ -99,10 +99,10 @@ Feature: Snap Shot settings
     When the user turns <cue> off
     Then captures happen without <effect>
 
+    # The flash and animation rows run on Windows: a desktop portal has no cues, and says so in the panel.
     Examples:
       | cue       | effect                                 |
       | sound     | a sound                                |
-      # On Windows: a desktop portal has no cues, and says so in the panel.
       | flash     | a flash on the captured window         |
       | animation | the image flying into the draft        |
 
@@ -841,8 +841,6 @@ Feature: Snap Shot settings
     Examples:
       | platform | key   | note                                           |
       | macOS    | Shift | no further note                                |
-
-    # Windows has no backend yet, and no Linux desktop here watches modifier pairs.
       | Windows  | Super | This key can also open the system's own menu.  |
       | Windows  | Alt   | This key can also activate app menu bars.      |
 
