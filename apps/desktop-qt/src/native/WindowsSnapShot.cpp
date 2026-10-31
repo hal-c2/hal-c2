@@ -154,20 +154,25 @@ QString WindowsSnapShot::trigger(const QJsonObject& shortcut, QString* error) co
   return QString::fromUtf8(QJsonDocument(held).toJson(QJsonDocument::Compact));
 }
 
-SnapShotBackend::Availability WindowsSnapShot::check(const QJsonObject& shortcut) const {
+void WindowsSnapShot::checkShortcut(const QJsonObject& shortcut, std::function<void(const Check&)> done) {
   QString problem;
   const QString wanted = trigger(shortcut, &problem);
-  if (wanted.isEmpty()) return {false, problem};
+  if (wanted.isEmpty()) {
+    done({false, problem});
+    return;
+  }
+  // The one already held is free to keep; asking Windows again would refuse it.
+  const bool held = wanted == m_bound && m_shortcut.registered;
   if (isPair(shortcut)) {
     const QString modifier = pairModifier(shortcut);
     const auto keys = *pairKeys(modifier);
-    const bool watched = wanted == m_bound && m_shortcut.registered;
-    if (watched || m_system->canWatchPair(keys.first, keys.second)) return {true, observedMessage(modifier)};
-    return {false, unavailableMessage(modifier)};
+    const bool available = held || m_system->canWatchPair(keys.first, keys.second);
+    done({available, available ? observedMessage(modifier) : unavailableMessage(modifier)});
+    return;
   }
   const auto key = *hotKey(shortcut);
-  if ((wanted == m_bound && m_shortcut.registered) || m_system->canHoldHotKey(key.first, key.second)) return {true, {}};
-  return {false, tr("This shortcut is already used by the system or another app.")};
+  if (held || m_system->canHoldHotKey(key.first, key.second)) done({true, {}});
+  else done({false, tr("This shortcut is already used by the system or another app.")});
 }
 
 void WindowsSnapShot::bind(const QString& trigger) {
@@ -214,10 +219,11 @@ QString WindowsSnapShot::appName(const QString& path) {
   return name.isEmpty() ? QStringLiteral("Window") : name;
 }
 
-// A second press while one is being taken is ignored; a grab still running
-// from before (one that timed out) fails this one rather than queue behind it.
+// A second press while one is being taken or its cue still shows is ignored;
+// a grab still running from before (one that timed out) fails this one rather
+// than queue behind it.
 void WindowsSnapShot::capture() {
-  if (m_capturing) return;
+  if (m_capturing || m_system->cueShowing()) return;
   const auto window = m_system->foreground();
   if (!window || window->bounds.isEmpty()) {
     emit failed(kNoWindow);

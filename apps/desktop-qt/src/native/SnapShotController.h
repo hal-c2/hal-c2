@@ -13,12 +13,12 @@
 #include <optional>
 
 #include "NativeController.h"
+#include "SnapShotBackend.h"
 
 class NativeWindow;
 class McClient;
 class ShellBridge;
 class ShellStore;
-class SnapShotBackend;
 
 // Snap Shot: the capture
 // shortcut takes the window the user is working in and attaches it to the
@@ -46,7 +46,7 @@ class SnapShotBackend;
 //   snapShot.shortcut.save, snapShot.shortcut.discard,
 //   snapShot.shortcut.permissions, snapShot.set {key, value} (accessibility,
 //   flash, animations), snapShot.sound {value: off | soft-pop | camera-shutter},
-//   snapShot.sound.play {sound}.
+//   snapShot.sound.play {sound}. Setup ignores its actions while `wizard.busy`.
 class SnapShotController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -71,10 +71,7 @@ public:
   static std::optional<QByteArray> encode(const QImage& image, qint64 maxBytes, QString* mimeType);
 
 private:
-  struct Check {
-    bool available = false;
-    QString message;
-  };
+  using Check = SnapShotBackend::Check;
   struct Wizard {
     QString step;
     bool wasEnabled = false;
@@ -98,7 +95,10 @@ private:
   void stopRecording();
   void resetCandidate();
   void record(const QJsonObject& shortcut);
-  Check check(const QJsonObject& shortcut) const;
+  // Asks whether the recorded shortcut can be held; only the newest answer counts.
+  void checkCandidate();
+  // Setup is waiting on the desktop and cannot be left or stepped through.
+  bool busy() const;
   // The HAL-C2 command already bound to `shortcut`, or empty.
   QString conflict(const QJsonObject& shortcut) const;
   QString label(const QJsonObject& shortcut) const;
@@ -135,6 +135,9 @@ private:
   QSet<QString> m_held;
   std::optional<QJsonObject> m_candidate;
   std::optional<Check> m_check;
+  // A check is out; m_checkId names the one whose answer counts.
+  bool m_checking = false;
+  quint64 m_checkId = 0;
   // Each window's last thread or draft (by window id).
   QHash<QString, QString> m_lastTarget;
   QVariantMap m_published;

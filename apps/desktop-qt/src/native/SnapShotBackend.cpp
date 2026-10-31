@@ -78,12 +78,6 @@ void SnapShotBackend::setWindowsFactory(WindowsFactory factory) {
   windowsFactory() = std::move(factory);
 }
 
-SnapShotBackend::Availability SnapShotBackend::check(const QJsonObject& shortcut) const {
-  QString problem;
-  if (portalTrigger(shortcut, &problem).isEmpty()) return {false, problem};
-  return {true, tr("Your desktop will confirm this shortcut when you save it.")};
-}
-
 SnapShotBackend::Platform SnapShotBackend::detect(const QProcessEnvironment& env, bool onLinux) {
   if (!onLinux) return {false, {}, QStringLiteral("SnapShots are not supported on this platform.")};
   const QString type = env.value(QStringLiteral("XDG_SESSION_TYPE")).toLower();
@@ -161,6 +155,19 @@ QString SnapShotBackend::portalTrigger(const QJsonObject& shortcut, QString* err
   parts.append(keysym);
   if (error) error->clear();
   return parts.join(QLatin1Char('+'));
+}
+
+void SnapShotBackend::checkShortcut(const QJsonObject& shortcut, std::function<void(const Check&)> done) {
+  if (session().mode != QLatin1String("portal")) {
+    done({false, QStringLiteral("SnapShots are not supported on this platform.")});
+    return;
+  }
+  QString problem;
+  if (portalTrigger(shortcut, &problem).isEmpty()) {
+    done({false, problem});
+    return;
+  }
+  done({true, QStringLiteral("Your desktop will confirm this shortcut when you save it.")});
 }
 
 // No audio module: the desktop's own player, from a copy of the sound in the

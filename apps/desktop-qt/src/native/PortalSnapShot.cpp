@@ -179,6 +179,8 @@ void PortalSnapShot::probe() {
 // The user may have changed what the desktop allows while away.
 void PortalSnapShot::refresh() {
   if (!m_session.ready || m_probing) return;
+  m_session.checking = true;
+  emit changed();
   readScreenshot();
 }
 
@@ -200,7 +202,8 @@ void PortalSnapShot::readScreenshot() {
       // Not knowing is not the picker: the screenshot portal may be missing too.
       message = QStringLiteral("Your desktop could not say whether it can capture windows.");
     }
-    if (m_session.ready && backend == m_session.backend && message == m_session.message) return;
+    const bool checked = std::exchange(m_session.checking, false);
+    if (!checked && m_session.ready && backend == m_session.backend && message == m_session.message) return;
     m_session.backend = backend;
     m_session.message = message;
     m_session.ready = true;

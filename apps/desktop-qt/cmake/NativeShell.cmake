@@ -58,4 +58,10 @@ function(hal_c2_add_native_library)
     target_link_libraries(hal_c2_native PUBLIC Qt6::DBus)
     target_compile_definitions(hal_c2_native PUBLIC HAL_C2_HAS_DBUS)
   endif()
+  # Snap Shot on Windows: the window in front, its hotkey and keyboard hook, its
+  # flash and flight (WindowsSnapShot); not built anywhere else.
+  if(WIN32)
+    target_sources(hal_c2_native PRIVATE "${_hal_c2_src}/native/win/WindowsSystem.cpp")
+    target_link_libraries(hal_c2_native PUBLIC user32 gdi32 dwmapi)
+  endif()
 endfunction()

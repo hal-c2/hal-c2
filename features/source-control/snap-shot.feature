@@ -52,7 +52,7 @@ Feature: Snap Shot captures another app's window into the draft
     When the user presses the shortcut again before the first capture has been taken
     Then only one capture is attached to the draft
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A capture that cannot be taken says so and leaves nothing behind
     Given the desktop app runs on <platform>
     And <failure>
@@ -62,9 +62,13 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | platform         | failure                                                    |
-      | macOS            | macOS returns an empty image for the window                |
       | Windows          | the Windows window capture does not answer in time         |
       | Windows          | an earlier Windows window capture is still running         |
+
+    @backlog
+    Examples:
+      | platform         | failure                                                    |
+      | macOS            | macOS returns an empty image for the window                |
       | Linux on GNOME   | the window in front is minimized or no window has focus    |
       | Linux on Niri    | Niri has no focused window                                 |
       | Linux on Wayland | the desktop returns an empty or unreadable screenshot      |
@@ -82,7 +86,7 @@ Feature: Snap Shot captures another app's window into the draft
       | macOS finding the window in front             | 5 seconds  |
       | macOS taking the picture of the window        | 15 seconds |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A capture with no window in front is explained
     Given the desktop app runs on <platform>
     And no window is available to capture
@@ -91,8 +95,12 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | platform |
-      | macOS    |
       | Windows  |
+
+    @backlog
+    Examples:
+      | platform |
+      | macOS    |
 
   @backlog @desktop
   Scenario: Closing the window picker without choosing attaches nothing
@@ -106,7 +114,7 @@ Feature: Snap Shot captures another app's window into the draft
     When the user takes a snapshot without the shortcut
     Then nothing is attached and the user is told to enable Snap Shot in Settings first
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A very large window is captured at a bounded size
     Given the desktop app runs on <platform>
     And the window in front is larger than 2,560 by 1,600 pixels
@@ -115,8 +123,12 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | platform         |
-      | macOS            |
       | Windows          |
+
+    @backlog
+    Examples:
+      | platform         |
+      | macOS            |
       | Linux on Wayland |
 
   @backlog @desktop
@@ -126,7 +138,7 @@ Feature: Snap Shot captures another app's window into the draft
     Then the image is attached
     And the attachment keeps the window title up to 1,000 characters and the app name up to 255
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The attachment names the app the way the user knows it
     Given the desktop app runs on <platform>
     And <window>
@@ -345,15 +357,13 @@ Feature: Snap Shot captures another app's window into the draft
     Then no background helper stays running to read app text
     And turning Snap Shot off has the same effect
 
-  @backlog-desktop
-  # The desktop portal cannot flash a window, and the Qt draft has no capture animation yet.
+  # On Windows: a desktop portal cannot flash a window or fly an image.
   Scenario: The capture plays its cues
     Given the sound, flash and animation are on
     When the user captures a window
     Then the sound plays, the captured window flashes and the image flies into the draft
 
-  @backlog-desktop
-  # The Qt draft has no capture animation yet.
+  # On Windows: a desktop portal has no animation to turn off.
   Scenario: Reduced motion turns the animation off
     Given the system asks for reduced motion
     When the user captures a window

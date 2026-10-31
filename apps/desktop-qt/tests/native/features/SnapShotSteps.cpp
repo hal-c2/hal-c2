@@ -48,6 +48,11 @@ struct FakeDesktop {
   // Each capture: true when the user picked the window.
   QList<bool> captures;
   QStringList played;
+  // Shortcut checks wait for answerCheck(), in the order they were asked.
+  bool holdChecks = false;
+  QList<std::function<void(const SnapShotBackend::Check&)>> checks;
+  // The desktop will not pause the capture shortcut, with this reason.
+  std::optional<QString> refusePause;
 };
 
 FakeDesktop& desktop() {
@@ -111,6 +116,18 @@ public:
     emit changed();
   }
   void configure() override { ++desktop().configured; }
+  void checkShortcut(const QJsonObject& shortcut, std::function<void(const Check&)> done) override {
+    if (desktop().holdChecks) {
+      desktop().checks.append(std::move(done));
+      return;
+    }
+    SnapShotBackend::checkShortcut(shortcut, std::move(done));
+  }
+  bool pause(bool paused, QString* reason) override {
+    if (!paused || !desktop().refusePause) return true;
+    *reason = *desktop().refusePause;
+    return false;
+  }
   void capture() override {
     desktop().captures.append(desktop().picker);
     if (!desktop().failure.isEmpty()) {
@@ -270,8 +287,8 @@ void capture(World& world) {
   seen() = {};
   QObject::connect(&world.bridge(), &ShellBridge::windowCommandRequested, controller(world),
                    [](const QString& command) { seen().raised.append(command); });
-  expect(portal(world) != nullptr, QStringLiteral("the shell has no fake portal"));
-  portal(world)->press();
+  // Any desktop's: its global shortcut was pressed.
+  emit controller(world)->backend()->activated();
 }
 
 QString threadKey(World& world) {
@@ -929,6 +946,7 @@ const Steps steps([] {
            QStringLiteral("setup to say %1 and %2; Snap Shot is %3").arg(c[0], c[1], show(snapShot(world))));
   });
   step(QStringLiteral("capture access is not reported as ready"), [](World& world, const Captures&, const Table&) {
+    waitForField(world, QStringLiteral("wizard.busy"), false);
     expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("access") && field(world, QStringLiteral("wizard.continueLabel")) == QLatin1String("Try again") &&
                field(world, QStringLiteral("status")) == QLatin1String("Capture needs attention"),
            QStringLiteral("access not to be ready; Snap Shot is %1").arg(show(snapShot(world))));
@@ -1247,3 +1265,70 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+// For the other SnapShot*Steps.cpp files: the panel, and the desktop
+// FakePortal plays.
+namespace snapshot {
+
+void openPanel(World& world) {
+  ::openPanel(world);
+}
+QVariant field(World& world, const QString& path) {
+  return ::field(world, path);
+}
+QString describe(World& world) {
+  return show(snapShot(world));
+}
+void send(World& world, const QString& action, const QVariantMap& payload) {
+  ::send(world, action, payload);
+}
+void set(World& world, const QString& key, const QVariant& value) {
+  settings(world)->set(key, value);
+}
+QVariant setting(World& world, const QString& key) {
+  return settings(world)->setting(key);
+}
+void press(World& world, int key, Qt::KeyboardModifiers modifiers) {
+  ::press(world, key, modifiers);
+}
+void waitForField(World& world, const QString& path, const QVariant& value) {
+  ::waitForField(world, path, value);
+}
+void portalDesktop(World& world, const PortalDesktop& portal) {
+  ::portalDesktop(world, portal);
+}
+void holdChecks() {
+  desktop().holdChecks = true;
+}
+qsizetype heldChecks() {
+  return desktop().checks.size();
+}
+void answerCheck(qsizetype index, const SnapShotBackend::Check& answer) {
+  desktop().checks.at(index)(answer);
+}
+void refusePause(const QString& reason) {
+  desktop().refusePause = reason;
+}
+QStringList played() {
+  return desktop().played;
+}
+void resetDesktop(World& world, const QProcessEnvironment& env) {
+  ::resetDesktop(world, env);
+}
+void openThread(World& world) {
+  ::openThread(world);
+}
+void capture(World& world) {
+  ::capture(world);
+}
+QVariantList draft(World& world) {
+  return attachments(world, threadKey(world));
+}
+SnapShotBackend* backend(World& world) {
+  return controller(world)->backend();
+}
+void expectToast(World& world, const QString& title, const QString& description) {
+  ::expectToast(world, title, description);
+}
+
+}  // namespace snapshot

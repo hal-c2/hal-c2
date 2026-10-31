@@ -57,6 +57,8 @@ public:
   // The captured image flying from `bounds` into HAL-C2, flashing first when
   // `flash`.
   virtual void fly(const QImage& image, const QRect& bounds, bool flash) = 0;
+  // A flash or flight is on the screen, where the next capture would see it.
+  virtual bool cueShowing() const = 0;
 
 signals:
   void pressed();
@@ -82,8 +84,7 @@ public:
   void release() override;
   void capture() override;
   QString trigger(const QJsonObject& shortcut, QString* error) const override;
-  Availability check(const QJsonObject& shortcut) const override;
-  bool watchesPairs() const override { return true; }
+  void checkShortcut(const QJsonObject& shortcut, std::function<void(const Check&)> done) override;
   void setCues(bool flash, bool animations) override;
 
   WindowsSystem* system() const { return m_system; }

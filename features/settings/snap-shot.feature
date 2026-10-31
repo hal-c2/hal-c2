@@ -16,9 +16,9 @@
 #   apps/desktop/src/snapShot/PortalCaptureShortcut.ts, NiriCaptureShortcut.ts, NiriSnapShot.ts (shortcut session and endpoint errors)
 #   apps/desktop/src/snapShot/GnomeCaptureSetup.ts, KdeSnapShot.ts, HyprlandSnapShot.ts (extension and helper install safety)
 #   apps/desktop/src/snapShot/DesktopSnapShot.ts, snapShot.ts (shortcut registration, modifier-pair and conflict messages)
-# The Qt desktop captures through the desktop portal on Linux Wayland only: no
-# macOS or Windows capture, no capture helper, no compositor bindings and no
-# app text yet.
+# The Qt desktop captures through the desktop portal on Linux Wayland and
+# directly on Windows: no macOS capture, no capture helper, no compositor
+# bindings and no app text yet.
 
 @desktop
 Feature: Snap Shot settings
@@ -37,8 +37,6 @@ Feature: Snap Shot settings
     When the user turns on snapshots
     Then setup asks the user to allow capture and then to choose a shortcut
 
-  @backlog-desktop
-  # The Qt desktop captures only on Linux so far.
   Scenario Outline: Setup asks for the permissions the platform needs
     Given the desktop app runs on <platform>
     When the user allows capture during setup
@@ -46,9 +44,14 @@ Feature: Snap Shot settings
 
     Examples:
       | platform                          | permissions                          |
+      | Windows                           | nothing                              |
+
+    # The Qt desktop does not capture on macOS so far.
+    @backlog-desktop
+    Examples:
+      | platform                          | permissions                          |
       | macOS                             | Screen Recording                     |
       | macOS with app text included      | Screen Recording and Accessibility   |
-      | Windows                           | nothing                              |
 
   @backlog-desktop
   # There is no capture helper to install on the Qt desktop.
@@ -109,12 +112,7 @@ Feature: Snap Shot settings
     Examples:
       | cue       | effect                                 |
       | sound     | a sound                                |
-
-    # The desktop portal cannot flash a window, and the Qt draft has no
-    # capture animation yet.
-    @backlog-desktop
-    Examples:
-      | cue       | effect                                 |
+      # On Windows: a desktop portal has no cues, and says so in the panel.
       | flash     | a flash on the captured window         |
       | animation | the image flying into the draft        |
 
@@ -203,7 +201,7 @@ Feature: Snap Shot settings
     Then the setup button reads "Manage capture"
     And it reopens setup to revisit access or the shortcut
 
-  @backlog @desktop
+  @desktop
   Scenario: Windows turns capture on without any setup
     Given the desktop app runs on Windows
     When the user turns on snapshots
@@ -271,21 +269,16 @@ Feature: Snap Shot settings
       | the desktop says the shortcut is free                     | Ready to save.                                  |
       | the shortcut is one HAL-C2 uses for "Terminal: Toggle"    | HAL-C2 already uses this for "Terminal: Toggle". |
       | the user presses only modifier keys on a Wayland desktop  | Add a letter, number, or function key to your shortcut. |
-
-    # The desktop portal is not asked whether a shortcut is free before it is saved.
-    @backlog
-    Examples:
-      | moment                                                    | message                                         |
       | the desktop is being asked if the shortcut is free        | Checking shortcut…                              |
 
-  @backlog @desktop
+  @desktop
   Scenario: A shortcut that cannot be checked is reported, not assumed free
     Given the user recorded a new shortcut
     When the desktop fails while checking it
     Then the shortcut row shows the failure, or "Could not check this shortcut."
     And Save is not available
 
-  @backlog @desktop
+  @desktop
   Scenario: Only the newest shortcut check counts
     Given the user recorded a shortcut and its check is still running
     When the user records another shortcut
@@ -307,7 +300,7 @@ Feature: Snap Shot settings
     Then no capture starts
     And pausing the capture shortcut ends when recording ends, is cancelled, or the panel closes
 
-  @backlog @desktop
+  @desktop
   Scenario: Recording a shortcut cannot start when the desktop will not pause capture
     Given the desktop fails to pause the capture shortcut
     When the user starts recording a shortcut
@@ -382,7 +375,7 @@ Feature: Snap Shot settings
       | Whoosh (Default) |
       | Click            |
 
-  @backlog @desktop
+  @desktop
   Scenario: A capture sound can be heard before choosing it
     Given the capture sound choices are open
     When the user plays Click without selecting it
@@ -470,7 +463,9 @@ Feature: Snap Shot settings
       | on    | Close        |
       | off   | Finish later |
 
-  @backlog @desktop
+  # Saving is a local setting and finishes at once; asking the desktop for
+  # access again is what setup waits on.
+  @desktop
   Scenario: Setup cannot be dismissed while it is working
     Given setup is checking access or saving
     Then the user cannot close setup or move between its steps until it has finished
@@ -793,16 +788,21 @@ Feature: Snap Shot settings
     When the user saves
     Then nothing is written and the user is asked to review again
 
-  @backlog @desktop
-  Scenario Outline: A shortcut on a key the Wayland portal cannot name is refused
+  # Upstream's portal names arrow keys and Home (portalShortcutTrigger in
+  # linuxCaptureSession.ts), so these were never refused. Every key the
+  # recorder can produce has a portal name; the refusal only meets a saved
+  # shortcut from elsewhere.
+  @desktop
+  Scenario Outline: A shortcut on an arrow key or Home is named to the Wayland portal
     Given a desktop that gives shortcuts through the desktop portal
     When the user records <shortcut>
-    Then the shortcut row says "This key isn't supported as a Wayland capture shortcut. Choose another key."
+    Then the shortcut row says "Ready to save."
+    And saving asks the desktop for "<trigger>"
 
     Examples:
-      | shortcut                      |
-      | Ctrl+Shift with an arrow key  |
-      | Ctrl+Alt with Home            |
+      | shortcut         | trigger          |
+      | Ctrl+Alt+Up      | CTRL+ALT+Up      |
+      | Ctrl+Alt+Home    | CTRL+ALT+Home    |
 
   @desktop
   Scenario Outline: A shortcut the system or common apps already use says why
@@ -832,7 +832,7 @@ Feature: Snap Shot settings
       | composer.stash | mod+alt+s   | Ctrl+S   | This shortcut is Save in most apps. |
       | thread.undo    | mod+alt+z   | Ctrl+Z   | This shortcut is Undo in most apps. |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A shortcut of one modifier key warns that it is observed, not reserved
     Given the desktop app runs on <platform>
     When the user chooses the shortcut of pressing both <key> keys
@@ -842,23 +842,34 @@ Feature: Snap Shot settings
     Examples:
       | platform | key   | note                                           |
       | Windows  | Super | This key can also open the system's own menu.  |
-      | Linux    | Super | This key can also open the system's own menu.  |
       | Windows  | Alt   | This key can also activate app menu bars.      |
+
+    # No Linux desktop the Qt app supports watches modifier keys yet, and it
+    # does not capture on macOS.
+    @backlog
+    Examples:
+      | platform | key   | note                                           |
+      | Linux    | Super | This key can also open the system's own menu.  |
       | macOS    | Shift | no further note                                |
 
-  @backlog @desktop
+  # Passes on Windows; macOS has no watcher in the Qt desktop yet.
+  @desktop
   Scenario: A modifier key the system will not let HAL-C2 watch is reported
     Given the desktop app runs on Windows or macOS
     When the user chooses a shortcut of pressing both of a modifier key and the system refuses to let HAL-C2 watch it
     Then the shortcut row says that key is not available on this system
     And capture does not claim the shortcut is registered
 
-  @backlog @desktop
+  # Upstream keeps its "Modifier-pair shortcuts aren't available" reason off
+  # the settings row (SnapShotSettings.logic.ts): the recorder refuses a pair
+  # on Wayland, and a saved pair is left unbound while the row suggests a
+  # letter-based shortcut.
+  @desktop
   Scenario: A modifier-pair shortcut is not offered in a Wayland session that cannot watch keys
-    Given a Wayland session that is not Hyprland
-    When the user chooses the shortcut of pressing both Shift keys
-    Then the shortcut row says modifier-pair shortcuts aren't available in this Wayland session
-    And it suggests another shortcut or Take snapshot from the command palette
+    Given a desktop that gives shortcuts through the desktop portal
+    And the saved shortcut is pressing both Shift keys
+    Then the shortcut row suggests a shortcut such as Ctrl+Shift+2
+    And pressing both Shift keys is not offered as the shortcut
 
   @desktop
   Scenario Outline: The shortcut row says what the desktop did with the shortcut request
@@ -901,12 +912,15 @@ Feature: Snap Shot settings
     When the user asks for the shortcut permission
     Then the user is told to change the capture binding in the Hyprland config and save it
 
-  @backlog @desktop
-  Scenario: Asking again without a shortcut session says where to allow it
+  # Upstream asks again by binding afresh when there is no session
+  # (retry-shortcut in DesktopSnapShot.ts); "open your desktop's shortcut
+  # settings" is only for a session too old to configure.
+  @desktop
+  Scenario: Asking again without a shortcut session starts a new one
     Given a desktop that gives shortcuts through the desktop portal
     And the desktop's shortcut session could not be started
-    When the user asks for the shortcut permission
-    Then the user is told to open the desktop's shortcut settings and allow HAL-C2's capture shortcut
+    When the user asks for shortcut permission again
+    Then a new shortcut session asks the desktop for the shortcut
 
   @desktop
   Scenario Outline: A shortcut service that fails says what to do
