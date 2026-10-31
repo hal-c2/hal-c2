@@ -378,7 +378,8 @@ defmodule HalC2.Orchestration.Delegation do
 
   Idempotent, and called whenever the child may be done: as its task ends, before the
   result reaches the caller, and from `HalC2.PullRequests.Wakes` whenever there is news
-  for the child, so a handover cut short (a restart, a refused dispatch) completes.
+  for the child, so a handover cut short (a restart, a refused dispatch) completes,
+  settled or not.
   """
   def hand_over_pull_requests(child_id) do
     child = stream(child_id)
@@ -388,7 +389,10 @@ defmodule HalC2.Orchestration.Delegation do
          when is_binary(parent_id) <- thread["lineage"],
          [_ | _] = links <- Links.visible(Links.of(thread)),
          [_ | _] <- StreamState.list(child, "run"),
-         true <- quiet?(child) do
+         true <- quiet?(child),
+         # A caller deleted since takes nothing; the child keeps its links.
+         %{} = parent <- StreamState.get(stream(parent_id), "thread")[parent_id],
+         nil <- parent["deletedAt"] do
       for link <- links, do: hand_over(link, child_id, parent_id)
     end
 

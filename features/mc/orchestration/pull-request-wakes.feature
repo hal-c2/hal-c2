@@ -226,6 +226,22 @@ Feature: A thread hears when a pull request it owns needs attention
     And the message says "New comment from owner-1."
 
   @mc
+  Scenario Outline: A handover cut short completes on a child put away since
+    Given thread "worker" works on a task "t1" delegated and links pull request "acme/app#14", which the MC has read once
+    And the task of "worker" ended without handing its pull requests over
+    And thread "worker" is <put away>
+    When the owner comments and the MC reads "acme/app#14" again
+    And the MC reads "acme/app#14" again
+    Then thread "worker" no longer links "acme/app#14"
+    And the agent of "t1" is woken once about "acme/app#14"
+    And the message says "New comment from owner-1."
+
+    Examples:
+      | put away |
+      | settled  |
+      | archived |
+
+  @mc
   Scenario: Unlinking the pull request stops the wakes
     When a client unlinks pull request "acme/app#12" from "t1"
     And its checks start failing and the MC reads "acme/app#12" again

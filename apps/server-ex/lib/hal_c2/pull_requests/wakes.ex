@@ -86,10 +86,13 @@ defmodule HalC2.PullRequests.Wakes do
 
   # A quick look at a sidebar row before its stream decides: whether a link has a
   # snapshot it has not heard. A busy thread waits for its run's end, which changes the
-  # row again.
+  # row again. A settled delegated child still showing links has a handover left to
+  # finish, whatever it heard.
   defp due?(row) do
     waiting? =
       row["archivedAt"] != nil or row["settledAt"] != nil or row["activityRunStatus"] != nil
+
+    handing_over? = row["activityRunStatus"] == nil and delegated?(row)
 
     row["deletedAt"] == nil and
       Enum.any?(Links.visible(row["pullRequests"] || []), fn link ->
@@ -98,6 +101,9 @@ defmodule HalC2.PullRequests.Wakes do
             false
 
           {nil, _} ->
+            true
+
+          _ when handing_over? ->
             true
 
           _ when waiting? ->
