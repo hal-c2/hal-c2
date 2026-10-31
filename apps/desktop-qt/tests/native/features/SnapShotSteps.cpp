@@ -1332,9 +1332,6 @@ qsizetype attachmentCount(World& world) {
 void expectFailureToast(World& world, const QString& body) {
   expectToast(world, QStringLiteral("Snapshot failed"), body);
 }
-void pressShortcut(World& world) {
-  capture(world);
-}
 void openThreadForCapture(World& world) {
   openThread(world);
   openPanel(world);
