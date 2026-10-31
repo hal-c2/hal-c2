@@ -61,14 +61,21 @@ public:
     QNetworkRequest request(release.asset);
     request.setTransferTimeout(kDownloadStallMs);
     QNetworkReply* reply = m_network.get(request);
-    QObject::connect(reply, &QNetworkReply::readyRead, reply, [reply, file] { file->write(reply->readAll()); });
+    // Hashed as it arrives: a whole AppImage at the end would freeze the window.
+    auto hash = std::make_shared<QCryptographicHash>(QCryptographicHash::Sha256);
+    const auto take = [reply, file, hash] {
+      const QByteArray bytes = reply->readAll();
+      file->write(bytes);
+      hash->addData(bytes);
+    };
+    QObject::connect(reply, &QNetworkReply::readyRead, reply, take);
     QObject::connect(reply, &QNetworkReply::downloadProgress, reply, [progress, release](qint64 received, qint64 total) {
       if (total <= 0) total = release.size;
       if (total > 0) progress(int(std::min<qint64>(100, received * 100 / total)));
     });
-    QObject::connect(reply, &QNetworkReply::finished, reply, [this, reply, file, path, release, done] {
+    QObject::connect(reply, &QNetworkReply::finished, reply, [this, reply, file, hash, take, path, release, done] {
       reply->deleteLater();
-      file->write(reply->readAll());
+      take();
       file->close();
       if (reply->error() != QNetworkReply::NoError) {
         QFile::remove(path);
@@ -80,13 +87,11 @@ public:
         done(QStringLiteral("The download of %1 was incomplete.").arg(release.version));
         return;
       }
-      QFile written(path);
-      if (!written.open(QIODevice::ReadOnly) || !desktopUpdate::matchesDigest(written, release.sha256)) {
+      if (!desktopUpdate::matchesDigest(*hash, release.sha256)) {
         QFile::remove(path);
         done(QStringLiteral("The download of %1 does not match its published digest.").arg(release.version));
         return;
       }
-      written.close();
       const QString staged = path.chopped(5);
       QFile::remove(staged);
       if (!QFile::rename(path, staged)) {

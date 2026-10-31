@@ -117,6 +117,8 @@ signals:
   void changed();
   // The new version is installed and running: this process quits.
   void installed();
+  // The install failed and the app stays.
+  void installFailed(const QString& reason);
 
 private:
   void apply(const desktopUpdate::State& state);
@@ -180,6 +182,8 @@ private:
   std::optional<Run> m_run;
   bool m_stepQueued = false;
   QSet<QString> m_cancelledBeforeStart;
+  // A commit that joined an install the user started: told if that install fails.
+  std::function<void(const QString&)> m_joined;
   struct Prepared {
     QString requestId;
     QString version;

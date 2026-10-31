@@ -1,6 +1,6 @@
 #pragma once
 
-#include <QIODevice>
+#include <QCryptographicHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
@@ -89,8 +89,8 @@ struct Release {
 // (linux, macos) and `arch` (x64, arm64), newest first. The app runs what it
 // downloads, so an asset that is not https or has no sha256 digest does not count.
 QList<Release> parseFeed(const QByteArray& json, const QString& platform, const QString& arch);
-// Whether what `file` holds from its current position has the digest.
-bool matchesDigest(QIODevice& file, const QString& sha256);
+// Whether the bytes `hash` was given have the digest.
+bool matchesDigest(const QCryptographicHash& hash, const QString& sha256);
 
 struct Offer {
   Release release;

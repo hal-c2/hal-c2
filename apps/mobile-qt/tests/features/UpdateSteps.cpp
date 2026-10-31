@@ -291,7 +291,15 @@ const Steps steps([] {
     openOperable(world);
     world.tap(S("maintenanceUpdate-") + kOwn);
   });
-  step(S("the wait for it runs out"), [](World& world, const Captures&, const Table&) { world.sync(); });
+  step(S("the wait for it runs out"), [](World& world, const Captures&, const Table&) {
+    awaitText(world, S("maintenanceOutcome-") + kOwn, S("server update failed: it did not come back on a new version. Try again."));
+  });
+  step(S("%1 comes back on %2").arg(kQuoted, kQuoted), [](World& world, const Captures& c, const Table&) {
+    QJsonObject descriptor = world.mc.descriptors.value(kOwn);
+    descriptor.insert(S("serverVersion"), c[1]);
+    world.mc.descriptors.insert(kOwn, descriptor);
+    world.mc.announceEnvironment();
+  });
   step(S("the user is told %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) { awaitText(world, S("maintenanceOutcome-") + kOwn, c[0]); });
   step(S("the update of %1 can be started again").arg(kQuoted), [](World& world, const Captures&, const Table&) {
     FakeUpdates& fake = world.mc.part<FakeUpdates>();

@@ -30,6 +30,8 @@ defmodule HalC2.DesktopUpdate do
 
   use GenServer
 
+  require Logger
+
   @update_timeout :timer.minutes(20)
   @install_timeout :timer.minutes(2)
   @unavailable "This server was not started by the HAL-C2 desktop app, so it cannot drive a desktop update."
@@ -171,26 +173,36 @@ defmodule HalC2.DesktopUpdate do
           desktop["downloadedVersion"] || desktop["availableVersion"] ||
             desktop["currentVersion"]
 
-        result = %{
-          "targetVersion" => target,
-          "method" => "desktop-app",
-          "desktopUpdateToken" => run.id
-        }
-
-        state = finish(state, {:ok, result})
-
         install = %{
           id: run.id,
           from: desktop["currentVersion"],
           target: target,
           restored: false,
-          timer: deadline(install_timeout(), run.id, :install)
+          timer: nil
         }
 
-        # On disk first: the app stops this MC as soon as it is told.
-        keep_install(install)
-        control(state, "commitDesktopUpdate", run.id)
-        %{state | install: install}
+        # On disk before anything is promised: the app stops this MC as soon as it
+        # is told, and nothing could then hear how the install went.
+        case keep_install(install) do
+          :ok ->
+            result = %{
+              "targetVersion" => target,
+              "method" => "desktop-app",
+              "desktopUpdateToken" => run.id
+            }
+
+            state = finish(state, {:ok, result})
+            control(state, "commitDesktopUpdate", run.id)
+            %{state | install: %{install | timer: deadline(install_timeout(), run.id, :install)}}
+
+          {:error, reason} ->
+            control(state, "cancelDesktopUpdate", run.id)
+
+            finish(
+              state,
+              failure("Could not save the desktop update's state: #{:file.format_error(reason)}.")
+            )
+        end
 
       "up-to-date" ->
         finish(
@@ -265,13 +277,20 @@ defmodule HalC2.DesktopUpdate do
   defp install_report(state, _report), do: state
 
   defp install_failed(%{install: install} = state, reason) do
-    HalC2.Upgrade.desktop_failed(%{
-      "id" => install.id,
-      "fromVersion" => install.from,
-      "targetVersion" => install.target,
-      "status" => "failed",
-      "reason" => reason
-    })
+    # A disk that cannot take the outcome must not keep the install going: it would
+    # come back from its record and fail here again at every deadline.
+    try do
+      HalC2.Upgrade.desktop_failed(%{
+        "id" => install.id,
+        "fromVersion" => install.from,
+        "targetVersion" => install.target,
+        "status" => "failed",
+        "reason" => reason
+      })
+    rescue
+      error in File.Error ->
+        Logger.warning("Could not record a failed desktop update: #{Exception.message(error)}")
+    end
 
     install_done(state)
   end
@@ -283,8 +302,9 @@ defmodule HalC2.DesktopUpdate do
   end
 
   defp keep_install(install) do
-    File.mkdir_p!(Path.dirname(install_path()))
-    File.write!(install_path(), JSON.encode!(Map.take(install, [:id, :from, :target])))
+    with :ok <- File.mkdir_p(Path.dirname(install_path())) do
+      File.write(install_path(), JSON.encode!(Map.take(install, [:id, :from, :target])))
+    end
   end
 
   defp restored_install do

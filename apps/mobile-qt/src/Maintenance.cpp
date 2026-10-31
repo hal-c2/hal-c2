@@ -407,6 +407,7 @@ void Maintenance::updateServer(const Machine& machine) {
   const QString version = target(machine);
   if (version.isEmpty()) return;
   m_updating.insert(machine.environmentId, machine.version);
+  m_gaveUpOn.remove(machine.environmentId);
   m_outcomes.remove(machine.environmentId);
   m_shell->client()->call(this, machine.environmentId, QStringLiteral("server.updateServer"), QJsonObject{{QStringLiteral("targetVersion"), version}},
                           [this, machine](const QJsonValue& result, const std::optional<QString>& error) {
@@ -424,20 +425,22 @@ void Maintenance::updateServer(const Machine& machine) {
 }
 
 void Maintenance::settle() {
-  for (auto it = m_reconnecting.begin(); it != m_reconnecting.end();) {
-    const std::optional<Machine> now = machine(it.key());
-    // Back on another version: the one it reconnected on.
-    if (!now || !now->online || now->version.isEmpty() || now->version == it.value()) {
-      ++it;
-      continue;
-    }
+  // Back on another version: the one it reconnected on.
+  const auto cameBack = [this](const QString& environmentId, const QString& left) {
+    const std::optional<Machine> now = machine(environmentId);
+    if (!now || !now->online || now->version.isEmpty() || now->version == left) return false;
     const Outcome outcome{true, tr("%1 was updated and reconnected on %2.").arg(now->label, now->version)};
-    m_outcomes.insert(it.key(), outcome);
+    m_outcomes.insert(environmentId, outcome);
     m_message = outcome;
-    m_releases.remove(it.key());
-    const QString environmentId = it.key();
-    ++it;
-    endReconnect(environmentId);
+    m_releases.remove(environmentId);
+    return true;
+  };
+  for (const QString& environmentId : m_reconnecting.keys()) {
+    if (cameBack(environmentId, m_reconnecting.value(environmentId))) endReconnect(environmentId);
+  }
+  // A slow one still counts: its failure gives way.
+  for (const QString& environmentId : m_gaveUpOn.keys()) {
+    if (cameBack(environmentId, m_gaveUpOn.value(environmentId))) m_gaveUpOn.remove(environmentId);
   }
 }
 
@@ -470,6 +473,7 @@ void Maintenance::reconnectFailed(const QString& environmentId, const QString& w
   const Outcome outcome{false, tr("%1 update failed: %2").arg(now ? now->label : environmentId, why)};
   m_outcomes.insert(environmentId, outcome);
   m_message = outcome;
+  m_gaveUpOn.insert(environmentId, m_reconnecting.value(environmentId));
   endReconnect(environmentId);
   publish();
 }

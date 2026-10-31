@@ -1,6 +1,5 @@
 #include "DesktopUpdateLogic.h"
 
-#include <QCryptographicHash>
 #include <QHash>
 #include <QJsonDocument>
 #include <QRegularExpression>
@@ -313,9 +312,8 @@ QString digestOf(const QJsonObject& asset) {
 
 }  // namespace
 
-bool matchesDigest(QIODevice& file, const QString& sha256) {
-  QCryptographicHash hash(QCryptographicHash::Sha256);
-  return hash.addData(&file) && QString::fromLatin1(hash.result().toHex()) == sha256;
+bool matchesDigest(const QCryptographicHash& hash, const QString& sha256) {
+  return QString::fromLatin1(hash.resultView().toByteArray().toHex()) == sha256;
 }
 
 QList<Release> parseFeed(const QByteArray& json, const QString& platform, const QString& arch) {

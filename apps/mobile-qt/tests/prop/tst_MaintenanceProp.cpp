@@ -52,6 +52,7 @@ struct Machine {
   // The server update's last outcome: succeeded or not.
   std::optional<bool> updated;
   int serverCalls = 0;
+  bool gaveUp = false;  // the phone stopped waiting for it to come back
   // Its Codex: behind its latest release, updating, and how its last update ended.
   bool behind = true;
   bool running = false;
@@ -80,6 +81,7 @@ bool behindApp(const Model& m, int i) { return m.app > m.machines[i].version; }
 void updateServer(Model& m, int i, bool fails) {
   Machine& machine = m.machines[i];
   ++machine.serverCalls;
+  machine.gaveUp = false;
   machine.updated = !fails;
   if (!fails) machine.version = m.app;
 }
@@ -346,6 +348,7 @@ struct UpdateStays : Command {
   void apply(Model& m) const override {
     ++m.machines[0].serverCalls;
     m.machines[0].updated = false;
+    m.machines[0].gaveUp = true;
   }
   void run(const Model& m, Sut& s) const override {
     Model next = m;
@@ -360,6 +363,28 @@ struct UpdateStays : Command {
     s.check(next);
   }
   void show(std::ostream& os) const override { os << "UpdateStays"; }
+};
+
+// It comes back on the new version after all: that replaces the failure.
+struct ComesBackLate : Command {
+  void checkPreconditions(const Model& m) const override { RC_PRE(m.connected && m.machines[0].gaveUp && behindApp(m, 0)); }
+  void apply(Model& m) const override {
+    m.machines[0].version = m.app;
+    m.machines[0].updated = true;
+    m.machines[0].gaveUp = false;
+  }
+  void run(const Model& m, Sut& s) const override {
+    Model next = m;
+    apply(next);
+    QJsonObject descriptor = s.mc.mc.descriptors.value(S(kIds[0]));
+    descriptor.insert(S("serverVersion"), version(next.machines[0].version));
+    s.mc.mc.descriptors.insert(S(kIds[0]), descriptor);
+    s.mc.mc.announceEnvironment();
+    RC_ASSERT(halc2::prop::until([&] { return s.machine(0).value(S("version")).toString() == version(next.machines[0].version); }));
+    RC_ASSERT(halc2::prop::until([&] { return s.machine(0).value(S("outcome")).toMap().value(S("ok")).toBool(); }));
+    s.check(next);
+  }
+  void show(std::ostream& os) const override { os << "ComesBackLate"; }
 };
 
 // "Update all machines": the service at once, the desktop host once confirmed.
@@ -578,7 +603,7 @@ private slots:
     QVERIFY(rc::check("the phone's maintenance matches its model", [] {
       Sut sut;
       rc::state::check(Model{}, sut,
-                       rc::state::gen::execOneOfWithArgs<Open, Close, Update, UpdateStays, UpdateAll, Confirm, Cancel, UpdateProvider, Release, Disconnect, Reconnect,
+                       rc::state::gen::execOneOfWithArgs<Open, Close, Update, UpdateStays, ComesBackLate, UpdateAll, Confirm, Cancel, UpdateProvider, Release, Disconnect, Reconnect,
                                                          NewApp, NewCodex>());
     }));
   }

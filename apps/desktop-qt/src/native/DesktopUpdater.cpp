@@ -8,6 +8,8 @@
 #include <QTimer>
 #include <QUrl>
 
+#include <utility>
+
 #ifdef Q_OS_MACOS
 #include <sys/sysctl.h>
 #endif
@@ -231,6 +233,7 @@ void DesktopUpdater::installNow(Finished done) {
     if (self->m_startMc) self->m_startMc();
     self->apply(desktopUpdate::onInstallFailure(self->m_state, *error));
     self->m_active.clear();
+    emit self->installFailed(*error);
     done({true, false, true});
   });
 }
@@ -258,6 +261,9 @@ std::optional<QString> DesktopUpdater::setChannel(const QString& channel,
 DesktopRemoteUpdates::DesktopRemoteUpdates(DesktopUpdater* updater, std::shared_ptr<DesktopUpdater::Clock> clock,
                                            std::function<void(const QJsonObject&)> report, QObject* parent)
     : QObject(parent), m_updater(updater), m_clock(std::move(clock)), m_report(std::move(report)) {
+  connect(updater, &DesktopUpdater::installFailed, this, [this](const QString& reason) {
+    if (const auto joined = std::exchange(m_joined, {})) joined(reason);
+  });
   connect(updater, &DesktopUpdater::changed, this, [this] {
     if (!m_run) return;
     if (!m_stepQueued) {
@@ -400,6 +406,7 @@ void DesktopRemoteUpdates::commit(const QString& requestId) {
   m_updater->install(version, [this, version, failed](const DesktopUpdater::Result& result) {
     // The user already started this install: the commit rides along.
     if (!result.accepted && m_updater->activeAction() == QLatin1String("install") && m_updater->state().downloadedVersion == version) {
+      m_joined = failed;
       return;
     }
     if (!result.accepted || result.failed) {

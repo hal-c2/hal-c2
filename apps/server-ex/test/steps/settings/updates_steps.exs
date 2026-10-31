@@ -327,7 +327,38 @@ defmodule HalC2.Steps.Settings.Updates do
   step "no install is left waiting and no failure is recorded", context do
     _ = HalC2.DesktopUpdate.latest()
     assert :sys.get_state(HalC2.DesktopUpdate).install == nil
-    assert HalC2.Upgrade.outcome() == nil
+    # An outcome is global to the VM: an earlier scenario's may still be there.
+    refute match?(%{"id" => id} when id == context.request, HalC2.Upgrade.outcome())
+    context
+  end
+
+  step "the MC cannot write its update state", context do
+    block_upgrades_dir()
+    context
+  end
+
+  step "a client's desktop update is ready to install", context do
+    Mc.ensure(HalC2.Settings)
+
+    ready =
+      report("downloaded", %{"downloadedVersion" => "1.2.4"}, %{"outcome" => "ready-to-install"})
+
+    context |> desktop_plays([{:run, ready}]) |> ask()
+  end
+
+  step "the desktop app is told to cancel and not to install", context do
+    {_request, context} = control(context, "cancelDesktopUpdate")
+    context
+  end
+
+  step "the MC stops being able to write its update state", context do
+    block_upgrades_dir()
+    context
+  end
+
+  step "the MC keeps running with no install left waiting", context do
+    _ = HalC2.DesktopUpdate.latest()
+    assert :sys.get_state(HalC2.DesktopUpdate).install == nil
     context
   end
 
@@ -490,6 +521,13 @@ defmodule HalC2.Steps.Settings.Updates do
 
   defp play(context, {:run, report}, request),
     do: send_report(context, Map.put(report, "requestId", request))
+
+  # A file where the directory goes: nothing can be written below it.
+  defp block_upgrades_dir do
+    dir = Path.join(HalC2.Paths.data_dir(), "upgrades")
+    File.rm_rf!(dir)
+    File.write!(dir, "")
+  end
 
   defp send_report(context, report) do
     {reply, desktop} =

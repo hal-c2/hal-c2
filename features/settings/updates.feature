@@ -474,6 +474,20 @@ Feature: Updating the server, the desktop app and providers
         | does not report an install | did not report an install result in time |
 
     @mc
+    Scenario: An update the MC cannot keep track of is not started
+      Given the MC cannot write its update state
+      And a client's desktop update is ready to install
+      Then the desktop app is told to cancel and not to install
+      And the request fails saying "Could not save the desktop update's state: not a directory."
+
+    @mc
+    Scenario: An install whose failure cannot be saved still ends
+      Given a client's desktop update is committed and the app stopped its MC to install
+      And the MC stops being able to write its update state
+      When the app reconnects and reports that the install failed because "disk full"
+      Then the MC keeps running with no install left waiting
+
+    @mc
     Scenario: An MC the desktop app started offers the update through the app
       Then the MC's descriptor says the desktop app updates it
 
@@ -573,6 +587,14 @@ Feature: Updating the server, the desktop app and providers
       When a server confirms its prepared update of that version
       Then no second install starts
       And no failure is reported
+
+    @desktop
+    Scenario: A confirmation that joined an install hears when it fails
+      Given the desktop app is already installing the downloaded version
+      When a server confirms its prepared update of that version
+      And that install fails
+      Then the MC hears that request failed with the install's reason
+      And a new update request can start
 
   Rule: Updating providers
 
@@ -841,6 +863,13 @@ Feature: Updating the server, the desktop app and providers
       When the wait for it runs out
       Then the user is told "server update failed: it did not come back on a new version. Try again."
       And the update of "server" can be started again
+
+    @mobile
+    Scenario: A machine that comes back after the wait ran out counts as updated
+      Given the user updated "server" and it comes back on the same version
+      When the wait for it runs out
+      And "server" comes back on "1.4.0"
+      Then the user is told "server" was updated and reconnected on "1.4.0"
 
     @mobile
     Scenario: The phone checks an environment's release on the channel the host follows

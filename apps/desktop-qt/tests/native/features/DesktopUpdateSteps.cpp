@@ -6,7 +6,6 @@
 // side is the wire: `server.reportDesktopUpdateStatus` calls are recorded and
 // `desktopUpdateControl` frames are sent as the MC sends them.
 
-#include <QBuffer>
 #include <QCryptographicHash>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -1089,6 +1088,13 @@ const Steps steps([] {
     expect(report.value(QLatin1String("outcome")) == QLatin1String("failed") && report.value(QLatin1String("reason")) == fake().reason,
            show(report.toVariantMap()));
   });
+  step(QStringLiteral("that install fails"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    fake().backend->installError = QStringLiteral("Could not replace /opt/hal-c2/HAL-C2.AppImage.");
+    fake().reason = *fake().backend->installError;
+    fake().backend->completeInstall();
+    world.sync();
+  });
   step(QStringLiteral("the update feed lists a release whose asset (.+)"), [](World&, const Captures& c, const Table&) {
     const bool https = c[0].contains(QLatin1String("https"));
     QJsonObject asset{{QStringLiteral("name"), QStringLiteral("HAL-C2.AppImage")},
@@ -1104,8 +1110,8 @@ const Steps steps([] {
     fake().downloadedBytes = c[0] == QLatin1String("match") ? QByteArrayLiteral("update") : QByteArrayLiteral("tampered");
   });
   step(QStringLiteral("the app (accepts|refuses) it"), [](World&, const Captures& c, const Table&) {
-    QBuffer bytes(&fake().downloadedBytes);
-    bytes.open(QIODevice::ReadOnly);
+    QCryptographicHash bytes(QCryptographicHash::Sha256);
+    bytes.addData(fake().downloadedBytes);
     const QString digest = QString::fromLatin1(QCryptographicHash::hash("update", QCryptographicHash::Sha256).toHex());
     expect(desktopUpdate::matchesDigest(bytes, digest) == (c[0] == QLatin1String("accepts")), c[0]);
   });

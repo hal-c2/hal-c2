@@ -155,6 +155,8 @@ private:
     int subscription = -1;
   };
   QHash<QString, Waiting> m_waiting;
+  // Machines it stopped waiting for, by the version they left.
+  QHash<QString, QString> m_gaveUpOn;
   quint64 m_waitRun = 0;
   int m_reconnectDeadline = 180'000;
   QHash<QString, Outcome> m_outcomes;
