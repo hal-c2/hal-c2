@@ -237,6 +237,14 @@ Rectangle {
             }
 
             ShellMenuItem {
+                objectName: "spaceMakeDeck"
+                text: qsTr("Make a deck")
+                iconName: "monitor"
+                enabled: !page.trashed
+                onTriggered: Shell.dispatch("space.deck.createFromPage", { pageId: Spaces.pageId })
+            }
+
+            ShellMenuItem {
                 text: qsTr("Move to the top of the Space")
                 iconName: "arrow-up"
                 visible: (page.current.parentPageId ?? "") !== "" && !page.trashed

@@ -6,8 +6,8 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The Space view (route kind `space`; SpaceController publishes `space`): the
-// Space's pages beside the open one, and its comments beside that when the
-// user asks for them. Everything shown is the MC's; with nothing to show it
+// Space's pages and decks beside the open one, and a page's comments beside that
+// when the user asks for them. Everything shown is the MC's; with nothing to show it
 // says why.
 Rectangle {
     id: workspace
@@ -66,17 +66,22 @@ Rectangle {
 
             SpacePage {
                 anchors.fill: parent
-                visible: Spaces.pageId !== ""
+                visible: Spaces.pageId !== "" && Spaces.deckId === ""
                 onSaveRequested: saveDialog.open()
                 onSubpageRequested: (parentPageId, link) => sidebar.newPage(parentPageId, link)
                 onCommentRequested: blockId => workspace.showComments(blockId)
+            }
+
+            SpaceDeck {
+                anchors.fill: parent
+                visible: Spaces.deckId !== ""
             }
 
             ColumnLayout {
                 objectName: "spaceEmpty"
                 anchors.centerIn: parent
                 width: Math.min(parent.width - 48, 420)
-                visible: Spaces.pageId === ""
+                visible: Spaces.pageId === "" && Spaces.deckId === ""
                 spacing: 12
 
                 ShellIcon {
@@ -140,10 +145,14 @@ Rectangle {
 
             Layout.preferredWidth: 300
             Layout.fillHeight: true
-            visible: workspace.commentsShown && Spaces.pageId !== ""
+            visible: workspace.commentsShown && Spaces.pageId !== "" && Spaces.deckId === ""
             readOnly: Spaces.page.trashed === true
             onCloseRequested: workspace.commentsShown = false
         }
+    }
+
+    SpacePresenter {
+        anchors.fill: parent
     }
 
     FileDialog {
