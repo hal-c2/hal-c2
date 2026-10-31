@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QTimer>
 #include <QVariantMap>
 
 #include <functional>
@@ -78,6 +79,90 @@ private:
   QList<QVariantMap> m_rows;
 };
 
+// A page's history as the user looks through it: its versions a stretch at a
+// time, and the one being read. The MC keeps it (features/space/page-history.feature)
+// and it is never on the stream, so this holds only what was asked for. It sends
+// nothing itself: what changes it hands back the request to send, whose answer
+// comes back with its token. An answer to anything since replaced is dropped, and
+// only one stretch is asked for at a time, so a refresh wanted meanwhile follows
+// the answer, however many were wanted.
+//
+// Rows:
+//   versions {id, version, at, byAgent, threadTitle, restoredFromAt}: newest
+//            first, the first being the page as it is now
+//   blocks   the version being read, as SpacePages' blocks
+class SpaceHistory : public QObject {
+  Q_OBJECT
+  Q_PROPERTY(bool shown READ shown NOTIFY changed)
+  Q_PROPERTY(QString pageId READ pageId NOTIFY changed)
+  Q_PROPERTY(SpaceRows* versions READ versions CONSTANT)
+  Q_PROPERTY(SpaceRows* blocks READ blocks CONSTANT)
+  Q_PROPERTY(bool loading READ loading NOTIFY changed)
+  // The last stretch asked for did not come.
+  Q_PROPERTY(bool failed READ failed NOTIFY changed)
+  Q_PROPERTY(bool hasMore READ hasMore NOTIFY changed)
+  // A version was chosen; `version` is {version, at, title} once it has come.
+  Q_PROPERTY(bool reading READ reading NOTIFY changed)
+  Q_PROPERTY(QVariantMap version READ version NOTIFY changed)
+
+public:
+  struct Request {
+    int token = 0;
+    QJsonObject payload;
+  };
+  using Next = std::optional<Request>;
+
+  SpaceHistory(std::function<QString(const QString& pageId)> titleOf, QObject* parent = nullptr);
+
+  bool shown() const { return !m_pageId.isEmpty(); }
+  QString pageId() const { return m_pageId; }
+  SpaceRows* versions() const { return m_versions; }
+  SpaceRows* blocks() const { return m_blocks; }
+  bool loading() const { return m_listToken != 0; }
+  bool failed() const { return m_failed; }
+  bool hasMore() const { return m_nextBefore >= 0; }
+  bool reading() const { return m_reading; }
+  QVariantMap version() const { return m_version; }
+
+  // Starts over on the newest versions of `pageId`.
+  Next open(const QString& pageId);
+  void close();
+  // The next stretch, when there is one and none is on its way.
+  Next more();
+  // The versions held, anew: the page was written. Waits for a stretch on its way.
+  Next refresh();
+  // The answer to a `space.page.history`, and what to ask next.
+  Next receive(int token, const QJsonObject& result);
+  Next failed(int token);
+
+  // Asks for one version to read, and leaves the one being read.
+  Request read(qint64 version);
+  void stopReading();
+  // The answer to a `space.page.version`. A failed one goes back to the list.
+  void receiveVersion(int token, const QJsonObject& result);
+  void failedVersion(int token);
+
+signals:
+  void changed();
+
+private:
+  Next settled();
+
+  std::function<QString(const QString&)> m_titleOf;
+  SpaceRows* m_versions;
+  SpaceRows* m_blocks;
+  QString m_pageId;
+  int m_tokens = 0;
+  int m_listToken = 0;
+  int m_readToken = 0;
+  bool m_appending = false;
+  bool m_stale = false;
+  bool m_failed = false;
+  bool m_reading = false;
+  qint64 m_nextBefore = -1;
+  QVariantMap m_version;
+};
+
 // What the Space view shows of the MC's Space streams: the Spaces, the
 // selected Space's page tree and trash, and the selected page's blocks and
 // comments. Everything comes from the streams; the one thing it adds is an
@@ -101,6 +186,7 @@ class SpacePages : public QObject {
   Q_PROPERTY(SpaceRows* trash READ trash CONSTANT)
   Q_PROPERTY(SpaceRows* blocks READ blocks CONSTANT)
   Q_PROPERTY(SpaceRows* comments READ comments CONSTANT)
+  Q_PROPERTY(SpaceHistory* history READ history CONSTANT)
   Q_PROPERTY(QString spaceId READ spaceId NOTIFY changed)
   Q_PROPERTY(QString spaceName READ spaceName NOTIFY changed)
   Q_PROPERTY(QString pageId READ pageId NOTIFY changed)
@@ -118,6 +204,7 @@ public:
   SpaceRows* trash() const { return m_trash; }
   SpaceRows* blocks() const { return m_blocks; }
   SpaceRows* comments() const { return m_comments; }
+  SpaceHistory* history() const { return m_history; }
   QString spaceId() const { return m_spaceId; }
   QString spaceName() const;
   QString pageId() const { return m_pageId; }
@@ -190,6 +277,7 @@ private:
   SpaceRows* m_trash;
   SpaceRows* m_blocks;
   SpaceRows* m_comments;
+  SpaceHistory* m_history;
 };
 
 // The Space view (route kind `space`): follows the `spaces` index and the
@@ -214,13 +302,16 @@ private:
 // `space.block.setChecked {blockId, checked}`, `space.block.move {blockId,
 // afterBlockId}`, `space.block.delete {blockId}`, `space.comment.add {pageId,
 // blockId, body}`, `space.comment.resolve {commentId}`, `space.comment.reopen
-// {commentId}`.
+// {commentId}`, `space.history.open {pageId}`, `space.history.close`,
+// `space.history.more`, `space.history.read {version}`, `space.history.back`,
+// `space.history.restore {version}`.
 class SpaceController : public SpacePages, public NativeController {
   Q_OBJECT
 
 public:
   static inline const QString kOpen = QStringLiteral("space.open");
   static inline const QString kPageFromThread = QStringLiteral("space.pageFromThread");
+  static inline const QString kHistory = QStringLiteral("space.history.open");
 
   SpaceController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 
@@ -243,6 +334,11 @@ private:
   void exportPage(const QString& pageId, std::function<void(const QString& markdown)> done);
   void importMarkdown(const QString& markdown);
   void pageFromThread(const QString& threadKey);
+  void openHistory(const QString& pageId);
+  // The history follows the open page, and asks again a moment after the page is
+  // written (at most once in `kHistoryRefreshMs`, however fast it is written).
+  void followHistory();
+  void askHistory(const SpaceHistory::Next& request);
   void toast(const QString& type, const QString& title, const QString& description = {});
   void publish();
 
@@ -259,4 +355,6 @@ private:
   int m_writing = 0;
   // The page last written from a thread.
   QString m_written;
+  QTimer* m_historyRefresh;
+  qint64 m_historyOffset = -1;
 };

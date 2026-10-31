@@ -54,6 +54,95 @@ Item {
             Spaces.reset();
         }
 
+        // "Roadmap" with its history open: "Final" now, "Draft" before it.
+        function withHistory(more) {
+            const versions = [
+                { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: true, threadTitle: "Work", restoredFromAt: "" },
+                { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, threadTitle: "", restoredFromAt: "" }
+            ];
+            return root.research({ history: Object.assign({ shown: true, pageId: "page-1", versions: versions }, more) });
+        }
+
+        function test_the_page_menu_opens_its_history() {
+            const view = root.research({});
+            findChild(view, "spaceHistoryOpen").triggered();
+            compare(root.dispatched("space.history.open"), [{ pageId: "page-1" }]);
+        }
+
+        function test_only_a_version_before_the_newest_can_be_restored() {
+            const view = withHistory({});
+            const panel = findChild(view, "spaceHistoryPanel");
+            verify(panel.visible);
+            tryVerify(() => findChild(view, "spaceHistoryRow:1") !== null);
+            verify(!findChild(view, "spaceHistoryRestore:0").visible);
+            const restore = findChild(view, "spaceHistoryRestore:1");
+            verify(restore.visible);
+            mouseClick(restore);
+            compare(root.dispatched("space.history.restore"), [{ version: 7 }]);
+        }
+
+        function test_a_page_in_the_trash_restores_no_version() {
+            const view = root.research({
+                page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: true, sourceThreadId: "", sourceThreadTitle: "" },
+                history: { shown: true, pageId: "page-1", versions: [
+                    { id: "12", version: 12, at: "2026-09-23T10:10:00Z", byAgent: false, threadTitle: "", restoredFromAt: "" },
+                    { id: "7", version: 7, at: "2026-09-23T10:00:00Z", byAgent: false, threadTitle: "", restoredFromAt: "" }
+                ] }
+            });
+            tryVerify(() => findChild(view, "spaceHistoryRow:1") !== null);
+            verify(!findChild(view, "spaceHistoryRestore:1").visible);
+        }
+
+        function test_a_version_read_takes_the_page_place_and_has_a_way_back() {
+            const view = withHistory({
+                reading: true,
+                version: { version: 7, at: "2026-09-23T10:00:00Z", title: "Roadmap" },
+                blocks: [root.block("b1", "Draft")]
+            });
+            const reader = findChild(view, "spaceVersionView");
+            verify(reader.visible);
+            tryVerify(() => findChild(reader, "spaceBlock:Draft") !== null);
+            mouseClick(findChild(view, "spaceVersionBack"));
+            compare(root.dispatched("space.history.back").length, 1);
+            mouseClick(findChild(view, "spaceVersionRestore"));
+            compare(root.dispatched("space.history.restore"), [{ version: 7 }]);
+        }
+
+        function test_reading_the_newest_version_offers_no_restore() {
+            const view = withHistory({
+                reading: true,
+                version: { version: 12, at: "2026-09-23T10:10:00Z", title: "Roadmap" },
+                blocks: [root.block("b1", "Final")]
+            });
+            verify(!findChild(view, "spaceVersionRestore").visible);
+        }
+
+        function test_history_that_could_not_load_says_so_and_can_be_asked_again() {
+            const view = root.research({ history: { shown: true, pageId: "page-1", failed: true } });
+            compare(findChild(view, "spaceHistoryNote").text, "The history could not be loaded.");
+            mouseClick(findChild(view, "spaceHistoryRetry"));
+            compare(root.dispatched("space.history.open"), [{ pageId: "page-1" }]);
+        }
+
+        function test_opening_comments_closes_the_history() {
+            const view = withHistory({});
+            view.showComments("b1");
+            compare(root.dispatched("space.history.close").length, 1);
+        }
+
+        function test_a_comment_whose_block_a_restore_took_away_says_so() {
+            const view = root.research({ comments: [{ id: "c1", blockId: "gone", blockText: "", body: "Why?", resolved: false, byAgent: false, createdAt: "" }] });
+            view.commentsShown = true;
+            const row = findChild(view, "spaceCommentRow:Why?");
+            verify(row.blockGone);
+        }
+
+        function test_a_comment_on_the_page_itself_has_lost_no_block() {
+            const view = root.research({ comments: [{ id: "c1", blockId: "", blockText: "", body: "Why?", resolved: false, byAgent: false, createdAt: "" }] });
+            view.commentsShown = true;
+            verify(!findChild(view, "spaceCommentRow:Why?").blockGone);
+        }
+
         function test_a_slash_picks_the_kind_of_the_next_block() {
             const view = root.research({});
             const composer = findChild(view, "spaceComposer");

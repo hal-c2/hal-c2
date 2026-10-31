@@ -223,6 +223,13 @@ Rectangle {
             }
 
             ShellMenuItem {
+                objectName: "spaceHistoryOpen"
+                text: qsTr("History")
+                iconName: "clock"
+                onTriggered: Shell.dispatch("space.history.open", { pageId: Spaces.pageId })
+            }
+
+            ShellMenuItem {
                 objectName: "spaceCopyMarkdown"
                 text: qsTr("Copy as Markdown")
                 iconName: "copy"

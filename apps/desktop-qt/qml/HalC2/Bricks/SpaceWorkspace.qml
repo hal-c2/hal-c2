@@ -6,8 +6,9 @@ import QtQuick.Layouts
 import HalC2.Shell
 
 // The Space view (route kind `space`; SpaceController publishes `space`): the
-// Space's pages beside the open one, and its comments beside that when the
-// user asks for them. Everything shown is the MC's; with nothing to show it
+// Space's pages beside the open one, and its comments or its history beside
+// that when the user asks for them; a version being read takes the page's
+// place. Everything shown is the MC's; with nothing to show it
 // says why.
 Rectangle {
     id: workspace
@@ -31,6 +32,8 @@ Rectangle {
     }
 
     function showComments(blockId) {
+        if (Spaces.history.shown)
+            Shell.dispatch("space.history.close", {});
         comments.blockId = blockId;
         workspace.commentsShown = true;
         comments.focusDraft();
@@ -41,6 +44,15 @@ Rectangle {
     // Another page's comments are not this one's.
     readonly property string pageId: Spaces.pageId
     onPageIdChanged: comments.blockId = ""
+
+    // One column beside the page at a time.
+    Connections {
+        target: Spaces.history
+        function onChanged() {
+            if (Spaces.history.shown)
+                workspace.commentsShown = false;
+        }
+    }
 
     RowLayout {
         anchors.fill: parent
@@ -66,10 +78,15 @@ Rectangle {
 
             SpacePage {
                 anchors.fill: parent
-                visible: Spaces.pageId !== ""
+                visible: Spaces.pageId !== "" && !Spaces.history.reading
                 onSaveRequested: saveDialog.open()
                 onSubpageRequested: (parentPageId, link) => sidebar.newPage(parentPageId, link)
                 onCommentRequested: blockId => workspace.showComments(blockId)
+            }
+
+            SpaceVersionView {
+                anchors.fill: parent
+                visible: Spaces.history.reading
             }
 
             ColumnLayout {
@@ -131,7 +148,7 @@ Rectangle {
         Rectangle {
             Layout.preferredWidth: 1
             Layout.fillHeight: true
-            visible: comments.visible
+            visible: comments.visible || historyPanel.visible
             color: workspace.lineColor
         }
 
@@ -143,6 +160,14 @@ Rectangle {
             visible: workspace.commentsShown && Spaces.pageId !== ""
             readOnly: Spaces.page.trashed === true
             onCloseRequested: workspace.commentsShown = false
+        }
+
+        SpaceHistoryPanel {
+            id: historyPanel
+
+            Layout.preferredWidth: 300
+            Layout.fillHeight: true
+            visible: Spaces.history.shown
         }
     }
 

@@ -2,6 +2,7 @@
 
 #include <QFile>
 #include <QJsonArray>
+#include <QSignalBlocker>
 #include <QUrl>
 
 #include <algorithm>
@@ -21,6 +22,7 @@ const NativeControllerRegistrar<SpaceController> registrar(QStringLiteral("space
                                                            "Spaces");
 
 const QString kRoute = QStringLiteral("space");
+constexpr int kHistoryRefreshMs = 1000;
 
 // HalC2.Patch: `s` sets, `u` unsets, `a` appends to strings, `d` deletes
 // (alone) or replaces (with `s`/`a`). nullopt when the entity is gone.
@@ -223,6 +225,141 @@ void SpaceRows::setRows(const QList<QVariantMap>& rows) {
 
 // --- SpacePages -----------------------------------------------------------------------
 
+SpaceHistory::SpaceHistory(std::function<QString(const QString&)> titleOf, QObject* parent)
+    : QObject(parent),
+      m_titleOf(std::move(titleOf)),
+      m_versions(new SpaceRows({"id", "version", "at", "byAgent", "threadTitle", "restoredFromAt"}, this)),
+      m_blocks(new SpaceRows(
+          {"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments"}, this)) {}
+
+SpaceHistory::Next SpaceHistory::open(const QString& pageId) {
+  {
+    // Going from one page's history to another's never shows none.
+    const QSignalBlocker blocker(this);
+    close();
+    m_pageId = pageId;
+    if (!pageId.isEmpty()) m_listToken = ++m_tokens;
+  }
+  emit changed();
+  if (pageId.isEmpty()) return std::nullopt;
+  return Request{m_listToken, {{QStringLiteral("pageId"), pageId}}};
+}
+
+void SpaceHistory::close() {
+  m_pageId.clear();
+  m_listToken = 0;
+  m_appending = m_stale = m_failed = false;
+  m_nextBefore = -1;
+  m_versions->setRows({});
+  stopReading();
+  emit changed();
+}
+
+SpaceHistory::Next SpaceHistory::more() {
+  if (!shown() || loading() || !hasMore()) return std::nullopt;
+  m_listToken = ++m_tokens;
+  m_appending = true;
+  m_failed = false;
+  emit changed();
+  return Request{m_listToken, {{QStringLiteral("pageId"), m_pageId}, {QStringLiteral("before"), m_nextBefore}}};
+}
+
+SpaceHistory::Next SpaceHistory::refresh() {
+  if (!shown()) return std::nullopt;
+  if (loading()) {
+    m_stale = true;
+    return std::nullopt;
+  }
+  m_listToken = ++m_tokens;
+  m_failed = false;
+  emit changed();
+  // As far back as the user has looked, so the list does not shrink under them.
+  const int limit = std::clamp(static_cast<int>(m_versions->rowCount()), 30, 100);
+  return Request{m_listToken, {{QStringLiteral("pageId"), m_pageId}, {QStringLiteral("limit"), limit}}};
+}
+
+SpaceHistory::Next SpaceHistory::settled() {
+  m_listToken = 0;
+  m_appending = false;
+  emit changed();
+  if (!std::exchange(m_stale, false)) return std::nullopt;
+  return refresh();
+}
+
+SpaceHistory::Next SpaceHistory::receive(int token, const QJsonObject& result) {
+  if (token == 0 || token != m_listToken) return std::nullopt;
+  QList<QVariantMap> rows = m_appending ? m_versions->rows() : QList<QVariantMap>();
+  QSet<QString> held;
+  for (const QVariantMap& row : rows) held.insert(row.value(QStringLiteral("id")).toString());
+  for (const QJsonValue& value : result.value(QLatin1String("versions")).toArray()) {
+    const QJsonObject version = value.toObject();
+    const qint64 number = version.value(QLatin1String("version")).toInteger();
+    const QString id = QString::number(number);
+    if (held.contains(id)) continue;
+    held.insert(id);
+    rows.append({{QStringLiteral("id"), id},
+                 {QStringLiteral("version"), number},
+                 {QStringLiteral("at"), text(version, QLatin1String("at"))},
+                 {QStringLiteral("byAgent"), byAgent(version.value(QLatin1String("author")))},
+                 {QStringLiteral("threadTitle"), text(version, QLatin1String("threadTitle"))},
+                 {QStringLiteral("restoredFromAt"), text(version, QLatin1String("restoredFromAt"))}});
+  }
+  m_versions->setRows(rows);
+  m_nextBefore = result.value(QLatin1String("nextBefore")).toInteger(-1);
+  m_failed = false;
+  return settled();
+}
+
+SpaceHistory::Next SpaceHistory::failed(int token) {
+  if (token == 0 || token != m_listToken) return std::nullopt;
+  m_failed = true;
+  return settled();
+}
+
+SpaceHistory::Request SpaceHistory::read(qint64 version) {
+  stopReading();
+  m_reading = true;
+  m_readToken = ++m_tokens;
+  emit changed();
+  return {m_readToken, {{QStringLiteral("pageId"), m_pageId}, {QStringLiteral("version"), version}}};
+}
+
+void SpaceHistory::stopReading() {
+  m_reading = false;
+  m_readToken = 0;
+  m_version.clear();
+  m_blocks->setRows({});
+  emit changed();
+}
+
+void SpaceHistory::receiveVersion(int token, const QJsonObject& result) {
+  if (token == 0 || token != m_readToken) return;
+  m_readToken = 0;
+  QList<QVariantMap> rows;
+  for (const QJsonValue& value : result.value(QLatin1String("blocks")).toArray()) {
+    const QJsonObject block = value.toObject();
+    const QString linked = text(block, QLatin1String("linkedPageId"));
+    rows.append({{QStringLiteral("id"), text(block, QLatin1String("id"))},
+                 {QStringLiteral("kind"), text(block, QLatin1String("kind"))},
+                 {QStringLiteral("text"), text(block, QLatin1String("text"))},
+                 {QStringLiteral("checked"), block.value(QLatin1String("checked")).toBool()},
+                 {QStringLiteral("linkedPageId"), linked},
+                 {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : m_titleOf(linked)},
+                 {QStringLiteral("byAgent"), byAgent(block.value(QLatin1String("updatedBy")))},
+                 {QStringLiteral("openComments"), 0}});
+  }
+  m_blocks->setRows(rows);
+  m_version = {{QStringLiteral("version"), result.value(QLatin1String("version")).toInteger()},
+               {QStringLiteral("at"), text(result, QLatin1String("at"))},
+               {QStringLiteral("title"), text(result, QLatin1String("title"))}};
+  emit changed();
+}
+
+void SpaceHistory::failedVersion(int token) {
+  if (token == 0 || token != m_readToken) return;
+  stopReading();
+}
+
 SpacePages::SpacePages(QObject* parent)
     : QObject(parent),
       m_spaces(new SpaceRows({"id", "name"}, this)),
@@ -230,7 +367,8 @@ SpacePages::SpacePages(QObject* parent)
       m_trash(new SpaceRows({"id", "title", "trashedAt"}, this)),
       m_blocks(new SpaceRows(
           {"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments"}, this)),
-      m_comments(new SpaceRows({"id", "blockId", "blockText", "body", "resolved", "byAgent", "createdAt"}, this)) {}
+      m_comments(new SpaceRows({"id", "blockId", "blockText", "body", "resolved", "byAgent", "createdAt"}, this)),
+      m_history(new SpaceHistory([this](const QString& id) { return titleOf(id); }, this)) {}
 
 QString SpacePages::spaceName() const {
   return text(m_index.entity(QStringLiteral("space"), m_spaceId), QLatin1String("name"));
@@ -506,6 +644,11 @@ SpaceController::SpaceController(ShellBridge* bridge, McClient* client, ShellSto
   connect(this, &SpacePages::spaceSelected, this, [this] {
     if (m_open) followSpace();
   });
+  m_historyRefresh = new QTimer(this);
+  m_historyRefresh->setSingleShot(true);
+  m_historyRefresh->setInterval(kHistoryRefreshMs);
+  connect(m_historyRefresh, &QTimer::timeout, this, [this] { askHistory(history()->refresh()); });
+  connect(this, &SpacePages::changed, this, &SpaceController::followHistory);
 }
 
 void SpaceController::activate() {
@@ -526,6 +669,16 @@ void SpaceController::activate() {
     });
     keys->commands()->setTerms(kPageFromThread, {QStringLiteral("space"), QStringLiteral("page"),
                                                  QStringLiteral("summary"), QStringLiteral("summarise")});
+    keys->commands()->add(kHistory, tr("Show page history"), [this, navigation] {
+      navigation->open(NavigationController::Route::of(kRoute));
+      if (pageId().isEmpty()) {
+        refuse(tr("Open a page to see its history."));
+      } else {
+        openHistory(pageId());
+      }
+    });
+    keys->commands()->setTerms(kHistory, {QStringLiteral("space"), QStringLiteral("page"), QStringLiteral("versions"),
+                                          QStringLiteral("restore"), QStringLiteral("undo")});
   }
   connect(navigation, &NavigationController::changed, this,
           [this, navigation] { setOpen(navigation->route().kind == kRoute); });
@@ -542,6 +695,8 @@ void SpaceController::setOpen(bool open) {
     follow();
   } else {
     unfollow();
+    history()->close();
+    m_historyRefresh->stop();
   }
 }
 
@@ -689,6 +844,34 @@ void SpaceController::pageFromThread(const QString& threadKey) {
   });
 }
 
+void SpaceController::openHistory(const QString& page) {
+  m_historyRefresh->stop();
+  m_historyOffset = space().offset();
+  askHistory(history()->open(page));
+}
+
+void SpaceController::followHistory() {
+  if (!history()->shown()) return;
+  if (history()->pageId() != pageId()) {
+    openHistory(pageId());
+  } else if (space().offset() != m_historyOffset) {
+    m_historyOffset = space().offset();
+    if (!m_historyRefresh->isActive()) m_historyRefresh->start();
+  }
+}
+
+void SpaceController::askHistory(const SpaceHistory::Next& request) {
+  if (!request) return;
+  const int token = request->token;
+  call(
+      QStringLiteral("page.history"), request->payload,
+      [this, token](const QJsonObject& result) { askHistory(history()->receive(token, result)); },
+      [this, token](const QJsonObject&) {
+        askHistory(history()->failed(token));
+        return QString();
+      });
+}
+
 bool SpaceController::handle(const QString& action, const QVariant& payload) {
   if (!m_active || !action.startsWith(QLatin1String("space."))) return false;
   const QJsonObject input = QJsonObject::fromVariantMap(payload.toMap());
@@ -815,6 +998,33 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     call(QStringLiteral("comment.resolve"), pick({"spaceId", "commentId"}));
   } else if (action == QLatin1String("space.comment.reopen")) {
     call(QStringLiteral("comment.reopen"), pick({"spaceId", "commentId"}));
+  } else if (action == kHistory) {
+    openHistory(pageId);
+  } else if (action == QLatin1String("space.history.close")) {
+    m_historyRefresh->stop();
+    history()->close();
+  } else if (action == QLatin1String("space.history.more")) {
+    askHistory(history()->more());
+  } else if (action == QLatin1String("space.history.read")) {
+    const SpaceHistory::Request read = history()->read(input.value(QLatin1String("version")).toInteger());
+    call(
+        QStringLiteral("page.version"), read.payload,
+        [this, token = read.token](const QJsonObject& result) { history()->receiveVersion(token, result); },
+        [this, token = read.token](const QJsonObject&) {
+          history()->failedVersion(token);
+          return QString();
+        });
+  } else if (action == QLatin1String("space.history.back")) {
+    history()->stopReading();
+  } else if (action == QLatin1String("space.history.restore")) {
+    QJsonObject restore{{QStringLiteral("pageId"), history()->pageId()},
+                        {QStringLiteral("version"), input.value(QLatin1String("version")).toInteger()}};
+    call(QStringLiteral("page.restoreVersion"), restore, [this](const QJsonObject&) {
+      history()->stopReading();
+      m_historyRefresh->stop();
+      askHistory(history()->refresh());
+      toast(QStringLiteral("success"), tr("Version restored"));
+    });
   } else {
     return false;
   }
