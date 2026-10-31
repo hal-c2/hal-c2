@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13469 (a malformed OTEL_RESOURCE_ATTRIBUTES no longer stops startup)
 #   https://github.com/pingdotgg/t3code/pull/13355
 #   apps/desktop-qt/host/main.ts (desktop host: MC lifecycle, the ready line)
 #   apps/desktop-qt/host/elixirMc.ts (the MC's access token, found through its runtime record when attached)
@@ -315,6 +316,16 @@ Feature: The desktop app runs its own MC
       When the user starts the desktop app
       Then the app exports nothing to any endpoint
       And its trace files and log output are still written
+
+    # The resource attributes are an optional tag. A value the exporter cannot read is ignored
+    # as a whole, the way a bad kill switch is, so a machine-wide variable never blocks launch.
+    @backlog @desktop
+    Scenario: A resource attribute setting that cannot be read is ignored at startup
+      Given the environment sets the resource attributes to "team=%zz"
+      When the user starts the desktop app
+      Then the app starts
+      And no resource attributes are attached to its telemetry
+      And the startup log names the setting as ignored
 
     # Legacy: apps/desktop/src/backend/DesktopBackendManager.ts (restart delay, readiness timeout)
     @backlog @desktop

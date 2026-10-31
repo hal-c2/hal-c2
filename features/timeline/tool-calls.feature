@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13386 (a tool's progress does not split the answer)
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   docs/user/activity-log.md
 #   packages/client-runtime/src/halC2ToolSummary.ts, halC2ToolSummary.test.ts (summary counting rules)
@@ -30,6 +31,15 @@ Feature: Tool calls and file changes
   Background:
     Given a connected environment with the project "shop"
     And the user is looking at a thread in "shop"
+
+  # A new tool call still separates two messages. Progress on a tool already shown does not,
+  # so a table or link the agent is writing is not cut in two.
+  @backlog @mc @shared
+  Scenario: A running command's progress does not split the agent's message in two
+    Given the agent is writing a message
+    And a command it started in the background reports progress in the middle of the message
+    Then the message stays one message
+    And the text the agent writes after the progress is part of it
 
   # TUI: implemented in apps/tui/src/timeline.ts
   @shared @backlog-mobile
