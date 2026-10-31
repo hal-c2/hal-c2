@@ -128,6 +128,14 @@ jobs:
           vp run --filter @hal-c2/desktop-qt test
           vp run --filter @hal-c2/desktop-qt typecheck
 
+      # Snap Shot's KDE Plasma and Hyprland capture helpers, which the AppImage carries.
+      - name: Build capture helpers (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          for crate in kde-snap-shot hyprland-snap-shot; do
+            cargo build --locked --release --manifest-path "native/${crate}/Cargo.toml"
+          done
+
       - name: Package (Linux AppImage)
         if: runner.os == 'Linux'
         run: apps/desktop-qt/scripts/package-linux.sh apps/desktop-qt/build/release

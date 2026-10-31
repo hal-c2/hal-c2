@@ -9,8 +9,10 @@
 #   apps/desktop/gnome-extension (extension.js, captureService.js, captureFeedback.js)
 #   apps/desktop/src/snapShot/SnapShotAccessibility.ts, SnapShotTransition.ts, NativeCaptureFeedback.ts (app text limits, flight, helper effects)
 #   apps/desktop-qt/src/native/SnapShotController.cpp
-# The Qt desktop captures through the desktop portal on Linux Wayland only: no
-# capture helper, no compositor bindings, no app text and no capture effects.
+# The Qt desktop captures on Linux Wayland through the desktop portal, Niri's socket
+# and a binding in its config, or the KDE and Hyprland capture helpers, without app
+# text or capture effects, and directly on macOS, where captures can carry the
+# app's text.
 
 @desktop
 Feature: Snap Shot captures another app's window into the draft
@@ -52,7 +54,7 @@ Feature: Snap Shot captures another app's window into the draft
     When the user presses the shortcut again before the first capture has been taken
     Then only one capture is attached to the draft
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A capture that cannot be taken says so and leaves nothing behind
     Given the desktop app runs on <platform>
     And <failure>
@@ -62,14 +64,18 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | platform         | failure                                                    |
+      | Linux on Niri    | Niri has no focused window                                 |
       | macOS            | macOS returns an empty image for the window                |
       | Windows          | the Windows window capture does not answer in time         |
       | Windows          | an earlier Windows window capture is still running         |
+
+    @backlog
+    Examples:
+      | platform         | failure                                                    |
       | Linux on GNOME   | the window in front is minimized or no window has focus    |
-      | Linux on Niri    | Niri has no focused window                                 |
       | Linux on Wayland | the desktop returns an empty or unreadable screenshot      |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A slow platform step ends the capture instead of hanging
     Given the desktop app runs on macOS
     And <step> has not answered after <limit>
@@ -79,10 +85,16 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | step                                          | limit      |
-      | macOS finding the window in front             | 5 seconds  |
       | macOS taking the picture of the window        | 15 seconds |
 
-  @backlog @desktop
+    # Finding the window asks the system directly in the app's own process, so
+    # there is no step to give up on yet.
+    @backlog
+    Examples:
+      | step                                          | limit      |
+      | macOS finding the window in front             | 5 seconds  |
+
+  @desktop
   Scenario Outline: A capture with no window in front is explained
     Given the desktop app runs on <platform>
     And no window is available to capture
@@ -106,7 +118,7 @@ Feature: Snap Shot captures another app's window into the draft
     When the user takes a snapshot without the shortcut
     Then nothing is attached and the user is told to enable Snap Shot in Settings first
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A very large window is captured at a bounded size
     Given the desktop app runs on <platform>
     And the window in front is larger than 2,560 by 1,600 pixels
@@ -117,6 +129,10 @@ Feature: Snap Shot captures another app's window into the draft
       | platform         |
       | macOS            |
       | Windows          |
+
+    @backlog
+    Examples:
+      | platform         |
       | Linux on Wayland |
 
   @backlog @desktop
@@ -126,7 +142,7 @@ Feature: Snap Shot captures another app's window into the draft
     Then the image is attached
     And the attachment keeps the window title up to 1,000 characters and the app name up to 255
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The attachment names the app the way the user knows it
     Given the desktop app runs on <platform>
     And <window>
@@ -196,10 +212,10 @@ Feature: Snap Shot captures another app's window into the draft
     When the draft confirms the capture landed again
     Then no error is shown
 
-  @backlog-desktop
-  # The desktop portal gives only a screenshot.
+  # macOS only: the desktop portal gives only a screenshot.
   Scenario: Including the app's text and controls
-    Given including app text is on
+    Given the desktop app runs on macOS
+    And including app text is on
     When the user captures a browser window
     Then the attachment carries the window's text and controls along with the image
     And the user can inspect that data from the attachment
@@ -345,15 +361,13 @@ Feature: Snap Shot captures another app's window into the draft
     Then no background helper stays running to read app text
     And turning Snap Shot off has the same effect
 
-  @backlog-desktop
-  # The desktop portal cannot flash a window, and the Qt draft has no capture animation yet.
+  # On Windows: a desktop portal cannot flash a window or fly an image.
   Scenario: The capture plays its cues
     Given the sound, flash and animation are on
     When the user captures a window
     Then the sound plays, the captured window flashes and the image flies into the draft
 
-  @backlog-desktop
-  # The Qt draft has no capture animation yet.
+  # On Windows: a desktop portal has no animation to turn off.
   Scenario: Reduced motion turns the animation off
     Given the system asks for reduced motion
     When the user captures a window
@@ -369,8 +383,6 @@ Feature: Snap Shot captures another app's window into the draft
     When the user presses the Snap Shot shortcut
     Then that app's window is captured
 
-  @backlog-desktop
-  # The Qt desktop has only the portal backend.
   Scenario: A capture uses one backend and never falls back
     Given a Hyprland session whose capture helper fails
     When the user presses the Snap Shot shortcut
@@ -384,15 +396,10 @@ Feature: Snap Shot captures another app's window into the draft
     Examples:
       | desktop            | backend                                    |
       | another compositor | the desktop portal                         |
-
-    # These desktops go through the desktop portal on the Qt desktop for now.
-    @backlog-desktop
-    Examples:
-      | desktop            | backend                                    |
       | GNOME              | the HAL-C2 GNOME extension                |
+      | Niri               | a Niri binding                             |
       | KDE Plasma         | the capture helper                         |
       | Hyprland           | the capture helper and a Hyprland binding  |
-      | Niri               | a Niri binding                             |
 
   Scenario: Other Wayland desktops choose a window each time
     Given a Linux Wayland session on a compositor without automatic capture
@@ -400,38 +407,28 @@ Feature: Snap Shot captures another app's window into the draft
     Then the user picks the window to capture
     And the attachment has no text or controls data
 
-  @backlog-desktop
-  # The Qt desktop has no GNOME extension.
   Scenario: The GNOME extension needs a new login
     Given a GNOME session where the extension was just installed
     When the user continues setup
     Then the user is asked to sign out and back in, and setup waits for that
 
-  @backlog-desktop
-  # The Qt desktop has no GNOME extension.
   Scenario: A disabled GNOME extension is explained
     Given the GNOME extension is installed but turned off
     When the user checks capture access
     Then the user is told to turn on HAL-C2 SnapShots in GNOME Extensions
 
-  @backlog-desktop
-  # The Qt desktop edits no compositor config.
   Scenario: Editing a compositor config is reviewed and backed up
     Given a Hyprland session
     When the user reviews the changes to the Hyprland config and saves them
     Then the config is written in one step after checking it did not change since review
     And a backup of the previous config is kept
 
-  @backlog-desktop
-  # The Qt desktop edits no compositor config.
   Scenario: A config that changed after review is not overwritten
     Given the user reviewed the changes to the Niri config
     And the Niri config changed on disk afterwards
     When the user saves
     Then nothing is written and the user is asked to review again
 
-  @backlog-desktop
-  # The Qt desktop has no Hyprland capture.
   Scenario: Hyprland access being denied is shown plainly
     Given Hyprland refuses screen capture to HAL-C2
     When the user presses the Snap Shot shortcut
@@ -481,7 +478,7 @@ Feature: Snap Shot captures another app's window into the draft
     Then the window in front is captured without a picker
     And the attachment has no text or controls data
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A sandboxed HAL-C2 never uses a compositor's own capture
     Given HAL-C2 runs inside a <sandbox> sandbox on a <desktop> Wayland session
     When the user sets up Snap Shot
@@ -491,12 +488,12 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | sandbox | desktop    |
-      | Flatpak | GNOME      |
-      | Flatpak | KDE Plasma |
       | Snap    | Hyprland   |
       | Snap    | Niri       |
+      | Flatpak | GNOME      |
+      | Flatpak | KDE Plasma |
 
-  @backlog @desktop
+  @desktop
   Scenario: The desktop portal is preferred to the GNOME extension
     Given a GNOME session with the HAL-C2 extension enabled
     And the desktop portal can capture a single window
@@ -557,14 +554,14 @@ Feature: Snap Shot captures another app's window into the draft
     Then no screenshot is delivered
     And the user is told snapshots are unavailable in this session
 
-  @backlog @desktop
+  @desktop
   Scenario: Two HAL-C2 instances do not capture at the same time
     Given a GNOME session with two HAL-C2 instances running
     And one instance is capturing a window
     When the other instance's user presses the Snap Shot shortcut
     Then that capture fails and the user is told another HAL-C2 instance is capturing and to try again
 
-  @backlog @desktop
+  @desktop
   Scenario: Capture effects that do not start do not hold up the capture
     Given the flash and animation are on and the desktop's capture helper cannot show them
     When the user presses the Snap Shot shortcut
