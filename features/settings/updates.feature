@@ -120,7 +120,7 @@ Feature: Updating the server, the desktop app and providers
 
   Rule: Updating the desktop app
 
-    @backlog @desktop
+    @desktop
     Scenario: The desktop app downloads an update and installs it on restart
       Given an update to "1.4.0" is available
       When the user downloads it
@@ -128,17 +128,17 @@ Feature: Updating the server, the desktop app and providers
       When the user restarts to install and confirms
       Then the app relaunches on "1.4.0" with the same windows
 
-    @backlog @desktop
+    @desktop
     Scenario: A failed download can be retried
       Given an update download failed
       When the user retries
       Then the download starts again
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The sidebar's update button says where the update stands
       Given <state>
       When the user points at the update button in the sidebar
-      Then it says "<says>"
+      Then its tooltip says "<says>"
 
       Examples:
         | state                                      | says                                                    |
@@ -150,7 +150,7 @@ Feature: Updating the server, the desktop app and providers
         | the download of v1.4.0 failed              | Download failed for v1.4.0. Click to retry.             |
         | the install of v1.4.0 failed               | Install failed for v1.4.0. Click to retry.              |
 
-    @backlog @desktop
+    @desktop
     Scenario: Restarting to install an update warns that running tasks stop
       Given update "v1.4.0" was downloaded
       When the user chooses to restart and install
@@ -158,7 +158,7 @@ Feature: Updating the server, the desktop app and providers
       When the user declines
       Then the app keeps running on its current version
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: An update step that fails says so
       When <step> and it fails with "Network unreachable"
       Then the user is told "<told>" with the reason
@@ -168,15 +168,20 @@ Feature: Updating the server, the desktop app and providers
         | the user checks for updates            | Could not check for updates  |
         | the user downloads the update          | Could not download update    |
         | the user restarts to install           | Could not install update     |
+
+      # The Qt desktop asks in its own dialog, which cannot fail.
+      @backlog
+      Examples:
+        | step                                   | told                         |
         | the user is asked to confirm a restart | Could not confirm update     |
 
-    @backlog @desktop
+    @desktop
     Scenario: Checking for updates in a build without updates and no reason for it says so
       Given this build has automatic updates turned off and does not say why
       When the user checks for updates
       Then the user is told "Could not check for updates" with "Automatic updates are not available in this build."
 
-    @backlog @desktop
+    @desktop
     Scenario: A nightly update lists what changed
       Given the user is on the Nightly track
       And a nightly update has release notes
@@ -184,7 +189,7 @@ Feature: Updating the server, the desktop app and providers
       Then the user sees "What's changed" with the notes of the newest release
       And each older release in between is listed under "Changes in" its version
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Release notes link to the rest on GitHub
       Given a nightly release lists <shown> of <total> changes and <older> older releases were left out
       When the user reads the release notes
@@ -198,7 +203,7 @@ Feature: Updating the server, the desktop app and providers
         | 5     | 5     | 4     | 4 older releases on GitHub |
 
     # Legacy: apps/desktop/src/updates/releaseNotes.ts (normalizeDesktopUpdateReleaseNotes)
-    @backlog @desktop
+    @desktop
     Scenario: Release notes are shown as plain short lines
       Given a release's notes are written with markup, links and bold text
       And one change is longer than 220 characters
@@ -206,33 +211,33 @@ Feature: Updating the server, the desktop app and providers
       Then each change is plain text with links shown as their words
       And the long change is cut short with "..."
 
-    @backlog @desktop
+    @desktop
     Scenario: Release notes leave out the boilerplate of a GitHub release
       Given a release's notes contain a "What's Changed" heading, compare links, "New Contributors" and "Full Changelog"
       When the user reads the release notes
       Then only the changes themselves are listed
 
-    @backlog @desktop
+    @desktop
     Scenario: Only releases of the followed track appear in the release notes
       Given the user is on the Nightly track
       And the notes cover a manually cut preview release as well as nightly releases
       When the user reads the release notes
       Then only the nightly releases are listed
 
-    @backlog @desktop
+    @desktop
     Scenario: A release with nothing to list is left out of the release notes
       Given a release's notes contain only a heading and a compare link
       When the user reads the release notes
       Then that release is not listed
 
-    @backlog @desktop
+    @desktop
     Scenario: A stable update shows no release notes popover
       Given the user is on the Stable track
       And an update is available
       When the user points at the update button in the sidebar
       Then the user sees only where the update stands
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The user switches update track
       When the user switches the update track to <track>
       Then the app checks for <track> releases
@@ -244,7 +249,7 @@ Feature: Updating the server, the desktop app and providers
         | Stable  |
 
     # Legacy: apps/web/src/components/settings/SettingsPanels.tsx (AboutVersionSection, track change)
-    @backlog @desktop
+    @desktop
     Scenario: A failed track change says so and keeps the current track
       Given the update track is Stable
       When the user switches the update track to Nightly and it fails with "Network unreachable"
@@ -252,7 +257,7 @@ Feature: Updating the server, the desktop app and providers
       And the update track is still Stable
 
     # Legacy: apps/desktop/src/settings/DesktopAppSettings.ts (updateChannelConfiguredByUser), apps/desktop/src/updates/updateChannels.ts
-    @backlog @desktop
+    @desktop
     Scenario Outline: A track the user never chose follows the installed build
       Given the user has never chosen an update track
       And the installed build is a <build>
@@ -266,7 +271,7 @@ Feature: Updating the server, the desktop app and providers
         | stable release  | Stable  |
 
     # Legacy: apps/desktop/src/updates/DesktopUpdates.ts (startup delay, poll interval)
-    @backlog @desktop
+    @desktop
     Scenario: The desktop app looks for updates by itself
       Given this build can update itself
       When the app starts
@@ -274,7 +279,7 @@ Feature: Updating the server, the desktop app and providers
       And again every four minutes while it runs
 
     # Legacy: apps/desktop/src/updates/DesktopUpdates.ts (disabled reasons)
-    @backlog @desktop
+    @desktop
     Scenario Outline: A build that cannot update itself says why
       Given <situation>
       When the user checks for updates
@@ -288,14 +293,14 @@ Feature: Updating the server, the desktop app and providers
         | the app on Linux is not the AppImage build        | Automatic updates on Linux require running the AppImage build.            |
 
     # Legacy: apps/desktop/src/window/DesktopApplicationMenu.ts (check for updates from the menu)
-    @backlog @desktop
+    @desktop
     Scenario: Checking for updates from the application menu says when the app is current
       Given the app is on version "1.4.0" and no newer one exists
       When the user chooses Check for Updates from the application menu
       Then the user is told "You're up to date!" with "HAL-C2 1.4.0 is currently the newest version available."
 
     # Legacy: apps/desktop/src/window/DesktopApplicationMenu.ts (check for updates from the menu)
-    @backlog @desktop
+    @desktop
     Scenario Outline: Checking for updates from the application menu says when it did not work
       Given <situation>
       When the user chooses Check for Updates from the application menu
@@ -307,21 +312,21 @@ Feature: Updating the server, the desktop app and providers
         | the check fails with no reason            | Update check failed | An unknown error occurred. Please try again later. |
         | this build cannot update itself           | Updates unavailable | the reason this build cannot update itself        |
 
-    @backlog @desktop
+    @desktop
     Scenario: The update track cannot change while an update step is running
       Given the app is checking for, downloading or installing an update
       When the user switches the update track
       Then the user is told the track cannot change while that update step is in progress
       And the update track stays as it was
 
-    @backlog @desktop
+    @desktop
     Scenario: Leaving the nightly track may install an older version
       Given the app is on the Nightly track at a build newer than the latest stable release
       When the user switches the update track to Stable
       Then the app offers the latest stable release even though it is older
       And installing it is allowed to go back in version
 
-    @backlog @desktop
+    @desktop
     Scenario: A failed install brings the MC back and says so
       Given the app stopped its MC to install an update
       When the install fails
@@ -330,7 +335,7 @@ Feature: Updating the server, the desktop app and providers
       And the app keeps running on its current version
 
     # Legacy: apps/desktop/src/updates/updateMachine.ts (a downloaded update survives later checks)
-    @backlog @desktop
+    @desktop
     Scenario Outline: A downloaded update stays ready when a later check does not find it again
       Given update "1.4.0" was downloaded
       When a later check <outcome>
@@ -342,21 +347,21 @@ Feature: Updating the server, the desktop app and providers
         | finds nothing newer      |
 
     # Legacy: apps/desktop/src/updates/DesktopUpdates.ts (handleUpdateAvailable channel match)
-    @backlog @desktop
+    @desktop
     Scenario: A release from the other track is not offered
       Given the update track is Stable
       When a check finds only a nightly release
       Then the app says it is up to date
 
     # Legacy: apps/desktop/src/updates/DesktopUpdates.ts (checkForUpdates, shouldBroadcastDownloadProgress)
-    @backlog @desktop
+    @desktop
     Scenario: No update check starts while an update is downloading
       Given an update is downloading
       When the timer for the next automatic check comes up
       Then no check starts
       And the download goes on
 
-    @backlog @desktop
+    @desktop
     Scenario: Download progress is reported in steps of ten percent
       Given an update is downloading
       When the download advances from 41 to 49 percent
@@ -365,7 +370,7 @@ Feature: Updating the server, the desktop app and providers
       Then the shown progress becomes 50 percent
 
     # Legacy: apps/desktop/src/telemetry/DesktopTelemetryPublisher.ts (replays the latest update report to a backend that attaches later)
-    @backlog @desktop
+    @desktop
     Scenario: An MC that connects after an update was found hears about it
       Given the desktop app already found an update
       When its MC restarts and connects to the app
@@ -379,13 +384,13 @@ Feature: Updating the server, the desktop app and providers
       Then the MC tells the desktop app to cancel that update
       And a new desktop update can be asked for
 
-    @backlog @desktop
+    @desktop
     Scenario: An Intel build on an Apple Silicon Mac warns the user
       Given the Intel build runs on an Apple Silicon Mac
       When the user checks for updates
       Then the user is warned to install the Apple Silicon build
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The Intel build warning says what to do next
       Given the Intel build runs on an Apple Silicon Mac
       And <state>
@@ -398,13 +403,13 @@ Feature: Updating the server, the desktop app and providers
         | an update was downloaded           | to restart to install the native build                  |
         | no update is available             | the next app update will replace it with the native one |
 
-    @backlog @desktop
+    @desktop
     Scenario: A downloaded update links its release notes
       Given update "1.4.0" finished downloading
       Then the user is told "Update downloaded" and to restart the app from the update button
       And the notice links to the release notes of "1.4.0"
 
-    @backlog @desktop
+    @desktop
     Scenario: Release notes that cannot be opened say so
       Given the notice for the downloaded update links its release notes
       When the user chooses the link and the system cannot open it
@@ -475,20 +480,20 @@ Feature: Updating the server, the desktop app and providers
 
     # Legacy: apps/desktop/src/updates/remoteUpdateFlow.ts, DesktopRemoteUpdates.ts (the desktop side of an update asked for by a server).
     # Uncertain: whether the Qt desktop takes update requests from its MC at all; kept as the desktop half of the scenarios above.
-    @backlog @desktop
+    @desktop
     Scenario: A requested update looks again before saying the app is current
       Given the app last found no update some time ago
       When a server asks the desktop app to update
       Then the app checks again before answering
       And it answers that the app is up to date only after that check
 
-    @backlog @desktop
+    @desktop
     Scenario: A requested update gives up after three failed downloads
       Given an update is available
       When a server asks the desktop app to update and the download fails three times
       Then the request fails with the reason the download gave
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A requested update that cannot start says why
       Given <situation>
       When a server asks the desktop app to update
@@ -497,17 +502,22 @@ Feature: Updating the server, the desktop app and providers
       Examples:
         | situation                                         | reason                                              |
         | automatic updates are disabled on this machine    | Automatic updates are disabled on this machine.     |
-        | the check never reports a result                  | The desktop app did not report an update result.    |
         | the downloaded update is gone before it is ready  | The desktop app lost the downloaded update.         |
 
-    @backlog @desktop
+      # The MC gives up on a desktop app that never answers.
+      @backlog
+      Examples:
+        | situation                                         | reason                                              |
+        | the check never reports a result                  | The desktop app did not report an update result.    |
+
+    @desktop
     Scenario: A prepared update that is not confirmed in five minutes is dropped
       Given the desktop app prepared an update for a server's request
       When five minutes pass without the request being confirmed
       Then confirming it fails with "This desktop update is no longer prepared."
       And a new update request can start
 
-    @backlog @desktop
+    @desktop
     Scenario: Confirming an update joins an install that is already running
       Given the desktop app is already installing the downloaded version
       When a server confirms its prepared update of that version

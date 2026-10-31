@@ -96,7 +96,9 @@ void DesktopUpdateController::activate() {
 
 void DesktopUpdateController::attach(NativeWindow* window) {
   if (auto* keys = window->controller<KeybindingController>()) {
-    keys->commands()->add(QStringLiteral("desktopUpdate.check"), tr("Check for Updates"), [this] { check(true); });
+    keys->commands()->add(QStringLiteral("desktopUpdate.check"), tr("Check for Updates"), [this] {
+      if (m_updater) check(true);
+    });
   }
 }
 

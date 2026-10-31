@@ -634,7 +634,13 @@ const Steps steps([] {
     fail(describeTree(world));
   });
   step(QStringLiteral("the user retries"), [](World& world, const Captures&, const Table&) {
-    // What failed is what is retried: the file, the project's listing or a folder's.
+    // What failed is what is retried: the app's update download, the file,
+    // the project's listing or a folder's.
+    if (at(world.state(QStringLiteral("desktopUpdate")), QStringLiteral("state.errorContext")) == QLatin1String("download")) {
+      world.bridge().dispatch(QStringLiteral("desktopUpdate.press"), {});
+      world.sync();
+      return;
+    }
     if (files(world).fileStatus() == QLatin1String("error")) {
       files(world).reloadFile();
       world.waitFor([&] { return files(world).fileStatus() != QLatin1String("loading"); }, QStringLiteral("the file to load"));
