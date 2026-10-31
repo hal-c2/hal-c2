@@ -9,8 +9,9 @@
 #   apps/desktop/gnome-extension (extension.js, captureService.js, captureFeedback.js)
 #   apps/desktop/src/snapShot/SnapShotAccessibility.ts, SnapShotTransition.ts, NativeCaptureFeedback.ts (app text limits, flight, helper effects)
 #   apps/desktop-qt/src/native/SnapShotController.cpp
-# The Qt desktop captures through the desktop portal on Linux Wayland only: no
-# capture helper, no compositor bindings, no app text and no capture effects.
+# The Qt desktop captures through the desktop portal on Linux Wayland, where it
+# has no capture helper, no compositor bindings, no app text and no capture
+# effects, and directly on macOS, where captures can carry the app's text.
 
 @desktop
 Feature: Snap Shot captures another app's window into the draft
@@ -62,18 +63,18 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | platform         | failure                                                    |
+      | macOS            | macOS returns an empty image for the window                |
       | Windows          | the Windows window capture does not answer in time         |
       | Windows          | an earlier Windows window capture is still running         |
 
     @backlog
     Examples:
       | platform         | failure                                                    |
-      | macOS            | macOS returns an empty image for the window                |
       | Linux on GNOME   | the window in front is minimized or no window has focus    |
       | Linux on Niri    | Niri has no focused window                                 |
       | Linux on Wayland | the desktop returns an empty or unreadable screenshot      |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A slow platform step ends the capture instead of hanging
     Given the desktop app runs on macOS
     And <step> has not answered after <limit>
@@ -83,8 +84,14 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | step                                          | limit      |
-      | macOS finding the window in front             | 5 seconds  |
       | macOS taking the picture of the window        | 15 seconds |
+
+    # Finding the window asks the system directly in the app's own process, so
+    # there is no step to give up on yet.
+    @backlog
+    Examples:
+      | step                                          | limit      |
+      | macOS finding the window in front             | 5 seconds  |
 
   @desktop
   Scenario Outline: A capture with no window in front is explained
@@ -95,12 +102,8 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | platform |
-      | Windows  |
-
-    @backlog
-    Examples:
-      | platform |
       | macOS    |
+      | Windows  |
 
   @backlog @desktop
   Scenario: Closing the window picker without choosing attaches nothing
@@ -123,12 +126,12 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | platform         |
+      | macOS            |
       | Windows          |
 
     @backlog
     Examples:
       | platform         |
-      | macOS            |
       | Linux on Wayland |
 
   @backlog @desktop
@@ -208,10 +211,10 @@ Feature: Snap Shot captures another app's window into the draft
     When the draft confirms the capture landed again
     Then no error is shown
 
-  @backlog-desktop
-  # The desktop portal gives only a screenshot.
+  # macOS only: the desktop portal gives only a screenshot.
   Scenario: Including the app's text and controls
-    Given including app text is on
+    Given the desktop app runs on macOS
+    And including app text is on
     When the user captures a browser window
     Then the attachment carries the window's text and controls along with the image
     And the user can inspect that data from the attachment

@@ -3,6 +3,7 @@
 // run on, since a desktop portal has none. The Win32 half,
 // src/native/win/WindowsSystem.cpp, is not built or run by these.
 
+#include <QHash>
 #include <QJsonObject>
 
 #include "Harness.h"
@@ -17,7 +18,6 @@ QString describe(World& world);
 void send(World& world, const QString& action, const QVariantMap& payload = {});
 QVariant setting(World& world, const QString& key);
 void set(World& world, const QString& key, const QVariant& value);
-QStringList played();
 void resetDesktop(World& world, const QProcessEnvironment& env);
 void openThread(World& world);
 void capture(World& world);
@@ -34,6 +34,7 @@ using namespace snapshot;
 struct Machine {
   std::optional<WindowsSystem::Window> window = WindowsSystem::Window{7, QStringLiteral("npm test"), QRect(10, 20, 800, 600), QStringLiteral("C:\\Tools\\Terminal.exe")};
   QImage image;
+  QStringList played;
   bool answerGrabs = true;
   bool grabRunning = false;
   bool refusePairs = false;
@@ -81,6 +82,7 @@ void runOnWindows(World& world) {
   machine().image.fill(Qt::darkCyan);
   WindowsSnapShot::setCaptureTimeout(15000);
   SnapShotBackend::setWindowsFactory([](QObject* parent) -> WindowsSystem* { return new FakeWindows(parent); });
+  SnapShotBackend::setSoundPlayer([](const QString& sound) { machine().played.append(sound); });
   QProcessEnvironment env;
   env.insert(QStringLiteral("OS"), QStringLiteral("Windows_NT"));
   resetDesktop(world, env);
@@ -112,6 +114,18 @@ void expectNothingAttached(World& world, const QString& told) {
   expectToast(world, QStringLiteral("Snapshot failed"), told);
 }
 
+using Run = std::function<void(World&, const Captures&, const Table&)>;
+
+// The steps macOS's rows also use, by their pattern; SnapShotMacosSteps.cpp
+// registers each once and asks here first.
+QHash<QString, Run>& sharedSteps() {
+  static QHash<QString, Run> steps;
+  return steps;
+}
+void sharedStep(const QString& pattern, const Run& run) {
+  sharedSteps().insert(pattern, run);
+}
+
 const Steps steps([] {
   const QString q = kQuoted;
 
@@ -125,7 +139,7 @@ const Steps steps([] {
   step(QStringLiteral("the setup button is not shown"), [](World& world, const Captures&, const Table&) {
     expect(field(world, QStringLiteral("setupLabel")).toString().isEmpty(), QStringLiteral("no setup button; Snap Shot is %1").arg(describe(world)));
   });
-  step(QStringLiteral("the user allows capture during setup"), [](World& world, const Captures&, const Table&) { turnOn(world); });
+  sharedStep(QStringLiteral("the user allows capture during setup"), [](World& world, const Captures&, const Table&) { turnOn(world); });
   step(QStringLiteral("the user is asked for nothing"), [](World& world, const Captures&, const Table&) {
     expect(setting(world, QStringLiteral("snapShotEnabled")).toBool() && !field(world, QStringLiteral("wizard")).toMap().contains(QStringLiteral("step")),
            QStringLiteral("nothing to allow; Snap Shot is %1").arg(describe(world)));
@@ -154,8 +168,8 @@ const Steps steps([] {
     turnOn(world);
   });
   step(QStringLiteral("the sound plays, the captured window flashes and the image flies into the draft"), [](World& world, const Captures&, const Table&) {
-    expect(played().size() == 1 && machine().flightsWithFlash == 1 && draft(world).size() == 1,
-           QStringLiteral("the sound and a flight with its flash: played %1, %2 flights flashed").arg(played().join(u',')).arg(machine().flightsWithFlash));
+    expect(machine().played.size() == 1 && machine().flightsWithFlash == 1 && draft(world).size() == 1,
+           QStringLiteral("the sound and a flight with its flash: played %1, %2 flights flashed").arg(machine().played.join(u',')).arg(machine().flightsWithFlash));
   });
   step(QStringLiteral("the system asks for reduced motion"), [](World& world, const Captures&, const Table&) {
     runOnWindows(world);
@@ -173,28 +187,26 @@ const Steps steps([] {
     pressBoth(world, c[0] == QLatin1String("Super") ? QStringLiteral("meta") : QStringLiteral("alt"));
     send(world, QStringLiteral("shortcut.save"));
   });
-  step(QStringLiteral("the shortcut row says it is observed and cannot be reserved exclusively"), [](World& world, const Captures&, const Table&) {
+  sharedStep(QStringLiteral("the shortcut row says it is observed and cannot be reserved exclusively"), [](World& world, const Captures&, const Table&) {
     expect(field(world, QStringLiteral("shortcut.status")).toString().contains(QLatin1String("is observed and cannot be reserved exclusively.")),
            QStringLiteral("the observed warning; Snap Shot is %1").arg(describe(world)));
   });
-  step(QStringLiteral("it adds %1").arg(q), [](World& world, const Captures& c, const Table&) {
+  step(QStringLiteral("it adds \"(This key .*)\""), [](World& world, const Captures& c, const Table&) {
     expect(field(world, QStringLiteral("shortcut.status")).toString().endsWith(c[0]), QStringLiteral("the note \"%1\"; Snap Shot is %2").arg(c[0], describe(world)));
   });
-  // Windows' half of "Windows or macOS"; the macOS watcher says the same.
-  step(QStringLiteral("the desktop app runs on Windows or macOS"), [](World& world, const Captures&, const Table&) { runOnWindows(world); });
-  step(QStringLiteral("the user chooses a shortcut of pressing both of a modifier key and the system refuses to let HAL-C2 watch it"),
+  sharedStep(QStringLiteral("the user chooses a shortcut of pressing both of a modifier key and the system refuses to let HAL-C2 watch it"),
        [](World& world, const Captures&, const Table&) {
          machine().refusePairs = true;
          turnOn(world);
          pressBoth(world, QStringLiteral("alt"));
          send(world, QStringLiteral("record.key"), {{QStringLiteral("key"), int(Qt::Key_Escape)}, {QStringLiteral("modifiers"), 0}});
        });
-  step(QStringLiteral("the shortcut row says that key is not available on this system"), [](World& world, const Captures&, const Table&) {
+  sharedStep(QStringLiteral("the shortcut row says that key is not available on this system"), [](World& world, const Captures&, const Table&) {
     // The saved both-Shift shortcut is refused too, so the row reads as its own.
     expect(field(world, QStringLiteral("shortcut.status")).toString().endsWith(QLatin1String("is not available on this system.")),
            QStringLiteral("the key to be reported; Snap Shot is %1").arg(describe(world)));
   });
-  step(QStringLiteral("capture does not claim the shortcut is registered"), [](World& world, const Captures&, const Table&) {
+  sharedStep(QStringLiteral("capture does not claim the shortcut is registered"), [](World& world, const Captures&, const Table&) {
     expect(!field(world, QStringLiteral("shortcut.registered")).toBool() && !field(world, QStringLiteral("shortcut.canSave")).toBool(),
            QStringLiteral("the shortcut not to be registered; Snap Shot is %1").arg(describe(world)));
   });
@@ -211,30 +223,29 @@ const Steps steps([] {
     turnOn(world);
     machine().grabRunning = true;
   });
-  step(QStringLiteral("nothing is attached and the user is told the window could not be captured"), [](World& world, const Captures&, const Table&) {
-    expectNothingAttached(world, WindowsSnapShot::kCouldNotCapture);
-  });
-  step(QStringLiteral("no half-finished capture is kept"), [](World& world, const Captures&, const Table&) {
+    sharedStep(QStringLiteral("no half-finished capture is kept"), [](World& world, const Captures&, const Table&) {
     // The press after the stuck grab ends works.
     machine().grabRunning = false;
     machine().answerGrabs = true;
     capture(world);
     expect(draft(world).size() == 1, QStringLiteral("the next capture to attach; the draft has %1").arg(show(draft(world))));
   });
-  step(QStringLiteral("no window is available to capture"), [](World& world, const Captures&, const Table&) {
+  sharedStep(QStringLiteral("no window is available to capture"), [](World& world, const Captures&, const Table&) {
     openThread(world);
     turnOn(world);
     machine().window = std::nullopt;
   });
-  step(QStringLiteral("nothing is attached and the user is told the active window is not available for capture"),
-       [](World& world, const Captures&, const Table&) { expectNothingAttached(world, WindowsSnapShot::kNoWindow); });
-  step(QStringLiteral("the window in front is larger than 2,560 by 1,600 pixels"), [](World& world, const Captures&, const Table&) {
+  sharedStep(QStringLiteral("nothing is attached and the user is told the (window could not be captured|active window is not available for capture)"),
+             [](World& world, const Captures& c, const Table&) {
+               expectNothingAttached(world, c[0].startsWith(QLatin1String("window")) ? WindowsSnapShot::kCouldNotCapture : WindowsSnapShot::kNoWindow);
+             });
+  sharedStep(QStringLiteral("the window in front is larger than 2,560 by 1,600 pixels"), [](World& world, const Captures&, const Table&) {
     openThread(world);
     turnOn(world);
     machine().image = QImage(5120, 2000, QImage::Format_RGB32);
     machine().image.fill(Qt::darkCyan);
   });
-  step(QStringLiteral("the attached image is shrunk to fit within 2,560 by 1,600 pixels"), [](World& world, const Captures&, const Table&) {
+  sharedStep(QStringLiteral("the attached image is shrunk to fit within 2,560 by 1,600 pixels"), [](World& world, const Captures&, const Table&) {
     expect(draft(world).size() == 1 && machine().attachedSize == QSize(2560, 1000),
            QStringLiteral("2560x1000 with its shape kept; it is %1x%2").arg(machine().attachedSize.width()).arg(machine().attachedSize.height()));
   });
@@ -256,3 +267,11 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+bool snapShotWindowsStep(World& world, const QString& pattern, const Captures& captures) {
+  if (!dynamic_cast<WindowsSnapShot*>(backend(world))) return false;
+  const Run run = sharedSteps().value(pattern);
+  expect(bool(run), QStringLiteral("no Windows answer to \"%1\"").arg(pattern));
+  run(world, captures, {});
+  return true;
+}

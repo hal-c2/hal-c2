@@ -3,11 +3,14 @@
 #include <QDir>
 #include <QFile>
 #include <QHash>
+#include <QJsonDocument>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
 
+#include "MacPlatform.h"
+#include "MacSnapShot.h"
 #ifdef HAL_C2_HAS_DBUS
 #include "PortalSnapShot.h"
 #endif
@@ -112,6 +115,11 @@ SnapShotBackend* SnapShotBackend::create(QObject* parent) {
     if (system) return new WindowsSnapShot(system, parent);
     return new UnavailableSnapShot(QStringLiteral("SnapShots are not supported on this platform."), parent);
   }
+  // macOS captures directly, and so does a test's stand-in Mac.
+  if (MacPlatform::overridden()) return new MacSnapShot(MacPlatform::create(parent), parent);
+#ifdef Q_OS_MACOS
+  if (MacPlatform* mac = MacPlatform::create(parent)) return new MacSnapShot(mac, parent);
+#endif
 #ifdef Q_OS_LINUX
   const bool onLinux = true;
 #else
@@ -172,7 +180,24 @@ void SnapShotBackend::checkShortcut(const QJsonObject& shortcut, std::function<v
 
 // No audio module: the desktop's own player, from a copy of the sound in the
 // cache (the players read files).
+namespace {
+std::function<void(const QString&)>& soundPlayer() {
+  static std::function<void(const QString&)> player;
+  return player;
+}
+}  // namespace
+
+void SnapShotBackend::setSoundPlayer(std::function<void(const QString&)> player) {
+  soundPlayer() = std::move(player);
+}
+
+QString SnapShotBackend::trigger(const QJsonObject& shortcut, QString* error) const {
+  if (session().mode == QLatin1String("direct")) return QString::fromUtf8(QJsonDocument(shortcut).toJson(QJsonDocument::Compact));
+  return portalTrigger(shortcut, error);
+}
+
 void SnapShotBackend::play(const QString& sound) {
+  if (soundPlayer()) return soundPlayer()(sound);
   const QString name = sound == QLatin1String("camera-shutter") ? QStringLiteral("snap-shot-click.oga")
                                                                 : QStringLiteral("snap-shot-whoosh.oga");
   const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
