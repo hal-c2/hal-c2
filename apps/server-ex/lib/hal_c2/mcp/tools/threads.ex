@@ -8,8 +8,6 @@ defmodule HalC2.Mcp.Tools.Threads do
 
   # Threads one create_threads call may hold.
   @max_batch_threads 20
-  # The input limits the tool definitions advertise (`priv/mcp_tools.json`):
-  # a message of at most 120,000 characters and at most 8 attachments.
   @capability_models 25
 
   import HalC2.Mcp.Tools,
