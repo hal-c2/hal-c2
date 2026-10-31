@@ -239,13 +239,17 @@ public:
   bool handle(const QString& action, const QVariant& payload) override;
 
   QString error() const { return m_error; }
+  // The phone's Space screen selects a page before showing it: the user is on
+  // it only while the screen says so (`space.pageShown`). On the desktop the
+  // selected page is the one on show.
+  void setPageShownBySteps() { m_pageShownBySteps = true; }
 
 private:
   void setOpen(bool open);
   void follow();
   void unfollow();
   void followSpace();
-  // Follows who else is on the open page, only while the view is open and the
+  // Follows who else is on the open page, only while it is on show and the
   // client connected: a new connection follows it anew.
   void followViewers();
   // `space.<method>` with the selected Space's id unless the payload names
@@ -271,6 +275,8 @@ private:
   int m_viewersSubscription = 0;
   QString m_followedSpace;
   QString m_followedViewers;
+  bool m_pageShownBySteps = false;
+  bool m_pageShown = false;
   QString m_error;
   int m_writing = 0;
   // The page last written from a thread.

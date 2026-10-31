@@ -76,6 +76,13 @@ Feature: Who else is on a page
       When the user leaves the page
       Then the user is no longer on the page "Roadmap"
 
+  @mobile
+  Rule: The phone is on a page only while it shows it
+
+    Scenario: The list of a Space's pages is not being on a page
+      When the user opens the Space "Research"
+      Then the user is no longer on the page "Roadmap"
+
   @mc
   Rule: The MC tracks viewers per page and writes nothing down
 

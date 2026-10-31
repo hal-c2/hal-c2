@@ -80,6 +80,31 @@ Item {
             compare(screen.view, "page");
         }
 
+        function test_theUserIsOnAPageOnlyWhileItShows() {
+            const screen = makeScreen();
+            const shown = () => dispatched("space.pageShown").map(payload => payload.shown);
+            compare(shown(), [false]);
+            screen.openSpace("s1");
+            compare(shown(), [false]);
+            screen.openPage("p1");
+            compare(shown(), [false, true]);
+            screen.showComments("");
+            compare(shown(), [false, true]);
+            verify(screen.stepBack());
+            compare(shown(), [false, true]);
+            verify(screen.stepBack());
+            compare(shown(), [false, true, false]);
+        }
+
+        function test_whoElseIsOnThePageIsNamed() {
+            const screen = makeScreen({ viewers: { devices: ["HAL-C2 desktop on ai-beast"], agents: ["Work"] } });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const viewers = findChild(screen, "spaceViewers");
+            verify(viewers.visible);
+            compare(viewers.text, "Also here: HAL-C2 desktop on ai-beast, the agent of “Work”");
+        }
+
         function test_backTakesOneStepAtATimeThenLeaves() {
             const screen = makeScreen();
             screen.openSpace("s1");
@@ -309,7 +334,7 @@ Item {
             editor.forceActiveFocus();
             editor.text = "Final";
             screen.destroy();
-            tryCompare(Shell, "dispatchCount", 3);
+            tryCompare(Shell, "dispatchCount", 5);
             compare(dispatched("space.block.update")[0].text, "Final");
         }
     }

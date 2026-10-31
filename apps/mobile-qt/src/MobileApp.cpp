@@ -19,6 +19,7 @@
 #include "SettingsController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
+#include "SpaceController.h"
 #include "TerminalController.h"
 #include "ThemeStore.h"
 
@@ -62,6 +63,7 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   // terminal, so in the phone's a thread has no place for one.
   m_native->controller<DraftController>()->setLandsOnDraft(false);
   m_native->controller<TerminalController>()->setDrawn(false);
+  m_native->controller<SpaceController>()->setPageShownBySteps();
   m_bridge->addInterceptor([drafts = QPointer<DraftController>(m_native->controller<DraftController>()),
                             terminals = QPointer<TerminalController>(m_native->controller<TerminalController>())](const QString& action, const QVariant& payload) {
     if (action != QLatin1String("layout.desktop")) return false;

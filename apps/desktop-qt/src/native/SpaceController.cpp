@@ -572,6 +572,7 @@ void SpaceController::setOpen(bool open) {
     follow();
   } else {
     unfollow();
+    m_pageShown = false;
   }
   followViewers();
 }
@@ -617,7 +618,8 @@ void SpaceController::followSpace() {
 }
 
 void SpaceController::followViewers() {
-  const QString page = m_open && m_client->isReady() ? pageId() : QString();
+  const bool onShow = m_open && m_client->isReady() && (!m_pageShownBySteps || m_pageShown);
+  const QString page = onShow ? pageId() : QString();
   if (page == m_followedViewers) return;
   if (m_viewersSubscription) m_client->unsubscribe(std::exchange(m_viewersSubscription, 0));
   m_followedViewers = page;
@@ -763,6 +765,9 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     if (input.contains(QLatin1String("pageId"))) awaitPage(pageId);
   } else if (action == QLatin1String("space.select")) {
     selectSpace(field(QLatin1String("spaceId")));
+  } else if (action == QLatin1String("space.pageShown")) {
+    m_pageShown = input.value(QLatin1String("shown")).toBool();
+    followViewers();
   } else if (action == QLatin1String("space.selectPage")) {
     selectPage(pageId);
   } else if (action == QLatin1String("space.create")) {
