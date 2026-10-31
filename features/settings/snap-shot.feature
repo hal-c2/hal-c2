@@ -16,9 +16,9 @@
 #   apps/desktop/src/snapShot/PortalCaptureShortcut.ts, NiriCaptureShortcut.ts, NiriSnapShot.ts (shortcut session and endpoint errors)
 #   apps/desktop/src/snapShot/GnomeCaptureSetup.ts, KdeSnapShot.ts, HyprlandSnapShot.ts (extension and helper install safety)
 #   apps/desktop/src/snapShot/DesktopSnapShot.ts, snapShot.ts (shortcut registration, modifier-pair and conflict messages)
-# Linux Wayland captures through the desktop portal, Niri's socket and a binding
-# in its config, or the KDE and Hyprland capture helpers, and macOS through MacSnapShot, which alone carries app text: no
-# Windows capture yet.
+# The Qt desktop captures on Linux Wayland through the desktop portal, Niri's socket
+# and a binding in its config, or the KDE and Hyprland capture helpers, through
+# MacSnapShot on macOS, which alone carries app text, and directly on Windows.
 
 @desktop
 Feature: Snap Shot settings
@@ -46,11 +46,6 @@ Feature: Snap Shot settings
       | platform                          | permissions                          |
       | macOS                             | Screen Recording                     |
       | macOS with app text included      | Screen Recording and Accessibility   |
-
-    # The Qt desktop has no Windows capture yet.
-    @backlog
-    Examples:
-      | platform                          | permissions                          |
       | Windows                           | nothing                              |
 
   @desktop
@@ -107,12 +102,7 @@ Feature: Snap Shot settings
     Examples:
       | cue       | effect                                 |
       | sound     | a sound                                |
-
-    # The desktop portal cannot flash a window, and the Qt draft has no
-    # capture animation yet.
-    @backlog-desktop
-    Examples:
-      | cue       | effect                                 |
+      # On Windows: a desktop portal has no cues, and says so in the panel.
       | flash     | a flash on the captured window         |
       | animation | the image flying into the draft        |
 
@@ -204,7 +194,7 @@ Feature: Snap Shot settings
     Then the setup button reads "Manage capture"
     And it reopens setup to revisit access or the shortcut
 
-  @backlog @desktop
+  @desktop
   Scenario: Windows turns capture on without any setup
     Given the desktop app runs on Windows
     When the user turns on snapshots
@@ -618,7 +608,7 @@ Feature: Snap Shot settings
     When the desktop cannot prepare the changes
     Then the user is told "Couldn't prepare the changes. Check Advanced for help."
     And the technical reason is under Advanced
-    And the user can try again
+    And the user can try the review again
 
   @desktop
   Scenario: Changing the keys while reviewing needs a new diff
@@ -852,20 +842,26 @@ Feature: Snap Shot settings
       | macOS    | Shift | no further note                                |
 
     # Windows has no backend yet, and no Linux desktop here watches modifier pairs.
+      | Windows  | Super | This key can also open the system's own menu.  |
+      | Windows  | Alt   | This key can also activate app menu bars.      |
+
+    # No Linux desktop the Qt app supports watches modifier keys yet.
     @backlog
     Examples:
       | platform | key   | note                                           |
-      | Windows  | Super | This key can also open the system's own menu.  |
       | Linux    | Super | This key can also open the system's own menu.  |
-      | Windows  | Alt   | This key can also activate app menu bars.      |
 
-  # Windows has no backend yet; the same refusal runs on macOS here.
   @desktop
-  Scenario: A modifier key the system will not let HAL-C2 watch is reported
-    Given the desktop app runs on Windows or macOS
+  Scenario Outline: A modifier key the system will not let HAL-C2 watch is reported
+    Given the desktop app runs on <platform>
     When the user chooses a shortcut of pressing both of a modifier key and the system refuses to let HAL-C2 watch it
     Then the shortcut row says that key is not available on this system
     And capture does not claim the shortcut is registered
+
+    Examples:
+      | platform |
+      | Windows  |
+      | macOS    |
 
   # Upstream keeps its "Modifier-pair shortcuts aren't available" reason off
   # the settings row (SnapShotSettings.logic.ts): the recorder refuses a pair

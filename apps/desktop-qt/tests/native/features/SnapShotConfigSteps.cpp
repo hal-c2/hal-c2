@@ -49,9 +49,6 @@ void pressShortcut(World& world);
 QVariantMap attachedImage(World& world);
 QVariantList draftImages(World& world);
 void pickerOnly(World& world);
-void macTryAgain(World& world);
-void macWindowFailed(World& world);
-void macNothingKept(World& world);
 }  // namespace snapshot
 
 namespace {
@@ -347,11 +344,7 @@ const Steps steps([] {
   step(QStringLiteral("the technical reason is under Advanced"), [](World& world, const Captures&, const Table&) {
     expect(!field(world, QStringLiteral("config.details")).toString().isEmpty(), QStringLiteral("a reason; Snap Shot is %1").arg(describe(world)));
   });
-  step(QStringLiteral("the user can try again"), [](World& world, const Captures&, const Table&) {
-    if (field(world, QStringLiteral("mode")) == QLatin1String("direct")) {
-      macTryAgain(world);
-      return;
-    }
+  step(QStringLiteral("the user can try the review again"), [](World& world, const Captures&, const Table&) {
     expect(field(world, QStringLiteral("config.canReview")).toBool(), QStringLiteral("Review changes to be offered; Snap Shot is %1").arg(describe(world)));
     compositor().binds = QList<CaptureShortcutConfig::HyprlandBind>{};
     reviewed(world);
@@ -752,22 +745,6 @@ const Steps steps([] {
     thread(world);
   });
   step(QStringLiteral("Niri has no focused window"), [](World&, const Captures&, const Table&) { scene().focusedWindow = false; });
-  step(QStringLiteral("nothing is attached and the user is told the window could not be captured"), [](World& world, const Captures&, const Table&) {
-    if (field(world, QStringLiteral("mode")) == QLatin1String("direct")) {
-      macWindowFailed(world);
-      return;
-    }
-    world.waitFor([&] { return show(world.state(QStringLiteral("toasts"))).contains(QLatin1String("Niri has no focused window to capture.")); },
-                  [&] { return QStringLiteral("the failure; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
-    expect(draftImages(world).isEmpty(), QStringLiteral("nothing attached: %1").arg(show(draftImages(world))));
-  });
-  step(QStringLiteral("no half-finished capture is kept"), [](World& world, const Captures&, const Table&) {
-    if (field(world, QStringLiteral("mode")) == QLatin1String("direct")) {
-      macNothingKept(world);
-      return;
-    }
-    expect(scene().shots == 0, QStringLiteral("no screenshot asked of Niri"));
-  });
   step(QStringLiteral("a Linux Wayland session on Niri"), [](World& world, const Captures&, const Table&) {
     openNiri(world, QStringLiteral("25.11.0"));
     thread(world);
@@ -828,3 +805,8 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+// For the capture steps every desktop shares (SnapShotMacosSteps.cpp).
+int snapShotNiriShots() {
+  return scene().shots;
+}
