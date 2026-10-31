@@ -121,7 +121,7 @@ public:
 
   void setWhite(qreal white) {
     m_white = white;
-    requestUpdate();
+    update();
   }
 
 protected:

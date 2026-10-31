@@ -733,6 +733,13 @@ Feature: Snap Shot settings
     Then the user is told to wait for the current config change to finish
 
   @desktop
+  Scenario: A config change that is running cannot be walked away from
+    Given the desktop is saving a reviewed shortcut change
+    When the user tries to cancel the review, record other keys and close setup
+    Then setup stays open on the review until the save finishes
+    And the user is told "Shortcut saved" and to use the shortcut from another app
+
+  @desktop
   Scenario: A shortcut that is not a letter, number or function key with Ctrl, Alt or Super is refused for the config
     Given a Niri or Hyprland session
     When the user records a shortcut of Shift and a letter, or of a punctuation key

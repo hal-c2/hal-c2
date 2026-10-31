@@ -260,7 +260,7 @@ void NiriSnapShot::onEvent(const QJsonObject& event) {
     const bool same = std::any_of(windows.begin(), windows.end(), [&](const QJsonValue& window) { return sameWindow(window.toObject(), m_capture->window); });
     const QString app = same ? m_capture->window.value(QLatin1String("app_id")).toString() : QString();
     const QString title = same ? m_capture->window.value(QLatin1String("title")).toString() : QString();
-    m_capture.reset();
+    retire();
     emit captured(image, app.isEmpty() ? QStringLiteral("Window") : app, title);
   });
 }
@@ -288,8 +288,18 @@ void NiriSnapShot::screenshot(const QJsonObject& window) {
 }
 
 void NiriSnapShot::finish(const QString& failure) {
-  m_capture.reset();
+  retire();
   emit failed(failure);
+}
+
+// Ends the capture; its socket or timer may be the one emitting right now, so
+// they go once the event loop is back.
+void NiriSnapShot::retire() {
+  std::shared_ptr<Capture> capture = std::move(m_capture);
+  capture->timeout.disconnect(this);
+  capture->timeout.stop();
+  if (capture->events) capture->events->disconnect(this);
+  QMetaObject::invokeMethod(this, [capture] {}, Qt::QueuedConnection);
 }
 
 #endif  // HAL_C2_HAS_DBUS

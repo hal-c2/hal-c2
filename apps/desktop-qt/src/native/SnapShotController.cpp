@@ -280,6 +280,7 @@ QString SnapShotController::initialStep(const QString& requested) const {
 }
 
 void SnapShotController::openSetup(const QString& requested) {
+  if (m_configThread) return;
   // A desktop without capture has nothing to set up.
   if (!m_backend->session().ready || m_backend->session().mode == QLatin1String("unavailable")) return;
   // Nor does one that needs no setup: opening it turns capture on.
@@ -547,7 +548,7 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
   if (action == QLatin1String("snapShot.setup.close")) {
-    if (m_testing) return true;
+    if (m_testing || m_configThread) return true;
     closeSetup(map.value(QStringLiteral("completed")).toBool());
     return true;
   }
@@ -560,6 +561,8 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
   if (action == QLatin1String("snapShot.config.cancel")) {
+    // The file is being read or written: the outcome is what the user sees next.
+    if (m_configThread) return true;
     withdrawReview();
     m_flow.error.clear();
     m_flow.details.clear();
@@ -574,11 +577,11 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
   if (action == QLatin1String("snapShot.config.complete")) {
-    if (managed()) closeSetup(true);
+    if (managed() && !m_configThread) closeSetup(true);
     return true;
   }
   if (action == QLatin1String("snapShot.setup.done")) {
-    if (!m_wizard || !accessReady()) return true;
+    if (!m_wizard || !accessReady() || m_configThread) return true;
     if (managed()) {
       if (m_flow.saved || (m_flow.preview && m_flow.preview->before == m_flow.preview->after)) closeSetup(true);
       return true;
@@ -594,6 +597,7 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
   if (action == QLatin1String("snapShot.record.start")) {
+    if (m_configThread) return true;
     m_held.clear();
     ++m_checkId;
     m_checking = false;
@@ -665,6 +669,7 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
   if (action == QLatin1String("snapShot.shortcut.discard")) {
+    if (m_configThread) return true;
     stopRecording();
     resetCandidate();
     publish();
@@ -891,6 +896,7 @@ QVariant SnapShotController::configState() const {
       {QStringLiteral("intro"), intro},
       {QStringLiteral("reviewLabel"), m_flow.preparing ? tr("Preparing changes…") : tr("Review changes")},
       {QStringLiteral("canReview"), !busy && !preview},
+      {QStringLiteral("busy"), busy},
       {QStringLiteral("review"), reviewed},
       {QStringLiteral("connecting"), connecting},
       {QStringLiteral("error"), m_flow.error},

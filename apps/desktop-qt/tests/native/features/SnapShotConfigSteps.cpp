@@ -581,6 +581,21 @@ const Steps steps([] {
     send(world, QStringLiteral("config.save"));
     compositor().waiting.acquire();
   });
+  step(QStringLiteral("the user tries to cancel the review, record other keys and close setup"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("config.cancel"));
+    send(world, QStringLiteral("record.start"));
+    send(world, QStringLiteral("setup.close"), {{QStringLiteral("completed"), false}});
+    send(world, QStringLiteral("config.complete"));
+    send(world, QStringLiteral("setup.done"));
+  });
+  step(QStringLiteral("setup stays open on the review until the save finishes"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("config.busy")).toBool() && !field(world, QStringLiteral("config.review.id")).toString().isEmpty(),
+           QStringLiteral("the review to stay; Snap Shot is %1").arg(describe(world)));
+    compositor().hold = false;
+    compositor().release.release();
+    settle(world);
+    expect(read(scene().file).contains("hal-c2"), QStringLiteral("the save to land: %1").arg(QString::fromUtf8(read(scene().file))));
+  });
   step(QStringLiteral("the user asks to review another change"), [](World& world, const Captures&, const Table&) { send(world, QStringLiteral("config.review")); });
   step(QStringLiteral("the user is told to wait for the current config change to finish"), [](World& world, const Captures&, const Table&) {
     expectDetails(world, QStringLiteral("Wait for the current config change to finish."));

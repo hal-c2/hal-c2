@@ -104,6 +104,7 @@ SettingsPage {
 
         objectName: "recorder"
         text: recorder.shortcut?.keys ?? ""
+        enabled: !(Shell.state.snapShot?.config?.busy ?? false)
         focusPolicy: Qt.StrongFocus
         onClicked: {
             // A shortcut in the compositor's config is changed through setup's review.
@@ -475,6 +476,7 @@ SettingsPage {
                     ShellButton {
                         objectName: "configCancel"
                         subtle: true
+                        enabled: !(configPanel.config?.busy ?? false)
                         text: qsTr("Cancel")
                         onClicked: Shell.dispatch("snapShot.config.cancel")
                     }
@@ -575,6 +577,7 @@ SettingsPage {
                         ShellButton {
                             objectName: "configComplete"
                             subtle: true
+                            enabled: !(configPanel.config?.busy ?? false)
                             text: qsTr("I've added the shortcut")
                             onClicked: Shell.dispatch("snapShot.config.complete")
                         }
@@ -608,6 +611,7 @@ SettingsPage {
                 ShellButton {
                     objectName: "close"
                     subtle: true
+                    enabled: !(snap.config?.busy ?? false)
                     text: snap.wizard?.closeLabel ?? ""
                     onClicked: Shell.dispatch("snapShot.setup.close", { completed: false })
                 }
@@ -627,7 +631,7 @@ SettingsPage {
                     objectName: "done"
                     visible: snap.wizard?.step === "shortcut"
                     primary: true
-                    enabled: snap.wizard?.doneEnabled ?? false
+                    enabled: (snap.wizard?.doneEnabled ?? false) && !(snap.config?.busy ?? false)
                     text: snap.wizard?.doneLabel ?? ""
                     onClicked: Shell.dispatch("snapShot.setup.done")
                 }

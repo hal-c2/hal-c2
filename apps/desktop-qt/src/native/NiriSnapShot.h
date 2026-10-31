@@ -59,6 +59,7 @@ private:
   void screenshot(const QJsonObject& window);
   void onEvent(const QJsonObject& event);
   void finish(const QString& failure);
+  void retire();
 
   QString m_socket;
   QString m_name;

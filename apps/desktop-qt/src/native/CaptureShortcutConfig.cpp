@@ -258,7 +258,8 @@ struct Range {
 QList<Range> hyprlandBinds(const QString& source, bool lua) {
   static const QRegularExpression legacy(QStringLiteral("^\\s*bind[a-z]*\\s*=\\s*([^,]*),\\s*([^,]*),\\s*([^,]*),\\s*(.*?)\\s*(?:#.*)?$"));
   static const QRegularExpression modern(
-      QStringLiteral("^\\s*hl\\.bind\\(\\s*([\"'])(.*?)\\1\\s*,\\s*hl\\.dsp\\.global\\(\\s*([\"'])(.*?)\\3\\s*\\)\\s*\\)\\s*;?\\s*(?:--.*)?$"));
+      QStringLiteral("^\\s*hl\\.bind\\(\\s*([\"'])(.*?)\\1\\s*,"));
+  static const QRegularExpression global(QStringLiteral("^\\s*hl\\.dsp\\.global\\(\\s*([\"'])(.*?)\\1\\s*\\)\\s*\\)\\s*;?\\s*(?:--.*)?$"));
   static const QRegularExpression spaces(QStringLiteral("\\s+"));
   QList<Range> bindings;
   qsizetype start = 0;
@@ -276,7 +277,9 @@ QList<Range> hyprlandBinds(const QString& source, bool lua) {
                          match.captured(3).trimmed() == u"global" ? match.captured(4).trimmed() : QString()});
       }
     } else if (const auto match = modern.match(trimmed); match.hasMatch()) {
-      bindings.append({start, end, match.captured(2), match.captured(4)});
+      // Any action holds the keys; only a global on one line is HAL-C2's to replace.
+      const auto action = global.matchView(QStringView(trimmed).mid(match.capturedEnd()));
+      bindings.append({start, end, match.captured(2), action.hasMatch() ? action.captured(2) : QString()});
     }
     start = end;
   }
@@ -573,19 +576,25 @@ std::optional<CaptureShortcutConfig::Edit> CaptureShortcutConfig::edit(const QSt
       if (bind.action == appId + QStringLiteral(":capture-window")) existing.append(bind);
     }
   }
-  const auto chord = keys(!requested.isEmpty() ? requested : existing.isEmpty() ? QString() : existing.first().keys, error);
+  const QString wanted = !requested.isEmpty() ? requested : existing.isEmpty() ? QString() : existing.first().keys;
+  // Removal goes by the action, whatever keys the user gave it.
+  if (!install) {
+    QString ignored;
+    const auto chord = keys(wanted, &ignored);
+    return Edit{removeRanges(source, existing), chord ? chord->label : wanted};
+  }
+  const auto chord = keys(wanted, error);
   if (!chord) return std::nullopt;
   const QString label = chord->label;
-  if (install && existing.size() == 1 && sameKeys(existing.first().keys, label)) return Edit{source, label};
+  if (existing.size() == 1 && sameKeys(existing.first().keys, label)) return Edit{source, label};
   QString after = removeRanges(source, existing);
-  if (!install) return Edit{after, label};
   bool conflict = false;
   if (niri) {
     const auto found = niriConflict(after, appId, label, error);
     if (!found) return std::nullopt;
     conflict = *found;
   } else {
-    for (const Range& bind : hyprlandBinds(after, false)) conflict = conflict || sameKeys(bind.keys, label);
+    for (const Range& bind : hyprlandBinds(after, format == Format::HyprlandLua)) conflict = conflict || sameKeys(bind.keys, label);
   }
   if (conflict) {
     *error = QStringLiteral("%1 is already used in this config. Choose another shortcut.").arg(label);
