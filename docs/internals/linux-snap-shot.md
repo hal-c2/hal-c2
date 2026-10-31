@@ -1,14 +1,14 @@
 # Linux window capture
 
 Wayland only. The Qt desktop captures through the Screenshot portal
-(`apps/desktop-qt/src/native/PortalSnapShot`) on every Wayland desktop and never falls back to
-another backend on failure, cancellation, or denial. Session detection comes from
+(`apps/desktop-qt/src/native/PortalSnapShot`) on every Wayland desktop, GNOME adding its extension
+for the active window when the portal cannot take it, and never falls back to another backend on
+failure, cancellation, or denial. Session detection comes from
 `XDG_CURRENT_DESKTOP`: a stale `NIRI_SOCKET` or a reachable GNOME extension must not select another
 desktop's backend.
 
-The helpers in `native/` (`kde-snap-shot`, `hyprland-snap-shot`, `gnome-snap-shot`) are the
-compositor-specific backends the desktop does not call yet (`@backlog-desktop`). The traps below
-bind them when it does.
+The helpers `native/kde-snap-shot` and `native/hyprland-snap-shot` are the compositor-specific
+backends the desktop does not call yet (`@backlog-desktop`). The traps below bind them when it does.
 
 ## KDE
 
@@ -63,6 +63,8 @@ version before adding it to `metadata.json`.
 
 ## Qt desktop
 
-`apps/desktop-qt` has only the portal backend so far (`PortalSnapShot`, over QtDBus), on every
-Wayland desktop. GNOME, KDE, Hyprland and Niri get the window picker unless their portal offers
-the active-window target. The helper backends are `@backlog-desktop`.
+`apps/desktop-qt` has the portal backend (`PortalSnapShot`, over QtDBus) on every Wayland desktop.
+KDE, Hyprland and Niri get the window picker unless their portal offers the active-window target;
+their helper backends are `@backlog-desktop`. On GNOME `GnomeSnapShot` wraps the portal and installs
+the extension from a Qt resource; a capture takes the bus name on a connection of its own, so it is
+held only for that capture. The landing flight is not wired yet: captures ask only for the flash.

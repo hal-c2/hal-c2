@@ -31,6 +31,7 @@ qsizetype portalCaptures();
 qsizetype attachmentCount(World& world);
 void expectFailureToast(World& world, const QString& body);
 void openThreadForCapture(World& world);
+void pressShortcut(World& world);
 }  // namespace snapshot
 
 namespace {
@@ -148,7 +149,15 @@ void expectWizard(World& world, const QString& key, const QString& value) {
 
 void onAccessStep(World& world) {
   openPanel(world);
-  send(world, QStringLiteral("setup.open"));
+  send(world, QStringLiteral("setup.open"), {{QStringLiteral("step"), QStringLiteral("access")}});
+}
+
+// The flash and animation rows say it (TurnSteps' "the user is told").
+void toldByEffects(World& world) {
+  openPanel(world);
+  world.toldInPlace = [&world] {
+    return QStringList{field(world, QStringLiteral("flash.status")).toString(), field(world, QStringLiteral("animations.status")).toString()};
+  };
 }
 
 void chooseStep(World& world, const QString& action) {
@@ -160,7 +169,7 @@ void chooseStep(World& world, const QString& action) {
 const Steps steps([] {
   const QString q = kQuoted;
 
-  step(QStringLiteral("a GNOME session where the extension is (not installed|was just installed|installed but waiting for a new login|"
+  step(QStringLiteral("a GNOME session where the extension (?:is )?(not installed|was just installed|installed but waiting for a new login|"
                       "installed but too old|installed while GNOME extensions are off|installed but turned off|enabled and answering|failing to start)"),
        [](World& world, const Captures& c, const Table&) {
          session(world);
@@ -180,6 +189,7 @@ const Steps steps([] {
            loaded(bundled(), 3);
            gnome().extension.error = QStringLiteral("JS ERROR");
          }
+         openPanel(world);
        });
   step(QStringLiteral("setup says %1 with the action %1").arg(q), [](World& world, const Captures& c, const Table&) {
     expectWizard(world, QStringLiteral("heading"), c[0]);
@@ -195,6 +205,7 @@ const Steps steps([] {
   step(QStringLiteral("a GNOME version the extension does not support"), [](World& world, const Captures&, const Table&) {
     session(world);
     gnome().extension.shellVersion = QStringLiteral("44.1");
+    openPanel(world);
   });
   step(QStringLiteral("it points to Take snapshot in the command palette to choose a window"), [](World& world, const Captures&, const Table&) {
     expect(field(world, QStringLiteral("wizard.body")).toString().contains(QLatin1String("Take snapshot from the command palette")), describe(world));
@@ -212,6 +223,7 @@ const Steps steps([] {
     } else {
       loaded(bundled(), 2);
     }
+    openPanel(world);
   });
   step(QStringLiteral("the user opens Advanced for the GNOME extension"), [](World& world, const Captures&, const Table&) { onAccessStep(world); });
   step(QStringLiteral("they can disable the extension, and turn it back on"), [](World& world, const Captures&, const Table&) {
@@ -335,11 +347,13 @@ const Steps steps([] {
     loaded(1, 1);
     gnome().extension.service = 1;
     turnOn(world);
+    toldByEffects(world);
   });
   step(QStringLiteral("a Linux session where GNOME setup has not been finished"), [](World& world, const Captures&, const Table&) {
     session(world);
     loaded(bundled(), 2);
     turnOn(world);
+    toldByEffects(world);
   });
 
   step(QStringLiteral("the desktop app runs (on a GNOME session|on Linux without GNOME)"), [](World& world, const Captures& c, const Table&) {
@@ -402,6 +416,7 @@ const Steps steps([] {
     // The name is held by the other instance: DBusGnomeShell answers this.
     gnome().capture.error = QStringLiteral("Another HAL-C2 instance is capturing a window. Try again.");
   });
+  step(QStringLiteral("the other instance's user presses the Snap Shot shortcut"), [](World& world, const Captures&, const Table&) { pressShortcut(world); });
   step(QStringLiteral("that capture fails and the user is told another HAL-C2 instance is capturing and to try again"), [](World& world, const Captures&, const Table&) {
     expect(gnome().captures.size() == 1 && portalCaptures() == 0, QStringLiteral("no other capture tried"));
     expect(attachmentCount(world) == 0, QStringLiteral("nothing attached"));

@@ -320,7 +320,7 @@ const Steps steps([] {
 
   // Each permission on its own.
   step(QStringLiteral("the user is on the access step"), [](World& world, const Captures&, const Table&) {
-    send(world, QStringLiteral("setup.open"));
+    send(world, QStringLiteral("setup.open"), {{QStringLiteral("step"), QStringLiteral("access")}});
     expectStep(world, QStringLiteral("access"));
   });
   step(QStringLiteral("Screen Recording is shown with %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {

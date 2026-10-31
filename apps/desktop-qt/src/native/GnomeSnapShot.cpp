@@ -99,7 +99,6 @@ void GnomeSnapShot::inspect(std::function<void()> then) {
 }
 
 void GnomeSnapShot::setEffects(bool flash, bool animate) {
-  Q_UNUSED(animate);
   m_portal->setEffects(flash, animate);
   m_flash = flash;
 }
@@ -113,8 +112,7 @@ void GnomeSnapShot::capture() {
   }
   if (m_capturing) return;
   m_capturing = true;
-  QString appId = QGuiApplication::desktopFileName();
-  m_shell->capture(busName(appId), m_flash && m_extension->service == 2, [this](const GnomeShell::Capture& capture) {
+  m_shell->capture(busName(QGuiApplication::desktopFileName()), m_flash && m_extension->service == 2, [this](const GnomeShell::Capture& capture) {
     m_capturing = false;
     if (!capture.error.isEmpty()) {
       emit failed(capture.error);
