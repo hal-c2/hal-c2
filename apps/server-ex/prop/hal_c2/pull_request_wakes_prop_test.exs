@@ -2,12 +2,15 @@ defmodule HalC2.PullRequestWakesPropTest do
   @moduledoc """
   A state machine over one thread and the two pull requests it may link: links and
   unlinks, host snapshots synced onto them, the thread settled, unsettled, archived and
-  unarchived, a run of its own working, and the MC restarting, with
+  unarchived, a run of its own working, the thread marked as a delegated task's child,
+  and the MC restarting, with
   `HalC2.PullRequests.Wakes.check/1` asked between any of them. The model keeps what
   the thread was told of each link and checks what the thread is promised:
 
   - a check wakes it at most once, and only while it is neither settled nor archived
     and has no run working; nothing else wakes it;
+  - a delegated task's child is never woken: idle, it has nothing left of its task, so
+    what it misses is kept for its caller, who takes its links over;
   - a wake tells what changed since the thread was last told (`news/2`), all of it,
     and never what it already heard, a link's first snapshot, or a restart;
   - a check that finds news on an idle thread that is present wakes it, unless every
@@ -73,6 +76,7 @@ defmodule HalC2.PullRequestWakesPropTest do
       links: [],
       settled: false,
       archived: false,
+      delegated: false,
       busy: false,
       runs: 0,
       clock: 0,
@@ -89,6 +93,7 @@ defmodule HalC2.PullRequestWakesPropTest do
         {1, {:call, __MODULE__, if(state.archived, do: :unarchive, else: :archive), []}},
         {3, run_call(state)}
       ] ++
+        if(state.delegated, do: [], else: [{1, {:call, __MODULE__, :delegate, []}}]) ++
         case linked(state) do
           [] ->
             []
@@ -194,6 +199,7 @@ defmodule HalC2.PullRequestWakesPropTest do
   def next_state(state, _result, {:call, _, :settle, []}), do: %{state | settled: true}
   def next_state(state, _result, {:call, _, :unsettle, []}), do: %{state | settled: false}
   def next_state(state, _result, {:call, _, :archive, []}), do: %{state | archived: true}
+  def next_state(state, _result, {:call, _, :delegate, []}), do: %{state | delegated: true}
   def next_state(state, _result, {:call, _, :unarchive, []}), do: %{state | archived: false}
   def next_state(state, _result, {:call, _, :work, [k, _]}), do: %{state | busy: true, runs: k}
   def next_state(state, _result, {:call, _, :finish, _}), do: %{state | busy: false}
@@ -211,6 +217,7 @@ defmodule HalC2.PullRequestWakesPropTest do
     do: %{link | told: advance(%{failed: false, act: 0}, snapshot, [])}
 
   defp hear(state, link) when state.settled or state.archived, do: link
+  defp hear(state, link) when state.delegated and not state.busy, do: link
 
   defp hear(state, %{told: told, snapshot: snapshot} = link) do
     case news(state, told, snapshot) do
@@ -279,7 +286,7 @@ defmodule HalC2.PullRequestWakesPropTest do
     expected = pending(state)
 
     cond do
-      state.settled or state.archived or state.busy or expected == [] ->
+      state.settled or state.archived or state.busy or state.delegated or expected == [] ->
         result == :quiet and wakes == []
 
       result == :quiet ->
@@ -388,6 +395,22 @@ defmodule HalC2.PullRequestWakesPropTest do
   def unsettle, do: observe(fn -> dispatch(%{"type" => "thread.unsettle"}) end)
   def archive, do: observe(fn -> dispatch(%{"type" => "thread.archive"}) end)
   def unarchive, do: observe(fn -> dispatch(%{"type" => "thread.unarchive"}) end)
+
+  # What `delegate_task` records on the child it starts.
+  def delegate do
+    observe(fn ->
+      commit([
+        {"thread", @thread,
+         %{
+           "lineage" => %{
+             "relationshipToParent" => "subagent",
+             "parentThreadId" => "caller",
+             "rootThreadId" => "caller"
+           }
+         }}
+      ])
+    end)
+  end
 
   def work(k, clock) do
     observe(fn ->

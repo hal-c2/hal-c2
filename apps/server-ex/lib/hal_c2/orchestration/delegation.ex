@@ -16,6 +16,7 @@ defmodule HalC2.Orchestration.Delegation do
 
   alias HalC2.{Orchestration, StreamState}
   alias HalC2.Orchestration.Entities
+  alias HalC2.Projection.PullRequests, as: Links
 
   @active ~w(preparing starting running waiting)
   @terminal ~w(completed failed interrupted cancelled)
@@ -279,6 +280,8 @@ defmodule HalC2.Orchestration.Delegation do
              &(&1["childThreadId"] == thread_id)
            ),
          true <- task["status"] in @terminal or settle_quiet(child, parent_id, task) do
+      hand_over_pull_requests(thread_id, parent_id)
+
       # The task may have been the last thing its caller, itself a subagent, waited on.
       # Checked whenever the task has ended, not only by the call that ended it, so a
       # report retried after this check failed (`report/5`) checks again.
@@ -354,7 +357,46 @@ defmodule HalC2.Orchestration.Delegation do
           ended_at
         ) != :already,
         reduce: 0 do
-      count -> count + 1
+      count ->
+        hand_over_pull_requests(child_id, parent_id)
+        count + 1
+    end
+  end
+
+  # A child whose task has ended hands the pull requests it links to its caller, so
+  # their reviews wake the thread that still owns the work instead of reviving the
+  # child beside whoever works on them now. The caller takes each with what the child
+  # heard of it, so news the child was not told yet is told to the caller; one the
+  # caller already carries stays as the caller has it, as a tombstone too. The child
+  # keeps a tombstone, so its own pull requests are not linked back to it, and an
+  # agent there that links one again takes it back.
+  defp hand_over_pull_requests(child_id, parent_id) do
+    thread = StreamState.get(stream(child_id), "thread")[child_id] || %{}
+
+    for link <- Links.visible(Links.of(thread)) do
+      key = Map.take(link, ~w(host repository number))
+
+      with {:ok, _} <-
+             Orchestration.dispatch(
+               Map.merge(
+                 Map.take(link, ~w(host repository number url source heard snapshot stack)),
+                 %{
+                   "type" => "thread.pull-request.link",
+                   "commandId" => "command:pr-handover:#{HalC2.Environment.uuid4()}",
+                   "threadId" => parent_id,
+                   "automatic" => true
+                 }
+               )
+             ) do
+        Orchestration.dispatch(
+          Map.merge(key, %{
+            "type" => "thread.pull-request.unlink",
+            "commandId" => "command:pr-handover:#{HalC2.Environment.uuid4()}",
+            "threadId" => child_id,
+            "tombstone" => true
+          })
+        )
+      end
     end
   end
 
@@ -385,9 +427,12 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  # Quiet: no run active or queued, and no background work owed. Persistent monitors
-  # never finish, so they are not owed (`BackgroundWork`).
-  defp quiet?(child), do: not working?(StreamState.list(child, "run")) and owed(child) == []
+  @doc """
+  Whether a child's stream `child` is quiet: no run active or queued, and no background
+  work owed, which is when its task ends. Persistent monitors never finish, so they
+  are not owed (`BackgroundWork`).
+  """
+  def quiet?(child), do: not working?(StreamState.list(child, "run")) and owed(child) == []
 
   # The child's owed background work, as its sidebar row shows it, read from its stream.
   # A task of its own whose result is still to reach it (a `pending` delivery) is
@@ -495,15 +540,16 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  # What a delegated child is told before its task: who it works for and that its last
-  # message is the report, so it finishes its own background work and workers first.
+  # What a delegated child is told before its task: who it works for, that its last
+  # message is the report, so it finishes its own background work and workers first,
+  # and that its pull requests go to its caller once it is done.
   @doc false
   def preamble(thread) do
     title = thread["title"] |> to_string() |> String.replace(~r/\s+/, " ") |> String.trim()
     parent = if title == "", do: thread["id"], else: inspect(title)
 
     """
-    You are a HAL-C2 worker delegated by the thread #{parent}. Your final message is your report to it: lead with the outcome, then evidence (files, commands, test results), then anything left undone. Finish your own work, including waiting on your background work and your own workers, before you end your last turn.
+    You are a HAL-C2 worker delegated by the thread #{parent}. Your final message is your report to it: lead with the outcome, then evidence (files, commands, test results), then anything left undone. Finish your own work, including waiting on your background work and your own workers, before you end your last turn. The pull requests you link pass to that thread when your task ends, and their reviews wake it, not you.
 
     Task:
     """
