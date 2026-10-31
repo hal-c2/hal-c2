@@ -153,6 +153,8 @@ QJsonObject FakeMc::ownEnvironment() const {
   QJsonObject own{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("capabilities"), capabilities}};
   if (!label.isEmpty()) own.insert(QStringLiteral("label"), label);
   if (!platform.isEmpty()) own.insert(QStringLiteral("platform"), platform);
+  const QJsonObject more = descriptors.value(environmentId);
+  for (auto it = more.begin(); it != more.end(); ++it) own.insert(it.key(), it.value());
   return own;
 }
 
@@ -170,6 +172,8 @@ QJsonObject FakeMc::peerEnvironment(const QString& environment) const {
   QJsonObject descriptor{{QStringLiteral("environmentId"), environment}, {QStringLiteral("capabilities"), capabilities}};
   if (peerLabels.contains(environment)) descriptor.insert(QStringLiteral("label"), peerLabels.value(environment));
   if (peerPlatforms.contains(environment)) descriptor.insert(QStringLiteral("platform"), peerPlatforms.value(environment));
+  const QJsonObject more = descriptors.value(environment);
+  for (auto it = more.begin(); it != more.end(); ++it) descriptor.insert(it.key(), it.value());
   return descriptor;
 }
 

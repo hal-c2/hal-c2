@@ -181,6 +181,10 @@ public:
   // A member's `platform` (its `machineId`), when it has one; join() again
   // announces a change.
   QHash<QString, QJsonObject> peerPlatforms;
+  // More of an environment's descriptor, the MC's own or a member's, by
+  // environment: its `serverVersion`, or `capabilities` of its own. Announced
+  // with the environment.
+  QHash<QString, QJsonObject> descriptors;
   // Members whose MC is down: their rows stay, and requests for them fail.
   QSet<QString> offline;
   // Each member's rows, by environment then id: [id, kind, row].

@@ -46,27 +46,27 @@ Feature: Updating the server, the desktop app and providers
       When the user starts another server update
       Then the second update is refused
 
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-desktop
     Scenario: A server behind the app offers an update in the conversation
       Given the app is newer than the server on "server"
       When the user opens a thread on "server"
       Then the user is offered to update "server"
 
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-desktop
     Scenario: A successful update names the version it reconnected on
       When the user updates "server" and it reconnects on "1.4.0"
       Then the user is told "server" was updated and reconnected on "1.4.0"
 
     # Owner of "Update all"; settings/connections.feature holds the Connections entry point
     # and version line, connections/ cross-references here.
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-desktop
     Scenario: Updating every machine confirms desktop hosts first
       Given "laptop" is hosted by the desktop app and "server" is a service
       When the user updates all machines
       Then the user is asked to confirm that the desktop app on "laptop" will relaunch
       And "server" updates independently of "laptop"
 
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-desktop
     Scenario: The user copies the update command instead
       When the user copies the update command for "server"
       Then the command for the matching version is on the clipboard
@@ -83,7 +83,7 @@ Feature: Updating the server, the desktop app and providers
       When the user copies the update command for "server"
       Then the user sees an "error" toast "Could not copy update command" with the reason
 
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-desktop
     Scenario: A dismissed update notice stays dismissed for that version
       Given the user dismissed the update notice for "1.4.0"
       When the user reconnects to the same server
@@ -591,7 +591,7 @@ Feature: Updating the server, the desktop app and providers
       And the user restarts the app
       Then the user sees no toast
 
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-desktop
     Scenario: Provider updates on several machines report each machine
       Given Codex is behind on "laptop" and on its WSL environment
       When the user updates Codex on both
@@ -768,26 +768,26 @@ Feature: Updating the server, the desktop app and providers
 
   Rule: Maintaining an environment from a phone
 
-    @mobile @backlog
+    @mobile
     Scenario: The phone checks an environment's release on the channel the host follows
       Given "server" is connected to the phone
       When the user checks "server" for updates
       Then the phone says whether a newer HAL-C2 release is available on "server"'s channel
 
-    @mobile @backlog
+    @mobile
     Scenario: The phone lists only the enabled providers of an environment for update
       Given Codex is enabled on "server" and Claude is not
       When the user opens the maintenance of "server" on the phone
       Then only Codex is offered for update on "server"
 
-    @mobile @backlog
+    @mobile
     Scenario: The phone shows a provider update until it ends
       Given Codex is enabled on "server" and behind its latest release
       When the user updates Codex on "server" from the phone
       Then the phone shows the update's progress until it ends
       And it says whether the update succeeded and, if it failed, why
 
-    @mobile @backlog
+    @mobile
     Scenario Outline: Maintenance of an environment needs a live connection and the operate scope
       Given "server" <state>
       When the user opens the maintenance of "server" on the phone
