@@ -19,6 +19,8 @@ defmodule HalC2.ShellPropTest do
     * a client resuming from a version is sent exactly the rows changed after it,
       or everything with `reset` when the version is of another epoch, and from then
       on holds what the shell holds, never seeing a version go back within an epoch;
+    * a plain subscriber is sent the rows of every member the shell holds, even
+      when it has none;
     * a forgotten member's rows are gone and stay gone;
     * subscribers stay subscribed across a restart of the shell;
     * a reader of the table, during a restart or a member's reset, never finds a
@@ -321,7 +323,11 @@ defmodule HalC2.ShellPropTest do
       rows: rows,
       mcs: Enum.sort(Map.keys(view)),
       clients: clients,
-      plain: %{rows: plain_rows.(local), errors: []},
+      plain: %{
+        rows: plain_rows.(local),
+        heard: state.held |> Map.keys() |> Enum.sort(),
+        errors: []
+      },
       peers_hold: peers_hold
     }
 
@@ -585,6 +591,7 @@ defmodule HalC2.ShellPropTest do
       end
 
     %{view: plain, errors: plain_errors} = collector_view(world().plain)
+    {heard, plain} = Map.split_with(plain, &match?({{:heard, _}, _}, &1))
 
     peers_hold =
       for p <- Wire.connected(), into: %{} do
@@ -597,7 +604,11 @@ defmodule HalC2.ShellPropTest do
       rows: rows,
       mcs: Shell.environments() |> Enum.map(&mc_key(elem(&1, 0))) |> Enum.sort(),
       clients: clients,
-      plain: %{rows: plain, errors: plain_errors},
+      plain: %{
+        rows: plain,
+        heard: heard |> Enum.map(fn {{:heard, mc}, _} -> mc end) |> Enum.sort(),
+        errors: plain_errors
+      },
       peers_hold: peers_hold
     }
   end
@@ -674,12 +685,8 @@ defmodule HalC2.ShellPropTest do
         send(parent, :subscribed)
         gather(kind, view, errors)
 
-      {:hal_c2_shell, {:rows, mc, rows}} ->
-        view = if mc == node(), do: Map.merge(view, Map.new(rows)), else: view
-        gather(kind, view, errors)
-
-      {:hal_c2_shell, _other} ->
-        gather(kind, view, errors)
+      {:hal_c2_shell, message} ->
+        gather(kind, plain_message(view, message), errors)
 
       {:view, parent} ->
         {view, errors} = drain(kind, view, errors)
@@ -753,9 +760,8 @@ defmodule HalC2.ShellPropTest do
 
   defp drain_messages(kind, view, errors) do
     receive do
-      {:hal_c2_shell, {:rows, mc, rows}} when kind == :plain ->
-        view = if mc == node(), do: Map.merge(view, Map.new(rows)), else: view
-        drain_messages(kind, view, errors)
+      {:hal_c2_shell, message} when kind == :plain ->
+        drain_messages(kind, plain_message(view, message), errors)
 
       {:hal_c2_shell, message} when kind == :client ->
         {view, errors} = apply_message(view, errors, message)
@@ -794,6 +800,15 @@ defmodule HalC2.ShellPropTest do
 
   defp apply_message(view, errors, {:mc, mc, :removed}), do: {Map.delete(view, mc), errors}
   defp apply_message(view, errors, _other), do: {view, errors}
+
+  # A plain subscriber's view: this MC's rows, and `{:heard, mc}` for each member whose
+  # rows it was sent, none among them or not.
+  defp plain_message(view, {:rows, mc, rows}) when mc == node(),
+    do: Map.merge(view, Map.new(rows))
+
+  defp plain_message(view, {:rows, mc, _rows}), do: Map.put(view, {:heard, mc}, true)
+  defp plain_message(view, {:mc, mc, :removed}), do: Map.delete(view, {:heard, mc})
+  defp plain_message(view, _other), do: view
 
   defp collector_view(pid) do
     send(pid, {:view, self()})

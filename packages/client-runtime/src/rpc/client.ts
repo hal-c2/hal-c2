@@ -13,6 +13,7 @@ import { RpcClientError } from "effect/unstable/rpc";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
+import type { EntityStreamFrame } from "../state/streamEntities.ts";
 
 export class EnvironmentRpcUnavailableError extends Schema.TaggedError<EnvironmentRpcUnavailableError>()(
   "EnvironmentRpcUnavailableError",
@@ -177,6 +178,29 @@ export const mcMembers: Stream.Stream<void, never, EnvironmentSupervisor> = Stre
     );
   }),
 );
+
+/**
+ * The frames of one of the MC's entity streams (`spaces`, `space:<id>`). Follows the
+ * environment's session: a new connection starts again from its snapshot, and the
+ * stream is quiet while there is none or the server is not an MC. Fails with the
+ * MC's refusal.
+ */
+export const mcStream = (
+  stream: string,
+): Stream.Stream<EntityStreamFrame, Error, EnvironmentSupervisor> =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const supervisor = yield* EnvironmentSupervisor;
+      return SubscriptionRef.changes(supervisor.session).pipe(
+        Stream.switchMap(
+          Option.match({
+            onNone: () => Stream.empty,
+            onSome: (session) => session.subscribeStream?.(stream) ?? Stream.empty,
+          }),
+        ),
+      );
+    }),
+  );
 
 export const request = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,

@@ -222,6 +222,66 @@ defmodule HalC2.PushTest do
     assert length(PushPhone.alerts(phone)) == 1
   end
 
+  test "the first thread of an MC that joined with none is news", %{
+    context: context,
+    phone: phone
+  } do
+    register(context, phone)
+    at = World.iso_from_now(1000)
+
+    row = %{
+      "id" => "first",
+      "title" => "First there",
+      "latestRunId" => "1",
+      "status" => "completed",
+      "latestRunCompletedAt" => at,
+      "updatedAt" => at
+    }
+
+    # The shell sends a joining member's rows whole, here none.
+    send(Push, {:hal_c2_shell, {:rows, :"empty@push.invalid", []}})
+    :ok = Push.drain()
+    send(Push, {:hal_c2_shell, {:rows, :"empty@push.invalid", [{"first", {"thread", row}}]}})
+    :ok = Push.drain()
+    assert [%{"title" => "First there"}] = PushPhone.alerts(phone)
+  end
+
+  test "a member the shell holds with no threads is known to Push when it starts", %{
+    context: context,
+    phone: phone
+  } do
+    register(context, phone)
+    peer = :"empty@127.0.0.1"
+
+    # The member joins with no threads, as the shell takes a real one's answer.
+    send(HalC2.Shell, {:nodeup, peer})
+    GenServer.cast(HalC2.Shell, {:peer_rows, peer, {"empty-run", 0}, 0, [], true})
+    :ok = HalC2.Shell.sync()
+
+    # Push starts again: what the shell holds of the member is its baseline, though
+    # there were no rows to see.
+    :ok = stop_supervised(Push)
+    Mc.ensure(PushPhone.service())
+    at = World.iso_from_now(1000)
+
+    row = %{
+      "id" => "first",
+      "title" => "First there",
+      "latestRunId" => "1",
+      "status" => "completed",
+      "latestRunCompletedAt" => at,
+      "updatedAt" => at
+    }
+
+    GenServer.cast(
+      HalC2.Shell,
+      {:peer_rows, peer, {"empty-run", 1}, 0, [{"first", {"thread", row}, 1}], false}
+    )
+
+    :ok = Push.drain()
+    assert [%{"title" => "First there"}] = PushPhone.alerts(phone)
+  end
+
   test "a card for work still running is sent again before it expires", %{
     context: context,
     phone: phone

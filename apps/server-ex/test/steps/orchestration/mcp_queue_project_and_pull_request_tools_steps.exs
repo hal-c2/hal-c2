@@ -343,8 +343,9 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
   end
 
   step "the tool refuses the input as invalid", context do
+    # Refused by the bound its input schema advertises (HalC2.Mcp.Schema).
     assert {:error, "invalid_request", message} = context.mcp_result
-    assert message =~ "limit"
+    assert message =~ ~r/ must (be|hold) /
     context
   end
 

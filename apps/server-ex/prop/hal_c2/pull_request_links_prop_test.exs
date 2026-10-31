@@ -5,12 +5,15 @@ defmodule HalC2.PullRequestLinksPropTest do
   agent and a pull request the thread created (`thread.pull-request.link`), unlinks, the
   links the MC makes when it finds a pull request the thread opened
   (`HalC2.PullRequests.Opened.link/3`, from the turn writer and discovery, and the same
-  link sent on a stale read of the thread), and a restart of the streams.
+  link sent on a stale read of the thread), a finished task's child handing a link over
+  (`HalC2.Orchestration.Delegation`: the caller's automatic link, the child's tombstone),
+  and a restart of the streams.
 
   The model keeps each pull request as shown with the source it was linked by, as a
   tombstone, or absent. A link of one already there changes nothing; unlinking one
   the thread created leaves a tombstone, which only the user or an agent bring back;
-  the MC never links one the thread carries, tombstones included. After every command
+  the MC never links one the thread carries, tombstones included, and a link handed
+  over always leaves a tombstone. After every command
   the test compares the thread's links with the model and checks that a command the
   model says changes nothing appended no event.
   """
@@ -74,6 +77,8 @@ defmodule HalC2.PullRequestLinksPropTest do
       {3, {:call, __MODULE__, :unlink, [n]}},
       {4, {:call, __MODULE__, :found, [n]}},
       {2, {:call, __MODULE__, :found_late, [n]}},
+      {2, {:call, __MODULE__, :handed_in, [n, oneof(@sources)]}},
+      {2, {:call, __MODULE__, :hand_over, [n]}},
       {1, {:call, __MODULE__, :restart, []}}
     ])
   end
@@ -98,6 +103,16 @@ defmodule HalC2.PullRequestLinksPropTest do
 
   def next_state(links, _result, {:call, _, fun, [n]}) when fun in [:found, :found_late],
     do: Map.put_new(links, n, {:shown, "created"})
+
+  def next_state(links, _result, {:call, _, :handed_in, [n, source]}),
+    do: Map.put_new(links, n, {:shown, source})
+
+  def next_state(links, _result, {:call, _, :hand_over, [n]}) do
+    case links[n] do
+      {:shown, _} -> Map.put(links, n, :tombstone)
+      _ -> links
+    end
+  end
 
   def next_state(links, _result, {:call, _, :restart, []}), do: links
 
@@ -141,6 +156,29 @@ defmodule HalC2.PullRequestLinksPropTest do
           "source" => "created",
           "automatic" => true
         })
+      )
+    end)
+  end
+
+  # A link a finished task's child hands its caller, with what the child heard of it.
+  def handed_in(n, source) do
+    observe(fn ->
+      Orchestration.dispatch(
+        Map.merge(key(n), %{
+          "type" => "thread.pull-request.link",
+          "url" => url(n),
+          "source" => source,
+          "automatic" => true,
+          "heard" => %{"state" => "open", "checksFailed" => false}
+        })
+      )
+    end)
+  end
+
+  def hand_over(n) do
+    observe(fn ->
+      Orchestration.dispatch(
+        Map.merge(key(n), %{"type" => "thread.pull-request.unlink", "tombstone" => true})
       )
     end)
   end

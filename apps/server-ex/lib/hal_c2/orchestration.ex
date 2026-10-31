@@ -153,7 +153,12 @@ defmodule HalC2.Orchestration do
   # A receipt only answers for the thread the command acted on (its `threadId`, or the
   # `parentThreadId` a delegated task or created-thread record belongs to), so the same
   # id aimed at another thread is refused rather than answered with work done elsewhere.
-  defp dispatch_once(%{"commandId" => id} = command) when is_binary(id) do
+  @doc """
+  `dispatch/1` answered once per command id: a repeat returns the first
+  outcome without deciding again. The RPC entry and the MCP tools whose
+  request key makes a call retryable dispatch through here.
+  """
+  def dispatch_once(%{"commandId" => id} = command) when is_binary(id) do
     key = "command-receipt:" <> id
     thread_id = command["threadId"] || command["parentThreadId"] || command["targetThreadId"]
 
@@ -192,7 +197,7 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  defp dispatch_once(command), do: dispatch(command)
+  def dispatch_once(command), do: dispatch(command)
 
   @spec dispatch(map) :: {:ok, map} | {:error, String.t()}
   def dispatch(%{"type" => "message.dispatch", "threadId" => thread_id} = command) do
@@ -2664,8 +2669,10 @@ defmodule HalC2.Orchestration do
 
   # A thread's pull requests are keyed by host, repository and number. Linking again
   # changes nothing, except that a user or agent brings back a stack layer they unlinked;
-  # a link the MC made on its own (`"automatic"`, `HalC2.PullRequests.Opened`) never does.
-  # A first manual link keeps the branch's pull request beside it.
+  # a link the MC made on its own (`"automatic"`, `HalC2.PullRequests.Opened`, a finished
+  # task's child handing its links to its caller) never does. A link handed over arrives
+  # with what its last owner heard and read of it. A first manual link keeps the
+  # branch's pull request beside it.
   defp thread_fields("thread.pull-request.link", command, thread, at) do
     links = PullRequests.of(thread)
     key = PullRequests.key(command)
@@ -2680,13 +2687,22 @@ defmodule HalC2.Orchestration do
       link =
         if existing,
           do: %{existing | "source" => source, "url" => command["url"]},
-          else: new_link(PullRequests.normalize(command), command["url"], source, at)
+          else:
+            PullRequests.normalize(command)
+            |> new_link(command["url"], source, at)
+            |> Map.merge(
+              if(command["automatic"] == true,
+                do: Map.take(command, ~w(heard snapshot stack)),
+                else: %{}
+              )
+            )
 
       branch = JS.json(JS.get(thread, "branchPullRequest"))
       branch_key = branch && PullRequests.legacy_key(branch)
 
       kept_branch =
-        if source == "manual" and branch != nil and PullRequests.visible(links) == [] and
+        if source == "manual" and command["automatic"] != true and branch != nil and
+             PullRequests.visible(links) == [] and
              PullRequests.key(branch_key) != key and
              not Enum.any?(links, &(PullRequests.key(&1) == PullRequests.key(branch_key))),
            do: [new_link(branch_key, branch["url"], "manual", at)],
@@ -2699,9 +2715,9 @@ defmodule HalC2.Orchestration do
     end
   end
 
-  # A layer of a native stack, or a pull request the thread created, stays as a
-  # tombstone, so the sync or discovery (`HalC2.PullRequests.Opened`) does not link it
-  # again. It forgets what the thread heard of it, so a link back starts from a new
+  # A layer of a native stack, a pull request the thread created, or one it hands
+  # over (`"tombstone"`), stays as a tombstone, so the sync or discovery
+  # (`HalC2.PullRequests.Opened`) does not link it again. It forgets what the thread heard of it, so a link back starts from a new
   # baseline.
   defp thread_fields("thread.pull-request.unlink", command, thread, at) do
     links = PullRequests.of(thread)
@@ -2710,7 +2726,8 @@ defmodule HalC2.Orchestration do
 
     tombstone? =
       existing != nil and
-        (existing["source"] in ["stack", "created"] or existing["stack"] != nil or
+        (command["tombstone"] == true or existing["source"] in ["stack", "created"] or
+           existing["stack"] != nil or
            Enum.any?(links, fn link ->
              Map.delete(PullRequests.normalize(link), "number") == Map.delete(key, "number") and
                Enum.any?((link["stack"] || %{})["layers"] || [], &(&1["number"] == key["number"]))

@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13388 (Stop ends a command left running after its turn)
 #   https://github.com/pingdotgg/t3code/pull/13328
 #   https://github.com/pingdotgg/t3code/pull/2829
 #   https://github.com/pingdotgg/t3code/pull/9514 (the sign-in link on stderr)
@@ -407,6 +408,23 @@ Feature: Antigravity
     When Antigravity has not confirmed the stop after 15 seconds
     Then its process is stopped
     And the user is told "The ACP agent did not finish cancellation. Its process was stopped."
+
+  # Antigravity keeps a command it started running after its turn ended. Cancelling the turn
+  # does not reach it, so with no turn running the stop ends the session instead.
+  @backlog
+  Scenario: Stop ends a command Antigravity left running after its turn ended
+    Given Antigravity's turn ended while a command it started is still running in the background
+    When the user stops that command
+    Then the command is shown as stopped
+    And the command is no longer shown as running in the background
+    And the Antigravity process is closed
+
+  @backlog
+  Scenario: Stop during an Antigravity turn still cancels only that turn
+    Given an Antigravity turn is running with a command it started in the background
+    When the user stops the turn
+    Then the turn is cancelled
+    And the background command keeps running
 
   # AntigravityAdapterV2.ts: what the Antigravity flavour changes in the shared ACP adapter.
   Scenario: Sending /compact alone to Antigravity compacts its conversation

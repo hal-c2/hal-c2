@@ -11,3 +11,5 @@ singleton PaletteModel 1.0 PaletteModel.qml
 singleton Runtime 1.0 Runtime.qml
 DeviceScreen 1.0 DeviceScreen.qml
 ComposerHighlighter 1.0 ComposerHighlighter.qml
+singleton Spaces 1.0 Spaces.qml
+SpaceRows 1.0 SpaceRows.qml

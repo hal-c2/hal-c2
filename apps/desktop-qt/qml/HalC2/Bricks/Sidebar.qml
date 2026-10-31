@@ -1007,6 +1007,13 @@ Rectangle {
 
             SidebarUpdateButton {}
 
+            FooterButton {
+                objectName: "spaceButton"
+                iconName: "book"
+                Accessible.name: qsTr("Space")
+                onClicked: Shell.dispatch("space.open")
+            }
+
             Item {
                 Layout.fillWidth: true
             }

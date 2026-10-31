@@ -29,8 +29,8 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       {
         keys: "^X …",
         description:
-          "Leader: n new · k commands · f filter · l panel · e terminal · s settings · b files",
-        chords: ["ctrl+x", "n", "k", "f", "l", "e", "s", "b"],
+          "Leader: n new · k commands · f filter · l panel · e terminal · s settings · b files · p Spaces",
+        chords: ["ctrl+x", "n", "k", "f", "l", "e", "s", "b", "p"],
       },
     ],
   },
@@ -103,36 +103,70 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
     ],
   },
   {
-    title: "Overlays (palette / diff / files / pickers)",
+    title: "Overlays (palette / diff / files / Spaces / pickers)",
     bindings: [
       { keys: "↑/↓ · j/k", description: "Move the selection", chords: ["up", "down", "j", "k"] },
-      { keys: "Enter · →", description: "Run / open / apply", chords: ["return", "right"] },
-      { keys: "← · Backspace", description: "Files: up a folder", chords: ["left", "backspace"] },
+      {
+        keys: "Enter · →",
+        description: "Run / open / apply · Spaces: follow a link, edit a block",
+        chords: ["return", "right"],
+      },
+      {
+        keys: "← · Backspace",
+        description: "Files: up a folder · Spaces: up a level",
+        chords: ["left", "backspace"],
+      },
       {
         keys: "s · i · o",
-        description: "File: rendered / source, edit, open in the environment's editor",
+        description:
+          "File: rendered / source, edit, open in the environment's editor · Spaces: i imports a Markdown file",
         chords: ["s", "i", "o"],
       },
       {
         keys: "PgUp/PgDn",
-        description: "Scroll a file, diff or settings",
+        description: "Scroll a file, diff, settings or Spaces",
         chords: ["pageup", "pagedown"],
       },
       { keys: "Esc", description: "Back / close", chords: ["escape"] },
       { keys: "^P", description: "Back to the prompt from any pane", chords: ["ctrl+p"] },
       { keys: "s", description: "Diff: toggle split / stacked", chords: ["s"] },
-      { keys: "y / n", description: "Delete a thread: confirm / keep", chords: ["y", "n"] },
+      {
+        keys: "y / n",
+        description:
+          "Delete a thread: confirm / keep · Spaces: copy a page as Markdown / new Space, page or block",
+        chords: ["y", "n"],
+      },
       {
         keys: "r",
-        description: "Settings: rebind a key · Files: list again · Diff: load again",
+        description:
+          "Settings: rebind a key · Files: list again · Diff: load again · Spaces: restore from the trash",
         chords: ["r"],
       },
-      { keys: "e", description: "Files: edit in $EDITOR", chords: ["e"] },
+      {
+        keys: "e",
+        description: "Files: edit in $EDITOR · Spaces: rename a Space or page, edit a block",
+        chords: ["e"],
+      },
       {
         keys: "c",
-        description: "Diff: note a line for the prompt · File: copy its text",
+        description: "Diff: note a line for the prompt · File: copy its text · Spaces: comment",
         chords: ["c"],
       },
+      { keys: "a", description: "Spaces: new page inside the selected page", chords: ["a"] },
+      { keys: "m", description: "Spaces: move a page or block", chords: ["m"] },
+      {
+        keys: "d · D",
+        description:
+          "Spaces: delete a Space or block, trash a page · delete a trashed page for good",
+        chords: ["d", "shift+d"],
+      },
+      {
+        keys: "Space · x",
+        description: "Spaces: tick / untick a checklist item, resolve / reopen a comment",
+        chords: ["space", "x"],
+      },
+      { keys: "l", description: "Spaces: link a subpage", chords: ["l"] },
+      { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
       {
         keys: "Tab · ^Enter",
         description: "Add project: browse ⇄ edit · run the action",
@@ -167,6 +201,7 @@ export const LEADER_ACTIONS: ReadonlyArray<{
   { key: "e", title: "Terminal", action: "terminal.toggle" },
   { key: "s", title: "Settings", action: "settings.open" },
   { key: "b", title: "Browse files", action: "files.open" },
+  { key: "p", title: "Spaces", action: "space.open" },
 ];
 
 const LEADER_LAYER: KeymapLayer = {
@@ -324,6 +359,30 @@ export const KEYMAP_LAYERS = {
     escape: "section.back",
     "ctrl+p": "section.close",
     "ctrl+k": "palette.open",
+  },
+  /** Spaces and their pages (`spaceState.ts`). */
+  space: {
+    "up, k": "space.previous",
+    "down, j": "space.next",
+    pageup: "space.pageUp",
+    pagedown: "space.pageDown",
+    "return, right": "space.activate",
+    "left, backspace, escape": "space.back",
+    n: "space.new",
+    a: "space.newInside",
+    e: "space.edit",
+    m: "space.move",
+    d: "space.delete",
+    "shift+d": "space.deleteForGood",
+    r: "space.restore",
+    "space, x": "space.tick",
+    c: "space.comment",
+    l: "space.link",
+    y: "space.export",
+    i: "space.import",
+    t: "space.fromThread",
+    "ctrl+k": "palette.open",
+    "ctrl+p": "space.close",
   },
   fileEdit: { escape: "files.editor.done" },
   sectionInput: { escape: "section.input.cancel" },

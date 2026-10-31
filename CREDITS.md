@@ -9,6 +9,7 @@ their pull requests the ledger cites and how far HAL-C2 has got with each.
 Agents and bots that co-wrote those pull requests are not listed.
 
 - [aaditagrawal](https://github.com/aaditagrawal)
+- [adeebahmad01](https://github.com/adeebahmad01)
 - [Aditya Garud](https://github.com/yashranaway)
 - [AKolenda](https://github.com/AKolenda)
 - [Alex](https://github.com/PixPMusic)

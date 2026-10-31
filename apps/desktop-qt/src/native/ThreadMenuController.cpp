@@ -19,6 +19,7 @@
 #include "McClient.h"
 #include "SettingsController.h"
 #include "ShellStore.h"
+#include "SpaceController.h"
 #include "SidebarController.h"
 #include "ToastController.h"
 #include "WorkspaceController.h"
@@ -199,6 +200,10 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   add(copy, false);
   if (projectKey) add({QStringLiteral("project-settings"), QStringLiteral("Project settings"), QStringLiteral("settings")}, false);
   add({QStringLiteral("fork"), QStringLiteral("Fork thread"), QStringLiteral("git-fork")});
+  // The MC writes a page only from its own threads.
+  if (thread->environmentId == m_client->environment()) {
+    add({QStringLiteral("page-from-thread"), QStringLiteral("Create page from thread"), QStringLiteral("file-text")});
+  }
   // Another machine of the cluster can take the thread.
   const QStringList environments = m_store->environments();
   const bool elsewhere = std::any_of(environments.cbegin(), environments.cend(),
@@ -456,6 +461,8 @@ void ThreadMenuController::choose(const QString& key, const QString& id, double 
     openProjectSettings(key);
   } else if (id == QLatin1String("fork")) {
     fork(key);
+  } else if (id == QLatin1String("page-from-thread")) {
+    m_bridge->dispatch(SpaceController::kPageFromThread, QVariantMap{{QStringLiteral("threadKey"), key}});
   } else if (id == QLatin1String("move")) {
     chooseDestination(key, x, y);
   } else if (id == QLatin1String("archive")) {

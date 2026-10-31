@@ -94,7 +94,7 @@ defmodule HalC2.Store do
     """
   ]
 
-  @type stream_kind :: :project | :thread
+  @type stream_kind :: :project | :thread | :space
   @typedoc "A patch to one entity, optionally with its own time (unix ms)."
   @type change ::
           {kind :: String.t(), entity :: String.t(), HalC2.Patch.t()}
