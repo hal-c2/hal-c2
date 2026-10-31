@@ -16,6 +16,7 @@ defmodule HalC2.Orchestration.Delegation do
 
   alias HalC2.{Orchestration, StreamState}
   alias HalC2.Orchestration.Entities
+  alias HalC2.Projection.PullRequests, as: Links
 
   @active ~w(preparing starting running waiting)
   @terminal ~w(completed failed interrupted cancelled)
@@ -278,7 +279,9 @@ defmodule HalC2.Orchestration.Delegation do
              StreamState.list(stream(parent_id), "subagent"),
              &(&1["childThreadId"] == thread_id)
            ),
-         true <- task["status"] in @terminal or settle_quiet(child, parent_id, task) do
+         true <- task["status"] in @terminal or settle_quiet(child, thread_id, parent_id, task) do
+      hand_over_pull_requests(thread_id)
+
       # The task may have been the last thing its caller, itself a subagent, waited on.
       # Checked whenever the task has ended, not only by the call that ended it, so a
       # report retried after this check failed (`report/5`) checks again.
@@ -289,12 +292,15 @@ defmodule HalC2.Orchestration.Delegation do
   end
 
   # Settles `task` if its child is quiet; true once the task has ended.
-  defp settle_quiet(child, parent_id, task) do
+  defp settle_quiet(child, child_id, parent_id, task) do
     # A child that has not started its first run yet has not begun the task.
     with [_ | _] = runs <- StreamState.list(child, "run"),
          true <- quiet?(child),
          {status, run, ended_at} <- last_end(runs) do
       result = result_for(child, run, status)
+      # Before the result starts the caller's turn, so a link its agent makes from the
+      # report finds the child's already there, with what the child heard of it.
+      hand_over_pull_requests(child_id)
 
       # A child found quiet twice (two runs' ends, a provider replaying its turn's end
       # after a reconnect, the periodic check racing a report) settles and wakes once:
@@ -354,7 +360,76 @@ defmodule HalC2.Orchestration.Delegation do
           ended_at
         ) != :already,
         reduce: 0 do
-      count -> count + 1
+      count ->
+        hand_over_pull_requests(child_id)
+        count + 1
+    end
+  end
+
+  @doc """
+  Hands the pull requests a delegated task's child links to its caller, once the child
+  is quiet and so done with its task: their reviews then wake the thread that still
+  owns the work instead of reviving the child beside whoever works on them now. The
+  caller takes each with what the child heard of it, so news the child was not told
+  yet is told to the caller; one the caller already carries stays as the caller has
+  it, as a tombstone too. The child keeps a tombstone, so its own pull requests are
+  not linked back to it; one its agent links again shows there again, and the caller
+  keeps its own.
+
+  Idempotent, and called whenever the child may be done: as its task ends, before the
+  result reaches the caller, and from `HalC2.PullRequests.Wakes` whenever there is news
+  for the child, so a handover cut short (a restart, a refused dispatch) completes,
+  settled or not.
+  """
+  def hand_over_pull_requests(child_id) do
+    child = stream(child_id)
+    thread = StreamState.get(child, "thread")[child_id] || %{}
+
+    with %{"relationshipToParent" => "subagent", "parentThreadId" => parent_id}
+         when is_binary(parent_id) <- thread["lineage"],
+         [_ | _] = links <- Links.visible(Links.of(thread)),
+         [_ | _] <- StreamState.list(child, "run"),
+         true <- quiet?(child),
+         # A caller deleted since takes nothing; the child keeps its links.
+         %{} = parent <- StreamState.get(stream(parent_id), "thread")[parent_id],
+         nil <- parent["deletedAt"] do
+      for link <- links, do: hand_over(link, child_id, parent_id)
+    end
+
+    :ok
+  end
+
+  defp hand_over(link, child_id, parent_id) do
+    key = Map.take(link, ~w(host repository number))
+
+    linked =
+      Orchestration.dispatch(
+        link
+        |> Map.take(~w(host repository number url source heard snapshot stack))
+        |> Map.merge(%{
+          "type" => "thread.pull-request.link",
+          "commandId" => "command:pr-handover:#{HalC2.Environment.uuid4()}",
+          "threadId" => parent_id,
+          "automatic" => true
+        })
+      )
+
+    with {:ok, _} <- linked,
+         {:ok, _} = done <-
+           Orchestration.dispatch(
+             Map.merge(key, %{
+               "type" => "thread.pull-request.unlink",
+               "commandId" => "command:pr-handover:#{HalC2.Environment.uuid4()}",
+               "threadId" => child_id,
+               "tombstone" => true
+             })
+           ) do
+      done
+    else
+      error ->
+        Logger.warning(
+          "handing #{Links.key(link)} from #{child_id} to #{parent_id} failed: #{inspect(error)}"
+        )
     end
   end
 
@@ -385,9 +460,12 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  # Quiet: no run active or queued, and no background work owed. Persistent monitors
-  # never finish, so they are not owed (`BackgroundWork`).
-  defp quiet?(child), do: not working?(StreamState.list(child, "run")) and owed(child) == []
+  @doc """
+  Whether a child's stream `child` is quiet: no run active or queued, and no background
+  work owed, which is when its task ends. Persistent monitors never finish, so they
+  are not owed (`BackgroundWork`).
+  """
+  def quiet?(child), do: not working?(StreamState.list(child, "run")) and owed(child) == []
 
   # The child's owed background work, as its sidebar row shows it, read from its stream.
   # A task of its own whose result is still to reach it (a `pending` delivery) is
@@ -495,15 +573,16 @@ defmodule HalC2.Orchestration.Delegation do
     end
   end
 
-  # What a delegated child is told before its task: who it works for and that its last
-  # message is the report, so it finishes its own background work and workers first.
+  # What a delegated child is told before its task: who it works for, that its last
+  # message is the report, so it finishes its own background work and workers first,
+  # and that its pull requests go to its caller once it is done.
   @doc false
   def preamble(thread) do
     title = thread["title"] |> to_string() |> String.replace(~r/\s+/, " ") |> String.trim()
     parent = if title == "", do: thread["id"], else: inspect(title)
 
     """
-    You are a HAL-C2 worker delegated by the thread #{parent}. Your final message is your report to it: lead with the outcome, then evidence (files, commands, test results), then anything left undone. Finish your own work, including waiting on your background work and your own workers, before you end your last turn.
+    You are a HAL-C2 worker delegated by the thread #{parent}. Your final message is your report to it: lead with the outcome, then evidence (files, commands, test results), then anything left undone. Finish your own work, including waiting on your background work and your own workers, before you end your last turn. The pull requests you link pass to that thread when your task ends, and their reviews wake it, not you.
 
     Task:
     """
