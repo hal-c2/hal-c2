@@ -42,6 +42,28 @@ defmodule HalC2.Space.Rpc do
   defp call("page.createFromThread", %{"spaceId" => s, "threadId" => t} = i),
     do: page(Space.create_page_from_thread(s, t, i["parentPageId"]))
 
+  defp call("page.history", %{"spaceId" => s, "pageId" => p} = i) do
+    with {:ok, %{versions: versions, next_before: next}} <-
+           Space.page_versions(s, p, i["before"], i["limit"]) do
+      {:ok, %{"versions" => Enum.map(versions, &version/1), "nextBefore" => next}}
+    end
+  end
+
+  defp call("page.version", %{"spaceId" => s, "pageId" => p, "version" => v}) do
+    with {:ok, read} <- Space.page_version(s, p, v) do
+      {:ok,
+       %{
+         "version" => read.version,
+         "at" => read.at,
+         "title" => read.title,
+         "blocks" => read.blocks
+       }}
+    end
+  end
+
+  defp call("page.restoreVersion", %{"spaceId" => s, "pageId" => p, "version" => v}),
+    do: page(Space.restore_page_version(s, p, v))
+
   defp call("block.insert", %{"spaceId" => s, "pageId" => p, "kind" => _} = i) do
     spec = Map.take(i, ~w(kind text checked linkedPageId))
     block(Space.insert_block(s, p, spec, Map.get(i, "afterBlockId", :last)))
@@ -76,11 +98,21 @@ defmodule HalC2.Space.Rpc do
 
   @methods ~w(list create rename delete page.create page.rename page.move page.trash
     page.restore page.delete page.exportMarkdown page.importMarkdown page.createFromThread
-    block.insert block.update block.setChecked block.move block.delete comment.add
-    comment.resolve comment.reopen)
+    page.history page.version page.restoreVersion block.insert block.update block.setChecked
+    block.move block.delete comment.add comment.resolve comment.reopen)
 
   @doc "The methods after `space.`."
   def methods, do: @methods
+
+  defp version(version) do
+    %{
+      "version" => version.version,
+      "at" => version.at,
+      "author" => version.author,
+      "threadTitle" => version.thread_title,
+      "restoredFromAt" => version.restored_from_at
+    }
+  end
 
   defp space(result), do: with({:ok, space} <- result, do: {:ok, %{"space" => space}})
   defp page(result), do: with({:ok, page} <- result, do: {:ok, %{"page" => page}})

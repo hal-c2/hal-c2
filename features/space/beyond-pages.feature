@@ -55,9 +55,3 @@ Feature: Spaces beyond Pages
     Given a cluster of two MCs
     When the user opens the Space "Research" from the other MC
     Then its pages are the same on both
-
-  @mc @shared
-  Scenario: The user looks back through a page's history
-    Given the page "Roadmap" was edited several times
-    When the user opens its history
-    Then each earlier version can be read and restored

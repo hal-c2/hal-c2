@@ -14,7 +14,7 @@ defmodule HalC2.Space do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState, Streams}
-  alias HalC2.Space.{Blocks, Markdown, Pages}
+  alias HalC2.Space.{Blocks, History, Markdown, Pages}
 
   @index "spaces"
 
@@ -169,7 +169,8 @@ defmodule HalC2.Space do
   def move_block(space_id, id, after_id, author \\ @user),
     do: transact(space_id, &Blocks.move(&1, id, after_id, author))
 
-  def delete_block(space_id, id), do: transact(space_id, &Blocks.delete(&1, id))
+  def delete_block(space_id, id, author \\ @user),
+    do: transact(space_id, &Blocks.delete(&1, id, author))
 
   def add_comment(space_id, page_id, block_id, body, author \\ @user),
     do: transact(space_id, &Blocks.comment(&1, page_id, block_id, body, author))
@@ -192,6 +193,26 @@ defmodule HalC2.Space do
              comments: Blocks.comments(state, page_id)
            }}
       end
+    end
+  end
+
+  # --- history -------------------------------------------------------------------------
+
+  @doc "See `HalC2.Space.History.versions/4`."
+  defdelegate page_versions(space_id, page_id, before \\ nil, limit \\ nil),
+    to: History,
+    as: :versions
+
+  @doc "See `HalC2.Space.History.read/3`."
+  defdelegate page_version(space_id, page_id, version), to: History, as: :read
+
+  @doc """
+  Makes the page look like `version` again, as a new edit (`HalC2.Space.History`). The
+  version is read before the stream decides: what it held never changes.
+  """
+  def restore_page_version(space_id, page_id, version, author \\ @user) do
+    with {:ok, read} <- History.read(space_id, page_id, version) do
+      transact(space_id, &History.restore(&1, page_id, read, author))
     end
   end
 
@@ -249,7 +270,8 @@ defmodule HalC2.Space do
   end
 
   # A link to a page this Space does not have is kept as a paragraph.
-  defp links(state, %{"kind" => "subpage_link"} = spec) do
+  @doc "A link to a page that is gone keeps its words as a paragraph."
+  def links(state, %{"kind" => "subpage_link"} = spec) do
     if Pages.get(state, spec["linkedPageId"]),
       do: spec,
       else: %{
@@ -260,7 +282,7 @@ defmodule HalC2.Space do
       }
   end
 
-  defp links(_state, spec), do: spec
+  def links(_state, spec), do: spec
 
   @doc """
   A new page summarising a thread of this MC, written by text generation in the

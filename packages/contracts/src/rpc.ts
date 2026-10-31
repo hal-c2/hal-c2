@@ -336,11 +336,15 @@ import {
   SpacePageCreateInput,
   SpacePageDeleteResult,
   SpacePageExportMarkdownResult,
+  SpacePageHistoryInput,
+  SpacePageHistoryResult,
   SpacePageImportMarkdownInput,
   SpacePageMoveInput,
   SpacePageRef,
   SpacePageRenameInput,
   SpacePageResult,
+  SpacePageVersionContent,
+  SpacePageVersionRef,
   SpaceRenameInput,
   SpaceResult,
   SpaceTextGenerationError,
@@ -516,6 +520,9 @@ export const WS_METHODS = {
   spacePageExportMarkdown: "space.page.exportMarkdown",
   spacePageImportMarkdown: "space.page.importMarkdown",
   spacePageCreateFromThread: "space.page.createFromThread",
+  spacePageHistory: "space.page.history",
+  spacePageVersion: "space.page.version",
+  spacePageRestoreVersion: "space.page.restoreVersion",
   spaceBlockInsert: "space.block.insert",
   spaceBlockUpdate: "space.block.update",
   spaceBlockSetChecked: "space.block.setChecked",
@@ -1820,6 +1827,24 @@ const WsSpacePageCreateFromThreadRpc = Rpc.make(WS_METHODS.spacePageCreateFromTh
   error: Schema.Union([SpaceError, SpaceTextGenerationError, EnvironmentAuthorizationError]),
 });
 
+const WsSpacePageHistoryRpc = Rpc.make(WS_METHODS.spacePageHistory, {
+  payload: SpacePageHistoryInput,
+  success: SpacePageHistoryResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageVersionRpc = Rpc.make(WS_METHODS.spacePageVersion, {
+  payload: SpacePageVersionRef,
+  success: SpacePageVersionContent,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageRestoreVersionRpc = Rpc.make(WS_METHODS.spacePageRestoreVersion, {
+  payload: SpacePageVersionRef,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
 const WsSpaceBlockInsertRpc = Rpc.make(WS_METHODS.spaceBlockInsert, {
   payload: SpaceBlockInsertInput,
   success: SpaceBlockResult,
@@ -1952,6 +1977,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageExportMarkdownRpc,
   WsSpacePageImportMarkdownRpc,
   WsSpacePageCreateFromThreadRpc,
+  WsSpacePageHistoryRpc,
+  WsSpacePageVersionRpc,
+  WsSpacePageRestoreVersionRpc,
   WsSpaceBlockInsertRpc,
   WsSpaceBlockUpdateRpc,
   WsSpaceBlockSetCheckedRpc,

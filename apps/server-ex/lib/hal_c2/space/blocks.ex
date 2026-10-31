@@ -115,8 +115,12 @@ defmodule HalC2.Space.Blocks do
     end)
   end
 
-  @doc "Deletes a block and the comments on it. Replies with the block's id."
-  def delete(state, id) do
+  @doc """
+  Deletes a block and the comments on it. Replies with the block's id. The deleting
+  author is written on the block first when it is not who last wrote it, which is how
+  the log says who deleted it (`HalC2.Space.History`).
+  """
+  def delete(state, id, author) do
     with {:ok, block} <- fetch(state, id),
          {:ok, _} <- Pages.fetch_live(state, block["pageId"]) do
       comments =
@@ -124,7 +128,12 @@ defmodule HalC2.Space.Blocks do
             c["blockId"] == id,
             do: {"comment", c["id"], Patch.delete()}
 
-      {[{"block", id, Patch.delete()} | comments], {:ok, id}}
+      stamp =
+        if block["updatedBy"] == author,
+          do: [],
+          else: [{"block", id, %{"s" => %{"updatedBy" => author}}}]
+
+      {stamp ++ [{"block", id, Patch.delete()} | comments], {:ok, id}}
     end
     |> Pages.refused()
   end

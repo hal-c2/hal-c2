@@ -52,8 +52,10 @@ defmodule HalC2.Mcp.Tools.Pages do
     s |> Space.edit_block(b, args["text"], args["checked"], author(caller)) |> block()
   end
 
-  def run("hal_c2_page_block_delete", %{"spaceId" => s, "blockId" => b}, _caller) do
-    reply(with({:ok, id} <- Space.delete_block(s, b), do: {:ok, %{"blockId" => id}}))
+  def run("hal_c2_page_block_delete", %{"spaceId" => s, "blockId" => b}, caller) do
+    reply(
+      with({:ok, id} <- Space.delete_block(s, b, author(caller)), do: {:ok, %{"blockId" => id}})
+    )
   end
 
   def run(name, _args, _caller),

@@ -44,6 +44,8 @@ defmodule HalC2.Store do
   @restart_wait 5_000
   @restart_poll 5
   @checkpoint_every :timer.seconds(10)
+  # The largest SQLite integer: a read with no `:through`.
+  @no_seq_limit 9_223_372_036_854_775_807
 
   @schema [
     "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -358,7 +360,8 @@ defmodule HalC2.Store do
   connection.
 
   Options: `:limit` caps how many events are read; `:kinds` reads only those entity
-  kinds (`["thread", "project"]` is indexed for building the shell).
+  kinds (`["thread", "project"]` is indexed for building the shell); `:through` stops
+  after that `seq`.
   """
   @spec reduce_stream(String.t(), String.t(), non_neg_integer, acc, (event, acc -> acc), keyword) ::
           acc
@@ -376,10 +379,16 @@ defmodule HalC2.Store do
         Sqlite3.prepare(db, """
         SELECT e.seq, e.kind, e.entity, e.patch, e.at FROM events e
         JOIN streams s ON s.key = e.stream
-        WHERE s.id = ?1 AND e.seq > ?2 #{kind_filter} ORDER BY e.seq LIMIT ?3
+        WHERE s.id = ?1 AND e.seq > ?2 AND e.seq <= ?4 #{kind_filter} ORDER BY e.seq LIMIT ?3
         """)
 
-      :ok = Sqlite3.bind(stmt, [stream_id, after_seq, Keyword.get(opts, :limit, -1)])
+      :ok =
+        Sqlite3.bind(stmt, [
+          stream_id,
+          after_seq,
+          Keyword.get(opts, :limit, -1),
+          Keyword.get(opts, :through, @no_seq_limit)
+        ])
 
       step_reduce(db, stmt, acc, fn [seq, kind, entity, patch, at], acc ->
         fun.(%{seq: seq, kind: kind, entity: entity, patch: decode_patch(patch), at: at}, acc)

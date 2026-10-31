@@ -2,8 +2,9 @@ defmodule HalC2.SpacePropTest do
   @moduledoc """
   A state machine over the pages, blocks and comments of one Space (`HalC2.Space`):
   pages made, moved, trashed, restored and deleted for good; blocks inserted, moved,
-  ticked, edited and deleted; comments added, resolved and reopened; and the Space's streams
-  restarting, which reads everything back from the event log.
+  ticked, edited and deleted; comments added, resolved and reopened; versions of a page
+  remembered and restored; and the Space's streams restarting, which reads everything
+  back from the event log.
 
   After each command the test reads the Space's stream back and checks it against
   the model:
@@ -16,7 +17,11 @@ defmodule HalC2.SpacePropTest do
   - a page's blocks are in the order inserted and moved, with strictly ordered keys;
   - an edit of a block's text and tick together is refused whole, or changes both;
   - each command writes one event per entity it changes, and a refusal, a tick to
-    the same value, or resolving a resolved comment (reopening an open one) writes none.
+    the same value, or resolving a resolved comment (reopening an open one) writes none;
+  - a restore makes a live page look as it did, keeps every comment, moves no page, and
+    writes nothing when the page already looks like it;
+  - reading a page's history writes nothing, its versions go strictly back in time, and
+    the newest of them reads as the page does now.
   """
 
   use ExUnit.Case, async: false
@@ -30,8 +35,9 @@ defmodule HalC2.SpacePropTest do
   @moduletag capture_log: true
 
   @pages ~w(p1 p2 p3 p4)
-  @blocks ~w(b1 b2 b3 b4 b5)
+  @blocks ~w(b1 b2 b3 b4 b5 b6 b7 b8)
   @comments ~w(c1 c2 c3)
+  @saves ~w(s1 s2)
 
   property "a Space's pages, blocks and comments follow the model",
     numtests: HalC2.Prop.numtests(100),
@@ -48,6 +54,7 @@ defmodule HalC2.SpacePropTest do
         {:ok, space} = Space.create("Prop")
         Process.put(:space, space["id"])
         Process.put(:names, %{})
+        Process.put(:saves, %{})
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
 
@@ -61,8 +68,11 @@ defmodule HalC2.SpacePropTest do
   # --- model ----------------------------------------------------------------------
 
   # pages: name => %{parent, trashed}; order: page => its block names in order;
-  # blocks: name => %{page, kind, checked, text}; comments: name => %{block, resolved}.
-  def initial_state, do: %{pages: %{}, order: %{}, blocks: %{}, comments: %{}}
+  # blocks: name => %{page, kind, checked, text}; comments: name => %{page, block, resolved};
+  # used: every block name so far, since a restore brings a deleted block back under its
+  # own; saves: name => %{page, order, blocks}, the page as it stood when remembered.
+  def initial_state,
+    do: %{pages: %{}, order: %{}, blocks: %{}, comments: %{}, used: [], saves: %{}}
 
   def command(s) do
     pages = Map.keys(s.pages)
@@ -80,7 +90,9 @@ defmodule HalC2.SpacePropTest do
             {1, {:call, __MODULE__, :delete_page, [in_trash(s, pages)]}},
             {4,
              {:call, __MODULE__, :insert_block,
-              [elements(@blocks), elements(pages), kind(), boolean(), after_block(blocks)]}}
+              [elements(@blocks), elements(pages), kind(), boolean(), after_block(blocks)]}},
+            {2, {:call, __MODULE__, :save_version, [elements(@saves), elements(pages)]}},
+            {1, {:call, __MODULE__, :read_history, [elements(pages)]}}
           ]
         ) ++
         if(blocks == [],
@@ -101,6 +113,10 @@ defmodule HalC2.SpacePropTest do
             {2, {:call, __MODULE__, :resolve_comment, [elements(comments)]}},
             {2, {:call, __MODULE__, :reopen_comment, [elements(comments)]}}
           ]
+        ) ++
+        if(s.saves == %{},
+          do: [],
+          else: [{3, {:call, __MODULE__, :restore_version, [elements(Map.keys(s.saves))]}}]
         ) ++
         [{1, {:call, __MODULE__, :restart, []}}]
     )
@@ -128,7 +144,7 @@ defmodule HalC2.SpacePropTest do
 
   def precondition(s, {:call, _, :insert_block, [name, page, _, _, after_id]}),
     do:
-      not Map.has_key?(s.blocks, name) and Map.has_key?(s.pages, page) and
+      name not in s.used and Map.has_key?(s.pages, page) and
         (after_id in [:last, nil] or Map.has_key?(s.blocks, after_id))
 
   def precondition(s, {:call, _, :move_block, [name, after_id]}),
@@ -149,6 +165,12 @@ defmodule HalC2.SpacePropTest do
 
   def precondition(s, {:call, _, cmd, [name]}) when cmd in [:resolve_comment, :reopen_comment],
     do: Map.has_key?(s.comments, name)
+
+  def precondition(s, {:call, _, cmd, [_, page]}) when cmd == :save_version,
+    do: Map.has_key?(s.pages, page)
+
+  def precondition(s, {:call, _, :read_history, [page]}), do: Map.has_key?(s.pages, page)
+  def precondition(s, {:call, _, :restore_version, [save]}), do: Map.has_key?(s.saves, save)
 
   def precondition(_s, {:call, _, :restart, []}), do: true
 
@@ -201,13 +223,16 @@ defmodule HalC2.SpacePropTest do
     if s.pages[name].trashed do
       pages = [name | descendants(s, name)]
       blocks = for {block, %{page: page}} <- s.blocks, page in pages, do: block
-      comments = for {comment, %{block: block}} <- s.comments, block in blocks, do: comment
+      comments = for {comment, %{page: page}} <- s.comments, page in pages, do: comment
+      saves = for {save, %{page: page}} <- s.saves, page in pages, do: save
 
       next = %{
-        pages: Map.drop(s.pages, pages),
-        order: Map.drop(s.order, pages),
-        blocks: Map.drop(s.blocks, blocks),
-        comments: Map.drop(s.comments, comments)
+        s
+        | pages: Map.drop(s.pages, pages),
+          order: Map.drop(s.order, pages),
+          blocks: Map.drop(s.blocks, blocks),
+          comments: Map.drop(s.comments, comments),
+          saves: Map.drop(s.saves, saves)
       }
 
       {:ok, next, length(pages) + length(blocks) + length(comments)}
@@ -227,7 +252,14 @@ defmodule HalC2.SpacePropTest do
       true ->
         block = %{page: page, kind: kind, checked: kind == "checklist" and checked, text: name}
         order = place(s.order[page], after_id, name)
-        {:ok, %{s | blocks: Map.put(s.blocks, name, block), order: %{s.order | page => order}}, 1}
+
+        {:ok,
+         %{
+           s
+           | blocks: Map.put(s.blocks, name, block),
+             order: %{s.order | page => order},
+             used: [name | s.used]
+         }, 1}
     end
   end
 
@@ -300,8 +332,10 @@ defmodule HalC2.SpacePropTest do
   end
 
   defp step(s, :add_comment, [name, block]) do
-    if live?(s, s.blocks[block].page),
-      do: {:ok, put_in(s.comments[name], %{block: block, resolved: false}), 1},
+    page = s.blocks[block].page
+
+    if live?(s, page),
+      do: {:ok, put_in(s.comments[name], %{page: page, block: block, resolved: false}), 1},
       else: {:trashed, s, 0}
   end
 
@@ -310,9 +344,46 @@ defmodule HalC2.SpacePropTest do
     resolved = cmd == :resolve_comment
 
     cond do
-      not live?(s, s.blocks[comment.block].page) -> {:trashed, s, 0}
+      not live?(s, comment.page) -> {:trashed, s, 0}
       comment.resolved == resolved -> {:ok, s, 0}
       true -> {:ok, put_in(s.comments[name].resolved, resolved), 1}
+    end
+  end
+
+  defp step(s, :save_version, [save, page]) do
+    blocks = Map.new(s.order[page], &{&1, s.blocks[&1]})
+    {:ok, put_in(s.saves[save], %{page: page, order: s.order[page], blocks: blocks}), 0}
+  end
+
+  defp step(s, :read_history, [_page]), do: {:ok, s, 0}
+
+  # The events it takes are two or three on the page and one a block that changes, and
+  # any block can differ by its order key alone, which the model does not hold.
+  defp step(s, :restore_version, [save]) do
+    %{page: page, order: order, blocks: blocks} = s.saves[save]
+
+    if live?(s, page) do
+      now = s.order[page]
+      gone = now -- order
+      changed = for name <- order, s.blocks[name] != blocks[name], do: name
+      moved = if now -- gone == order -- (order -- now), do: 0, else: 1
+      least = length(gone) + length(changed)
+      most = length(Enum.uniq(now ++ order))
+
+      next = %{
+        s
+        | blocks: s.blocks |> Map.drop(gone) |> Map.merge(blocks),
+          order: %{s.order | page => order}
+      }
+
+      writes =
+        if least + moved == 0,
+          do: [0 | Enum.to_list(3..(3 + most))],
+          else: Enum.to_list((2 + least + moved)..(3 + most))
+
+      {:ok, next, writes}
+    else
+      {:trashed, s, 0}
     end
   end
 
@@ -369,6 +440,41 @@ defmodule HalC2.SpacePropTest do
   def resolve_comment(name), do: act(&Space.resolve_comment(&1, id(name)))
   def reopen_comment(name), do: act(&Space.reopen_comment(&1, id(name)))
 
+  # Any point in the log is a version, so this remembers the next one to be asked for.
+  def save_version(save, page) do
+    saved = %{version: Streams.sequence(stream()), page: id(page)}
+    Process.put(:saves, Map.put(Process.get(:saves), save, saved))
+    act(fn _ -> {:ok, nil} end)
+  end
+
+  def restore_version(save) do
+    %{version: version, page: page} = Map.fetch!(Process.get(:saves), save)
+    act(&Space.restore_page_version(&1, page, version))
+  end
+
+  # Replies :ok when the versions go back in time and the newest reads as the page does.
+  def read_history(page) do
+    act(fn space ->
+      {:ok, %{versions: versions}} = Space.page_versions(space, id(page))
+      seqs = Enum.map(versions, & &1.version)
+      {:ok, newest} = Space.page_version(space, id(page), hd(seqs))
+      state = Streams.state(stream())
+      content = &Map.take(&1, ~w(id kind text checked linkedPageId order))
+
+      cond do
+        seqs != seqs |> Enum.uniq() |> Enum.sort(:desc) ->
+          {:error, :versions_out_of_order, nil}
+
+        Enum.map(newest.blocks, content) !=
+            Enum.map(Blocks.of_page(state, id(page)), content) ->
+          {:error, :newest_is_not_the_page, nil}
+
+        true ->
+          {:ok, nil}
+      end
+    end)
+  end
+
   def restart do
     act(fn _ ->
       HalC2.Prop.restart_service(HalC2.Streams)
@@ -399,10 +505,8 @@ defmodule HalC2.SpacePropTest do
 
   defp read_back do
     state = Streams.state(stream())
-    ids = for kind <- ~w(page block comment), id <- Map.keys(StreamState.get(state, kind)), do: id
-    names = Map.filter(Process.get(:names), fn {_, id} -> id in ids end)
-    Process.put(:names, names)
-    name = Map.new(names, fn {name, id} -> {id, name} end)
+    # Named things that are gone stay named: a restore can bring a block back.
+    name = Map.new(Process.get(:names), fn {name, id} -> {id, name} end)
     name = &Map.get(name, &1, &1)
     pages = StreamState.list(state, "page")
 
@@ -434,7 +538,11 @@ defmodule HalC2.SpacePropTest do
       comments:
         Map.new(StreamState.list(state, "comment"), fn comment ->
           {name.(comment["id"]),
-           %{block: name.(comment["blockId"]), resolved: comment["resolvedAt"] != nil}}
+           %{
+             page: name.(comment["pageId"]),
+             block: name.(comment["blockId"]),
+             resolved: comment["resolvedAt"] != nil
+           }}
         end)
     }
 
