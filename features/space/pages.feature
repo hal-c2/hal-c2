@@ -164,6 +164,13 @@ Feature: Pages in a Space
       When the user links "Q3" from "Roadmap"
       Then "Roadmap" links to "Q3"
 
+    @backlog-mobile @backlog-tui
+    Scenario: A subpage made from a link is linked straight away
+      Given the page "Roadmap"
+      When the user makes the subpage "Q3" from a link on "Roadmap"
+      Then "Q3" is a subpage of "Roadmap"
+      And "Roadmap" links to "Q3"
+
     Scenario: A block goes in between two others
       Given "Roadmap" has the blocks "One, Three"
       When the user adds "Two" after "One" on "Roadmap"

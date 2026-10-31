@@ -197,6 +197,24 @@ defmodule HalC2.Steps.Space.Pages do
     request(context, "space.block.insert", input)
   end
 
+  # What a client does for "New subpage" in the link menu: the page, then the link.
+  step "the user makes the subpage {string} from a link on {string}",
+       %{args: [linked, title]} = context do
+    context =
+      request(context, "space.page.create", %{
+        "spaceId" => context.space,
+        "title" => linked,
+        "parentPageId" => page_id(context, title)
+      })
+
+    input =
+      context
+      |> block_input(title, "subpage_link", nil)
+      |> Map.put("linkedPageId", page_id(context, linked))
+
+    request(context, "space.block.insert", input)
+  end
+
   step "{string} links to {string}", %{args: [title, linked]} = context do
     id = page_id(context, linked)
 
