@@ -25,6 +25,8 @@ interface SpaceWorld extends World {
   /** Page ids by title, kept so a Then can name pages deleted for good. */
   pageIds?: Map<string, string>;
   second?: Host;
+  /** The page whose history the scenario last opened. */
+  historyPage?: string;
 }
 
 const SUMMARY_TITLE = "Release plan";
@@ -50,6 +52,8 @@ function mc(ctx: SpaceWorld): FakeSpaceMc {
       const project = env(ctx).projects.find((candidate) => candidate.id === thread.projectId);
       return thread.worktreePath ?? project?.workspaceRoot ?? null;
     },
+    titleOf: (threadId) =>
+      env(ctx).threads.find((candidate) => candidate.id === threadId)?.title ?? null,
   });
   return ctx.spaceMc;
 }
@@ -859,3 +863,113 @@ step(
     });
   },
 );
+
+// --- a page's history ---
+
+const versionRows = (ctx: World) => pane(ctx).rows.filter((row) => row.kind === "version");
+
+async function openHistory(ctx: SpaceWorld, title: string) {
+  ctx.historyPage = title;
+  if (pane(ctx)?.view === "history" && pane(ctx).title === `history · ${title}`) return;
+  await openPage(ctx, title);
+  await press(ctx, "h");
+  expect(pane(ctx).view).toBe("history");
+}
+
+/** Back on the history the scenario opened, wherever the last step left the pane. */
+const onHistory = (ctx: SpaceWorld) => openHistory(ctx, ctx.historyPage!);
+
+async function selectVersion(ctx: SpaceWorld, back: number, title: string) {
+  await openHistory(ctx, title);
+  await selectRow(ctx, versionRows(ctx)[back]!.key);
+}
+
+const versionBlocks = (ctx: World) =>
+  pane(ctx)
+    .rows.filter((row) => row.kind === "block" && row.first)
+    .map(blockText);
+
+step("a while passes", (ctx: SpaceWorld) => {
+  mc(ctx).aWhilePasses();
+});
+
+step("the user opens the history of {string}", openHistory);
+
+const historyHas = async (ctx: SpaceWorld, count: number) => {
+  await onHistory(ctx);
+  expect(versionRows(ctx)).toHaveLength(count);
+};
+step("the history has {int} versions", historyHas);
+step("the history has {int} version", historyHas);
+
+step("each version says when it was written and by the user", (ctx: SpaceWorld) => {
+  for (const row of versionRows(ctx)) {
+    expect(words(row)).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d {2}You/);
+  }
+});
+
+step("the newest version is the page as it is now", async (ctx: SpaceWorld) => {
+  expect(words(versionRows(ctx)[0]!)).toContain("· current");
+  const asItIs = mc(ctx)
+    .blocksOf(pageId(ctx, ctx.historyPage!))
+    .map((block) => block.text);
+  await selectRow(ctx, versionRows(ctx)[0]!.key);
+  await press(ctx, "Enter");
+  expect(versionBlocks(ctx)).toEqual(asItIs);
+  await press(ctx, "Esc");
+});
+
+step("the newest version was written by the thread {string}", (ctx: SpaceWorld, thread: string) => {
+  expect(words(versionRows(ctx)[0]!)).toContain(thread);
+});
+
+step(
+  "the user reads the version {int} back on {string}",
+  async (ctx: SpaceWorld, back: number, title: string) => {
+    await selectVersion(ctx, back, title);
+    await press(ctx, "Enter");
+    expect(pane(ctx).view).toBe("version");
+  },
+);
+
+step("the version reads {string}", (ctx: SpaceWorld, texts: string) => {
+  expect(pane(ctx).view).toBe("version");
+  expect(versionBlocks(ctx)).toEqual(list(texts));
+});
+
+step("the user goes back to the list of versions", (ctx: SpaceWorld) => press(ctx, "Esc"));
+
+step("no version is being read", (ctx: SpaceWorld) => {
+  expect(pane(ctx).view).toBe("history");
+});
+
+step(
+  "the user restores the version {int} back on {string}",
+  async (ctx: SpaceWorld, back: number, title: string) => {
+    await selectVersion(ctx, back, title);
+    await press(ctx, "r");
+  },
+);
+
+step("the newest version says it restored an earlier one", async (ctx: SpaceWorld) => {
+  await onHistory(ctx);
+  expect(words(versionRows(ctx)[0]!)).toContain("restored from");
+});
+
+// The pane says why without asking the MC, which would refuse it.
+step("the user cannot restore a version of {string}", async (ctx: SpaceWorld, title: string) => {
+  await selectVersion(ctx, 1, title);
+  await press(ctx, "r");
+  expect(mc(ctx).refusals).toEqual([]);
+  expect(status(ctx)).toEqual(
+    expect.objectContaining({
+      text: "This page is in the trash: restore it to bring back a version.",
+      kind: "info",
+    }),
+  );
+  expect(
+    mc(ctx)
+      .blocksOf(pageId(ctx, title))
+      .map((block) => block.text),
+  ).toEqual(["Final"]);
+});

@@ -201,6 +201,122 @@ describe("replies that come after the user moved on", () => {
   });
 });
 
+describe("a page's history", () => {
+  const version = (n: number, fields: Record<string, unknown> = {}) => ({
+    version: n,
+    at,
+    author: user,
+    threadTitle: null,
+    restoredFromAt: null,
+    ...fields,
+  });
+  const onRoadmap = (fields: Record<string, unknown> = {}) => {
+    const t = inResearch([page("p1", "Roadmap", fields), block("b1", "p1", "Final", "a")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    t.controller.dispatch("space.history", {});
+    return t;
+  };
+
+  test("is asked for from the tree too, and going back lands on the page", async () => {
+    const t = inResearch([page("p1", "Roadmap")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.history", {});
+    expect(t.view().title).toBe("history · Roadmap");
+    t.reply("space.page.history", { versions: [version(2)], nextBefore: null });
+    await t.controller.settled();
+    t.controller.dispatch("space.back", {});
+    expect(t.view().title).toBe("page · Roadmap");
+  });
+
+  test("loads more a stretch at a time", async () => {
+    const t = onRoadmap();
+    t.reply("space.page.history", { versions: [version(9), version(8)], nextBefore: 8 });
+    await t.controller.settled();
+    expect(t.texts("more")).toEqual(["Load more…"]);
+    t.select("more:more");
+    t.controller.dispatch("space.activate", {});
+    t.reply("space.page.history", { versions: [version(7)], nextBefore: null });
+    await t.controller.settled();
+    expect(t.calls.at(-1)!.payload).toEqual(expect.objectContaining({ before: 8 }));
+    expect(t.view().rows.filter((row) => row.kind === "version")).toHaveLength(3);
+    expect(t.texts("more")).toEqual([]);
+  });
+
+  test("a reply for a history the user left is dropped", async () => {
+    const t = onRoadmap();
+    t.controller.dispatch("space.back", {});
+    t.reply("space.page.history", { versions: [version(9)], nextBefore: null });
+    await t.controller.settled();
+    expect(t.view().view).toBe("page");
+    t.controller.dispatch("space.history", {});
+    expect(t.view().rows).toEqual([]);
+    expect(t.view().message).toBe("Loading…");
+  });
+
+  test("a refresh asked for while one is in flight goes after it", async () => {
+    const t = onRoadmap();
+    t.controller.dispatch("space.history", {});
+    expect(t.calls.filter((call) => call.method === "space.page.history")).toHaveLength(1);
+    t.reply("space.page.history", { versions: [version(9)], nextBefore: null });
+    await Promise.resolve();
+    await Promise.resolve();
+    t.reply("space.page.history", { versions: [version(10), version(9)], nextBefore: null });
+    await t.controller.settled();
+    expect(t.calls.filter((call) => call.method === "space.page.history")).toHaveLength(2);
+    expect(t.view().rows.filter((row) => row.kind === "version")).toHaveLength(2);
+  });
+
+  test("a version being read cannot be edited", async () => {
+    const t = onRoadmap();
+    t.reply("space.page.history", { versions: [version(9), version(8)], nextBefore: null });
+    await t.controller.settled();
+    t.select("version:8");
+    t.controller.dispatch("space.activate", {});
+    t.reply("space.page.version", {
+      version: 8,
+      at,
+      title: "Roadmap",
+      blocks: [block("b1", "p1", "Draft", "a")[2]],
+    });
+    await t.controller.settled();
+    expect(t.view().view).toBe("version");
+    const asked = t.calls.length;
+    for (const action of ["space.edit", "space.delete", "space.tick", "space.move"]) {
+      t.controller.dispatch(action, {});
+    }
+    t.controller.dispatch("space.activate", {});
+    expect(t.calls).toHaveLength(asked);
+  });
+
+  test("the newest version is not restored over itself", async () => {
+    const t = onRoadmap();
+    t.reply("space.page.history", { versions: [version(9), version(8)], nextBefore: null });
+    await t.controller.settled();
+    t.select("version:9");
+    t.controller.dispatch("space.restore", {});
+    expect(t.statuses.at(-1)).toBe("This version is the page as it is.");
+    expect(t.calls.some((call) => call.method === "space.page.restoreVersion")).toBe(false);
+  });
+
+  test("a comment whose block a restore took away is still shown", () => {
+    const comment = {
+      id: "c1",
+      pageId: "p1",
+      blockId: "gone",
+      author: user,
+      body: "Why?",
+      resolvedAt: null,
+      createdAt: at,
+      updatedAt: at,
+    };
+    const t = inResearch([page("p1", "Roadmap"), ["comment", "c1", comment]]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    expect(t.texts("comment")[0]).toContain("Why? · on a block no longer on this page");
+  });
+});
+
 describe("refusalText", () => {
   test("names text generation that is unavailable, wherever the client put the detail", () => {
     const error = Object.assign(new Error("No provider is set up."), {

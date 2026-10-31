@@ -375,6 +375,7 @@ export const KEYMAP_LAYERS = {
     d: "space.delete",
     "shift+d": "space.deleteForGood",
     r: "space.restore",
+    h: "space.history",
     "space, x": "space.tick",
     c: "space.comment",
     l: "space.link",
