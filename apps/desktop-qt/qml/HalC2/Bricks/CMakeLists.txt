@@ -32,6 +32,8 @@ qt_add_qml_module(hal_c2_bricks
     ProviderModelList.qml
     ComposerUsageLimits.qml
     ConnectionStatusRow.qml
+    ServerUpdateAction.qml
+    ServerUpdatesList.qml
     ShellButton.qml
     ShellCard.qml
     ShellChevron.qml

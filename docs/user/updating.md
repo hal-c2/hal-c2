@@ -3,7 +3,16 @@
 The app you use and the MC running your agents can be on different machines.
 When an MC is behind your app, an update notice names it. In the terminal app it
 appears at the top and under **Updates** in the command palette (`Ctrl+K`).
-Update the machine named in that notice.
+In the desktop app it appears at the top of the window, and **Settings →
+Connections** lists every machine of the cluster that is behind, with
+**Update all**; the command palette has **Update all servers** and **Update a
+server...**. Update the machine named in that notice.
+
+A server run by the desktop app on another machine is updated by that app,
+which closes and relaunches there, so HAL-C2 asks before it starts. If that desktop
+app cannot update itself from here, update it on its own machine. A server started
+by hand offers **Copy update command** instead: run the copied command on that
+machine.
 
 ## Before you update
 

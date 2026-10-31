@@ -23,6 +23,8 @@ UsageModelPrices 1.0 UsageModelPrices.qml
 ProviderModelList 1.0 ProviderModelList.qml
 ComposerUsageLimits 1.0 ComposerUsageLimits.qml
 ConnectionStatusRow 1.0 ConnectionStatusRow.qml
+ServerUpdateAction 1.0 ServerUpdateAction.qml
+ServerUpdatesList 1.0 ServerUpdatesList.qml
 ShellTextField 1.0 ShellTextField.qml
 ShellSwitch 1.0 ShellSwitch.qml
 ShellSpinBox 1.0 ShellSpinBox.qml

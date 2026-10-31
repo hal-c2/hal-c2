@@ -149,8 +149,19 @@ void FakeMc::sendSnapshot() {
   send(frame);
 }
 
+QJsonObject FakeMc::describe(const QString& environment) const {
+  QJsonObject descriptor{{QStringLiteral("environmentId"), environment}};
+  const QJsonObject fields = descriptorFields.value(environment);
+  QJsonObject merged = capabilities;
+  const QJsonObject added = fields.value(QLatin1String("capabilities")).toObject();
+  for (auto it = added.begin(); it != added.end(); ++it) merged.insert(it.key(), it.value());
+  for (auto it = fields.begin(); it != fields.end(); ++it) descriptor.insert(it.key(), it.value());
+  descriptor.insert(QStringLiteral("capabilities"), merged);
+  return descriptor;
+}
+
 QJsonObject FakeMc::ownEnvironment() const {
-  QJsonObject own{{QStringLiteral("environmentId"), environmentId}, {QStringLiteral("capabilities"), capabilities}};
+  QJsonObject own = describe(environmentId);
   if (!label.isEmpty()) own.insert(QStringLiteral("label"), label);
   if (!platform.isEmpty()) own.insert(QStringLiteral("platform"), platform);
   return own;
@@ -167,7 +178,7 @@ void FakeMc::announceEnvironment() {
 }
 
 QJsonObject FakeMc::peerEnvironment(const QString& environment) const {
-  QJsonObject descriptor{{QStringLiteral("environmentId"), environment}, {QStringLiteral("capabilities"), capabilities}};
+  QJsonObject descriptor = describe(environment);
   if (peerLabels.contains(environment)) descriptor.insert(QStringLiteral("label"), peerLabels.value(environment));
   if (peerPlatforms.contains(environment)) descriptor.insert(QStringLiteral("platform"), peerPlatforms.value(environment));
   return descriptor;

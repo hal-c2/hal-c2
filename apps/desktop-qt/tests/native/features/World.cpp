@@ -21,6 +21,7 @@
 #include "PluginController.h"
 #include "ThreadMenuController.h"
 #include "RightPanelController.h"
+#include "ServerUpdateController.h"
 #include "ThisMachine.h"
 #include "ThreadStore.h"
 #include "ToastController.h"
@@ -67,6 +68,7 @@ void World::start() {
   m_native->controller<FileActionsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<ProviderSettingsController>()->setClipboardWriter(writeClipboard);
   m_native->controller<RightPanelController>()->review()->setClipboardWriter(writeClipboard);
+  m_native->shared<ServerUpdateController>()->setClipboardWriter(writeClipboard);
   m_bridge->setClipboardWriter(writeClipboard);
   setTime(m_now);
   QObject::connect(m_bridge.get(), &ShellBridge::actionRequested, m_bridge.get(),

@@ -46,66 +46,66 @@ Feature: Updating the server, the desktop app and providers
       When the user starts another server update
       Then the second update is refused
 
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-mobile
     Scenario: A server behind the app offers an update in the conversation
       Given the app is newer than the server on "server"
       When the user opens a thread on "server"
       Then the user is offered to update "server"
 
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-mobile
     Scenario: A successful update names the version it reconnected on
       When the user updates "server" and it reconnects on "1.4.0"
       Then the user is told "server" was updated and reconnected on "1.4.0"
 
     # Owner of "Update all"; settings/connections.feature holds the Connections entry point
     # and version line, connections/ cross-references here.
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-mobile
     Scenario: Updating every machine confirms desktop hosts first
       Given "laptop" is hosted by the desktop app and "server" is a service
       When the user updates all machines
       Then the user is asked to confirm that the desktop app on "laptop" will relaunch
       And "server" updates independently of "laptop"
 
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-mobile
     Scenario: The user copies the update command instead
       When the user copies the update command for "server"
       Then the command for the matching version is on the clipboard
 
     # Legacy: apps/web/src/components/ServerUpdateAction.tsx (Update command copied, Could not copy update command)
-    @backlog @desktop
+    @desktop
     Scenario: Copying the update command says what to run and where
       When the user copies the update command for "server"
       Then the user sees a "success" toast "Update command copied" saying to run the command on "server"
 
-    @backlog @desktop
+    @desktop
     Scenario: A copy that fails says so
       Given the clipboard cannot be written
       When the user copies the update command for "server"
       Then the user sees an "error" toast "Could not copy update command" with the reason
 
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-mobile
     Scenario: A dismissed update notice stays dismissed for that version
       Given the user dismissed the update notice for "1.4.0"
       When the user reconnects to the same server
       Then the notice for "1.4.0" does not return
       But a notice for "1.5.0" does appear
 
-    @backlog @desktop
+    @desktop
     Scenario: A failed server update says why and leaves the server where it was
       Given "server" is behind the app
       When the user updates "server" and the update fails with "Disk is full"
       Then the user is told "Server update failed" with "Disk is full"
       And "server" keeps running on its current version
 
-    @backlog @desktop
+    @desktop
     Scenario: A server run by another machine's desktop app asks before that app relaunches
       Given "workstation" is served by the desktop app on that machine and is behind
-      When the user updates "workstation"
+      When the user updates the server on "workstation"
       Then the user is asked to confirm the desktop app on "workstation" will close and relaunch
       When the user declines
       Then nothing is updated
 
-    @backlog @desktop
+    @desktop
     Scenario: A server run by a desktop app this client cannot update points to that machine
       Given "workstation" is served by the desktop app on that machine
       And this client cannot update that desktop app
@@ -113,7 +113,7 @@ Feature: Updating the server, the desktop app and providers
       Then the user is told to update the desktop app on that machine to update the server
       And no update button is offered
 
-    @backlog @desktop
+    @desktop
     Scenario: Updating a server run by a desktop app says the app relaunched
       When the user updates "workstation" and its desktop app relaunches on "1.4.0"
       Then the user is told "workstation" was updated and the desktop app relaunched on "1.4.0"

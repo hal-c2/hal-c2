@@ -27,7 +27,7 @@ class ShellStore;
 //    reason,          why the last connection ended, or ""
 //    traceId,         the failed attempt's trace id, or ""
 //    canRetry, needsPairing, pairing, pairingError,
-//    versionWarning:  null | {clientVersion, serverVersion, text}}
+//    versionWarning:  null | {key, environmentId, clientVersion, serverVersion, text}}
 // `connected` is not said before the MC's shell snapshot lands on this
 // connection: the socket alone shows nothing. `problem` is a socket that is
 // fine while the MC turned the shell subscription down, which is not a
@@ -49,6 +49,7 @@ public:
 
   // This app's version (QCoreApplication::applicationVersion by default).
   void setClientVersion(const QString& version);
+  QString clientVersion() const { return m_clientVersion.trimmed(); }
   void setClipboardWriter(std::function<bool(const QString&)> write) { m_writeClipboard = std::move(write); }
   // What `connection.pair` says this client is; the desktop unless told.
   void setPairingClient(const pairing::Client& client) { m_pairingClient = client; }
@@ -70,6 +71,9 @@ public:
   // two nightlies compare whole, anything else by its core
   // major.minor.patch, so a release and a nightly of one core do not differ.
   static bool serverBehind(const QString& client, const QString& server);
+
+signals:
+  void clientVersionChanged();
 
 private:
   void update();
