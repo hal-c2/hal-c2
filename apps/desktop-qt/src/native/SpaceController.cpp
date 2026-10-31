@@ -512,7 +512,7 @@ void SpaceController::activate() {
   if (m_active) return;
   m_active = true;
   auto* navigation = NativeShell::of(this)->controller<NavigationController>();
-  if (auto* keys = NativeShell::of(this)->controller<KeybindingController>()) {
+  if (auto* keys = NativeShell::of(this)->controller<KeybindingController>(); keys && m_viewed) {
     keys->commands()->add(kOpen, tr("Open Space"),
                           [navigation] { navigation->open(NavigationController::Route::of(kRoute)); });
     keys->commands()->setTerms(kOpen, {QStringLiteral("space"), QStringLiteral("pages"), QStringLiteral("notes"),

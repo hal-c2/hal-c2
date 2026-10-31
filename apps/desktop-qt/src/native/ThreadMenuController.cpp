@@ -200,8 +200,8 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   add(copy, false);
   if (projectKey) add({QStringLiteral("project-settings"), QStringLiteral("Project settings"), QStringLiteral("settings")}, false);
   add({QStringLiteral("fork"), QStringLiteral("Fork thread"), QStringLiteral("git-fork")});
-  // The MC writes a page only from its own threads.
-  if (thread->environmentId == m_client->environment()) {
+  // The MC writes a page only from its own threads, and the page opens in the Space view.
+  if (thread->environmentId == m_client->environment() && shell->controller<SpaceController>()->viewed()) {
     add({QStringLiteral("page-from-thread"), QStringLiteral("Create page from thread"), QStringLiteral("file-text")});
   }
   // Another machine of the cluster can take the thread.
