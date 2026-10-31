@@ -67,6 +67,26 @@ defmodule HalC2.SpaceTest do
     end
   end
 
+  describe "a page's history" do
+    # Found by the property in prop/hal_c2/space_prop_test.exs: a page patch that
+    # changes nothing crashed the stream that applied it.
+    test "a restore in the millisecond the page was written leaves the page out", %{space: space} do
+      page_id = page!(space, "Roadmap")
+      block!(space, page_id, "Later")
+      {:ok, state} = Space.state(space)
+      page = Space.Pages.get(state, page_id)
+      version = %{version: 1, at: page["updatedAt"], title: page["title"], blocks: []}
+
+      {changes, {:ok, _page}} =
+        Space.History.restore(state, page_id, version, %{"type" => "user"}, page["updatedAt"])
+
+      assert Enum.all?(changes, fn {_kind, _id, patch} -> is_map(patch) end)
+
+      assert [{"page", ^page_id, %{"s" => _}}, {"block", _, _}, {"page", ^page_id, %{"u" => _}}] =
+               changes
+    end
+  end
+
   describe "pages" do
     test "a page cannot move inside itself or below its own subpage", %{space: space} do
       top = page!(space, "Roadmap")

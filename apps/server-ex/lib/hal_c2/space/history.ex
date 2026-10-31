@@ -72,9 +72,8 @@ defmodule HalC2.Space.History do
   The changes that make the live page look like the version `read/3` gave, as a Space
   transaction: none when it already does.
   """
-  def restore(state, page_id, version, author) do
+  def restore(state, page_id, version, author, at \\ Entities.now()) do
     with {:ok, page} <- Pages.fetch_live(state, page_id) do
-      at = Entities.now()
       stamp = &Map.merge(&1, %{"updatedBy" => author, "updatedAt" => at})
       current = Map.new(Space.Blocks.of_page(state, page_id), &{&1["id"], &1})
       wanted = Enum.map(version.blocks, &Space.links(state, &1))
