@@ -147,8 +147,10 @@ void PortalRequest::finish(uint status, const QVariantMap& results) {
 PortalSnapShot::PortalSnapShot(const Platform& platform, QObject* parent) : SnapShotBackend(parent) {
   m_session.mode = QStringLiteral("portal");
   m_session.desktop = platform.desktop;
+  m_keysInConfig = platform.desktop == QLatin1String("hyprland");
   qDBusRegisterMetaType<PortalShortcut>();
   qDBusRegisterMetaType<QList<PortalShortcut>>();
+  if (m_keysInConfig) m_shortcut = {false, true, {}, QStringLiteral("Connecting to Hyprland shortcuts…"), false};
 }
 
 PortalSnapShot::~PortalSnapShot() {
@@ -294,6 +296,12 @@ void PortalSnapShot::closeSession() {
 
 void PortalSnapShot::shortcutFailed(const QString& message) {
   closeSession();
+  if (m_keysInConfig) {
+    setShortcut({false, false, {},
+                 QStringLiteral("Couldn't connect to Hyprland shortcuts. Make sure xdg-desktop-portal-hyprland is running, then restart HAL-C2."),
+                 false});
+    return;
+  }
   setShortcut({false, false, {}, message, true});
 }
 
@@ -301,10 +309,13 @@ void PortalSnapShot::bind(const QString& trigger) {
   if (trigger == m_trigger && !m_sessionHandle.isEmpty()) return;
   closeSession();
   m_trigger = trigger;
-  m_shortcutId = QStringLiteral("hal-c2-snap-shot-") +
-                 QString::fromLatin1(QCryptographicHash::hash(trigger.toUtf8(), QCryptographicHash::Sha256).toHex().left(16));
-  setShortcut({false, true, {}, QStringLiteral("Waiting for shortcut permission. Approve the desktop prompt if one appears."),
-               m_shortcutsVersion == 0 || m_shortcutsVersion >= 2});
+  // The Hyprland config names the action, so its id does not follow the keys.
+  m_shortcutId = m_keysInConfig ? QStringLiteral("capture-window")
+                                : QStringLiteral("hal-c2-snap-shot-") +
+                                      QString::fromLatin1(QCryptographicHash::hash(trigger.toUtf8(), QCryptographicHash::Sha256).toHex().left(16));
+  setShortcut(m_keysInConfig ? Shortcut{false, true, {}, QStringLiteral("Connecting to Hyprland shortcuts…"), false}
+                             : Shortcut{false, true, {}, QStringLiteral("Waiting for shortcut permission. Approve the desktop prompt if one appears."),
+                                        m_shortcutsVersion == 0 || m_shortcutsVersion >= 2});
   registerApp();
   if (m_watcher.watchedServices().isEmpty()) {
     // The shortcut's signals, and the portal going away under it.
@@ -345,10 +356,10 @@ void PortalSnapShot::bind(const QString& trigger) {
       }
       m_sessionHandle = handle;
       bus().connect(kService, handle, kSession, QStringLiteral("Closed"), this, SLOT(onSessionClosed(QDBusMessage)));
-      m_shortcut.canRetry = m_shortcutsVersion >= 2;
-      const QList<PortalShortcut> shortcuts{
-          {m_shortcutId,
-           {{QStringLiteral("description"), QStringLiteral("Capture a window")}, {QStringLiteral("preferred_trigger"), m_trigger}}}};
+      m_shortcut.canRetry = !m_keysInConfig && m_shortcutsVersion >= 2;
+      QVariantMap properties{{QStringLiteral("description"), QStringLiteral("Capture a window")}};
+      if (!m_keysInConfig) properties.insert(QStringLiteral("preferred_trigger"), m_trigger);
+      const QList<PortalShortcut> shortcuts{{m_shortcutId, properties}};
       // Every session binds, even when the desktop remembers the approval.
       request(kShortcuts, QStringLiteral("BindShortcuts"),
               {QVariant::fromValue(QDBusObjectPath(handle)), QVariant::fromValue(shortcuts), QString()}, {}, waits().promptTimeoutMs,
@@ -356,6 +367,10 @@ void PortalSnapShot::bind(const QString& trigger) {
                 if (generation != m_generation) return;
                 if (results.contains(QStringLiteral("timeout"))) {
                   shortcutFailed(QStringLiteral("Shortcut permission request timed out. Try again."));
+                  return;
+                }
+                if (status != 0 && m_keysInConfig) {
+                  shortcutFailed({});
                   return;
                 }
                 if (status != 0) {
@@ -382,6 +397,14 @@ void PortalSnapShot::bound(const QVariant& shortcuts) {
     found = true;
     label = unwrap(shortcut.properties.value(QStringLiteral("trigger_description"))).toString().trimmed();
   }
+  if (m_keysInConfig) {
+    // The action is what HAL-C2 holds; which keys press it is the config's business.
+    setShortcut({found, false, {},
+                 found ? QStringLiteral("Managed by Hyprland. Add the binding to your config and save it.")
+                       : QStringLiteral("Hyprland did not register the capture action. Check that xdg-desktop-portal-hyprland is running, then restart HAL-C2."),
+                 false});
+    return;
+  }
   setShortcut({found && !label.isEmpty(), false, label,
                !label.isEmpty()            ? QStringLiteral("Desktop shortcut: %1").arg(label)
                : m_shortcutsVersion >= 2 ? QStringLiteral("No shortcut is assigned. Open shortcut permissions to choose one.")
@@ -396,6 +419,12 @@ void PortalSnapShot::release() {
 }
 
 void PortalSnapShot::configure() {
+  if (m_keysInConfig) {
+    Shortcut shortcut = m_shortcut;
+    shortcut.message = QStringLiteral("Change the capture binding in your Hyprland config, then save it.");
+    setShortcut(shortcut);
+    return;
+  }
   if (m_sessionHandle.isEmpty()) {
     // The session failed or was closed: a fresh one asks again.
     const QString trigger = std::exchange(m_trigger, {});

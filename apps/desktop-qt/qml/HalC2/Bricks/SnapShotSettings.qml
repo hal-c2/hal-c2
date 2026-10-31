@@ -294,6 +294,42 @@ SettingsPage {
             }
 
             Label {
+                objectName: "checkMessage"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: snap.wizard?.checkMessage ?? ""
+                color: snap.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
+            // Advanced: undoing what setup did, and the like.
+            Repeater {
+                model: snap.wizard?.step === "access" ? (snap.wizard?.advanced ?? []) : []
+
+                delegate: ColumnLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    spacing: 2
+
+                    ShellButton {
+                        objectName: "advanced-" + parent.modelData.action
+                        text: parent.modelData.label
+                        onClicked: Shell.dispatch("snapShot.setup.action", { action: parent.modelData.action })
+                    }
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: parent.modelData.note ?? ""
+                        color: snap.muted
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        wrapMode: Text.Wrap
+                    }
+                }
+            }
+
+            Label {
                 Layout.fillWidth: true
                 visible: text.length > 0
                 text: snap.wizard?.details ?? ""
@@ -566,7 +602,9 @@ SettingsPage {
                     primary: true
                     enabled: snap.wizard?.continueEnabled ?? true
                     text: snap.wizard?.continueLabel ?? ""
-                    onClicked: Shell.dispatch("snapShot.setup.continue")
+                    onClicked: snap.wizard?.action
+                               ? Shell.dispatch("snapShot.setup.action", { action: snap.wizard.action })
+                               : Shell.dispatch("snapShot.setup.continue")
                 }
 
                 ShellButton {

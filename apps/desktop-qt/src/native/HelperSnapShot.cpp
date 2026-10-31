@@ -7,7 +7,9 @@ HelperSnapShot::HelperSnapShot(const Platform& platform, SnapShotBackend* shortc
   connect(m_shortcuts, &SnapShotBackend::changed, this, &SnapShotBackend::changed);
   connect(m_shortcuts, &SnapShotBackend::activated, this, &SnapShotBackend::activated);
   connect(m_helper, &CaptureHelper::changed, this, &SnapShotBackend::changed);
-  connect(m_helper, &CaptureHelper::captured, this, &SnapShotBackend::captured);
+  connect(m_helper, &CaptureHelper::captured, this, [this](const QImage& image, const QString& appName, const QString& windowTitle) {
+    emit captured(image, appName, windowTitle);
+  });
   connect(m_helper, &CaptureHelper::failed, this, &SnapShotBackend::failed);
   connect(m_helper, &CaptureHelper::performed, this, [this](const QString& error) {
     if (!error.isEmpty()) emit setupFailed(error);
@@ -22,7 +24,9 @@ SnapShotBackend::Session HelperSnapShot::session() const {
   session.mode = QStringLiteral("portal");
   session.backend = QStringLiteral("helper");
   session.desktop = m_desktop;
-  session.feedbackAvailable = state.status == QLatin1String("ready") && state.feedbackAvailable;
+  session.checking = m_helper->busy();
+  // The helper can draw effects where the desktop lets it, but nothing here asks it to yet.
+  session.feedbackAvailable = false;
   return session;
 }
 
@@ -74,8 +78,7 @@ std::optional<SnapShotBackend::Setup> HelperSnapShot::setup() const {
                                  : tr("Not ready yet. Finish the step above.");
   }
   setup.status = error ? tr("Check capture access in setup") : tr("Install the capture helper to continue");
-  setup.effects = ready ? (state.feedbackAvailable ? QString() : tr("Capture effects aren't available on this desktop."))
-                        : tr("Install or update the capture helper to enable effects.");
+  setup.effects = ready ? tr("Capture effects aren't available on this desktop.") : tr("Install or update the capture helper to enable effects.");
   const QString included = tr("Included with HAL-C2. No download needed.");
   if (error) setup.advanced.append({m_helper->installAction(), tr("Reinstall helper"), included});
   if (!status.isEmpty() && status != QLatin1String("not-installed")) {

@@ -21,6 +21,10 @@ public:
   void bind(const QString& trigger) override { m_shortcuts->bind(trigger); }
   void release() override { m_shortcuts->release(); }
   void configure() override { m_shortcuts->configure(); }
+  void checkShortcut(const QJsonObject& shortcut, std::function<void(const Check&)> done) override {
+    m_shortcuts->checkShortcut(shortcut, std::move(done));
+  }
+  bool pause(bool paused, QString* reason) override { return m_shortcuts->pause(paused, reason); }
   void capture() override { m_helper->capture(); }
   void play(const QString& sound) override { m_shortcuts->play(sound); }
   std::optional<Setup> setup() const override;

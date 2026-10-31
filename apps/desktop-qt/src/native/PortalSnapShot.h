@@ -108,6 +108,8 @@ private:
   uint m_shortcutsVersion = 0;
   QString m_trigger;
   QString m_shortcutId;
+  // Hyprland: the keys live in its config, the portal session only holds the action.
+  bool m_keysInConfig = false;
   QString m_sessionHandle;
   // Bumped whenever the session is dropped, so a late answer for the one
   // before is ignored.

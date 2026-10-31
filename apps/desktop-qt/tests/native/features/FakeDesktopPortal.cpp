@@ -216,6 +216,9 @@ bool FakeDesktopPortal::handleMessage(const QDBusMessage& message, const QDBusCo
       case Answer::Unassigned:
         respond(request, 0, granted({}));
         break;
+      case Answer::Nothing:
+        respond(request, 0, {{QStringLiteral("shortcuts"), QVariant::fromValue(QList<PortalShortcut>{})}});
+        break;
       case Answer::Refuse:
         respond(request, 1, {});
         break;

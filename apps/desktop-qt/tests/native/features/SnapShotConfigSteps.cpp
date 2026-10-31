@@ -49,6 +49,9 @@ void pressShortcut(World& world);
 QVariantMap attachedImage(World& world);
 QVariantList draftImages(World& world);
 void pickerOnly(World& world);
+void macTryAgain(World& world);
+void macWindowFailed(World& world);
+void macNothingKept(World& world);
 }  // namespace snapshot
 
 namespace {
@@ -345,6 +348,10 @@ const Steps steps([] {
     expect(!field(world, QStringLiteral("config.details")).toString().isEmpty(), QStringLiteral("a reason; Snap Shot is %1").arg(describe(world)));
   });
   step(QStringLiteral("the user can try again"), [](World& world, const Captures&, const Table&) {
+    if (field(world, QStringLiteral("mode")) == QLatin1String("direct")) {
+      macTryAgain(world);
+      return;
+    }
     expect(field(world, QStringLiteral("config.canReview")).toBool(), QStringLiteral("Review changes to be offered; Snap Shot is %1").arg(describe(world)));
     compositor().binds = QList<CaptureShortcutConfig::HyprlandBind>{};
     reviewed(world);
@@ -746,11 +753,19 @@ const Steps steps([] {
   });
   step(QStringLiteral("Niri has no focused window"), [](World&, const Captures&, const Table&) { scene().focusedWindow = false; });
   step(QStringLiteral("nothing is attached and the user is told the window could not be captured"), [](World& world, const Captures&, const Table&) {
+    if (field(world, QStringLiteral("mode")) == QLatin1String("direct")) {
+      macWindowFailed(world);
+      return;
+    }
     world.waitFor([&] { return show(world.state(QStringLiteral("toasts"))).contains(QLatin1String("Niri has no focused window to capture.")); },
                   [&] { return QStringLiteral("the failure; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))); });
     expect(draftImages(world).isEmpty(), QStringLiteral("nothing attached: %1").arg(show(draftImages(world))));
   });
-  step(QStringLiteral("no half-finished capture is kept"), [](World&, const Captures&, const Table&) {
+  step(QStringLiteral("no half-finished capture is kept"), [](World& world, const Captures&, const Table&) {
+    if (field(world, QStringLiteral("mode")) == QLatin1String("direct")) {
+      macNothingKept(world);
+      return;
+    }
     expect(scene().shots == 0, QStringLiteral("no screenshot asked of Niri"));
   });
   step(QStringLiteral("a Linux Wayland session on Niri"), [](World& world, const Captures&, const Table&) {
@@ -764,8 +779,8 @@ const Steps steps([] {
     world.waitFor([&] { return !draftImages(world).isEmpty(); }, [&] { return QStringLiteral("the capture; Snap Shot is %1").arg(describe(world)); });
     expect(scene().shots == 1 && attachedImage(world).value(QStringLiteral("mimeType")) == QLatin1String("image/png"), QStringLiteral("one PNG from Niri"));
   });
-  step(QStringLiteral("HAL-C2 runs inside a (\\S+) sandbox on a (\\S+) Wayland session"), [](World& world, const Captures& c, const Table&) {
-    QProcessEnvironment env = environmentFor(c[1].toLower());
+  step(QStringLiteral("HAL-C2 runs inside a (\\S+) sandbox on a (\\S+(?: Plasma)?) Wayland session"), [](World& world, const Captures& c, const Table&) {
+    QProcessEnvironment env = environmentFor(c[1] == QLatin1String("KDE Plasma") ? QStringLiteral("kde") : c[1].toLower());
     env.insert(c[0] == QLatin1String("Snap") ? QStringLiteral("SNAP") : QStringLiteral("FLATPAK_ID"), QStringLiteral("hal-c2"));
     // Even with Niri's socket in reach.
     env.insert(QStringLiteral("NIRI_SOCKET"), scene().home->filePath(QStringLiteral("s")));

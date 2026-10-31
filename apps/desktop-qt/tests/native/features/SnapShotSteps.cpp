@@ -16,6 +16,7 @@
 #include "FakeDesktopPortal.h"
 #include "DraftController.h"
 #include "Harness.h"
+#include "HelperSnapShot.h"
 #include "KeybindingController.h"
 #include "MacPlatform.h"
 #include "NativeShell.h"
@@ -31,6 +32,11 @@
 
 // SnapShotMacosSteps.cpp: the shortcut pressed when the scenario runs on a Mac.
 void snapShotMacPress(World& world);
+
+namespace snapshot {
+void resetCaptureHelpers();
+void uninstallCaptureHelpers(World& world);
+}
 
 namespace {
 
@@ -181,7 +187,10 @@ SnapShotController* controller(World& world) {
 }
 
 FakePortal* portal(World& world) {
-  return dynamic_cast<FakePortal*>(controller(world)->backend());
+  SnapShotBackend* backend = controller(world)->backend();
+  // KDE and Hyprland hold their shortcut in the portal behind the capture helper.
+  if (auto* helper = dynamic_cast<HelperSnapShot*>(backend)) backend = helper->shortcuts();
+  return dynamic_cast<FakePortal*>(backend);
 }
 
 QVariantMap snapShot(World& world) {
@@ -209,6 +218,7 @@ FakeDesktopPortal& bus() {
 void resetDesktop(World& world, const QProcessEnvironment& env = environment(QStringLiteral("wayland")),
                   const std::optional<PortalDesktop>& portal = std::nullopt) {
   desktop() = {};
+  snapshot::resetCaptureHelpers();
   throughPortal() = portal.has_value();
   if (portal) {
     bus().reset();
@@ -596,6 +606,8 @@ const Steps steps([] {
        [](World& world, const Captures& c, const Table&) {
          const QString current = c[0] == QLatin1String("GNOME") ? QStringLiteral("GNOME") : c[0] == QLatin1String("KDE Plasma") ? QStringLiteral("KDE") : QStringLiteral("sway");
          resetDesktop(world, environment(QStringLiteral("wayland"), current));
+         // KDE's setup is its capture helper.
+         if (current == QLatin1String("KDE")) snapshot::uninstallCaptureHelpers(world);
          openPanel(world);
          desktop().message = QStringLiteral("Your desktop could not say whether it can capture windows.");
          turnOn(world);
@@ -1330,6 +1342,9 @@ QStringList played() {
 
 void session(World& world, const QProcessEnvironment& env) {
   resetDesktop(world, env);
+}
+void portalSession(World& world, const QProcessEnvironment& env, const PortalDesktop& portal) {
+  resetDesktop(world, env, portal);
 }
 void shortcutRefused(const QString& reason) {
   desktop().holdShortcuts = false;

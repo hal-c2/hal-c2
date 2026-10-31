@@ -8,6 +8,8 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 
+#include "CaptureHelper.h"
+#include "HelperSnapShot.h"
 #include "MacPlatform.h"
 #include "MacSnapShot.h"
 #ifdef HAL_C2_HAS_DBUS
@@ -116,11 +118,25 @@ SnapShotBackend* SnapShotBackend::create(QObject* parent) {
     return new NiriSnapShot(platform, NiriSnapShot::socketPath(environment()), parent);
   }
 #endif
-  if (portalFactory()) return portalFactory()(platform, parent);
+  const auto portal = [&](QObject* owner) -> SnapShotBackend* {
+    if (portalFactory()) return portalFactory()(platform, owner);
 #ifdef HAL_C2_HAS_DBUS
-  return new PortalSnapShot(platform, parent);
+    return new PortalSnapShot(platform, owner);
 #else
+    return nullptr;
+#endif
+  };
+  if (platform.desktop == QLatin1String("kde") || platform.desktop == QLatin1String("hyprland")) {
+    const auto kind = platform.desktop == QLatin1String("kde") ? CaptureHelper::Kind::Kde : CaptureHelper::Kind::Hyprland;
+    if (SnapShotBackend* shortcuts = portal(nullptr)) {
+      return new HelperSnapShot(platform, shortcuts, new CaptureHelper(kind, CaptureHelper::defaultPaths(kind)), parent);
+    }
+  }
+  if (SnapShotBackend* backend = portal(parent)) return backend;
+#ifndef HAL_C2_HAS_DBUS
   return new UnavailableSnapShot(QStringLiteral("SnapShots are not supported on this platform."), parent);
+#else
+  return new UnavailableSnapShot(platform.message, parent);
 #endif
 }
 

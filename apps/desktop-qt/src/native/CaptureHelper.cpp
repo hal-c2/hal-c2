@@ -354,7 +354,10 @@ void CaptureHelper::perform(const QString& action) {
 }
 
 void CaptureHelper::capture() {
-  if (m_busy) return;
+  if (m_busy) {
+    emit failed(tr("Capture setup is still busy. Try again in a moment."));
+    return;
+  }
   const State found = files();
   if (found.status != QLatin1String("ready")) {
     setState(found);

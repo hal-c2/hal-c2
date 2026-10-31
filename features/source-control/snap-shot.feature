@@ -9,8 +9,8 @@
 #   apps/desktop/gnome-extension (extension.js, captureService.js, captureFeedback.js)
 #   apps/desktop/src/snapShot/SnapShotAccessibility.ts, SnapShotTransition.ts, NativeCaptureFeedback.ts (app text limits, flight, helper effects)
 #   apps/desktop-qt/src/native/SnapShotController.cpp
-# Linux Wayland captures through the desktop portal, or Niri's socket and a binding
-# in its config, without app text or capture effects; macOS captures directly and
+# Linux Wayland captures through the desktop portal, Niri's socket and a binding
+# in its config, or the KDE and Hyprland capture helpers, without app text or capture effects; macOS captures directly and
 # captures can carry the app's text.
 
 @desktop
@@ -392,8 +392,6 @@ Feature: Snap Shot captures another app's window into the draft
     When the user presses the Snap Shot shortcut
     Then that app's window is captured
 
-  @backlog-desktop
-  # The Qt desktop has only the portal backend.
   Scenario: A capture uses one backend and never falls back
     Given a Hyprland session whose capture helper fails
     When the user presses the Snap Shot shortcut
@@ -408,14 +406,14 @@ Feature: Snap Shot captures another app's window into the draft
       | desktop            | backend                                    |
       | another compositor | the desktop portal                         |
       | Niri               | a Niri binding                             |
+      | KDE Plasma         | the capture helper                         |
+      | Hyprland           | the capture helper and a Hyprland binding  |
 
-    # These desktops go through the desktop portal on the Qt desktop for now.
+    # GNOME goes through the desktop portal on the Qt desktop for now.
     @backlog-desktop
     Examples:
       | desktop            | backend                                    |
       | GNOME              | the HAL-C2 GNOME extension                |
-      | KDE Plasma         | the capture helper                         |
-      | Hyprland           | the capture helper and a Hyprland binding  |
 
   Scenario: Other Wayland desktops choose a window each time
     Given a Linux Wayland session on a compositor without automatic capture
@@ -449,8 +447,6 @@ Feature: Snap Shot captures another app's window into the draft
     When the user saves
     Then nothing is written and the user is asked to review again
 
-  @backlog-desktop
-  # The Qt desktop has no Hyprland capture.
   Scenario: Hyprland access being denied is shown plainly
     Given Hyprland refuses screen capture to HAL-C2
     When the user presses the Snap Shot shortcut
@@ -512,10 +508,6 @@ Feature: Snap Shot captures another app's window into the draft
       | sandbox | desktop    |
       | Snap    | Hyprland   |
       | Snap    | Niri       |
-
-    @backlog
-    Examples:
-      | sandbox | desktop    |
       | Flatpak | GNOME      |
       | Flatpak | KDE Plasma |
 
@@ -587,7 +579,7 @@ Feature: Snap Shot captures another app's window into the draft
     When the other instance's user presses the Snap Shot shortcut
     Then that capture fails and the user is told another HAL-C2 instance is capturing and to try again
 
-  @backlog @desktop
+  @desktop
   Scenario: Capture effects that do not start do not hold up the capture
     Given the flash and animation are on and the desktop's capture helper cannot show them
     When the user presses the Snap Shot shortcut

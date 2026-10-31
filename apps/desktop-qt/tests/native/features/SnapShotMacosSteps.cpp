@@ -227,6 +227,15 @@ void capture(World& world) {
   world.waitFor([&] { return !snapShotDraft(world).isEmpty(); }, [&] { return QStringLiteral("the capture on the draft"); });
 }
 
+void expectFailure(World& world, const QStringList& said) {
+  expect(snapShotDraft(world).isEmpty(), QStringLiteral("nothing attached; %1").arg(show(snapShotDraft(world))));
+  for (const QVariant& item : world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
+    const QVariantMap toast = item.toMap();
+    if (toast.value(QStringLiteral("title")) == QLatin1String("Snapshot failed") && said.contains(toast.value(QStringLiteral("description")).toString())) return;
+  }
+  fail(QStringLiteral("the toast saying one of %1; the shell shows %2").arg(said.join(QStringLiteral(", ")), show(world.state(QStringLiteral("toasts")))));
+}
+
 const Steps steps([] {
   step(QStringLiteral("macOS returns an empty image for the window"), [](World&, const Captures&, const Table&) { mac().emptyImage = true; });
   step(QStringLiteral("macOS taking the picture of the window has not answered after 15 seconds"), [](World&, const Captures&, const Table&) {
@@ -234,21 +243,8 @@ const Steps steps([] {
     mac().captureFailure = QStringLiteral("timed-out");
   });
   step(QStringLiteral("no window is available to capture"), [](World&, const Captures&, const Table&) { mac().captureFailure = QStringLiteral("missing"); });
-  step(QStringLiteral("nothing is attached and the user is told the (window could not be captured|active window is not available for capture)"),
-       [](World& world, const Captures& c, const Table&) {
-         expect(snapShotDraft(world).isEmpty(), QStringLiteral("nothing attached; %1").arg(show(snapShotDraft(world))));
-         const QStringList said = c[0].startsWith(QLatin1String("window"))
-                                      ? QStringList{QStringLiteral("macOS could not capture the window."), QStringLiteral("macOS returned an invalid snapshot.")}
-                                      : QStringList{QStringLiteral("No window is available to capture.")};
-         for (const QVariant& item : world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
-           const QVariantMap toast = item.toMap();
-           if (toast.value(QStringLiteral("title")) == QLatin1String("Snapshot failed") && said.contains(toast.value(QStringLiteral("description")).toString())) return;
-         }
-         fail(QStringLiteral("the toast saying one of %1; the shell shows %2").arg(said.join(QStringLiteral(", ")), show(world.state(QStringLiteral("toasts")))));
-       });
-  step(QStringLiteral("no half-finished capture is kept"), [](World& world, const Captures&, const Table&) {
-    expect(mac().kept == 0 && snapShotDraft(world).isEmpty(), QStringLiteral("no capture kept"));
-  });
+  step(QStringLiteral("nothing is attached and the user is told the active window is not available for capture"),
+       [](World& world, const Captures&, const Table&) { expectFailure(world, {QStringLiteral("No window is available to capture.")}); });
   step(QStringLiteral("the next press of the shortcut captures normally"), [](World& world, const Captures&, const Table&) {
     mac().captureFailure.clear();
     capture(world);
@@ -321,6 +317,8 @@ const Steps steps([] {
   // Each permission on its own.
   step(QStringLiteral("the user is on the access step"), [](World& world, const Captures&, const Table&) {
     send(world, QStringLiteral("setup.open"));
+    // Capture that already works opens on the shortcut, one step on.
+    if (field(world, QStringLiteral("wizard.step")) == QLatin1String("shortcut")) send(world, QStringLiteral("setup.back"));
     expectStep(world, QStringLiteral("access"));
   });
   step(QStringLiteral("Screen Recording is shown with %1").arg(kQuoted), [](World& world, const Captures& c, const Table&) {
@@ -400,13 +398,6 @@ const Steps steps([] {
     expect(!enabled(world) && details.startsWith(c[0]) && details.contains(QLatin1String("screencapture exited with code 1")),
            QStringLiteral("capture off and why; Snap Shot is %1").arg(show(snap(world))));
     expectStep(world, QStringLiteral("access"));
-  });
-  step(QStringLiteral("the user can try again"), [](World& world, const Captures&, const Table&) {
-    expectCanContinue(world, true);
-    mac().captureFailure.clear();
-    send(world, QStringLiteral("setup.continue"));
-    expectStep(world, QStringLiteral("shortcut"));
-    expect(enabled(world), QStringLiteral("capture on once the test works"));
   });
   step(QStringLiteral("the user continues past the access step"), [](World& world, const Captures&, const Table&) {
     allowAll();
@@ -587,6 +578,23 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+// The Niri and macOS scenarios share these words (SnapShotConfigSteps.cpp holds the steps).
+namespace snapshot {
+void macTryAgain(World& world) {
+  expectCanContinue(world, true);
+  mac().captureFailure.clear();
+  send(world, QStringLiteral("setup.continue"));
+  expectStep(world, QStringLiteral("shortcut"));
+  expect(enabled(world), QStringLiteral("capture on once the test works"));
+}
+void macWindowFailed(World& world) {
+  expectFailure(world, {QStringLiteral("macOS could not capture the window."), QStringLiteral("macOS returned an invalid snapshot.")});
+}
+void macNothingKept(World& world) {
+  expect(mac().kept == 0 && snapShotDraft(world).isEmpty(), QStringLiteral("no capture kept"));
+}
+}  // namespace snapshot
 
 // The shortcut pressed on this Mac, turning Snap Shot on first if the scenario
 // has not, for SnapShotSteps.cpp's own press.

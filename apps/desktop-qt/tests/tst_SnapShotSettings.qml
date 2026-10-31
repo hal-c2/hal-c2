@@ -141,6 +141,18 @@ Item {
             compare(last().payload.completed, false);
         }
 
+        function test_a_step_that_installs_sends_its_action() {
+            Shell.state = { snapShot: root.snapShot({ wizard: { step: "access", action: "install-kde-helper", title: "Set up Snap Shot", heading: "Allow capture",
+                                                                body: "", details: "", attention: "", checkMessage: "The helper failed to start.",
+                                                                closeLabel: "Finish later", continueLabel: "Install", doneLabel: "Done", doneEnabled: false,
+                                                                permissions: false, permissionsLabel: "" } }) };
+            const page = createTemporaryObject(snapComponent, root);
+            compare(findChild(page, "checkMessage").text, "The helper failed to start.");
+            mouseClick(findChild(page, "continue"));
+            compare(last().action, "snapShot.setup.action");
+            compare(last().payload.action, "install-kde-helper");
+        }
+
         function test_the_walk_through_waits_while_it_works() {
             Shell.state = { snapShot: root.snapShot({ wizard: { step: "access", busy: true, title: "Set up Snap Shot", heading: "Allow capture",
                                                                 body: "", details: "", attention: "", closeLabel: "Finish later",

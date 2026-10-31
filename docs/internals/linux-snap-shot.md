@@ -63,9 +63,11 @@ version before adding it to `metadata.json`.
 
 ## Qt desktop
 
-`apps/desktop-qt` captures through the portal (`PortalSnapShot`, over QtDBus) on every Wayland
-desktop but Niri outside a sandbox. GNOME, KDE and Hyprland get the window picker unless their portal
-offers the active-window target. The helper backends are `@backlog-desktop`.
+`apps/desktop-qt` captures through the portal (`PortalSnapShot`, over QtDBus) on GNOME and any other
+Wayland desktop without a backend of its own, with the window picker unless the portal offers the
+active-window target. Outside a sandbox, Niri captures through its socket, and KDE and Hyprland through
+their helpers (`HelperSnapShot`, `CaptureHelper`) with the shortcut still in the portal. The helpers'
+capture effects are not driven yet: setup says they are unavailable, and captures go without them.
 
 On Niri and Hyprland the capture shortcut lives in the compositor's config, written only after the
 user reviews the diff (`CaptureShortcutConfig`). Hyprland's binding still reaches HAL-C2 through a

@@ -9,7 +9,7 @@
 #include <QStringList>
 
 // How the desktop answers BindShortcuts.
-enum class PortalAnswer { Grant, Unassigned, Refuse, Hold };
+enum class PortalAnswer { Grant, Unassigned, Nothing, Refuse, Hold };
 
 struct PortalDesktop {
   uint shortcutsVersion = 2;

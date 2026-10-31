@@ -16,8 +16,8 @@
 #   apps/desktop/src/snapShot/PortalCaptureShortcut.ts, NiriCaptureShortcut.ts, NiriSnapShot.ts (shortcut session and endpoint errors)
 #   apps/desktop/src/snapShot/GnomeCaptureSetup.ts, KdeSnapShot.ts, HyprlandSnapShot.ts (extension and helper install safety)
 #   apps/desktop/src/snapShot/DesktopSnapShot.ts, snapShot.ts (shortcut registration, modifier-pair and conflict messages)
-# Linux Wayland captures through the desktop portal, or Niri's socket and a binding
-# in its config, and macOS through MacSnapShot, which alone carries app text: no
+# Linux Wayland captures through the desktop portal, Niri's socket and a binding
+# in its config, or the KDE and Hyprland capture helpers, and macOS through MacSnapShot, which alone carries app text: no
 # Windows capture yet.
 
 @desktop
@@ -53,8 +53,7 @@ Feature: Snap Shot settings
       | platform                          | permissions                          |
       | Windows                           | nothing                              |
 
-  @backlog-desktop
-  # There is no capture helper to install on the Qt desktop.
+  @desktop
   Scenario: Finishing setup later
     Given the user installed the capture helper during setup
     When the user chooses to finish later
@@ -166,13 +165,16 @@ Feature: Snap Shot settings
       | on with no shortcut chosen yet                                     | Finish shortcut setup                                |
       | on but the desktop reports a problem                               | Capture needs attention                              |
 
-    # The Qt desktop has no capture helper or GNOME extension, and does not
-    # track whether the shortcut has been seen to work from another app.
-    @backlog
     Examples:
       | situation                                                          | status                                               |
       | on but the capture helper is not installed                         | Install the capture helper to continue               |
       | on but the capture helper's access check failed                    | Check capture access in setup                        |
+
+    # The Qt desktop has no GNOME extension, and does not track whether the
+    # shortcut has been seen to work from another app.
+    @backlog
+    Examples:
+      | situation                                                          | status                                               |
       | on with the GNOME extension not enabled                            | Set up active-window snapshots                       |
       | on with a shortcut saved but never seen to work from another app   | Use your shortcut from another app                   |
 
@@ -393,14 +395,17 @@ Feature: Snap Shot settings
       | situation                                                    | message                                                                 |
       | any other desktop but Niri                                   | Capture effects aren't available on this desktop.                       |
 
-    # The Qt desktop has no capture helper or GNOME extension.
-    @backlog
     Examples:
       | situation                                                    | message                                                                 |
       | Hyprland has its helper ready but no effects                 | Capture effects aren't available on this desktop.                       |
       | Hyprland has no helper or an outdated one                    | Install or update the capture helper to enable effects.                 |
       | KDE Plasma has its helper ready but no effects               | Capture effects aren't available on this desktop.                       |
       | KDE Plasma has no helper or an outdated one                  | Install or update the capture helper to enable effects.                 |
+
+    # The Qt desktop has no GNOME extension.
+    @backlog
+    Examples:
+      | situation                                                    | message                                                                 |
       | the GNOME extension is installed but is the first version    | Update the GNOME extension, then sign out and back in to enable effects. |
       | GNOME setup has not been finished                            | Finish extension setup to enable effects.                               |
 
@@ -500,10 +505,16 @@ Feature: Snap Shot settings
     Given the GNOME extension is enabled
     When the user opens Advanced on the access step
     Then they can disable the extension
-    And on KDE Plasma and Hyprland they can remove the capture helper
+
+  # Split from the scenario above: the helpers and the GNOME extension do not ship together.
+  @desktop
+  Scenario: The user can remove the capture helper setup installed
+    Given a session whose capture helper was installed by setup
+    When the user opens Advanced on the access step
+    Then they can remove the capture helper
     And the helper's own note says it is included with HAL-C2 and needs no download
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The access step offers the capture helper on KDE Plasma and Hyprland
     Given a <desktop> session where the capture helper is <state>
     When the user is on the access step
@@ -517,7 +528,7 @@ Feature: Snap Shot settings
       | Hyprland   | not installed        | Install the capture helper  |
       | Hyprland   | failing its check    | Check again                 |
 
-  @backlog @desktop
+  @desktop
   Scenario: A failing capture helper suggests reinstalling it
     Given a KDE Plasma session where the capture helper fails its access check
     When the user checks again and it still fails
@@ -537,7 +548,7 @@ Feature: Snap Shot settings
     When the user checks again
     Then the answer is acknowledged and setup keeps asking for the login
 
-  @backlog @desktop
+  @desktop
   Scenario: Hyprland may ask for permission the first time
     Given a Hyprland session with the capture helper installed
     When the user is on the access step
@@ -889,7 +900,7 @@ Feature: Snap Shot settings
     Then HAL-C2 keeps waiting and the shortcut row keeps asking for the prompt to be approved
     And the shortcut is registered as soon as the user approves
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A Hyprland shortcut session says whether the capture action is registered
     Given a Hyprland session where the binding is kept in the Hyprland config
     When <situation>
@@ -902,7 +913,7 @@ Feature: Snap Shot settings
       | Hyprland does not register the capture action                | Hyprland did not register the capture action. Check that xdg-desktop-portal-hyprland is running, then restart HAL-C2.            |
       | Hyprland's shortcut session cannot be reached                | Couldn't connect to Hyprland shortcuts. Make sure xdg-desktop-portal-hyprland is running, then restart HAL-C2.                   |
 
-  @backlog @desktop
+  @desktop
   Scenario: Asking for the shortcut again is not offered for a Hyprland binding
     Given a Hyprland session where the binding is kept in the Hyprland config
     When the user asks for the shortcut permission
@@ -1015,7 +1026,7 @@ Feature: Snap Shot settings
     Then the extension bundled with the app is copied for this user only
     And nothing is downloaded and no administrator password is asked
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A capture helper is never written over a link
     Given a <desktop> session
     And <conflict>
@@ -1031,7 +1042,7 @@ Feature: Snap Shot settings
       | Hyprland   | the helper is a link                               | The capture helper must be a regular file, not a link.                              |
       | Hyprland   | the helper's folder is a link                      | The capture helper directory must not be a link.                                    |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A capture helper that this build does not carry is reported
     Given a <desktop> session
     And the app was built without its capture helper
@@ -1043,7 +1054,7 @@ Feature: Snap Shot settings
       | KDE Plasma |
       | Hyprland   |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A capture helper that cannot be set up says why
     Given a KDE Plasma session
     When <situation>
@@ -1055,14 +1066,14 @@ Feature: Snap Shot settings
       | KDE has not granted the helper screen capture access     | KDE hasn't granted capture access. Reinstall the capture helper in setup, then try again.           |
       | the helper does not answer a check                       | The KDE capture helper did not respond. Reopen capture setup and check access.                       |
 
-  @backlog @desktop
+  @desktop
   Scenario: Capturing before the capture helper is ready points to setup
     Given a KDE Plasma or Hyprland session where the capture helper is not ready
     When the user presses the Snap Shot shortcut
     Then nothing is attached
     And the user is told what is missing and to open Settings, SnapShots to continue setup
 
-  @backlog @desktop
+  @desktop
   Scenario: A Hyprland capture helper that does not answer fails the capture
     Given a Hyprland session with the capture helper installed
     And the helper does not answer within twenty seconds
@@ -1070,14 +1081,14 @@ Feature: Snap Shot settings
     Then nothing is attached
     And the user is told Hyprland capture did not respond and to check capture setup and try again
 
-  @backlog @desktop
+  @desktop
   Scenario: Setup installs or removes only what the user chose
     Given a KDE Plasma or Hyprland session
     When the user checks capture access without choosing to install
     Then nothing is written to the user's files
     And files are written only after the user chooses to install the helper
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A setup step that belongs to another desktop is refused
     Given the desktop app runs <session>
     When setup is asked to <step>
@@ -1091,6 +1102,11 @@ Feature: Snap Shot settings
       | on Linux without GNOME  | install the GNOME extension              |
       | on Linux                | allow screen recording the way macOS does |
       | on Linux                | test a capture the way macOS does        |
+
+    # The Qt desktop has no Windows capture yet.
+    @backlog
+    Examples:
+      | session                 | step                                     |
       | on Windows              | review a Niri or Hyprland config change  |
 
   # The Qt desktop and its capture code ship as one app, so there is no older bridge to update past.

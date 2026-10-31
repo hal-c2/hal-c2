@@ -16,8 +16,9 @@
 // Linux Wayland captures through xdg-desktop-portal (PortalSnapShot): the
 // Screenshot portal's active-window target where the desktop offers it, else
 // its window picker, and the GlobalShortcuts portal for the shortcut. Niri
-// outside a sandbox captures over its own socket (NiriSnapShot). macOS captures
-// directly (MacSnapShot). X11 and Windows are unavailable for now
+// outside a sandbox captures over its own socket (NiriSnapShot), and KDE and
+// Hyprland through a helper executable (HelperSnapShot, CaptureHelper) with the
+// shortcut still in the portal. macOS captures directly (MacSnapShot). X11 and Windows are unavailable for now
 // (UnavailableSnapShot).
 //
 // A backend answers from what it has already found out: `session()` is not
