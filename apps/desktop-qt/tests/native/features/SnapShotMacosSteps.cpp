@@ -20,6 +20,7 @@
 void snapShotOpenThread(World& world);
 QVariantList snapShotDraft(World& world);
 void snapShotMacPress(World& world);
+int snapShotNiriShots();
 
 namespace {
 
@@ -238,16 +239,22 @@ const Steps steps([] {
        [](World& world, const Captures& c, const Table&) {
          expect(snapShotDraft(world).isEmpty(), QStringLiteral("nothing attached; %1").arg(show(snapShotDraft(world))));
          const QStringList said = c[0].startsWith(QLatin1String("window"))
-                                      ? QStringList{QStringLiteral("macOS could not capture the window."), QStringLiteral("macOS returned an invalid snapshot.")}
+                                      ? QStringList{QStringLiteral("macOS could not capture the window."), QStringLiteral("macOS returned an invalid snapshot."),
+                                                    QStringLiteral("Niri has no focused window to capture.")}
                                       : QStringList{QStringLiteral("No window is available to capture.")};
-         for (const QVariant& item : world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
-           const QVariantMap toast = item.toMap();
-           if (toast.value(QStringLiteral("title")) == QLatin1String("Snapshot failed") && said.contains(toast.value(QStringLiteral("description")).toString())) return;
-         }
-         fail(QStringLiteral("the toast saying one of %1; the shell shows %2").arg(said.join(QStringLiteral(", ")), show(world.state(QStringLiteral("toasts")))));
+         world.waitFor(
+             [&] {
+               for (const QVariant& item : world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
+                 const QVariantMap toast = item.toMap();
+                 if (toast.value(QStringLiteral("title")) == QLatin1String("Snapshot failed") && said.contains(toast.value(QStringLiteral("description")).toString())) return true;
+               }
+               return false;
+             },
+             [&] { return QStringLiteral("the toast saying one of %1; the shell shows %2").arg(said.join(QStringLiteral(", ")), show(world.state(QStringLiteral("toasts")))); });
+         expect(snapShotDraft(world).isEmpty(), QStringLiteral("nothing attached; %1").arg(show(snapShotDraft(world))));
        });
   step(QStringLiteral("no half-finished capture is kept"), [](World& world, const Captures&, const Table&) {
-    expect(mac().kept == 0 && snapShotDraft(world).isEmpty(), QStringLiteral("no capture kept"));
+    expect(mac().kept == 0 && snapShotNiriShots() == 0 && snapShotDraft(world).isEmpty(), QStringLiteral("no capture kept"));
   });
   step(QStringLiteral("the next press of the shortcut captures normally"), [](World& world, const Captures&, const Table&) {
     mac().captureFailure.clear();

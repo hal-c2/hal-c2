@@ -57,6 +57,8 @@ struct FakeDesktop {
   QList<std::function<void(const SnapShotBackend::Check&)>> checks;
   // The desktop will not pause the capture shortcut, with this reason.
   std::optional<QString> refusePause;
+  // The desktop does not answer a shortcut's bind.
+  bool holdShortcuts = false;
 };
 
 FakeDesktop& desktop() {
@@ -106,7 +108,9 @@ public:
   void bind(const QString& trigger) override {
     desktop().binds.append(trigger);
     m_shortcut = {};
-    if (desktop().refuse.isEmpty()) {
+    if (desktop().holdShortcuts) {
+      m_shortcut.pending = true;
+    } else if (desktop().refuse.isEmpty()) {
       m_shortcut.registered = true;
       m_shortcut.label = describeTrigger(trigger);
     } else {
@@ -249,6 +253,7 @@ const QJsonObject kCtrlShift2{{QStringLiteral("key"), QStringLiteral("2")}, {QSt
 void turnOn(World& world) {
   settings(world)->set(QStringLiteral("snapShotShortcut"), kCtrlShift2.toVariantMap());
   settings(world)->set(QStringLiteral("snapShotEnabled"), true);
+  if (desktop().holdShortcuts) return;
   world.waitFor([&] { return field(world, QStringLiteral("shortcut.registered")).toBool(); },
                 [&] { return QStringLiteral("the shortcut to be held; Snap Shot is %1").arg(show(snapShot(world))); });
 }
@@ -292,8 +297,12 @@ void capture(World& world) {
   seen() = {};
   QObject::connect(&world.bridge(), &ShellBridge::windowCommandRequested, controller(world),
                    [](const QString& command) { seen().raised.append(command); });
-  expect(portal(world) != nullptr, QStringLiteral("the shell has no fake portal"));
-  portal(world)->press();
+  // A real backend (NiriSnapShot) hears its shortcut the same way.
+  if (portal(world)) {
+    portal(world)->press();
+  } else {
+    emit controller(world)->backend()->activated();
+  }
 }
 
 QString threadKey(World& world) {
@@ -764,7 +773,7 @@ const Steps steps([] {
            QStringLiteral("app text to stay off; Snap Shot is %1").arg(show(snapShot(world))));
   });
   step(QStringLiteral("the panel says %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    expect(field(world, QStringLiteral("accessibility.status")) == c[0], QStringLiteral("the panel to say %1; Snap Shot is %2").arg(c[0], show(snapShot(world))));
+    expect(field(world, QStringLiteral("accessibility.status")) == c[0] || field(world, QStringLiteral("shortcut.status")) == c[0], QStringLiteral("the panel to say %1; Snap Shot is %2").arg(c[0], show(snapShot(world))));
   });
   step(QStringLiteral("the user's settings cannot be written"), [](World& world, const Captures&, const Table&) {
     // A file where the preferences' folder would be.
@@ -1222,7 +1231,8 @@ const Steps steps([] {
     openPanel(world);
     send(world, QStringLiteral("enable"), {{QStringLiteral("on"), true}});
     recordCtrlShift2(world);
-    send(world, QStringLiteral("setup.done"));
+    // A compositor's own config holds it; the user says it is there.
+    send(world, field(world, QStringLiteral("shortcut.managed")).toBool() ? QStringLiteral("config.complete") : QStringLiteral("setup.done"));
     expect(!field(world, QStringLiteral("wizard")).isValid() || field(world, QStringLiteral("wizard")).isNull(),
            QStringLiteral("setup to finish; Snap Shot is %1").arg(show(snapShot(world))));
   });
@@ -1316,6 +1326,36 @@ void refusePause(const QString& reason) {
 }
 QStringList played() {
   return desktop().played;
+}
+
+void session(World& world, const QProcessEnvironment& env) {
+  resetDesktop(world, env);
+}
+void shortcutRefused(const QString& reason) {
+  desktop().holdShortcuts = false;
+  desktop().refuse = reason;
+}
+void holdShortcuts() {
+  desktop().holdShortcuts = true;
+}
+QStringList binds() {
+  return desktop().binds;
+}
+void thread(World& world) {
+  openThread(world);
+}
+void pressShortcut(World& world) {
+  capture(world);
+}
+QVariantMap attachedImage(World& world) {
+  return attached(world, threadKey(world));
+}
+QVariantList draftImages(World& world) {
+  return attachments(world, threadKey(world));
+}
+void pickerOnly(World& world) {
+  desktop().picker = true;
+  update(world);
 }
 
 }  // namespace snapshot

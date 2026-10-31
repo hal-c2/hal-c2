@@ -16,9 +16,9 @@
 #   apps/desktop/src/snapShot/PortalCaptureShortcut.ts, NiriCaptureShortcut.ts, NiriSnapShot.ts (shortcut session and endpoint errors)
 #   apps/desktop/src/snapShot/GnomeCaptureSetup.ts, KdeSnapShot.ts, HyprlandSnapShot.ts (extension and helper install safety)
 #   apps/desktop/src/snapShot/DesktopSnapShot.ts, snapShot.ts (shortcut registration, modifier-pair and conflict messages)
-# The Qt desktop captures through the desktop portal on Linux Wayland and through
-# MacSnapShot on macOS, which alone carries app text: no Windows capture, no
-# capture helper and no compositor bindings yet.
+# The Qt desktop captures on Linux Wayland through the desktop portal, or Niri's
+# socket and a binding in its config, and through MacSnapShot on macOS, which
+# alone carries app text: no Windows capture and no capture helper yet.
 
 @desktop
 Feature: Snap Shot settings
@@ -127,7 +127,7 @@ Feature: Snap Shot settings
     Then the user is told capture effects are not available on Niri
 
   @backlog-desktop
-  # The Qt desktop edits no compositor config.
+  # Neither the Qt desktop nor upstream reopens setup when the binding changes.
   Scenario: Reviewing compositor changes again
     Given a Hyprland session where the Snap Shot binding changed outside HAL-C2
     When the panel loads
@@ -328,7 +328,7 @@ Feature: Snap Shot settings
     When the panel loads
     Then there is no Shortcut permissions button
 
-  @backlog @desktop
+  @desktop
   Scenario: A shortcut kept in the compositor is changed through setup
     Given a Niri or Hyprland session where HAL-C2 keeps the binding in the compositor config
     When the panel loads
@@ -592,14 +592,14 @@ Feature: Snap Shot settings
     When the desktop has refused the shortcut
     Then the user cannot finish until it is allowed or changed
 
-  @backlog @desktop
+  @desktop
   Scenario: A Niri or Hyprland shortcut is reviewed before it is written
     Given a Niri or Hyprland session
     When the user records a shortcut and chooses Review changes
     Then the config's changes are shown as a diff with "Only these changes will be saved. We'll keep a backup."
     And nothing is written until the user chooses Save shortcut
 
-  @backlog @desktop
+  @desktop
   Scenario: Preparing config changes shows progress and can fail
     Given a Hyprland session
     When the user chooses Review changes
@@ -607,49 +607,49 @@ Feature: Snap Shot settings
     When the desktop cannot prepare the changes
     Then the user is told "Couldn't prepare the changes. Check Advanced for help."
     And the technical reason is under Advanced
-    And the user can try again
+    And the user can try the review again
 
-  @backlog @desktop
+  @desktop
   Scenario: Changing the keys while reviewing needs a new diff
     Given the user is reviewing a diff for the shortcut Ctrl+Shift+1
     When the user records Ctrl+Shift+3
     Then the old diff is withdrawn and the user reviews again
 
-  @backlog @desktop
+  @desktop
   Scenario: Cancelling a reviewed diff writes nothing
     Given the user is reviewing a diff
     When the user cancels
     Then the config is not written and setup is not finished
 
-  @backlog @desktop
+  @desktop
   Scenario: A shortcut already in the config is not written again
     Given the config already holds the shortcut
     When the user reviews changes
     Then the user is told "This shortcut is already set up."
     And the user can choose Done
 
-  @backlog @desktop
+  @desktop
   Scenario: Saving the shortcut finishes setup with a message
     Given the user reviewed a diff and saves it
     When the config is written and the desktop reloaded
     Then the user is told "Shortcut saved" and to use the shortcut from another app
     And setup closes
 
-  @backlog @desktop
+  @desktop
   Scenario: A reload that fails is not reported as success
     Given the user reviewed a diff and saves it
     When the config is written but the desktop could not reload
     Then the user is told "Saved, but the shortcut needs attention. Check Advanced for help."
     And setup does not finish
 
-  @backlog @desktop
+  @desktop
   Scenario: A failed write asks for another review
     Given the user reviewed a diff and saves it
     When the write fails
     Then the user is told "Couldn't save your shortcut. Review the changes and try again."
     And the old diff is withdrawn
 
-  @backlog @desktop
+  @desktop
   Scenario: The shortcut can be removed from the compositor config
     Given a Niri or Hyprland session with a saved shortcut
     When the user chooses Remove shortcut under Advanced and reviews the change
@@ -657,41 +657,42 @@ Feature: Snap Shot settings
     And saving says "Shortcut removed."
     And with no binding to remove the user is told "There's no capture shortcut to remove."
 
-  @backlog @desktop
+  @desktop
   Scenario: The config file can be chosen by the user
     Given a Niri or Hyprland session
     When the user opens Advanced and chooses a different file
     Then the changes are prepared against that file
     And the panel shows which settings file is in use, including a link's target and that it will be kept
 
-  @backlog @desktop
+  @desktop
   Scenario: The binding can be set up by hand
     Given a Niri or Hyprland session
     When the user opens Advanced
     Then the binding is shown with where to paste it and a way to copy it
     And copying says "Copied"
 
-  @backlog @desktop
+  @desktop
   Scenario: The config that was written is backed up and its path shown
     Given the user saved the shortcut into the config
     When the user opens Advanced
     Then the backup file's path is shown
 
-  @backlog @desktop
+  # The Qt desktop and its capture code ship as one app.
+  @dropped @desktop
   Scenario: A config change cannot be prepared by an older desktop app
     Given the desktop app is too old to prepare compositor config changes
     When the user is on the shortcut step
     Then Review changes is unavailable
     And the user is told "Update HAL-C2 to finish setting up your shortcut."
 
-  @backlog @desktop
+  @desktop
   Scenario: A shortcut waiting for the compositor says what is missing
     Given a Hyprland session where HAL-C2's shortcut action is not registered yet
     When the user is on the shortcut step
     Then setup says "Connecting to your desktop…" while it connects
     And "Restart HAL-C2 to finish connecting your shortcut." when it is not coming
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A config that is not safe to edit is refused with a reason
     Given a Niri or Hyprland session
     And <config>
@@ -709,47 +710,47 @@ Feature: Snap Shot settings
       | a Hyprland Lua config returns early or uses long strings       | This Lua config needs a manual edit. Choose your bindings file or use manual setup in Advanced. |
       | a Niri config has more than one binds section                   | This Niri config has an unexpected binds section. Check it in Advanced. |
 
-  @backlog @desktop
+  @desktop
   Scenario: A shortcut already used elsewhere is refused before it is written
     Given a Niri or Hyprland session
     And the chosen keys are already bound in the config, in a file it includes, or by Hyprland itself
     When the user chooses Review changes
     Then nothing is changed and the user is told the keys are already used and to choose another shortcut
 
-  @backlog @desktop
+  @desktop
   Scenario: A Hyprland that cannot list its shortcuts blocks the change
     Given a Hyprland session that cannot report its current shortcuts
     When the user chooses Review changes
     Then the user is told to try again from the Hyprland session
     And nothing is changed
 
-  @backlog @desktop
+  @desktop
   Scenario: Only one config change is prepared at a time
     Given the desktop is saving a reviewed shortcut change
     When the user asks to review another change
     Then the user is told to wait for the current config change to finish
 
-  @backlog @desktop
+  @desktop
   Scenario: A shortcut that is not a letter, number or function key with Ctrl, Alt or Super is refused for the config
     Given a Niri or Hyprland session
     When the user records a shortcut of Shift and a letter, or of a punctuation key
     Then the user is told to choose a letter, number or function key with Ctrl, Alt or Super
 
-  @backlog @desktop
+  @desktop
   Scenario: A Niri config is checked before it replaces the user's file
     Given the user reviewed a change to the Niri config
     When the user saves
     Then Niri validates the new config first
     And a config Niri rejects is not saved
 
-  @backlog @desktop
+  @desktop
   Scenario: Saving keeps the file's permissions and line endings
     Given the user reviewed a change to a config that uses Windows line endings and is readable only by the user
     When the user saves
     Then the new binding uses the same line endings
     And the file keeps its permissions
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A config file that is too big or not text is refused
     Given a Niri or Hyprland session
     And <config>
@@ -762,14 +763,14 @@ Feature: Snap Shot settings
       | the settings file and its included files add up to more than 1 MB | This config has too many included files. Use manual setup in Advanced. |
       | the settings file is not a text file                      | Choose a text config file.          |
 
-  @backlog @desktop
+  @desktop
   Scenario: A Hyprland that reports config errors after a reload fails the save
     Given the user reviewed a change to the Hyprland config and saves it
     When Hyprland reloads and reports errors in its config
     Then the user is told Hyprland reported config errors
     And setup does not finish
 
-  @backlog @desktop
+  @desktop
   Scenario: A review that is no longer current cannot be saved
     Given the user reviewed a change to the Niri or Hyprland config
     And the user has since reviewed another change, or the change was already saved
@@ -777,7 +778,7 @@ Feature: Snap Shot settings
     Then nothing is written
     And the user is told the preview expired and to review the changes again
 
-  @backlog @desktop
+  @desktop
   Scenario: A missing optional include that appears after review is not ignored
     Given the user reviewed a change to a Niri config that includes an optional file that does not exist
     And that file has been created since the review
@@ -931,7 +932,7 @@ Feature: Snap Shot settings
       | the permission prompt is not answered in time          | Shortcut permission request timed out. Try again.                   |
       | the desktop's shortcut service cannot be reached       | Could not connect to your desktop's shortcut service.               |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The Niri capture shortcut endpoint reports why it is not working
     Given a Niri session of version 25.11 or newer
     When <situation>
@@ -943,20 +944,20 @@ Feature: Snap Shot settings
       | the endpoint disconnects while HAL-C2 is running             | The Niri capture endpoint disconnected. Restart HAL-C2.                    |
       | the endpoint is up and the binding is not in the config yet  | Set up the shortcut to add it to your Niri config.                         |
 
-  @backlog @desktop
+  @desktop
   Scenario: Niri older than 25.11 cannot capture
     Given a Niri session older than version 25.11
     When the user presses the Snap Shot shortcut
     Then nothing is attached and the user is told SnapShots require Niri 25.11 or newer
 
-  @backlog @desktop
+  @desktop
   Scenario: The Niri binding endpoint refuses calls with arguments
     Given a Niri session with the capture binding set up
     When another program calls the capture endpoint with arguments
     Then the call is refused as invalid
     And no capture is taken
 
-  @backlog @desktop
+  @desktop
   Scenario: Shortcut settings in Niri and Hyprland are changed in the compositor
     Given a Niri or Hyprland session
     When the user checks a shortcut in HAL-C2
