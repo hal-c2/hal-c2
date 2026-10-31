@@ -11,6 +11,7 @@
 #ifdef HAL_C2_HAS_DBUS
 #include "PortalSnapShot.h"
 #endif
+#include "WindowsSnapShot.h"
 
 namespace {
 
@@ -21,6 +22,11 @@ std::optional<QProcessEnvironment>& environmentOverride() {
 
 SnapShotBackend::PortalFactory& portalFactory() {
   static SnapShotBackend::PortalFactory factory;
+  return factory;
+}
+
+SnapShotBackend::WindowsFactory& windowsFactory() {
+  static SnapShotBackend::WindowsFactory factory;
   return factory;
 }
 
@@ -68,6 +74,16 @@ void SnapShotBackend::setPortalFactory(PortalFactory factory) {
   portalFactory() = std::move(factory);
 }
 
+void SnapShotBackend::setWindowsFactory(WindowsFactory factory) {
+  windowsFactory() = std::move(factory);
+}
+
+SnapShotBackend::Availability SnapShotBackend::check(const QJsonObject& shortcut) const {
+  QString problem;
+  if (portalTrigger(shortcut, &problem).isEmpty()) return {false, problem};
+  return {true, tr("Your desktop will confirm this shortcut when you save it.")};
+}
+
 SnapShotBackend::Platform SnapShotBackend::detect(const QProcessEnvironment& env, bool onLinux) {
   if (!onLinux) return {false, {}, QStringLiteral("SnapShots are not supported on this platform.")};
   const QString type = env.value(QStringLiteral("XDG_SESSION_TYPE")).toLower();
@@ -91,6 +107,17 @@ SnapShotBackend::Platform SnapShotBackend::detect(const QProcessEnvironment& env
 }
 
 SnapShotBackend* SnapShotBackend::create(QObject* parent) {
+  const auto& stand = environmentOverride();
+#ifdef Q_OS_WIN
+  const bool onWindows = !stand || stand->value(QStringLiteral("OS")) == QLatin1String("Windows_NT");
+#else
+  const bool onWindows = stand && stand->value(QStringLiteral("OS")) == QLatin1String("Windows_NT");
+#endif
+  if (onWindows) {
+    WindowsSystem* system = windowsFactory() ? windowsFactory()(nullptr) : createNativeWindowsSystem(nullptr);
+    if (system) return new WindowsSnapShot(system, parent);
+    return new UnavailableSnapShot(QStringLiteral("SnapShots are not supported on this platform."), parent);
+  }
 #ifdef Q_OS_LINUX
   const bool onLinux = true;
 #else

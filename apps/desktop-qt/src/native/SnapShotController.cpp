@@ -195,10 +195,11 @@ void SnapShotController::follow() {
 }
 
 void SnapShotController::applyShortcut() {
+  m_backend->setCues(setting(QStringLiteral("snapShotFlash")).toBool(), setting(QStringLiteral("snapShotAnimations")).toBool());
   QString trigger;
   QString problem;
-  if (enabled() && m_backend->session().mode == QLatin1String("portal")) {
-    trigger = SnapShotBackend::portalTrigger(savedShortcut(), &problem);
+  if (enabled() && m_backend->session().mode != QLatin1String("unavailable")) {
+    trigger = m_backend->trigger(savedShortcut(), &problem);
   }
   m_shortcutProblem = problem;
   if (trigger == m_bound) return;
@@ -221,6 +222,12 @@ QString SnapShotController::initialStep(const QString& requested) const {
 void SnapShotController::openSetup(const QString& requested) {
   // A desktop without capture has nothing to set up.
   if (!m_backend->session().ready || m_backend->session().mode == QLatin1String("unavailable")) return;
+  // Nor does one that needs no setup: opening it turns capture on.
+  if (m_backend->session().setupFree) {
+    if (!enabled()) set(QStringLiteral("snapShotEnabled"), true);
+    publish();
+    return;
+  }
   stopRecording();
   resetCandidate();
   const bool wasEnabled = enabled();
@@ -281,15 +288,14 @@ QString SnapShotController::conflict(const QJsonObject& shortcut) const {
 
 // DesktopSnapShot.checkShortcut.
 SnapShotController::Check SnapShotController::check(const QJsonObject& shortcut) const {
-  if (m_backend->session().mode != QLatin1String("portal")) {
+  if (m_backend->session().mode == QLatin1String("unavailable")) {
     return {false, tr("SnapShots are not supported on this platform.")};
   }
-  QString problem;
   if (!isPair(shortcut)) {
     if (const QString reserved = systemConflict(chordOf(shortcut)); !reserved.isEmpty()) return {false, reserved};
   }
-  if (SnapShotBackend::portalTrigger(shortcut, &problem).isEmpty()) return {false, problem};
-  return {true, tr("Your desktop will confirm this shortcut when you save it.")};
+  const auto availability = m_backend->check(shortcut);
+  return {availability.available, availability.message};
 }
 
 void SnapShotController::record(const QJsonObject& shortcut) {
@@ -324,7 +330,11 @@ QString SnapShotController::shortcutStatus() const {
   }
   if (!m_shortcutProblem.isEmpty()) return m_shortcutProblem;
   if (shortcut.pending) return tr("Approve the shortcut permission prompt to continue.");
-  if (shortcut.registered) return session.mode == QLatin1String("portal") ? shortcut.message : tr("Shortcut saved.");
+  // Upstream's panel reads "Shortcut saved." here and drops what the desktop
+  // said; a modifier pair's warning that it is only observed is kept.
+  if (shortcut.registered) {
+    return session.mode == QLatin1String("portal") || !shortcut.message.isEmpty() ? shortcut.message : tr("Shortcut saved.");
+  }
   return shortcut.message;
 }
 
@@ -430,7 +440,7 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     const auto count = std::count_if(m_held.cbegin(), m_held.cend(),
                                      [&](const QString& entry) { return entry.startsWith(modifier + u':'); });
     if (count < 2) return true;
-    if (m_backend->session().mode == QLatin1String("portal")) {
+    if (m_backend->session().mode == QLatin1String("portal") && !m_backend->watchesPairs()) {
       m_check = Check{false, tr("Add a letter, number, or function key to your shortcut.")};
       publish();
       return true;
@@ -613,7 +623,7 @@ QVariantMap SnapShotController::state() const {
   else status = tr("Finish shortcut setup");
 
   QString setupLabel;
-  if (on && session.ready) {
+  if (on && session.ready && !session.setupFree) {
     // The button is short: "Set up KDE capture".
     const QString name = session.desktop == QLatin1String("kde") ? QStringLiteral("KDE") : desktop;
     setupLabel = ready ? tr("Manage capture") : name.isEmpty() ? tr("Continue setup") : tr("Set up %1 capture").arg(name);
