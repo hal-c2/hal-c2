@@ -106,6 +106,10 @@ SettingsScopeSentence 1.0 SettingsScopeSentence.qml
 StorageSettings 1.0 StorageSettings.qml
 ProjectSettings 1.0 ProjectSettings.qml
 DevicePanel 1.0 DevicePanel.qml
+DeviceToolsPanel 1.0 DeviceToolsPanel.qml
+DeviceSetup 1.0 DeviceSetup.qml
+DeviceBanners 1.0 DeviceBanners.qml
+DeviceBody3D 1.0 DeviceBody3D.qml
 OpenSourceLicenses 1.0 OpenSourceLicenses.qml
 DiagnosticsSettings 1.0 DiagnosticsSettings.qml
 WelcomeWizard 1.0 WelcomeWizard.qml

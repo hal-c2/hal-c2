@@ -17,6 +17,7 @@
 #include "native/CommandRegistry.h"
 #include "native/ComposerHighlighter.h"
 #include "native/DeviceScreen.h"
+#include "native/DeviceTools.h"
 #include "native/KeybindingController.h"
 #include "native/OnboardingController.h"
 #include "native/RightPanelController.h"
@@ -72,6 +73,13 @@ struct DeviceStreamDeclaration {
   QML_FOREIGN(DeviceStream)
   QML_NAMED_ELEMENT(DeviceStream)
   QML_UNCREATABLE("A device tab's stream")
+};
+
+struct DeviceToolsDeclaration {
+  Q_GADGET
+  QML_FOREIGN(DeviceTools)
+  QML_NAMED_ELEMENT(DeviceTools)
+  QML_UNCREATABLE("A device tab's tools")
 };
 
 HAL_C2_SHELL_VALUE(CommandRegistry)

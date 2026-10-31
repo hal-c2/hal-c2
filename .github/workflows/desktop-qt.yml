@@ -61,7 +61,7 @@ jobs:
           version: "6.9.*"
           host: ${{ runner.os == 'macOS' && 'mac' || 'linux' }}
           arch: ${{ runner.os == 'macOS' && 'clang_64' || 'linux_gcc_64' }}
-          modules: qtwebsockets
+          modules: qtwebsockets qtquick3d
           cache: true
 
       # FFmpeg's headers build the Device tab's H.264 decoding
