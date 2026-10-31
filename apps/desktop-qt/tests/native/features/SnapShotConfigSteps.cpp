@@ -581,15 +581,19 @@ const Steps steps([] {
     send(world, QStringLiteral("config.save"));
     compositor().waiting.acquire();
   });
-  step(QStringLiteral("the user tries to cancel the review, record other keys and close setup"), [](World& world, const Captures&, const Table&) {
+  step(QStringLiteral("the user tries to cancel the review, record other keys, go back, turn capture off and close setup"), [](World& world, const Captures&, const Table&) {
     send(world, QStringLiteral("config.cancel"));
     send(world, QStringLiteral("record.start"));
+    send(world, QStringLiteral("setup.back"));
+    send(world, QStringLiteral("enable"), {{QStringLiteral("on"), false}});
     send(world, QStringLiteral("setup.close"), {{QStringLiteral("completed"), false}});
     send(world, QStringLiteral("config.complete"));
     send(world, QStringLiteral("setup.done"));
   });
   step(QStringLiteral("setup stays open on the review until the save finishes"), [](World& world, const Captures&, const Table&) {
-    expect(field(world, QStringLiteral("config.busy")).toBool() && !field(world, QStringLiteral("config.review.id")).toString().isEmpty(),
+    expect(field(world, QStringLiteral("config.busy")).toBool() && !field(world, QStringLiteral("config.review.id")).toString().isEmpty() &&
+               field(world, QStringLiteral("wizard.step")) == QLatin1String("shortcut") &&
+               field(world, QStringLiteral("switchOn")).toBool(),
            QStringLiteral("the review to stay; Snap Shot is %1").arg(describe(world)));
     compositor().hold = false;
     compositor().release.release();

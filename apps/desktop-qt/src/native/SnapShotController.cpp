@@ -486,6 +486,7 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     if (map.value(QStringLiteral("on")).toBool()) {
       openSetup(QStringLiteral("resume"));
     } else {
+      if (m_configThread) return true;
       stopRecording();
       m_wizard.reset();
       set(kResume, QString());
@@ -541,7 +542,7 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
   if (action == QLatin1String("snapShot.setup.back")) {
-    if (!m_wizard || m_testing) return true;
+    if (!m_wizard || m_testing || m_configThread) return true;
     stopRecording();
     m_wizard->step = kAccess;
     publish();
@@ -805,6 +806,8 @@ void SnapShotController::review(bool remove, const QString& file) {
 void SnapShotController::saveReview(const QString& id) {
   if (!managed() || !m_flow.preview || m_configThread) return;
   if (m_flow.preview->before == m_flow.preview->after) return;
+  // A key recorded during the save would withdraw the review being saved.
+  stopRecording();
   // Hyprland's binding does nothing until the portal session that serves it is up.
   const auto shortcut = m_backend->shortcut();
   if (m_flow.preview->install && !shortcut.registered && (m_backend->session().desktop == QLatin1String("hyprland") || !shortcut.message.isEmpty())) {

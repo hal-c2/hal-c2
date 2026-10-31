@@ -169,7 +169,7 @@ SettingsPage {
 
         ShellSwitch {
             objectName: "control"
-            enabled: (snap.settings?.ready ?? false) && (snap.settings?.available ?? false)
+            enabled: (snap.settings?.ready ?? false) && (snap.settings?.available ?? false) && !(snap.config?.busy ?? false)
             checked: snap.settings?.switchOn ?? false
             Accessible.name: qsTr("SnapShots")
             onToggled: Shell.dispatch("snapShot.enable", { on: checked })
@@ -602,6 +602,7 @@ SettingsPage {
                     objectName: "back"
                     visible: snap.wizard?.step === "shortcut"
                     subtle: true
+                    enabled: !(snap.config?.busy ?? false)
                     text: qsTr("Back")
                     onClicked: Shell.dispatch("snapShot.setup.back")
                 }

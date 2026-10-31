@@ -735,7 +735,7 @@ Feature: Snap Shot settings
   @desktop
   Scenario: A config change that is running cannot be walked away from
     Given the desktop is saving a reviewed shortcut change
-    When the user tries to cancel the review, record other keys and close setup
+    When the user tries to cancel the review, record other keys, go back, turn capture off and close setup
     Then setup stays open on the review until the save finishes
     And the user is told "Shortcut saved" and to use the shortcut from another app
 
