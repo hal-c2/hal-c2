@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Build the Linux release into release/: the MC (release:mc) and the Qt desktop AppImage that carries it"
 #MISE dir="{{config_root}}"
-#MISE depends=["release:mc"]
+#MISE depends=["release:mc", "desktop:helpers"]
 set -euo pipefail
 
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || {
@@ -15,6 +15,7 @@ node apps/desktop-qt/scripts/dev-qt.mjs --configure-only --release
 export NO_STRIP="${NO_STRIP:-1}"
 # Beside a Qt 5 the Qt plugin would pick qmake-qt5 and find no modules to deploy.
 export QMAKE="${QMAKE:-$(command -v qmake6 || command -v qmake)}"
+# cmake --install carries the capture helpers desktop:helpers just built.
 # package-linux.sh stages the MC release:mc just built (apps/server-ex/_build/prod/rel/hal_c2).
 apps/desktop-qt/scripts/package-linux.sh apps/desktop-qt/build/release
 

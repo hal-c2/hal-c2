@@ -52,6 +52,10 @@ function(hal_c2_add_native_library)
   # Snap Shot's capture sounds, as :/hal-c2/sounds/*.oga.
   qt_add_resources(hal_c2_native hal_c2_native_sounds PREFIX "/hal-c2" BASE "${_hal_c2_src}/native"
                    FILES "${_hal_c2_src}/native/sounds/snap-shot-click.oga" "${_hal_c2_src}/native/sounds/snap-shot-whoosh.oga")
+  # A development build finds the KDE and Hyprland capture helpers where cargo
+  # builds them (CaptureHelper::defaultPaths); a package carries its own.
+  get_filename_component(_hal_c2_root "${_hal_c2_src}/../../.." ABSOLUTE)
+  target_compile_definitions(hal_c2_native PUBLIC "$<$<NOT:$<CONFIG:Release>>:HAL_C2_SOURCE_ROOT=\"${_hal_c2_root}\">")
   # Snap Shot's xdg-desktop-portal backend talks D-Bus (PortalSnapShot).
   if(UNIX AND NOT APPLE AND NOT ANDROID)
     find_package(Qt6 REQUIRED COMPONENTS DBus)

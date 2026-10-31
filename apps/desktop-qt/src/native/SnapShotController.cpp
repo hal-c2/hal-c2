@@ -116,6 +116,7 @@ void SnapShotController::activate() {
     connect(m_backend, &SnapShotBackend::activated, this, &SnapShotController::onActivated);
     connect(m_backend, &SnapShotBackend::captured, this, &SnapShotController::onCaptured);
     connect(m_backend, &SnapShotBackend::failed, this, &SnapShotController::onFailed);
+    connect(m_backend, &SnapShotBackend::setupFailed, this, &SnapShotController::onSetupFailed);
   }
   if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
     connect(settings, &SettingsController::deviceChanged, this, &SnapShotController::follow, Qt::UniqueConnection);
@@ -171,6 +172,7 @@ bool SnapShotController::mac() const {
 }
 
 bool SnapShotController::accessReady() const {
+  if (const auto setup = m_backend->setup()) return setup->accessReady;
   const auto session = m_backend->session();
   return session.mode != QLatin1String("unavailable") && session.message.isEmpty();
 }
@@ -223,6 +225,7 @@ void SnapShotController::openSetup(const QString& requested) {
   if (!m_backend->session().ready || m_backend->session().mode == QLatin1String("unavailable")) return;
   stopRecording();
   resetCandidate();
+  m_setupError.clear();
   const bool wasEnabled = enabled();
   const QString step = initialStep(requested);
   // Opening setup is the opt-in.
@@ -352,14 +355,24 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
   }
   if (action == QLatin1String("snapShot.setup.continue")) {
     if (!m_wizard) return true;
-    if (!enabled() || !m_backend->session().message.isEmpty()) set(QStringLiteral("snapShotEnabled"), true);
+    const auto setup = m_backend->setup();
+    const bool retry = setup ? !setup->accessReady : !m_backend->session().message.isEmpty();
+    m_setupError.clear();
+    if (!enabled() || retry) set(QStringLiteral("snapShotEnabled"), true);
     // Try again: the desktop is asked once more, and setup moves on once it answers.
-    if (!m_backend->session().message.isEmpty()) m_backend->refresh();
+    if (retry) m_backend->refresh();
     if (accessReady()) {
       stopRecording();
       m_wizard->step = kShortcutStep;
     }
     publish();
+    return true;
+  }
+  if (action == QLatin1String("snapShot.setup.action")) {
+    // Only a step the user chose: checking access never installs anything.
+    m_setupError.clear();
+    publish();
+    m_backend->perform(map.value(QStringLiteral("action")).toString());
     return true;
   }
   if (action == QLatin1String("snapShot.setup.back")) {
@@ -496,6 +509,7 @@ void SnapShotController::onApplicationState(Qt::ApplicationState state) {
 void SnapShotController::onActivated() {
   // Recording a shortcut suppresses the one held.
   if (m_recording || !enabled()) return;
+  m_backend->setEffects(setting(QStringLiteral("snapShotFlash")).toBool(), setting(QStringLiteral("snapShotAnimations")).toBool());
   m_backend->capture();
 }
 
@@ -539,6 +553,16 @@ void SnapShotController::onCaptured(const QImage& image, const QString& appName,
   if (auto* composer = window->controller<ComposerController>()) composer->attachImage(to, name, mimeType, *bytes, source);
   window->bridge()->windowCommand(QStringLiteral("raise"));
   window->bridge()->sendToBricks(QStringLiteral("composer.focus"));
+}
+
+void SnapShotController::onSetupFailed(const QString& message) {
+  // Setup errors stay in setup; without it open, the panel has nowhere else.
+  if (!m_wizard) {
+    onFailed(message);
+    return;
+  }
+  m_setupError = message;
+  publish();
 }
 
 void SnapShotController::onFailed(const QString& message) {
@@ -591,6 +615,7 @@ void SnapShotController::publish() {
 QVariantMap SnapShotController::state() const {
   const auto session = m_backend->session();
   const auto shortcut = m_backend->shortcut();
+  const auto setup = m_backend->setup();
   const bool on = enabled();
   const bool portal = session.mode == QLatin1String("portal");
   const bool available = session.ready && session.mode != QLatin1String("unavailable");
@@ -607,6 +632,7 @@ QVariantMap SnapShotController::state() const {
   else if (!available) status = session.message.isEmpty() ? tr("Not supported on this platform.") : session.message;
   else if (!on) status = tr("Turn this on to set up snapshots.");
   else if (!session.message.isEmpty()) status = tr("Capture needs attention");
+  else if (setup && !setup->accessReady && !setup->status.isEmpty()) status = setup->status;
   else if (picker) status = tr("Manual capture only — you'll choose a window each time");
   else if (shortcut.pending) status = tr("Waiting for shortcut permission");
   else if (shortcut.registered) status = shortcut.label.isEmpty() ? tr("Shortcut saved") : tr("Ready to capture");
@@ -627,7 +653,8 @@ QVariantMap SnapShotController::state() const {
   else keys = label(display);
 
   const bool canRetry = shortcut.canRetry && !isPair(saved);
-  const QString effects = portal && !session.feedbackAvailable
+  const QString effects = setup && !setup->effects.isEmpty() ? setup->effects
+                          : portal && !session.feedbackAvailable
                               ? (session.desktop == QLatin1String("niri") ? tr("Capture effects aren't available on Niri.")
                                                                           : tr("Capture effects aren't available on this desktop."))
                               : QString();
@@ -652,7 +679,10 @@ QVariantMap SnapShotController::state() const {
     const bool access = m_wizard->step == kAccess;
     QString heading;
     QString body;
-    if (access) {
+    if (access && setup) {
+      heading = setup->heading;
+      body = setup->body;
+    } else if (access) {
       if (!session.message.isEmpty()) {
         heading = tr("Let's try that again");
         body = tr("Couldn't check snapshots. Try again to continue.");
@@ -670,15 +700,32 @@ QVariantMap SnapShotController::state() const {
              : portal    ? tr("Choose your keys, then approve the permission prompt if asked.")
                          : tr("Use both Shift keys, or record a different shortcut.");
     }
+    QVariantList advanced;
+    if (access && setup) {
+      for (const auto& option : setup->advanced) {
+        advanced.append(QVariantMap{{QStringLiteral("action"), option.action},
+                                    {QStringLiteral("label"), option.label},
+                                    {QStringLiteral("note"), option.note}});
+      }
+    }
     wizard = QVariantMap{
         {QStringLiteral("step"), m_wizard->step},
         {QStringLiteral("title"), desktop.isEmpty() ? tr("Set up snapshots") : tr("Set up snapshots for %1").arg(desktop)},
         {QStringLiteral("heading"), heading},
         {QStringLiteral("body"), body},
-        {QStringLiteral("details"), access ? session.message : QString()},
+        {QStringLiteral("details"), !access                   ? QString()
+                                    : !m_setupError.isEmpty() ? m_setupError
+                                    : setup                   ? setup->details
+                                                              : session.message},
+        // The access step's own button runs this setup step, else checks again or continues.
+        {QStringLiteral("action"), access && setup ? setup->action : QString()},
+        {QStringLiteral("checkMessage"), access && setup ? setup->checkMessage : QString()},
+        {QStringLiteral("advanced"), advanced},
         {QStringLiteral("attention"), !access && !ready ? tr("Capture needs attention. Go back to check access.") : QString()},
         {QStringLiteral("closeLabel"), m_wizard->wasEnabled ? tr("Close") : tr("Finish later")},
-        {QStringLiteral("continueLabel"), ready ? tr("Continue") : tr("Try again")},
+        {QStringLiteral("continueLabel"), setup && !setup->actionLabel.isEmpty() ? setup->actionLabel
+                                          : ready                                ? tr("Continue")
+                                                                                 : tr("Try again")},
         {QStringLiteral("doneLabel"), changed ? tr("Save and finish") : tr("Done")},
         {QStringLiteral("doneEnabled"), ready && (changed ? canSave() : shortcut.registered || shortcut.pending)},
         {QStringLiteral("permissions"), !changed && !shortcut.registered && !shortcut.pending && canRetry},
