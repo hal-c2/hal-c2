@@ -15,6 +15,7 @@
 #include "KeybindingController.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
+#include "Space.h"
 
 namespace {
 
@@ -456,7 +457,10 @@ const Steps steps([] {
     world.waitFor([&] { return files(world).rendered() && shown(world, QStringLiteral("fileRenderedMarkdown")); }, [&] { return describeViewer(world); });
     tick(world, c[0]);
   });
-  step(QStringLiteral("the user unticks %1").arg(q), [](World& world, const Captures& c, const Table&) { tick(world, c[0]); });
+  // A Space page's checklist item is unticked the same way (Space.h).
+  step(QStringLiteral("the user unticks %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (!spaceTick(world, c[0], false)) tick(world, c[0]);
+  });
   step(QStringLiteral("%1 records %1 as (done|open)").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString wanted = QStringLiteral("# To do\n\n- [x] Draft the plan\n- [%1] %2\n- [ ] Tell everyone\n").arg(c[2] == QLatin1String("done") ? u"x" : u" ", c[1]);
     expect(fakeFiles(world.mc).files.value(c[0]) == wanted, QStringLiteral("%1 holds \"%2\"").arg(c[0], fakeFiles(world.mc).files.value(c[0])));

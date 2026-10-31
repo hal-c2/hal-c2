@@ -116,6 +116,8 @@ const QStringList CommandPaletteController::kRootCommands{
     QStringLiteral("themeEditor.toggle"),
     QStringLiteral("pullRequests.open"),
     QStringLiteral("usage.open"),
+    QStringLiteral("space.open"),
+    QStringLiteral("space.pageFromThread"),
     QStringLiteral("settings.open"),
     QStringLiteral("projectSettings.open"),
 };
