@@ -5,6 +5,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <utility>
 
 #include "CommandRegistry.h"
 #include "KeybindingController.h"
@@ -492,7 +493,34 @@ void SpacePages::rebuild() {
                      {QStringLiteral("createdAt"), text(comment, QLatin1String("createdAt"))}});
   }
   m_comments->setRows(comments);
+  if (m_viewersPage != m_pageId) clearViewers();
   emit changed();
+}
+
+void SpacePages::receiveViewers(const QString& pageId, const QJsonObject& frame) {
+  if (pageId != m_pageId || frame.value(QLatin1String("t")).toString() != QLatin1String("spacePresence")) return;
+  QStringList devices;
+  QStringList agents;
+  for (const QJsonValue& viewer : frame.value(QLatin1String("viewers")).toArray()) {
+    const QJsonObject row = viewer.toObject();
+    if (row.value(QLatin1String("type")).toString() == QLatin1String("agent")) {
+      agents.append(row.value(QLatin1String("title")).toString());
+    } else {
+      for (const QJsonValue& device : row.value(QLatin1String("devices")).toArray()) devices.append(device.toString());
+    }
+  }
+  m_viewersPage = pageId;
+  const QVariantMap viewers{{QStringLiteral("devices"), devices}, {QStringLiteral("agents"), agents}};
+  if (viewers == m_viewers) return;
+  m_viewers = viewers;
+  emit viewersChanged();
+}
+
+void SpacePages::clearViewers() {
+  m_viewersPage.clear();
+  if (m_viewers.isEmpty()) return;
+  m_viewers.clear();
+  emit viewersChanged();
 }
 
 // --- SpaceController ------------------------------------------------------------------
@@ -506,6 +534,7 @@ SpaceController::SpaceController(ShellBridge* bridge, McClient* client, ShellSto
   connect(this, &SpacePages::spaceSelected, this, [this] {
     if (m_open) followSpace();
   });
+  connect(this, &SpacePages::changed, this, &SpaceController::followViewers);
 }
 
 void SpaceController::activate() {
@@ -531,6 +560,7 @@ void SpaceController::activate() {
           [this, navigation] { setOpen(navigation->route().kind == kRoute); });
   connect(m_client, &McClient::readyChanged, this, [this](bool ready) {
     if (ready && m_open) follow();
+    followViewers();
   });
   setOpen(navigation->route().kind == kRoute);
   publish();
@@ -543,6 +573,7 @@ void SpaceController::setOpen(bool open) {
   } else {
     unfollow();
   }
+  followViewers();
 }
 
 void SpaceController::follow() {
@@ -583,6 +614,22 @@ void SpaceController::followSpace() {
         }
       },
       [this, followed] { return followed == spaceId() ? space().subscribing() : QJsonObject(); });
+}
+
+void SpaceController::followViewers() {
+  const QString page = m_open && m_client->isReady() ? pageId() : QString();
+  if (page == m_followedViewers) return;
+  if (m_viewersSubscription) m_client->unsubscribe(std::exchange(m_viewersSubscription, 0));
+  m_followedViewers = page;
+  clearViewers();
+  if (page.isEmpty()) return;
+  m_viewersSubscription = m_client->subscribe(
+      this,
+      {{QStringLiteral("type"), QStringLiteral("spacePresence")},
+       {QStringLiteral("environment"), m_client->environment()},
+       {QStringLiteral("spaceId"), spaceId()},
+       {QStringLiteral("pageId"), page}},
+      [this, page](const QJsonObject& frame) { receiveViewers(page, frame); });
 }
 
 void SpaceController::unfollow() {

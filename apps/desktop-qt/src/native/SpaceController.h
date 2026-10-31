@@ -83,7 +83,8 @@ private:
 // comments. Everything comes from the streams; the one thing it adds is an
 // edit the user made (a block's text, a tick) shown until the MC has answered
 // it and the stream has moved past what it was, after which the stream's
-// value is what shows.
+// value is what shows. Who else is on the open page comes from the
+// `spacePresence` shape, not a stream, and is gone with the page.
 //
 // Rows:
 //   spaces   {id, name}, in the order they were made
@@ -109,6 +110,8 @@ class SpacePages : public QObject {
   // loading, live or unreachable: the selected Space's stream (the index's
   // before a Space is selected).
   Q_PROPERTY(QString status READ status NOTIFY changed)
+  // Who else is on the open page: {devices: [label], agents: [thread title]}.
+  Q_PROPERTY(QVariantMap viewers READ viewers NOTIFY viewersChanged)
 
 public:
   explicit SpacePages(QObject* parent = nullptr);
@@ -123,6 +126,7 @@ public:
   QString pageId() const { return m_pageId; }
   QVariantMap page() const;
   QString status() const;
+  QVariantMap viewers() const { return m_viewers; }
 
   SpaceStream& index() { return m_index; }
   SpaceStream& space() { return m_space; }
@@ -130,6 +134,10 @@ public:
   void receiveIndex(const QJsonObject& frame);
   void receiveSpace(const QJsonObject& frame);
   void setUnreachable(bool unreachable);
+  // A `spacePresence` frame of the page `pageId`; only the open page's shows,
+  // and whoever was on a page stops showing when another opens.
+  void receiveViewers(const QString& pageId, const QJsonObject& frame);
+  void clearViewers();
 
   // Shows the Space `id` (a new copy of its stream follows) or page `id`
   // of it; one the streams do not hold is not selected.
@@ -156,6 +164,7 @@ signals:
   void changed();
   // The selected Space changed: its stream is followed anew.
   void spaceSelected(const QString& id);
+  void viewersChanged();
 
 private:
   struct Pending {
@@ -182,6 +191,8 @@ private:
   QString m_pageId;
   QString m_awaitedSpace;
   QString m_awaitedPage;
+  QVariantMap m_viewers;
+  QString m_viewersPage;
   QHash<QString, Pending> m_pending;
   int m_tokens = 0;
   std::function<QString(const QString&)> m_threadTitle;
@@ -234,6 +245,9 @@ private:
   void follow();
   void unfollow();
   void followSpace();
+  // Follows who else is on the open page, only while the view is open and the
+  // client connected: a new connection follows it anew.
+  void followViewers();
   // `space.<method>` with the selected Space's id unless the payload names
   // one. A refusal is said (refuse) in the MC's words, or in what `refused`
   // returns for its detail.
@@ -254,7 +268,9 @@ private:
   bool m_listed = false;
   int m_indexSubscription = 0;
   int m_spaceSubscription = 0;
+  int m_viewersSubscription = 0;
   QString m_followedSpace;
+  QString m_followedViewers;
   QString m_error;
   int m_writing = 0;
   // The page last written from a thread.

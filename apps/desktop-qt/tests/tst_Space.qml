@@ -242,5 +242,17 @@ Item {
             verify(source.visible);
             compare(source.text, "Made from the thread “Work”");
         }
+
+        function test_nobodyElseTakesNoRoom() {
+            const view = root.research({ viewers: { devices: [], agents: [] } });
+            verify(!findChild(view, "spaceViewers").visible);
+        }
+
+        function test_whoElseIsOnThePageIsNamed() {
+            const view = root.research({ viewers: { devices: ["HAL-C2 on SM-F741B"], agents: ["Work"] } });
+            const viewers = findChild(view, "spaceViewers");
+            verify(viewers.visible);
+            compare(viewers.text, "Also here: HAL-C2 on SM-F741B, the agent of “Work”");
+        }
     }
 }

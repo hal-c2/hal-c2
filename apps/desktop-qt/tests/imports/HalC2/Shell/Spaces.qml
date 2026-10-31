@@ -9,6 +9,7 @@ QtObject {
     property string pageId: ""
     property var page: ({})
     property string status: "live"
+    property var viewers: ({})
     readonly property SpaceRows spaces: SpaceRows {}
     readonly property SpaceRows pages: SpaceRows {}
     readonly property SpaceRows trash: SpaceRows {}
@@ -25,6 +26,7 @@ QtObject {
         spaceId = state.spaceId ?? "";
         spaceName = state.spaceName ?? "";
         status = state.status ?? "live";
+        viewers = state.viewers ?? {};
         fill(spaces, state.spaces);
         fill(pages, state.pages);
         fill(trash, state.trash);

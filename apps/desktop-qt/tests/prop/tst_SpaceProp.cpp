@@ -107,6 +107,9 @@ struct Model {
   bool unreachable = false;
   QJsonObject lastEvents;
   QString selected;
+  // Who the MC last said is on `viewersPage`; only the selected page shows it.
+  QStringList viewers;
+  QString viewersPage;
   // By "block\nfield".
   QMap<QString, Pend> pending;
   QList<Request> requests;
@@ -286,6 +289,11 @@ void reconcile(Model& model) {
     const QList<QVariantMap> tree = treeOf(model.held);
     model.selected = tree.isEmpty() ? QString() : tree.first().value(QStringLiteral("id")).toString();
   }
+  // Whoever was on a page stops showing once another opens, and does not come back with it.
+  if (model.viewersPage != model.selected) {
+    model.viewers.clear();
+    model.viewersPage.clear();
+  }
 }
 
 QString handleOf(int handle) { return QStringLiteral("log-%1").arg(handle); }
@@ -388,6 +396,7 @@ struct Sut {
     }
     RC_ASSERT(pages.space().offset() == model.offset);
     RC_ASSERT(pages.pageId() == model.selected);
+    RC_ASSERT(pages.viewers().value(QStringLiteral("devices")).toStringList() == model.viewers);
     RC_ASSERT(pages.pages()->rows() == treeOf(model.held));
     RC_ASSERT(pages.trash()->rows() == trashOf(model.held));
     RC_ASSERT(pages.blocks()->rows() == blocksOf(model));
@@ -817,6 +826,32 @@ struct NewLog : Command {
 
 // --- The user ---------------------------------------------------------------------
 
+// The MC says who is on a page, the open one or one the user just left.
+struct Viewers : Command {
+  QString id;
+  QStringList devices;
+  explicit Viewers(const Model& model) {
+    id = !model.selected.isEmpty() && *rc::gen::arbitrary<bool>() ? model.selected : QStringLiteral("page-%1").arg(*rc::gen::inRange(1, kMaxPages + 1));
+    if (*rc::gen::arbitrary<bool>()) devices.append(QStringLiteral("Phone"));
+    if (*rc::gen::arbitrary<bool>()) devices.append(QStringLiteral("Laptop"));
+  }
+  void apply(Model& model) const override {
+    if (id != model.selected) return;
+    model.viewers = devices;
+    model.viewersPage = id;
+  }
+  void run(const Model& model, Sut& sut) const override {
+    Model next = model;
+    apply(next);
+    sut.begin();
+    QJsonArray viewers;
+    if (!devices.isEmpty()) viewers.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("user")}, {QStringLiteral("devices"), QJsonArray::fromStringList(devices)}});
+    sut.pages.receiveViewers(id, {{QStringLiteral("t"), QStringLiteral("spacePresence")}, {QStringLiteral("viewers"), viewers}});
+    sut.check(next);
+  }
+  void show(std::ostream& os) const override { os << "Viewers(" << id.toStdString() << ", " << devices.join(QLatin1Char(',')).toStdString() << ")"; }
+};
+
 // The user opens a page; one the copy does not hold is not selected.
 struct SelectPage : Command {
   QString id;
@@ -996,7 +1031,7 @@ private slots:
       Sut sut;
       rc::state::check(model, sut,
                        rc::state::gen::execOneOfWithArgs<Write, Write, Write, Write, Write, Subscribe, Subscribe, Drop, Resync,
-                                                         Duplicate, NewLog, SelectPage, SelectPage, Edit, Edit, Answer, Answer>());
+                                                         Duplicate, NewLog, SelectPage, SelectPage, Viewers, Edit, Edit, Answer, Answer>());
     }));
   }
 };

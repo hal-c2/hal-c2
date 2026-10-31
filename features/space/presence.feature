@@ -5,7 +5,6 @@
 #   packages/contracts/src/space.ts (SpacePresenceViewer, subscribeSpacePresence)
 #   apps/server-ex/lib/hal_c2/space/presence.ex
 
-@mc @desktop @mobile @tui
 Feature: Who else is on a page
   A page open on a client says who else is looking at it right now: the user's other
   devices and any agent working on it. HAL-C2 has no accounts, so every paired device is
@@ -16,6 +15,7 @@ Feature: Who else is on a page
     Given a connected environment
     And the Space "Research" with the page "Roadmap"
 
+  @mc @desktop @mobile @tui
   Rule: The open page says who else is on it
 
     Scenario: Nobody else is on the page
@@ -152,7 +152,7 @@ Feature: Who else is on a page
       When the presence service starts again
       Then the client is told to follow the page's viewers again
 
-  @backlog
+  @backlog @mc @desktop @mobile @tui
   Rule: Still to come
 
     # Waits on the maintainers deciding what names a person on an MC with no accounts.
