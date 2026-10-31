@@ -538,8 +538,10 @@ defmodule HalC2.Shell do
     # while this shell was starting has just made is left to that import.
     unfinished = HalC2.Import.PreviousInstall.unfinished(path)
 
+    # Only projects and threads have sidebar rows (`HalC2.Projection.row/3`).
     missing =
-      for %{id: id} <- streams,
+      for %{id: id, kind: kind} <- streams,
+          kind in ["project", "thread"],
           not MapSet.member?(have, id),
           id not in unfinished,
           do: id
