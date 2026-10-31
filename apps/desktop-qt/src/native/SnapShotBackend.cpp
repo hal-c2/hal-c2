@@ -10,6 +10,8 @@
 
 #include "GnomeSnapShot.h"
 
+#include "MacPlatform.h"
+#include "MacSnapShot.h"
 #ifdef HAL_C2_HAS_DBUS
 #include "PortalSnapShot.h"
 #endif
@@ -102,6 +104,11 @@ SnapShotBackend::Platform SnapShotBackend::detect(const QProcessEnvironment& env
 }
 
 SnapShotBackend* SnapShotBackend::create(QObject* parent) {
+  // macOS captures directly, and so does a test's stand-in Mac.
+  if (MacPlatform::overridden()) return new MacSnapShot(MacPlatform::create(parent), parent);
+#ifdef Q_OS_MACOS
+  if (MacPlatform* mac = MacPlatform::create(parent)) return new MacSnapShot(mac, parent);
+#endif
 #ifdef Q_OS_LINUX
   const bool onLinux = true;
 #else

@@ -52,6 +52,13 @@ function(hal_c2_add_native_library)
   # Snap Shot's capture sounds, as :/hal-c2/sounds/*.oga.
   qt_add_resources(hal_c2_native hal_c2_native_sounds PREFIX "/hal-c2" BASE "${_hal_c2_src}/native"
                    FILES "${_hal_c2_src}/native/sounds/snap-shot-click.oga" "${_hal_c2_src}/native/sounds/snap-shot-whoosh.oga")
+  # Snap Shot's macOS half (MacPlatform): TCC, key flags, Carbon hot keys, the
+  # permission panel. The project enables OBJCXX on Apple.
+  if(APPLE AND NOT IOS)
+    target_sources(hal_c2_native PRIVATE "${_hal_c2_src}/native/MacPlatform.mm")
+    set_source_files_properties("${_hal_c2_src}/native/MacPlatform.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(hal_c2_native PUBLIC "-framework AppKit" "-framework ApplicationServices" "-framework Carbon")
+  endif()
   # Snap Shot's xdg-desktop-portal backend talks D-Bus (PortalSnapShot).
   if(UNIX AND NOT APPLE AND NOT ANDROID)
     find_package(Qt6 REQUIRED COMPONENTS DBus)

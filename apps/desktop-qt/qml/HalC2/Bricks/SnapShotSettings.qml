@@ -84,7 +84,11 @@ SettingsPage {
             enabled: toggle.model?.enabled ?? false
             checked: toggle.model?.checked ?? false
             Accessible.name: toggle.heading
-            onToggled: Shell.dispatch("snapShot.set", { key: toggle.key, value: checked })
+            onToggled: {
+                Shell.dispatch("snapShot.set", { key: toggle.key, value: checked });
+                // A refusal leaves the state as it was, so nothing would move the switch back.
+                checked = Qt.binding(() => toggle.model?.checked ?? false);
+            }
         }
     }
 
@@ -223,6 +227,65 @@ SettingsPage {
                 wrapMode: Text.Wrap
             }
 
+            // macOS grants each permission on its own.
+            Repeater {
+                model: snap.wizard?.step === "access" ? (snap.wizard?.permissionRows ?? []) : []
+
+                RowLayout {
+                    required property var modelData
+
+                    objectName: "permission:" + modelData.id
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        Label {
+                            text: modelData.title
+                            color: Theme.palette.color("text", "#e4e4e7")
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.weight: Font.Medium
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: modelData.description
+                            color: snap.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            wrapMode: Text.Wrap
+                        }
+                    }
+
+                    Label {
+                        objectName: "allowed"
+                        visible: modelData.granted
+                        text: qsTr("Allowed")
+                        color: snap.muted
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+
+                    ShellButton {
+                        objectName: "allow"
+                        visible: !modelData.granted
+                        enabled: !(snap.wizard?.permissionsBusy ?? false)
+                        text: qsTr("Allow")
+                        onClicked: Shell.dispatch("snapShot.permission.allow", { id: modelData.id })
+                    }
+                }
+            }
+
+            Label {
+                objectName: "permissionsError"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: snap.wizard?.permissionsError ?? ""
+                color: snap.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
             Label {
                 Layout.fillWidth: true
                 visible: text.length > 0
@@ -333,6 +396,7 @@ SettingsPage {
                     objectName: "continue"
                     visible: snap.wizard?.step === "access"
                     primary: true
+                    enabled: snap.wizard?.continueEnabled ?? true
                     text: snap.wizard?.continueLabel ?? ""
                     onClicked: snap.wizard?.action
                                ? Shell.dispatch("snapShot.setup.action", { action: snap.wizard.action })

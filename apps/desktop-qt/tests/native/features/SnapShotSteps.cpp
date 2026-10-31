@@ -17,16 +17,21 @@
 #include "DraftController.h"
 #include "Harness.h"
 #include "KeybindingController.h"
+#include "MacPlatform.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #ifdef HAL_C2_HAS_DBUS
 #include "PortalSnapShot.h"
 #endif
 #include "SettingsController.h"
+#include "GnomeSnapShot.h"
 #include "SnapShotBackend.h"
 #include "SnapShotController.h"
 #include "Stream.h"
 #include "World.h"
+
+// SnapShotMacosSteps.cpp: the shortcut pressed when the scenario runs on a Mac.
+void snapShotMacPress(World& world);
 
 namespace {
 
@@ -173,7 +178,9 @@ SnapShotController* controller(World& world) {
 }
 
 FakePortal* portal(World& world) {
-  return dynamic_cast<FakePortal*>(controller(world)->backend());
+  SnapShotBackend* backend = controller(world)->backend();
+  if (auto* gnome = dynamic_cast<GnomeSnapShot*>(backend)) backend = gnome->portal();
+  return dynamic_cast<FakePortal*>(backend);
 }
 
 QVariantMap snapShot(World& world) {
@@ -199,8 +206,11 @@ FakeDesktopPortal& bus() {
 // A fresh desktop: Wayland on no named compositor, nothing bound yet; through
 // the desktop portal on the test's bus, answering as `portal` does, with one.
 void resetDesktop(World& world, const QProcessEnvironment& env = environment(QStringLiteral("wayland")),
-                  const std::optional<PortalDesktop>& portal = std::nullopt) {
+                  const std::optional<PortalDesktop>& portal = std::nullopt, const SnapShotBackend::GnomeFactory& gnome = {},
+                  bool picker = false) {
   desktop() = {};
+  desktop().picker = picker;
+  SnapShotBackend::setGnomeFactory(gnome);
   throughPortal() = portal.has_value();
   if (portal) {
     bus().reset();
@@ -284,6 +294,7 @@ Seen& seen() {
 }
 
 void capture(World& world) {
+  if (MacPlatform::overridden()) return snapShotMacPress(world);
   seen() = {};
   QObject::connect(&world.bridge(), &ShellBridge::windowCommandRequested, controller(world),
                    [](const QString& command) { seen().raised.append(command); });
@@ -1294,6 +1305,27 @@ void press(World& world, int key, Qt::KeyboardModifiers modifiers) {
 void waitForField(World& world, const QString& path, const QVariant& value) {
   ::waitForField(world, path, value);
 }
+void turnOn(World& world) {
+  ::turnOn(world);
+}
+// A GNOME session wrapping the fake portal with `factory`; a session on no
+// named desktop without one.
+void gnomeSession(World& world, SnapShotBackend::GnomeFactory factory, bool picker) {
+  resetDesktop(world, factory ? environment(QStringLiteral("wayland"), QStringLiteral("GNOME")) : environment(QStringLiteral("wayland")), std::nullopt, factory, picker);
+}
+qsizetype portalCaptures() {
+  return desktop().captures.size();
+}
+qsizetype attachmentCount(World& world) {
+  return attachments(world, threadKey(world)).size();
+}
+void expectFailureToast(World& world, const QString& body) {
+  expectToast(world, QStringLiteral("Snapshot failed"), body);
+}
+void openThreadForCapture(World& world) {
+  openThread(world);
+  openPanel(world);
+}
 void portalDesktop(World& world, const PortalDesktop& portal) {
   ::portalDesktop(world, portal);
 }
@@ -1314,3 +1346,12 @@ QStringList played() {
 }
 
 }  // namespace snapshot
+
+// For the other Snap Shot steps files.
+void snapShotOpenThread(World& world) {
+  openThread(world);
+}
+
+QVariantList snapShotDraft(World& world) {
+  return attachments(world, threadKey(world));
+}

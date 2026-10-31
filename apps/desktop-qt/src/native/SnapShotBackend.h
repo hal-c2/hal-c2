@@ -16,8 +16,9 @@
 // Linux Wayland captures through xdg-desktop-portal (PortalSnapShot): the
 // Screenshot portal's active-window target where the desktop offers it, else
 // its window picker, and the GlobalShortcuts portal for the shortcut. GNOME
-// adds HAL-C2's extension in place of the picker (GnomeSnapShot). X11,
-// macOS and Windows are unavailable for now (UnavailableSnapShot).
+// adds HAL-C2's extension in place of the picker (GnomeSnapShot). macOS
+// captures directly (MacSnapShot). X11 and Windows are unavailable for now
+// (UnavailableSnapShot).
 //
 // A backend answers from what it has already found out: `session()` is not
 // ready until `probe()` has asked the desktop, and `bind()` leaves the
@@ -26,10 +27,17 @@ class SnapShotBackend : public QObject {
   Q_OBJECT
 
 public:
+  // What macOS allows this app.
+  struct Permissions {
+    bool screenRecording = false;
+    bool accessibility = false;
+    bool operator==(const Permissions&) const = default;
+  };
+
   struct Session {
     // The desktop has been asked; until then nothing else here is known.
     bool ready = false;
-    // portal | unavailable
+    // portal | direct (macOS) | unavailable
     QString mode = QStringLiteral("unavailable");
     // A portal's: screenshot-portal (the window in front), gnome-extension
     // (the same, once the extension is set up) or picker (the user chooses a
@@ -43,6 +51,11 @@ public:
     bool feedbackAvailable = false;
     // The desktop is being asked again (`refresh()`) and has not answered.
     bool checking = false;
+    // Where capture needs privacy permissions the user grants one at a time
+    // (macOS), what is allowed; a failed check keeps the last answer and says
+    // so in `permissionsError`.
+    std::optional<Permissions> permissions;
+    QString permissionsError;
   };
 
   struct Shortcut {
@@ -99,14 +112,17 @@ public:
   virtual void probe() {}
   // Asks again after the user may have changed what the desktop allows.
   virtual void refresh() { probe(); }
-  // Binds the capture shortcut to `trigger` (portalTrigger's), replacing the
-  // one before; pending until the desktop answers.
+  // Binds the capture shortcut to `trigger` (portalTrigger's; in direct mode
+  // the shortcut's JSON), replacing the one before; pending until the
+  // desktop answers.
   virtual void bind(const QString& trigger) { Q_UNUSED(trigger); }
   // Lets the capture shortcut go.
   virtual void release() {}
   // Whether `shortcut` can be held here: `done` answers once, maybe at once.
-  // Unavailable with no message is a check that failed. A portal names the
-  // shortcut's keys (portalTrigger) and confirms it only when it is bound.
+  // Unavailable with no message is a check that failed; a message on an
+  // available shortcut in direct mode is shown (it may only be observed). A
+  // portal names the shortcut's keys (portalTrigger) and confirms it only when
+  // it is bound.
   virtual void checkShortcut(const QJsonObject& shortcut, std::function<void(const Check&)> done);
   // Pauses the capture shortcut while a new one is recorded, or ends the
   // pause; false when it could not, with the desktop's reason if it gave one.
@@ -121,6 +137,20 @@ public:
   virtual void configure() {}
   // Captures (or has the user pick) a window: `captured` or `failed`.
   virtual void capture() {}
+  // The permissions below are for a backend whose session has `permissions`.
+  // Captures include the app's text, which needs Accessibility too.
+  virtual void setIncludeAccessibility(bool include) { Q_UNUSED(include); }
+  // Checks the permissions again and again while setup shows them.
+  virtual void watchPermissions(bool on) { Q_UNUSED(on); }
+  // One permission's Allow (screen-recording | accessibility).
+  virtual void allow(const QString& permission) { Q_UNUSED(permission); }
+  // Asks for what capture needs; why it still cannot, or empty.
+  virtual QString requestPermissions(bool includeAccessibility) {
+    Q_UNUSED(includeAccessibility);
+    return {};
+  }
+  // A capture that is thrown away, to prove capture works: `tested`.
+  virtual void test() { emit tested({}); }
   // Plays a capture sound: soft-pop (Whoosh) or camera-shutter (Click).
   virtual void play(const QString& sound);
   // The capture effects the user wants, for a desktop that can show them.
@@ -165,10 +195,14 @@ signals:
   void changed();
   // The capture shortcut was pressed.
   void activated();
-  void captured(const QImage& image, const QString& appName, const QString& windowTitle);
+  // `context` is what the attachment's source says of the app's text
+  // ({accessibleText, accessibility}), when the backend could read it.
+  void captured(const QImage& image, const QString& appName, const QString& windowTitle, const QJsonObject& context = {});
   void failed(const QString& message);
   // A setup step failed; shown in setup, not as a toast.
   void setupFailed(const QString& message);
+  // A test capture finished: why it failed, or empty.
+  void tested(const QString& error);
 };
 
 // Where capture is not supported: only the reason.

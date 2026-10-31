@@ -2,6 +2,7 @@
 
 #include <QBuffer>
 #include <QGuiApplication>
+#include <QJsonDocument>
 #include <QJsonValue>
 
 #include <cmath>
@@ -25,6 +26,7 @@ const NativeControllerRegistrar<SnapShotController> registrar(QStringLiteral("sn
 
 const QString kAccess = QStringLiteral("access");
 const QString kShortcutStep = QStringLiteral("shortcut");
+const QString kResume = QStringLiteral("snapShotSetupResume");
 
 bool isPair(const QJsonObject& shortcut) {
   return shortcut.contains(QLatin1String("kind"));
@@ -117,6 +119,7 @@ void SnapShotController::activate() {
     connect(m_backend, &SnapShotBackend::captured, this, &SnapShotController::onCaptured);
     connect(m_backend, &SnapShotBackend::failed, this, &SnapShotController::onFailed);
     connect(m_backend, &SnapShotBackend::setupFailed, this, &SnapShotController::onSetupFailed);
+    connect(m_backend, &SnapShotBackend::tested, this, &SnapShotController::onTested);
   }
   if (auto* settings = NativeShell::of(this)->controller<SettingsController>()) {
     connect(settings, &SettingsController::deviceChanged, this, &SnapShotController::follow, Qt::UniqueConnection);
@@ -189,7 +192,9 @@ bool SnapShotController::panelOpen() const {
 
 void SnapShotController::follow() {
   if (!m_active || !m_backend) return;
-  if (enabled() || panelOpen()) m_backend->probe();
+  m_backend->setIncludeAccessibility(includeAccessibility());
+  if (enabled() || panelOpen() || !setting(kResume).toString().isEmpty()) m_backend->probe();
+  resumeSetup();
   // Leaving the panel ends recording, and with it the pause on captures.
   if (m_recording && !panelOpen()) stopRecording();
   applyShortcut();
@@ -199,8 +204,11 @@ void SnapShotController::follow() {
 void SnapShotController::applyShortcut() {
   QString trigger;
   QString problem;
-  if (enabled() && m_backend->session().mode == QLatin1String("portal")) {
+  const QString mode = m_backend->session().mode;
+  if (enabled() && mode == QLatin1String("portal")) {
     trigger = SnapShotBackend::portalTrigger(savedShortcut(), &problem);
+  } else if (enabled() && mode == QLatin1String("direct")) {
+    trigger = QString::fromUtf8(QJsonDocument(savedShortcut()).toJson(QJsonDocument::Compact));
   }
   m_shortcutProblem = problem;
   if (trigger == m_bound) return;
@@ -215,7 +223,8 @@ void SnapShotController::applyShortcut() {
 // --- Setup ------------------------------------------------------------------------
 
 QString SnapShotController::initialStep(const QString& requested) const {
-  if (!accessReady()) return kAccess;
+  // Permissions and the test capture come first, every time.
+  if (!accessReady() || m_backend->session().permissions) return kAccess;
   if (requested == kAccess || requested == kShortcutStep) return requested;
   return m_backend->session().backend == QLatin1String("picker") ? kAccess : kShortcutStep;
 }
@@ -225,7 +234,6 @@ void SnapShotController::openSetup(const QString& requested) {
   if (!m_backend->session().ready || m_backend->session().mode == QLatin1String("unavailable")) return;
   stopRecording();
   resetCandidate();
-  m_setupError.clear();
   const bool wasEnabled = enabled();
   const QString step = initialStep(requested);
   // Opening setup is the opt-in.
@@ -239,8 +247,43 @@ void SnapShotController::closeSetup(bool completed) {
   const bool wasEnabled = m_wizard->wasEnabled;
   stopRecording();
   m_wizard.reset();
+  set(kResume, QString());
   if (enabled() && !wasEnabled && !completed) set(QStringLiteral("snapShotEnabled"), false);
   publish();
+}
+
+bool SnapShotController::includeAccessibility() const {
+  return setting(QStringLiteral("snapShotIncludeAccessibility")).toBool();
+}
+
+bool SnapShotController::permissionsReady() const {
+  const auto session = m_backend->session();
+  return session.permissions && session.permissionsError.isEmpty() && session.permissions->screenRecording &&
+         (!includeAccessibility() || session.permissions->accessibility);
+}
+
+// macOS can quit the app from its permission prompt.
+void SnapShotController::saveResume() {
+  if (m_wizard) set(kResume, m_wizard->wasEnabled ? QStringLiteral("enabled") : QStringLiteral("disabled"));
+}
+
+void SnapShotController::resumeSetup() {
+  const auto session = m_backend->session();
+  if (!m_resumeChecked && session.ready) {
+    // Once per start, so opening System Settings cannot redirect later.
+    m_resumeChecked = true;
+    const QString resume = setting(kResume).toString();
+    if (!resume.isEmpty() && session.permissions && !m_wizard) {
+      m_wizard = Wizard{kAccess, resume == QLatin1String("enabled")};
+      m_resumeShown = false;
+    }
+  }
+  // The window may come after the answer.
+  if (m_resumeShown) return;
+  if (auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
+    m_resumeShown = true;
+    navigation->open(NavigationController::Route::settings(kSection));
+  }
 }
 
 void SnapShotController::stopRecording() {
@@ -335,7 +378,12 @@ QString SnapShotController::shortcutStatus() const {
     }
   }
   if (m_checking) return tr("Checking shortcut…");
-  if (m_check) return m_check->available ? tr("Ready to save.") : m_check->message;
+  // A direct backend's word on a free shortcut is worth reading (it may only
+  // be observed); the portal's only promises what saving will do.
+  if (m_check) {
+    if (!m_check->available) return m_check->message;
+    return m_backend->session().mode == QLatin1String("direct") && !m_check->message.isEmpty() ? m_check->message : tr("Ready to save.");
+  }
   const auto session = m_backend->session();
   const auto shortcut = m_backend->shortcut();
   const QJsonObject display = shortcutChanged() ? *m_candidate : savedShortcut();
@@ -344,7 +392,9 @@ QString SnapShotController::shortcutStatus() const {
   }
   if (!m_shortcutProblem.isEmpty()) return m_shortcutProblem;
   if (shortcut.pending) return tr("Approve the shortcut permission prompt to continue.");
-  if (shortcut.registered) return session.mode == QLatin1String("portal") ? shortcut.message : tr("Shortcut saved.");
+  if (shortcut.registered) {
+    return session.mode == QLatin1String("portal") || !shortcut.message.isEmpty() ? shortcut.message : tr("Shortcut saved.");
+  }
   return shortcut.message;
 }
 
@@ -366,6 +416,7 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     } else {
       stopRecording();
       m_wizard.reset();
+      set(kResume, QString());
       set(QStringLiteral("snapShotEnabled"), false);
       publish();
     }
@@ -376,10 +427,19 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
   if (action == QLatin1String("snapShot.setup.continue")) {
-    if (!m_wizard) return true;
+    if (!m_wizard || m_testing) return true;
+    if (m_backend->session().permissions) {
+      if (!permissionsReady()) return true;
+      saveResume();
+      m_wizard->error.clear();
+      m_testing = true;
+      publish();
+      m_backend->test();
+      return true;
+    }
     const auto setup = m_backend->setup();
     const bool retry = setup ? !setup->accessReady : !m_backend->session().message.isEmpty();
-    m_setupError.clear();
+    m_wizard->error.clear();
     if (!enabled() || retry) set(QStringLiteral("snapShotEnabled"), true);
     // Try again: the desktop is asked once more, and setup moves on once it answers.
     m_wizard->checked = retry;
@@ -393,20 +453,30 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
   }
   if (action == QLatin1String("snapShot.setup.action")) {
     // Only a step the user chose: checking access never installs anything.
-    m_setupError.clear();
-    if (m_wizard) m_wizard->checked = false;
+    if (m_wizard) {
+      m_wizard->error.clear();
+      m_wizard->checked = false;
+    }
     publish();
     m_backend->perform(map.value(QStringLiteral("action")).toString());
     return true;
   }
+  if (action == QLatin1String("snapShot.permission.allow")) {
+    if (!m_wizard || m_testing) return true;
+    saveResume();
+    m_backend->allow(map.value(QStringLiteral("id")).toString());
+    publish();
+    return true;
+  }
   if (action == QLatin1String("snapShot.setup.back")) {
-    if (!m_wizard) return true;
+    if (!m_wizard || m_testing) return true;
     stopRecording();
     m_wizard->step = kAccess;
     publish();
     return true;
   }
   if (action == QLatin1String("snapShot.setup.close")) {
+    if (m_testing) return true;
     closeSetup(map.value(QStringLiteral("completed")).toBool());
     return true;
   }
@@ -512,6 +582,16 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     if (key.isEmpty() || m_backend->session().mode == QLatin1String("portal") && key == QLatin1String("snapShotIncludeAccessibility")) {
       return true;
     }
+    if (key == QLatin1String("snapShotIncludeAccessibility") && map.value(QStringLiteral("value")).toBool() && enabled() &&
+        m_backend->session().permissions) {
+      if (const QString refused = m_backend->requestPermissions(true); !refused.isEmpty()) {
+        const QString title = tr("Couldn't allow app text capture");
+        if (m_wizard) m_wizard->error = title + u'.' + u' ' + refused;
+        else if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) toasts->error(title, refused);
+        publish();
+        return true;
+      }
+    }
     set(key, map.value(QStringLiteral("value")).toBool());
     return true;
   }
@@ -557,7 +637,25 @@ QString SnapShotController::target(NativeWindow* window) {
   return m_lastTarget.value(window->id());
 }
 
-void SnapShotController::onCaptured(const QImage& image, const QString& appName, const QString& windowTitle) {
+// The test image is the backend's to throw away; only the answer comes here.
+void SnapShotController::onTested(const QString& error) {
+  if (!m_testing) return;
+  m_testing = false;
+  if (!m_wizard) return publish();
+  if (!error.isEmpty()) {
+    m_wizard->error = tr("Couldn't verify capture access. %1").arg(error);
+    return publish();
+  }
+  m_backend->requestPermissions(includeAccessibility());
+  if (!enabled()) set(QStringLiteral("snapShotEnabled"), true);
+  if (accessReady()) {
+    stopRecording();
+    m_wizard->step = kShortcutStep;
+  }
+  publish();
+}
+
+void SnapShotController::onCaptured(const QImage& image, const QString& appName, const QString& windowTitle, const QJsonObject& context) {
   if (setting(QStringLiteral("snapShotPlaySound")).toBool()) {
     m_backend->play(setting(QStringLiteral("snapShotSound")).toString());
   }
@@ -578,10 +676,13 @@ void SnapShotController::onCaptured(const QImage& image, const QString& appName,
   const QString capturedAt = m_now().toUTC().toString(Qt::ISODateWithMs);
   QString name = QStringLiteral("window-%1").arg(QString(capturedAt).replace(u':', u'-'));
   name += mimeType == QLatin1String("image/png") ? QStringLiteral(".png") : QStringLiteral(".jpg");
-  const QJsonObject source{{QStringLiteral("kind"), QStringLiteral("snap-shot")},
-                           {QStringLiteral("capturedAt"), capturedAt},
-                           {QStringLiteral("appName"), appName.trimmed().isEmpty() ? QStringLiteral("Window") : appName.trimmed()},
-                           {QStringLiteral("windowTitle"), windowTitle.trimmed()}};
+  QJsonObject source{{QStringLiteral("kind"), QStringLiteral("snap-shot")},
+                     {QStringLiteral("capturedAt"), capturedAt},
+                     {QStringLiteral("appName"), appName.trimmed().isEmpty() ? QStringLiteral("Window") : appName.trimmed()},
+                     {QStringLiteral("windowTitle"), windowTitle.trimmed()}};
+  if (includeAccessibility()) {
+    for (auto it = context.begin(); it != context.end(); ++it) source.insert(it.key(), it.value());
+  }
   if (auto* composer = window->controller<ComposerController>()) composer->attachImage(to, name, mimeType, *bytes, source);
   window->bridge()->windowCommand(QStringLiteral("raise"));
   window->bridge()->sendToBricks(QStringLiteral("composer.focus"));
@@ -593,7 +694,7 @@ void SnapShotController::onSetupFailed(const QString& message) {
     onFailed(message);
     return;
   }
-  m_setupError = message;
+  m_wizard->error = message;
   publish();
 }
 
@@ -638,6 +739,10 @@ std::optional<QByteArray> SnapShotController::encode(const QImage& image, qint64
 
 void SnapShotController::publish() {
   if (!m_active || !m_backend) return;
+  // A permission can change in System Settings while setup or the panel shows
+  // it, and one granted again brings the shortcut back without a restart.
+  m_backend->watchPermissions(!m_testing && ((m_wizard && m_wizard->step == kAccess) ||
+                                             (enabled() && (panelOpen() || !m_backend->session().message.isEmpty()))));
   const QVariantMap next = state();
   if (next == m_published) return;
   m_published = next;
@@ -671,7 +776,9 @@ QVariantMap SnapShotController::state() const {
   else status = tr("Finish shortcut setup");
 
   QString setupLabel;
-  if (on && session.ready) {
+  // macOS hides setup once there is nothing left to do in it.
+  const bool complete = session.permissions && ready && permissionsReady() && shortcut.registered;
+  if (on && session.ready && !complete) {
     // The button is short: "Set up KDE capture".
     const QString name = session.desktop == QLatin1String("kde") ? QStringLiteral("KDE") : desktop;
     setupLabel = ready ? tr("Manage capture") : name.isEmpty() ? tr("Continue setup") : tr("Set up %1 capture").arg(name);
@@ -715,7 +822,12 @@ QVariantMap SnapShotController::state() const {
       heading = setup->heading;
       body = setup->body;
     } else if (access) {
-      if (!session.message.isEmpty()) {
+      if (session.permissions) {
+        heading = tr("Allow snapshots");
+        body = permissionsReady() ? tr("Test a snapshot of the current window. If macOS asks to bypass its window picker, choose Allow. The test "
+                                       "image is discarded.")
+                                  : tr("Allow each permission, then continue.");
+      } else if (!session.message.isEmpty()) {
         heading = tr("Let's try that again");
         body = tr("Couldn't check snapshots. Try again to continue.");
       } else if (picker) {
@@ -740,26 +852,48 @@ QVariantMap SnapShotController::state() const {
                                     {QStringLiteral("note"), option.note}});
       }
     }
+    QVariantList permissionRows;
+    if (session.permissions) {
+      const bool text = includeAccessibility();
+      permissionRows = {QVariantMap{{QStringLiteral("id"), QStringLiteral("screen-recording")},
+                                    {QStringLiteral("title"), tr("Screen Recording")},
+                                    {QStringLiteral("description"), tr("Capture the window you're using.")},
+                                    {QStringLiteral("required"), true},
+                                    {QStringLiteral("granted"), session.permissions->screenRecording}},
+                        QVariantMap{{QStringLiteral("id"), QStringLiteral("accessibility")},
+                                    {QStringLiteral("title"), tr("Accessibility")},
+                                    {QStringLiteral("description"), text ? tr("Include text and controls from the captured app.")
+                                                                         : tr("Optional. Include text and controls from the captured app.")},
+                                    {QStringLiteral("required"), text},
+                                    {QStringLiteral("granted"), session.permissions->accessibility}}};
+    }
+    const QString continueLabel = m_testing            ? tr("Working…")
+                                  : busy()              ? tr("Checking…")
+                                  : session.permissions ? tr("Test capture and continue")
+                                  : setup && !setup->actionLabel.isEmpty() ? setup->actionLabel
+                                  : ready               ? tr("Continue")
+                                                        : tr("Try again");
     wizard = QVariantMap{
         {QStringLiteral("step"), m_wizard->step},
         {QStringLiteral("busy"), busy()},
+        {QStringLiteral("permissionRows"), permissionRows},
+        {QStringLiteral("permissionsBusy"), m_testing},
+        {QStringLiteral("permissionsError"), session.permissionsError},
+        {QStringLiteral("continueEnabled"), !m_testing && (!session.permissions || permissionsReady())},
         {QStringLiteral("title"), desktop.isEmpty() ? tr("Set up snapshots") : tr("Set up snapshots for %1").arg(desktop)},
         {QStringLiteral("heading"), heading},
         {QStringLiteral("body"), body},
-        {QStringLiteral("details"), !access                   ? QString()
-                                    : !m_setupError.isEmpty() ? m_setupError
-                                    : setup                   ? setup->details
-                                                              : session.message},
+        {QStringLiteral("details"), !m_wizard->error.isEmpty() ? m_wizard->error
+                                    : !access || session.permissions ? QString()
+                                    : setup ? setup->details
+                                            : session.message},
         // The access step's own button runs this setup step, else checks again or continues.
         {QStringLiteral("action"), access && setup ? setup->action : QString()},
         {QStringLiteral("checkMessage"), access && setup && m_wizard->checked && !busy() ? setup->checkMessage : QString()},
         {QStringLiteral("advanced"), advanced},
         {QStringLiteral("attention"), !access && !ready ? tr("Capture needs attention. Go back to check access.") : QString()},
         {QStringLiteral("closeLabel"), m_wizard->wasEnabled ? tr("Close") : tr("Finish later")},
-        {QStringLiteral("continueLabel"), busy()                                    ? tr("Checking…")
-                                          : setup && !setup->actionLabel.isEmpty() ? setup->actionLabel
-                                          : ready                                  ? tr("Continue")
-                                                                                   : tr("Try again")},
+        {QStringLiteral("continueLabel"), continueLabel},
         {QStringLiteral("doneLabel"), changed ? tr("Save and finish") : tr("Done")},
         {QStringLiteral("doneEnabled"), ready && (changed ? canSave() : shortcut.registered || shortcut.pending)},
         {QStringLiteral("permissions"), !changed && !shortcut.registered && !shortcut.pending && canRetry},
