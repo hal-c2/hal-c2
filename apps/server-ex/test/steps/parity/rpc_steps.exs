@@ -699,6 +699,9 @@ defmodule HalC2.Steps.Parity.Fixtures do
         "cluster." <> _ ->
           [HalC2.Cluster]
 
+        push when push in ~w(hal-c2.registerPush hal-c2.unregisterPush) ->
+          [HalC2.Push]
+
         _ ->
           []
       end

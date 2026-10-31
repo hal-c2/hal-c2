@@ -11,6 +11,9 @@ ColumnLayout {
     id: screen
 
     readonly property var route: Shell.state.route ?? null
+    readonly property var notifications: Shell.state.notifications ?? null
+    readonly property string threadKey: route !== null && route.kind === "thread" ? (route.threadKey ?? "") : ""
+    readonly property bool muted: notifications !== null && (notifications.muted ?? []).indexOf(threadKey) >= 0
 
     signal backRequested
 
@@ -22,6 +25,15 @@ ColumnLayout {
         canGoBack: true
         title: screen.route !== null && screen.route.title ? screen.route.title : qsTr("Thread")
         onBackRequested: screen.backRequested()
+
+        // This thread's alerts on this phone, which the MC holds back while muted.
+        MobileIconButton {
+            objectName: screen.muted ? "unmuteAlerts" : "muteAlerts"
+            visible: screen.notifications?.supported === true && screen.threadKey.length > 0
+            iconName: screen.muted ? "bell-off" : "bell"
+            label: screen.muted ? qsTr("Unmute alerts for this thread") : qsTr("Mute alerts for this thread")
+            onClicked: Shell.dispatch("alerts.setMuted", { key: screen.threadKey, muted: !screen.muted })
+        }
 
         MobileIconButton {
             objectName: "threadMenu"

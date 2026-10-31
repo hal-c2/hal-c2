@@ -77,6 +77,7 @@ void collectTexts(QQuickItem* item, QStringList& texts) {
 }  // namespace
 
 World::World() : environment(QStringLiteral("a"), QStringLiteral("My MacBook")), mc(environment.mc) {
+  push = std::make_shared<FakePushSystem>(QDir(m_home.path()).filePath(QStringLiteral("data")));
   mc.projects.clear();
   mc.threads.clear();
   mc.projects.insert(QStringLiteral("shop"), {{QStringLiteral("id"), QStringLiteral("shop")},
@@ -107,8 +108,9 @@ void World::fillStorage() {
 void World::open() {
   if (m_app) return;
   QWindowSystemInterface::handleApplicationStateChanged<QWindowSystemInterface::SynchronousDelivery>(Qt::ApplicationActive);
+  push->opened();
   m_app = std::make_unique<MobileApp>(
-      MobileApp::Options{m_home.path(), QStringLiteral(HAL_C2_QML_DIR), QStringLiteral(HAL_C2_MOBILE_QML_DIR), kTestPhone, camera});
+      MobileApp::Options{m_home.path(), QStringLiteral(HAL_C2_QML_DIR), QStringLiteral(HAL_C2_MOBILE_QML_DIR), kTestPhone, camera, push});
   // The scenarios' seams: a dropped connection is tried again at once, and
   // nothing leaves the test for the system's browser or clipboard.
   m_app->native().client()->setRetryDelays({20});
@@ -153,6 +155,8 @@ void World::followLink(const QString& link) {
 
 void World::close() {
   m_app.reset();
+  // The process went with it; a receiver the system starts is in a new one.
+  push::setForeground(false);
 }
 
 PairableMc& World::another(const QString& label) {

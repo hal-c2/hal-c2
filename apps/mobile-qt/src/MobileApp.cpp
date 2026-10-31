@@ -12,6 +12,7 @@
 #include "LicensesController.h"
 #include "LocalFolderModel.h"
 #include "NativeShell.h"
+#include "Notifications.h"
 #include "PlatformWindow.h"
 #include "PluginController.h"
 #include "Scanner.h"
@@ -84,21 +85,25 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
       m_theme.get());
   // The one environment the phone is paired with.
   m_pairing = std::make_unique<Pairing>(m_bridge.get(), m_native.get(), m_storage.data, options.device);
+  m_notifications = std::make_unique<Notifications>(m_bridge.get(), m_native.get(), m_pairing.get(),
+                                                    options.pushSystem ? options.pushSystem : devicePushSystem(m_storage.data), m_storage.data);
   m_scanner = std::make_unique<Scanner>(m_bridge.get(), options.camera ? options.camera : deviceCamera());
   // A `hal-c2:` link the system opens the app with (the manifest's
-  // `hal-c2://pair`). Qt for Android hands a running app's link, and the one
+  // `hal-c2://pair`, and the `hal-c2://threads/...` a tapped notification
+  // opens, which Notifications takes and passes the rest on). Qt for Android hands a running app's link, and the one
   // a stopped app was started with, to QDesktopServices::openUrl, which
   // calls the scheme's handler. The second comes with the event loop's first
   // turn, so the handler has to be here before that.
-  QDesktopServices::setUrlHandler(QStringLiteral("hal-c2"), m_pairing.get(), "openLink");
+  QDesktopServices::setUrlHandler(QStringLiteral("hal-c2"), m_notifications.get(), "openLink");
 }
 
 MobileApp::~MobileApp() {
-  // Before the pairing goes: a link may be on its way from another thread.
+  // Before the notifications go: a link may be on its way from another thread.
   QDesktopServices::unsetUrlHandler(QStringLiteral("hal-c2"));
 }
 
 void MobileApp::start() {
   m_pairing->start();
+  m_notifications->start();
   m_runtime->start();
 }
