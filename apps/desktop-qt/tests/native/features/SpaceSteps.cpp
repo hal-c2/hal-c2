@@ -1033,6 +1033,11 @@ const Steps steps([] {
     actOnPage(world, idOfPage(world, c[1]), QStringLiteral("space.block.insert"),
               {{QStringLiteral("kind"), QStringLiteral("subpage_link")}, {QStringLiteral("text"), c[0]}, {QStringLiteral("linkedPageId"), idOfPage(world, c[0])}});
   });
+  step(QStringLiteral("the user makes the subpage %1 from a link on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, idOfPage(world, c[1]));
+    act(world, QStringLiteral("space.page.create"),
+        {{QStringLiteral("title"), c[0]}, {QStringLiteral("parentPageId"), idOfPage(world, c[1])}, {QStringLiteral("link"), true}});
+  });
   step(QStringLiteral("%1 links to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     lookAtPage(world, idOfPage(world, c[0]));
     const QString linked = idOfPage(world, c[1]);

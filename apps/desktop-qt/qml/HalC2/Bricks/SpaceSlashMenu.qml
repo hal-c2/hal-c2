@@ -39,6 +39,7 @@ Popup {
     }
 
     onQueryChanged: current = 0
+    onAboutToShow: current = 0
     padding: 4
     width: 240
     // The composer keeps the keyboard.
@@ -59,7 +60,6 @@ Popup {
             visible: menu.shown.length === 0
             text: qsTr("No block kind matches")
             color: Theme.palette.color("textMuted", "#a1a1aa")
-            font.family: Theme.fontUi
             font.pixelSize: Math.round(13 * Theme.fontScale)
         }
 
@@ -73,6 +73,13 @@ Popup {
                 required property int index
 
                 objectName: "spaceSlash:" + modelData.kind
+                Accessible.role: Accessible.MenuItem
+                Accessible.name: modelData.label
+                Accessible.focused: index === menu.current
+                Accessible.onPressAction: {
+                    menu.current = entry.index;
+                    menu.choose();
+                }
                 Layout.fillWidth: true
                 implicitHeight: 30
                 radius: Math.min(Theme.radius, 6)
@@ -94,7 +101,6 @@ Popup {
                         Layout.fillWidth: true
                         text: entry.modelData.label
                         color: Theme.palette.color("text", "#e4e4e7")
-                        font.family: Theme.fontUi
                         font.pixelSize: Math.round(13 * Theme.fontScale)
                     }
                 }

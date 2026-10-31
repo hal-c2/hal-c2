@@ -25,7 +25,8 @@ Rectangle {
     }
 
     signal saveRequested
-    signal subpageRequested(string parentPageId)
+    // `link`: the new subpage also gets a link block on this page.
+    signal subpageRequested(string parentPageId, bool link)
     signal commentRequested(string blockId)
 
     function kindLabel(kind) {
@@ -137,7 +138,6 @@ Rectangle {
             Text {
                 text: Spaces.spaceName
                 color: page.muted
-                font.family: Theme.fontUi
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
@@ -151,7 +151,6 @@ Rectangle {
 
                     text: "/  " + modelData.title
                     color: page.muted
-                    font.family: Theme.fontUi
                     font.pixelSize: Math.round(12 * Theme.fontScale)
 
                     MouseArea {
@@ -173,7 +172,7 @@ Rectangle {
                 objectName: "spacePageActions"
                 subtle: true
                 iconName: "ellipsis"
-                toolTip: qsTr("Page actions")
+                Accessible.name: qsTr("Page actions")
                 onClicked: actionsMenu.popup(pageActions, 0, pageActions.height + 4)
             }
 
@@ -189,7 +188,6 @@ Rectangle {
                 selectByMouse: true
                 selectionColor: Theme.palette.color("accent", "#2563eb")
                 selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
-                font.family: Theme.fontUi
                 font.pixelSize: Math.round(28 * Theme.fontScale)
                 font.weight: Font.Bold
                 clip: true
@@ -221,7 +219,7 @@ Rectangle {
                 text: qsTr("New subpage")
                 iconName: "plus"
                 enabled: !page.trashed
-                onTriggered: page.subpageRequested(Spaces.pageId)
+                onTriggered: page.subpageRequested(Spaces.pageId, false)
             }
 
             ShellMenuItem {
@@ -261,7 +259,6 @@ Rectangle {
             visible: (page.current.sourceThreadId ?? "") !== ""
             text: qsTr("Made from the thread “%1”").arg(page.current.sourceThreadTitle ?? "")
             color: page.muted
-            font.family: Theme.fontUi
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
@@ -292,7 +289,6 @@ Rectangle {
                     text: qsTr("This page is in the trash, so it cannot be changed.")
                     color: page.foreground
                     wrapMode: Text.Wrap
-                    font.family: Theme.fontUi
                     font.pixelSize: Math.round(13 * Theme.fontScale)
                 }
 
@@ -348,7 +344,6 @@ Rectangle {
                 visible: Spaces.blocks.count === 0
                 text: page.trashed ? qsTr("This page has no blocks.") : qsTr("This page is empty. Write below, or type / to pick a kind of block.")
                 color: page.muted
-                font.family: Theme.fontUi
                 font.pixelSize: Math.round(14 * Theme.fontScale)
             }
         }
@@ -358,7 +353,6 @@ Rectangle {
             visible: page.insertAfter !== "" && !page.trashed
             text: qsTr("Adding after “%1”").arg(page.insertAfterText)
             color: page.muted
-            font.family: Theme.fontUi
             font.pixelSize: Math.round(12 * Theme.fontScale)
 
             MouseArea {
@@ -393,7 +387,6 @@ Rectangle {
 
                 objectName: "spaceComposer"
                 Layout.fillWidth: true
-                font.family: Theme.fontUi
                 placeholderText: qsTr("Write, or type / for a kind of block")
                 onTextChanged: {
                     if (text.startsWith("/")) {
@@ -439,6 +432,8 @@ Rectangle {
         ShellMenu {
             id: linkMenu
 
+            objectName: "spaceLinkMenu"
+
             Instantiator {
                 model: linkMenu.visible ? page.subpages() : []
 
@@ -464,9 +459,10 @@ Rectangle {
             ShellMenuSeparator {}
 
             ShellMenuItem {
+                objectName: "spaceLinkNewSubpage"
                 text: qsTr("New subpage…")
                 iconName: "plus"
-                onTriggered: page.subpageRequested(Spaces.pageId)
+                onTriggered: page.subpageRequested(Spaces.pageId, true)
             }
         }
     }

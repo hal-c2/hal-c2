@@ -53,7 +53,7 @@ Rectangle {
                 objectName: "spaceCommentsClose"
                 subtle: true
                 iconName: "x"
-                toolTip: qsTr("Hide comments")
+                Accessible.name: qsTr("Hide comments")
                 onClicked: column.closeRequested()
             }
 
@@ -61,7 +61,6 @@ Rectangle {
                 Layout.fillWidth: true
                 text: qsTr("Comments")
                 color: column.foreground
-                font.family: Theme.fontUi
                 font.pixelSize: Math.round(14 * Theme.fontScale)
                 font.weight: Font.DemiBold
             }
@@ -77,7 +76,6 @@ Rectangle {
                 text: qsTr("On “%1”").arg(column.blockText)
                 elide: Text.ElideRight
                 color: column.muted
-                font.family: Theme.fontUi
                 font.pixelSize: Math.round(12 * Theme.fontScale)
             }
 
@@ -86,7 +84,6 @@ Rectangle {
 
                 objectName: "spaceCommentDraft"
                 Layout.fillWidth: true
-                font.family: Theme.fontUi
                 placeholderText: qsTr("Add a comment")
                 onAccepted: column.send()
             }
@@ -107,7 +104,6 @@ Rectangle {
             wrapMode: Text.Wrap
             text: qsTr("No comments on this page yet. Choose a block's comment button to start one.")
             color: column.muted
-            font.family: Theme.fontUi
             font.pixelSize: Math.round(13 * Theme.fontScale)
         }
 
@@ -152,7 +148,6 @@ Rectangle {
                         text: "“" + comment.blockText + "”"
                         elide: Text.ElideRight
                         color: column.muted
-                        font.family: Theme.fontUi
                         font.pixelSize: Math.round(11 * Theme.fontScale)
 
                         MouseArea {
@@ -167,7 +162,6 @@ Rectangle {
                         text: comment.body
                         wrapMode: Text.Wrap
                         color: column.foreground
-                        font.family: Theme.fontUi
                         font.pixelSize: Math.round(13 * Theme.fontScale)
                     }
 
@@ -179,7 +173,6 @@ Rectangle {
                             Layout.fillWidth: true
                             text: (comment.byAgent ? qsTr("An agent") : qsTr("You")) + (comment.resolved ? qsTr(" · resolved") : "")
                             color: column.muted
-                            font.family: Theme.fontUi
                             font.pixelSize: Math.round(11 * Theme.fontScale)
                         }
 

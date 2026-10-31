@@ -720,8 +720,17 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     QJsonObject create = orNull(pick({"spaceId"}), QLatin1String("parentPageId"));
     const QString title = field(QLatin1String("title")).trimmed();
     create.insert(QStringLiteral("title"), title.isEmpty() ? QStringLiteral("Untitled") : title);
-    call(QStringLiteral("page.create"), create, [this](const QJsonObject& result) {
-      awaitPage(result.value(QLatin1String("page")).toObject().value(QLatin1String("id")).toString());
+    // `link`: also add a block to the parent page that links to the new one.
+    const QString linkFrom = input.value(QLatin1String("link")).toBool() ? field(QLatin1String("parentPageId")) : QString();
+    call(QStringLiteral("page.create"), create, [this, linkFrom, title](const QJsonObject& result) {
+      const QString id = result.value(QLatin1String("page")).toObject().value(QLatin1String("id")).toString();
+      if (!linkFrom.isEmpty() && !id.isEmpty()) {
+        call(QStringLiteral("block.insert"), {{QStringLiteral("pageId"), linkFrom},
+                                              {QStringLiteral("kind"), QStringLiteral("subpage_link")},
+                                              {QStringLiteral("text"), title.isEmpty() ? QStringLiteral("Untitled") : title},
+                                              {QStringLiteral("linkedPageId"), id}});
+      }
+      awaitPage(id);
     });
   } else if (action == QLatin1String("space.page.rename")) {
     call(QStringLiteral("page.rename"),

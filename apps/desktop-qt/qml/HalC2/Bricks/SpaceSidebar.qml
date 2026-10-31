@@ -19,13 +19,16 @@ Rectangle {
     // one) or "page" (a new page, inside `parentPageId` when it is set).
     property string naming: ""
     property string parentPageId: ""
+    property bool linkFromParent: false
     property bool trashShown: false
 
     signal importRequested
 
-    // Asks for a name for a new page, inside `parentPageId` ("" for the top).
-    function newPage(parentPageId) {
+    // Asks for a name for a new page, inside `parentPageId` ("" for the top),
+    // and with `link` also links to it from that parent.
+    function newPage(parentPageId, link) {
         sidebar.parentPageId = parentPageId;
+        sidebar.linkFromParent = link === true && parentPageId !== "";
         sidebar.name("page", "");
     }
 
@@ -44,7 +47,7 @@ Rectangle {
             else if (sidebar.naming === "rename")
                 Shell.dispatch("space.rename", { spaceId: Spaces.spaceId, name: text });
             else if (sidebar.naming === "page")
-                Shell.dispatch("space.page.create", { title: text, parentPageId: sidebar.parentPageId });
+                Shell.dispatch("space.page.create", { title: text, parentPageId: sidebar.parentPageId, link: sidebar.linkFromParent });
         }
         sidebar.naming = "";
     }
@@ -74,10 +77,19 @@ Rectangle {
             }
 
             ShellButton {
+                objectName: "spaceImportMarkdown"
+                subtle: true
+                iconName: "file"
+                Accessible.name: qsTr("Import Markdown")
+                enabled: Spaces.spaceId !== ""
+                onClicked: sidebar.importRequested()
+            }
+
+            ShellButton {
                 objectName: "spaceNewPage"
                 subtle: true
                 iconName: "plus"
-                toolTip: qsTr("New page")
+                Accessible.name: qsTr("New page")
                 enabled: Spaces.spaceId !== ""
                 onClicked: sidebar.newPage("")
             }
@@ -145,16 +157,6 @@ Rectangle {
             Keys.onEscapePressed: sidebar.naming = ""
         }
 
-        ShellButton {
-            objectName: "spaceImportMarkdown"
-            Layout.fillWidth: true
-            subtle: true
-            iconName: "file"
-            text: qsTr("Import Markdown")
-            enabled: Spaces.spaceId !== ""
-            onClicked: sidebar.importRequested()
-        }
-
         ListView {
             id: tree
 
@@ -214,7 +216,6 @@ Rectangle {
                         text: row.title
                         elide: Text.ElideRight
                         color: sidebar.foreground
-                        font.family: Theme.fontUi
                         font.pixelSize: Math.round(13 * Theme.fontScale)
                         font.weight: row.selected ? Font.Medium : Font.Normal
                     }
@@ -225,7 +226,7 @@ Rectangle {
                         iconName: "ellipsis"
                         implicitHeight: 24
                         implicitWidth: 24
-                        toolTip: qsTr("Page actions")
+                        Accessible.name: qsTr("Page actions")
                         opacity: rowMouse.containsMouse || hovered || row.selected || pageMenu.visible ? 1 : 0
                         onClicked: pageMenu.popup(this, 0, height + 2)
                     }
@@ -299,7 +300,6 @@ Rectangle {
             visible: sidebar.trashShown && Spaces.trash.count === 0
             text: qsTr("The trash is empty.")
             color: sidebar.muted
-            font.family: Theme.fontUi
             font.pixelSize: Math.round(12 * Theme.fontScale)
         }
 
@@ -322,7 +322,6 @@ Rectangle {
                     text: trashed.title
                     elide: Text.ElideRight
                     color: sidebar.muted
-                    font.family: Theme.fontUi
                     font.pixelSize: Math.round(13 * Theme.fontScale)
 
                     MouseArea {
@@ -337,7 +336,7 @@ Rectangle {
                     iconName: "archive-restore"
                     implicitHeight: 24
                     implicitWidth: 24
-                    toolTip: qsTr("Restore")
+                    Accessible.name: qsTr("Restore")
                     onClicked: Shell.dispatch("space.page.restore", { pageId: trashed.model.id })
                 }
 
@@ -348,7 +347,7 @@ Rectangle {
                     implicitHeight: 24
                     implicitWidth: 24
                     tint: Theme.palette.color("error", "#ef4444")
-                    toolTip: qsTr("Delete for good")
+                    Accessible.name: qsTr("Delete for good")
                     onClicked: Shell.dispatch("space.page.delete", { pageId: trashed.model.id })
                 }
             }

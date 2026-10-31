@@ -68,7 +68,7 @@ Rectangle {
                 anchors.fill: parent
                 visible: Spaces.pageId !== ""
                 onSaveRequested: saveDialog.open()
-                onSubpageRequested: parentPageId => sidebar.newPage(parentPageId)
+                onSubpageRequested: (parentPageId, link) => sidebar.newPage(parentPageId, link)
                 onCommentRequested: blockId => workspace.showComments(blockId)
             }
 
@@ -93,7 +93,6 @@ Rectangle {
                     wrapMode: Text.Wrap
                     text: workspace.emptyText
                     color: workspace.foreground
-                    font.family: Theme.fontUi
                     font.pixelSize: Math.round(15 * Theme.fontScale)
                 }
 
@@ -103,7 +102,6 @@ Rectangle {
                     horizontalAlignment: Text.AlignHCenter
                     text: qsTr("Writing a page from the thread…")
                     color: workspace.muted
-                    font.family: Theme.fontUi
                     font.pixelSize: Math.round(13 * Theme.fontScale)
                 }
 

@@ -75,6 +75,7 @@ Item {
 
         ShellCheckBox {
             objectName: "spaceTick:" + block.text
+            Accessible.name: block.text
             visible: block.kind === "checklist"
             padding: 0
             checked: block.checked
@@ -108,7 +109,6 @@ Item {
             visible: block.kind === "subpage_link"
             text: block.linkedTitle
             color: Theme.palette.color("accent", "#3b82f6")
-            font.family: Theme.fontUi
             font.pixelSize: Math.round(15 * Theme.fontScale)
             font.underline: linkMouse.containsMouse
             elide: Text.ElideRight
@@ -135,7 +135,6 @@ Item {
             color: block.foreground
             selectionColor: Theme.palette.color("accent", "#2563eb")
             selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
-            font.family: Theme.fontUi
             font.pixelSize: Math.round((block.kind === "heading" ? 20 : 15) * Theme.fontScale)
             font.weight: block.kind === "heading" ? Font.DemiBold : Font.Normal
             font.strikeout: block.kind === "checklist" && block.checked
@@ -166,7 +165,6 @@ Item {
             visible: block.byAgent
             text: qsTr("agent")
             color: block.muted
-            font.family: Theme.fontUi
             font.pixelSize: Math.round(11 * Theme.fontScale)
         }
 
@@ -182,6 +180,7 @@ Item {
                 text: block.openComments > 0 ? String(block.openComments) : ""
                 implicitHeight: 26
                 toolTip: qsTr("Comment")
+                Accessible.name: block.openComments > 0 ? qsTr("Comments, %1 open").arg(block.openComments) : qsTr("Comment")
                 onClicked: block.commentRequested(block.blockId)
             }
 
@@ -191,7 +190,7 @@ Item {
                 iconName: "plus"
                 implicitHeight: 26
                 implicitWidth: 26
-                toolTip: qsTr("Add a block below")
+                Accessible.name: qsTr("Add a block below")
                 visible: !block.readOnly
                 onClicked: block.addBelowRequested(block.blockId)
             }
@@ -202,7 +201,7 @@ Item {
                 iconName: "arrow-up"
                 implicitHeight: 26
                 implicitWidth: 26
-                toolTip: qsTr("Move up")
+                Accessible.name: qsTr("Move up")
                 visible: !block.readOnly
                 enabled: block.previousId !== ""
                 // After the block before the one above it; first when there is none.
@@ -215,7 +214,7 @@ Item {
                 iconName: "arrow-down"
                 implicitHeight: 26
                 implicitWidth: 26
-                toolTip: qsTr("Move down")
+                Accessible.name: qsTr("Move down")
                 visible: !block.readOnly
                 enabled: block.nextId !== ""
                 onClicked: Shell.dispatch("space.block.move", { blockId: block.blockId, afterBlockId: block.nextId })
@@ -227,7 +226,7 @@ Item {
                 iconName: "x"
                 implicitHeight: 26
                 implicitWidth: 26
-                toolTip: qsTr("Delete block")
+                Accessible.name: qsTr("Delete block")
                 visible: !block.readOnly
                 onClicked: Shell.dispatch("space.block.delete", { blockId: block.blockId })
             }

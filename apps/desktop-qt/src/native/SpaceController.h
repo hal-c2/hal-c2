@@ -203,7 +203,7 @@ private:
 // Actions (each payload's `spaceId` defaults to the selected Space):
 // `space.open`, `space.select {spaceId}`, `space.selectPage {pageId}`,
 // `space.create {name}`, `space.rename {spaceId, name}`, `space.delete {spaceId}`,
-// `space.page.create {title, parentPageId}`, `space.page.rename {pageId, title}`,
+// `space.page.create {title, parentPageId, link}`, `space.page.rename {pageId, title}`,
 // `space.page.move {pageId, parentPageId}`, `space.page.trash {pageId}`,
 // `space.page.restore {pageId}`, `space.page.delete {pageId}`,
 // `space.page.copyMarkdown {pageId}`, `space.page.saveMarkdown {pageId, url}`,

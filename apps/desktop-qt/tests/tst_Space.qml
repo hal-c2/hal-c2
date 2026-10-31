@@ -200,7 +200,23 @@ Item {
             verify(field.visible);
             keyClick("R");
             keyClick(Qt.Key_Return);
-            compare(root.dispatched("space.page.create"), [{ title: "R", parentPageId: "" }]);
+            compare(root.dispatched("space.page.create"), [{ title: "R", parentPageId: "", link: false }]);
+        }
+
+        function test_a_subpage_made_from_the_link_menu_is_linked() {
+            const view = root.research({});
+            findChild(view, "spaceComposer").forceActiveFocus();
+            keyClick("/");
+            keyClick("l");
+            keyClick(Qt.Key_Return);
+            const menu = findChild(view, "spaceLinkMenu");
+            tryVerify(() => menu.opened);
+            mouseClick(findChild(view, "spaceLinkNewSubpage"));
+            const field = findChild(view, "spaceNameField");
+            tryVerify(() => field.visible);
+            keyClick("Q");
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.page.create"), [{ title: "Q", parentPageId: "page-1", link: true }]);
         }
 
         function test_an_unreachable_mc_is_said_rather_than_an_empty_space() {
