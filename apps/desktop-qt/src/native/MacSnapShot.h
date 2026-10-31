@@ -15,7 +15,7 @@
 // include the app's text. The shortcut is a key chord or both keys of one
 // modifier (both Shift keys by default), watched in-process.
 //
-// `bind` takes the shortcut's JSON (SnapShotController::directTrigger). While
+// `bind` takes the shortcut's JSON (SnapShotBackend::trigger). While
 // a shortcut is asked for and a permission it needs is missing, the session
 // says which and nothing is held; once the permission is back (a refresh),
 // the shortcut is held again without a restart.

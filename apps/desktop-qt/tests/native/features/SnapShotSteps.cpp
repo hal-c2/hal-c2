@@ -1327,9 +1327,27 @@ void refusePause(const QString& reason) {
 QStringList played() {
   return desktop().played;
 }
+void resetDesktop(World& world, const QProcessEnvironment& env) {
+  ::resetDesktop(world, env);
+}
+void openThread(World& world) {
+  ::openThread(world);
+}
+void capture(World& world) {
+  ::capture(world);
+}
+QVariantList draft(World& world) {
+  return attachments(world, threadKey(world));
+}
+SnapShotBackend* backend(World& world) {
+  return controller(world)->backend();
+}
+void expectToast(World& world, const QString& title, const QString& description) {
+  ::expectToast(world, title, description);
+}
 
 void session(World& world, const QProcessEnvironment& env) {
-  resetDesktop(world, env);
+  ::resetDesktop(world, env);
 }
 void shortcutRefused(const QString& reason) {
   desktop().holdShortcuts = false;
@@ -1342,10 +1360,10 @@ QStringList binds() {
   return desktop().binds;
 }
 void thread(World& world) {
-  openThread(world);
+  ::openThread(world);
 }
 void pressShortcut(World& world) {
-  capture(world);
+  ::capture(world);
 }
 QVariantMap attachedImage(World& world) {
   return attached(world, threadKey(world));
