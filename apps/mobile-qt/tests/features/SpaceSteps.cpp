@@ -1438,6 +1438,18 @@ const Steps steps([] {
     const QString title = viewOf(world)->page().value(S("title")).toString();
     expect(title == c[0], S("another page shows: %1").arg(title));
   });
+  step(S("the user goes to Settings from there"), [](World& world, const Captures&, const Table&) {
+    // As the palette does: not by Back, which would take the screen's steps first.
+    world.bridge().dispatch(NavigationController::kOpenSettings, QVariantMap{});
+    world.waitFor([&] { return navigation(world)->route().kind == QLatin1String("settings"); }, S("the settings"));
+  });
+  step(S("the user opens the Spaces"), [](World& world, const Captures&, const Table&) {
+    openSpaces(world);
+  });
+  step(S("the Space screen shows the list of Spaces"), [](World& world, const Captures&, const Table&) {
+    world.sync();
+    expectStep(world, S("spaces"));
+  });
   step(S("the user unfolds the phone"), [](World& world, const Captures&, const Table&) {
     world.resize(1024, 800);
   });

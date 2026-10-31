@@ -30,6 +30,12 @@ Feature: Spaces on a phone
     And the window narrows to a phone's width
     Then the Space screen shows the page "Draft"
 
+  Scenario: Leaving the Space screen from a page and opening it again starts at the Spaces
+    When the user opens the page "Draft" of "Ideas"
+    And the user goes to Settings from there
+    And the user opens the Spaces
+    Then the Space screen shows the list of Spaces
+
   Scenario: A page that opened in the wide layout is not awaited on the phone
     When the user makes a page in "Research" from the thread "Work"
     And the user unfolds the phone
