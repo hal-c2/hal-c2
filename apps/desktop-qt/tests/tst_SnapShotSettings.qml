@@ -32,7 +32,9 @@ Item {
             accessibility: root.toggle({ enabled: false, status: "Not available on this desktop." }),
             flash: root.toggle({ checked: true, enabled: false }),
             animations: root.toggle({ checked: true, enabled: false }),
-            sound: { value: "soft-pop", label: "Whoosh (Default)" },
+            sound: { value: "soft-pop", label: "Whoosh (Default)",
+                     choices: [{ value: "off", label: "Off" }, { value: "soft-pop", label: "Whoosh (Default)" },
+                               { value: "camera-shutter", label: "Click" }] },
             wizard: null
         }, overrides);
     }
@@ -47,6 +49,61 @@ Item {
 
         function last() {
             return Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
+        }
+
+        function managedSetup(config) {
+            return root.snapShot({
+                shortcut: Object.assign(root.snapShot({}).shortcut, { managed: true, keys: "Ctrl+Shift+2" }),
+                wizard: { step: "shortcut", title: "Set up snapshots", heading: "Choose your shortcut", body: "", details: "", attention: "",
+                          closeLabel: "Close", continueLabel: "Continue", doneLabel: "Done", doneEnabled: true, permissions: false },
+                config: Object.assign({ intro: "Allow it.", reviewLabel: "Review changes", canReview: true, review: null, connecting: "", error: "",
+                                        details: "", backup: "", file: "/h/config.kdl", fileHint: "", binding: "bind", manual: "Paste this",
+                                        copyLabel: "Copy shortcut", removeNote: "" }, config)
+            });
+        }
+
+        function test_a_shortcut_in_the_compositor_is_changed_through_setup() {
+            const state = root.snapShot({ shortcut: Object.assign(root.snapShot({}).shortcut, { managed: true, keys: "Change shortcut" }) });
+            Shell.state = { snapShot: state };
+            const page = createTemporaryObject(snapComponent, root);
+            mouseClick(findChild(findChild(page, "snapShot:shortcut"), "recorder"));
+            compare(last().action, "snapShot.setup.open");
+            compare(last().payload.step, "shortcut");
+        }
+
+        function test_a_config_change_is_reviewed_then_saved_or_cancelled() {
+            Shell.state = { snapShot: managedSetup({}) };
+            const page = createTemporaryObject(snapComponent, root);
+            mouseClick(findChild(page, "configReview"));
+            compare(last().action, "snapShot.config.review");
+
+            Shell.state = { snapShot: managedSetup({ canReview: false, review: {
+                id: "r1", changed: true, install: true, shortcut: "Ctrl+Shift+2", note: "Only these changes will be saved.",
+                lines: [{ kind: "added", text: "Ctrl+Shift+2 {}" }], saveLabel: "Save shortcut", canSave: true, linked: "" } }) };
+            verify(!findChild(page, "configReview").visible);
+            compare(findChild(page, "configNote").text, "Only these changes will be saved.");
+            mouseClick(findChild(page, "configSave"));
+            compare(last().action, "snapShot.config.save");
+            compare(last().payload.id, "r1");
+            mouseClick(findChild(page, "configCancel"));
+            compare(last().action, "snapShot.config.cancel");
+        }
+
+        function test_a_refusal_opens_advanced_with_its_reason() {
+            Shell.state = { snapShot: managedSetup({}) };
+            const page = createTemporaryObject(snapComponent, root);
+            verify(!findChild(page, "configDetails").visible);
+            Shell.state = { snapShot: managedSetup({ error: "Couldn't prepare the changes.", details: "This config uses a dynamic include." }) };
+            compare(findChild(page, "configError").text, "Couldn't prepare the changes.");
+            tryVerify(() => findChild(page, "configDetails").visible);
+            compare(findChild(page, "configDetails").text, "This config uses a dynamic include.");
+            mouseClick(findChild(page, "configRemove"));
+            compare(last().action, "snapShot.config.review");
+            compare(last().payload.remove, true);
+            mouseClick(findChild(page, "configCopy"));
+            compare(last().action, "snapShot.config.copy");
+            mouseClick(findChild(page, "configComplete"));
+            compare(last().action, "snapShot.config.complete");
         }
 
         function test_turning_it_on_and_off_goes_to_the_controller() {
@@ -82,6 +139,51 @@ Item {
             mouseClick(findChild(page, "close"));
             compare(last().action, "snapShot.setup.close");
             compare(last().payload.completed, false);
+        }
+
+        function test_a_helper_failure_says_why_on_the_access_step() {
+            Shell.state = { snapShot: root.snapShot({ wizard: { step: "access", action: "install-kde-helper", title: "Set up Snap Shot", heading: "Allow capture",
+                                                                body: "", details: "", attention: "", checkMessage: "The helper failed to start.",
+                                                                closeLabel: "Finish later", continueLabel: "Install", doneLabel: "Done", doneEnabled: false,
+                                                                permissions: false, permissionsLabel: "" } }) };
+            const page = createTemporaryObject(snapComponent, root);
+            compare(findChild(page, "checkMessage").text, "The helper failed to start.");
+            mouseClick(findChild(page, "continue"));
+            compare(last().action, "snapShot.setup.action");
+            compare(last().payload.action, "install-kde-helper");
+        }
+
+        function test_a_setup_step_and_advanced_go_to_the_desktop() {
+            Shell.state = { snapShot: root.snapShot({ wizard: { step: "access", title: "Set up snapshots for GNOME",
+                                                                heading: "Install the extension", body: "Sign out once after installing.",
+                                                                details: "", attention: "", closeLabel: "Finish later",
+                                                                continueLabel: "Install extension", action: "install-extension",
+                                                                checkMessage: "", doneLabel: "Done", doneEnabled: false,
+                                                                permissions: false, permissionsLabel: "",
+                                                                advanced: [{ action: "disable-extension", label: "Disable extension",
+                                                                             note: "" }] } }) };
+            const page = createTemporaryObject(snapComponent, root);
+            compare(findChild(page, "continue").text, "Install extension");
+            mouseClick(findChild(page, "continue"));
+            compare(last().action, "snapShot.setup.action");
+            compare(last().payload.action, "install-extension");
+            verify(!findChild(page, "advanced-disable-extension"), "Advanced starts closed");
+            mouseClick(findChild(page, "advanced"));
+            const disable = findChild(page, "advanced-disable-extension");
+            verify(disable);
+            mouseClick(disable);
+            compare(last().action, "snapShot.setup.action");
+            compare(last().payload.action, "disable-extension");
+        }
+
+        function test_the_walk_through_waits_while_it_works() {
+            Shell.state = { snapShot: root.snapShot({ wizard: { step: "access", busy: true, title: "Set up Snap Shot", heading: "Allow capture",
+                                                                body: "", details: "", attention: "", closeLabel: "Finish later",
+                                                                continueLabel: "Checking…", doneLabel: "Done", doneEnabled: false,
+                                                                permissions: false, permissionsLabel: "" } }) };
+            const page = createTemporaryObject(snapComponent, root);
+            verify(!findChild(page, "close").enabled);
+            verify(!findChild(page, "continue").enabled);
         }
 
         function test_recording_sends_the_keys_and_escape() {
@@ -127,9 +229,26 @@ Item {
             sound.activated(0);
             compare(last().action, "snapShot.sound");
             compare(last().payload.value, "off");
-            mouseClick(findChild(findChild(page, "snapShot:sound"), "play"));
+            sound.popup.open();
+            tryVerify(() => sound.popup.opened);
+            const click = sound.popup.contentItem.itemAtIndex(2);
+            verify(findChild(click, "play:camera-shutter"));
+            verify(!findChild(sound.popup.contentItem.itemAtIndex(0), "play:off")?.visible, "Off has nothing to hear");
+            mouseClick(findChild(click, "play:camera-shutter"));
+            compare(last().action, "snapShot.sound.play");
+            compare(last().payload.sound, "camera-shutter");
+            verify(sound.popup.visible, "hearing a sound keeps the choices open");
+            sound.popup.close();
+            tryVerify(() => !sound.popup.visible);
+            sound.forceActiveFocus();
+            sound.popup.open();
+            tryVerify(() => sound.popup.opened);
+            compare(sound.highlightedIndex, 1);
+            keyClick(Qt.Key_Right);
             compare(last().action, "snapShot.sound.play");
             compare(last().payload.sound, "soft-pop");
+            verify(sound.popup.visible, "the keyboard hears a sound without choosing it");
+            sound.popup.close();
             const flash = findChild(findChild(page, "snapShot:flash"), "control");
             verify(flash.checked);
             verify(!flash.enabled, "the portal gives no flash");

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import HalC2.Shell
 
@@ -10,6 +11,7 @@ import HalC2.Shell
 // and sends what the user does.
 SettingsPage {
     id: snap
+    readonly property var config: Shell.state.snapShot?.config ?? null
 
     readonly property var settings: Shell.state.snapShot ?? null
     readonly property var shortcut: settings?.shortcut ?? null
@@ -84,7 +86,11 @@ SettingsPage {
             enabled: toggle.model?.enabled ?? false
             checked: toggle.model?.checked ?? false
             Accessible.name: toggle.heading
-            onToggled: Shell.dispatch("snapShot.set", { key: toggle.key, value: checked })
+            onToggled: {
+                Shell.dispatch("snapShot.set", { key: toggle.key, value: checked });
+                // A refusal leaves the state as it was, so nothing would move the switch back.
+                checked = Qt.binding(() => toggle.model?.checked ?? false);
+            }
         }
     }
 
@@ -98,8 +104,14 @@ SettingsPage {
 
         objectName: "recorder"
         text: recorder.shortcut?.keys ?? ""
+        enabled: !(Shell.state.snapShot?.config?.busy ?? false)
         focusPolicy: Qt.StrongFocus
         onClicked: {
+            // A shortcut in the compositor's config is changed through setup's review.
+            if ((recorder.shortcut?.managed ?? false) && !Shell.state.snapShot?.wizard) {
+                Shell.dispatch("snapShot.setup.open", { step: "shortcut" });
+                return;
+            }
             forceActiveFocus();
             Shell.dispatch("snapShot.record.start");
         }
@@ -115,19 +127,24 @@ SettingsPage {
             return "";
         }
 
-        Keys.onShortcutOverride: event => event.accepted = (recorder.shortcut?.recording ?? false) && event.key !== Qt.Key_Tab
-                                                          && event.key !== Qt.Key_Backtab
+        // A plain Tab moves focus on (the controller ignores it too).
+        function plainTab(event) {
+            return (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
+                && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier));
+        }
+
+        Keys.onShortcutOverride: event => event.accepted = (recorder.shortcut?.recording ?? false) && !recorder.plainTab(event)
         Keys.onPressed: event => {
-            if (!(recorder.shortcut?.recording ?? false) || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
+            if (!(recorder.shortcut?.recording ?? false) || recorder.plainTab(event))
                 return;
             event.accepted = true;
-            if (event.isAutoRepeat)
-                return;
             const held = modifier(event.key);
-            if (held.length > 0)
-                Shell.dispatch("snapShot.record.modifier", { modifier: held, code: event.nativeScanCode, down: true });
-            else
-                Shell.dispatch("snapShot.record.key", { key: event.key, modifiers: event.modifiers });
+            if (held.length > 0) {
+                if (!event.isAutoRepeat)
+                    Shell.dispatch("snapShot.record.modifier", { modifier: held, code: event.nativeScanCode, down: true });
+            } else {
+                Shell.dispatch("snapShot.record.key", { key: event.key, modifiers: event.modifiers, repeat: event.isAutoRepeat });
+            }
         }
         Keys.onReleased: event => {
             const held = modifier(event.key);
@@ -152,7 +169,7 @@ SettingsPage {
 
         ShellSwitch {
             objectName: "control"
-            enabled: (snap.settings?.ready ?? false) && (snap.settings?.available ?? false)
+            enabled: (snap.settings?.ready ?? false) && (snap.settings?.available ?? false) && !(snap.config?.busy ?? false)
             checked: snap.settings?.switchOn ?? false
             Accessible.name: qsTr("SnapShots")
             onToggled: Shell.dispatch("snapShot.enable", { on: checked })
@@ -164,6 +181,8 @@ SettingsPage {
         objectName: "snapShotSetup"
         Layout.fillWidth: true
         visible: snap.wizard !== null
+        // Nothing is left or stepped through while the desktop answers.
+        enabled: !(snap.wizard?.busy ?? false)
         implicitHeight: setup.implicitHeight + 32
         radius: Math.min(Theme.radius, 10)
         color: Theme.palette.color("surface", "#18181b")
@@ -216,6 +235,65 @@ SettingsPage {
                 wrapMode: Text.Wrap
             }
 
+            // macOS grants each permission on its own.
+            Repeater {
+                model: snap.wizard?.step === "access" ? (snap.wizard?.permissionRows ?? []) : []
+
+                RowLayout {
+                    required property var modelData
+
+                    objectName: "permission:" + modelData.id
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        Label {
+                            text: modelData.title
+                            color: Theme.palette.color("text", "#e4e4e7")
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            font.weight: Font.Medium
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: modelData.description
+                            color: snap.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            wrapMode: Text.Wrap
+                        }
+                    }
+
+                    Label {
+                        objectName: "allowed"
+                        visible: modelData.granted
+                        text: qsTr("Allowed")
+                        color: snap.muted
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+
+                    ShellButton {
+                        objectName: "allow"
+                        visible: !modelData.granted
+                        enabled: !(snap.wizard?.permissionsBusy ?? false)
+                        text: qsTr("Allow")
+                        onClicked: Shell.dispatch("snapShot.permission.allow", { id: modelData.id })
+                    }
+                }
+            }
+
+            Label {
+                objectName: "permissionsError"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: snap.wizard?.permissionsError ?? ""
+                color: snap.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
             Label {
                 Layout.fillWidth: true
                 visible: text.length > 0
@@ -223,6 +301,58 @@ SettingsPage {
                 color: Theme.palette.color("warning", "#fbbf24")
                 font.pixelSize: Math.round(12 * Theme.fontScale)
                 wrapMode: Text.Wrap
+            }
+
+            Label {
+                objectName: "checkMessage"
+                Layout.fillWidth: true
+                visible: snap.wizard?.step === "access" && text.length > 0
+                text: snap.wizard?.checkMessage ?? ""
+                color: snap.muted
+                font.pixelSize: Math.round(12 * Theme.fontScale)
+                wrapMode: Text.Wrap
+            }
+
+            // Advanced: undoing what setup did.
+            ColumnLayout {
+                Layout.fillWidth: true
+                visible: snap.wizard?.step === "access" && (snap.wizard?.advanced ?? []).length > 0
+                spacing: 6
+
+                ShellButton {
+                    id: advancedToggle
+                    objectName: "advanced"
+                    property bool open: false
+                    subtle: true
+                    text: open ? qsTr("Hide advanced") : qsTr("Advanced")
+                    onClicked: open = !open
+                }
+
+                Repeater {
+                    model: advancedToggle.open ? (snap.wizard?.advanced ?? []) : []
+
+                    delegate: ColumnLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        ShellButton {
+                            objectName: "advanced-" + modelData.action
+                            subtle: true
+                            text: modelData.label
+                            onClicked: Shell.dispatch("snapShot.setup.action", { action: modelData.action })
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: modelData.note ?? ""
+                            color: snap.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            wrapMode: Text.Wrap
+                        }
+                    }
+                }
             }
 
             RowLayout {
@@ -249,6 +379,221 @@ SettingsPage {
                 wrapMode: Text.Wrap
             }
 
+            // The shortcut kept in the compositor's config: review, then save.
+            ColumnLayout {
+                id: configPanel
+
+                readonly property var config: snap.config
+                readonly property var review: config?.review ?? null
+                property bool advanced: false
+                readonly property bool failed: (config?.error ?? "").length > 0
+
+                Layout.fillWidth: true
+                visible: snap.wizard?.step === "shortcut" && config !== null
+                spacing: 8
+                onFailedChanged: if (failed) advanced = true
+
+                Label {
+                    objectName: "configIntro"
+                    Layout.fillWidth: true
+                    text: configPanel.config?.intro ?? ""
+                    color: snap.muted
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    wrapMode: Text.Wrap
+                }
+
+                Label {
+                    objectName: "configConnecting"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: configPanel.config?.connecting ?? ""
+                    color: snap.muted
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    wrapMode: Text.Wrap
+                }
+
+                Label {
+                    objectName: "configError"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: configPanel.config?.error ?? ""
+                    color: Theme.palette.color("warning", "#fbbf24")
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    wrapMode: Text.Wrap
+                }
+
+                ShellButton {
+                    objectName: "configReview"
+                    visible: configPanel.review === null
+                    enabled: configPanel.config?.canReview ?? false
+                    text: configPanel.config?.reviewLabel ?? ""
+                    onClicked: Shell.dispatch("snapShot.config.review")
+                }
+
+                Label {
+                    objectName: "configNote"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: configPanel.review?.note ?? ""
+                    color: snap.muted
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    wrapMode: Text.Wrap
+                }
+
+                Column {
+                    Layout.fillWidth: true
+                    visible: configPanel.review?.changed ?? false
+
+                    Repeater {
+                        objectName: "configDiff"
+                        model: configPanel.review?.lines ?? []
+
+                        delegate: Label {
+                            required property var modelData
+                            width: parent.width
+                            text: (modelData.kind === "added" ? "+ " : modelData.kind === "removed" ? "- " : "  ") + modelData.text
+                            color: modelData.kind === "added" ? Theme.palette.color("success", "#34d399")
+                                 : modelData.kind === "removed" ? Theme.palette.color("destructive", "#f87171") : snap.muted
+                            font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            wrapMode: Text.WrapAnywhere
+                        }
+                    }
+                }
+
+                RowLayout {
+                    visible: configPanel.review?.changed ?? false
+                    spacing: 8
+
+                    ShellButton {
+                        objectName: "configSave"
+                        primary: true
+                        enabled: configPanel.review?.canSave ?? false
+                        text: configPanel.review?.saveLabel ?? ""
+                        onClicked: Shell.dispatch("snapShot.config.save", { id: configPanel.review?.id ?? "" })
+                    }
+
+                    ShellButton {
+                        objectName: "configCancel"
+                        subtle: true
+                        enabled: !(configPanel.config?.busy ?? false)
+                        text: qsTr("Cancel")
+                        onClicked: Shell.dispatch("snapShot.config.cancel")
+                    }
+                }
+
+                ShellButton {
+                    objectName: "configAdvanced"
+                    subtle: true
+                    text: qsTr("Advanced")
+                    onClicked: configPanel.advanced = !configPanel.advanced
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: configPanel.advanced
+                    spacing: 8
+
+                    Label {
+                        objectName: "configDetails"
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: configPanel.config?.details ?? ""
+                        color: Theme.palette.color("warning", "#fbbf24")
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        wrapMode: Text.Wrap
+                    }
+
+                    Repeater {
+                        // What the user may need to read, in the order they would need it.
+                        model: [
+                            { name: "configFile", text: configPanel.config?.file ?? "" },
+                            { name: "configLinked", text: configPanel.review?.linked ?? "" },
+                            { name: "configFileHint", text: configPanel.config?.fileHint ?? "" },
+                            { name: "configBackup", text: configPanel.config?.backup ?? "" }
+                        ]
+
+                        delegate: Label {
+                            required property var modelData
+                            objectName: modelData.name
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: modelData.text
+                            color: snap.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            wrapMode: Text.WrapAnywhere
+                        }
+                    }
+
+                    RowLayout {
+                        spacing: 8
+
+                        ShellButton {
+                            objectName: "configChooseFile"
+                            subtle: true
+                            enabled: configPanel.config?.canReview ?? false
+                            text: qsTr("Choose file…")
+                            onClicked: configFileDialog.open()
+                        }
+
+                        ShellButton {
+                            objectName: "configRemove"
+                            subtle: true
+                            enabled: configPanel.config?.canReview ?? false
+                            text: qsTr("Remove shortcut…")
+                            onClicked: Shell.dispatch("snapShot.config.review", { remove: true })
+                        }
+                    }
+
+                    Label {
+                        objectName: "configManual"
+                        Layout.fillWidth: true
+                        text: configPanel.config?.manual ?? ""
+                        color: snap.muted
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        wrapMode: Text.Wrap
+                    }
+
+                    Label {
+                        objectName: "configBinding"
+                        Layout.fillWidth: true
+                        text: configPanel.config?.binding ?? ""
+                        color: snap.muted
+                        font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        wrapMode: Text.WrapAnywhere
+                    }
+
+                    RowLayout {
+                        spacing: 8
+
+                        ShellButton {
+                            objectName: "configCopy"
+                            subtle: true
+                            text: configPanel.config?.copyLabel ?? ""
+                            onClicked: Shell.dispatch("snapShot.config.copy")
+                        }
+
+                        ShellButton {
+                            objectName: "configComplete"
+                            subtle: true
+                            enabled: !(configPanel.config?.busy ?? false)
+                            text: qsTr("I've added the shortcut")
+                            onClicked: Shell.dispatch("snapShot.config.complete")
+                        }
+                    }
+
+                    Label {
+                        objectName: "configRemoveNote"
+                        Layout.fillWidth: true
+                        text: configPanel.config?.removeNote ?? ""
+                        color: snap.muted
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        wrapMode: Text.Wrap
+                    }
+                }
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
@@ -257,6 +602,7 @@ SettingsPage {
                     objectName: "back"
                     visible: snap.wizard?.step === "shortcut"
                     subtle: true
+                    enabled: !(snap.config?.busy ?? false)
                     text: qsTr("Back")
                     onClicked: Shell.dispatch("snapShot.setup.back")
                 }
@@ -266,6 +612,7 @@ SettingsPage {
                 ShellButton {
                     objectName: "close"
                     subtle: true
+                    enabled: !(snap.config?.busy ?? false)
                     text: snap.wizard?.closeLabel ?? ""
                     onClicked: Shell.dispatch("snapShot.setup.close", { completed: false })
                 }
@@ -274,15 +621,18 @@ SettingsPage {
                     objectName: "continue"
                     visible: snap.wizard?.step === "access"
                     primary: true
+                    enabled: snap.wizard?.continueEnabled ?? true
                     text: snap.wizard?.continueLabel ?? ""
-                    onClicked: Shell.dispatch("snapShot.setup.continue")
+                    onClicked: snap.wizard?.action
+                               ? Shell.dispatch("snapShot.setup.action", { action: snap.wizard.action })
+                               : Shell.dispatch("snapShot.setup.continue")
                 }
 
                 ShellButton {
                     objectName: "done"
                     visible: snap.wizard?.step === "shortcut"
                     primary: true
-                    enabled: snap.wizard?.doneEnabled ?? false
+                    enabled: (snap.wizard?.doneEnabled ?? false) && !(snap.config?.busy ?? false)
                     text: snap.wizard?.doneLabel ?? ""
                     onClicked: Shell.dispatch("snapShot.setup.done")
                 }
@@ -342,24 +692,35 @@ SettingsPage {
             heading: qsTr("Sound")
             description: qsTr("Choose the sound played when capture starts.")
 
-            ShellButton {
-                objectName: "play"
-                visible: (snap.settings?.sound?.value ?? "off") !== "off"
-                subtle: true
-                iconName: "play"
-                Accessible.name: qsTr("Play %1").arg(snap.settings?.sound?.label ?? "")
-                onClicked: Shell.dispatch("snapShot.sound.play", { sound: snap.settings?.sound?.value })
-            }
-
             ShellComboBox {
+                id: soundChoices
                 objectName: "control"
                 outline: true
                 implicitWidth: 170
-                readonly property var sounds: ["off", "soft-pop", "camera-shutter"]
-                model: [qsTr("Off"), qsTr("Whoosh (Default)"), qsTr("Click")]
-                currentIndex: sounds.indexOf(snap.settings?.sound?.value ?? "soft-pop")
+                readonly property var sounds: snap.settings?.sound?.choices ?? []
+                model: sounds.map(choice => choice.label)
+                currentIndex: sounds.findIndex(choice => choice.value === (snap.settings?.sound?.value ?? "soft-pop"))
                 Accessible.name: qsTr("Sound")
-                onActivated: index => Shell.dispatch("snapShot.sound", { value: sounds[index] })
+                onActivated: index => Shell.dispatch("snapShot.sound", { value: sounds[index].value })
+                // Right arrow hears the highlighted sound, as its row's button does.
+                Keys.onRightPressed: event => {
+                    const choice = popup.visible ? sounds[highlightedIndex] : null;
+                    event.accepted = !!choice;
+                    if (choice && choice.value !== "off")
+                        Shell.dispatch("snapShot.sound.play", { sound: choice.value });
+                }
+                // Hears a sound without choosing it; the choices stay open.
+                rowAction: ShellButton {
+                    readonly property var choice: soundChoices.sounds[parent?.row ?? 0] ?? null
+                    objectName: "play:" + (choice?.value ?? "")
+                    visible: (choice?.value ?? "off") !== "off"
+                    implicitWidth: 22
+                    implicitHeight: 22
+                    subtle: true
+                    iconName: "play"
+                    Accessible.name: qsTr("Play %1").arg(choice?.label ?? "")
+                    onClicked: Shell.dispatch("snapShot.sound.play", { sound: choice.value })
+                }
             }
         }
 
@@ -376,5 +737,13 @@ SettingsPage {
             heading: qsTr("Animations")
             description: qsTr("Animate captured windows into your draft.")
         }
+    }
+
+    FileDialog {
+        id: configFileDialog
+
+        title: qsTr("Choose your config file")
+        fileMode: FileDialog.OpenFile
+        onAccepted: Shell.dispatch("snapShot.config.review", { file: selectedFile.toString().replace(/^file:\/\//, "") })
     }
 }

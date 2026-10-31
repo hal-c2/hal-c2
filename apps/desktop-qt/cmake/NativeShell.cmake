@@ -52,10 +52,33 @@ function(hal_c2_add_native_library)
   # Snap Shot's capture sounds, as :/hal-c2/sounds/*.oga.
   qt_add_resources(hal_c2_native hal_c2_native_sounds PREFIX "/hal-c2" BASE "${_hal_c2_src}/native"
                    FILES "${_hal_c2_src}/native/sounds/snap-shot-click.oga" "${_hal_c2_src}/native/sounds/snap-shot-whoosh.oga")
+  # A development build finds the KDE and Hyprland capture helpers where cargo
+  # builds them (CaptureHelper::defaultPaths); a package carries its own.
+  get_filename_component(_hal_c2_root "${_hal_c2_src}/../../.." ABSOLUTE)
+  target_compile_definitions(hal_c2_native PUBLIC "$<$<NOT:$<CONFIG:Release>>:HAL_C2_SOURCE_ROOT=\"${_hal_c2_root}\">")
+  # Snap Shot's macOS half (MacPlatform): TCC, key flags, Carbon hot keys, the
+  # permission panel. The project enables OBJCXX on Apple.
+  if(APPLE AND NOT IOS)
+    target_sources(hal_c2_native PRIVATE "${_hal_c2_src}/native/MacPlatform.mm")
+    set_source_files_properties("${_hal_c2_src}/native/MacPlatform.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(hal_c2_native PUBLIC "-framework AppKit" "-framework ApplicationServices" "-framework Carbon")
+  endif()
   # Snap Shot's xdg-desktop-portal backend talks D-Bus (PortalSnapShot).
   if(UNIX AND NOT APPLE AND NOT ANDROID)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
     target_link_libraries(hal_c2_native PUBLIC Qt6::DBus)
     target_compile_definitions(hal_c2_native PUBLIC HAL_C2_HAS_DBUS)
+    # The GNOME extension setup installs (GnomeSnapShot), as :/hal-c2/gnome-extension/*.
+    set(_hal_c2_gnome "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../../native/gnome-snap-shot")
+    set(_hal_c2_gnome_files metadata.json bundle.json extension.js captureService.js captureFeedback.js feedbackGeometry.js)
+    list(TRANSFORM _hal_c2_gnome_files PREPEND "${_hal_c2_gnome}/")
+    qt_add_resources(hal_c2_native hal_c2_native_gnome_extension PREFIX "/hal-c2/gnome-extension" BASE "${_hal_c2_gnome}"
+                     FILES ${_hal_c2_gnome_files})
+  endif()
+  # Snap Shot on Windows: the window in front, its hotkey and keyboard hook, its
+  # flash and flight (WindowsSnapShot); not built anywhere else.
+  if(WIN32)
+    target_sources(hal_c2_native PRIVATE "${_hal_c2_src}/native/win/WindowsSystem.cpp")
+    target_link_libraries(hal_c2_native PUBLIC user32 gdi32 dwmapi)
   endif()
 endfunction()

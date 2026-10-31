@@ -3,14 +3,22 @@
 #include <QDir>
 #include <QFile>
 #include <QHash>
+#include <QJsonDocument>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
 
+#include "CaptureHelper.h"
+#include "GnomeSnapShot.h"
+#include "HelperSnapShot.h"
+#include "MacPlatform.h"
+#include "MacSnapShot.h"
 #ifdef HAL_C2_HAS_DBUS
+#include "NiriSnapShot.h"
 #include "PortalSnapShot.h"
 #endif
+#include "WindowsSnapShot.h"
 
 namespace {
 
@@ -21,6 +29,16 @@ std::optional<QProcessEnvironment>& environmentOverride() {
 
 SnapShotBackend::PortalFactory& portalFactory() {
   static SnapShotBackend::PortalFactory factory;
+  return factory;
+}
+
+SnapShotBackend::GnomeFactory& gnomeFactory() {
+  static SnapShotBackend::GnomeFactory factory;
+  return factory;
+}
+
+SnapShotBackend::WindowsFactory& windowsFactory() {
+  static SnapShotBackend::WindowsFactory factory;
   return factory;
 }
 
@@ -64,8 +82,20 @@ void SnapShotBackend::setEnvironment(const std::optional<QProcessEnvironment>& e
   environmentOverride() = env;
 }
 
+QProcessEnvironment SnapShotBackend::environment() {
+  return environmentOverride().value_or(QProcessEnvironment::systemEnvironment());
+}
+
 void SnapShotBackend::setPortalFactory(PortalFactory factory) {
   portalFactory() = std::move(factory);
+}
+
+void SnapShotBackend::setGnomeFactory(GnomeFactory factory) {
+  gnomeFactory() = std::move(factory);
+}
+
+void SnapShotBackend::setWindowsFactory(WindowsFactory factory) {
+  windowsFactory() = std::move(factory);
 }
 
 SnapShotBackend::Platform SnapShotBackend::detect(const QProcessEnvironment& env, bool onLinux) {
@@ -91,20 +121,78 @@ SnapShotBackend::Platform SnapShotBackend::detect(const QProcessEnvironment& env
 }
 
 SnapShotBackend* SnapShotBackend::create(QObject* parent) {
+  const auto& stand = environmentOverride();
+#ifdef Q_OS_WIN
+  const bool onWindows = !stand || stand->value(QStringLiteral("OS")) == QLatin1String("Windows_NT");
+#else
+  const bool onWindows = stand && stand->value(QStringLiteral("OS")) == QLatin1String("Windows_NT");
+#endif
+  if (onWindows) {
+    WindowsSystem* system = windowsFactory() ? windowsFactory()(nullptr) : createNativeWindowsSystem(nullptr);
+    if (system) return new WindowsSnapShot(system, parent);
+    return new UnavailableSnapShot(QStringLiteral("SnapShots are not supported on this platform."), parent);
+  }
+  // macOS captures directly, and so does a test's stand-in Mac.
+  if (MacPlatform::overridden()) return new MacSnapShot(MacPlatform::create(parent), parent);
+#ifdef Q_OS_MACOS
+  if (MacPlatform* mac = MacPlatform::create(parent)) return new MacSnapShot(mac, parent);
+#endif
 #ifdef Q_OS_LINUX
   const bool onLinux = true;
 #else
   // A test's stand-in environment is a Linux desktop's.
   const bool onLinux = environmentOverride().has_value();
 #endif
-  const Platform platform = detect(environmentOverride().value_or(QProcessEnvironment::systemEnvironment()), onLinux);
+  const Platform platform = detect(environment(), onLinux);
   if (!platform.portal) return new UnavailableSnapShot(platform.message, parent);
-  if (portalFactory()) return portalFactory()(platform, parent);
 #ifdef HAL_C2_HAS_DBUS
-  return new PortalSnapShot(platform, parent);
-#else
-  return new UnavailableSnapShot(QStringLiteral("SnapShots are not supported on this platform."), parent);
+  if (platform.desktop == QLatin1String("niri") && !NiriSnapShot::socketPath(environment()).isEmpty()) {
+    return new NiriSnapShot(platform, NiriSnapShot::socketPath(environment()), parent);
+  }
 #endif
+  const auto portal = [&](QObject* owner) -> SnapShotBackend* {
+    if (portalFactory()) return portalFactory()(platform, owner);
+#ifdef HAL_C2_HAS_DBUS
+    return new PortalSnapShot(platform, owner);
+#else
+    return nullptr;
+#endif
+  };
+  if (platform.desktop == QLatin1String("kde") || platform.desktop == QLatin1String("hyprland")) {
+    const auto kind = platform.desktop == QLatin1String("kde") ? CaptureHelper::Kind::Kde : CaptureHelper::Kind::Hyprland;
+    if (SnapShotBackend* shortcuts = portal(nullptr)) {
+      return new HelperSnapShot(platform, shortcuts, new CaptureHelper(kind, CaptureHelper::defaultPaths(kind)), parent);
+    }
+  }
+  SnapShotBackend* fallback = portal(parent);
+  if (!fallback) return new UnavailableSnapShot(QStringLiteral("SnapShots are not supported on this platform."), parent);
+  if (platform.desktop != QLatin1String("gnome")) return fallback;
+  // A test's stand-in portal never reaches the real GNOME Shell.
+  if (gnomeFactory()) return gnomeFactory()(fallback, parent);
+  return portalFactory() ? fallback : GnomeSnapShot::create(fallback, parent);
+}
+
+// DesktopSnapShotSetupError's unsupported-session messages.
+QString SnapShotBackend::unsupportedSetup(const QString& action) {
+  if (action == QLatin1String("install-kde-helper") || action == QLatin1String("remove-kde-helper")) {
+    return QStringLiteral("Helper setup requires a KDE Plasma Wayland session outside a sandbox.");
+  }
+  if (action == QLatin1String("install-hyprland-helper") || action == QLatin1String("remove-hyprland-helper")) {
+    return QStringLiteral("Helper setup requires a Hyprland Wayland session outside a sandbox.");
+  }
+  if (action == QLatin1String("test-mac-capture")) return QStringLiteral("Test capture requires macOS.");
+  // Upstream falls through to the GNOME message for these.
+  if (action == QLatin1String("allow-screen-recording") || action == QLatin1String("allow-accessibility")) {
+    return QStringLiteral("Permission setup requires macOS.");
+  }
+  if (action == QLatin1String("preview-config") || action == QLatin1String("apply-config")) {
+    return QStringLiteral("Config setup requires a Niri or Hyprland session.");
+  }
+  if (action == QLatin1String("install-extension") || action == QLatin1String("enable-extension") ||
+      action == QLatin1String("disable-extension")) {
+    return QStringLiteral("Extension setup requires a GNOME Wayland session outside a sandbox.");
+  }
+  return QStringLiteral("This setup step is not available in this session.");
 }
 
 QString SnapShotBackend::portalTrigger(const QJsonObject& shortcut, QString* error) {
@@ -136,9 +224,39 @@ QString SnapShotBackend::portalTrigger(const QJsonObject& shortcut, QString* err
   return parts.join(QLatin1Char('+'));
 }
 
+void SnapShotBackend::checkShortcut(const QJsonObject& shortcut, std::function<void(const Check&)> done) {
+  if (session().mode != QLatin1String("portal")) {
+    done({false, QStringLiteral("SnapShots are not supported on this platform.")});
+    return;
+  }
+  QString problem;
+  if (portalTrigger(shortcut, &problem).isEmpty()) {
+    done({false, problem});
+    return;
+  }
+  done({true, QStringLiteral("Your desktop will confirm this shortcut when you save it.")});
+}
+
 // No audio module: the desktop's own player, from a copy of the sound in the
 // cache (the players read files).
+namespace {
+std::function<void(const QString&)>& soundPlayer() {
+  static std::function<void(const QString&)> player;
+  return player;
+}
+}  // namespace
+
+void SnapShotBackend::setSoundPlayer(std::function<void(const QString&)> player) {
+  soundPlayer() = std::move(player);
+}
+
+QString SnapShotBackend::trigger(const QJsonObject& shortcut, QString* error) const {
+  if (session().mode == QLatin1String("direct")) return QString::fromUtf8(QJsonDocument(shortcut).toJson(QJsonDocument::Compact));
+  return portalTrigger(shortcut, error);
+}
+
 void SnapShotBackend::play(const QString& sound) {
+  if (soundPlayer()) return soundPlayer()(sound);
   const QString name = sound == QLatin1String("camera-shutter") ? QStringLiteral("snap-shot-click.oga")
                                                                 : QStringLiteral("snap-shot-whoosh.oga");
   const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);

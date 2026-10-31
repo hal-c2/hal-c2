@@ -1,3 +1,4 @@
+#include "MacPlatform.h"
 #include "World.h"
 
 #include <QDateTime>
@@ -38,6 +39,8 @@ World::World() {
 World::~World() {
   brick.reset();
   thisMachine::setIdForTesting(std::nullopt);
+  // A scenario's Mac is not the next scenario's.
+  MacPlatform::setFactory({});
 }
 
 // As main.cpp wires them.
