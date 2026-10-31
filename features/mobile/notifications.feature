@@ -96,6 +96,15 @@ Feature: Push notifications and live agent activity
     When the MC starts
     Then no alert is pushed for those threads
 
+  # What a machine had when it joined the cluster is not news either, but its first
+  # finished turn is, even when it joined with no threads at all.
+  @mc @mobile
+  Scenario: A machine that joins the cluster with no threads alerts about its first finished turn
+    Given device notifications are on
+    And "Studio" joins the cluster with no threads
+    When the first thread on "Studio" finishes its turn
+    Then the phone shows an alert for "First on Studio"
+
   @mobile
   Scenario: Tapping an alert opens the thread
     Given the phone shows an alert for "Fix checkout"
