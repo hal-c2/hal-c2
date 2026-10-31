@@ -200,7 +200,10 @@ bool ThreadMenuController::open(const QString& key, double x, double y, bool hea
   add(copy, false);
   if (projectKey) add({QStringLiteral("project-settings"), QStringLiteral("Project settings"), QStringLiteral("settings")}, false);
   add({QStringLiteral("fork"), QStringLiteral("Fork thread"), QStringLiteral("git-fork")});
-  add({QStringLiteral("page-from-thread"), QStringLiteral("Create page from thread"), QStringLiteral("file-text")});
+  // The MC writes a page only from its own threads.
+  if (thread->environmentId == m_client->environment()) {
+    add({QStringLiteral("page-from-thread"), QStringLiteral("Create page from thread"), QStringLiteral("file-text")});
+  }
   // Another machine of the cluster can take the thread.
   const QStringList environments = m_store->environments();
   const bool elsewhere = std::any_of(environments.cbegin(), environments.cend(),

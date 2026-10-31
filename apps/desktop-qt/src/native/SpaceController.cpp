@@ -282,7 +282,8 @@ void SpacePages::selectSpace(const QString& id) {
   if (id == m_spaceId || !m_index.of(QStringLiteral("space")).contains(id)) return;
   m_spaceId = id;
   m_pageId.clear();
-  m_awaitedPage.clear();
+  // A page awaited in this Space is still awaited: it arrives with the Space's copy.
+  if (id != m_awaitedSpace) m_awaitedPage.clear();
   m_space.clear();
   m_pending.clear();
   rebuild();
@@ -352,11 +353,13 @@ void SpacePages::reconcile() {
 bool SpacePages::reselect() {
   const QHash<QString, QJsonObject>& spaces = m_index.of(QStringLiteral("space"));
   if (spaces.contains(m_awaitedSpace)) {
-    const QString awaited = std::exchange(m_awaitedSpace, {});
-    if (awaited != m_spaceId) {
-      selectSpace(awaited);
+    // Selected while still awaited, so the page awaited in it stays awaited.
+    if (m_awaitedSpace != m_spaceId) {
+      selectSpace(m_awaitedSpace);
+      m_awaitedSpace.clear();
       return true;
     }
+    m_awaitedSpace.clear();
   }
   if (m_index.hasCopy() && !spaces.contains(m_spaceId)) {
     const QList<QJsonObject> made = sorted(spaces.values(), QLatin1String("createdAt"));
@@ -638,7 +641,11 @@ void SpaceController::importMarkdown(const QString& markdown) {
 }
 
 void SpaceController::pageFromThread(const QString& threadKey) {
-  const QString threadId = threadKey.mid(threadKey.indexOf(QLatin1Char(':')) + 1);
+  const qsizetype colon = threadKey.indexOf(QLatin1Char(':'));
+  if (threadKey.left(colon) != m_client->environment()) {
+    return refuse(tr("A page can be made only from a thread on this machine. Move the thread here first."));
+  }
+  const QString threadId = threadKey.mid(colon + 1);
   const auto write = [this, threadId](const QString& space) {
     ++m_writing;
     publish();
