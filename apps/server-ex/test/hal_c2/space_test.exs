@@ -6,7 +6,7 @@ defmodule HalC2.SpaceTest do
   use ExUnit.Case
 
   alias HalC2.{Space, Streams}
-  alias HalC2.Space.{Markdown, Order}
+  alias HalC2.Space.{Decks, Markdown, Order}
 
   @moduletag :tmp_dir
   setup %{tmp_dir: dir} do
@@ -185,6 +185,85 @@ defmodule HalC2.SpaceTest do
       assert {:ok, %{"resolvedAt" => ^at}} = Space.resolve_comment(space, id)
       assert {:ok, %{"resolvedAt" => nil}} = Space.reopen_comment(space, id)
       assert {:error, :invalid, _} = Space.add_comment(space, page, nil, " ")
+    end
+  end
+
+  describe "decks" do
+    defp slides(space, deck) do
+      {:ok, state} = Space.state(space)
+      Decks.slides(state, deck)
+    end
+
+    defp slide!(space, deck, title, after_id \\ :last) do
+      {:ok, slide} = Space.insert_slide(space, deck, %{"title" => title}, after_id)
+      slide["id"]
+    end
+
+    test "a page's link and blocks become a slide's lines, heading by heading",
+         %{space: space} do
+      page = page!(space, "Roadmap")
+      sub = page!(space, "Q3", page)
+      block!(space, page, "Goals", "heading")
+
+      {:ok, _} =
+        Space.insert_block(space, page, %{"kind" => "subpage_link", "linkedPageId" => sub})
+
+      block!(space, page, "Risks", "heading")
+      block!(space, page, "", "heading")
+
+      {:ok, deck} = Space.create_deck_from_page(space, page)
+
+      assert [{"Goals", "Q3"}, {"Risks", ""}, {"", ""}] =
+               Enum.map(slides(space, deck["id"]), &{&1["title"], &1["body"]})
+    end
+
+    test "an empty page makes one blank slide under its title", %{space: space} do
+      {:ok, deck} = Space.create_deck_from_page(space, page!(space, "Roadmap"))
+      assert [%{"title" => "Roadmap", "body" => ""}] = slides(space, deck["id"])
+    end
+
+    test "a slide placed or moved between others is the only one written", %{space: space} do
+      {:ok, deck} = Space.create_deck(space, "Pitch")
+      [blank] = slides(space, deck["id"])
+      three = slide!(space, deck["id"], "Three")
+      stream = Space.stream_id(space)
+      before = Streams.sequence(stream)
+
+      slide!(space, deck["id"], "Two", blank["id"])
+      assert Streams.sequence(stream) == before + 1
+
+      {:ok, _} = Space.move_slide(space, three, nil)
+      assert Streams.sequence(stream) == before + 2
+      assert ["Three", "", "Two"] = Enum.map(slides(space, deck["id"]), & &1["title"])
+    end
+
+    test "a slide cannot go after itself or a slide of another deck", %{space: space} do
+      {:ok, deck} = Space.create_deck(space, "Pitch")
+      {:ok, other} = Space.create_deck(space, "Other")
+      [mine] = slides(space, deck["id"])
+      [theirs] = slides(space, other["id"])
+
+      assert {:error, :invalid, _} = Space.move_slide(space, mine["id"], mine["id"])
+      assert {:error, :not_found, _} = Space.move_slide(space, mine["id"], theirs["id"])
+    end
+
+    test "an edit that changes nothing writes nothing; a title must be a string", %{space: space} do
+      {:ok, deck} = Space.create_deck(space, "Pitch")
+      [slide] = slides(space, deck["id"])
+      seq = Streams.sequence(Space.stream_id(space))
+
+      assert {:ok, _} = Space.update_slide(space, slide["id"], %{"title" => "", "body" => ""})
+      assert {:error, :invalid, _} = Space.update_slide(space, slide["id"], %{"title" => 1})
+      assert Streams.sequence(Space.stream_id(space)) == seq
+    end
+
+    test "a Space with a deck, even in the trash, is not deleted", %{space: space} do
+      {:ok, deck} = Space.create_deck(space, "Pitch")
+      assert {:error, :not_empty, _} = Space.delete(space)
+      {:ok, _} = Space.trash_deck(space, deck["id"])
+      assert {:error, :not_empty, _} = Space.delete(space)
+      {:ok, _} = Space.delete_deck(space, deck["id"])
+      assert {:ok, ^space} = Space.delete(space)
     end
   end
 

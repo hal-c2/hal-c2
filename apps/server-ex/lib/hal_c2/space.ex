@@ -1,12 +1,14 @@
 defmodule HalC2.Space do
   @moduledoc """
-  Spaces: Pages that people and agents write together (`features/space/`).
+  Spaces: Pages that people and agents write together, and slide decks
+  (`features/space/`).
 
   The `spaces` stream indexes the Spaces, one `space` entity each, and each Space's
-  own `space:<id>` stream holds its `page`, `block` and `comment` entities. Every
-  change is a `HalC2.Streams.transact/3` on one of them, so the event log is the
-  only record and clients follow both streams through the stream shape. The
-  decisions live in `HalC2.Space.Pages` and `HalC2.Space.Blocks`.
+  own `space:<id>` stream holds its `page`, `block`, `comment`, `deck` and `slide`
+  entities. Every change is a `HalC2.Streams.transact/3` on one of them, so the event
+  log is the only record and clients follow both streams through the stream shape.
+  The decisions live in `HalC2.Space.Pages`, `HalC2.Space.Blocks` and
+  `HalC2.Space.Decks`.
 
   Replies are `{:ok, value}` or `{:error, reason, message}`; an author is
   `%{"type" => "user"}` or `%{"type" => "agent", "threadId" => id}`.
@@ -14,7 +16,7 @@ defmodule HalC2.Space do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState, Streams}
-  alias HalC2.Space.{Blocks, Markdown, Pages}
+  alias HalC2.Space.{Blocks, Decks, Markdown, Pages}
 
   @index "spaces"
 
@@ -88,11 +90,11 @@ defmodule HalC2.Space do
     end
   end
 
-  @doc "Deletes a Space with no pages, in the trash or out of it."
+  @doc "Deletes a Space with no pages or decks, in the trash or out of it."
   def delete(id) do
-    # Decided in the Space's stream, so no page can be made in it meanwhile.
+    # Decided in the Space's stream, so nothing can be made in it meanwhile.
     Streams.transact(stream_id(id), :space, fn state ->
-      if StreamState.get(state, "page") == %{} do
+      if StreamState.get(state, "page") == %{} and StreamState.get(state, "deck") == %{} do
         reply =
           Streams.transact(@index, :space, fn index ->
             if StreamState.get(index, "space")[id],
@@ -176,6 +178,27 @@ defmodule HalC2.Space do
 
   def resolve_comment(space_id, id), do: transact(space_id, &Blocks.resolve(&1, id))
   def reopen_comment(space_id, id), do: transact(space_id, &Blocks.reopen(&1, id))
+
+  def create_deck(space_id, title), do: transact(space_id, &Decks.create(&1, space_id, title))
+
+  def create_deck_from_page(space_id, page_id),
+    do: transact(space_id, &Decks.create_from_page(&1, space_id, page_id))
+
+  def rename_deck(space_id, id, title), do: transact(space_id, &Decks.rename(&1, id, title))
+  def trash_deck(space_id, id), do: transact(space_id, &Decks.trash(&1, id))
+  def restore_deck(space_id, id), do: transact(space_id, &Decks.restore(&1, id))
+  def delete_deck(space_id, id), do: transact(space_id, &Decks.delete(&1, id))
+
+  def insert_slide(space_id, deck_id, spec, after_id \\ :last),
+    do: transact(space_id, &Decks.insert_slide(&1, deck_id, spec, after_id))
+
+  def update_slide(space_id, id, fields),
+    do: transact(space_id, &Decks.update_slide(&1, id, fields))
+
+  def move_slide(space_id, id, after_id),
+    do: transact(space_id, &Decks.move_slide(&1, id, after_id))
+
+  def delete_slide(space_id, id), do: transact(space_id, &Decks.delete_slide(&1, id))
 
   @doc "A page with its blocks and comments, trashed or not."
   def page(space_id, page_id) do

@@ -327,6 +327,12 @@ import {
   SpaceCommentRef,
   SpaceCommentResult,
   SpaceCreateInput,
+  SpaceDeckCreateFromPageInput,
+  SpaceDeckCreateInput,
+  SpaceDeckDeleteResult,
+  SpaceDeckRef,
+  SpaceDeckRenameInput,
+  SpaceDeckResult,
   SpaceDeleteInput,
   SpaceDeleteResult,
   SpaceError,
@@ -343,6 +349,12 @@ import {
   SpacePageResult,
   SpaceRenameInput,
   SpaceResult,
+  SpaceSlideDeleteInput,
+  SpaceSlideDeleteResult,
+  SpaceSlideInsertInput,
+  SpaceSlideMoveInput,
+  SpaceSlideResult,
+  SpaceSlideUpdateInput,
   SpaceTextGenerationError,
 } from "./space.ts";
 import {
@@ -524,6 +536,16 @@ export const WS_METHODS = {
   spaceCommentAdd: "space.comment.add",
   spaceCommentResolve: "space.comment.resolve",
   spaceCommentReopen: "space.comment.reopen",
+  spaceDeckCreate: "space.deck.create",
+  spaceDeckCreateFromPage: "space.deck.createFromPage",
+  spaceDeckRename: "space.deck.rename",
+  spaceDeckTrash: "space.deck.trash",
+  spaceDeckRestore: "space.deck.restore",
+  spaceDeckDelete: "space.deck.delete",
+  spaceSlideInsert: "space.slide.insert",
+  spaceSlideUpdate: "space.slide.update",
+  spaceSlideMove: "space.slide.move",
+  spaceSlideDelete: "space.slide.delete",
 
   // The cluster of this person's machines (MCs only)
   clusterStatus: "cluster.status",
@@ -1868,6 +1890,66 @@ const WsSpaceCommentReopenRpc = Rpc.make(WS_METHODS.spaceCommentReopen, {
   error: SpaceRpcError,
 });
 
+const WsSpaceDeckCreateRpc = Rpc.make(WS_METHODS.spaceDeckCreate, {
+  payload: SpaceDeckCreateInput,
+  success: SpaceDeckResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceDeckCreateFromPageRpc = Rpc.make(WS_METHODS.spaceDeckCreateFromPage, {
+  payload: SpaceDeckCreateFromPageInput,
+  success: SpaceDeckResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceDeckRenameRpc = Rpc.make(WS_METHODS.spaceDeckRename, {
+  payload: SpaceDeckRenameInput,
+  success: SpaceDeckResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceDeckTrashRpc = Rpc.make(WS_METHODS.spaceDeckTrash, {
+  payload: SpaceDeckRef,
+  success: SpaceDeckResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceDeckRestoreRpc = Rpc.make(WS_METHODS.spaceDeckRestore, {
+  payload: SpaceDeckRef,
+  success: SpaceDeckResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceDeckDeleteRpc = Rpc.make(WS_METHODS.spaceDeckDelete, {
+  payload: SpaceDeckRef,
+  success: SpaceDeckDeleteResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceSlideInsertRpc = Rpc.make(WS_METHODS.spaceSlideInsert, {
+  payload: SpaceSlideInsertInput,
+  success: SpaceSlideResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceSlideUpdateRpc = Rpc.make(WS_METHODS.spaceSlideUpdate, {
+  payload: SpaceSlideUpdateInput,
+  success: SpaceSlideResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceSlideMoveRpc = Rpc.make(WS_METHODS.spaceSlideMove, {
+  payload: SpaceSlideMoveInput,
+  success: SpaceSlideResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceSlideDeleteRpc = Rpc.make(WS_METHODS.spaceSlideDelete, {
+  payload: SpaceSlideDeleteInput,
+  success: SpaceSlideDeleteResult,
+  error: SpaceRpcError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -1960,6 +2042,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpaceCommentAddRpc,
   WsSpaceCommentResolveRpc,
   WsSpaceCommentReopenRpc,
+  WsSpaceDeckCreateRpc,
+  WsSpaceDeckCreateFromPageRpc,
+  WsSpaceDeckRenameRpc,
+  WsSpaceDeckTrashRpc,
+  WsSpaceDeckRestoreRpc,
+  WsSpaceDeckDeleteRpc,
+  WsSpaceSlideInsertRpc,
+  WsSpaceSlideUpdateRpc,
+  WsSpaceSlideMoveRpc,
+  WsSpaceSlideDeleteRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,
