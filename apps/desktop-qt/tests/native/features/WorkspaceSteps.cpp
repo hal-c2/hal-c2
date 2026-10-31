@@ -248,7 +248,14 @@ const Steps steps([] {
   step(QStringLiteral("a connected environment with the thread %1 in the project %1").arg(q), [](World& world, const Captures& c, const Table&) {
     world.mc.projects.insert(c[1], {{QStringLiteral("id"), c[1]}, {QStringLiteral("title"), c[1]}, {QStringLiteral("workspaceRoot"), root(c[1])}, {QStringLiteral("scripts"), QJsonArray()}});
     world.mc.threads.insert(kThread, {{QStringLiteral("id"), kThread}, {QStringLiteral("title"), c[0]}, {QStringLiteral("projectId"), c[1]}, {QStringLiteral("createdAt"), QStringLiteral("2026-09-23T09:00:00Z")}, {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T09:00:00Z")}});
-    world.connect();
+    // A Rule's background can follow a Feature's that connected already.
+    if (world.shellSubscriptions() > 0) {
+      world.mc.sendRow(c[1], world.mc.projects.value(c[1]), QStringLiteral("project"));
+      world.mc.sendRow(kThread, world.mc.threads.value(kThread));
+      world.sync();
+    } else {
+      world.connect();
+    }
     open(world, threadKey(world));
   });
   step(QStringLiteral("a connected environment with a thread in the git project %1 on the branch %1").arg(q), [](World& world, const Captures& c, const Table&) {

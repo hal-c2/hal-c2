@@ -12,6 +12,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
   use Cucumber.StepDefinition
   import ExUnit.Assertions
 
+  alias HalC2.Projection.PullRequests, as: Links
   alias HalC2.StreamState
   alias HalC2.Test.Mc
   alias HalC2.Test.Mc.World
@@ -41,6 +42,86 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
     |> link(thread, pr)
     |> read()
     |> tap(&assert(wakes(&1, thread) == []))
+  end
+
+  # A task's child as `delegate_task` records it, without a provider behind it: the
+  # task's result is disposed of, so its end wakes nobody and only hands links over.
+  step ~r/^thread "(?<thread>[^"]+)" works on a task "(?<parent>[^"]+)" delegated and links pull request "(?<pr>[^"]+)", which the MC has read once$/,
+       %{args: [thread, parent, pr]} = context do
+    parent_id = World.thread_id(context, parent)
+    at = World.iso_from_now(0)
+
+    context = context |> World.named_thread(thread, "demo") |> Map.put(:task_parent, parent)
+    child_id = World.thread_id(context, thread)
+    task = "task-#{thread}"
+
+    context
+    |> World.put_entity(thread, "thread", child_id, %{
+      "s" =>
+        Map.put(World.thread(context, thread), "lineage", %{
+          "relationshipToParent" => "subagent",
+          "parentThreadId" => parent_id,
+          "rootThreadId" => parent_id
+        })
+    })
+    |> World.put_entity(parent, "subagent", task, %{
+      "s" => %{
+        "id" => task,
+        "threadId" => parent_id,
+        "origin" => "app_owned",
+        "childThreadId" => child_id,
+        "title" => thread,
+        "completionWake" => "always",
+        "completionDelivery" => %{"state" => "disposed", "observedByRunId" => nil},
+        "status" => "running",
+        "startedAt" => at,
+        "updatedAt" => at
+      }
+    })
+    |> World.put_entity(parent, "node", task, %{
+      "s" => %{
+        "id" => task,
+        "threadId" => parent_id,
+        "kind" => "subagent",
+        "status" => "running",
+        "startedAt" => at,
+        "completedAt" => nil
+      }
+    })
+    |> then(&if(&1.prs[pr], do: &1, else: open(&1, pr)))
+    |> link(thread, pr)
+    |> read()
+    |> tap(&assert(wakes(&1, thread) == []))
+  end
+
+  step ~r/^the task of "(?<thread>[^"]+)" (?:ends|ended)$/, %{args: [thread]} = context do
+    {context, at} = tick(context)
+
+    context =
+      case context[:working] do
+        nil ->
+          World.add_run(context, thread, "completed", at)
+
+        run ->
+          World.put_entity(context, thread, "run", run, %{
+            "s" => %{"status" => "completed", "completedAt" => at}
+          })
+      end
+
+    :ok = HalC2.Orchestration.Delegation.settle_if_quiet(World.thread_id(context, thread))
+    context |> Map.delete(:working) |> check()
+  end
+
+  # The task ended, but the MC stopped before the child's links reached its caller.
+  step "the task of {string} ended without handing its pull requests over",
+       %{args: [thread]} = context do
+    {context, at} = tick(context)
+
+    context
+    |> World.add_run(thread, "completed", at)
+    |> World.put_entity(context.task_parent, "subagent", "task-#{thread}", %{
+      "s" => %{"status" => "completed", "completedAt" => at}
+    })
   end
 
   step "pull request {string} has failing checks, a conflict and a comment from its owner",
@@ -157,6 +238,16 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
     Mc.ensure({HalC2.Orchestration.Settlement, interval: nil})
     :ok = HalC2.Orchestration.Settlement.sweep()
     World.await_row(World.thread_id(context, thread), &(&1["settledAt"] != nil))
+    context
+  end
+
+  step "thread {string} links {string}", %{args: [thread, pr]} = context do
+    assert [_] = Enum.filter(Links.visible(links(context, thread)), &(name(&1) == pr))
+    context
+  end
+
+  step "thread {string} no longer links {string}", %{args: [thread, pr]} = context do
+    refute Enum.any?(Links.visible(links(context, thread)), &(name(&1) == pr))
     context
   end
 

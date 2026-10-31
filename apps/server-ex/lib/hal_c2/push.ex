@@ -15,7 +15,8 @@ defmodule HalC2.Push do
   its quiet hours are held, beside the registration so a restart keeps them, and sent at
   their end, except approvals and questions when it lets them through. The MC records
   when it started, and threads that finished before it say nothing; nor do those of an
-  MC whose rows arrive for the first time, as when it joins the cluster.
+  MC whose rows arrive for the first time, as when it joins the cluster (the shell
+  sends them even when there are none, so a member's first thread is news).
 
   `drain/0` evaluates what the shell has sent so far and returns once every push has
   been delivered or given up; tests call it instead of waiting. Options: `:clock` (a
@@ -158,8 +159,10 @@ defmodule HalC2.Push do
       sleep: opts[:sleep] || (&Process.sleep/1),
       started_at: clock.(),
       seen: %{},
-      # The MCs whose rows were seen: the first rows of another are a baseline.
-      known: MapSet.new([node() | for({{mc, _id}, _} <- shell, do: mc)]),
+      # The MCs whose rows were seen: the first rows of another are a baseline. The
+      # shell sends a member's rows whole when it joins, even none.
+      known:
+        MapSet.new([node() | HalC2.Shell.held_mcs()] ++ for({{mc, _id}, _} <- shell, do: mc)),
       registrations: registrations,
       # Per session: what of the card it was last sent, and the alerts held for quiet
       # hours.

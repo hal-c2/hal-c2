@@ -316,6 +316,36 @@ import {
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
 import {
+  SpaceBlockDeleteInput,
+  SpaceBlockDeleteResult,
+  SpaceBlockInsertInput,
+  SpaceBlockMoveInput,
+  SpaceBlockResult,
+  SpaceBlockSetCheckedInput,
+  SpaceBlockUpdateInput,
+  SpaceCommentAddInput,
+  SpaceCommentRef,
+  SpaceCommentResult,
+  SpaceCreateInput,
+  SpaceDeleteInput,
+  SpaceDeleteResult,
+  SpaceError,
+  SpaceListInput,
+  SpaceListResult,
+  SpacePageCreateFromThreadInput,
+  SpacePageCreateInput,
+  SpacePageDeleteResult,
+  SpacePageExportMarkdownResult,
+  SpacePageImportMarkdownInput,
+  SpacePageMoveInput,
+  SpacePageRef,
+  SpacePageRenameInput,
+  SpacePageResult,
+  SpaceRenameInput,
+  SpaceResult,
+  SpaceTextGenerationError,
+} from "./space.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -471,6 +501,29 @@ export const WS_METHODS = {
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
   scheduledTasksDelete: "scheduledTasks.delete",
   scheduledTasksRunNow: "scheduledTasks.runNow",
+
+  // Spaces and their pages (read through the `spaces` and `space:<id>` streams)
+  spaceList: "space.list",
+  spaceCreate: "space.create",
+  spaceRename: "space.rename",
+  spaceDelete: "space.delete",
+  spacePageCreate: "space.page.create",
+  spacePageRename: "space.page.rename",
+  spacePageMove: "space.page.move",
+  spacePageTrash: "space.page.trash",
+  spacePageRestore: "space.page.restore",
+  spacePageDelete: "space.page.delete",
+  spacePageExportMarkdown: "space.page.exportMarkdown",
+  spacePageImportMarkdown: "space.page.importMarkdown",
+  spacePageCreateFromThread: "space.page.createFromThread",
+  spaceBlockInsert: "space.block.insert",
+  spaceBlockUpdate: "space.block.update",
+  spaceBlockSetChecked: "space.block.setChecked",
+  spaceBlockMove: "space.block.move",
+  spaceBlockDelete: "space.block.delete",
+  spaceCommentAdd: "space.comment.add",
+  spaceCommentResolve: "space.comment.resolve",
+  spaceCommentReopen: "space.comment.reopen",
 
   // The cluster of this person's machines (MCs only)
   clusterStatus: "cluster.status",
@@ -1687,6 +1740,134 @@ const WsScheduledTasksRunNowRpc = Rpc.make(WS_METHODS.scheduledTasksRunNow, {
   error: Schema.Union([ScheduledTaskError, EnvironmentAuthorizationError]),
 });
 
+const SpaceRpcError = Schema.Union([SpaceError, EnvironmentAuthorizationError]);
+
+const WsSpaceListRpc = Rpc.make(WS_METHODS.spaceList, {
+  payload: SpaceListInput,
+  success: SpaceListResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceCreateRpc = Rpc.make(WS_METHODS.spaceCreate, {
+  payload: SpaceCreateInput,
+  success: SpaceResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceRenameRpc = Rpc.make(WS_METHODS.spaceRename, {
+  payload: SpaceRenameInput,
+  success: SpaceResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceDeleteRpc = Rpc.make(WS_METHODS.spaceDelete, {
+  payload: SpaceDeleteInput,
+  success: SpaceDeleteResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageCreateRpc = Rpc.make(WS_METHODS.spacePageCreate, {
+  payload: SpacePageCreateInput,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageRenameRpc = Rpc.make(WS_METHODS.spacePageRename, {
+  payload: SpacePageRenameInput,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageMoveRpc = Rpc.make(WS_METHODS.spacePageMove, {
+  payload: SpacePageMoveInput,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageTrashRpc = Rpc.make(WS_METHODS.spacePageTrash, {
+  payload: SpacePageRef,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageRestoreRpc = Rpc.make(WS_METHODS.spacePageRestore, {
+  payload: SpacePageRef,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageDeleteRpc = Rpc.make(WS_METHODS.spacePageDelete, {
+  payload: SpacePageRef,
+  success: SpacePageDeleteResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageExportMarkdownRpc = Rpc.make(WS_METHODS.spacePageExportMarkdown, {
+  payload: SpacePageRef,
+  success: SpacePageExportMarkdownResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageImportMarkdownRpc = Rpc.make(WS_METHODS.spacePageImportMarkdown, {
+  payload: SpacePageImportMarkdownInput,
+  success: SpacePageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpacePageCreateFromThreadRpc = Rpc.make(WS_METHODS.spacePageCreateFromThread, {
+  payload: SpacePageCreateFromThreadInput,
+  success: SpacePageResult,
+  error: Schema.Union([SpaceError, SpaceTextGenerationError, EnvironmentAuthorizationError]),
+});
+
+const WsSpaceBlockInsertRpc = Rpc.make(WS_METHODS.spaceBlockInsert, {
+  payload: SpaceBlockInsertInput,
+  success: SpaceBlockResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceBlockUpdateRpc = Rpc.make(WS_METHODS.spaceBlockUpdate, {
+  payload: SpaceBlockUpdateInput,
+  success: SpaceBlockResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceBlockSetCheckedRpc = Rpc.make(WS_METHODS.spaceBlockSetChecked, {
+  payload: SpaceBlockSetCheckedInput,
+  success: SpaceBlockResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceBlockMoveRpc = Rpc.make(WS_METHODS.spaceBlockMove, {
+  payload: SpaceBlockMoveInput,
+  success: SpaceBlockResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceBlockDeleteRpc = Rpc.make(WS_METHODS.spaceBlockDelete, {
+  payload: SpaceBlockDeleteInput,
+  success: SpaceBlockDeleteResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceCommentAddRpc = Rpc.make(WS_METHODS.spaceCommentAdd, {
+  payload: SpaceCommentAddInput,
+  success: SpaceCommentResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceCommentResolveRpc = Rpc.make(WS_METHODS.spaceCommentResolve, {
+  payload: SpaceCommentRef,
+  success: SpaceCommentResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceCommentReopenRpc = Rpc.make(WS_METHODS.spaceCommentReopen, {
+  payload: SpaceCommentRef,
+  success: SpaceCommentResult,
+  error: SpaceRpcError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -1758,6 +1939,27 @@ export const WsRpcGroup = RpcGroup.make(
   WsScheduledTasksSetEnabledRpc,
   WsScheduledTasksDeleteRpc,
   WsScheduledTasksRunNowRpc,
+  WsSpaceListRpc,
+  WsSpaceCreateRpc,
+  WsSpaceRenameRpc,
+  WsSpaceDeleteRpc,
+  WsSpacePageCreateRpc,
+  WsSpacePageRenameRpc,
+  WsSpacePageMoveRpc,
+  WsSpacePageTrashRpc,
+  WsSpacePageRestoreRpc,
+  WsSpacePageDeleteRpc,
+  WsSpacePageExportMarkdownRpc,
+  WsSpacePageImportMarkdownRpc,
+  WsSpacePageCreateFromThreadRpc,
+  WsSpaceBlockInsertRpc,
+  WsSpaceBlockUpdateRpc,
+  WsSpaceBlockSetCheckedRpc,
+  WsSpaceBlockMoveRpc,
+  WsSpaceBlockDeleteRpc,
+  WsSpaceCommentAddRpc,
+  WsSpaceCommentResolveRpc,
+  WsSpaceCommentReopenRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,

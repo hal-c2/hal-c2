@@ -172,6 +172,7 @@ const UNRECORDED = new Set([
   "subscribeUsageLimits",
   "subscribeServerSettings",
   "subscribeAuthAccess",
+  "subscribeMcStream",
   "readSettings",
 ]);
 

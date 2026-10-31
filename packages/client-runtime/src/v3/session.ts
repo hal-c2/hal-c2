@@ -113,6 +113,7 @@ import {
   type PreparedConnection,
 } from "../connection/model.ts";
 import { EarlierTurnsUnavailableError, type RpcSession } from "../rpc/session.ts";
+import type { EntityStreamFrame } from "../state/streamEntities.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   ClusterRpcError,
@@ -313,6 +314,28 @@ function foldThreadFrame(
   }
 }
 
+/** A stream shape's frame as an entity stream frame; frames it does not fold are dropped. */
+function entityStreamFrame(frame: ShapeFrame): ReadonlyArray<EntityStreamFrame> {
+  switch (frame.t) {
+    case "snapshot":
+      return [
+        {
+          type: "snapshot",
+          part: Number(frame.part ?? 0),
+          done: frame.done === true,
+          offset: Number(frame.offset ?? 0),
+          rows: frame.rows as ReadonlyArray<ShapeRow>,
+        },
+      ];
+    case "events":
+      return [{ type: "events", events: frame.events as ReadonlyArray<ShapeEvent> }];
+    case "live":
+      return [{ type: "live" }];
+    default:
+      return [];
+  }
+}
+
 /**
  * Streams one shape's frames, folded into items, for as long as it is consumed. An
  * `error` frame fails the stream when `toError` is given.
@@ -478,6 +501,15 @@ export function makeV3Session(input: {
         ),
       );
     };
+
+    // One of the MC's entity streams (a Space, the Spaces index) as its frames.
+    const subscribeStream = (stream: string) =>
+      shapeStream(
+        socket,
+        { type: "stream", mc, stream },
+        entityStreamFrame,
+        (frame) => new ClusterRpcError(String(frame.reason ?? "The stream is unavailable."), frame),
+      );
 
     // Asks the MC for the turns before the open thread's window. They arrive as
     // a snapshot of the longer thread on the thread's stream.
@@ -1533,6 +1565,7 @@ export function makeV3Session(input: {
               : new ClusterRpcError(String(cause), undefined),
         }),
       mcMembers,
+      subscribeStream,
     } satisfies RpcSession;
   });
 }

@@ -39,7 +39,7 @@ Feature: Thread menu and selecting several threads
   @desktop @mobile @backlog-mobile
   Scenario: The thread menu offers its actions in a fixed order
     When the user opens the menu for "Tidy logs"
-    Then the actions read, in order: new thread on "chore/logs", pin, settle, snooze, rename, regenerate title, mark unread, filter by "shop", copy, project settings, archive, delete
+    Then the actions read, in order: new thread on "chore/logs", pin, settle, snooze, rename, regenerate title, mark unread, filter by "shop", copy, project settings, create page from thread, archive, delete
 
   @desktop @mobile @backlog-mobile
   Scenario: Actions the environment does not support are left out

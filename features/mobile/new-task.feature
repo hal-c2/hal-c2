@@ -1,4 +1,5 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13454 (branch search and remote-only branches)
 #   apps/mobile/src/features/threads/NewTaskRouteScreen.tsx (project choice, empty states, search)
 #   apps/mobile/src/features/threads/new-task-project-selection.ts (scopes, environment match)
 #   apps/mobile/src/features/threads/NewTaskDraftRouteScreen.tsx (branch switch before the draft opens)
@@ -151,6 +152,18 @@ Feature: Starting a task from a phone
       | the branches have not arrived yet | Loading branches…     |
       | the project has no branches       | No branches available |
       | a search matches no branch        | No matching branches  |
+
+  @backlog @mobile
+  Scenario: A branch search ignores case and finds a dashed branch by typed spaces
+    Given "feature/login-page" is a branch of "shop"
+    When the user searches the new task's branches for "Login Page"
+    Then "feature/login-page" is listed
+
+  @backlog @mobile
+  Scenario: A branch that exists only on the remote is listed and labelled as remote
+    Given "feature/cart" exists on the remote of "shop" but nowhere locally
+    When the user opens the branch list of the new task
+    Then "feature/cart" is listed with a "remote" label
 
   @backlog @mobile
   Scenario: A branch list that could not be loaded can be asked for again

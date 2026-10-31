@@ -10,6 +10,8 @@ import type {
   ServerSettings,
 } from "@hal-c2/contracts";
 
+import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
+
 import type { TuiSettingsClient, UsageLimitsSnapshot } from "../../src/settingsClient.ts";
 
 export interface FakeMcCall {
@@ -48,6 +50,17 @@ export interface FakeSettingsMc {
   /** Called when a client starts following the access list (send it the snapshot). */
   onAuthAccessSubscribe: (() => void) | null;
   readonly authAccessWatchers: () => number;
+  /**
+   * Serves `subscribeMcStream` (a Space's stream, the Spaces index): returns the
+   * unsubscribe. Unset, a stream sends nothing.
+   */
+  streams:
+    | ((
+        stream: string,
+        onFrame: (frame: EntityStreamFrame) => void,
+        onError?: (message: string) => void,
+      ) => () => void)
+    | null;
 }
 
 export function fakeSettingsMc(): FakeSettingsMc {
@@ -86,6 +99,7 @@ export function fakeSettingsMc(): FakeSettingsMc {
     },
     telemetryWatchers: () => telemetryWatchers.size,
     onTelemetrySubscribe: null,
+    streams: null,
     client: {
       mcCall: async <T>(method: string, payload: unknown, environmentId?: string) => {
         calls.push({ method, payload, environmentId });
@@ -129,6 +143,8 @@ export function fakeSettingsMc(): FakeSettingsMc {
           telemetryWatchers.delete(onSnapshot);
         };
       },
+      subscribeMcStream: (stream, onFrame, onError) =>
+        fake.streams?.(stream, onFrame, onError) ?? (() => {}),
     },
   };
   return fake;

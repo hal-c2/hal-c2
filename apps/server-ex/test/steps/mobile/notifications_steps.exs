@@ -146,6 +146,33 @@ defmodule HalC2.Steps.Mobile.Notifications do
     Map.put(context, :finished_before, titles)
   end
 
+  # A member is played through the shell's own messages: it comes up, and its rows
+  # arrive whole (`reset`), here none, as a real member's answer to the shell's hello.
+  step "{string} joins the cluster with no threads", %{args: [name]} = context do
+    peer = :"#{String.downcase(name)}@127.0.0.1"
+    send(HalC2.Shell, {:nodeup, peer})
+    GenServer.cast(HalC2.Shell, {:peer_environment, peer, %{"environmentId" => "env-#{name}"}})
+    GenServer.cast(HalC2.Shell, {:peer_rows, peer, {"#{name}-run", 0}, 0, [], true})
+    Map.put(context, :peer, peer)
+  end
+
+  step "the first thread on {string} finishes its turn", %{args: [name]} = context do
+    at = World.iso_from_now(1_000)
+
+    row = %{
+      "id" => "first",
+      "title" => "First on #{name}",
+      "latestRunId" => "run-1",
+      "status" => "completed",
+      "latestRunCompletedAt" => at,
+      "updatedAt" => at
+    }
+
+    rows = [{"first", {"thread", row}, 1}]
+    GenServer.cast(HalC2.Shell, {:peer_rows, context.peer, {"#{name}-run", 1}, 0, rows, false})
+    context
+  end
+
   # --- outcomes -----------------------------------------------------------------------
 
   step "{string} sends the alert to the phone's endpoint at that distributor",

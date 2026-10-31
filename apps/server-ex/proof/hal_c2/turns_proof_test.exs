@@ -32,6 +32,10 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.dispatch/1" =>
         ~w(dispatch begin-turn retry start-failed delete stop-runtimes interrupt-any
            interrupt-undriven),
+      # dispatch/1 behind a receipt: a repeated command id is answered from it, unchanged.
+      "HalC2.Orchestration.dispatch_once/1" =>
+        ~w(dispatch begin-turn retry start-failed delete stop-runtimes interrupt-any
+           interrupt-undriven),
       # dispatch/1's message path, split around a caller's own transaction (delegation).
       "HalC2.Orchestration.decide_dispatch/3" => "dispatch",
       "HalC2.Orchestration.dispatched/3" => ~w(begin-turn retry start-failed interrupt-any),

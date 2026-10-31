@@ -103,7 +103,8 @@ defmodule HalC2.PushPropTest do
         {1, {:call, __MODULE__, :finish_while_down, [oneof(@threads), state.clock]}},
         {2,
          {:call, __MODULE__, :appear,
-          [state.appeared + 1, oneof([state.started_at - 1, state.started_at, state.clock])]}}
+          [state.appeared + 1, oneof([state.started_at - 1, state.started_at, state.clock])]}},
+        {1, {:call, __MODULE__, :join_empty, []}}
       ] ++
         case Map.keys(state.regs) do
           [] -> []
@@ -173,6 +174,9 @@ defmodule HalC2.PushPropTest do
     due = if state.peer_known and at > state.started_at, do: ["n#{k}"], else: []
     evaluate(%{state | appeared: k, peer_known: true}, due)
   end
+
+  # The other MC's rows arrive whole with none among them: its next thread is news.
+  defp step(state, {:call, _, :join_empty, []}), do: evaluate(%{state | peer_known: true}, [])
 
   defp step(state, {:call, _, :gone, [session]}),
     do: {%{state | dead: MapSet.put(state.dead, state.regs[session].endpoint)}, %{}}
@@ -280,6 +284,11 @@ defmodule HalC2.PushPropTest do
       send(Push, {:hal_c2_shell, {:rows, :"pa@prop.invalid", [{"n#{k}", {"thread", row}}]}})
     end)
   end
+
+  # The other MC's rows reach the service whole, and there are none: as the shell sends
+  # those of a member that joins with no threads.
+  def join_empty,
+    do: observe(fn -> send(Push, {:hal_c2_shell, {:rows, :"pa@prop.invalid", []}}) end)
 
   # Runs `fun`, drains the service, and returns the alerts each phone got meanwhile.
   defp observe(fun) do

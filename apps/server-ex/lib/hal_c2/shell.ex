@@ -13,7 +13,8 @@ defmodule HalC2.Shell do
   Each MC's environment descriptor (`HalC2.Environment.descriptor/0`) travels with its
   rows, so clients can list and label every machine, online or not.
 
-  Subscribers receive `{:hal_c2_shell, {:rows, mc, [{id, {kind, row}}]}}`,
+  Subscribers receive `{:hal_c2_shell, {:rows, mc, [{id, {kind, row}}]}}` (all of
+  `mc`'s rows, possibly none, when they are sent whole),
   `{:hal_c2_shell, {:environment, mc, descriptor}}` and
   `{:hal_c2_shell, {:mc, mc, :up | :down | :removed}}`.
 
@@ -88,6 +89,14 @@ defmodule HalC2.Shell do
         [] -> nil
       end
     end
+  end
+
+  @doc "The members whose rows this MC holds, as of a version they sent."
+  @spec held_mcs() :: [node]
+  def held_mcs do
+    if :ets.whereis(@versions) == :undefined,
+      do: [],
+      else: for({peer, _version} <- :ets.tab2list(@versions), do: peer)
   end
 
   @doc "Every known MC's environment descriptor as `{mc, descriptor}`."
@@ -493,17 +502,18 @@ defmodule HalC2.Shell do
   defp transport, do: Application.get_env(:hal_c2, :shell_transport, HalC2.Shell.Distribution)
 
   # Changed rows of `mc`: clients are told the version they bring it to. Plain
-  # subscribers get `plain`, clients `rows`.
+  # subscribers get `plain`, and a reset even when empty: it tells them they have all
+  # of `mc`'s rows, as `HalC2.Push` needs of a member that joins with none.
   defp notify(mc, plain \\ nil, rows, version)
 
   defp notify(_mc, _plain, [], %{reset: false}), do: :ok
 
-  defp notify(mc, plain, rows, version) do
+  defp notify(mc, plain, rows, %{reset: reset?} = version) do
     plain = plain || rows
 
     for {pid, kind} <- :ets.tab2list(@subscribers) do
       case kind do
-        :plain -> if plain != [], do: send(pid, {:hal_c2_shell, {:rows, mc, plain}})
+        :plain -> if plain != [] or reset?, do: send(pid, {:hal_c2_shell, {:rows, mc, plain}})
         :client -> send(pid, {:hal_c2_shell, {:rows, mc, rows, version}})
       end
     end
@@ -528,8 +538,10 @@ defmodule HalC2.Shell do
     # while this shell was starting has just made is left to that import.
     unfinished = HalC2.Import.PreviousInstall.unfinished(path)
 
+    # Only projects and threads have sidebar rows (`HalC2.Projection.row/3`).
     missing =
-      for %{id: id} <- streams,
+      for %{id: id, kind: kind} <- streams,
+          kind in ["project", "thread"],
           not MapSet.member?(have, id),
           id not in unfinished,
           do: id

@@ -234,11 +234,26 @@ defmodule HalC2.Orchestration.Settlement do
   end
 
   @doc "Whether a thread may settle at all (`isAutoSettlementCandidate`)."
-  def candidate?(row, now) do
-    row["archivedAt"] == nil and row["settledOverride"] == nil and row["pinnedAt"] == nil and
-      row["pendingRuntimeRequest"] == nil and row["activityRunStatus"] == nil and
-      (row["pendingBackgroundTasks"] || []) == [] and not queued_turn_start?(row, now) and
-      awake?(row, now)
+  def candidate?(row, now), do: blocker(row, now) == nil
+
+  @doc """
+  Why a thread may not settle now, in words, or nil when it may: the one list
+  of blockers both automatic settlement and the answers that report settlement
+  (`HalC2.Mcp.Tools`) read, so the two cannot disagree.
+  """
+  def blocker(row, now) do
+    cond do
+      row["archivedAt"] != nil -> "archived"
+      row["settledOverride"] == "settled" -> "already settled"
+      row["settledOverride"] != nil -> "kept active by the user"
+      row["pinnedAt"] != nil -> "pinned"
+      row["pendingRuntimeRequest"] != nil -> "waiting on the user"
+      row["activityRunStatus"] != nil -> "has a run in progress"
+      (row["pendingBackgroundTasks"] || []) != [] -> "has background work"
+      queued_turn_start?(row, now) -> "a message is waiting for its run"
+      not awake?(row, now) -> "snoozed"
+      true -> nil
+    end
   end
 
   # A snoozed thread that woke early, on an error or finished work, may settle; one

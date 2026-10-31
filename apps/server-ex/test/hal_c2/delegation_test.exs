@@ -2,6 +2,7 @@ defmodule HalC2.Orchestration.DelegationTest do
   use ExUnit.Case, async: false
 
   alias HalC2.Orchestration.{Delegation, Recovery}
+  alias HalC2.Projection.PullRequests, as: Links
   alias HalC2.StreamState
 
   @moduletag :tmp_dir
@@ -222,6 +223,60 @@ defmodule HalC2.Orchestration.DelegationTest do
 
       assert Delegation.reconcile("p") == 1
       assert %{"status" => "completed", "result" => "done"} = task()
+    end
+  end
+
+  describe "a task's child that links a pull request" do
+    @heard %{"state" => "open", "checksFailed" => false}
+
+    defp link_child do
+      {:ok, _} =
+        HalC2.Streams.commit("c", :thread, [
+          thread("c", %{
+            "lineage" => %{"relationshipToParent" => "subagent", "parentThreadId" => "p"},
+            "pullRequests" => [
+              %{
+                "host" => "github.com",
+                "repository" => "acme/app",
+                "number" => 7,
+                "url" => "https://github.com/acme/app/pull/7",
+                "source" => "agent",
+                "linkedAt" => @at,
+                "heard" => @heard
+              }
+            ]
+          })
+        ])
+
+      :ok
+    end
+
+    defp links(id) do
+      thread = id |> HalC2.Streams.state() |> StreamState.get("thread") |> Map.get(id)
+      Links.visible(Links.of(thread))
+    end
+
+    test "hands it to the caller when the boot settles the task" do
+      :ok = delegate("completed")
+      :ok = link_child()
+
+      assert Delegation.reconcile("p") == 1
+
+      assert links("c") == []
+      assert [%{"number" => 7, "source" => "agent", "heard" => @heard}] = links("p")
+    end
+
+    test "keeps it when the caller is deleted" do
+      :ok = delegate("completed")
+      :ok = link_child()
+      {:ok, _} = HalC2.Streams.commit("p", :thread, [thread("p", %{"deletedAt" => @at})])
+
+      assert ExUnit.CaptureLog.capture_log(fn ->
+               assert Delegation.hand_over_pull_requests("c") == :ok
+             end) == ""
+
+      assert [%{"number" => 7}] = links("c")
+      assert links("p") == []
     end
   end
 
