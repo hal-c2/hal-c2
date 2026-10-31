@@ -183,6 +183,7 @@ import {
   ClusterStatus,
   ClusterUpdateResult,
 } from "./cluster.ts";
+import { InvalidPushRegistration, PushRegistrationInput } from "./push.ts";
 import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationGetWorkflowScriptError,
@@ -530,6 +531,10 @@ export const WS_METHODS = {
   clusterJoin: "cluster.join",
   clusterRemove: "cluster.remove",
   clusterUpdate: "cluster.update",
+
+  // Agent push to the calling client's UnifiedPush endpoint (MCs only)
+  registerPush: "hal-c2.registerPush",
+  unregisterPush: "hal-c2.unregisterPush",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -914,6 +919,23 @@ const WsClusterUpdateRpc = Rpc.make(WS_METHODS.clusterUpdate, {
   payload: Schema.Struct({}),
   success: ClusterUpdateResult,
   error: ClusterRpcError,
+});
+
+/**
+ * Registers the calling client's UnifiedPush endpoint for agent alerts, replacing what its
+ * session registered before. Revoking the client drops it.
+ */
+const WsRegisterPushRpc = Rpc.make(WS_METHODS.registerPush, {
+  payload: PushRegistrationInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([InvalidPushRegistration, EnvironmentAuthorizationError]),
+});
+
+/** Drops the calling client's push registration, if it has one. */
+const WsUnregisterPushRpc = Rpc.make(WS_METHODS.unregisterPush, {
+  payload: Schema.Struct({}),
+  success: Schema.Struct({}),
+  error: EnvironmentAuthorizationError,
 });
 
 const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientActivity, {
@@ -1946,6 +1968,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsClusterJoinRpc,
   WsClusterRemoveRpc,
   WsClusterUpdateRpc,
+  WsRegisterPushRpc,
+  WsUnregisterPushRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,

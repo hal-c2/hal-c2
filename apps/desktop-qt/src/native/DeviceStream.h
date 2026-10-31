@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QNetworkRequest>
 #include <QObject>
 #include <QPointer>
 #include <QSize>
@@ -42,6 +43,11 @@ class DeviceStream : public QObject {
   Q_PROPERTY(QString status READ status NOTIFY statusChanged)
   Q_PROPERTY(QString detail READ detail NOTIFY statusChanged)
   Q_PROPERTY(bool inputConnected READ inputConnected NOTIFY inputChanged)
+  // Why the input connection dropped, while it reconnects; "" when it is up.
+  Q_PROPERTY(QString inputDetail READ inputDetail NOTIFY inputChanged)
+  // The MC has handed this client a hub base to read the device through
+  // (the tools' read-only feeds need it; streaming alone does not say so).
+  Q_PROPERTY(bool access READ access NOTIFY targetChanged)
   Q_PROPERTY(QString platform READ platform NOTIFY screenChanged)
   // portrait, landscape_left, portrait_upside_down or landscape_right.
   Q_PROPERTY(QString orientation READ orientation NOTIFY screenChanged)
@@ -65,6 +71,11 @@ public:
   QString status() const { return m_status; }
   QString detail() const { return m_detail; }
   bool inputConnected() const { return m_inputConnected; }
+  QString inputDetail() const { return m_inputDetail; }
+  bool access() const { return !m_hubBase.isEmpty() && !m_deviceId.isEmpty(); }
+  // The hub paths the tools read through the same proxy (`<hubBase>/vendor/...`).
+  QString hubBase() const { return m_hubBase; }
+  QString deviceId() const { return m_deviceId; }
   QString platform() const { return m_platform; }
   QString orientation() const { return m_orientation; }
   int rotation() const;
@@ -78,11 +89,15 @@ public:
   // A key (Qt::Key) going down or up, with the text it types and whether
   // ctrl or meta is held.
   Q_INVOKABLE void key(int qtKey, const QString& text, bool command, bool down);
+  // Lets go of a Command chord still held on the device, if any.
+  Q_INVOKABLE void releaseChord();
   // home, back, recents or power (iOS: home, recents as the app switcher,
   // power as lock; back does nothing).
   Q_INVOKABLE void pressButton(const QString& button);
   // iOS: the next orientation, clockwise from portrait.
   Q_INVOKABLE void rotate();
+  // iOS: ask for one orientation (portrait, landscape_left, ...).
+  Q_INVOKABLE void setOrientation(const QString& orientation);
 
 signals:
   void statusChanged();
@@ -94,11 +109,14 @@ signals:
 private:
   bool ios() const { return m_platform == QLatin1String("ios"); }
   QString vendorPath(const QString& path) const;
+  // A proxied request, carrying the refreshed ticket once one was minted.
+  QNetworkRequest hubRequest(const QString& path, const QString& query = {}, bool socket = false) const;
+  void refreshAccess();
   void start();
   // Closes every connection, leaving `status`.
   void stop(const QString& status = QStringLiteral("idle"), const QString& detail = {});
   void setStatus(const QString& status, const QString& detail = {});
-  void setInput(bool connected);
+  void setInput(bool connected, const QString& detail = {});
   void connecting(const QString& detail = {});
   void fail(const QString& detail);
   void unauthorized();
@@ -142,6 +160,15 @@ private:
   QString m_status = QStringLiteral("idle");
   QString m_detail;
   bool m_inputConnected = false;
+  QString m_inputDetail;
+  // A fresh proxy ticket, minted once after the MC refused the stream
+  // (its access expired); a second refusal is an error.
+  QString m_ticket;
+  bool m_refreshed = false;
+  // Bumped when a ticket being fetched no longer applies.
+  int m_accessEpoch = 0;
+  // The key held in a Command chord on iOS, or -1.
+  int m_chordUsage = -1;
   // The device's screen: iOS as its helper reports it, Android as its
   // pictures come.
   int m_width = 0;

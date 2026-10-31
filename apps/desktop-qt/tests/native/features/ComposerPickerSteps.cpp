@@ -11,6 +11,7 @@
 
 #include "Brick.h"
 #include "ComposerBrick.h"
+#include "DevicePanelSteps.h"
 #include "FakeConfig.h"
 #include "FakeGit.h"
 #include "Harness.h"
@@ -339,6 +340,8 @@ const Steps steps([] {
                   [&] { return QStringLiteral("the picker to name %1; it names %2 of %3").arg(c[0], title->property("text").toString(), icon->property("driverKind").toString()); });
   });
   step(QStringLiteral("%1 cannot be chosen").arg(q), [](World& world, const Captures& c, const Table&) {
+    // The Device tab's push Send is unchoosable in the same words (DeviceSteps).
+    if (checkDeviceCannotChoose(world, c[0])) return;
     const QVariantMap before = composer(world);
     click(world, rowOf(world, c[0]));
     expect(pickerOpen(world) && composer(world).value(QStringLiteral("selectedModel")) == before.value(QStringLiteral("selectedModel")),

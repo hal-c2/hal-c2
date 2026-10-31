@@ -49,7 +49,8 @@ class ShellStore;
 // (its parent, and the forks and subagents it started).
 //
 // Actions: `rightPanel.toggle`, `rightPanel.activate {id}`,
-// `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.resize
+// `rightPanel.close {id}`, `rightPanel.add {kind}`, `rightPanel.rename
+// {id, title}`, `rightPanel.unfloat`, `rightPanel.resize
 // {width?}` (no width: the default), `rightPanel.toggleMaximized`,
 // `threadPanel.toggle`, `rightPanel.reviewProject {key}` (a pull request of
 // the thread's project, from the Pull requests tab), `rightPanel.linkPullRequest {url}` (a message's
@@ -157,6 +158,10 @@ private:
     // Device tabs the user closed: an agent opening the device again does not
     // bring them back.
     QStringList dismissed;
+    // Names the user gave tabs of their own, by tab id.
+    QHash<QString, QString> titles;
+    // The device tab floating over the chat, while the panel is closed.
+    QString floating;
   };
 
   Panel& panel() { return m_panels[m_thread]; }
@@ -175,6 +180,12 @@ private:
   void save();
   // A device's tab, in place of the picker (ThreadDevices::opened).
   void openDevice(const QString& id, bool automatic);
+  // Floats a device tab over the chat and closes the panel
+  // (ThreadDevices::floated); `rightPanel.unfloat` brings it back.
+  void floatDevice(const QString& id);
+  void unfloat();
+  // Gives a tab the user's own name (`rightPanel.rename`); empty clears it.
+  void renameTab(const QString& id, const QString& title);
   static bool removeTab(Panel& state, const QString& id);
   // Closes `id` in `threadKey`'s panel, shown or not (ThreadDevices::closed).
   void closeTabIn(const QString& threadKey, const QString& id);

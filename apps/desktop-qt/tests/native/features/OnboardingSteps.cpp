@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "DevicePanelSteps.h"
 #include "FakeConfig.h"
 #include "FakeProjects.h"
 #include "Harness.h"
@@ -429,6 +430,8 @@ const Steps steps([] {
     world.sync();
   });
   step(QStringLiteral("the user can continue"), [](World& world, const Captures&, const Table&) {
+    // The Device tab's setup wizard continues in the same words (DeviceSteps).
+    if (checkDeviceCanContinue(world)) return;
     world.waitFor([&] { return onboarding(world).value(QStringLiteral("canContinue")).toBool(); },
                   [&] { return QStringLiteral("to be able to continue; the wizard is %1").arg(show(onboarding(world))); });
   });

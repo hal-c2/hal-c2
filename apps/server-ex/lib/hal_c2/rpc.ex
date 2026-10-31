@@ -5,7 +5,10 @@ defmodule HalC2.Rpc do
   """
 
   # Methods that answer for the calling session (`handle/3`).
-  @session_methods ~w(hal-c2.clients hal-c2.revokeClient hal-c2.revokeOtherClients)
+  @session_methods ~w(
+    hal-c2.clients hal-c2.revokeClient hal-c2.revokeOtherClients hal-c2.registerPush
+    hal-c2.unregisterPush
+  )
 
   @doc "Methods the socket runs with its session, through `handle/3`."
   def session_methods, do: @session_methods
@@ -294,6 +297,10 @@ defmodule HalC2.Rpc do
 
   def handle("hal-c2.revokeClient", _input, _session), do: {:error, "a sessionId is required"}
 
+  # Push goes to the phone that registered, so it belongs to the client's session.
+  def handle("hal-c2.registerPush", input, session), do: HalC2.Push.register(session, input)
+  def handle("hal-c2.unregisterPush", _input, session), do: HalC2.Push.unregister(session)
+
   defp cluster({:ok, _} = ok), do: ok
 
   defp cluster({:error, reason}),
@@ -330,7 +337,7 @@ defmodule HalC2.Rpc do
     orchestration.getWorkflowScript orchestration.getTurnDiff orchestration.getFullThreadDiff
     orchestration.searchThreads orchestration.getArchivedShellSnapshot
     orchestration.getThreadProjection server.getSettings hal-c2.readSettings hal-c2.threadRows
-    hal-c2.placeThread
+    hal-c2.placeThread hal-c2.registerPush hal-c2.unregisterPush
     server.getConfig server.probe server.discoverSourceControl server.getTraceDiagnostics
     server.getProcessDiagnostics server.getHostResources server.getProcessResourceHistory
     server.getResourceTelemetryHistory server.getUsageSummary server.refreshUsageRates
