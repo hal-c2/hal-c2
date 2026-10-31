@@ -1,7 +1,7 @@
 # Sources:
-#   https://chatgpt.com/features/space/ (slides, sites, images, Slack, scheduled pages, applets)
+#   https://chatgpt.com/features/space/ (slides, sites, images, Slack, applets)
 #   spaces-feature-bdd-tests branch, features/space/ (the prototype; read for ideas only):
-#     slides-sites-and-images.feature, self-updating-pages-and-schedules.feature,
+#     slides-sites-and-images.feature,
 #     living-pages-and-visualizations.feature, collaboration-agents-and-dots.feature
 
 @backlog
@@ -28,12 +28,6 @@ Feature: Spaces beyond Pages
     Given the Space "Research" is connected to a Slack channel
     When someone asks about "Roadmap" in that channel
     Then the answer cites the page "Roadmap"
-
-  @mc @shared
-  Scenario: A page updates itself on a schedule
-    Given the page "Status" has the instruction "Summarise yesterday's threads" every morning
-    When the morning run finishes
-    Then "Status" holds the new summary and says when it was written
 
   @mc @shared
   Scenario: The user visualises data on a page
