@@ -3,6 +3,7 @@
 #   docs/user/updating.md
 #   docs/internals/server-updates.md
 #   apps/server-ex/lib/hal_c2/upgrade.ex (server.updateServer, server.updateServerWithProgress)
+#   apps/server-ex/lib/hal_c2/desktop_update.ex (desktop-managed updates, server.reportDesktopUpdateStatus, desktopUpdateControl)
 #   apps/server-ex/lib/hal_c2/provider_updates.ex (server.updateProvider, version advisories)
 #   apps/server-ex/test/mc_parity_test.exs (server.commitDesktopUpdate not applicable)
 #   packages/contracts/src/rpc.ts (server.updateServer, server.updateServerWithProgress, server.commitDesktopUpdate, server.updateProvider)
@@ -372,7 +373,7 @@ Feature: Updating the server, the desktop app and providers
       Then the MC receives the current update state without another check
 
     # Legacy: apps/server/src/desktopUpdate/DesktopAppUpdate.ts (onInterrupt cancels the desktop request)
-    @backlog @mc
+    @mc
     Scenario: Abandoning a desktop update request cancels it in the desktop app
       Given a desktop update is in progress
       When the client that asked for it goes away
@@ -410,26 +411,26 @@ Feature: Updating the server, the desktop app and providers
       When the user chooses the link and the system cannot open it
       Then the user is told "Unable to open release notes"
 
-    @backlog @mc
+    @mc
     Scenario: A desktop update request from a server the desktop app did not start is refused
       Given this server was not started by the desktop app
       When a client asks for a desktop update
       Then the request fails saying the server cannot drive a desktop update
 
-    @backlog @mc
+    @mc
     Scenario: A desktop update request while the app is current says so
       Given the desktop app is already on the latest version
       When a client asks for a desktop update
       Then the request says the desktop app is already up to date on its version
 
-    @backlog @mc
+    @mc
     Scenario: Only one desktop update runs at a time
       Given a desktop update is in progress
       When a client asks for another desktop update
       Then the request fails saying a desktop app update is already in progress
 
     # Legacy: apps/server/src/desktopUpdate/DesktopAppUpdate.test.ts (stages, other runs, retry after success)
-    @backlog @mc
+    @mc
     Scenario: A desktop update reports its stages once and ignores other runs
       Given the desktop app checks, finds "1.2.4", downloads it and has it ready to install
       And it also sends a failure that belongs to an earlier request
@@ -439,7 +440,7 @@ Feature: Updating the server, the desktop app and providers
       And the earlier request's failure is not shown
 
     # Legacy: apps/server/src/desktopUpdate/DesktopAppUpdate.test.ts (failed outcome, silent desktop app)
-    @backlog @mc
+    @mc
     Scenario Outline: A desktop update that ends badly says why
       Given the desktop app <ends>
       When a client asks for a desktop update
@@ -450,13 +451,13 @@ Feature: Updating the server, the desktop app and providers
         | reports that the update failed because "feed unreachable"  | feed unreachable                                |
         | stops reporting before it has an outcome                   | The desktop app stopped reporting its update.   |
 
-    @backlog @mc
+    @mc
     Scenario: A desktop update that is ready can be asked for again
       Given a desktop update was prepared and is ready to install
       When a client asks for a desktop update again
       Then the MC does not refuse it as already in progress
 
-    @backlog @mc
+    @mc
     Scenario Outline: A desktop update that stalls is reported as timed out
       Given the desktop app <stage> for longer than allowed
       Then the update fails saying the desktop app <message>
