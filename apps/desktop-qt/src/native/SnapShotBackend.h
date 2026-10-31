@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QProcessEnvironment>
+#include <QList>
 #include <QString>
 
 #include <functional>
@@ -51,6 +52,35 @@ public:
     bool canRetry = true;
   };
 
+  // A desktop whose capture has to be set up first (GNOME's extension, a
+  // capture helper): what the access step says and offers. The controller
+  // shows it as given; only perform() changes anything.
+  struct Setup {
+    // Capture works and setup can go on to the shortcut.
+    bool accessReady = false;
+    QString heading;
+    QString body;
+    // The access step's button: a perform() action, or empty to check again
+    // (or continue, once ready) with actionLabel.
+    QString action;
+    QString actionLabel;
+    // What the desktop said, when it explains a failure.
+    QString details;
+    // Said after checking again changed nothing; empty otherwise.
+    QString checkMessage;
+    // The capture row while capture is on and access is not ready.
+    QString status;
+    // Why capture effects are off; empty to leave it to feedbackAvailable.
+    QString effects;
+    struct Option {
+      QString action;
+      QString label;
+      QString note;
+    };
+    // Advanced: undoing what setup did, and the like.
+    QList<Option> advanced;
+  };
+
   explicit SnapShotBackend(QObject* parent = nullptr) : QObject(parent) {}
 
   virtual Session session() const = 0;
@@ -70,6 +100,17 @@ public:
   virtual void capture() {}
   // Plays a capture sound: soft-pop (Whoosh) or camera-shutter (Click).
   virtual void play(const QString& sound);
+  // The capture effects the user wants, for a desktop that can show them.
+  virtual void setEffects(bool flash, bool animate) { Q_UNUSED(flash); Q_UNUSED(animate); }
+  // The setup this desktop needs before it captures; none by default.
+  virtual std::optional<Setup> setup() const { return std::nullopt; }
+  // Runs a setup step the user chose (install-extension, remove-kde-helper,
+  // ...): `changed` once done, `setupFailed` if not. A step this desktop does
+  // not have is refused and changes nothing.
+  virtual void perform(const QString& action) { emit setupFailed(unsupportedSetup(action)); }
+
+  // Why `action` cannot run in this session.
+  static QString unsupportedSetup(const QString& action);
 
   // The backend this session gets.
   static SnapShotBackend* create(QObject* parent);
@@ -100,6 +141,8 @@ signals:
   void activated();
   void captured(const QImage& image, const QString& appName, const QString& windowTitle);
   void failed(const QString& message);
+  // A setup step failed; shown in setup, not as a toast.
+  void setupFailed(const QString& message);
 };
 
 // Where capture is not supported: only the reason.

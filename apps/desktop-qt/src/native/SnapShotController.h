@@ -110,6 +110,7 @@ private:
   void onActivated();
   void onCaptured(const QImage& image, const QString& appName, const QString& windowTitle);
   void onFailed(const QString& message);
+  void onSetupFailed(const QString& message);
   // Where a capture lands in `window`: its thread or draft, else the last one
   // it showed, else a new draft; empty with no project.
   QString target(NativeWindow* window);
@@ -130,6 +131,8 @@ private:
   // name for).
   QString m_shortcutProblem;
   std::optional<Wizard> m_wizard;
+  // The last setup step's failure, shown in setup until the next one.
+  QString m_setupError;
   bool m_recording = false;
   // Modifier keys held while recording: "<modifier>:<scan code>".
   QSet<QString> m_held;

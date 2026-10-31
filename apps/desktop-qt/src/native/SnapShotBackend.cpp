@@ -107,6 +107,29 @@ SnapShotBackend* SnapShotBackend::create(QObject* parent) {
 #endif
 }
 
+// DesktopSnapShotSetupError's unsupported-session messages.
+QString SnapShotBackend::unsupportedSetup(const QString& action) {
+  if (action == QLatin1String("install-kde-helper") || action == QLatin1String("remove-kde-helper")) {
+    return QStringLiteral("Helper setup requires a KDE Plasma Wayland session outside a sandbox.");
+  }
+  if (action == QLatin1String("install-hyprland-helper") || action == QLatin1String("remove-hyprland-helper")) {
+    return QStringLiteral("Helper setup requires a Hyprland Wayland session outside a sandbox.");
+  }
+  if (action == QLatin1String("test-mac-capture")) return QStringLiteral("Test capture requires macOS.");
+  // Upstream falls through to the GNOME message for these.
+  if (action == QLatin1String("allow-screen-recording") || action == QLatin1String("allow-accessibility")) {
+    return QStringLiteral("Permission setup requires macOS.");
+  }
+  if (action == QLatin1String("preview-config") || action == QLatin1String("apply-config")) {
+    return QStringLiteral("Config setup requires a Niri or Hyprland session.");
+  }
+  if (action == QLatin1String("install-extension") || action == QLatin1String("enable-extension") ||
+      action == QLatin1String("disable-extension")) {
+    return QStringLiteral("Extension setup requires a GNOME Wayland session outside a sandbox.");
+  }
+  return QStringLiteral("This setup step is not available in this session.");
+}
+
 QString SnapShotBackend::portalTrigger(const QJsonObject& shortcut, QString* error) {
   if (shortcut.contains(QLatin1String("kind"))) {
     if (error) {

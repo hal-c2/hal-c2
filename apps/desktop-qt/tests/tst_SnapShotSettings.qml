@@ -86,6 +86,29 @@ Item {
             compare(last().payload.completed, false);
         }
 
+        function test_a_setup_step_and_advanced_go_to_the_desktop() {
+            Shell.state = { snapShot: root.snapShot({ wizard: { step: "access", title: "Set up snapshots for GNOME",
+                                                                heading: "Install the extension", body: "Sign out once after installing.",
+                                                                details: "", attention: "", closeLabel: "Finish later",
+                                                                continueLabel: "Install extension", action: "install-extension",
+                                                                checkMessage: "", doneLabel: "Done", doneEnabled: false,
+                                                                permissions: false, permissionsLabel: "",
+                                                                advanced: [{ action: "disable-extension", label: "Disable extension",
+                                                                             note: "" }] } }) };
+            const page = createTemporaryObject(snapComponent, root);
+            compare(findChild(page, "continue").text, "Install extension");
+            mouseClick(findChild(page, "continue"));
+            compare(last().action, "snapShot.setup.action");
+            compare(last().payload.action, "install-extension");
+            verify(!findChild(page, "advanced-disable-extension"), "Advanced starts closed");
+            mouseClick(findChild(page, "advanced"));
+            const disable = findChild(page, "advanced-disable-extension");
+            verify(disable);
+            mouseClick(disable);
+            compare(last().action, "snapShot.setup.action");
+            compare(last().payload.action, "disable-extension");
+        }
+
         function test_recording_sends_the_keys_and_escape() {
             Shell.state = { snapShot: root.snapShot({}) };
             const page = createTemporaryObject(snapComponent, root);
