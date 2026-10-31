@@ -242,6 +242,7 @@ void SnapShotController::follow() {
 }
 
 void SnapShotController::applyShortcut() {
+  m_backend->setCues(setting(QStringLiteral("snapShotFlash")).toBool(), setting(QStringLiteral("snapShotAnimations")).toBool());
   QString trigger;
   QString problem;
   const QString mode = m_backend->session().mode;
@@ -256,8 +257,8 @@ void SnapShotController::applyShortcut() {
       trigger = QStringLiteral("CTRL+SHIFT+2");
       problem.clear();
     }
-  } else if (enabled() && mode == QLatin1String("direct")) {
-    trigger = QString::fromUtf8(QJsonDocument(savedShortcut()).toJson(QJsonDocument::Compact));
+  } else if (enabled() && mode != QLatin1String("unavailable") && desktop != QLatin1String("niri")) {
+    trigger = m_backend->trigger(savedShortcut(), &problem);
   }
   m_shortcutProblem = problem;
   if (trigger == m_bound) return;
@@ -281,6 +282,12 @@ QString SnapShotController::initialStep(const QString& requested) const {
 void SnapShotController::openSetup(const QString& requested) {
   // A desktop without capture has nothing to set up.
   if (!m_backend->session().ready || m_backend->session().mode == QLatin1String("unavailable")) return;
+  // Nor does one that needs no setup: opening it turns capture on.
+  if (m_backend->session().setupFree) {
+    if (!enabled()) set(QStringLiteral("snapShotEnabled"), true);
+    publish();
+    return;
+  }
   stopRecording();
   resetCandidate();
   const bool wasEnabled = enabled();
@@ -672,8 +679,8 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
                                               {QStringLiteral("flash"), QStringLiteral("snapShotFlash")},
                                               {QStringLiteral("animations"), QStringLiteral("snapShotAnimations")}};
     const QString key = keys.value(map.value(QStringLiteral("key")).toString());
-    // The portal gives only a screenshot, and no capture effects.
-    if (key.isEmpty() || m_backend->session().mode == QLatin1String("portal") && key == QLatin1String("snapShotIncludeAccessibility")) {
+    // A desktop that gives only a screenshot has no app text to include.
+    if (key.isEmpty() || !m_backend->session().appText && key == QLatin1String("snapShotIncludeAccessibility")) {
       return true;
     }
     if (key == QLatin1String("snapShotIncludeAccessibility") && map.value(QStringLiteral("value")).toBool() && enabled() &&
@@ -1067,7 +1074,7 @@ QVariantMap SnapShotController::state() const {
   QString setupLabel;
   // macOS hides setup once there is nothing left to do in it.
   const bool complete = session.permissions && ready && permissionsReady() && shortcut.registered;
-  if (on && session.ready && !complete) {
+  if (on && session.ready && !session.setupFree && !complete) {
     // The button is short: "Set up KDE capture".
     const QString name = session.desktop == QLatin1String("kde") ? QStringLiteral("KDE") : desktop;
     setupLabel = ready ? tr("Manage capture") : name.isEmpty() ? tr("Continue setup") : tr("Set up %1 capture").arg(name);
@@ -1087,7 +1094,7 @@ QVariantMap SnapShotController::state() const {
                               ? (session.desktop == QLatin1String("niri") ? tr("Capture effects aren't available on Niri.")
                                                                           : tr("Capture effects aren't available on this desktop."))
                               : QString();
-  const QString screenshotOnly = portal ? tr("This desktop only provides a screenshot.") : QString();
+  const QString screenshotOnly = available && !session.appText ? tr("This desktop only provides a screenshot.") : QString();
   const auto toggle = [&](const char* key, const QString& unavailable) {
     return QVariantMap{{QStringLiteral("checked"), unavailable.isEmpty() && setting(QLatin1String(key)).toBool()},
                        {QStringLiteral("enabled"), available && unavailable.isEmpty()},

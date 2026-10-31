@@ -73,6 +73,7 @@ SnapShotBackend::Session MacSnapShot::session() const {
   Session session;
   session.ready = m_probed;
   session.mode = QStringLiteral("direct");
+  session.appText = true;
   session.message = m_message;
   if (m_probed) session.permissions = m_permissions.value_or(Permissions{});
   session.permissionsError = m_permissionsError;

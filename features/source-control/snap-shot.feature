@@ -66,12 +66,12 @@ Feature: Snap Shot captures another app's window into the draft
       | platform         | failure                                                    |
       | Linux on Niri    | Niri has no focused window                                 |
       | macOS            | macOS returns an empty image for the window                |
+      | Windows          | the Windows window capture does not answer in time         |
+      | Windows          | an earlier Windows window capture is still running         |
 
     @backlog
     Examples:
       | platform         | failure                                                    |
-      | Windows          | the Windows window capture does not answer in time         |
-      | Windows          | an earlier Windows window capture is still running         |
       | Linux on GNOME   | the window in front is minimized or no window has focus    |
       | Linux on Wayland | the desktop returns an empty or unreadable screenshot      |
 
@@ -104,10 +104,6 @@ Feature: Snap Shot captures another app's window into the draft
     Examples:
       | platform |
       | macOS    |
-
-    @backlog
-    Examples:
-      | platform |
       | Windows  |
 
   @backlog @desktop
@@ -132,11 +128,11 @@ Feature: Snap Shot captures another app's window into the draft
     Examples:
       | platform         |
       | macOS            |
+      | Windows          |
 
     @backlog
     Examples:
       | platform         |
-      | Windows          |
       | Linux on Wayland |
 
   @backlog @desktop
@@ -146,7 +142,7 @@ Feature: Snap Shot captures another app's window into the draft
     Then the image is attached
     And the attachment keeps the window title up to 1,000 characters and the app name up to 255
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The attachment names the app the way the user knows it
     Given the desktop app runs on <platform>
     And <window>
@@ -365,15 +361,13 @@ Feature: Snap Shot captures another app's window into the draft
     Then no background helper stays running to read app text
     And turning Snap Shot off has the same effect
 
-  @backlog-desktop
-  # The desktop portal cannot flash a window, and the Qt draft has no capture animation yet.
+  # On Windows: a desktop portal cannot flash a window or fly an image.
   Scenario: The capture plays its cues
     Given the sound, flash and animation are on
     When the user captures a window
     Then the sound plays, the captured window flashes and the image flies into the draft
 
-  @backlog-desktop
-  # The Qt draft has no capture animation yet.
+  # On Windows: a desktop portal has no animation to turn off.
   Scenario: Reduced motion turns the animation off
     Given the system asks for reduced motion
     When the user captures a window

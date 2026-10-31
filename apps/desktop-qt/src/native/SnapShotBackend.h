@@ -10,6 +10,8 @@
 #include <functional>
 #include <optional>
 
+class WindowsSystem;
+
 // The platform half of Snap Shot (SnapShotController): whether this session
 // can capture, the global capture shortcut, and the capture itself.
 //
@@ -17,8 +19,9 @@
 // Screenshot portal's active-window target where the desktop offers it, else
 // its window picker, and the GlobalShortcuts portal for the shortcut. GNOME
 // adds HAL-C2's extension in place of the picker (GnomeSnapShot). Niri
-// outside a sandbox captures over its own socket (NiriSnapShot). macOS captures
-// directly (MacSnapShot). X11 and Windows are unavailable for now
+// outside a sandbox captures over its own socket (NiriSnapShot). macOS
+// (MacSnapShot) and Windows (WindowsSnapShot) capture directly. X11 is
+// unavailable for now
 // (UnavailableSnapShot).
 //
 // A backend answers from what it has already found out: `session()` is not
@@ -38,7 +41,7 @@ public:
   struct Session {
     // The desktop has been asked; until then nothing else here is known.
     bool ready = false;
-    // portal | direct (macOS) | unavailable
+    // portal | direct (macOS, Windows) | unavailable
     QString mode = QStringLiteral("unavailable");
     // A portal's: screenshot-portal (the window in front), gnome-extension
     // (the same, once the extension is set up) or picker (the user chooses a
@@ -50,6 +53,10 @@ public:
     QString message;
     // The desktop can flash the captured window and animate it.
     bool feedbackAvailable = false;
+    // Capture needs no setup (Windows): turning it on is enough.
+    bool setupFree = false;
+    // Captures can carry the app's text and controls; otherwise only an image.
+    bool appText = false;
     // The desktop is being asked again (`refresh()`) and has not answered.
     bool checking = false;
     // Where capture needs privacy permissions the user grants one at a time
@@ -113,9 +120,17 @@ public:
   virtual void probe() {}
   // Asks again after the user may have changed what the desktop allows.
   virtual void refresh() { probe(); }
-  // Binds the capture shortcut to `trigger` (portalTrigger's; in direct mode
-  // the shortcut's JSON), replacing the one before; pending until the
-  // desktop answers.
+  // What `bind` takes for `shortcut`: portalTrigger's for a portal, the
+  // shortcut's JSON in direct mode; empty with `error` set when this desktop
+  // cannot hold it.
+  virtual QString trigger(const QJsonObject& shortcut, QString* error) const;
+  // The capture cues the user chose (snapShotFlash, snapShotAnimations).
+  virtual void setCues(bool flash, bool animations) {
+    Q_UNUSED(flash);
+    Q_UNUSED(animations);
+  }
+  // Binds the capture shortcut to `trigger`, replacing the one before;
+  // pending until the desktop answers.
   virtual void bind(const QString& trigger) { Q_UNUSED(trigger); }
   // Lets the capture shortcut go.
   virtual void release() {}
@@ -166,6 +181,9 @@ public:
   // Why `action` cannot run in this session.
   static QString unsupportedSetup(const QString& action);
 
+  // Tests hear the sounds instead of the speakers; null restores them.
+  static void setSoundPlayer(std::function<void(const QString&)> player);
+
   // The backend this session gets.
   static SnapShotBackend* create(QObject* parent);
 
@@ -179,14 +197,16 @@ public:
   static Platform detect(const QProcessEnvironment& env, bool onLinux);
 
   // Tests stand in for the process environment (a Linux desktop's, on any
-  // platform) and the portal.
+  // platform, or Windows' when it has OS=Windows_NT), the portal and Windows.
   using PortalFactory = std::function<SnapShotBackend*(const Platform&, QObject* parent)>;
+  using WindowsFactory = std::function<WindowsSystem*(QObject* parent)>;
   static void setEnvironment(const std::optional<QProcessEnvironment>& env);
   static QProcessEnvironment environment();
   static void setPortalFactory(PortalFactory factory);
   // What wraps the portal on a GNOME session.
   using GnomeFactory = std::function<SnapShotBackend*(SnapShotBackend* portal, QObject* parent)>;
   static void setGnomeFactory(GnomeFactory factory);
+  static void setWindowsFactory(WindowsFactory factory);
 
   // The portal's trigger for a key chord ({key, metaKey, ctrlKey, shiftKey,
   // altKey, modKey}), "CTRL+SHIFT+2"; empty with `error` set when the portal

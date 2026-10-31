@@ -71,4 +71,10 @@ function(hal_c2_add_native_library)
     qt_add_resources(hal_c2_native hal_c2_native_gnome_extension PREFIX "/hal-c2/gnome-extension" BASE "${_hal_c2_gnome}"
                      FILES ${_hal_c2_gnome_files})
   endif()
+  # Snap Shot on Windows: the window in front, its hotkey and keyboard hook, its
+  # flash and flight (WindowsSnapShot); not built anywhere else.
+  if(WIN32)
+    target_sources(hal_c2_native PRIVATE "${_hal_c2_src}/native/win/WindowsSystem.cpp")
+    target_link_libraries(hal_c2_native PUBLIC user32 gdi32 dwmapi)
+  endif()
 endfunction()

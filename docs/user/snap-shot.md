@@ -5,10 +5,10 @@ attachment carries the app name and window title, and when available the app ico
 accessibility data (its controls, text, and their positions in the image). Agents can use that data
 to reason about the screenshot.
 
-SnapShots are off by default. The desktop app captures on macOS, and on Linux with Wayland through
-the desktop's screenshot portal (see [Other Wayland desktops](#linux-desktops)), with the capture
-sound as its only cue. It does not capture on Windows yet. App text is macOS only; the portal gives
-just the image.
+SnapShots are off by default. The desktop app captures on macOS and Windows, and on Linux with
+Wayland through the desktop's screenshot portal (see [Other Wayland desktops](#linux-desktops)), with
+the capture sound as its only cue. App text is macOS only; Windows and the portal give just the
+image.
 
 X11 sessions are not supported.
 

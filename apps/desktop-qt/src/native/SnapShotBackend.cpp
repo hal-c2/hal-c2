@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QHash>
+#include <QJsonDocument>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
@@ -16,6 +17,7 @@
 #include "NiriSnapShot.h"
 #include "PortalSnapShot.h"
 #endif
+#include "WindowsSnapShot.h"
 
 namespace {
 
@@ -31,6 +33,11 @@ SnapShotBackend::PortalFactory& portalFactory() {
 
 SnapShotBackend::GnomeFactory& gnomeFactory() {
   static SnapShotBackend::GnomeFactory factory;
+  return factory;
+}
+
+SnapShotBackend::WindowsFactory& windowsFactory() {
+  static SnapShotBackend::WindowsFactory factory;
   return factory;
 }
 
@@ -86,6 +93,10 @@ void SnapShotBackend::setGnomeFactory(GnomeFactory factory) {
   gnomeFactory() = std::move(factory);
 }
 
+void SnapShotBackend::setWindowsFactory(WindowsFactory factory) {
+  windowsFactory() = std::move(factory);
+}
+
 SnapShotBackend::Platform SnapShotBackend::detect(const QProcessEnvironment& env, bool onLinux) {
   if (!onLinux) return {false, {}, QStringLiteral("SnapShots are not supported on this platform.")};
   const QString type = env.value(QStringLiteral("XDG_SESSION_TYPE")).toLower();
@@ -109,6 +120,17 @@ SnapShotBackend::Platform SnapShotBackend::detect(const QProcessEnvironment& env
 }
 
 SnapShotBackend* SnapShotBackend::create(QObject* parent) {
+  const auto& stand = environmentOverride();
+#ifdef Q_OS_WIN
+  const bool onWindows = !stand || stand->value(QStringLiteral("OS")) == QLatin1String("Windows_NT");
+#else
+  const bool onWindows = stand && stand->value(QStringLiteral("OS")) == QLatin1String("Windows_NT");
+#endif
+  if (onWindows) {
+    WindowsSystem* system = windowsFactory() ? windowsFactory()(nullptr) : createNativeWindowsSystem(nullptr);
+    if (system) return new WindowsSnapShot(system, parent);
+    return new UnavailableSnapShot(QStringLiteral("SnapShots are not supported on this platform."), parent);
+  }
   // macOS captures directly, and so does a test's stand-in Mac.
   if (MacPlatform::overridden()) return new MacSnapShot(MacPlatform::create(parent), parent);
 #ifdef Q_OS_MACOS
@@ -206,7 +228,24 @@ void SnapShotBackend::checkShortcut(const QJsonObject& shortcut, std::function<v
 
 // No audio module: the desktop's own player, from a copy of the sound in the
 // cache (the players read files).
+namespace {
+std::function<void(const QString&)>& soundPlayer() {
+  static std::function<void(const QString&)> player;
+  return player;
+}
+}  // namespace
+
+void SnapShotBackend::setSoundPlayer(std::function<void(const QString&)> player) {
+  soundPlayer() = std::move(player);
+}
+
+QString SnapShotBackend::trigger(const QJsonObject& shortcut, QString* error) const {
+  if (session().mode == QLatin1String("direct")) return QString::fromUtf8(QJsonDocument(shortcut).toJson(QJsonDocument::Compact));
+  return portalTrigger(shortcut, error);
+}
+
 void SnapShotBackend::play(const QString& sound) {
+  if (soundPlayer()) return soundPlayer()(sound);
   const QString name = sound == QLatin1String("camera-shutter") ? QStringLiteral("snap-shot-click.oga")
                                                                 : QStringLiteral("snap-shot-whoosh.oga");
   const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
