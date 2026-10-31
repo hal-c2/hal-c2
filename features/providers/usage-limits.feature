@@ -127,6 +127,13 @@ Feature: Subscription limits
     Then Claude shows no reset credits
     And no request for Claude's reset credits is sent
 
+  # The MC does not bank Claude's reset credits yet, so this refusal still holds. Move the
+  # Claude row out once the Claude redemption scenarios above pass.
+  @mc @plugin-claude
+  Scenario: Claude reset credits are refused until the MC banks them
+    When the user uses a reset credit on Claude
+    Then the user is told "This provider does not bank reset credits."
+
   @mc
   Scenario Outline: Reset credits are refused where they do not exist
     When the user uses a reset credit on <target>
