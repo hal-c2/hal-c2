@@ -1,4 +1,6 @@
 # Sources:
+#   https://github.com/pingdotgg/t3code/pull/13118 (Claude banked resets)
+#   https://github.com/pingdotgg/t3code/pull/13363 (a refused Codex reset credit is not reported as unconfirmed)
 #   docs/user/usage.md (Track subscription limits, Connect a CLIProxyAPI hub, Subscription usage widget)
 #   apps/server-ex/lib/hal_c2/provider_usage_limits.ex, apps/server-ex/lib/hal_c2/provider_usage_limits/codex.ex,
 #   apps/server-ex/lib/hal_c2/provider_usage_limits/claude.ex (probes, probeFailed, unsupported, provider.consumeResetCredit)
@@ -85,11 +87,45 @@ Feature: Subscription limits
     When the user uses the reset credit and the following check fails
     Then the user is told "The reset was applied, but Codex could not confirm the new limits. Refresh to check."
 
+  @backlog @mc @plugin-codex
+  Scenario Outline: A refused Codex reset credit is not reported as unconfirmed when the following check fails
+    Given Codex refuses the reset credit because <refusal>
+    When the user uses the reset credit and the following check fails
+    Then the user is told "<message>"
+    And the reset is not reported as applied
+
+    Examples:
+      | refusal                    | message                            |
+      | it was already redeemed    | That credit was already redeemed.  |
+      | nothing needs resetting    | Nothing to reset right now.        |
+      | the account has no credit  | No reset credit left.              |
+
   @mc
   Scenario: A failed redemption is retried as the same attempt
     Given a reset credit redemption timed out
     When the user uses the reset credit again
     Then Codex receives the same redemption rather than a second one
+
+  @backlog @mc @plugin-claude
+  Scenario: Claude's banked reset credit restores the limit
+    Given Claude has a banked reset credit
+    When the user uses the reset credit
+    Then Claude's limits are checked again and show the reset
+
+  @backlog @mc @plugin-claude
+  Scenario: Claude's reset credits are shown with its limits
+    Given Claude has a banked reset credit
+    When the user views limits
+    Then the limits show 1 reset credit banked for Claude
+
+  # macOS keeps Claude's sign-in token in the Keychain, which the MC does not read, so the
+  # reset credits stay off there and no request is sent.
+  @backlog @mc @plugin-claude
+  Scenario: Claude's reset credits are not offered on macOS and no request is sent for them
+    Given the MC runs on macOS with Claude signed in
+    When the user views limits
+    Then Claude shows no reset credits
+    And no request for Claude's reset credits is sent
 
   @mc
   Scenario Outline: Reset credits are refused where they do not exist
@@ -98,7 +134,6 @@ Feature: Subscription limits
 
     Examples:
       | target                        | message                                               |
-      | Claude                        | This provider does not bank reset credits.            |
       | a provider that is not set up | Provider instance not found.                          |
       | a hub that is disabled        | The usage limit source is missing or disabled.        |
       | a hub without naming a credit | The reset credit request is incomplete.               |
