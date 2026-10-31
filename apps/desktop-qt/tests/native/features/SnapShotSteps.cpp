@@ -17,6 +17,7 @@
 #include "DraftController.h"
 #include "Harness.h"
 #include "KeybindingController.h"
+#include "MacPlatform.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
 #ifdef HAL_C2_HAS_DBUS
@@ -27,6 +28,9 @@
 #include "SnapShotController.h"
 #include "Stream.h"
 #include "World.h"
+
+// SnapShotMacosSteps.cpp: the shortcut pressed when the scenario runs on a Mac.
+void snapShotMacPress(World& world);
 
 namespace {
 
@@ -267,6 +271,7 @@ Seen& seen() {
 }
 
 void capture(World& world) {
+  if (MacPlatform::overridden()) return snapShotMacPress(world);
   seen() = {};
   QObject::connect(&world.bridge(), &ShellBridge::windowCommandRequested, controller(world),
                    [](const QString& command) { seen().raised.append(command); });

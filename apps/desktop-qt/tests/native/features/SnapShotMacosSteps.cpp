@@ -19,6 +19,7 @@
 // SnapShotSteps.cpp.
 void snapShotOpenThread(World& world);
 QVariantList snapShotDraft(World& world);
+void snapShotMacPress(World& world);
 
 namespace {
 
@@ -31,6 +32,9 @@ struct FakeMac {
   bool readFails = false;
   bool refuseWatch = false;
   QString captureFailure;
+  bool emptyImage = false;
+  QSize window{320, 200};
+  QSize capturedSize;
   QStringList requested;
   QStringList watched;
   int captures = 0;
@@ -79,7 +83,8 @@ public:
       result.exitCode = 1;
       return done(result);
     }
-    result.image = QImage(320, 200, QImage::Format_RGB32);
+    if (mac().emptyImage) return done(result);
+    result.image = QImage(mac().window, QImage::Format_RGB32);
     result.image.fill(Qt::darkCyan);
     if (includeText) {
       const QString text = QStringLiteral("Docs: Getting started");
@@ -223,6 +228,53 @@ void capture(World& world) {
 }
 
 const Steps steps([] {
+  step(QStringLiteral("macOS returns an empty image for the window"), [](World&, const Captures&, const Table&) { mac().emptyImage = true; });
+  step(QStringLiteral("macOS taking the picture of the window has not answered after 15 seconds"), [](World&, const Captures&, const Table&) {
+    // MacPlatform.mm gives up after that long; here it has just said so.
+    mac().captureFailure = QStringLiteral("timed-out");
+  });
+  step(QStringLiteral("no window is available to capture"), [](World&, const Captures&, const Table&) { mac().captureFailure = QStringLiteral("missing"); });
+  step(QStringLiteral("nothing is attached and the user is told the (window could not be captured|active window is not available for capture)"),
+       [](World& world, const Captures& c, const Table&) {
+         expect(snapShotDraft(world).isEmpty(), QStringLiteral("nothing attached; %1").arg(show(snapShotDraft(world))));
+         const QStringList said = c[0].startsWith(QLatin1String("window"))
+                                      ? QStringList{QStringLiteral("macOS could not capture the window."), QStringLiteral("macOS returned an invalid snapshot.")}
+                                      : QStringList{QStringLiteral("No window is available to capture.")};
+         for (const QVariant& item : world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
+           const QVariantMap toast = item.toMap();
+           if (toast.value(QStringLiteral("title")) == QLatin1String("Snapshot failed") && said.contains(toast.value(QStringLiteral("description")).toString())) return;
+         }
+         fail(QStringLiteral("the toast saying one of %1; the shell shows %2").arg(said.join(QStringLiteral(", ")), show(world.state(QStringLiteral("toasts")))));
+       });
+  step(QStringLiteral("no half-finished capture is kept"), [](World& world, const Captures&, const Table&) {
+    expect(mac().kept == 0 && snapShotDraft(world).isEmpty(), QStringLiteral("no capture kept"));
+  });
+  step(QStringLiteral("the next press of the shortcut captures normally"), [](World& world, const Captures&, const Table&) {
+    mac().captureFailure.clear();
+    capture(world);
+    expect(snapShotDraft(world).size() == 1, QStringLiteral("one capture on the draft; %1").arg(show(snapShotDraft(world))));
+  });
+  step(QStringLiteral("the window in front is larger than 2,560 by 1,600 pixels"), [](World&, const Captures&, const Table&) { mac().window = QSize(4000, 3000); });
+  step(QStringLiteral("the attached image is shrunk to fit within 2,560 by 1,600 pixels"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { return !snapShotDraft(world).isEmpty(); }, [&] { return QStringLiteral("the capture on the draft"); });
+    expect(mac().capturedSize == QSize(2133, 1600), QStringLiteral("the image shrunk, keeping its shape; it is %1x%2").arg(mac().capturedSize.width()).arg(mac().capturedSize.height()));
+  });
+  step(QStringLiteral("including app text is on"), [](World& world, const Captures&, const Table&) { include(world, true); });
+  step(QStringLiteral("the user captures a browser window"), [](World& world, const Captures&, const Table&) {
+    snapShotMacPress(world);
+    world.waitFor([&] { return !snapShotDraft(world).isEmpty(); }, [&] { return QStringLiteral("the capture on the draft"); });
+  });
+  step(QStringLiteral("the attachment carries the window's text and controls along with the image"), [](World& world, const Captures&, const Table&) {
+    const QVariantMap source = snapShotDraft(world).first().toMap().value(QStringLiteral("source")).toMap();
+    expect(source.value(QStringLiteral("accessibleText")) == QLatin1String("Docs: Getting started") &&
+               at(source, QStringLiteral("accessibility.format")) == QLatin1String("flat-text"),
+           QStringLiteral("the window's text on the capture; it is %1").arg(show(source)));
+  });
+  step(QStringLiteral("the user can inspect that data from the attachment"), [](World& world, const Captures&, const Table&) {
+    const QVariantList shown = world.state(QStringLiteral("composer")).toMap().value(QStringLiteral("attachments")).toList();
+    expect(shown.size() == 1 && at(shown.first().toMap(), QStringLiteral("source.accessibility")) == QLatin1String("Docs: Getting started"),
+           QStringLiteral("the composer to offer the capture's text; it shows %1").arg(show(shown)));
+  });
   step(QStringLiteral("the desktop app runs on (macOS|macOS with app text included|Windows or macOS)"), [](World& world, const Captures& c, const Table&) {
     macDesktop(world);
     if (c[0] == QLatin1String("macOS with app text included")) include(world, true);
@@ -535,3 +587,13 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+// The shortcut pressed on this Mac, turning Snap Shot on first if the scenario
+// has not, for SnapShotSteps.cpp's own press.
+void snapShotMacPress(World& world) {
+  if (!enabled(world)) turnOn(world);
+  snapShotOpenThread(world);
+  auto* snapShot = backend(world);
+  QObject::connect(snapShot, &SnapShotBackend::captured, snapShot, [](const QImage& image) { mac().capturedSize = image.size(); });
+  emit snapShot->platform()->pressed();
+}
