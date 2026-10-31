@@ -118,7 +118,7 @@ Item {
         }
 
         function test_aPageWrittenFromAThreadOpensWhenItArrives() {
-            const screen = makeScreen({}, { pageExpected: true });
+            const screen = makeScreen({}, { awaitedPageId: "p9" });
             const arrived = createTemporaryQmlObject("import QtTest; SignalSpy { signalName: \"pageArrived\" }", screen);
             arrived.target = screen;
             // Its Space comes first, and is no reason to fall back to the list.
@@ -127,6 +127,28 @@ Item {
             Spaces.pageId = "p9";
             compare(screen.view, "page");
             compare(arrived.count, 1);
+        }
+
+        function test_onlyThePageWrittenFromAThreadOpensByItself() {
+            const screen = makeScreen({}, { awaitedPageId: "p9" });
+            const arrived = createTemporaryQmlObject("import QtTest; SignalSpy { signalName: \"pageArrived\" }", screen);
+            arrived.target = screen;
+            // The user looks at another Space meanwhile, and its first page is selected.
+            screen.openSpace("s1");
+            Spaces.pageId = "p4";
+            compare(screen.view, "pages");
+            compare(arrived.count, 0);
+            Spaces.spaceId = "s2";
+            Spaces.pageId = "p9";
+            compare(screen.view, "page");
+            compare(screen.openedPageId, "p9");
+            compare(arrived.count, 1);
+        }
+
+        function test_aWrittenPageSelectedBeforeTheScreenOpens() {
+            const screen = makeScreen({ spaceId: "s2", page: root.pageOf("p9") }, { awaitedPageId: "p9" });
+            compare(screen.view, "page");
+            compare(screen.openedPageId, "p9");
         }
 
         function test_aPageThatGoesAwayIsNotReplacedByAnother() {

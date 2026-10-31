@@ -629,14 +629,19 @@ Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
 
 const FakeMc::Extension spaceCalls([](FakeMc& mc) {
   mc.onRpc(QStringLiteral("space."), [&mc](const FakeMc::Rpc& rpc) {
-    const Answer answer = call(mc, rpc.method.mid(6), rpc.payload);
-    fake(mc).lastMethod = rpc.method;
-    fake(mc).last = answer;
-    if (answer.error.isEmpty()) {
-      mc.reply(rpc, answer.result);
-    } else {
-      mc.refuse(rpc, answer.error, answer.detail);
-    }
+    const auto respond = [&mc, rpc] {
+      const Answer answer = call(mc, rpc.method.mid(6), rpc.payload);
+      fake(mc).lastMethod = rpc.method;
+      fake(mc).last = answer;
+      if (answer.error.isEmpty()) {
+        mc.reply(rpc, answer.result);
+      } else {
+        mc.refuse(rpc, answer.error, answer.detail);
+      }
+    };
+    // A page from a thread waits on text generation: nothing is written until then.
+    if (rpc.method == QLatin1String("space.page.createFromThread") && mc.holding(QStringLiteral("pageFromThread"))) return mc.defer(respond);
+    respond();
   });
 });
 
@@ -1411,6 +1416,24 @@ const Steps steps([] {
   });
   step(S("text generation fails"), [](World& world, const Captures&, const Table&) {
     fake(world.mc).generation = S("failed");
+  });
+  step(S("writing a page from a thread takes a while"), [](World& world, const Captures&, const Table&) {
+    world.mc.hold(S("pageFromThread"));
+  });
+  step(S("the page from the thread is written"), [](World& world, const Captures&, const Table&) {
+    world.mc.answerHeld();
+    world.sync();
+  });
+  step(S("the user opens the Space %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, idOfSpace(world, c[0]));
+  });
+  step(S("the user unfolds the phone"), [](World& world, const Captures&, const Table&) {
+    world.resize(1024, 800);
+  });
+  step(S("the Space screen shows the pages of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expectStep(world, S("pages"));
+    expect(viewOf(world)->spaceId() == idOfSpace(world, c[0]), S("another Space shows: %1").arg(describe(world)));
   });
   step(S("the user makes a page in %1 from the thread %1").arg(q), [](World& world, const Captures& c, const Table&) {
     // The Space the page goes in is the one the user last had open.

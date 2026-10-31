@@ -228,10 +228,6 @@ public:
   bool handle(const QString& action, const QVariant& payload) override;
 
   QString error() const { return m_error; }
-  // Whether this client has a Space view to open. One without offers no way
-  // into Spaces: no palette commands, no thread menu item. Set before activate().
-  void setViewed(bool viewed) { m_viewed = viewed; }
-  bool viewed() const { return m_viewed; }
 
 private:
   void setOpen(bool open);
@@ -254,7 +250,6 @@ private:
   McClient* m_client;
   ShellStore* m_store;
   bool m_active = false;
-  bool m_viewed = true;
   bool m_open = false;
   bool m_listed = false;
   int m_indexSubscription = 0;
@@ -262,4 +257,6 @@ private:
   QString m_followedSpace;
   QString m_error;
   int m_writing = 0;
+  // The page last written from a thread.
+  QString m_written;
 };

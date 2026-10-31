@@ -67,20 +67,11 @@ ShellWindow {
 
     // The phone layout's Space screen while it shows, which has steps of its own.
     property Item spaceScreen: null
-    // A page is being written from a thread (`space.busy`): the Space screen
-    // the route then opens goes to it, unless `space.error` says it never came.
-    property bool spacePageComing: false
-    readonly property var space: Shell.state.space ?? ({})
-    readonly property bool spaceWriting: space.busy === true
-    readonly property string spaceError: space.error ?? ""
-    onSpaceWritingChanged: {
-        if (spaceWriting && layout === "phone")
-            spacePageComing = true;
-    }
-    onSpaceErrorChanged: {
-        if (spaceError !== "")
-            spacePageComing = false;
-    }
+    // The page last written from a thread (`space.written`), which the phone's
+    // Space screen opens once it arrives. The wide layout opens it in its own view.
+    property string spacePageComing: ""
+    readonly property string spaceWritten: (Shell.state.space ?? {}).written ?? ""
+    onSpaceWrittenChanged: spacePageComing = layout === "phone" ? spaceWritten : ""
 
     // One step back: out of the scanner, from pairing with another
     // environment to the one the device has, out of an open popup, in the
@@ -117,7 +108,11 @@ ShellWindow {
     // on the thread list in the phone's, which also draws no terminal.
     firstRunGate: layout === "desktop" && connected
     contextMenus: layout === "desktop"
-    onLayoutChanged: Shell.dispatch("layout.desktop", { shown: layout === "desktop" })
+    onLayoutChanged: {
+        Shell.dispatch("layout.desktop", { shown: layout === "desktop" });
+        if (layout !== "phone")
+            spacePageComing = "";
+    }
     Component.onCompleted: Shell.dispatch("layout.desktop", { shown: layout === "desktop" })
     // The notice is placed below, clear of the system's bars, in both layouts.
     connectionNotice: false
@@ -247,8 +242,8 @@ ShellWindow {
                         active: root.screen === "space"
                         onItemChanged: root.spaceScreen = item
                         sourceComponent: SpaceScreen {
-                            pageExpected: root.spacePageComing
-                            onPageArrived: root.spacePageComing = false
+                            awaitedPageId: root.spacePageComing
+                            onPageArrived: root.spacePageComing = ""
                             onBackRequested: root.stepBack()
                         }
                     }

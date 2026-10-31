@@ -15,9 +15,11 @@ Item {
     id: screen
 
     property string view: "spaces"
-    // A page the user asked for is on its way (new, imported, written from a
-    // thread): it opens when the controller selects it.
+    // A page the user asked for here is on its way (new or imported): it opens
+    // when the controller selects it.
     property bool pageExpected: false
+    // A page written from a thread, opened when it arrives and no other.
+    property string awaitedPageId: ""
     property string openedSpaceId: ""
     property string openedPageId: ""
     // What the controller already holds when the screen loads is no arrival:
@@ -28,6 +30,7 @@ Item {
     readonly property string error: (Shell.state.space ?? {}).error ?? ""
 
     signal backRequested
+    // The awaited page opened.
     signal pageArrived
 
     // One step back within the screen; false at its first step.
@@ -217,22 +220,27 @@ Item {
         text.ask({ title: qsTr("New comment"), placeholder: qsTr("Comment"), action: qsTr("Comment"), multiline: true }, body => Shell.dispatch("space.comment.add", Object.assign({ body: body }, add)));
     }
 
+    function openArrived() {
+        openedSpaceId = spaceId;
+        openedPageId = pageId;
+        view = "page";
+        if (pageId === awaitedPageId)
+            pageArrived();
+    }
+
     onPageIdChanged: {
         if (!settled)
             return;
-        if (pageExpected && pageId !== "") {
+        if (pageId !== "" && (pageExpected || pageId === awaitedPageId)) {
             pageExpected = false;
-            openedSpaceId = spaceId;
-            openedPageId = pageId;
-            view = "page";
-            pageArrived();
+            openArrived();
         } else if ((view === "page" || view === "comments") && pageId !== openedPageId) {
             // The page went (another client deleted it): not some other page in its place.
             view = "pages";
         }
     }
     onSpaceIdChanged: {
-        if (settled && !pageExpected && view !== "spaces" && spaceId !== openedSpaceId)
+        if (settled && !pageExpected && awaitedPageId === "" && view !== "spaces" && spaceId !== openedSpaceId)
             view = "spaces";
     }
     onErrorChanged: {
@@ -240,7 +248,12 @@ Item {
             pageExpected = false;
     }
 
-    Component.onCompleted: settled = true
+    Component.onCompleted: {
+        settled = true;
+        // Selected before the screen was made.
+        if (pageId !== "" && pageId === awaitedPageId)
+            openArrived();
+    }
 
     objectName: "spaceScreen"
 

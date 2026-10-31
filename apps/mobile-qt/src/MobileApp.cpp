@@ -16,7 +16,6 @@
 #include "PluginController.h"
 #include "Scanner.h"
 #include "SettingsController.h"
-#include "SpaceController.h"
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
 #include "TerminalController.h"
@@ -62,8 +61,6 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   // terminal, so in the phone's a thread has no place for one.
   m_native->controller<DraftController>()->setLandsOnDraft(false);
   m_native->controller<TerminalController>()->setDrawn(false);
-  // The phone has no Space screen to open a page in.
-  m_native->controller<SpaceController>()->setViewed(false);
   m_bridge->addInterceptor([drafts = QPointer<DraftController>(m_native->controller<DraftController>()),
                             terminals = QPointer<TerminalController>(m_native->controller<TerminalController>())](const QString& action, const QVariant& payload) {
     if (action != QLatin1String("layout.desktop")) return false;
