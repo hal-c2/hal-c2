@@ -13,6 +13,7 @@
 #include "MacPlatform.h"
 #include "MacSnapShot.h"
 #ifdef HAL_C2_HAS_DBUS
+#include "NiriSnapShot.h"
 #include "PortalSnapShot.h"
 #endif
 
@@ -73,6 +74,10 @@ void SnapShotBackend::setEnvironment(const std::optional<QProcessEnvironment>& e
   environmentOverride() = env;
 }
 
+QProcessEnvironment SnapShotBackend::environment() {
+  return environmentOverride().value_or(QProcessEnvironment::systemEnvironment());
+}
+
 void SnapShotBackend::setPortalFactory(PortalFactory factory) {
   portalFactory() = std::move(factory);
 }
@@ -115,8 +120,13 @@ SnapShotBackend* SnapShotBackend::create(QObject* parent) {
   // A test's stand-in environment is a Linux desktop's.
   const bool onLinux = environmentOverride().has_value();
 #endif
-  const Platform platform = detect(environmentOverride().value_or(QProcessEnvironment::systemEnvironment()), onLinux);
+  const Platform platform = detect(environment(), onLinux);
   if (!platform.portal) return new UnavailableSnapShot(platform.message, parent);
+#ifdef HAL_C2_HAS_DBUS
+  if (platform.desktop == QLatin1String("niri") && !NiriSnapShot::socketPath(environment()).isEmpty()) {
+    return new NiriSnapShot(platform, NiriSnapShot::socketPath(environment()), parent);
+  }
+#endif
   SnapShotBackend* portal = nullptr;
   if (portalFactory()) portal = portalFactory()(platform, parent);
 #ifdef HAL_C2_HAS_DBUS

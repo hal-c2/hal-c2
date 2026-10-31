@@ -51,6 +51,61 @@ Item {
             return Shell.dispatchedActions[Shell.dispatchedActions.length - 1];
         }
 
+        function managedSetup(config) {
+            return root.snapShot({
+                shortcut: Object.assign(root.snapShot({}).shortcut, { managed: true, keys: "Ctrl+Shift+2" }),
+                wizard: { step: "shortcut", title: "Set up snapshots", heading: "Choose your shortcut", body: "", details: "", attention: "",
+                          closeLabel: "Close", continueLabel: "Continue", doneLabel: "Done", doneEnabled: true, permissions: false },
+                config: Object.assign({ intro: "Allow it.", reviewLabel: "Review changes", canReview: true, review: null, connecting: "", error: "",
+                                        details: "", backup: "", file: "/h/config.kdl", fileHint: "", binding: "bind", manual: "Paste this",
+                                        copyLabel: "Copy shortcut", removeNote: "" }, config)
+            });
+        }
+
+        function test_a_shortcut_in_the_compositor_is_changed_through_setup() {
+            const state = root.snapShot({ shortcut: Object.assign(root.snapShot({}).shortcut, { managed: true, keys: "Change shortcut" }) });
+            Shell.state = { snapShot: state };
+            const page = createTemporaryObject(snapComponent, root);
+            mouseClick(findChild(findChild(page, "snapShot:shortcut"), "recorder"));
+            compare(last().action, "snapShot.setup.open");
+            compare(last().payload.step, "shortcut");
+        }
+
+        function test_a_config_change_is_reviewed_then_saved_or_cancelled() {
+            Shell.state = { snapShot: managedSetup({}) };
+            const page = createTemporaryObject(snapComponent, root);
+            mouseClick(findChild(page, "configReview"));
+            compare(last().action, "snapShot.config.review");
+
+            Shell.state = { snapShot: managedSetup({ canReview: false, review: {
+                id: "r1", changed: true, install: true, shortcut: "Ctrl+Shift+2", note: "Only these changes will be saved.",
+                lines: [{ kind: "added", text: "Ctrl+Shift+2 {}" }], saveLabel: "Save shortcut", canSave: true, linked: "" } }) };
+            verify(!findChild(page, "configReview").visible);
+            compare(findChild(page, "configNote").text, "Only these changes will be saved.");
+            mouseClick(findChild(page, "configSave"));
+            compare(last().action, "snapShot.config.save");
+            compare(last().payload.id, "r1");
+            mouseClick(findChild(page, "configCancel"));
+            compare(last().action, "snapShot.config.cancel");
+        }
+
+        function test_a_refusal_opens_advanced_with_its_reason() {
+            Shell.state = { snapShot: managedSetup({}) };
+            const page = createTemporaryObject(snapComponent, root);
+            verify(!findChild(page, "configDetails").visible);
+            Shell.state = { snapShot: managedSetup({ error: "Couldn't prepare the changes.", details: "This config uses a dynamic include." }) };
+            compare(findChild(page, "configError").text, "Couldn't prepare the changes.");
+            tryVerify(() => findChild(page, "configDetails").visible);
+            compare(findChild(page, "configDetails").text, "This config uses a dynamic include.");
+            mouseClick(findChild(page, "configRemove"));
+            compare(last().action, "snapShot.config.review");
+            compare(last().payload.remove, true);
+            mouseClick(findChild(page, "configCopy"));
+            compare(last().action, "snapShot.config.copy");
+            mouseClick(findChild(page, "configComplete"));
+            compare(last().action, "snapShot.config.complete");
+        }
+
         function test_turning_it_on_and_off_goes_to_the_controller() {
             Shell.state = { snapShot: root.snapShot({ enabled: false, switchOn: false, rows: false, setupLabel: "" }) };
             const page = createTemporaryObject(snapComponent, root);

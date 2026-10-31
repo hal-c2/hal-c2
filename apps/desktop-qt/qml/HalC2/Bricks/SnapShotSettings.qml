@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import HalC2.Shell
 
@@ -10,6 +11,7 @@ import HalC2.Shell
 // and sends what the user does.
 SettingsPage {
     id: snap
+    readonly property var config: Shell.state.snapShot?.config ?? null
 
     readonly property var settings: Shell.state.snapShot ?? null
     readonly property var shortcut: settings?.shortcut ?? null
@@ -104,6 +106,11 @@ SettingsPage {
         text: recorder.shortcut?.keys ?? ""
         focusPolicy: Qt.StrongFocus
         onClicked: {
+            // A shortcut in the compositor's config is changed through setup's review.
+            if ((recorder.shortcut?.managed ?? false) && !Shell.state.snapShot?.wizard) {
+                Shell.dispatch("snapShot.setup.open", { step: "shortcut" });
+                return;
+            }
             forceActiveFocus();
             Shell.dispatch("snapShot.record.start");
         }
@@ -371,6 +378,219 @@ SettingsPage {
                 wrapMode: Text.Wrap
             }
 
+            // The shortcut kept in the compositor's config: review, then save.
+            ColumnLayout {
+                id: configPanel
+
+                readonly property var config: snap.config
+                readonly property var review: config?.review ?? null
+                property bool advanced: false
+                readonly property bool failed: (config?.error ?? "").length > 0
+
+                Layout.fillWidth: true
+                visible: snap.wizard?.step === "shortcut" && config !== null
+                spacing: 8
+                onFailedChanged: if (failed) advanced = true
+
+                Label {
+                    objectName: "configIntro"
+                    Layout.fillWidth: true
+                    text: configPanel.config?.intro ?? ""
+                    color: snap.muted
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    wrapMode: Text.Wrap
+                }
+
+                Label {
+                    objectName: "configConnecting"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: configPanel.config?.connecting ?? ""
+                    color: snap.muted
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    wrapMode: Text.Wrap
+                }
+
+                Label {
+                    objectName: "configError"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: configPanel.config?.error ?? ""
+                    color: Theme.palette.color("warning", "#fbbf24")
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    wrapMode: Text.Wrap
+                }
+
+                ShellButton {
+                    objectName: "configReview"
+                    visible: configPanel.review === null
+                    enabled: configPanel.config?.canReview ?? false
+                    text: configPanel.config?.reviewLabel ?? ""
+                    onClicked: Shell.dispatch("snapShot.config.review")
+                }
+
+                Label {
+                    objectName: "configNote"
+                    Layout.fillWidth: true
+                    visible: text.length > 0
+                    text: configPanel.review?.note ?? ""
+                    color: snap.muted
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                    wrapMode: Text.Wrap
+                }
+
+                Column {
+                    Layout.fillWidth: true
+                    visible: configPanel.review?.changed ?? false
+
+                    Repeater {
+                        objectName: "configDiff"
+                        model: configPanel.review?.lines ?? []
+
+                        delegate: Label {
+                            required property var modelData
+                            width: parent.width
+                            text: (modelData.kind === "added" ? "+ " : modelData.kind === "removed" ? "- " : "  ") + modelData.text
+                            color: modelData.kind === "added" ? Theme.palette.color("success", "#34d399")
+                                 : modelData.kind === "removed" ? Theme.palette.color("destructive", "#f87171") : snap.muted
+                            font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            wrapMode: Text.WrapAnywhere
+                        }
+                    }
+                }
+
+                RowLayout {
+                    visible: configPanel.review?.changed ?? false
+                    spacing: 8
+
+                    ShellButton {
+                        objectName: "configSave"
+                        primary: true
+                        enabled: configPanel.review?.canSave ?? false
+                        text: configPanel.review?.saveLabel ?? ""
+                        onClicked: Shell.dispatch("snapShot.config.save", { id: configPanel.review?.id ?? "" })
+                    }
+
+                    ShellButton {
+                        objectName: "configCancel"
+                        subtle: true
+                        text: qsTr("Cancel")
+                        onClicked: Shell.dispatch("snapShot.config.cancel")
+                    }
+                }
+
+                ShellButton {
+                    objectName: "configAdvanced"
+                    subtle: true
+                    text: qsTr("Advanced")
+                    onClicked: configPanel.advanced = !configPanel.advanced
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    visible: configPanel.advanced
+                    spacing: 8
+
+                    Label {
+                        objectName: "configDetails"
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: configPanel.config?.details ?? ""
+                        color: Theme.palette.color("warning", "#fbbf24")
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        wrapMode: Text.Wrap
+                    }
+
+                    Repeater {
+                        // What the user may need to read, in the order they would need it.
+                        model: [
+                            { name: "configFile", text: configPanel.config?.file ?? "" },
+                            { name: "configLinked", text: configPanel.review?.linked ?? "" },
+                            { name: "configFileHint", text: configPanel.config?.fileHint ?? "" },
+                            { name: "configBackup", text: configPanel.config?.backup ?? "" }
+                        ]
+
+                        delegate: Label {
+                            required property var modelData
+                            objectName: modelData.name
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: modelData.text
+                            color: snap.muted
+                            font.pixelSize: Math.round(12 * Theme.fontScale)
+                            wrapMode: Text.WrapAnywhere
+                        }
+                    }
+
+                    RowLayout {
+                        spacing: 8
+
+                        ShellButton {
+                            objectName: "configChooseFile"
+                            subtle: true
+                            enabled: configPanel.config?.canReview ?? false
+                            text: qsTr("Choose file…")
+                            onClicked: configFileDialog.open()
+                        }
+
+                        ShellButton {
+                            objectName: "configRemove"
+                            subtle: true
+                            enabled: configPanel.config?.canReview ?? false
+                            text: qsTr("Remove shortcut…")
+                            onClicked: Shell.dispatch("snapShot.config.review", { remove: true })
+                        }
+                    }
+
+                    Label {
+                        objectName: "configManual"
+                        Layout.fillWidth: true
+                        text: configPanel.config?.manual ?? ""
+                        color: snap.muted
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        wrapMode: Text.Wrap
+                    }
+
+                    Label {
+                        objectName: "configBinding"
+                        Layout.fillWidth: true
+                        text: configPanel.config?.binding ?? ""
+                        color: snap.muted
+                        font.family: Theme.fontMono.length > 0 ? Theme.fontMono : "monospace"
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        wrapMode: Text.WrapAnywhere
+                    }
+
+                    RowLayout {
+                        spacing: 8
+
+                        ShellButton {
+                            objectName: "configCopy"
+                            subtle: true
+                            text: configPanel.config?.copyLabel ?? ""
+                            onClicked: Shell.dispatch("snapShot.config.copy")
+                        }
+
+                        ShellButton {
+                            objectName: "configComplete"
+                            subtle: true
+                            text: qsTr("I've added the shortcut")
+                            onClicked: Shell.dispatch("snapShot.config.complete")
+                        }
+                    }
+
+                    Label {
+                        objectName: "configRemoveNote"
+                        Layout.fillWidth: true
+                        text: configPanel.config?.removeNote ?? ""
+                        color: snap.muted
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                        wrapMode: Text.Wrap
+                    }
+                }
+            }
+
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
@@ -512,5 +732,13 @@ SettingsPage {
             heading: qsTr("Animations")
             description: qsTr("Animate captured windows into your draft.")
         }
+    }
+
+    FileDialog {
+        id: configFileDialog
+
+        title: qsTr("Choose your config file")
+        fileMode: FileDialog.OpenFile
+        onAccepted: Shell.dispatch("snapShot.config.review", { file: selectedFile.toString().replace(/^file:\/\//, "") })
     }
 }

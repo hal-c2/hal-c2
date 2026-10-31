@@ -95,6 +95,10 @@ bool sandboxed() {
 
 }  // namespace
 
+QDBusConnection PortalSnapShot::connection() {
+  return bus();
+}
+
 void PortalSnapShot::useBus(const QString& name, int timeoutMs, int promptTimeoutMs) {
   waits() = {name, timeoutMs, promptTimeoutMs};
 }
