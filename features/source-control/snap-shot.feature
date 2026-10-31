@@ -9,9 +9,9 @@
 #   apps/desktop/gnome-extension (extension.js, captureService.js, captureFeedback.js)
 #   apps/desktop/src/snapShot/SnapShotAccessibility.ts, SnapShotTransition.ts, NativeCaptureFeedback.ts (app text limits, flight, helper effects)
 #   apps/desktop-qt/src/native/SnapShotController.cpp
-# The Qt desktop captures through the desktop portal on Linux Wayland, where it
-# has no capture helper, no compositor bindings, no app text and no capture
-# effects, and directly on macOS, where captures can carry the app's text.
+# Linux Wayland captures through the desktop portal, or Niri's socket and a binding
+# in its config, without app text or capture effects; macOS captures directly and
+# captures can carry the app's text.
 
 @desktop
 Feature: Snap Shot captures another app's window into the draft
@@ -63,6 +63,11 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | platform         | failure                                                    |
+      | Linux on Niri    | Niri has no focused window                                 |
+
+    @backlog
+    Examples:
+      | platform         | failure                                                    |
       | macOS            | macOS returns an empty image for the window                |
 
     @backlog
@@ -71,7 +76,6 @@ Feature: Snap Shot captures another app's window into the draft
       | Windows          | the Windows window capture does not answer in time         |
       | Windows          | an earlier Windows window capture is still running         |
       | Linux on GNOME   | the window in front is minimized or no window has focus    |
-      | Linux on Niri    | Niri has no focused window                                 |
       | Linux on Wayland | the desktop returns an empty or unreadable screenshot      |
 
   @desktop
@@ -403,6 +407,7 @@ Feature: Snap Shot captures another app's window into the draft
     Examples:
       | desktop            | backend                                    |
       | another compositor | the desktop portal                         |
+      | Niri               | a Niri binding                             |
 
     # These desktops go through the desktop portal on the Qt desktop for now.
     @backlog-desktop
@@ -411,7 +416,6 @@ Feature: Snap Shot captures another app's window into the draft
       | GNOME              | the HAL-C2 GNOME extension                |
       | KDE Plasma         | the capture helper                         |
       | Hyprland           | the capture helper and a Hyprland binding  |
-      | Niri               | a Niri binding                             |
 
   Scenario: Other Wayland desktops choose a window each time
     Given a Linux Wayland session on a compositor without automatic capture
@@ -433,16 +437,12 @@ Feature: Snap Shot captures another app's window into the draft
     When the user checks capture access
     Then the user is told to turn on HAL-C2 SnapShots in GNOME Extensions
 
-  @backlog-desktop
-  # The Qt desktop edits no compositor config.
   Scenario: Editing a compositor config is reviewed and backed up
     Given a Hyprland session
     When the user reviews the changes to the Hyprland config and saves them
     Then the config is written in one step after checking it did not change since review
     And a backup of the previous config is kept
 
-  @backlog-desktop
-  # The Qt desktop edits no compositor config.
   Scenario: A config that changed after review is not overwritten
     Given the user reviewed the changes to the Niri config
     And the Niri config changed on disk afterwards
@@ -500,7 +500,7 @@ Feature: Snap Shot captures another app's window into the draft
     Then the window in front is captured without a picker
     And the attachment has no text or controls data
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A sandboxed HAL-C2 never uses a compositor's own capture
     Given HAL-C2 runs inside a <sandbox> sandbox on a <desktop> Wayland session
     When the user sets up Snap Shot
@@ -510,10 +510,14 @@ Feature: Snap Shot captures another app's window into the draft
 
     Examples:
       | sandbox | desktop    |
-      | Flatpak | GNOME      |
-      | Flatpak | KDE Plasma |
       | Snap    | Hyprland   |
       | Snap    | Niri       |
+
+    @backlog
+    Examples:
+      | sandbox | desktop    |
+      | Flatpak | GNOME      |
+      | Flatpak | KDE Plasma |
 
   @backlog @desktop
   Scenario: The desktop portal is preferred to the GNOME extension

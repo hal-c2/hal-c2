@@ -15,8 +15,9 @@
 //
 // Linux Wayland captures through xdg-desktop-portal (PortalSnapShot): the
 // Screenshot portal's active-window target where the desktop offers it, else
-// its window picker, and the GlobalShortcuts portal for the shortcut. macOS
-// captures directly (MacSnapShot). X11 and Windows are unavailable for now
+// its window picker, and the GlobalShortcuts portal for the shortcut. Niri
+// outside a sandbox captures over its own socket (NiriSnapShot). macOS captures
+// directly (MacSnapShot). X11 and Windows are unavailable for now
 // (UnavailableSnapShot).
 //
 // A backend answers from what it has already found out: `session()` is not
@@ -179,6 +180,7 @@ public:
   // platform) and the portal.
   using PortalFactory = std::function<SnapShotBackend*(const Platform&, QObject* parent)>;
   static void setEnvironment(const std::optional<QProcessEnvironment>& env);
+  static QProcessEnvironment environment();
   static void setPortalFactory(PortalFactory factory);
 
   // The portal's trigger for a key chord ({key, metaKey, ctrlKey, shiftKey,

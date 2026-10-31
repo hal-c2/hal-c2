@@ -1,10 +1,10 @@
 # Linux window capture
 
 Wayland only. The Qt desktop captures through the Screenshot portal
-(`apps/desktop-qt/src/native/PortalSnapShot`) on every Wayland desktop and never falls back to
-another backend on failure, cancellation, or denial. Session detection comes from
-`XDG_CURRENT_DESKTOP`: a stale `NIRI_SOCKET` or a reachable GNOME extension must not select another
-desktop's backend.
+(`apps/desktop-qt/src/native/PortalSnapShot`), or on Niri outside a sandbox over its socket
+(`NiriSnapShot`), and never falls back to another backend on failure, cancellation, or denial.
+Session detection comes from `XDG_CURRENT_DESKTOP`: a stale `NIRI_SOCKET` or a reachable GNOME
+extension must not select another desktop's backend.
 
 The helpers in `native/` (`kde-snap-shot`, `hyprland-snap-shot`, `gnome-snap-shot`) are the
 compositor-specific backends the desktop does not call yet (`@backlog-desktop`). The traps below
@@ -63,6 +63,11 @@ version before adding it to `metadata.json`.
 
 ## Qt desktop
 
-`apps/desktop-qt` has only the portal backend so far (`PortalSnapShot`, over QtDBus), on every
-Wayland desktop. GNOME, KDE, Hyprland and Niri get the window picker unless their portal offers
-the active-window target. The helper backends are `@backlog-desktop`.
+`apps/desktop-qt` captures through the portal (`PortalSnapShot`, over QtDBus) on every Wayland
+desktop but Niri outside a sandbox. GNOME, KDE and Hyprland get the window picker unless their portal
+offers the active-window target. The helper backends are `@backlog-desktop`.
+
+On Niri and Hyprland the capture shortcut lives in the compositor's config, written only after the
+user reviews the diff (`CaptureShortcutConfig`). Hyprland's binding still reaches HAL-C2 through a
+GlobalShortcuts session, so the controller opens one even when the saved keys cannot name a portal
+trigger. A sandbox reaches neither the config nor the endpoint, and uses the portal alone.

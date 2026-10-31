@@ -77,6 +77,8 @@ public:
   // Tests talk to a portal of their own on the connection named `name`, and
   // wait less; empty is the session bus and the waits above.
   static void useBus(const QString& name, int timeoutMs = kTimeoutMs, int promptTimeoutMs = kPromptTimeoutMs);
+  // The bus that is: what Snap Shot's other D-Bus services sit on too.
+  static QDBusConnection connection();
 
 private slots:
   void onShortcutSignal(const QDBusMessage& message);
