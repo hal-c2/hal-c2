@@ -16,6 +16,7 @@
 #include "NavigationController.h"
 #include "OnboardingController.h"
 #include "ProviderSettingsController.h"
+#include "ProviderUpdateNotice.h"
 #include "SettingsController.h"
 #include "FileActionsController.h"
 #include "PluginController.h"
@@ -151,7 +152,9 @@ void World::setTime(const QDateTime& time) {
   m_native->controller<RightPanelController>()->agents()->setClock([now] { return now.toUTC(); });
   m_native->controller<UsageController>()->setClock([now] { return now.toUTC(); });
   m_native->controller<OnboardingController>()->setClock([now] { return now.toUTC(); });
+  m_native->controller<ProviderUpdateNotice>()->setClock([now] { return now.toUTC(); });
   m_native->controller<ToastController>()->expire();
+  m_native->controller<ProviderUpdateNotice>()->expire();
 }
 
 void World::connect(const QString& token) {

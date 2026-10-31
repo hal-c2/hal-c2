@@ -2133,3 +2133,463 @@ void renameProviderInstance(World& world, const QString& from, const QString& to
   seedWork(world, from);
   act(world, QStringLiteral("rename"), {{QStringLiteral("instanceId"), fake(world).instanceId}, {QStringLiteral("name"), to}});
 }
+
+
+// Provider updates as the shell tells of them (ProviderUpdateNotice): the
+// sidebar's notice, the launch offer, and its rows when the cluster has
+// several environments: the MC's own plays Windows, a member its WSL backend.
+namespace {
+
+const QString kWsl = QStringLiteral("wsl-ubuntu");
+const QString kCheckedAt = QStringLiteral("2026-09-23T09:00:00.000Z");
+const QString kFinishedAt = QStringLiteral("2026-09-23T09:30:00.000Z");
+
+QJsonObject behind(const QString& instanceId, const QString& driver, const QString& name, const QString& latest,
+                   const QJsonObject& advisory = {}) {
+  QJsonObject versionAdvisory{{QStringLiteral("status"), QStringLiteral("behind_latest")},
+                              {QStringLiteral("currentVersion"), QStringLiteral("0.50.0")},
+                              {QStringLiteral("latestVersion"), latest},
+                              {QStringLiteral("updateCommand"), kUpdateCommand},
+                              {QStringLiteral("canUpdate"), true}};
+  for (auto it = advisory.begin(); it != advisory.end(); ++it) versionAdvisory.insert(it.key(), it.value());
+  return provider(instanceId, driver, name, {{QStringLiteral("version"), QStringLiteral("0.50.0")},
+                                             {QStringLiteral("checkedAt"), kCheckedAt},
+                                             {QStringLiteral("versionAdvisory"), versionAdvisory}});
+}
+QJsonObject behindCodex(const QString& latest = QStringLiteral("0.51.0")) {
+  return behind(QStringLiteral("codex"), QStringLiteral("codex"), QStringLiteral("Codex"), latest);
+}
+QJsonObject behindClaude() {
+  return behind(QStringLiteral("claudeAgent"), QStringLiteral("claudeAgent"), QStringLiteral("Claude"), QStringLiteral("2.1.0"));
+}
+
+// A provider whose update went `status` (and finished then, unless it runs).
+QJsonObject updated(const QString& driver, const QString& name, const QString& status, const QJsonObject& fields = {},
+                    const QString& finishedAt = kFinishedAt) {
+  QJsonObject state{{QStringLiteral("status"), status}};
+  if (status != QLatin1String("running")) state.insert(QStringLiteral("finishedAt"), finishedAt);
+  QJsonObject entry{{QStringLiteral("checkedAt"), kCheckedAt}, {QStringLiteral("updateState"), state}};
+  for (auto it = fields.begin(); it != fields.end(); ++it) entry.insert(it.key(), it.value());
+  return provider(driver, driver, name, entry);
+}
+QJsonObject failedTo(const QString& driver, const QString& name, const QString& latest) {
+  QJsonObject fields;
+  if (!latest.isEmpty()) {
+    fields.insert(QStringLiteral("versionAdvisory"), QJsonObject{{QStringLiteral("status"), QStringLiteral("behind_latest")},
+                                                                 {QStringLiteral("latestVersion"), latest}});
+  }
+  return updated(driver, name, QStringLiteral("failed"), fields);
+}
+
+QString iso(World& world) {
+  return world.now().toUTC().toString(Qt::ISODateWithMs);
+}
+
+// This machine's provider `instanceId`, changed as `fields` say.
+void amend(World& world, const QString& instanceId, const QJsonObject& fields) {
+  for (const QJsonValue& value : fakeConfig(world.mc).config.value(QLatin1String("providers")).toArray()) {
+    if (value.toObject().value(QLatin1String("instanceId")) != instanceId) continue;
+    QJsonObject entry = value.toObject();
+    for (auto it = fields.begin(); it != fields.end(); ++it) entry.insert(it.key(), it.value());
+    offer(world, entry);
+    return;
+  }
+  fail(QStringLiteral("no provider %1 to change").arg(instanceId));
+}
+
+QVariant sidebarNotice(World& world) {
+  return world.state(QStringLiteral("providerUpdates")).toMap().value(QStringLiteral("notice"));
+}
+
+void waitForNotice(World& world, const QString& title) {
+  world.waitFor([&] { return at(sidebarNotice(world), QStringLiteral("title")) == title; },
+                [&] { return QStringLiteral("the sidebar notice \"%1\"; it is %2").arg(title, show(sidebarNotice(world))); });
+}
+
+void expectNoNotice(World& world) {
+  world.sync();
+  expect(!sidebarNotice(world).isValid() || sidebarNotice(world).isNull(),
+         QStringLiteral("no sidebar notice; it is %1").arg(show(sidebarNotice(world))));
+}
+
+QVariantList shownToasts(World& world) {
+  return world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList();
+}
+
+QStringList actionLabels(const QVariantMap& toast) {
+  QStringList labels;
+  for (const QVariant& action : toast.value(QStringLiteral("actions")).toList()) {
+    labels.append(action.toMap().value(QStringLiteral("label")).toString());
+  }
+  return labels;
+}
+
+// The one toast on screen.
+QVariantMap onlyToast(World& world) {
+  world.waitFor([&] { return !shownToasts(world).isEmpty(); }, [] { return QStringLiteral("a toast"); });
+  world.sync();
+  const QVariantList toasts = shownToasts(world);
+  expect(toasts.size() == 1, QStringLiteral("one toast; the shell shows %1").arg(show(toasts)));
+  return toasts.first().toMap();
+}
+
+// The update notice with a row per environment.
+std::optional<QVariantMap> rowsToast(World& world) {
+  for (const QVariant& toast : shownToasts(world)) {
+    if (!toast.toMap().value(QStringLiteral("rows")).toList().isEmpty()) return toast.toMap();
+  }
+  return std::nullopt;
+}
+
+QStringList rowLabels(World& world) {
+  QStringList labels;
+  if (const auto toast = rowsToast(world)) {
+    for (const QVariant& row : toast->value(QStringLiteral("rows")).toList()) labels.append(row.toMap().value(QStringLiteral("label")).toString());
+  }
+  return labels;
+}
+
+QVariantMap row(World& world, const QString& label) {
+  if (const auto toast = rowsToast(world)) {
+    for (const QVariant& row : toast->value(QStringLiteral("rows")).toList()) {
+      if (row.toMap().value(QStringLiteral("label")) == label) return row.toMap();
+    }
+  }
+  return {};
+}
+
+void waitForRow(World& world, const QString& label, const std::function<bool(const QVariantMap&)>& ready, const QString& what) {
+  world.waitFor([&] { const QVariantMap found = row(world, label); return !found.isEmpty() && ready(found); },
+                [&] { return QStringLiteral("the row of %1 %2; the shell shows %3").arg(label, what, show(shownToasts(world))); });
+}
+
+void waitForRows(World& world, const QStringList& labels) {
+  world.waitFor([&] { return rowLabels(world) == labels; },
+                [&] { return QStringLiteral("the update notice to list %1; the shell shows %2").arg(labels.join(QStringLiteral(", ")), show(shownToasts(world))); });
+}
+
+// The user presses the row's button.
+void chooseRow(World& world, const QString& label, const QString& button) {
+  waitForRow(world, label, [&](const QVariantMap& found) { return found.value(QStringLiteral("action")) == button; },
+             QStringLiteral("to offer ") + button);
+  world.bridge().dispatch(QStringLiteral("notification.rowAction"),
+                          QVariantMap{{QStringLiteral("id"), rowsToast(world)->value(QStringLiteral("id"))},
+                                      {QStringLiteral("rowId"), row(world, label).value(QStringLiteral("id"))}});
+}
+
+QList<FakeMc::Rpc> updatesOn(World& world, const QString& environment) {
+  QList<FakeMc::Rpc> found;
+  for (const FakeMc::Rpc& rpc : fake(world).updates) {
+    if ((rpc.environment.isEmpty() ? world.mc.environmentId : rpc.environment) == environment) found.append(rpc);
+  }
+  return found;
+}
+
+FakeMc::Rpc waitForUpdateOn(World& world, const QString& environment, qsizetype count = 1) {
+  world.waitFor([&] { return updatesOn(world, environment).size() >= count; },
+                [&] { return QStringLiteral("%1 update(s) asked of %2; %3 were").arg(count).arg(environment).arg(updatesOn(world, environment).size()); });
+  return updatesOn(world, environment).at(count - 1);
+}
+
+QJsonObject answered(const QString& status) {
+  return QJsonObject{{QStringLiteral("providers"), QJsonArray{updated(QStringLiteral("codex"), QStringLiteral("Codex"), status)}}};
+}
+
+// The MC is Windows; WSL "Ubuntu" is a member of its cluster, its providers
+// as given, or none yet while it is still connecting.
+void windowsWithWsl(World& world, const std::optional<QJsonArray>& wsl) {
+  world.mc.label = QStringLiteral("Windows");
+  world.mc.peerLabels.insert(kWsl, QStringLiteral("WSL · Ubuntu"));
+  if (wsl) fakeConfig(world.mc).elsewhere.insert(kWsl, QJsonObject{{QStringLiteral("providers"), *wsl}});
+  world.mc.join(QStringLiteral("mc-wsl"), kWsl);
+}
+
+// Codex behind on both, the notice listing both.
+void listedOnBoth(World& world) {
+  windowsWithWsl(world, QJsonArray{behindCodex()});
+  offer(world, behindCodex());
+  world.connect();
+  waitForRows(world, {QStringLiteral("Windows"), QStringLiteral("WSL · Ubuntu")});
+}
+
+QString environmentOf(World& world, const QString& label) {
+  return label == world.mc.label ? world.mc.environmentId : kWsl;
+}
+
+void timeOut(World& world, const QString& label) {
+  chooseRow(world, label, QStringLiteral("Update"));
+  waitForUpdateOn(world, environmentOf(world, label));
+  world.setTime(world.now().addSecs(6 * 60));
+}
+
+void expectWindowsUnaffected(World& world) {
+  waitForRow(world, QStringLiteral("Windows"), [](const QVariantMap& found) {
+    return found.value(QStringLiteral("kind")) == QLatin1String("idle") && found.value(QStringLiteral("text")) == QLatin1String("Codex") &&
+           found.value(QStringLiteral("action")) == QLatin1String("Update");
+  }, QStringLiteral("to still offer its update"));
+  expect(updatesOn(world, world.mc.environmentId).isEmpty(), QStringLiteral("no update to have run on Windows"));
+}
+
+const Steps providerUpdateSteps([] {
+  const QString q = kQuoted;
+
+  // The sidebar's notice.
+  step(QStringLiteral("(Codex is being updated|Codex and Claude are being updated|Codex was updated to 0.52.0|Codex and Claude were updated|"
+                      "the update of Codex to 0.52.0 failed|the updates of two providers failed|Codex was updated but is still out of date|"
+                      "Codex finished updating before the app connected)"),
+       [](World& world, const Captures& c, const Table&) {
+         const QString& state = c[0];
+         const QString codex = QStringLiteral("codex"), claude = QStringLiteral("claudeAgent");
+         QJsonArray providers;
+         if (state == QLatin1String("Codex is being updated")) {
+           providers = {updated(codex, QStringLiteral("Codex"), QStringLiteral("running"))};
+         } else if (state == QLatin1String("Codex and Claude are being updated")) {
+           providers = {updated(codex, QStringLiteral("Codex"), QStringLiteral("running")),
+                        updated(claude, QStringLiteral("Claude"), QStringLiteral("running"))};
+         } else if (state == QLatin1String("Codex was updated to 0.52.0")) {
+           providers = {updated(codex, QStringLiteral("Codex"), QStringLiteral("succeeded"), {{QStringLiteral("version"), QStringLiteral("0.52.0")}})};
+         } else if (state == QLatin1String("Codex and Claude were updated")) {
+           providers = {updated(codex, QStringLiteral("Codex"), QStringLiteral("succeeded")),
+                        updated(claude, QStringLiteral("Claude"), QStringLiteral("succeeded"))};
+         } else if (state == QLatin1String("the update of Codex to 0.52.0 failed")) {
+           providers = {failedTo(codex, QStringLiteral("Codex"), QStringLiteral("0.52.0"))};
+         } else if (state == QLatin1String("the updates of two providers failed")) {
+           providers = {failedTo(codex, QStringLiteral("Codex"), {}), failedTo(claude, QStringLiteral("Claude"), {})};
+         } else if (state == QLatin1String("Codex was updated but is still out of date")) {
+           providers = {updated(codex, QStringLiteral("Codex"), QStringLiteral("unchanged"))};
+         } else {
+           // It finished before the MC last checked, which is before the app looked.
+           providers = {updated(codex, QStringLiteral("Codex"), QStringLiteral("succeeded"), {}, QStringLiteral("2026-09-23T08:30:00.000Z"))};
+         }
+         publishProviders(world.mc, providers);
+       });
+  step(QStringLiteral("the user looks at the bottom of the sidebar"), [](World& world, const Captures&, const Table&) {
+    world.connect();
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
+  });
+  step(QStringLiteral("the sidebar notice says %1").arg(q), [](World& world, const Captures& c, const Table&) { waitForNotice(world, c[0]); });
+  step(QStringLiteral("the sidebar says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (c[0] == QLatin1String("Codex updated: v0.52.0")) {
+      publishProviders(world.mc, {updated(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("succeeded"),
+                                          {{QStringLiteral("version"), QStringLiteral("0.52.0")}})});
+    } else if (c[0] == QLatin1String("Codex update failed")) {
+      publishProviders(world.mc, {failedTo(QStringLiteral("codex"), QStringLiteral("Codex"), {})});
+    } else {
+      fail(QStringLiteral("no sidebar state says \"%1\"").arg(c[0]));
+    }
+    world.connect();
+    waitForNotice(world, c[0]);
+  });
+  step(QStringLiteral("three seconds pass"), [](World& world, const Captures&, const Table&) {
+    world.setTime(world.now().addSecs(3));
+  });
+  step(QStringLiteral("(?:the (?:sidebar )?notice is gone|the sidebar shows no provider update notice)"),
+       [](World& world, const Captures&, const Table&) { expectNoNotice(world); });
+  step(QStringLiteral("the user dismisses the notice"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("providerUpdates.dismissNotice"), QVariantMap{});
+  });
+  step(QStringLiteral("the user chooses the notice"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("providerUpdates.openNotice"), QVariantMap{});
+  });
+  step(QStringLiteral("it does not return until the provider's update status changes"), [](World& world, const Captures&, const Table&) {
+    // The MC reports the same again: still gone.
+    publishProviders(world.mc, fakeConfig(world.mc).config.value(QLatin1String("providers")).toArray());
+    expectNoNotice(world);
+    // It fails again, later.
+    publishProviders(world.mc, {updated(QStringLiteral("codex"), QStringLiteral("Codex"), QStringLiteral("failed"), {},
+                                        QStringLiteral("2026-09-23T09:45:00.000Z"))});
+    waitForNotice(world, QStringLiteral("Codex update failed"));
+  });
+
+  // The launch offer.
+  step(QStringLiteral("%1 and %1 are behind their latest releases").arg(q), [](World& world, const Captures&, const Table&) {
+    publishProviders(world.mc, {behindCodex(), behindClaude()});
+  });
+  step(QStringLiteral("no update command runs for %1 from here").arg(q), [](World& world, const Captures&, const Table&) {
+    QJsonObject advisory = behindCodex().value(QLatin1String("versionAdvisory")).toObject();
+    advisory.insert(QStringLiteral("canUpdate"), false);
+    amend(world, QStringLiteral("codex"), {{QStringLiteral("versionAdvisory"), advisory}});
+  });
+  step(QStringLiteral("that release is (known to be broken with this app|not supported by this app)"), [](World& world, const Captures& c, const Table&) {
+    const QString status = c[0].startsWith(QLatin1String("known")) ? QStringLiteral("broken") : QStringLiteral("unsupported");
+    amend(world, QStringLiteral("codex"), {{QStringLiteral("compatibilityAdvisory"), QJsonObject{{QStringLiteral("status"), QStringLiteral("supported")},
+                                                                                                {QStringLiteral("latestVersionStatus"), status}}}});
+  });
+  step(QStringLiteral("%1 is turned off").arg(q), [](World& world, const Captures&, const Table&) {
+    amend(world, QStringLiteral("codex"), {{QStringLiteral("enabled"), false}});
+  });
+  step(QStringLiteral("the user sees an? %1 toast saying %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap toast = onlyToast(world);
+    expect(toast.value(QStringLiteral("type")) == c[0] && toast.value(QStringLiteral("description")) == c[1],
+           QStringLiteral("the toast is %1").arg(show(toast)));
+  });
+  step(QStringLiteral("the (?:user sees a )?toast (?:that )?offers %1 and not %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap toast = onlyToast(world);
+    const QStringList labels = actionLabels(toast);
+    expect(labels.contains(c[0]) && !labels.contains(c[1]), QStringLiteral("the toast is %1").arg(show(toast)));
+  });
+  step(QStringLiteral("the user dismissed the toast %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    offer(world, behindCodex());
+    world.connect();
+    world.waitFor([&] { return onlyToast(world).value(QStringLiteral("title")) == c[0]; },
+                  [&] { return QStringLiteral("the toast \"%1\"; the shell shows %2").arg(c[0], show(shownToasts(world))); });
+    world.bridge().dispatch(QStringLiteral("notification.dismiss"), QVariantMap{{QStringLiteral("id"), onlyToast(world).value(QStringLiteral("id"))}});
+    world.waitFor([&] { return shownToasts(world).isEmpty(); }, [] { return QStringLiteral("the toast to close"); });
+  });
+  step(QStringLiteral("%1 v0.52.0 is released and the MC checks provider versions").arg(q), [](World& world, const Captures&, const Table&) {
+    amend(world, QStringLiteral("codex"), {{QStringLiteral("checkedAt"), QStringLiteral("2026-09-23T10:00:00.000Z")},
+                                           {QStringLiteral("versionAdvisory"), behindCodex(QStringLiteral("0.52.0")).value(QLatin1String("versionAdvisory"))}});
+  });
+  step(QStringLiteral("the MC reports %1 still outdated after the update").arg(q), [](World& world, const Captures&, const Table&) {
+    QJsonObject still = behindCodex();
+    still.insert(QStringLiteral("updateState"), QJsonObject{{QStringLiteral("status"), QStringLiteral("unchanged")}, {QStringLiteral("finishedAt"), iso(world)}});
+    world.mc.reply(waitForUpdateOn(world, world.mc.environmentId), QJsonObject{{QStringLiteral("providers"), QJsonArray{still}}});
+  });
+  step(QStringLiteral("the update fails without saying why"), [](World& world, const Captures&, const Table&) {
+    world.mc.reply(waitForUpdateOn(world, world.mc.environmentId), answered(QStringLiteral("failed")));
+  });
+  step(QStringLiteral("%1 is behind its latest release through two of its instances").arg(q), [](World& world, const Captures&, const Table&) {
+    publishProviders(world.mc, {behindCodex(), behind(QStringLiteral("codex_work"), QStringLiteral("codex"), QStringLiteral("Codex Work"), QStringLiteral("0.51.0"))});
+  });
+  step(QStringLiteral("%1 has two instances that would be updated by different commands").arg(q), [](World& world, const Captures&, const Table&) {
+    publishProviders(world.mc, {behindCodex(), behind(QStringLiteral("codex_brew"), QStringLiteral("codex"), QStringLiteral("Codex (Homebrew)"),
+                                                      QStringLiteral("0.51.0"), {{QStringLiteral("updateCommand"), QStringLiteral("brew upgrade codex")}})});
+  });
+  step(QStringLiteral("the user sees one toast %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap toast = onlyToast(world);
+    expect(toast.value(QStringLiteral("title")) == c[0], QStringLiteral("the toast is %1").arg(show(toast)));
+  });
+
+  // Several environments.
+  step(QStringLiteral("the app runs on Windows with a WSL backend"), [](World& world, const Captures&, const Table&) {
+    windowsWithWsl(world, QJsonArray{});
+  });
+  step(QStringLiteral("the app runs on Windows with a WSL backend that is still connecting"), [](World& world, const Captures&, const Table&) {
+    windowsWithWsl(world, std::nullopt);
+  });
+  step(QStringLiteral("%1 is behind on Windows and on WSL %1").arg(q), [](World& world, const Captures&, const Table&) {
+    offer(world, behindCodex());
+    fakeConfig(world.mc).elsewhere.insert(kWsl, QJsonObject{{QStringLiteral("providers"), QJsonArray{behindCodex()}}});
+  });
+  step(QStringLiteral("%1 is behind on Windows").arg(q), [](World& world, const Captures&, const Table&) { offer(world, behindCodex()); });
+  step(QStringLiteral("both environments connect"), [](World& world, const Captures&, const Table&) {
+    world.connect();
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
+  });
+  step(QStringLiteral("the user sees one update notice listing %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForRows(world, {c[0], c[1]});
+    expect(shownToasts(world).size() == 1, QStringLiteral("one notice; the shell shows %1").arg(show(shownToasts(world))));
+  });
+  step(QStringLiteral("each environment has its own Update button"), [](World& world, const Captures&, const Table&) {
+    for (const QString& label : rowLabels(world)) {
+      expect(row(world, label).value(QStringLiteral("action")) == QLatin1String("Update"),
+             QStringLiteral("the row of %1 is %2").arg(label, show(row(world, label))));
+    }
+  });
+  step(QStringLiteral("no update notice is shown yet"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&world] { return world.native().isActive(); }, QStringLiteral("the shell to start"));
+    world.sync();
+    expect(shownToasts(world).isEmpty(), QStringLiteral("no notice yet; the shell shows %1").arg(show(shownToasts(world))));
+  });
+  step(QStringLiteral("the WSL backend connects"), [](World& world, const Captures&, const Table&) {
+    publishProvidersOn(world.mc, kWsl, {behindCodex()});
+  });
+  step(QStringLiteral("the update notice is shown once for both environments"), [](World& world, const Captures&, const Table&) {
+    waitForRows(world, {QStringLiteral("Windows"), QStringLiteral("WSL · Ubuntu")});
+    world.sync();
+    expect(shownToasts(world).size() == 1, QStringLiteral("one notice; the shell shows %1").arg(show(shownToasts(world))));
+  });
+  step(QStringLiteral("the update notice lists \"Windows\" and \"WSL · Ubuntu\""), [](World& world, const Captures&, const Table&) {
+    listedOnBoth(world);
+  });
+  step(QStringLiteral("the update of %1 is running").arg(q), [](World& world, const Captures& c, const Table&) {
+    chooseRow(world, c[0], QStringLiteral("Update"));
+    waitForUpdateOn(world, environmentOf(world, c[0]));
+  });
+  step(QStringLiteral("the update of %1 (?:finally )?finishes").arg(q), [](World& world, const Captures& c, const Table&) {
+    if (updatesOn(world, environmentOf(world, c[0])).isEmpty()) chooseRow(world, c[0], QStringLiteral("Update"));
+    world.mc.reply(waitForUpdateOn(world, environmentOf(world, c[0])), answered(QStringLiteral("succeeded")));
+  });
+  step(QStringLiteral("the update of %1 fails with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world).updateRefusal = c[1];
+    chooseRow(world, c[0], QStringLiteral("Update"));
+  });
+  step(QStringLiteral("the update of %1 leaves the provider still outdated").arg(q), [](World& world, const Captures& c, const Table&) {
+    chooseRow(world, c[0], QStringLiteral("Update"));
+    waitForUpdateOn(world, environmentOf(world, c[0]));
+    // The MC tells of it before it answers.
+    QJsonObject still = behindCodex();
+    still.insert(QStringLiteral("updateState"), QJsonObject{{QStringLiteral("status"), QStringLiteral("unchanged")}, {QStringLiteral("finishedAt"), iso(world)}});
+    publishProvidersOn(world.mc, kWsl, {still});
+  });
+  step(QStringLiteral("the row of %1 says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForRow(world, c[0], [&](const QVariantMap& found) { return found.value(QStringLiteral("text")) == c[1]; },
+               QStringLiteral("to say \"%1\"").arg(c[1]));
+  });
+  step(QStringLiteral("the row of \"Windows\" is unaffected"), [](World& world, const Captures&, const Table&) { expectWindowsUnaffected(world); });
+  step(QStringLiteral("the user dismissed the update notice for %1 on Windows").arg(q), [](World& world, const Captures&, const Table&) {
+    windowsWithWsl(world, QJsonArray{provider(QStringLiteral("claudeAgent"), QStringLiteral("claudeAgent"), QStringLiteral("Claude"))});
+    offer(world, behindCodex());
+    world.connect();
+    waitForRows(world, {QStringLiteral("Windows")});
+    world.bridge().dispatch(QStringLiteral("notification.dismiss"), QVariantMap{{QStringLiteral("id"), rowsToast(world)->value(QStringLiteral("id"))}});
+    world.waitFor([&] { return shownToasts(world).isEmpty(); }, [] { return QStringLiteral("the notice to close"); });
+  });
+  step(QStringLiteral("%1 also falls behind on %1").arg(q), [](World& world, const Captures&, const Table&) {
+    publishProvidersOn(world.mc, kWsl, {behindClaude()});
+  });
+  step(QStringLiteral("the update notice is shown again listing both"), [](World& world, const Captures&, const Table&) {
+    waitForRows(world, {QStringLiteral("Windows"), QStringLiteral("WSL · Ubuntu")});
+  });
+  step(QStringLiteral("the update of %1 has been running for six minutes without an answer").arg(q), [](World& world, const Captures& c, const Table&) {
+    timeOut(world, c[0]);
+  });
+  step(QStringLiteral("the update of %1 timed out").arg(q), [](World& world, const Captures& c, const Table&) {
+    listedOnBoth(world);
+    timeOut(world, c[0]);
+    waitForRow(world, c[0], [](const QVariantMap& found) { return found.value(QStringLiteral("text")) == QStringLiteral("Update timed out — try again."); },
+               QStringLiteral("to have timed out"));
+  });
+  step(QStringLiteral("the update can be started again from that row"), [](World& world, const Captures&, const Table&) {
+    chooseRow(world, QStringLiteral("WSL · Ubuntu"), QStringLiteral("Retry"));
+    waitForUpdateOn(world, kWsl, 2);
+    waitForRow(world, QStringLiteral("WSL · Ubuntu"), [](const QVariantMap& found) { return found.value(QStringLiteral("text")) == QStringLiteral("Updating…"); },
+               QStringLiteral("to be updating again"));
+  });
+  step(QStringLiteral("%1 is not connected").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.setOnline(environmentOf(world, c[0]), false);
+    world.sync();
+  });
+  step(QStringLiteral("the user starts the update of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    chooseRow(world, c[0], QStringLiteral("Update"));
+  });
+
+  // features/settings/updates.feature's @shared scenario: "laptop" and its WSL backend.
+  step(QStringLiteral("Codex is behind on %1 and on its WSL environment").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.mc.label = c[0];
+    world.mc.peerLabels.insert(kWsl, QStringLiteral("WSL · Ubuntu"));
+    fakeConfig(world.mc).elsewhere.insert(kWsl, QJsonObject{{QStringLiteral("providers"), QJsonArray{behindCodex()}}});
+    world.mc.join(QStringLiteral("mc-wsl"), kWsl);
+    offer(world, behindCodex());
+    world.connect();
+    waitForRows(world, {c[0], QStringLiteral("WSL · Ubuntu")});
+  });
+  step(QStringLiteral("the user updates Codex on both"), [](World& world, const Captures&, const Table&) {
+    chooseRow(world, world.mc.label, QStringLiteral("Update"));
+    chooseRow(world, QStringLiteral("WSL · Ubuntu"), QStringLiteral("Update"));
+    // This machine's goes through, the WSL backend's fails.
+    world.mc.reply(waitForUpdateOn(world, world.mc.environmentId), answered(QStringLiteral("succeeded")));
+    world.mc.refuse(waitForUpdateOn(world, kWsl), QStringLiteral("npm is not installed"),
+                    {{QStringLiteral("_tag"), QStringLiteral("ServerProviderUpdateError")}});
+  });
+  step(QStringLiteral("each machine shows whether its update succeeded, was unchanged or failed"), [](World& world, const Captures&, const Table&) {
+    waitForRow(world, world.mc.label, [](const QVariantMap& found) {
+      return found.value(QStringLiteral("kind")) == QLatin1String("success") && found.value(QStringLiteral("text")) == QLatin1String("Updated");
+    }, QStringLiteral("to say it updated"));
+    waitForRow(world, QStringLiteral("WSL · Ubuntu"), [](const QVariantMap& found) {
+      return found.value(QStringLiteral("kind")) == QLatin1String("failed") && found.value(QStringLiteral("text")) == QLatin1String("npm is not installed");
+    }, QStringLiteral("to say why it failed"));
+  });
+});
+
+}  // namespace

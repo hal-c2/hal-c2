@@ -591,13 +591,13 @@ Feature: Updating the server, the desktop app and providers
       And the user restarts the app
       Then the user sees no toast
 
-    @shared @backlog-desktop @backlog-mobile
+    @shared @backlog-mobile
     Scenario: Provider updates on several machines report each machine
       Given Codex is behind on "laptop" and on its WSL environment
       When the user updates Codex on both
       Then each machine shows whether its update succeeded, was unchanged or failed
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The sidebar shows how a provider update is going
       Given <state>
       When the user looks at the bottom of the sidebar
@@ -613,32 +613,32 @@ Feature: Updating the server, the desktop app and providers
         | the updates of two providers failed        | 2 provider updates failed   |
         | Codex was updated but is still out of date | Codex still needs an update |
 
-    @backlog @desktop
+    @desktop
     Scenario: A finished provider update notice goes away by itself
       Given the sidebar says "Codex updated: v0.52.0"
       When three seconds pass
       Then the sidebar notice is gone
 
-    @backlog @desktop
+    @desktop
     Scenario: A failed provider update notice stays until it is dismissed
       Given the sidebar says "Codex update failed"
       When the user dismisses the notice
       Then the notice is gone
       And it does not return until the provider's update status changes
 
-    @backlog @desktop
+    @desktop
     Scenario: The provider update notice opens the provider settings
       Given the sidebar says "Codex update failed"
       When the user chooses the notice
       Then the Providers settings open
 
-    @backlog @desktop
+    @desktop
     Scenario: Provider updates that finished before the app connected are not announced
       Given Codex finished updating before the app connected
       When the user looks at the bottom of the sidebar
       Then the sidebar shows no provider update notice
 
-    @backlog @desktop
+    @desktop
     Scenario: Several outdated providers are offered together at launch
       Given "Codex" and "Claude" are behind their latest releases
       When the desktop shell is connected to its MC
@@ -646,7 +646,7 @@ Feature: Updating the server, the desktop app and providers
       When the user chooses "Update" on the toast "Updates Available: 2 providers"
       Then the user sees a "loading" toast "Updating providers" saying "Running provider update command."
 
-    @backlog @desktop
+    @desktop
     Scenario: A provider that cannot be updated from here is offered only its settings
       Given "Codex" is behind its latest release
       And no update command runs for "Codex" from here
@@ -654,7 +654,7 @@ Feature: Updating the server, the desktop app and providers
       Then the user sees a "warning" toast saying "Codex can be updated from provider settings."
       And the toast offers "Settings" and not "Update"
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A provider whose latest release is not usable is not offered
       Given "Codex" is behind its latest release
       And that release is <flag>
@@ -666,20 +666,20 @@ Feature: Updating the server, the desktop app and providers
         | known to be broken with this app    |
         | not supported by this app           |
 
-    @backlog @desktop
+    @desktop
     Scenario: A disabled provider is not offered an update
       Given "Codex" is behind its latest release
       And "Codex" is turned off
       When the desktop shell is connected to its MC
       Then the user sees no toast
 
-    @backlog @desktop
+    @desktop
     Scenario: A newer release of a dismissed provider is offered again
       Given the user dismissed the toast "Update Available: Codex v0.51.0"
       When "Codex" v0.52.0 is released and the MC checks provider versions
       Then the user sees a "warning" toast "Update Available: Codex v0.52.0"
 
-    @backlog @desktop
+    @desktop
     Scenario: A provider that is still out of date after its update says so
       Given "Codex" is behind its latest release
       And the desktop shell is connected to its MC
@@ -687,7 +687,7 @@ Feature: Updating the server, the desktop app and providers
       And the MC reports "Codex" still outdated after the update
       Then the user sees a "warning" toast "Provider still needs an update" saying "Codex still appears outdated. Check provider settings for details."
 
-    @backlog @desktop
+    @desktop
     Scenario: A failed update with no reason names the provider
       Given "Codex" is behind its latest release
       And the desktop shell is connected to its MC
@@ -695,27 +695,27 @@ Feature: Updating the server, the desktop app and providers
       And the update fails without saying why
       Then the user sees an "error" toast "Provider update failed" saying "Codex failed to update. Check provider settings for details."
 
-    @backlog @desktop
+    @desktop
     Scenario: A provider with several instances gets one offer
       Given "Codex" is behind its latest release through two of its instances
       When the desktop shell is connected to its MC
       Then the user sees one toast "Update Available: Codex v0.51.0"
 
-    @backlog @desktop
+    @desktop
     Scenario: A provider installed more than one way is not updated in one click
       Given "Codex" has two instances that would be updated by different commands
       When the desktop shell is connected to its MC
       Then the user sees a toast that offers "Settings" and not "Update"
 
-    @backlog @desktop
+    @desktop
     Scenario: Windows and WSL are offered their updates separately
       Given the app runs on Windows with a WSL backend
       And "Codex" is behind on Windows and on WSL "Ubuntu"
-      When both environments are connected
+      When both environments connect
       Then the user sees one update notice listing "Windows" and "WSL · Ubuntu"
       And each environment has its own Update button
 
-    @backlog @desktop
+    @desktop
     Scenario: The update notice waits for a WSL backend that is still starting
       Given the app runs on Windows with a WSL backend that is still connecting
       And "Codex" is behind on Windows
@@ -724,7 +724,7 @@ Feature: Updating the server, the desktop app and providers
       When the WSL backend connects
       Then the update notice is shown once for both environments
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Each environment's update row shows how its update went
       Given the update notice lists "Windows" and "WSL · Ubuntu"
       When the update of "WSL · Ubuntu" <happens>
@@ -738,14 +738,14 @@ Feature: Updating the server, the desktop app and providers
         | fails with "npm is not installed"         | npm is not installed                  |
         | leaves the provider still outdated        | Codex still appears outdated. Review provider settings for details. |
 
-    @backlog @desktop
+    @desktop
     Scenario: A changed set of environment updates is offered again
       Given the user dismissed the update notice for "Codex" on Windows
       When "Claude" also falls behind on "WSL · Ubuntu"
       Then the update notice is shown again listing both
 
     # Legacy: apps/web/src/components/ProviderUpdateEnvironmentRows.tsx (PENDING_EXPIRY_MS, "Update timed out")
-    @backlog @desktop
+    @desktop
     Scenario: A provider update that never answers is given up on after six minutes
       Given the update notice lists "Windows" and "WSL · Ubuntu"
       And the update of "WSL · Ubuntu" has been running for six minutes without an answer
@@ -753,13 +753,13 @@ Feature: Updating the server, the desktop app and providers
       And the update can be started again from that row
       And the row of "Windows" is unaffected
 
-    @backlog @desktop
+    @desktop
     Scenario: A late answer replaces a timed out update
-      Given the row of "WSL · Ubuntu" says "Update timed out — try again."
+      Given the update of "WSL · Ubuntu" timed out
       When the update of "WSL · Ubuntu" finally finishes
       Then the row of "WSL · Ubuntu" says "Updated"
 
-    @backlog @desktop
+    @desktop
     Scenario: A provider update on an environment that is not connected says so
       Given the update notice lists "Windows" and "WSL · Ubuntu"
       And "WSL · Ubuntu" is not connected

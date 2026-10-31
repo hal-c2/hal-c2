@@ -959,6 +959,13 @@ Rectangle {
             Layout.topMargin: 4
         }
 
+        ProviderUpdateNotice {
+            Layout.fillWidth: true
+            Layout.leftMargin: 8
+            Layout.rightMargin: 8
+            Layout.topMargin: 4
+        }
+
         RowLayout {
             Layout.fillWidth: true
             Layout.margins: 8
