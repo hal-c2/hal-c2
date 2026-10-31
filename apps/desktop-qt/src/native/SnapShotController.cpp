@@ -241,16 +241,22 @@ void SnapShotController::closeSetup(bool completed) {
 }
 
 void SnapShotController::stopRecording() {
-  m_recording = false;
   m_held.clear();
+  if (!std::exchange(m_recording, false)) return;
+  m_backend->pause(false, nullptr);
   // Recording cleared the check; the shortcut recorded before it can still be saved.
-  m_check.reset();
-  if (shortcutChanged() && conflict(*m_candidate).isEmpty()) m_check = check(*m_candidate);
+  checkCandidate();
 }
 
 void SnapShotController::resetCandidate() {
   m_candidate.reset();
+  ++m_checkId;
+  m_checking = false;
   m_check.reset();
+}
+
+bool SnapShotController::busy() const {
+  return m_wizard && m_backend->session().checking;
 }
 
 // --- The shortcut -----------------------------------------------------------------
@@ -279,17 +285,27 @@ QString SnapShotController::conflict(const QJsonObject& shortcut) const {
   return {};
 }
 
-// DesktopSnapShot.checkShortcut.
-SnapShotController::Check SnapShotController::check(const QJsonObject& shortcut) const {
-  if (m_backend->session().mode != QLatin1String("portal")) {
-    return {false, tr("SnapShots are not supported on this platform.")};
+// SnapShotSettings' checkShortcut: HAL-C2's own keybindings first, then the
+// system's, then the desktop (DesktopSnapShot.checkShortcut).
+void SnapShotController::checkCandidate() {
+  const quint64 id = ++m_checkId;
+  m_checking = false;
+  m_check.reset();
+  if (!shortcutChanged() || !conflict(*m_candidate).isEmpty()) return;
+  if (!isPair(*m_candidate)) {
+    if (const QString reserved = systemConflict(chordOf(*m_candidate)); !reserved.isEmpty()) {
+      m_check = Check{false, reserved};
+      return;
+    }
   }
-  QString problem;
-  if (!isPair(shortcut)) {
-    if (const QString reserved = systemConflict(chordOf(shortcut)); !reserved.isEmpty()) return {false, reserved};
-  }
-  if (SnapShotBackend::portalTrigger(shortcut, &problem).isEmpty()) return {false, problem};
-  return {true, tr("Your desktop will confirm this shortcut when you save it.")};
+  m_checking = true;
+  m_backend->checkShortcut(*m_candidate, [this, guard = QPointer<SnapShotController>(this), id](const Check& answer) {
+    if (!guard || id != m_checkId) return;
+    m_checking = false;
+    m_check = answer;
+    if (!answer.available && answer.message.isEmpty()) m_check->message = tr("Could not check this shortcut.");
+    publish();
+  });
 }
 
 void SnapShotController::record(const QJsonObject& shortcut) {
@@ -315,6 +331,7 @@ QString SnapShotController::shortcutStatus() const {
       return tr("HAL-C2 already uses this for \"%1\".").arg(keybindings::commandLabel(command));
     }
   }
+  if (m_checking) return tr("Checking shortcut…");
   if (m_check) return m_check->available ? tr("Ready to save.") : m_check->message;
   const auto session = m_backend->session();
   const auto shortcut = m_backend->shortcut();
@@ -335,6 +352,11 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
   if (!m_backend) return true;
   const QVariantMap map = payload.toMap();
 
+  // Setup waits on the desktop before it can be left or stepped through.
+  if (busy() && (action.startsWith(QLatin1String("snapShot.setup.")) || action == QLatin1String("snapShot.enable") ||
+                 action == QLatin1String("snapShot.record.start"))) {
+    return true;
+  }
   if (action == QLatin1String("snapShot.enable")) {
     if (map.value(QStringLiteral("on")).toBool()) {
       openSetup(QStringLiteral("resume"));
@@ -386,9 +408,17 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
     return true;
   }
   if (action == QLatin1String("snapShot.record.start")) {
-    m_recording = true;
     m_held.clear();
+    ++m_checkId;
+    m_checking = false;
     m_check.reset();
+    // The capture shortcut must not fire while its replacement is pressed.
+    QString reason;
+    if (m_recording || m_backend->pause(true, &reason)) {
+      m_recording = true;
+    } else {
+      m_check = Check{false, reason.isEmpty() ? tr("Could not start shortcut recording.") : reason};
+    }
     publish();
     return true;
   }
@@ -672,13 +702,14 @@ QVariantMap SnapShotController::state() const {
     }
     wizard = QVariantMap{
         {QStringLiteral("step"), m_wizard->step},
+        {QStringLiteral("busy"), busy()},
         {QStringLiteral("title"), desktop.isEmpty() ? tr("Set up snapshots") : tr("Set up snapshots for %1").arg(desktop)},
         {QStringLiteral("heading"), heading},
         {QStringLiteral("body"), body},
         {QStringLiteral("details"), access ? session.message : QString()},
         {QStringLiteral("attention"), !access && !ready ? tr("Capture needs attention. Go back to check access.") : QString()},
         {QStringLiteral("closeLabel"), m_wizard->wasEnabled ? tr("Close") : tr("Finish later")},
-        {QStringLiteral("continueLabel"), ready ? tr("Continue") : tr("Try again")},
+        {QStringLiteral("continueLabel"), busy() ? tr("Checking…") : ready ? tr("Continue") : tr("Try again")},
         {QStringLiteral("doneLabel"), changed ? tr("Save and finish") : tr("Done")},
         {QStringLiteral("doneEnabled"), ready && (changed ? canSave() : shortcut.registered || shortcut.pending)},
         {QStringLiteral("permissions"), !changed && !shortcut.registered && !shortcut.pending && canRetry},

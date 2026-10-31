@@ -169,6 +169,8 @@ SettingsPage {
         objectName: "snapShotSetup"
         Layout.fillWidth: true
         visible: snap.wizard !== null
+        // Nothing is left or stepped through while the desktop answers.
+        enabled: !(snap.wizard?.busy ?? false)
         implicitHeight: setup.implicitHeight + 32
         radius: Math.min(Theme.radius, 10)
         color: Theme.palette.color("surface", "#18181b")
@@ -347,16 +349,8 @@ SettingsPage {
             heading: qsTr("Sound")
             description: qsTr("Choose the sound played when capture starts.")
 
-            ShellButton {
-                objectName: "play"
-                visible: (snap.settings?.sound?.value ?? "off") !== "off"
-                subtle: true
-                iconName: "play"
-                Accessible.name: qsTr("Play %1").arg(snap.settings?.sound?.label ?? "")
-                onClicked: Shell.dispatch("snapShot.sound.play", { sound: snap.settings?.sound?.value })
-            }
-
             ShellComboBox {
+                id: soundChoices
                 objectName: "control"
                 outline: true
                 implicitWidth: 170
@@ -365,6 +359,18 @@ SettingsPage {
                 currentIndex: sounds.findIndex(choice => choice.value === (snap.settings?.sound?.value ?? "soft-pop"))
                 Accessible.name: qsTr("Sound")
                 onActivated: index => Shell.dispatch("snapShot.sound", { value: sounds[index].value })
+                // Hears a sound without choosing it; the choices stay open.
+                rowAction: ShellButton {
+                    readonly property var choice: soundChoices.sounds[parent?.row ?? 0] ?? null
+                    objectName: "play:" + (choice?.value ?? "")
+                    visible: (choice?.value ?? "off") !== "off"
+                    implicitWidth: 22
+                    implicitHeight: 22
+                    subtle: true
+                    iconName: "play"
+                    Accessible.name: qsTr("Play %1").arg(choice?.label ?? "")
+                    onClicked: Shell.dispatch("snapShot.sound.play", { sound: choice.value })
+                }
             }
         }
 

@@ -86,6 +86,16 @@ Item {
             compare(last().payload.completed, false);
         }
 
+        function test_the_walk_through_waits_while_it_works() {
+            Shell.state = { snapShot: root.snapShot({ wizard: { step: "access", busy: true, title: "Set up Snap Shot", heading: "Allow capture",
+                                                                body: "", details: "", attention: "", closeLabel: "Finish later",
+                                                                continueLabel: "Checking…", doneLabel: "Done", doneEnabled: false,
+                                                                permissions: false, permissionsLabel: "" } }) };
+            const page = createTemporaryObject(snapComponent, root);
+            verify(!findChild(page, "close").enabled);
+            verify(!findChild(page, "continue").enabled);
+        }
+
         function test_recording_sends_the_keys_and_escape() {
             Shell.state = { snapShot: root.snapShot({}) };
             const page = createTemporaryObject(snapComponent, root);
@@ -129,9 +139,16 @@ Item {
             sound.activated(0);
             compare(last().action, "snapShot.sound");
             compare(last().payload.value, "off");
-            mouseClick(findChild(findChild(page, "snapShot:sound"), "play"));
+            sound.popup.open();
+            tryVerify(() => sound.popup.opened);
+            const click = sound.popup.contentItem.itemAtIndex(2);
+            verify(findChild(click, "play:camera-shutter"));
+            verify(!findChild(sound.popup.contentItem.itemAtIndex(0), "play:off")?.visible, "Off has nothing to hear");
+            mouseClick(findChild(click, "play:camera-shutter"));
             compare(last().action, "snapShot.sound.play");
-            compare(last().payload.sound, "soft-pop");
+            compare(last().payload.sound, "camera-shutter");
+            verify(sound.popup.visible, "hearing a sound keeps the choices open");
+            sound.popup.close();
             const flash = findChild(findChild(page, "snapShot:flash"), "control");
             verify(flash.checked);
             verify(!flash.enabled, "the portal gives no flash");

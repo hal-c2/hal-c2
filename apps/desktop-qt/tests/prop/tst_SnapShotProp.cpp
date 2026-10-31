@@ -4,11 +4,15 @@
 // saved shortcut changes only on a save of a shortcut the desktop can take;
 // the desktop holds it exactly while Snap Shot is on; recording pauses
 // captures and ends when the panel closes; and closing setup unfinished
-// leaves Snap Shot as setup found it.
+// leaves Snap Shot as setup found it. The desktop may answer a shortcut check
+// late, and only the newest check counts; it may refuse to pause, and then
+// nothing records; and while it is asked again setup stays where it is.
 
 #include "Prop.h"
 
+#include <functional>
 #include <memory>
+#include <vector>
 
 #include "FakeMc.h"
 #include "McClient.h"
@@ -40,7 +44,8 @@ const Chord kChords[] = {
 };
 constexpr int kChordCount = sizeof(kChords) / sizeof(kChords[0]);
 
-// The desktop: always answers, grants every trigger at once, and counts captures.
+// The desktop: grants every trigger at once and counts captures. Shortcut
+// checks wait for answer() while `holdChecks`.
 class Portal : public SnapShotBackend {
 public:
   using SnapShotBackend::SnapShotBackend;
@@ -50,6 +55,7 @@ public:
     session.ready = true;
     session.mode = QStringLiteral("portal");
     session.backend = QStringLiteral("screenshot-portal");
+    session.checking = working;
     return session;
   }
   Shortcut shortcut() const override {
@@ -67,14 +73,34 @@ public:
   }
   void capture() override { ++captures; }
   void play(const QString&) override {}
+  void checkShortcut(const QJsonObject& shortcut, std::function<void(const Check&)> done) override {
+    if (holdChecks) checks.append(std::move(done));
+    else SnapShotBackend::checkShortcut(shortcut, std::move(done));
+  }
+  bool pause(bool on, QString*) override {
+    if (on && refusePause) return false;
+    paused = on;
+    return true;
+  }
 
   // The desktop only sends a shortcut it holds.
   void press() {
     if (!bound.isEmpty()) emit activated();
   }
 
+  void work(bool on) {
+    working = on;
+    emit changed();
+  }
+  void answer(int index, bool available) { checks.takeAt(index)({available, {}}); }
+
   QString bound;
   int captures = 0;
+  bool holdChecks = false;
+  QList<std::function<void(const Check&)>> checks;
+  bool refusePause = false;
+  bool paused = false;
+  bool working = false;
 };
 
 [[maybe_unused]] const bool installed = [] {
@@ -95,15 +121,45 @@ struct Model {
   int saved = -1;
   std::optional<int> candidate;
   int captures = 0;
+  // The desktop holds shortcut checks; each held check, true for the one that counts.
+  bool holdChecks = false;
+  std::vector<bool> held;
+  bool checking = false;
+  // The answer that counts.
+  std::optional<bool> check;
+  bool refusePause = false;
+  // The desktop is being asked again.
+  bool working = false;
 
   bool changed() const { return candidate && *candidate != saved; }
   // Recording a new shortcut sets the last one aside until it stops.
-  bool canSave() const { return !recording && changed() && *kChords[*candidate].trigger; }
+  bool canSave() const { return !recording && changed() && check.value_or(false); }
   QString bound() const { return enabled && saved >= 0 ? QString::fromLatin1(kChords[saved].trigger) : QString(); }
+  bool busy() const { return setup && working; }
 
+  void forgetChecks() {
+    held.assign(held.size(), false);
+    checking = false;
+    check.reset();
+  }
+  void askAboutCandidate() {
+    forgetChecks();
+    if (!changed()) return;
+    if (holdChecks) {
+      held.push_back(true);
+      checking = true;
+    } else {
+      check = *kChords[*candidate].trigger != 0;
+    }
+  }
+  void stopRecording() {
+    if (std::exchange(recording, false)) askAboutCandidate();
+  }
   void openSetup() {
-    recording = false;
+    if (busy()) return;
+    stopRecording();
     candidate.reset();
+    forgetChecks();
     setup = enabled;
     enabled = true;
   }
@@ -169,7 +225,9 @@ bool agrees(const Model& model, const Sut& sut) {
            shortcut.value(QStringLiteral("changed")).toBool() == model.changed() &&
            shortcut.value(QStringLiteral("canSave")).toBool() == model.canSave() &&
            sut.snapShot().value(QStringLiteral("wizard")).isValid() == model.setup.has_value() &&
-           sut.portal()->captures == model.captures;
+           sut.portal()->captures == model.captures && sut.portal()->paused == model.recording &&
+           (shortcut.value(QStringLiteral("status")) == QStringLiteral("Checking shortcut…")) == model.checking &&
+           sut.snapShot().value(QStringLiteral("wizard")).toMap().value(QStringLiteral("busy")).toBool() == model.busy();
   });
 }
 
@@ -192,7 +250,7 @@ struct Panel : Step<Panel> {
   void apply(Model& model) const override {
     model.panel = open;
     // Leaving the panel ends recording.
-    if (!open) model.recording = false;
+    if (!open) model.stopRecording();
   }
   void act(Sut& sut) const {
     sut.native->controller<NavigationController>()->open(
@@ -208,7 +266,8 @@ struct Enable : Step<Enable> {
       model.openSetup();
       return;
     }
-    model.recording = false;
+    if (model.busy()) return;
+    model.stopRecording();
     model.setup.reset();
     model.enabled = false;
   }
@@ -225,10 +284,10 @@ struct OpenSetup : Step<OpenSetup> {
 struct CloseSetup : Step<CloseSetup> {
   bool completed = *rc::gen::arbitrary<bool>();
   void apply(Model& model) const override {
-    if (!model.setup) return;
+    if (!model.setup || model.busy()) return;
     if (!*model.setup && !completed) model.enabled = false;
     model.setup.reset();
-    model.recording = false;
+    model.stopRecording();
   }
   void act(Sut& sut) const { sut.dispatch("setup.close", {{QStringLiteral("completed"), completed}}); }
   void show(std::ostream& os) const override { os << "CloseSetup completed=" << completed; }
@@ -237,7 +296,12 @@ struct CloseSetup : Step<CloseSetup> {
 // Recording starts from the panel's shortcut row.
 struct RecordStart : Step<RecordStart> {
   void checkPreconditions(const Model& model) const override { RC_PRE(model.panel); }
-  void apply(Model& model) const override { model.recording = true; }
+  void apply(Model& model) const override {
+    if (model.busy()) return;
+    model.forgetChecks();
+    if (model.recording || !model.refusePause) model.recording = true;
+    else model.check = false;
+  }
   void act(Sut& sut) const { sut.dispatch("record.start"); }
   void show(std::ostream& os) const override { os << "RecordStart"; }
 };
@@ -247,8 +311,8 @@ struct Press : Step<Press> {
   bool repeat = *rc::gen::weightedElement<bool>({{4, false}, {1, true}});
   void apply(Model& model) const override {
     if (!model.recording || repeat) return;
-    model.recording = false;
     model.candidate = chord;
+    model.stopRecording();
   }
   void act(Sut& sut) const {
     sut.dispatch("record.key",
@@ -260,7 +324,7 @@ struct Press : Step<Press> {
 // Escape, or the row's cancel.
 struct StopRecording : Step<StopRecording> {
   bool escape = *rc::gen::arbitrary<bool>();
-  void apply(Model& model) const override { model.recording = false; }
+  void apply(Model& model) const override { model.stopRecording(); }
   void act(Sut& sut) const {
     if (escape) sut.dispatch("record.key", {{QStringLiteral("key"), int(Qt::Key_Escape)}, {QStringLiteral("modifiers"), 0}});
     else sut.dispatch("record.cancel");
@@ -273,6 +337,7 @@ struct Save : Step<Save> {
     if (!model.canSave()) return;
     model.saved = *model.candidate;
     model.candidate.reset();
+    model.forgetChecks();
   }
   void act(Sut& sut) const { sut.dispatch("shortcut.save"); }
   void show(std::ostream& os) const override { os << "Save"; }
@@ -280,8 +345,9 @@ struct Save : Step<Save> {
 
 struct Discard : Step<Discard> {
   void apply(Model& model) const override {
-    model.recording = false;
+    model.stopRecording();
     model.candidate.reset();
+    model.forgetChecks();
   }
   void act(Sut& sut) const { sut.dispatch("shortcut.discard"); }
   void show(std::ostream& os) const override { os << "Discard"; }
@@ -296,6 +362,46 @@ struct Shoot : Step<Shoot> {
   void show(std::ostream& os) const override { os << "Shoot"; }
 };
 
+// The desktop starts or stops making shortcut checks wait.
+struct HoldChecks : Step<HoldChecks> {
+  bool on = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override { model.holdChecks = on; }
+  void act(Sut& sut) const { sut.portal()->holdChecks = on; }
+  void show(std::ostream& os) const override { os << "HoldChecks " << on; }
+};
+
+// The desktop answers one held check, in any order.
+struct AnswerCheck : Step<AnswerCheck> {
+  int pick = *rc::gen::inRange(0, 8);
+  bool available = *rc::gen::arbitrary<bool>();
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.held.empty()); }
+  void apply(Model& model) const override {
+    const auto index = pick % model.held.size();
+    if (model.held[index]) {
+      model.checking = false;
+      model.check = available;
+    }
+    model.held.erase(model.held.begin() + index);
+  }
+  void act(Sut& sut) const { sut.portal()->answer(pick % sut.portal()->checks.size(), available); }
+  void show(std::ostream& os) const override { os << "AnswerCheck " << pick << " available=" << available; }
+};
+
+struct RefusePause : Step<RefusePause> {
+  bool on = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override { model.refusePause = on; }
+  void act(Sut& sut) const { sut.portal()->refusePause = on; }
+  void show(std::ostream& os) const override { os << "RefusePause " << on; }
+};
+
+// The desktop is asked again about capture, or answers.
+struct Work : Step<Work> {
+  bool on = *rc::gen::arbitrary<bool>();
+  void apply(Model& model) const override { model.working = on; }
+  void act(Sut& sut) const { sut.portal()->work(on); }
+  void show(std::ostream& os) const override { os << "Work " << on; }
+};
+
 }  // namespace
 
 class SnapShotProp : public QObject {
@@ -308,7 +414,8 @@ private slots:
       sut.reset();
       rc::state::check(Model{}, sut,
                        rc::state::gen::execOneOfWithArgs<Panel, Panel, Enable, OpenSetup, CloseSetup, RecordStart, RecordStart, Press,
-                                                         Press, Press, StopRecording, Save, Save, Discard, Shoot, Shoot>());
+                                                         Press, Press, StopRecording, Save, Save, Discard, Shoot, Shoot, HoldChecks, AnswerCheck, AnswerCheck,
+                                                         RefusePause, Work>());
     }));
   }
 };

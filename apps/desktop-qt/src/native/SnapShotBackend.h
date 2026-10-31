@@ -38,6 +38,8 @@ public:
     QString message;
     // The desktop can flash the captured window and animate it (never yet).
     bool feedbackAvailable = false;
+    // The desktop is being asked again (`refresh()`) and has not answered.
+    bool checking = false;
   };
 
   struct Shortcut {
@@ -49,6 +51,12 @@ public:
     QString message;
     // The desktop can be asked to show its shortcut permissions again.
     bool canRetry = true;
+  };
+
+  // Whether a shortcut can be the capture shortcut, and what to tell the user.
+  struct Check {
+    bool available = false;
+    QString message;
   };
 
   explicit SnapShotBackend(QObject* parent = nullptr) : QObject(parent) {}
@@ -64,6 +72,19 @@ public:
   virtual void bind(const QString& trigger) { Q_UNUSED(trigger); }
   // Lets the capture shortcut go.
   virtual void release() {}
+  // Whether `shortcut` can be held here: `done` answers once, maybe at once.
+  // Unavailable with no message is a check that failed. A portal names the
+  // shortcut's keys (portalTrigger) and confirms it only when it is bound.
+  virtual void checkShortcut(const QJsonObject& shortcut, std::function<void(const Check&)> done);
+  // Pauses the capture shortcut while a new one is recorded, or ends the
+  // pause; false when it could not, with the desktop's reason if it gave one.
+  // The controller ignores the shortcut while it records, so a backend only
+  // acts when it must let the OS go.
+  virtual bool pause(bool paused, QString* reason) {
+    Q_UNUSED(paused);
+    Q_UNUSED(reason);
+    return true;
+  }
   // Shows the desktop's shortcut permissions again.
   virtual void configure() {}
   // Captures (or has the user pick) a window: `captured` or `failed`.
