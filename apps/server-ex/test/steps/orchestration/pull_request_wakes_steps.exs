@@ -51,7 +51,7 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
     parent_id = World.thread_id(context, parent)
     at = World.iso_from_now(0)
 
-    context = World.named_thread(context, thread, "demo")
+    context = context |> World.named_thread(thread, "demo") |> Map.put(:task_parent, parent)
     child_id = World.thread_id(context, thread)
     task = "task-#{thread}"
 
@@ -110,6 +110,18 @@ defmodule HalC2.Steps.Orchestration.PullRequestWakes do
 
     :ok = HalC2.Orchestration.Delegation.settle_if_quiet(World.thread_id(context, thread))
     context |> Map.delete(:working) |> check()
+  end
+
+  # The task ended, but the MC stopped before the child's links reached its caller.
+  step "the task of {string} ended without handing its pull requests over",
+       %{args: [thread]} = context do
+    {context, at} = tick(context)
+
+    context
+    |> World.add_run(thread, "completed", at)
+    |> World.put_entity(context.task_parent, "subagent", "task-#{thread}", %{
+      "s" => %{"status" => "completed", "completedAt" => at}
+    })
   end
 
   step "pull request {string} has failing checks, a conflict and a comment from its owner",

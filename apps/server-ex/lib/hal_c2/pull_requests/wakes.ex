@@ -8,8 +8,9 @@ defmodule HalC2.PullRequests.Wakes do
   A thread owns the links it shows while it is neither settled nor archived. A
   delegated task's child owns them only while it works on its task: once it is quiet
   its task ends and its links pass to its caller with what it heard of them
-  (`HalC2.Orchestration.Delegation`), so it is not woken beside whoever took the
-  work over. Each link
+  (`HalC2.Orchestration.Delegation.hand_over_pull_requests/1`, which a check also
+  calls, so a handover cut short completes), so it is not woken beside whoever took
+  the work over. Each link
   remembers what the thread was last told of it (`heard`); a snapshot from
   `HalC2.PullRequests.Sync` that differs from it in a way worth acting on is news
   (`changes/2`). A link's first snapshot is its baseline. A settled or archived thread
@@ -126,6 +127,8 @@ defmodule HalC2.PullRequests.Wakes do
         :woken
 
       other ->
+        # A delegated child done with its task kept what it heard for its caller.
+        Delegation.hand_over_pull_requests(thread_id)
         other
     end
   end

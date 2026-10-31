@@ -9,8 +9,8 @@ defmodule HalC2.PullRequestWakesPropTest do
 
   - a check wakes it at most once, and only while it is neither settled nor archived
     and has no run working; nothing else wakes it;
-  - a delegated task's child is never woken: idle, it has nothing left of its task, so
-    what it misses is kept for its caller, who takes its links over;
+  - a delegated task's child is never woken: idle after a run, it has nothing left of
+    its task, so a check hands its links to its caller, with what it missed;
   - a wake tells what changed since the thread was last told (`news/2`), all of it,
     and never what it already heard, a link's first snapshot, or a restart;
   - a check that finds news on an idle thread that is present wakes it, unless every
@@ -206,8 +206,12 @@ defmodule HalC2.PullRequestWakesPropTest do
   def next_state(state, _result, {:call, _, :restart, []}), do: state
 
   # Woken, or yielding to settlement, the thread has heard the news either way.
-  def next_state(state, _result, {:call, _, :check, []}),
-    do: %{state | links: Enum.map(state.links, fn {n, link} -> {n, hear(state, link)} end)}
+  # A child done with its task has handed every link over.
+  def next_state(state, _result, {:call, _, :check, []}) do
+    if handed_over?(state),
+      do: %{state | links: []},
+      else: %{state | links: Enum.map(state.links, fn {n, link} -> {n, hear(state, link)} end)}
+  end
 
   # A first snapshot is a baseline; away the thread hears nothing more; busy, news
   # waits and the rest is heard.
@@ -282,10 +286,13 @@ defmodule HalC2.PullRequestWakesPropTest do
       Enum.all?(state.links, fn {_, link} -> link.snapshot && link.snapshot.state != "open" end)
   end
 
-  def postcondition(state, {:call, _, :check, []}, {result, wakes, overridden?}) do
+  def postcondition(state, {:call, _, :check, []}, {result, wakes, overridden?, shown}) do
     expected = pending(state)
 
     cond do
+      handed_over?(state) ->
+        result == :quiet and wakes == [] and shown == []
+
       state.settled or state.archived or state.busy or state.delegated or expected == [] ->
         result == :quiet and wakes == []
 
@@ -297,7 +304,9 @@ defmodule HalC2.PullRequestWakesPropTest do
     end
   end
 
-  def postcondition(_state, _call, {_result, wakes, _}), do: wakes == []
+  def postcondition(_state, _call, {_result, wakes, _, _}), do: wakes == []
+
+  defp handed_over?(state), do: state.delegated and not state.busy and state.runs > 0
 
   # The wake names each pull request with news, and tells all of it.
   defp told?(wake, expected) do
@@ -321,6 +330,17 @@ defmodule HalC2.PullRequestWakesPropTest do
   # --- the real side ----------------------------------------------------------------
 
   defp setup do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "thread.create",
+        "threadId" => "caller",
+        "projectId" => "project-1",
+        "title" => "Caller",
+        "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-5.4"},
+        "runtimeMode" => "full-access",
+        "interactionMode" => "default"
+      })
+
     {:ok, _} =
       HalC2.Orchestration.dispatch(%{
         "type" => "thread.create",
@@ -436,13 +456,19 @@ defmodule HalC2.PullRequestWakesPropTest do
 
   def check, do: observe(fn -> Wakes.check(@thread) end)
 
-  # The command's result, the wakes it sent, and whether the user decided the thread's
-  # settledness by hand, which keeps it from settling on its own.
+  # The command's result, the wakes it sent, whether the user decided the thread's
+  # settledness by hand, which keeps it from settling on its own, and the numbers of
+  # the links it shows.
   defp observe(fun) do
     before = wakes()
     result = fun.()
     thread = StreamState.get(stream(), "thread")[@thread]
-    {result, wakes() -- before, thread["settledOverride"] != nil}
+
+    shown =
+      for link <- HalC2.Projection.PullRequests.visible(HalC2.Projection.PullRequests.of(thread)),
+          do: link["number"]
+
+    {result, wakes() -- before, thread["settledOverride"] != nil, shown}
   end
 
   defp wakes do
