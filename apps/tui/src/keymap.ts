@@ -378,6 +378,7 @@ export const KEYMAP_LAYERS = {
     "space, x": "space.tick",
     c: "space.comment",
     l: "space.link",
+    u: "space.update",
     y: "space.export",
     i: "space.import",
     t: "space.fromThread",

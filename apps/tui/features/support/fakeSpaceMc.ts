@@ -302,6 +302,25 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     return orderBetween(blocks[index]!.order, blocks[index + 1]?.order ?? null);
   };
 
+  // --- a page's update ---
+
+  const updatedPage = (spaceId: string, pageId: string) => {
+    const found = livePage(spaceId, pageId);
+    if (!found.schedule) refuse("not_found", "This page has no update.");
+    return found;
+  };
+
+  const generatedOf = (spaceId: string, pageId: string) =>
+    [...table(spaceId, "block").values()].find(
+      (block) => block.pageId === pageId && block.kind === "generated",
+    );
+
+  // `schedule` arrives whole, as the MC's does.
+  const showUpdate = (spaceId: string, pageId: string, fields: Entity) => {
+    const schedule = { ...table(spaceId, "page").get(pageId)?.schedule, ...fields };
+    commit(`space:${spaceId}`, [["page", pageId, { s: { schedule } }]]);
+  };
+
   // --- writes ---
 
   const newPage = (spaceId: string, title: unknown, parent: unknown, extra: Entity = {}) => {
@@ -515,6 +534,74 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
         agent,
       );
     },
+    // A page's update (lib/hal_c2/space/schedule.ex). The fake has no clock to wait on,
+    // so a run ends within its `runNow`.
+    "space.page.schedule.set": (input) => {
+      const found = livePage(input.spaceId, input.pageId);
+      const instruction = name(input.instruction, "A page's update needs an instruction.");
+      showUpdate(input.spaceId, found.id, {
+        instruction,
+        cadence: input.cadence,
+        enabled: found.schedule?.enabled ?? true,
+        nextRunAt: new Date(clock + 3_600_000).toISOString(),
+        lastRunStatus: found.schedule?.lastRunStatus ?? "never",
+      });
+      return { page: table(input.spaceId, "page").get(found.id) };
+    },
+    "space.page.schedule.setEnabled": (input) => {
+      const found = updatedPage(input.spaceId, input.pageId);
+      showUpdate(input.spaceId, found.id, {
+        enabled: input.enabled === true,
+        nextRunAt: input.enabled === true ? new Date(clock + 3_600_000).toISOString() : null,
+      });
+      return { page: table(input.spaceId, "page").get(found.id) };
+    },
+    "space.page.schedule.runNow": (input, by) => {
+      const found = updatedPage(input.spaceId, input.pageId);
+      const generation = mc.generation;
+      const at = now();
+      if (generation.kind !== "available") {
+        showUpdate(input.spaceId, found.id, {
+          lastRunAt: at,
+          lastRunStatus: "failed",
+          lastRunError:
+            generation.kind === "failed" ? "the model is overloaded" : generation.message,
+        });
+        return { page: table(input.spaceId, "page").get(found.id) };
+      }
+      const held = generatedOf(input.spaceId, found.id);
+      const part: Entity = held
+        ? { ...held, text: generation.markdown, updatedAt: at }
+        : {
+            ...newBlock(
+              input.spaceId,
+              found.id,
+              { kind: "paragraph", text: generation.markdown },
+              orderAt(input.spaceId, found.id, undefined),
+              by,
+            ),
+            kind: "generated",
+          };
+      commit(`space:${input.spaceId}`, [
+        ["block", part.id, { s: part }],
+        ["page", found.id, { s: { writtenAt: at } }],
+      ]);
+      showUpdate(input.spaceId, found.id, {
+        lastRunAt: at,
+        lastRunStatus: "succeeded",
+        lastRunError: null,
+      });
+      return { page: table(input.spaceId, "page").get(found.id) };
+    },
+    "space.page.schedule.remove": (input) => {
+      const found = updatedPage(input.spaceId, input.pageId);
+      const held = generatedOf(input.spaceId, found.id);
+      commit(`space:${input.spaceId}`, [
+        ...(held ? ([["block", held.id, { s: { kind: "paragraph" } }]] satisfies Change[]) : []),
+        ["page", found.id, { s: { schedule: null, writtenAt: null } }],
+      ]);
+      return { page: table(input.spaceId, "page").get(found.id) };
+    },
     "space.block.insert": (input, by) => {
       const target = livePage(input.spaceId, input.pageId);
       const order = orderAt(input.spaceId, target.id, input.afterBlockId);
@@ -524,6 +611,9 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     },
     "space.block.update": (input, by) => {
       const found = liveBlock(input.spaceId, input.blockId);
+      if (found.kind === "generated") {
+        refuse("invalid", "What a page's update wrote cannot be edited by hand.");
+      }
       if (typeof input.text !== "string") refuse("invalid", "A block's text is a string.");
       commit(`space:${input.spaceId}`, [
         ["block", found.id, { s: { text: input.text, updatedBy: by, updatedAt: now() } }],
