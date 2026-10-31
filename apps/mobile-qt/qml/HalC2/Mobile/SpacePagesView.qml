@@ -6,7 +6,7 @@ import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
-// The pages of the open Space as a tree, its trash under them.
+// The pages of the open Space as a tree, its decks and its trash under them.
 ColumnLayout {
     id: view
 
@@ -82,13 +82,53 @@ ColumnLayout {
                 text: view.emptyText
             }
 
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.topMargin: 16
+                Layout.rightMargin: 4
+                spacing: 8
+
+                Label {
+                    objectName: "spaceDecks"
+                    Layout.fillWidth: true
+                    text: qsTr("Decks")
+                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                    font.weight: Font.DemiBold
+                }
+
+                MobileButton {
+                    objectName: "spaceNewDeck"
+                    subtle: true
+                    text: qsTr("New deck")
+                    onClicked: view.screen.askNewDeck()
+                }
+            }
+
+            Repeater {
+                model: Spaces.decks
+
+                delegate: SpaceListRow {
+                    required property var model
+
+                    objectName: "spaceDeck:" + title
+                    Layout.fillWidth: true
+                    title: model.title
+                    iconName: "play"
+                    menuName: "spaceDeckMenu:" + model.title
+                    onClicked: view.screen.openDeck(model.id)
+                    onMenuRequested: view.screen.deckMenu(model.id, model.title)
+                }
+            }
+
             Label {
                 objectName: "spaceTrash"
                 Layout.fillWidth: true
                 Layout.leftMargin: 16
                 Layout.topMargin: 16
                 Layout.bottomMargin: 4
-                visible: Spaces.trash.count > 0
+                visible: Spaces.trash.count > 0 || Spaces.deckTrash.count > 0
                 text: qsTr("Trash")
                 color: Theme.palette.color("textMuted", "#a1a1aa")
                 font.pixelSize: Math.round(13 * Theme.fontScale)
@@ -110,6 +150,22 @@ ColumnLayout {
                     menuName: "spaceTrashMenu:" + model.title
                     onClicked: view.screen.openPage(model.id)
                     onMenuRequested: view.screen.trashMenu(model.id)
+                }
+            }
+
+            Repeater {
+                model: Spaces.deckTrash
+
+                delegate: SpaceListRow {
+                    required property var model
+
+                    objectName: "spaceDeckTrashRow:" + title
+                    Layout.fillWidth: true
+                    title: model.title
+                    iconName: "trash"
+                    menuName: "spaceDeckTrashMenu:" + model.title
+                    onClicked: view.screen.openDeck(model.id)
+                    onMenuRequested: view.screen.deckTrashMenu(model.id)
                 }
             }
         }

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import "../../qml/HalC2/Mobile"
 import HalC2.Shell
@@ -311,6 +312,164 @@ Item {
             screen.destroy();
             tryCompare(Shell, "dispatchCount", 3);
             compare(dispatched("space.block.update")[0].text, "Final");
+        }
+
+        function deckState(more) {
+            return Object.assign({
+                decks: [{ id: "d1", title: "Pitch" }],
+                slides: [{ id: "s1", title: "One", body: "" }, { id: "s2", title: "Two", body: "" }, { id: "s3", title: "Three", body: "" }],
+                deck: { id: "d1", title: "Pitch", trashed: false }
+            }, more ?? {});
+        }
+
+        function test_aNewDeckOpensWhenItArrives() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.askNewDeck();
+            dialogOf(screen).then("Pitch");
+            compare(dispatched("space.deck.create")[0].title, "Pitch");
+            compare(screen.view, "pages");
+            Spaces.deckId = "d9";
+            compare(screen.view, "deck");
+            compare(screen.openedDeckId, "d9");
+        }
+
+        function test_aDeckMadeFromAPageOpensWhenItArrives() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.pageMenu("p1", "Roadmap", "");
+            sheetOf(screen).choose("deck");
+            compare(dispatched("space.deck.createFromPage")[0].pageId, "p1");
+            Spaces.deckId = "d9";
+            compare(screen.view, "deck");
+        }
+
+        function test_aRefusedDeckLeavesTheUserWhereTheyWere() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.askNewDeck();
+            dialogOf(screen).then("Pitch");
+            publishSpace({ error: "No." });
+            Spaces.deckId = "d9";
+            compare(screen.view, "pages");
+        }
+
+        function test_backLeavesTheDeckForTheListOfPagesAndDecks() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            compare(dispatched("space.selectDeck")[0].deckId, "d1");
+            compare(screen.view, "deck");
+            verify(screen.stepBack());
+            compare(screen.view, "pages");
+        }
+
+        function test_aDeckThatGoesAwayLeadsBackToTheList() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            Spaces.deckId = "";
+            compare(screen.view, "pages");
+        }
+
+        function test_backLeavesThePresenterBeforeTheDeck() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            Spaces.presenting = true;
+            verify(screen.stepBack());
+            compare(dispatched("space.deck.leave").length, 1);
+            compare(screen.view, "deck");
+            Spaces.presenting = false;
+            verify(screen.stepBack());
+            compare(screen.view, "pages");
+        }
+
+        function test_aTapOnTheLeftThirdOfThePresenterGoesBack() {
+            const screen = makeScreen(deckState({ presenting: true, slide: { id: "s2", title: "Two", body: "" }, slideNumber: 2, slideCount: 3 }));
+            const tap = findChild(Overlay.overlay ?? screen, "spacePresenterTap") ?? findChild(screen, "spacePresenterTap");
+            tryVerify(() => tap.visible && tap.width > 0);
+            mouseClick(tap, tap.width / 6, tap.height / 2);
+            compare(dispatched("space.deck.step")[0].by, -1);
+            mouseClick(tap, tap.width * 5 / 6, tap.height / 2);
+            compare(dispatched("space.deck.step")[1].by, 1);
+        }
+
+        function test_aDeckScreenMadeAgainIsBackOnItsStep() {
+            const first = makeScreen(deckState());
+            first.openSpace("s1");
+            first.openDeck("d1");
+            const step = first.step;
+            compare(makeScreen(deckState(), { resumeStep: step }).view, "deck");
+            compare(makeScreen(deckState({ deck: { id: "d2", title: "Other", trashed: false } }), { resumeStep: step }).view, "pages");
+        }
+
+        function test_aSlideMovesToTheSlotOneRowAway_data() {
+            return [
+                { tag: "up to the top", row: 1, choice: "up", after: "" },
+                { tag: "up", row: 2, choice: "up", after: "s1" },
+                { tag: "down", row: 0, choice: "down", after: "s2" }
+            ];
+        }
+
+        function test_aSlideMovesToTheSlotOneRowAway(data) {
+            const screen = makeScreen(deckState());
+            const ids = ["s1", "s2", "s3"];
+            screen.slideMenu(data.row, ids[data.row]);
+            sheetOf(screen).choose(data.choice);
+            const move = dispatched("space.slide.move")[0];
+            compare(move.slideId, ids[data.row]);
+            compare(move.afterSlideId, data.after);
+        }
+
+        function test_aSlideCannotMovePastTheEnds() {
+            const screen = makeScreen(deckState());
+            const enabled = id => sheetOf(screen).rows.find(row => row.id === id).enabled;
+            screen.slideMenu(0, "s1");
+            compare(enabled("up"), false);
+            screen.slideMenu(2, "s3");
+            compare(enabled("down"), false);
+        }
+
+        function test_aDeckInTheTrashIsOnlyRead() {
+            const screen = makeScreen(deckState({ decks: [], deckTrash: [{ id: "d1", title: "Pitch", trashedAt: "2026-10-01T10:00:00Z" }], deck: { id: "d1", title: "Pitch", trashed: true } }));
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, "spaceSlideTitle:0") !== null);
+            verify(findChild(screen, "spaceDeckTrashedNotice").visible);
+            verify(!findChild(screen, "spaceAddSlide").visible);
+            verify(!findChild(screen, "spaceDeckPresent").visible);
+            verify(findChild(screen, "spaceSlideTitle:0").readOnly);
+            verify(!findChild(screen, "spaceSlideMenu:0").visible);
+            screen.deckTrashMenu("d1");
+            sheetOf(screen).choose("restore");
+            compare(dispatched("space.deck.restore")[0].deckId, "d1");
+        }
+
+        function test_aDeckInTheListOffersPresentingAndTheTrash() {
+            const screen = makeScreen(deckState());
+            screen.deckMenu("d1", "Pitch");
+            sheetOf(screen).choose("present");
+            compare(dispatched("space.deck.present")[0].deckId, "d1");
+            screen.deckMenu("d1", "Pitch");
+            sheetOf(screen).choose("trash");
+            compare(dispatched("space.deck.trash")[0].deckId, "d1");
+        }
+
+        function test_whatWasWrittenOnASlideGoesToTheMcWhenTheEditorLosesFocus() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, "spaceSlideBody:1") !== null);
+            const editor = findChild(screen, "spaceSlideBody:1");
+            editor.forceActiveFocus();
+            verify(findChild(screen, "spaceDeckDone").visible);
+            editor.text = "More to say";
+            screen.stepBack();
+            const update = dispatched("space.slide.update")[0];
+            compare(update.slideId, "s2");
+            compare(update.body, "More to say");
+            verify(!("title" in update));
         }
     }
 }
