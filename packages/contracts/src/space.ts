@@ -9,6 +9,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ScheduledTaskRunStatus, ScheduledTaskUpsertSchedule } from "./scheduledTask.ts";
 
 /**
  * Spaces hold Pages that people and agents write together. Clients read them
@@ -21,10 +22,11 @@ export const SPACES_STREAM_ID = "spaces";
 
 export const spaceStreamId = (spaceId: SpaceId) => `space:${spaceId}`;
 
-/** Who wrote something: the user, or the agent of a thread. */
+/** Who wrote something: the user, the agent of a thread, or a page's own update. */
 export const SpaceAuthor = Schema.Union([
   Schema.Struct({ type: Schema.Literal("user") }),
   Schema.Struct({ type: Schema.Literal("agent"), threadId: ThreadId }),
+  Schema.Struct({ type: Schema.Literal("schedule") }),
 ]);
 export type SpaceAuthor = typeof SpaceAuthor.Type;
 
@@ -36,6 +38,23 @@ export const Space = Schema.Struct({
 });
 export type Space = typeof Space.Type;
 
+/**
+ * What a page shows of its update: the MC's scheduler keeps it and mirrors it here, so
+ * a client changes it through `space.page.schedule.*` and never writes it.
+ */
+export const SpacePageSchedule = Schema.Struct({
+  instruction: TrimmedNonEmptyString,
+  cadence: ScheduledTaskUpsertSchedule,
+  /** False while the update is paused. */
+  enabled: Schema.Boolean,
+  /** Null while paused, or while the page is in the trash. */
+  nextRunAt: Schema.NullOr(IsoDateTime),
+  lastRunAt: Schema.NullOr(IsoDateTime),
+  lastRunStatus: ScheduledTaskRunStatus,
+  lastRunError: Schema.NullOr(Schema.String),
+});
+export type SpacePageSchedule = typeof SpacePageSchedule.Type;
+
 export const SpacePage = Schema.Struct({
   id: SpacePageId,
   spaceId: SpaceId,
@@ -45,18 +64,31 @@ export const SpacePage = Schema.Struct({
   sourceThreadId: Schema.NullOr(ThreadId),
   /** Set while the page is in the trash. Its subpages are hidden with it. */
   trashedAt: Schema.NullOr(IsoDateTime),
+  /** The page's update, if it has one. */
+  schedule: Schema.optional(Schema.NullOr(SpacePageSchedule)),
+  /** When a run of its update last wrote the page's generated part. */
+  writtenAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 export type SpacePage = typeof SpacePage.Type;
 
-export const SpaceBlockKind = Schema.Literals([
+/** The kinds of block that can be written by hand. */
+export const SpaceWritableBlockKind = Schema.Literals([
   "paragraph",
   "heading",
   "checklist",
   "callout",
   "subpage_link",
 ]);
+export type SpaceWritableBlockKind = typeof SpaceWritableBlockKind.Type;
+
+/**
+ * A `generated` block is the marked part of a page that updates itself: at most one on
+ * a page, its text is the Markdown of the last run, and only a run writes it. It can be
+ * moved, deleted and commented on.
+ */
+export const SpaceBlockKind = Schema.Literals([...SpaceWritableBlockKind.literals, "generated"]);
 export type SpaceBlockKind = typeof SpaceBlockKind.Type;
 
 export const SpaceBlock = Schema.Struct({
@@ -177,6 +209,32 @@ export const SpacePageCreateFromThreadInput = Schema.Struct({
 });
 export type SpacePageCreateFromThreadInput = typeof SpacePageCreateFromThreadInput.Type;
 
+// A page's update
+
+/**
+ * Gives a live page an instruction and a cadence, or changes them. Each run writes the
+ * page's generated part. A paused update stays paused.
+ */
+export const SpacePageScheduleSetInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  instruction: TrimmedNonEmptyString,
+  cadence: ScheduledTaskUpsertSchedule,
+});
+export type SpacePageScheduleSetInput = typeof SpacePageScheduleSetInput.Type;
+
+/** Pauses or resumes a live page's update. Resuming does not run what was missed. */
+export const SpacePageScheduleSetEnabledInput = Schema.Struct({
+  spaceId: SpaceId,
+  pageId: SpacePageId,
+  enabled: Schema.Boolean,
+});
+export type SpacePageScheduleSetEnabledInput = typeof SpacePageScheduleSetEnabledInput.Type;
+
+// `space.page.schedule.runNow` starts a run and answers at once; the page shows how it
+// goes. `space.page.schedule.remove` ends the update and leaves what it last wrote as
+// ordinary blocks. Both take a `SpacePageRef`.
+
 // Blocks
 
 /**
@@ -188,7 +246,7 @@ const AfterBlockId = Schema.optional(Schema.NullOr(SpaceBlockId));
 export const SpaceBlockInsertInput = Schema.Struct({
   spaceId: SpaceId,
   pageId: SpacePageId,
-  kind: SpaceBlockKind,
+  kind: SpaceWritableBlockKind,
   text: Schema.optional(Schema.String),
   checked: Schema.optional(Schema.Boolean),
   /** Required for `subpage_link`, which shows that page's title. */

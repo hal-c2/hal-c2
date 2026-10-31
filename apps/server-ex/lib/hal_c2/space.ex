@@ -150,9 +150,24 @@ defmodule HalC2.Space do
 
   def rename_page(space_id, id, title), do: transact(space_id, &Pages.rename(&1, id, title))
   def move_page(space_id, id, parent_id), do: transact(space_id, &Pages.move(&1, id, parent_id))
-  def trash_page(space_id, id), do: transact(space_id, &Pages.trash(&1, id))
-  def restore_page(space_id, id), do: transact(space_id, &Pages.restore(&1, id))
-  def delete_page(space_id, id), do: transact(space_id, &Pages.delete(&1, id))
+
+  def trash_page(space_id, id),
+    do: transact(space_id, &Pages.trash(&1, id)) |> settle_schedules(space_id)
+
+  def restore_page(space_id, id),
+    do: transact(space_id, &Pages.restore(&1, id)) |> settle_schedules(space_id)
+
+  def delete_page(space_id, id),
+    do: transact(space_id, &Pages.delete(&1, id)) |> settle_schedules(space_id)
+
+  # The trash decides whether a page's update runs, and the scheduler is told after the
+  # stream's step is over: it writes to this stream, so it cannot be waited on inside one.
+  defp settle_schedules({:ok, _} = reply, space_id) do
+    :ok = HalC2.ScheduledTasks.reconcile_pages(space_id)
+    reply
+  end
+
+  defp settle_schedules(refused, _space_id), do: refused
 
   def insert_block(space_id, page_id, spec, after_id \\ :last, author \\ @user),
     do: transact(space_id, &Blocks.insert(&1, page_id, spec, after_id, author))
@@ -248,8 +263,8 @@ defmodule HalC2.Space do
     end)
   end
 
-  # A link to a page this Space does not have is kept as a paragraph.
-  defp links(state, %{"kind" => "subpage_link"} = spec) do
+  @doc "`spec` as a block of this Space: a link to a page it does not have is a paragraph."
+  def links(state, %{"kind" => "subpage_link"} = spec) do
     if Pages.get(state, spec["linkedPageId"]),
       do: spec,
       else: %{
@@ -260,7 +275,7 @@ defmodule HalC2.Space do
       }
   end
 
-  defp links(_state, spec), do: spec
+  def links(_state, spec), do: spec
 
   @doc """
   A new page summarising a thread of this MC, written by text generation in the

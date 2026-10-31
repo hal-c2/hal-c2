@@ -6,6 +6,11 @@ defmodule HalC2.Space.Blocks do
   A block's place is its `order` key (`HalC2.Space.Order`): inserting or moving one
   writes that block alone. `afterBlockId` places it: after that block, first when
   nil, last when left out (`:last`).
+
+  A block of the kind `generated` is the marked part of a page that updates itself
+  (`HalC2.Space.Schedule`): a page has at most one, its text is the Markdown of the last
+  run, and only `write_generated/4` writes it. Anyone may move or delete it or comment on
+  it, but its text cannot be edited and it cannot be inserted.
   """
 
   alias HalC2.Orchestration.Entities
@@ -14,7 +19,9 @@ defmodule HalC2.Space.Blocks do
 
   @kinds ~w(paragraph heading checklist callout subpage_link)
 
-  @doc "The kinds of block a page holds."
+  @generated "generated"
+
+  @doc "The kinds of block a page holds that can be written by hand."
   def kinds, do: @kinds
 
   @doc "A page's blocks in order."
@@ -88,15 +95,19 @@ defmodule HalC2.Space.Blocks do
   """
   def edit(state, id, text, checked, author) do
     change(state, id, author, fn block ->
-      with {:ok, text} <- text_change(text),
+      with {:ok, text} <- text_change(block, text),
            {:ok, tick} <- tick_change(block, checked),
            do: {:ok, Map.merge(text, tick)}
     end)
   end
 
-  defp text_change(nil), do: {:ok, %{}}
-  defp text_change(text) when is_binary(text), do: {:ok, %{"text" => text}}
-  defp text_change(_), do: {:error, :invalid, "A block's text is a string."}
+  defp text_change(_block, nil), do: {:ok, %{}}
+
+  defp text_change(%{"kind" => @generated}, _text),
+    do: {:error, :invalid, "What a page's update wrote cannot be edited by hand."}
+
+  defp text_change(_block, text) when is_binary(text), do: {:ok, %{"text" => text}}
+  defp text_change(_block, _), do: {:error, :invalid, "A block's text is a string."}
 
   defp tick_change(_block, nil), do: {:ok, %{}}
 
@@ -127,6 +138,79 @@ defmodule HalC2.Space.Blocks do
       {[{"block", id, Patch.delete()} | comments], {:ok, id}}
     end
     |> Pages.refused()
+  end
+
+  # --- the generated part -----------------------------------------------------------
+
+  @doc """
+  A run's Markdown as the generated part of a live page, and no other block: the
+  page's generated block is rewritten, or made last on the page when it has none.
+  Replies with the block.
+  """
+  def write_generated(state, page_id, markdown, author) do
+    at = Entities.now()
+
+    case generated(state, page_id) do
+      nil ->
+        block = %{
+          "id" => HalC2.Environment.uuid4(),
+          "pageId" => page_id,
+          "kind" => @generated,
+          "text" => markdown,
+          "checked" => false,
+          "linkedPageId" => nil,
+          "order" => Order.between(state |> last_order(page_id), nil),
+          "createdBy" => author,
+          "updatedBy" => author,
+          "createdAt" => at,
+          "updatedAt" => at
+        }
+
+        {[{"block", block["id"], Patch.diff(nil, block)}], {:ok, block}}
+
+      block ->
+        next = Map.merge(block, %{"text" => markdown, "updatedBy" => author, "updatedAt" => at})
+        {[{"block", block["id"], Patch.diff(block, next)}], {:ok, next}}
+    end
+  end
+
+  @doc """
+  Turns a page's generated part into ordinary blocks in the same place, from `specs`
+  (as `insert_all/5` takes them). Its first block keeps the id, and so the comments.
+  """
+  def release_generated(state, page_id, specs, author) do
+    case {generated(state, page_id), specs} do
+      {nil, _} ->
+        []
+
+      {block, []} ->
+        {changes, _} = delete(state, block["id"])
+        changes
+
+      {block, [first | rest]} ->
+        next =
+          Map.merge(block, %{
+            "kind" => first["kind"],
+            "text" => first["text"] || "",
+            "checked" => first["kind"] == "checklist" and first["checked"] == true,
+            "linkedPageId" => first["linkedPageId"],
+            "updatedBy" => author,
+            "updatedAt" => Entities.now()
+          })
+
+        {inserted, _} = insert_all(state, page_id, rest, block["id"], author)
+        [{"block", block["id"], Patch.diff(block, next)} | inserted]
+    end
+  end
+
+  defp generated(state, page_id),
+    do: Enum.find(of_page(state, page_id), &(&1["kind"] == @generated))
+
+  defp last_order(state, page_id) do
+    case List.last(of_page(state, page_id)) do
+      nil -> nil
+      block -> block["order"]
+    end
   end
 
   # --- comments ---------------------------------------------------------------------

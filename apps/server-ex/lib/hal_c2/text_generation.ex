@@ -157,6 +157,23 @@ defmodule HalC2.TextGeneration do
     end
   end
 
+  @doc """
+  What a run of a page's update writes into the page (`HalC2.Space.Schedule`), from
+  the global settings and in no checkout: `%{"markdown"}`. `{:error, {:unavailable,
+  message}}` when no provider can write it.
+  """
+  def page_update(title, instruction, page, threads) do
+    case usable_selection(nil, :text) do
+      {:ok, selection} ->
+        prompt = Prompts.page_update(title, instruction, page, threads)
+        schema = %{"markdown" => :string}
+        in_dir(nil, &run(selection, &1, prompt, schema, isolate: true))
+
+      {:error, message} ->
+        {:error, {:unavailable, message}}
+    end
+  end
+
   # --- model selection ---------------------------------------------------------------
 
   @doc "The settings that apply to `cwd`: its project's, when it is in one."

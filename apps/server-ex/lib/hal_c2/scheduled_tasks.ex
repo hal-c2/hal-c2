@@ -18,6 +18,14 @@ defmodule HalC2.ScheduledTasks do
   never comes back cannot keep its task `running` for good. A task that starts
   a new thread per run is given that thread's id up front, so the same cleanup
   finds its thread too.
+
+  A task can keep a Space page up to date instead (`HalC2.Space.Schedule`): it has a
+  `page` target, and its run writes the page rather than sending a prompt. Such a task
+  is seen and managed on its page, so `list/1` and watchers leave it out; every change
+  to it is shown on the page's `schedule` field in the Space's stream. While its page is
+  in the trash the task is `held`: it has no next run, and letting go of it aims the
+  next run afresh, so what it missed does not run. Nothing that holds a stream's
+  transaction may call this process, because it writes to those streams.
   """
 
   use GenServer
@@ -50,6 +58,25 @@ defmodule HalC2.ScheduledTasks do
   def run_now(%{"id" => id}),
     do: GenServer.call(__MODULE__, {:run_now, id}, run_timeout_ms() + 5_000)
 
+  @doc "The tasks that keep a page up to date."
+  def page_tasks, do: GenServer.call(__MODULE__, :page_tasks)
+
+  @doc """
+  Saves the task of a page (`id`, `page`, `prompt`, `schedule`): a new one starts
+  enabled, a changed one stays paused or running as it is.
+  """
+  def put_page_task(input), do: GenServer.call(__MODULE__, {:put_page_task, input})
+
+  @doc "Starts a task's run and replies at once, with its status `running`."
+  def start(%{"id" => id}), do: GenServer.call(__MODULE__, {:start, id})
+
+  @doc "Holds, lets go of, or deletes the page tasks of a Space by what became of their pages."
+  def reconcile_pages(space_id) do
+    if Process.whereis(__MODULE__),
+      do: GenServer.call(__MODULE__, {:reconcile_pages, space_id}),
+      else: :ok
+  end
+
   def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
   def unsubscribe(pid, ref \\ nil), do: GenServer.cast(__MODULE__, {:unsubscribe, pid, ref})
 
@@ -74,15 +101,62 @@ defmodule HalC2.ScheduledTasks do
       end
 
     state = %{path: path, tasks: tasks, runs: %{}, watchers: %{}, timer: nil}
-    {:ok, schedule(state)}
+    {:ok, state, {:continue, :pages}}
+  end
+
+  # A page trashed or deleted as the MC stopped is settled before anything can run, and
+  # a run the stop cut off is shown as failed on its page.
+  @impl true
+  def handle_continue(:pages, state) do
+    {:noreply, state |> reconcile(page_tasks(state)) |> changed()}
   end
 
   @impl true
-  def handle_call(:list, _from, state), do: {:reply, sorted(state), state}
+  def handle_call(:list, _from, state), do: {:reply, public(state), state}
+
+  def handle_call(:page_tasks, _from, state), do: {:reply, page_tasks(state), state}
+
+  def handle_call({:put_page_task, input}, _from, state) do
+    existing = state.tasks[input["id"]]
+
+    if invalid_schedule?(input["schedule"]) do
+      {:reply, error("The schedule is not valid.", input["id"]), state}
+    else
+      enabled = if existing, do: existing["enabled"], else: true
+
+      task =
+        input
+        |> Map.merge(%{"enabled" => enabled, "creationSource" => "space"})
+        |> build(existing, now())
+        |> Map.put("page", input["page"])
+
+      state = state |> put(task) |> changed()
+      {:reply, {:ok, %{"task" => state.tasks[task["id"]]}}, state}
+    end
+  end
+
+  def handle_call({:start, id}, _from, state) do
+    cond do
+      state.tasks[id] == nil ->
+        {:reply, error("Schedule task not found.", id), state}
+
+      running?(state, id) ->
+        {:reply, error("Schedule task is already running.", id), state}
+
+      true ->
+        state = start_run(state, state.tasks[id], "manual", nil)
+        {:reply, {:ok, %{"task" => state.tasks[id]}}, state}
+    end
+  end
+
+  def handle_call({:reconcile_pages, space_id}, _from, state) do
+    tasks = Enum.filter(page_tasks(state), &(&1["page"]["spaceId"] == space_id))
+    {:reply, :ok, state |> reconcile(tasks) |> changed()}
+  end
 
   def handle_call({:subscribe, pid, ref}, _from, state) do
     watchers = HalC2.Watchers.add(state.watchers, pid, ref)
-    {:reply, {:ok, sorted(state)}, %{state | watchers: watchers}}
+    {:reply, {:ok, public(state)}, %{state | watchers: watchers}}
   end
 
   def handle_call({:upsert, input}, _from, state) do
@@ -251,7 +325,8 @@ defmodule HalC2.ScheduledTasks do
     # The thread this run's prompt lands in: the task's own, or — for a task
     # that starts a new thread each run — one minted now and handed to the
     # launch, so a run that times out mid-launch still has a thread to clean up.
-    thread_id = task["threadId"] || HalC2.Environment.uuid4()
+    # A task that writes a page sends no prompt, so it has no thread at all.
+    thread_id = task["threadId"] || if(!task["page"], do: HalC2.Environment.uuid4())
     # Linked, so a scheduler that dies takes its runs with it, and monitored, so a run
     # that exits fails its task.
     parent = self()
@@ -520,6 +595,9 @@ defmodule HalC2.ScheduledTasks do
         fake = Application.get_env(:hal_c2, :scheduled_tasks_fire) ->
           fake.(task, fire_key)
 
+        task["page"] ->
+          HalC2.Space.Schedule.run(task)
+
         task["threadId"] ->
           Orchestration.dispatch(%{
             "type" => "message.dispatch",
@@ -698,17 +776,68 @@ defmodule HalC2.ScheduledTasks do
 
   defp running?(state, id), do: Enum.any?(state.runs, fn {_, run} -> run.id == id end)
 
-  defp put(state, task), do: %{state | tasks: Map.put(state.tasks, task["id"], task)}
+  defp put(state, task), do: %{state | tasks: Map.put(state.tasks, task["id"], aim(task))}
+
+  # A held task has no next run, whatever else just aimed it.
+  defp aim(%{"held" => true} = task), do: Map.put(task, "nextRunAt", nil)
+  defp aim(task), do: task
 
   defp sorted(state), do: state.tasks |> Map.values() |> Enum.sort_by(& &1["createdAt"])
 
-  # Saves, tells watchers, and re-arms the timer.
+  defp public(state), do: state |> sorted() |> Enum.reject(& &1["page"])
+  defp page_tasks(state), do: state |> sorted() |> Enum.filter(& &1["page"])
+
+  # Saves, tells watchers, shows page tasks on their pages, and re-arms the timer.
   defp changed(state) do
     save(state.path, sorted(state))
-    tasks = sorted(state)
-    HalC2.Watchers.notify(state.watchers, {:hal_c2_scheduled_tasks, node(), tasks})
-    schedule(state)
+    HalC2.Watchers.notify(state.watchers, {:hal_c2_scheduled_tasks, node(), public(state)})
+    state |> show_pages() |> schedule()
   end
+
+  # Writes each page task that changed since it was last shown, and clears the page of
+  # one that is gone. One the Space's stream refused stays unshown, for the next change.
+  defp show_pages(state) do
+    current = Map.new(page_tasks(state), &{&1["id"], {&1["page"], HalC2.Space.Schedule.view(&1)}})
+    shown = Map.get(state, :shown, %{})
+
+    cleared =
+      for {id, {page, _}} <- shown, not is_map_key(current, id), into: %{}, do: {id, {page, nil}}
+
+    kept =
+      for {id, entry} <- Map.merge(cleared, current), shown[id] != entry, reduce: shown do
+        shown ->
+          {page, view} = entry
+
+          case HalC2.Space.Schedule.show(page, view) do
+            :ok when view == nil -> Map.delete(shown, id)
+            :ok -> Map.put(shown, id, entry)
+            :error -> shown
+          end
+      end
+
+    Map.put(state, :shown, kept)
+  end
+
+  # Settles page tasks by what became of their pages. A page this MC cannot read just
+  # now leaves its task as it is.
+  defp reconcile(state, tasks) do
+    Enum.reduce(tasks, state, fn task, state ->
+      case HalC2.Space.Schedule.fate(task) do
+        :gone -> %{stop_runs(state, task["id"]) | tasks: Map.delete(state.tasks, task["id"])}
+        :held -> put(state, Map.put(task, "held", true))
+        :live -> put(state, let_go(task))
+        :unknown -> state
+      end
+    end)
+  end
+
+  defp let_go(%{"held" => true} = task) do
+    task
+    |> Map.delete("held")
+    |> Map.put("nextRunAt", if(task["enabled"], do: next_run(task["schedule"], now())))
+  end
+
+  defp let_go(task), do: task
 
   defp schedule(state) do
     if state.timer, do: Process.cancel_timer(state.timer)
