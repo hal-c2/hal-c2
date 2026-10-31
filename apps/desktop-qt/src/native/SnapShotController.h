@@ -23,7 +23,12 @@ class SnapShotBackend;
 // Snap Shot: the capture
 // shortcut takes the window the user is working in and attaches it to the
 // current draft. The platform half is a SnapShotBackend (the desktop portal
-// on Linux Wayland; unavailable elsewhere for now).
+// on Linux Wayland, MacSnapShot on macOS; unavailable elsewhere for now).
+//
+// Where the backend has `permissions` (macOS), setup stays on the access step
+// until each is allowed and a discarded test capture worked, and it comes back
+// there after macOS quits the app from a permission prompt
+// (snapShotSetupResume, until the user closes setup).
 //
 // The settings are this device's snapShot* rows (SettingsController). While
 // Snap Shot is on the backend holds the saved shortcut; off, it lets it go.
@@ -44,7 +49,8 @@ class SnapShotBackend;
 //   snapShot.record.start, snapShot.record.key {key, modifiers, repeat?},
 //   snapShot.record.modifier {modifier, code, down}, snapShot.record.cancel,
 //   snapShot.shortcut.save, snapShot.shortcut.discard,
-//   snapShot.shortcut.permissions, snapShot.set {key, value} (accessibility,
+//   snapShot.shortcut.permissions, snapShot.permission.allow {id},
+//   snapShot.set {key, value} (accessibility,
 //   flash, animations), snapShot.sound {value: off | soft-pop | camera-shutter},
 //   snapShot.sound.play {sound}.
 class SnapShotController : public QObject, public NativeController {
@@ -78,6 +84,8 @@ private:
   struct Wizard {
     QString step;
     bool wasEnabled = false;
+    // What went wrong in setup, shown in it.
+    QString error;
   };
 
   QVariant setting(const QString& key) const;
@@ -91,6 +99,12 @@ private:
   void follow();
   // Holds the saved shortcut while Snap Shot is on.
   void applyShortcut();
+  // The permissions capture needs are allowed, on a backend that has them.
+  bool permissionsReady() const;
+  bool includeAccessibility() const;
+  void saveResume();
+  // Opens setup again after macOS restarted the app from a permission prompt.
+  void resumeSetup();
 
   QString initialStep(const QString& requested) const;
   void openSetup(const QString& requested);
@@ -108,8 +122,9 @@ private:
 
   void onApplicationState(Qt::ApplicationState state);
   void onActivated();
-  void onCaptured(const QImage& image, const QString& appName, const QString& windowTitle);
+  void onCaptured(const QImage& image, const QString& appName, const QString& windowTitle, const QJsonObject& context);
   void onFailed(const QString& message);
+  void onTested(const QString& error);
   // Where a capture lands in `window`: its thread or draft, else the last one
   // it showed, else a new draft; empty with no project.
   QString target(NativeWindow* window);
@@ -130,6 +145,11 @@ private:
   // name for).
   QString m_shortcutProblem;
   std::optional<Wizard> m_wizard;
+  // The test capture is under way: setup waits for it.
+  bool m_testing = false;
+  bool m_resumeChecked = false;
+  // Setup came back and Settings has been opened to it.
+  bool m_resumeShown = true;
   bool m_recording = false;
   // Modifier keys held while recording: "<modifier>:<scan code>".
   QSet<QString> m_held;

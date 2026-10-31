@@ -16,9 +16,9 @@
 #   apps/desktop/src/snapShot/PortalCaptureShortcut.ts, NiriCaptureShortcut.ts, NiriSnapShot.ts (shortcut session and endpoint errors)
 #   apps/desktop/src/snapShot/GnomeCaptureSetup.ts, KdeSnapShot.ts, HyprlandSnapShot.ts (extension and helper install safety)
 #   apps/desktop/src/snapShot/DesktopSnapShot.ts, snapShot.ts (shortcut registration, modifier-pair and conflict messages)
-# The Qt desktop captures through the desktop portal on Linux Wayland only: no
-# macOS or Windows capture, no capture helper, no compositor bindings and no
-# app text yet.
+# The Qt desktop captures through the desktop portal on Linux Wayland and through
+# MacSnapShot on macOS, which alone carries app text: no Windows capture, no
+# capture helper and no compositor bindings yet.
 
 @desktop
 Feature: Snap Shot settings
@@ -37,8 +37,6 @@ Feature: Snap Shot settings
     When the user turns on snapshots
     Then setup asks the user to allow capture and then to choose a shortcut
 
-  @backlog-desktop
-  # The Qt desktop captures only on Linux so far.
   Scenario Outline: Setup asks for the permissions the platform needs
     Given the desktop app runs on <platform>
     When the user allows capture during setup
@@ -48,6 +46,11 @@ Feature: Snap Shot settings
       | platform                          | permissions                          |
       | macOS                             | Screen Recording                     |
       | macOS with app text included      | Screen Recording and Accessibility   |
+
+    # The Qt desktop has no Windows capture yet.
+    @backlog
+    Examples:
+      | platform                          | permissions                          |
       | Windows                           | nothing                              |
 
   @backlog-desktop
@@ -62,15 +65,11 @@ Feature: Snap Shot settings
     When the user turns off snapshots
     Then the shortcut is released and nothing that was installed is removed
 
-  @backlog-desktop
-  # The Qt desktop captures only on Linux so far.
   Scenario: The default shortcut presses both Shift keys
     Given the desktop app runs on macOS
     When the user finishes setup without changing the shortcut
     Then the shortcut is pressing both Shift keys
 
-  # The Qt desktop captures only on Linux so far; this is the macOS watcher's requirement.
-  @backlog-desktop
   Scenario: Watching for both Shift keys adds no second app to the Dock
     Given the desktop app runs on macOS
     And the shortcut is pressing both Shift keys
@@ -96,9 +95,9 @@ Feature: Snap Shot settings
       | a shortcut HAL-C2 already uses           | it collides with a HAL-C2 keybinding           |
       | a shortcut the system reserves            | the system reserves it                          |
 
-  @backlog-desktop
-  # The desktop portal gives only a screenshot.
+  # The desktop portal gives only a screenshot, so this is macOS's.
   Scenario: Including app text
+    Given Snap Shot is on and the desktop app runs on macOS
     When the user turns on including app text
     Then captures carry the app's text and controls when the app makes them available
 
@@ -210,7 +209,7 @@ Feature: Snap Shot settings
     Then capture is on and no setup is opened
     And the setup button is not shown
 
-  @backlog @desktop
+  @desktop
   Scenario: macOS hides setup once permissions and the shortcut are in place
     Given the desktop app runs on macOS
     And Screen Recording is allowed, and Accessibility too when app text is included
@@ -220,14 +219,14 @@ Feature: Snap Shot settings
     When the user revokes a permission
     Then the setup button returns as "Continue setup"
 
-  @backlog @desktop
+  @desktop
   Scenario: On macOS, turning on capture needs a test capture that works
     Given the desktop app runs on macOS
     When the user allows capture in setup and the test capture fails
     Then capture stays off, the user is told "Couldn't verify capture access" with the reason
     And the user can try again
 
-  @backlog @desktop
+  @desktop
   Scenario: Setup continues after macOS restarts the app for a permission
     Given the desktop app runs on macOS
     And the user allowed Screen Recording and the app had to quit and reopen
@@ -235,14 +234,14 @@ Feature: Snap Shot settings
     Then setup resumes where the user left it, with capture on or off as it was
 
   # Legacy: apps/desktop/src/permissions/MacPermissionHelper.ts
-  @backlog @desktop
+  @desktop
   Scenario: macOS shows where to drop the app when a permission must be granted by hand
     Given the desktop app runs on macOS
     When the user is sent to System Settings to allow Screen Recording or Accessibility
     Then a small panel beside System Settings says to drag HAL-C2 into the list
     And the user can drag the app from it or choose to reveal the app in Finder
 
-  @backlog @desktop
+  @desktop
   Scenario: The permission panel goes away when it is no longer needed
     Given the permission panel is showing beside System Settings
     When the permission is granted
@@ -355,7 +354,7 @@ Feature: Snap Shot settings
     Then including app text is off and cannot be turned on
     And the panel says "This desktop only provides a screenshot."
 
-  @backlog @desktop
+  @desktop
   Scenario: Including app text asks for the permission on macOS
     Given Snap Shot is on and the desktop app runs on macOS
     When the user turns on including app text
@@ -547,7 +546,7 @@ Feature: Snap Shot settings
     When the user is on the access step
     Then setup says the desktop may ask for permission when the user first captures
 
-  @backlog @desktop
+  @desktop
   Scenario: macOS permissions are granted one at a time
     Given the desktop app runs on macOS
     When the user is on the access step
@@ -556,7 +555,7 @@ Feature: Snap Shot settings
     And Continue is "Test capture and continue"
     And Accessibility only gates Continue when app text is included
 
-  @backlog @desktop
+  @desktop
   Scenario: The macOS test capture is discarded
     Given the desktop app runs on macOS
     When the user continues past the access step
@@ -587,11 +586,6 @@ Feature: Snap Shot settings
       | platform                                    | instruction                                              |
       | a desktop that gives shortcuts by portal    | Choose your keys, then approve the permission prompt if asked. |
       | while recording                             | Click the shortcut, then press the keys you want.        |
-
-    # No Linux desktop the Qt app supports records modifier pairs yet.
-    @backlog
-    Examples:
-      | platform                                    | instruction                                              |
       | a desktop that records modifier pairs       | Use both Shift keys, or record a different shortcut.     |
 
   @desktop
@@ -832,7 +826,7 @@ Feature: Snap Shot settings
       | composer.stash | mod+alt+s   | Ctrl+S   | This shortcut is Save in most apps. |
       | thread.undo    | mod+alt+z   | Ctrl+Z   | This shortcut is Undo in most apps. |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A shortcut of one modifier key warns that it is observed, not reserved
     Given the desktop app runs on <platform>
     When the user chooses the shortcut of pressing both <key> keys
@@ -841,12 +835,18 @@ Feature: Snap Shot settings
 
     Examples:
       | platform | key   | note                                           |
+      | macOS    | Shift | no further note                                |
+
+    # Windows has no backend yet, and no Linux desktop here watches modifier pairs.
+    @backlog
+    Examples:
+      | platform | key   | note                                           |
       | Windows  | Super | This key can also open the system's own menu.  |
       | Linux    | Super | This key can also open the system's own menu.  |
       | Windows  | Alt   | This key can also activate app menu bars.      |
-      | macOS    | Shift | no further note                                |
 
-  @backlog @desktop
+  # Windows has no backend yet; the same refusal runs on macOS here.
+  @desktop
   Scenario: A modifier key the system will not let HAL-C2 watch is reported
     Given the desktop app runs on Windows or macOS
     When the user chooses a shortcut of pressing both of a modifier key and the system refuses to let HAL-C2 watch it
@@ -961,7 +961,7 @@ Feature: Snap Shot settings
     Then the shortcut stays registered without being released and set up again
     And an approved desktop shortcut session is not dropped
 
-  @backlog @desktop
+  @desktop
   Scenario: A permission that macOS grants again brings the shortcut back
     Given the desktop app runs on macOS
     And Snap Shot is on and a permission was revoked so capture needs attention
@@ -1090,21 +1090,21 @@ Feature: Snap Shot settings
     When the user opens Settings, SnapShots
     Then the user is told "Update the desktop app to use snapshots."
 
-  @backlog @desktop
+  @desktop
   Scenario: Setup lists each permission and lets the user continue only when all are allowed
     Given setup asks for two permissions and one is allowed
     Then the allowed permission is marked as allowed
     And the other offers to be allowed
-    And the user cannot continue
+    And setup does not let the user continue
     When the user allows the other permission in system settings and returns to the app
     Then both are marked as allowed
-    And the user can continue
+    And setup lets the user continue
 
-  @backlog @desktop
+  @desktop
   Scenario: A permission check that fails is retried on its own
     Given setup is waiting on a permission
     When the check of the permission's state fails
     Then the user is told "Could not check permissions. We'll try again automatically."
-    And the user cannot continue
+    And setup does not let the user continue
     When the next check succeeds
     Then the message goes away

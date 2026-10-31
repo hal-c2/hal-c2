@@ -1247,3 +1247,12 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+// For the other Snap Shot steps files.
+void snapShotOpenThread(World& world) {
+  openThread(world);
+}
+
+QVariantList snapShotDraft(World& world) {
+  return attachments(world, threadKey(world));
+}
