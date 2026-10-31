@@ -359,6 +359,13 @@ SettingsPage {
                 currentIndex: sounds.findIndex(choice => choice.value === (snap.settings?.sound?.value ?? "soft-pop"))
                 Accessible.name: qsTr("Sound")
                 onActivated: index => Shell.dispatch("snapShot.sound", { value: sounds[index].value })
+                // Right arrow hears the highlighted sound, as its row's button does.
+                Keys.onRightPressed: event => {
+                    const choice = popup.visible ? sounds[highlightedIndex] : null;
+                    event.accepted = !!choice;
+                    if (choice && choice.value !== "off")
+                        Shell.dispatch("snapShot.sound.play", { sound: choice.value });
+                }
                 // Hears a sound without choosing it; the choices stay open.
                 rowAction: ShellButton {
                     readonly property var choice: soundChoices.sounds[parent?.row ?? 0] ?? null

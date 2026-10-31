@@ -149,6 +149,16 @@ Item {
             compare(last().payload.sound, "camera-shutter");
             verify(sound.popup.visible, "hearing a sound keeps the choices open");
             sound.popup.close();
+            tryVerify(() => !sound.popup.visible);
+            sound.forceActiveFocus();
+            sound.popup.open();
+            tryVerify(() => sound.popup.opened);
+            compare(sound.highlightedIndex, 1);
+            keyClick(Qt.Key_Right);
+            compare(last().action, "snapShot.sound.play");
+            compare(last().payload.sound, "soft-pop");
+            verify(sound.popup.visible, "the keyboard hears a sound without choosing it");
+            sound.popup.close();
             const flash = findChild(findChild(page, "snapShot:flash"), "control");
             verify(flash.checked);
             verify(!flash.enabled, "the portal gives no flash");
