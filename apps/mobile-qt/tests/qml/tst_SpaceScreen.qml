@@ -145,6 +145,17 @@ Item {
             compare(arrived.count, 1);
         }
 
+        function test_pickingAnotherSpaceStopsWaitingForTheWrittenPage() {
+            const screen = makeScreen({ spaceId: "s2" }, { awaitedPageId: "p9" });
+            const dropped = createTemporaryQmlObject("import QtTest; SignalSpy { signalName: \"awaitDropped\" }", screen);
+            dropped.target = screen;
+            // Its own Space keeps the wait: the controller still selects the page.
+            screen.openSpace("s2");
+            compare(dropped.count, 0);
+            screen.openSpace("s1");
+            compare(dropped.count, 1);
+        }
+
         function test_aWrittenPageSelectedBeforeTheScreenOpens() {
             const screen = makeScreen({ spaceId: "s2", page: root.pageOf("p9") }, { awaitedPageId: "p9" });
             compare(screen.view, "page");

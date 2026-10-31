@@ -191,7 +191,7 @@ Feature: Pages in a Space
     Scenario: Only a checklist item can be ticked
       Given "Roadmap" has the blocks "Plain"
       When the user ticks "Plain"
-      Then the page request is refused
+      Then the user is told only a checklist item can be ticked
 
     Scenario: The user moves a block
       Given "Roadmap" has the blocks "One, Two, Three"

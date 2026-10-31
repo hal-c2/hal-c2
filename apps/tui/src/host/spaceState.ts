@@ -895,10 +895,14 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const entry = selectedEntry();
     if (entry?.kind === "block") {
       const block = blocksOf(pageId ?? "").find((candidate) => candidate.id === entry.id);
+      if (block?.kind !== "checklist") {
+        options.status("Only a checklist item can be ticked.", "info");
+        return;
+      }
       void send(WS_METHODS.spaceBlockSetChecked, {
         spaceId,
         blockId: entry.id,
-        checked: !(block?.checked ?? false),
+        checked: !block.checked,
       });
     } else if (entry?.kind === "comment") {
       const comment = commentsOf(pageId ?? "").find((candidate) => candidate.id === entry.id);

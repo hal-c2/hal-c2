@@ -244,6 +244,7 @@ ShellWindow {
                         sourceComponent: SpaceScreen {
                             awaitedPageId: root.spacePageComing
                             onPageArrived: root.spacePageComing = ""
+                            onAwaitDropped: root.spacePageComing = ""
                             onBackRequested: root.stepBack()
                         }
                     }

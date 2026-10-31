@@ -279,6 +279,15 @@ const refused = async (ctx: SpaceWorld) => {
 step("the Space request is refused", refused);
 step("the page request is refused", refused);
 
+// The pane knows a block has no box, and says so without asking the MC.
+step("the user is told only a checklist item can be ticked", async (ctx: SpaceWorld) => {
+  await settle(ctx);
+  expect(mc(ctx).refusals).toEqual([]);
+  expect(status(ctx)).toEqual(
+    expect.objectContaining({ text: "Only a checklist item can be ticked.", kind: "info" }),
+  );
+});
+
 step("the Space {string} with the page {string}", (ctx: SpaceWorld, name: string, page) => {
   seedSpace(ctx, name);
   seedPage(ctx, page);

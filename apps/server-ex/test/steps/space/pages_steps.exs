@@ -129,6 +129,7 @@ defmodule HalC2.Steps.Space.Pages do
   end
 
   step("the page request is refused", context, do: refused(context))
+  step("the user is told only a checklist item can be ticked", context, do: refused(context))
 
   step "the pages of {string} are {string}", %{args: [name, titles]} = context do
     state = Streams.state(Space.stream_id(space_id(context, name)))

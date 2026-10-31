@@ -32,6 +32,8 @@ Item {
     signal backRequested
     // The awaited page opened.
     signal pageArrived
+    // The user picked another Space, so the page written from a thread no longer opens.
+    signal awaitDropped
 
     // One step back within the screen; false at its first step.
     function stepBack() {
@@ -48,6 +50,8 @@ Item {
     }
 
     function openSpace(id) {
+        if (id !== spaceId)
+            awaitDropped();
         openedSpaceId = id;
         Shell.dispatch("space.select", { spaceId: id });
         view = "pages";

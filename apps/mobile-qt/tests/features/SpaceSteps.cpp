@@ -1017,7 +1017,7 @@ const Steps steps([] {
     choose(world, S("delete"));
     settle(world);
   });
-  step(S("the (Space|page) request is refused"), [](World& world, const Captures&, const Table&) {
+  step(S("(?:the (?:Space|page) request is refused|the user is told only a checklist item can be ticked)"), [](World& world, const Captures&, const Table&) {
     const FakeSpaces& spaces = fake(world.mc);
     expect(!spaces.last.error.isEmpty(), S("the MC answered %1 with %2").arg(spaces.lastMethod, show(spaces.last.result.toVariantMap())));
     const QString said = world.state(S("space")).toMap().value(S("error")).toString();
