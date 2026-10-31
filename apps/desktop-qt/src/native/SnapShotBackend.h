@@ -57,6 +57,8 @@ public:
   virtual Shortcut shortcut() const { return {}; }
   // Asks the desktop what it offers; idempotent.
   virtual void probe() {}
+  // Asks again after the user may have changed what the desktop allows.
+  virtual void refresh() { probe(); }
   // Binds the capture shortcut to `trigger` (portalTrigger's), replacing the
   // one before; pending until the desktop answers.
   virtual void bind(const QString& trigger) { Q_UNUSED(trigger); }

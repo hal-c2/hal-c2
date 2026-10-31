@@ -41,7 +41,7 @@ class SnapShotBackend;
 // string as it reads. Actions:
 //   snapShot.enable {on}, snapShot.setup.open {step?}, snapShot.setup.continue,
 //   snapShot.setup.back, snapShot.setup.close {completed?}, snapShot.setup.done,
-//   snapShot.record.start, snapShot.record.key {key, modifiers},
+//   snapShot.record.start, snapShot.record.key {key, modifiers, repeat?},
 //   snapShot.record.modifier {modifier, code, down}, snapShot.record.cancel,
 //   snapShot.shortcut.save, snapShot.shortcut.discard,
 //   snapShot.shortcut.permissions, snapShot.set {key, value} (accessibility,
@@ -106,6 +106,7 @@ private:
   bool canSave() const;
   QString shortcutStatus() const;
 
+  void onApplicationState(Qt::ApplicationState state);
   void onActivated();
   void onCaptured(const QImage& image, const QString& appName, const QString& windowTitle);
   void onFailed(const QString& message);

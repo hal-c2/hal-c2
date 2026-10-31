@@ -1,19 +1,27 @@
 // Snap Shot on the desktop (SnapShotController): Settings, SnapShots and
 // capturing a window into the draft (features/settings/snap-shot.feature,
-// source-control/snap-shot.feature). The desktop portal is FakePortal, so no
-// scenario touches the session bus: its shortcut answers at once, and the
-// Snap Shot shortcut is FakePortal saying so.
+// source-control/snap-shot.feature). The desktop is FakePortal, whose
+// shortcut answers at once, unless a scenario's desktop "gives shortcuts
+// through the desktop portal": then it is PortalSnapShot itself, talking to
+// FakeDesktopPortal on a bus of the test's own.
 
+#include <QDir>
+#include <QFile>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QRandomGenerator>
 
 #include "ComposerController.h"
+#include "FakeDesktopPortal.h"
 #include "DraftController.h"
 #include "Harness.h"
 #include "KeybindingController.h"
 #include "NativeShell.h"
 #include "NavigationController.h"
+#ifdef HAL_C2_HAS_DBUS
+#include "PortalSnapShot.h"
+#endif
 #include "SettingsController.h"
 #include "SnapShotBackend.h"
 #include "SnapShotController.h"
@@ -27,6 +35,8 @@ using namespace stream;
 // What the desktop does, for FakePortal to read and record into.
 struct FakeDesktop {
   bool picker = false;
+  // Why capture access is not ready, if it is not.
+  QString message;
   // The desktop turns down the shortcut with this.
   QString refuse;
   // The next capture fails with this.
@@ -75,6 +85,7 @@ public:
     session.mode = QStringLiteral("portal");
     session.backend = desktop().picker ? QStringLiteral("picker") : QStringLiteral("screenshot-portal");
     session.desktop = m_desktop;
+    session.message = desktop().message;
     return session;
   }
   Shortcut shortcut() const override { return m_shortcut; }
@@ -113,6 +124,8 @@ public:
 
   // The user presses the Snap Shot shortcut.
   void press() { emit activated(); }
+  // The desktop's answers changed (FakeDesktop).
+  void update() { emit changed(); }
 
 private:
   QString m_desktop;
@@ -120,11 +133,21 @@ private:
   Shortcut m_shortcut;
 };
 
+// The shell's desktop is PortalSnapShot on FakeDesktopPortal, not FakePortal.
+bool& throughPortal() {
+  static bool on = false;
+  return on;
+}
+
 // Every shell of tst_Features gets the fake portal, on a Wayland session.
 [[maybe_unused]] const bool installed = [] {
   SnapShotBackend::setEnvironment(environment(QStringLiteral("wayland")));
-  SnapShotBackend::setPortalFactory(
-      [](const SnapShotBackend::Platform& platform, QObject* parent) -> SnapShotBackend* { return new FakePortal(platform, parent); });
+  SnapShotBackend::setPortalFactory([](const SnapShotBackend::Platform& platform, QObject* parent) -> SnapShotBackend* {
+#ifdef HAL_C2_HAS_DBUS
+    if (throughPortal()) return new PortalSnapShot(platform, parent);
+#endif
+    return new FakePortal(platform, parent);
+  });
   return true;
 }();
 
@@ -152,9 +175,20 @@ SettingsController* settings(World& world) {
   return world.native().controller<SettingsController>();
 }
 
-// A fresh desktop: Wayland on no named compositor, nothing bound yet.
-void resetDesktop(World& world, const QProcessEnvironment& env = environment(QStringLiteral("wayland"))) {
+FakeDesktopPortal& bus() {
+  return FakeDesktopPortal::instance();
+}
+
+// A fresh desktop: Wayland on no named compositor, nothing bound yet; through
+// the desktop portal on the test's bus, answering as `portal` does, with one.
+void resetDesktop(World& world, const QProcessEnvironment& env = environment(QStringLiteral("wayland")),
+                  const std::optional<PortalDesktop>& portal = std::nullopt) {
   desktop() = {};
+  throughPortal() = portal.has_value();
+  if (portal) {
+    bus().reset();
+    bus().desktop = *portal;
+  }
   QImage image(320, 200, QImage::Format_RGB32);
   image.fill(Qt::darkCyan);
   desktop().image = image;
@@ -208,6 +242,12 @@ void recordCtrlShift2(World& world) {
   }
   send(world, QStringLiteral("record.start"));
   press(world, Qt::Key_At, Qt::ControlModifier | Qt::ShiftModifier);
+}
+
+// The user saves the shortcut they recorded.
+void save(World& world) {
+  expect(field(world, QStringLiteral("shortcut.canSave")).toBool(), QStringLiteral("the shortcut to be ready to save; Snap Shot is %1").arg(show(snapShot(world))));
+  send(world, QStringLiteral("shortcut.save"));
 }
 
 void expectOff(World& world) {
@@ -265,6 +305,57 @@ void expectToast(World& world, const QString& title, const QString& description)
          QStringLiteral("the toast \"%1\": %2; the shell shows %3").arg(title, description, show(world.state(QStringLiteral("toasts")))));
 }
 
+const QJsonObject kCtrlShift1{{QStringLiteral("key"), QStringLiteral("1")}, {QStringLiteral("metaKey"), false},
+                              {QStringLiteral("ctrlKey"), false},          {QStringLiteral("shiftKey"), true},
+                              {QStringLiteral("altKey"), false},           {QStringLiteral("modKey"), true}};
+
+// Snap Shot on with `shortcut`, without waiting on the desktop's answer.
+void turnOnWith(World& world, const QJsonObject& shortcut = kCtrlShift2) {
+  settings(world)->set(QStringLiteral("snapShotShortcut"), shortcut.toVariantMap());
+  settings(world)->set(QStringLiteral("snapShotEnabled"), true);
+}
+
+// A desktop that captures and gives shortcuts through the desktop portal,
+// answering as `portal` says, with Settings, SnapShots open.
+void portalDesktop(World& world, const PortalDesktop& portal = {}) {
+  resetDesktop(world, environment(QStringLiteral("wayland")), portal);
+  openPanel(world);
+}
+
+void waitForField(World& world, const QString& path, const QVariant& value) {
+  world.waitFor([&] { return field(world, path) == value; },
+                [&] { return QStringLiteral("%1 to be %2; Snap Shot is %3").arg(path, show(value), show(snapShot(world))); });
+}
+
+// The desktop's answers to FakePortal changed.
+void update(World& world) {
+  expect(portal(world) != nullptr, QStringLiteral("the shell has no fake portal"));
+  portal(world)->update();
+}
+
+bool hasWizard(World& world) {
+  return field(world, QStringLiteral("wizard")).toMap().contains(QStringLiteral("step"));
+}
+
+// The keys of a shortcut as the feature names it.
+void pressNamed(World& world, const QString& name) {
+  static const QHash<QString, QPair<int, Qt::KeyboardModifiers>> keys{
+      {QStringLiteral("Shift+K"), {Qt::Key_K, Qt::ShiftModifier}},  {QStringLiteral("Ctrl+C"), {Qt::Key_C, Qt::ControlModifier}},
+      {QStringLiteral("Ctrl+S"), {Qt::Key_S, Qt::ControlModifier}}, {QStringLiteral("Ctrl+Z"), {Qt::Key_Z, Qt::ControlModifier}},
+      {QStringLiteral("Alt+Tab"), {Qt::Key_Tab, Qt::AltModifier}},  {QStringLiteral("Super+L"), {Qt::Key_L, Qt::MetaModifier}},
+      {QStringLiteral("Ctrl+Alt+K"), {Qt::Key_K, Qt::ControlModifier | Qt::AltModifier}},
+  };
+  expect(keys.contains(name), QStringLiteral("no keys for %1").arg(name));
+  press(world, keys.value(name).first, keys.value(name).second);
+}
+
+std::optional<QVariantMap> toastSaying(World& world, const QString& description) {
+  for (const QVariant& item : world.state(QStringLiteral("toasts")).toMap().value(QStringLiteral("items")).toList()) {
+    if (item.toMap().value(QStringLiteral("description")).toString() == description) return item.toMap();
+  }
+  return std::nullopt;
+}
+
 // A capture of noise: no image format makes it small.
 QImage noise(int width, int height) {
   QImage image(width, height, QImage::Format_RGB32);
@@ -307,7 +398,9 @@ const Steps steps([] {
            QStringLiteral("allowing capture to lead to the shortcut; Snap Shot is %1").arg(show(snapShot(world))));
   });
   step(QStringLiteral("the user chooses to finish later"), [](World& world, const Captures&, const Table&) {
-    expect(field(world, QStringLiteral("wizard.closeLabel")) == QLatin1String("Finish later"),
+    // Close, once Snap Shot was on before setup opened.
+    const QString close = field(world, QStringLiteral("wizard.closeLabel")).toString();
+    expect(close == QLatin1String("Finish later") || close == QLatin1String("Close"),
            QStringLiteral("setup to offer finishing later; Snap Shot is %1").arg(show(snapShot(world))));
     send(world, QStringLiteral("setup.close"));
   });
@@ -324,9 +417,10 @@ const Steps steps([] {
   });
   step(QStringLiteral("the user changes the shortcut and presses Ctrl\\+Shift\\+2"), [](World& world, const Captures&, const Table&) {
     recordCtrlShift2(world);
-    send(world, QStringLiteral("shortcut.save"));
   });
   step(QStringLiteral("the shortcut is saved as Ctrl\\+Shift\\+2"), [](World& world, const Captures&, const Table&) {
+    // The recorded keys are the shortcut once the user saves them.
+    save(world);
     expect(QJsonValue::fromVariant(settings(world)->setting(QStringLiteral("snapShotShortcut"))).toObject() == kCtrlShift2,
            QStringLiteral("the shortcut to be saved; it is %1").arg(show(settings(world)->setting(QStringLiteral("snapShotShortcut")))));
     expect(desktop().binds.endsWith(QStringLiteral("CTRL+SHIFT+2")) && field(world, QStringLiteral("shortcut.keys")) == QLatin1String("Ctrl+Shift+2"),
@@ -409,11 +503,584 @@ const Steps steps([] {
     desktop().refuse = QStringLiteral("Your desktop did not allow the shortcut.");
   });
   step(QStringLiteral("the user is told the desktop did not allow it and can ask again"), [](World& world, const Captures&, const Table&) {
+    save(world);
     expect(field(world, QStringLiteral("shortcut.status")) == QLatin1String("Your desktop did not allow the shortcut.") &&
                field(world, QStringLiteral("shortcut.permissions")).toBool(),
            QStringLiteral("the refusal and a way to ask again; Snap Shot is %1").arg(show(snapShot(world))));
     send(world, QStringLiteral("shortcut.permissions"));
     expect(desktop().configured == 1, QStringLiteral("the desktop to show its shortcut permissions again"));
+  });
+
+  // The panel's rows.
+  step(QStringLiteral("Snap Shot is (still being checked|on with only a manual window picker available|"
+                      "on and waiting for the user to approve the shortcut|on with a shortcut that has been seen to work|"
+                      "on with no shortcut chosen yet|on but the desktop reports a problem)"),
+       [](World& world, const Captures& c, const Table&) {
+         if (c[0] == QLatin1String("still being checked")) {
+           PortalDesktop portal;
+           portal.holdScreenshot = true;
+           resetDesktop(world, environment(QStringLiteral("wayland")), portal);
+           // The panel asks, and the desktop has not answered.
+           world.native().controller<NavigationController>()->open(NavigationController::Route::settings(SnapShotController::kSection));
+           world.waitFor([&] { return at(world.state(QStringLiteral("route")), QStringLiteral("section")) == SnapShotController::kSection; },
+                         [&] { return QStringLiteral("Settings, SnapShots to open; the route is %1").arg(show(world.state(QStringLiteral("route")))); });
+         } else if (c[0].contains(QLatin1String("window picker"))) {
+           desktop().picker = true;
+           turnOn(world);
+         } else if (c[0].contains(QLatin1String("approve"))) {
+           PortalDesktop portal;
+           portal.bind = PortalAnswer::Hold;
+           portalDesktop(world, portal);
+           turnOnWith(world);
+           world.waitFor([] { return bus().prompting(); }, QStringLiteral("the desktop to prompt for the shortcut"));
+         } else if (c[0].contains(QLatin1String("seen to work"))) {
+           turnOn(world);
+         } else if (c[0].contains(QLatin1String("no shortcut"))) {
+           settings(world)->set(QStringLiteral("snapShotEnabled"), true);
+         } else {
+           turnOn(world);
+           desktop().message = QStringLiteral("Your desktop could not say whether it can capture windows.");
+           update(world);
+         }
+       });
+  step(QStringLiteral("the capture row reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForField(world, QStringLiteral("status"), c[0]);
+  });
+  step(QStringLiteral("the desktop reports that capture is not supported on this platform"), [](World& world, const Captures&, const Table&) {
+    resetDesktop(world, environment(QStringLiteral("x11")));
+    openPanel(world);
+  });
+  step(QStringLiteral("the capture row says the desktop's reason, or \"Not supported on this platform\\.\""),
+       [](World& world, const Captures&, const Table&) {
+         expect(!field(world, QStringLiteral("available")).toBool() && !field(world, QStringLiteral("status")).toString().isEmpty(),
+                QStringLiteral("the row to say why capture is not supported; Snap Shot is %1").arg(show(snapShot(world))));
+       });
+  step(QStringLiteral("capture cannot be turned on"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("enable"), {{QStringLiteral("on"), true}});
+    expect(!settings(world)->setting(QStringLiteral("snapShotEnabled")).toBool() && !hasWizard(world) &&
+               !field(world, QStringLiteral("switchOn")).toBool(),
+           QStringLiteral("capture to stay off with no setup; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("Snap Shot is on and setup is not finished on (GNOME|KDE Plasma|a desktop HAL-C2 cannot name)"),
+       [](World& world, const Captures& c, const Table&) {
+         const QString current = c[0] == QLatin1String("GNOME") ? QStringLiteral("GNOME") : c[0] == QLatin1String("KDE Plasma") ? QStringLiteral("KDE") : QStringLiteral("sway");
+         resetDesktop(world, environment(QStringLiteral("wayland"), current));
+         openPanel(world);
+         desktop().message = QStringLiteral("Your desktop could not say whether it can capture windows.");
+         turnOn(world);
+         update(world);
+       });
+  step(QStringLiteral("the setup button reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitForField(world, QStringLiteral("setupLabel"), c[0]);
+  });
+  step(QStringLiteral("capture access is in place"), [](World& world, const Captures&, const Table&) { turnOn(world); });
+  step(QStringLiteral("it reopens setup to revisit access or the shortcut"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("setup.open"));
+    expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("shortcut"), QStringLiteral("setup to open on the shortcut; Snap Shot is %1").arg(show(snapShot(world))));
+    send(world, QStringLiteral("setup.back"));
+    expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("access"), QStringLiteral("setup to go back to access; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+
+  // The shortcut.
+  step(QStringLiteral("Snap Shot is on with the shortcut Ctrl\\+Shift\\+1"), [](World& world, const Captures&, const Table&) {
+    turnOnWith(world, kCtrlShift1);
+    waitForField(world, QStringLiteral("shortcut.registered"), true);
+  });
+  step(QStringLiteral("the panel shows Ctrl\\+Shift\\+2 with Save and Cancel"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("shortcut.keys")) == QLatin1String("Ctrl+Shift+2") && field(world, QStringLiteral("shortcut.changed")).toBool() &&
+               field(world, QStringLiteral("shortcut.canSave")).toBool(),
+           QStringLiteral("Ctrl+Shift+2 to wait for Save or Cancel; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the shortcut in use is still Ctrl\\+Shift\\+1"), [](World& world, const Captures&, const Table&) {
+    expect(QJsonValue::fromVariant(settings(world)->setting(QStringLiteral("snapShotShortcut"))).toObject() == kCtrlShift1 &&
+               desktop().binds == QStringList{QStringLiteral("CTRL+SHIFT+1")},
+           QStringLiteral("Ctrl+Shift+1 to stay in use; the desktop holds %1").arg(desktop().binds.join(u',')));
+  });
+  step(QStringLiteral("the panel shows Ctrl\\+Shift\\+1 again and nothing changed"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("shortcut.keys")) == QLatin1String("Ctrl+Shift+1") && !field(world, QStringLiteral("shortcut.changed")).toBool() &&
+               desktop().binds == QStringList{QStringLiteral("CTRL+SHIFT+1")},
+           QStringLiteral("Ctrl+Shift+1 back with nothing changed; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the user is changing the shortcut"), [](World& world, const Captures&, const Table&) {
+    settings(world)->set(QStringLiteral("snapShotEnabled"), true);
+    send(world, QStringLiteral("record.start"));
+  });
+  step(QStringLiteral("(recording starts|the desktop says the shortcut is free|the shortcut is one HAL-C2 uses for \"Terminal: Toggle\"|"
+                      "the user presses only modifier keys on a Wayland desktop)"),
+       [](World& world, const Captures& c, const Table&) {
+         if (c[0].contains(QLatin1String("free"))) {
+           press(world, Qt::Key_At, Qt::ControlModifier | Qt::ShiftModifier);
+         } else if (c[0].contains(QLatin1String("Terminal: Toggle"))) {
+           press(world, Qt::Key_J, Qt::ControlModifier);
+         } else if (c[0].contains(QLatin1String("modifier"))) {
+           for (const int code : {50, 62}) {
+             send(world, QStringLiteral("record.modifier"),
+                  {{QStringLiteral("modifier"), QStringLiteral("shift")}, {QStringLiteral("code"), code}, {QStringLiteral("down"), true}});
+           }
+         }
+       });
+  step(QStringLiteral("the shortcut row says \"(.*)\""), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return field(world, QStringLiteral("shortcut.status")) == c[0] || field(world, QStringLiteral("shortcut.description")) == c[0]; },
+                  [&] { return QStringLiteral("the shortcut row to say %1; Snap Shot is %2").arg(c[0], show(snapShot(world))); });
+  });
+  step(QStringLiteral("a desktop that gives shortcuts through the desktop portal"), [](World& world, const Captures&, const Table&) {
+    portalDesktop(world);
+  });
+  step(QStringLiteral("no shortcut is saved yet"), [](World& world, const Captures&, const Table&) {
+    expect(!settings(world)->setting(QStringLiteral("snapShotShortcut")).isValid() ||
+               QJsonValue::fromVariant(settings(world)->setting(QStringLiteral("snapShotShortcut"))).toObject().value(QLatin1String("kind")) ==
+                   QLatin1String("both-shift-keys"),
+           QStringLiteral("a shortcut is saved"));
+    settings(world)->set(QStringLiteral("snapShotEnabled"), true);
+  });
+  step(QStringLiteral("the shortcut row suggests a shortcut such as Ctrl\\+Shift\\+2"), [](World& world, const Captures&, const Table&) {
+    waitForField(world, QStringLiteral("shortcut.status"), QStringLiteral("Try a shortcut such as Ctrl+Shift+2."));
+  });
+  step(QStringLiteral("pressing both Shift keys is not offered as the shortcut"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("shortcut.keys")) == QLatin1String("Choose shortcut") && bus().triggers.isEmpty(),
+           QStringLiteral("no shortcut to be offered; the desktop was asked for %1, Snap Shot is %2").arg(bus().triggers.join(u','), show(snapShot(world))));
+  });
+  step(QStringLiteral("the user starts recording a new shortcut and presses the current one"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("record.start"));
+    capture(world);
+  });
+  step(QStringLiteral("no capture starts"), [](World&, const Captures&, const Table&) {
+    expect(desktop().captures.isEmpty(), QStringLiteral("no capture; %1 were taken").arg(desktop().captures.size()));
+  });
+  step(QStringLiteral("pausing the capture shortcut ends when recording ends, is cancelled, or the panel closes"),
+       [](World& world, const Captures&, const Table&) {
+         const auto captures = [&](qsizetype count, const QString& after) {
+           capture(world);
+           expect(desktop().captures.size() == count, QStringLiteral("the shortcut to capture again once %1; %2 captures").arg(after).arg(desktop().captures.size()));
+         };
+         pressNamed(world, QStringLiteral("Ctrl+Alt+K"));
+         captures(1, QStringLiteral("recording ends"));
+         send(world, QStringLiteral("record.start"));
+         send(world, QStringLiteral("record.cancel"));
+         captures(2, QStringLiteral("recording is cancelled"));
+         send(world, QStringLiteral("record.start"));
+         world.native().controller<NavigationController>()->open(NavigationController::Route::settings());
+         captures(3, QStringLiteral("the panel closes"));
+       });
+  step(QStringLiteral("the user presses Tab, holds a key down, or presses a modifier on its own"), [](World& world, const Captures&, const Table&) {
+    press(world, Qt::Key_Tab, Qt::NoModifier);
+    press(world, Qt::Key_Backtab, Qt::ShiftModifier);
+    send(world, QStringLiteral("record.key"),
+         {{QStringLiteral("key"), int(Qt::Key_At)}, {QStringLiteral("modifiers"), int((Qt::ControlModifier | Qt::ShiftModifier).toInt())}, {QStringLiteral("repeat"), true}});
+    press(world, Qt::Key_Control, Qt::ControlModifier);
+    send(world, QStringLiteral("record.modifier"), {{QStringLiteral("modifier"), QStringLiteral("control")}, {QStringLiteral("code"), 37}, {QStringLiteral("down"), true}});
+  });
+  step(QStringLiteral("no shortcut is recorded"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("shortcut.recording")).toBool() && !field(world, QStringLiteral("shortcut.changed")).toBool() &&
+               field(world, QStringLiteral("shortcut.status")) == QLatin1String("Press your shortcut. Esc cancels."),
+           QStringLiteral("the recorder to keep listening; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the desktop shows a portal shortcut that was refused or never granted"), [](World& world, const Captures&, const Table&) {
+    PortalDesktop portal;
+    portal.bind = PortalAnswer::Refuse;
+    portalDesktop(world, portal);
+    turnOnWith(world);
+    waitForField(world, QStringLiteral("shortcut.status"), QStringLiteral("Shortcut permission wasn't granted. Open shortcut permissions to allow it."));
+    expect(field(world, QStringLiteral("shortcut.permissions")).toBool(), QStringLiteral("Shortcut permissions to be offered; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the user chooses Shortcut permissions"), [](World& world, const Captures&, const Table&) {
+    bus().desktop.bind = PortalAnswer::Hold;
+    send(world, QStringLiteral("shortcut.permissions"));
+  });
+  step(QStringLiteral("the desktop asks for the shortcut again"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([] { return bus().prompting(); }, [] { return QStringLiteral("the desktop to prompt again; it was asked for %1").arg(bus().triggers.join(u',')); });
+    expect(bus().triggers.size() == 2, QStringLiteral("a second request; the desktop was asked for %1").arg(bus().triggers.join(u',')));
+  });
+  step(QStringLiteral("the button is disabled while its prompt is pending"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("shortcut.permissions")).toBool() && !field(world, QStringLiteral("shortcut.permissionsEnabled")).toBool(),
+           QStringLiteral("Shortcut permissions to wait on the prompt; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the row says %1 while it is").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(field(world, QStringLiteral("shortcut.pending")).toBool() && field(world, QStringLiteral("shortcut.status")) == c[0],
+           QStringLiteral("the row to say %1 while the prompt is open; Snap Shot is %2").arg(c[0], show(snapShot(world))));
+  });
+  step(QStringLiteral("the shortcut is a modifier pair, or the desktop says asking again changes nothing"), [](World& world, const Captures&, const Table&) {
+    // The first portal version cannot show its shortcut permissions again.
+    PortalDesktop portal;
+    portal.shortcutsVersion = 1;
+    portal.bind = PortalAnswer::Refuse;
+    portalDesktop(world, portal);
+    turnOnWith(world);
+    waitForField(world, QStringLiteral("shortcut.status"),
+                 QStringLiteral("Shortcut permission wasn't granted. Allow HAL-C2 in your desktop's shortcut settings."));
+  });
+  step(QStringLiteral("there is no Shortcut permissions button"), [](World& world, const Captures&, const Table&) {
+    expect(!field(world, QStringLiteral("shortcut.permissions")).toBool(),
+           QStringLiteral("no Shortcut permissions where the desktop cannot ask again; Snap Shot is %1").arg(show(snapShot(world))));
+    settings(world)->set(QStringLiteral("snapShotShortcut"), QVariantMap{{QStringLiteral("kind"), QStringLiteral("both-shift-keys")}});
+    expect(!field(world, QStringLiteral("shortcut.permissions")).toBool(),
+           QStringLiteral("no Shortcut permissions for a modifier pair; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the desktop reports a shortcut HAL-C2 cannot read"), [](World& world, const Captures&, const Table&) {
+    turnOnWith(world, QJsonObject{{QStringLiteral("trigger"), QStringLiteral("…")}});
+  });
+  step(QStringLiteral("the shortcut row says \"Change shortcut\" instead of showing keys"), [](World& world, const Captures&, const Table&) {
+    waitForField(world, QStringLiteral("shortcut.keys"), QStringLiteral("Change shortcut"));
+  });
+  step(QStringLiteral("recording a new one replaces it"), [](World& world, const Captures&, const Table&) {
+    recordCtrlShift2(world);
+    save(world);
+    expect(QJsonValue::fromVariant(settings(world)->setting(QStringLiteral("snapShotShortcut"))).toObject() == kCtrlShift2 &&
+               field(world, QStringLiteral("shortcut.keys")) == QLatin1String("Ctrl+Shift+2"),
+           QStringLiteral("Ctrl+Shift+2 to replace it; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+
+  // App text and the capture cues.
+  step(QStringLiteral("a Linux desktop that only provides a screenshot"), [](World& world, const Captures&, const Table&) {
+    settings(world)->set(QStringLiteral("snapShotEnabled"), true);
+  });
+  step(QStringLiteral("including app text is off and cannot be turned on"), [](World& world, const Captures&, const Table&) {
+    const QVariant before = settings(world)->setting(QStringLiteral("snapShotIncludeAccessibility"));
+    send(world, QStringLiteral("set"), {{QStringLiteral("key"), QStringLiteral("accessibility")}, {QStringLiteral("value"), true}});
+    expect(!field(world, QStringLiteral("accessibility.checked")).toBool() && !field(world, QStringLiteral("accessibility.enabled")).toBool() &&
+               settings(world)->setting(QStringLiteral("snapShotIncludeAccessibility")) == before,
+           QStringLiteral("app text to stay off; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the panel says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(field(world, QStringLiteral("accessibility.status")) == c[0], QStringLiteral("the panel to say %1; Snap Shot is %2").arg(c[0], show(snapShot(world))));
+  });
+  step(QStringLiteral("the user's settings cannot be written"), [](World& world, const Captures&, const Table&) {
+    // A file where the preferences' folder would be.
+    const QString blocker = QDir(world.configDir()).filePath(QStringLiteral("not-a-folder"));
+    QDir().mkpath(world.configDir());
+    QFile file(blocker);
+    expect(file.open(QIODevice::WriteOnly), QStringLiteral("cannot write %1").arg(blocker));
+    file.close();
+    settings(world)->setDevicePath(QDir(blocker).filePath(QStringLiteral("preferences.json")));
+  });
+  step(QStringLiteral("the user turns off the capture sound"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("sound"), {{QStringLiteral("value"), QStringLiteral("off")}});
+  });
+  step(QStringLiteral("the sound is still on"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("sound.value")) == QLatin1String("soft-pop") && settings(world)->setting(QStringLiteral("snapShotPlaySound")).toBool(),
+           QStringLiteral("the sound to stay on; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the user is told the save failed with the reason"), [](World& world, const Captures&, const Table&) {
+    const auto toast = toastTitled(world, QStringLiteral("Setting not saved"));
+    expect(toast && toast->value(QStringLiteral("description")).toString().startsWith(QLatin1String("Cannot save ")),
+           QStringLiteral("the save's failure and why; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))));
+  });
+  step(QStringLiteral("the user opens the capture sound choices"), [](World&, const Captures&, const Table&) {});
+  step(QStringLiteral("the choices are Off, \"Whoosh \\(Default\\)\" and Click"), [](World& world, const Captures&, const Table&) {
+    QStringList labels;
+    for (const QVariant& choice : field(world, QStringLiteral("sound.choices")).toList()) labels.append(choice.toMap().value(QStringLiteral("label")).toString());
+    expect(labels == QStringList{QStringLiteral("Off"), QStringLiteral("Whoosh (Default)"), QStringLiteral("Click")},
+           QStringLiteral("Off, Whoosh and Click; the choices are %1").arg(labels.join(u',')));
+  });
+  step(QStringLiteral("the current choice is shown on the row as (Off|Whoosh \\(Default\\)|Click)"), [](World& world, const Captures& c, const Table&) {
+    for (const QVariant& choice : field(world, QStringLiteral("sound.choices")).toList()) {
+      if (choice.toMap().value(QStringLiteral("label")) == c[0]) send(world, QStringLiteral("sound"), {{QStringLiteral("value"), choice.toMap().value(QStringLiteral("value"))}});
+    }
+    expect(field(world, QStringLiteral("sound.label")) == c[0], QStringLiteral("the row to show %1; Snap Shot is %2").arg(c[0], show(snapShot(world))));
+  });
+  step(QStringLiteral("a Linux session where any other desktop but Niri"), [](World& world, const Captures&, const Table&) {
+    resetDesktop(world, environment(QStringLiteral("wayland"), QStringLiteral("sway")));
+    settings(world)->set(QStringLiteral("snapShotEnabled"), true);
+    openPanel(world);
+    // The flash and animation rows say it (TurnSteps' "the user is told").
+    world.toldInPlace = [&world] {
+      return QStringList{field(world, QStringLiteral("flash.status")).toString(), field(world, QStringLiteral("animations.status")).toString()};
+    };
+  });
+  step(QStringLiteral("a desktop that gives only a window picker"), [](World& world, const Captures&, const Table&) {
+    desktop().picker = true;
+    turnOn(world);
+    update(world);
+  });
+  step(QStringLiteral("the capture row says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(field(world, QStringLiteral("description")) == c[0], QStringLiteral("the capture row to say %1; Snap Shot is %2").arg(c[0], show(snapShot(world))));
+  });
+
+  // Catching up with the desktop.
+  step(QStringLiteral("the panel is open"), [](World& world, const Captures&, const Table&) {
+    portalDesktop(world);
+    turnOnWith(world);
+    waitForField(world, QStringLiteral("shortcut.registered"), true);
+    expect(field(world, QStringLiteral("status")) == QLatin1String("Ready to capture"), QStringLiteral("capture to be ready; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the user returns to the app after changing capture access or the shortcut outside it"), [](World&, const Captures&, const Table&) {
+    bus().desktop.windowCapture = false;
+    emit qGuiApp->applicationStateChanged(Qt::ApplicationActive);
+  });
+  step(QStringLiteral("the panel shows the current state without being reopened"), [](World& world, const Captures&, const Table&) {
+    waitForField(world, QStringLiteral("status"), QStringLiteral("Manual capture only — you'll choose a window each time"));
+  });
+  step(QStringLiteral("it does the same when the desktop reports the shortcut changed"), [](World& world, const Captures&, const Table&) {
+    bus().changeShortcut(QStringLiteral("Ctrl+Alt+S"));
+    waitForField(world, QStringLiteral("shortcut.keys"), QStringLiteral("Ctrl+Alt+S"));
+    expect(field(world, QStringLiteral("shortcut.status")) == QLatin1String("Desktop shortcut: Ctrl+Alt+S"),
+           QStringLiteral("the row to show the desktop's shortcut; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the user asked for shortcut permission and the desktop failed"), [](World& world, const Captures&, const Table&) {
+    PortalDesktop portal;
+    portal.sessionFails = true;
+    portalDesktop(world, portal);
+    turnOnWith(world);
+    waitForField(world, QStringLiteral("shortcut.status"), QStringLiteral("Your desktop could not create a capture shortcut session."));
+  });
+  step(QStringLiteral("the user is told what went wrong once"), [](World& world, const Captures&, const Table&) {
+    expect(!toastSaying(world, QStringLiteral("Your desktop could not create a capture shortcut session.")) && !hasWizard(world),
+           QStringLiteral("the failure on the shortcut row alone; the shell shows %1").arg(show(world.state(QStringLiteral("toasts")))));
+  });
+  step(QStringLiteral("the user can ask (?:again|for the shortcut again)"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("shortcut.permissions")).toBool(), QStringLiteral("a way to ask again; Snap Shot is %1").arg(show(snapShot(world))));
+    // The desktop works again.
+    bus().reset();
+    send(world, QStringLiteral("shortcut.permissions"));
+    waitForField(world, QStringLiteral("shortcut.registered"), true);
+  });
+
+  // Setup.
+  step(QStringLiteral("setup is open and a step fails"), [](World& world, const Captures&, const Table&) {
+    PortalDesktop portal;
+    portal.screenshotFails = true;
+    portalDesktop(world, portal);
+    send(world, QStringLiteral("setup.open"));
+  });
+  step(QStringLiteral("the error is shown in setup"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("access") &&
+               field(world, QStringLiteral("wizard.details")) == QLatin1String("Your desktop could not say whether it can capture windows."),
+           QStringLiteral("setup to show the failure; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("closing setup does not repeat it in the panel"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("setup.close"));
+    expect(!hasWizard(world) && !toastSaying(world, QStringLiteral("Your desktop could not say whether it can capture windows.")) &&
+               field(world, QStringLiteral("status")) == QLatin1String("Turn this on to set up snapshots."),
+           QStringLiteral("the failure to go with setup; Snap Shot is %1, the shell shows %2").arg(show(snapShot(world)), show(world.state(QStringLiteral("toasts")))));
+  });
+  step(QStringLiteral("Snap Shot was off and the user opened setup"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("setup.open"));
+    expect(hasWizard(world), QStringLiteral("setup to open; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("capture is off again"), [](World& world, const Captures&, const Table&) { expectOff(world); });
+  step(QStringLiteral("Snap Shot was on and the user opened setup to change something"), [](World& world, const Captures&, const Table&) {
+    turnOn(world);
+    send(world, QStringLiteral("setup.open"));
+    expect(hasWizard(world), QStringLiteral("setup to open; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("capture is still on"), [](World& world, const Captures&, const Table&) {
+    expect(!hasWizard(world) && settings(world)->setting(QStringLiteral("snapShotEnabled")).toBool() &&
+               field(world, QStringLiteral("shortcut.registered")).toBool(),
+           QStringLiteral("capture to stay on; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("turning it on succeeds but the following status check fails"), [](World& world, const Captures&, const Table&) {
+    desktop().message = QStringLiteral("Your desktop could not say whether it can capture windows.");
+    update(world);
+  });
+  step(QStringLiteral("the user opens setup"), [](World& world, const Captures&, const Table&) { send(world, QStringLiteral("setup.open")); });
+  step(QStringLiteral("setup opens at its first step"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("access") && field(world, QStringLiteral("wizard.closeLabel")) == QLatin1String("Finish later"),
+           QStringLiteral("setup to open on access; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("finishing later turns capture back off"), [](World& world, const Captures&, const Table&) {
+    // Trying again turns capture on, and the check still fails.
+    send(world, QStringLiteral("setup.continue"));
+    expect(settings(world)->setting(QStringLiteral("snapShotEnabled")).toBool() && field(world, QStringLiteral("wizard.step")) == QLatin1String("access"),
+           QStringLiteral("capture on and setup still on access; Snap Shot is %1").arg(show(snapShot(world))));
+    send(world, QStringLiteral("setup.close"));
+    expectOff(world);
+  });
+  step(QStringLiteral("the title says \"Set up snapshots for\" the user's desktop, or just \"Set up snapshots\""), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("wizard.title")) == QLatin1String("Set up snapshots"),
+           QStringLiteral("setup's title on an unnamed desktop; Snap Shot is %1").arg(show(snapShot(world))));
+    resetDesktop(world, environment(QStringLiteral("wayland"), QStringLiteral("GNOME")));
+    openPanel(world);
+    send(world, QStringLiteral("setup.open"));
+    expect(field(world, QStringLiteral("wizard.title")) == QLatin1String("Set up snapshots for GNOME"),
+           QStringLiteral("setup's title on GNOME; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the steps are capture access and the shortcut"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("shortcut"), QStringLiteral("setup on the shortcut; Snap Shot is %1").arg(show(snapShot(world))));
+    send(world, QStringLiteral("setup.back"));
+    expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("access"), QStringLiteral("access before it; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the user can go back to access but cannot jump ahead to the shortcut"), [](World& world, const Captures&, const Table&) {
+    desktop().message = QStringLiteral("Your desktop could not say whether it can capture windows.");
+    update(world);
+    send(world, QStringLiteral("setup.continue"));
+    expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("access"), QStringLiteral("setup to stay on access; Snap Shot is %1").arg(show(snapShot(world))));
+    send(world, QStringLiteral("setup.close"));
+    send(world, QStringLiteral("setup.open"), {{QStringLiteral("step"), QStringLiteral("shortcut")}});
+    expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("access"), QStringLiteral("setup to open on access; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("Snap Shot was (on|off) when the user opened setup"), [](World& world, const Captures& c, const Table&) {
+    if (c[0] == QLatin1String("on")) turnOn(world);
+    send(world, QStringLiteral("setup.open"));
+  });
+  step(QStringLiteral("the setup footer offers %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(field(world, QStringLiteral("wizard.closeLabel")) == c[0], QStringLiteral("setup to offer %1; Snap Shot is %2").arg(c[0], show(snapShot(world))));
+  });
+  step(QStringLiteral("the desktop cannot report whether capture is supported"), [](World& world, const Captures&, const Table&) {
+    PortalDesktop portal;
+    portal.screenshotFails = true;
+    portalDesktop(world, portal);
+  });
+  step(QStringLiteral("the user checks capture access"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("setup.open"));
+    send(world, QStringLiteral("setup.continue"));
+  });
+  step(QStringLiteral("setup says %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(field(world, QStringLiteral("wizard.heading")) == c[0] && field(world, QStringLiteral("wizard.body")) == c[1],
+           QStringLiteral("setup to say %1 and %2; Snap Shot is %3").arg(c[0], c[1], show(snapShot(world))));
+  });
+  step(QStringLiteral("capture access is not reported as ready"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("access") && field(world, QStringLiteral("wizard.continueLabel")) == QLatin1String("Try again") &&
+               field(world, QStringLiteral("status")) == QLatin1String("Capture needs attention"),
+           QStringLiteral("access not to be ready; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the user is on the shortcut step(?: with a saved shortcut| on a desktop that gives shortcuts by portal)?"),
+       [](World& world, const Captures&, const Table&) {
+         turnOn(world);
+         send(world, QStringLiteral("setup.open"));
+         expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("shortcut"), QStringLiteral("setup on the shortcut; Snap Shot is %1").arg(show(snapShot(world))));
+       });
+  step(QStringLiteral("the user is on the shortcut step on while recording"), [](World& world, const Captures&, const Table&) {
+    turnOn(world);
+    send(world, QStringLiteral("setup.open"));
+    send(world, QStringLiteral("record.start"));
+  });
+  step(QStringLiteral("capture access is lost"), [](World& world, const Captures&, const Table&) {
+    desktop().message = QStringLiteral("Your desktop could not say whether it can capture windows.");
+    update(world);
+  });
+  step(QStringLiteral("setup says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QVariantMap wizard = field(world, QStringLiteral("wizard")).toMap();
+    const bool says = std::any_of(wizard.cbegin(), wizard.cend(), [&](const QVariant& value) { return value == c[0]; });
+    expect(says, QStringLiteral("setup to say %1; it shows %2").arg(c[0], show(wizard)));
+  });
+  step(QStringLiteral("the user cannot finish until access is back"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("setup.done"));
+    expect(hasWizard(world) && !field(world, QStringLiteral("wizard.doneEnabled")).toBool(),
+           QStringLiteral("setup to stay open without access; Snap Shot is %1").arg(show(snapShot(world))));
+    desktop().message.clear();
+    update(world);
+    expect(field(world, QStringLiteral("wizard.doneEnabled")).toBool(), QStringLiteral("finishing once access is back; Snap Shot is %1").arg(show(snapShot(world))));
+    send(world, QStringLiteral("setup.done"));
+    expect(!hasWizard(world), QStringLiteral("setup to finish; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the user records a different one"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("record.start"));
+    pressNamed(world, QStringLiteral("Ctrl+Alt+K"));
+  });
+  step(QStringLiteral("the finishing button reads \"Save and finish\" and is available only when the shortcut can be saved"),
+       [](World& world, const Captures&, const Table&) {
+         expect(field(world, QStringLiteral("wizard.doneLabel")) == QLatin1String("Save and finish") && field(world, QStringLiteral("wizard.doneEnabled")).toBool() &&
+                    field(world, QStringLiteral("shortcut.canSave")).toBool(),
+                QStringLiteral("Save and finish, available; Snap Shot is %1").arg(show(snapShot(world))));
+         // One the desktop reserves cannot be saved, so setup cannot finish with it.
+         send(world, QStringLiteral("record.start"));
+         pressNamed(world, QStringLiteral("Super+L"));
+         expect(field(world, QStringLiteral("wizard.doneLabel")) == QLatin1String("Save and finish") && !field(world, QStringLiteral("wizard.doneEnabled")).toBool(),
+                QStringLiteral("Save and finish, unavailable; Snap Shot is %1").arg(show(snapShot(world))));
+       });
+  step(QStringLiteral("the user records nothing"), [](World& world, const Captures&, const Table&) { send(world, QStringLiteral("shortcut.discard")); });
+  step(QStringLiteral("the button reads %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(field(world, QStringLiteral("wizard.doneLabel")) == c[0] && field(world, QStringLiteral("wizard.doneEnabled")).toBool(),
+           QStringLiteral("the button to read %1; Snap Shot is %2").arg(c[0], show(snapShot(world))));
+  });
+  step(QStringLiteral("setup asked the desktop for a shortcut and its prompt is pending"), [](World& world, const Captures&, const Table&) {
+    PortalDesktop portal;
+    portal.bind = PortalAnswer::Hold;
+    portalDesktop(world, portal);
+    settings(world)->set(QStringLiteral("snapShotShortcut"), kCtrlShift2.toVariantMap());
+    send(world, QStringLiteral("setup.open"));
+    world.waitFor([] { return bus().prompting(); }, QStringLiteral("the desktop to prompt for the shortcut"));
+  });
+  step(QStringLiteral("the user can finish setup and approve the prompt later"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("wizard.doneEnabled")).toBool(), QStringLiteral("setup to finish while the prompt is open; Snap Shot is %1").arg(show(snapShot(world))));
+    send(world, QStringLiteral("setup.done"));
+    expect(!hasWizard(world) && settings(world)->setting(QStringLiteral("snapShotEnabled")).toBool(),
+           QStringLiteral("setup to finish with capture on; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the desktop has refused the shortcut"), [](World& world, const Captures&, const Table&) {
+    bus().answer(false);
+    waitForField(world, QStringLiteral("shortcut.pending"), false);
+    send(world, QStringLiteral("setup.open"));
+  });
+  step(QStringLiteral("the user cannot finish until it is allowed or changed"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("setup.done"));
+    expect(hasWizard(world) && !field(world, QStringLiteral("wizard.doneEnabled")).toBool() && field(world, QStringLiteral("wizard.permissions")).toBool(),
+           QStringLiteral("setup to wait on the refused shortcut; Snap Shot is %1").arg(show(snapShot(world))));
+    send(world, QStringLiteral("record.start"));
+    pressNamed(world, QStringLiteral("Ctrl+Alt+K"));
+    expect(field(world, QStringLiteral("wizard.doneEnabled")).toBool(), QStringLiteral("a changed shortcut to finish setup; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+
+  // The desktop portal's answers.
+  step(QStringLiteral("(the desktop grants the shortcut and shows it as \"Ctrl\\+Alt\\+S\"|"
+                      "the user refuses the permission prompt on a desktop that (?:can|cannot) ask again|"
+                      "the desktop grants the shortcut but assigns no keys, and (?:can|cannot) ask again)"),
+       [](World& world, const Captures& c, const Table&) {
+         auto& portal = bus().desktop;
+         if (c[0].contains(QLatin1String("cannot ask"))) portal.shortcutsVersion = 1;
+         if (c[0].contains(QLatin1String("Ctrl+Alt+S"))) portal.label = QStringLiteral("Ctrl+Alt+S");
+         if (c[0].contains(QLatin1String("refuses"))) portal.bind = PortalAnswer::Refuse;
+         if (c[0].contains(QLatin1String("no keys"))) portal.bind = PortalAnswer::Unassigned;
+         turnOnWith(world);
+       });
+  step(QStringLiteral("the desktop's shortcut permission prompt is open"), [](World& world, const Captures&, const Table&) {
+    bus().desktop.bind = PortalAnswer::Hold;
+    turnOnWith(world);
+    world.waitFor([] { return bus().prompting(); }, QStringLiteral("the desktop to prompt for the shortcut"));
+  });
+  step(QStringLiteral("the user takes up to two minutes to answer it"), [](World&, const Captures&, const Table&) {
+    expect(FakeDesktopPortal::promptTimeoutMs() >= 120'000,
+           QStringLiteral("the prompt to be waited for two minutes, not %1 ms").arg(FakeDesktopPortal::promptTimeoutMs()));
+  });
+  step(QStringLiteral("HAL-C2 keeps waiting and the shortcut row keeps asking for the prompt to be approved"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("shortcut.pending")).toBool() &&
+               field(world, QStringLiteral("shortcut.status")) == QLatin1String("Approve the shortcut permission prompt to continue."),
+           QStringLiteral("the row to wait on the prompt; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("the shortcut is registered as soon as the user approves"), [](World& world, const Captures&, const Table&) {
+    bus().answer(true);
+    waitForField(world, QStringLiteral("shortcut.registered"), true);
+  });
+  step(QStringLiteral("(the desktop's shortcut service restarts|the desktop closes HAL-C2's shortcut session|"
+                      "the permission prompt is not answered in time|the desktop's shortcut service cannot be reached)"),
+       [](World& world, const Captures& c, const Table&) {
+         if (c[0].contains(QLatin1String("in time"))) {
+           bus().desktop.bind = PortalAnswer::Hold;
+           bus().shortenPrompts();
+           turnOnWith(world);
+           return;
+         }
+         if (c[0].contains(QLatin1String("cannot be reached"))) {
+           bus().dropService();
+           turnOnWith(world);
+           return;
+         }
+         turnOnWith(world);
+         waitForField(world, QStringLiteral("shortcut.registered"), true);
+         if (c[0].contains(QLatin1String("restarts"))) bus().restartService();
+         else bus().closeSession();
+       });
+  step(QStringLiteral("the user records (Shift\\+K|Ctrl\\+C|Ctrl\\+S|Ctrl\\+Z|Alt\\+Tab|Super\\+L)"), [](World& world, const Captures& c, const Table&) {
+    pressNamed(world, c[0]);
+  });
+  step(QStringLiteral("Save is not available"), [](World& world, const Captures&, const Table&) {
+    expect(!field(world, QStringLiteral("shortcut.canSave")).toBool(), QStringLiteral("Save to be unavailable; Snap Shot is %1").arg(show(snapShot(world))));
+  });
+  step(QStringLiteral("Snap Shot is on and its shortcut is registered"), [](World& world, const Captures&, const Table&) {
+    portalDesktop(world);
+    turnOnWith(world);
+    waitForField(world, QStringLiteral("shortcut.registered"), true);
+  });
+  step(QStringLiteral("the user changes a setting that is not about Snap Shot"), [](World& world, const Captures&, const Table&) {
+    settings(world)->set(QStringLiteral("wordWrap"), !settings(world)->setting(QStringLiteral("wordWrap")).toBool());
+    world.sync();
+  });
+  step(QStringLiteral("the shortcut stays registered without being released and set up again"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("shortcut.registered")).toBool() && bus().creates == 1 && bus().triggers.size() == 1 && bus().closes == 0,
+           QStringLiteral("one session, never closed; %1 sessions, %2 binds, %3 closed").arg(bus().creates).arg(bus().triggers.size()).arg(bus().closes));
+  });
+  step(QStringLiteral("an approved desktop shortcut session is not dropped"), [](World&, const Captures&, const Table&) {
+    expect(bus().sessionOpen(), QStringLiteral("the desktop's session to stay open"));
   });
 
   // source-control/snap-shot.feature

@@ -151,7 +151,7 @@ Feature: Snap Shot settings
     When the user changes the shortcut and presses Ctrl+Shift+2
     Then the user is told the desktop did not allow it and can ask again
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The panel says where capture setup stands
     Given Snap Shot is <situation>
     When the panel loads
@@ -161,24 +161,30 @@ Feature: Snap Shot settings
       | situation                                                          | status                                               |
       | still being checked                                                | Checking snapshots…                                  |
       | off                                                                | Turn this on to set up snapshots.                    |
-      | on but the capture helper is not installed                         | Install the capture helper to continue               |
-      | on but the capture helper's access check failed                    | Check capture access in setup                        |
-      | on with the GNOME extension not enabled                            | Set up active-window snapshots                       |
       | on with only a manual window picker available                      | Manual capture only — you'll choose a window each time |
       | on and waiting for the user to approve the shortcut                | Waiting for shortcut permission                      |
-      | on with a shortcut saved but never seen to work from another app   | Use your shortcut from another app                   |
       | on with a shortcut that has been seen to work                      | Ready to capture                                     |
       | on with no shortcut chosen yet                                     | Finish shortcut setup                                |
       | on but the desktop reports a problem                               | Capture needs attention                              |
 
-  @backlog @desktop
+    # The Qt desktop has no capture helper or GNOME extension, and does not
+    # track whether the shortcut has been seen to work from another app.
+    @backlog
+    Examples:
+      | situation                                                          | status                                               |
+      | on but the capture helper is not installed                         | Install the capture helper to continue               |
+      | on but the capture helper's access check failed                    | Check capture access in setup                        |
+      | on with the GNOME extension not enabled                            | Set up active-window snapshots                       |
+      | on with a shortcut saved but never seen to work from another app   | Use your shortcut from another app                   |
+
+  @desktop
   Scenario: A desktop without capture says why instead of offering setup
     Given the desktop reports that capture is not supported on this platform
     When the panel loads
     Then the capture row says the desktop's reason, or "Not supported on this platform."
     And capture cannot be turned on
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The setup button names the desktop it sets up
     Given Snap Shot is on and setup is not finished on <desktop>
     When the panel loads
@@ -190,7 +196,7 @@ Feature: Snap Shot settings
       | KDE Plasma                       | Set up KDE capture    |
       | a desktop HAL-C2 cannot name     | Continue setup        |
 
-  @backlog @desktop
+  @desktop
   Scenario: Setup that is complete reads as managing capture
     Given capture access is in place
     When the panel loads
@@ -244,7 +250,7 @@ Feature: Snap Shot settings
     When instead the user closes System Settings or brings another app forward
     Then the panel closes or hides with it
 
-  @backlog @desktop
+  @desktop
   Scenario: A shortcut is saved only when the user saves it
     Given Snap Shot is on with the shortcut Ctrl+Shift+1
     When the user changes the shortcut and presses Ctrl+Shift+2
@@ -253,7 +259,7 @@ Feature: Snap Shot settings
     When the user cancels
     Then the panel shows Ctrl+Shift+1 again and nothing changed
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The shortcut row says what is happening with a new shortcut
     Given the user is changing the shortcut
     When <moment>
@@ -262,10 +268,15 @@ Feature: Snap Shot settings
     Examples:
       | moment                                                    | message                                         |
       | recording starts                                          | Press your shortcut. Esc cancels.               |
-      | the desktop is being asked if the shortcut is free        | Checking shortcut…                              |
       | the desktop says the shortcut is free                     | Ready to save.                                  |
-      | the shortcut is one HAL-C2 uses for "Toggle terminal"     | HAL-C2 already uses this for "Toggle terminal". |
+      | the shortcut is one HAL-C2 uses for "Terminal: Toggle"    | HAL-C2 already uses this for "Terminal: Toggle". |
       | the user presses only modifier keys on a Wayland desktop  | Add a letter, number, or function key to your shortcut. |
+
+    # The desktop portal is not asked whether a shortcut is free before it is saved.
+    @backlog
+    Examples:
+      | moment                                                    | message                                         |
+      | the desktop is being asked if the shortcut is free        | Checking shortcut…                              |
 
   @backlog @desktop
   Scenario: A shortcut that cannot be checked is reported, not assumed free
@@ -281,7 +292,7 @@ Feature: Snap Shot settings
     Then the answer to the first check is ignored
     And the second shortcut's answer decides whether Save is available
 
-  @backlog @desktop
+  @desktop
   Scenario: A portal desktop suggests a letter-based shortcut
     Given a desktop that gives shortcuts through the desktop portal
     And no shortcut is saved yet
@@ -289,7 +300,7 @@ Feature: Snap Shot settings
     Then the shortcut row suggests a shortcut such as Ctrl+Shift+2
     And pressing both Shift keys is not offered as the shortcut
 
-  @backlog @desktop
+  @desktop
   Scenario: Capture shortcuts are paused while a new one is recorded
     Given Snap Shot is on with a shortcut
     When the user starts recording a new shortcut and presses the current one
@@ -303,13 +314,13 @@ Feature: Snap Shot settings
     Then recording does not start
     And the user is told "Could not start shortcut recording." or the desktop's reason
 
-  @backlog @desktop
+  @desktop
   Scenario: Pressing Tab while recording moves on without recording a shortcut
     Given the user is recording a new shortcut
     When the user presses Tab, holds a key down, or presses a modifier on its own
     Then no shortcut is recorded
 
-  @backlog @desktop
+  @desktop
   Scenario: Shortcut permission can be asked for again
     Given the desktop shows a portal shortcut that was refused or never granted
     When the user chooses Shortcut permissions
@@ -317,7 +328,7 @@ Feature: Snap Shot settings
     And the button is disabled while its prompt is pending
     And the row says "Approve the shortcut permission prompt to continue." while it is
 
-  @backlog @desktop
+  @desktop
   Scenario: Asking again is not offered when it cannot help
     Given the shortcut is a modifier pair, or the desktop says asking again changes nothing
     When the panel loads
@@ -330,14 +341,14 @@ Feature: Snap Shot settings
     Then the shortcut row offers "Change shortcut"
     And choosing it opens setup at the shortcut step
 
-  @backlog @desktop
+  @desktop
   Scenario: A shortcut that cannot be read is replaced, not guessed
     Given the desktop reports a shortcut HAL-C2 cannot read
     When the panel loads
     Then the shortcut row says "Change shortcut" instead of showing keys
     And recording a new one replaces it
 
-  @backlog @desktop
+  @desktop
   Scenario: App text is not offered where the desktop only gives a screenshot
     Given a Linux desktop that only provides a screenshot
     When the panel loads
@@ -352,14 +363,14 @@ Feature: Snap Shot settings
     When the permission is refused
     Then app text stays off and the user is told "Couldn't allow app text capture" with the reason
 
-  @backlog @desktop
+  @desktop
   Scenario: A preference that fails to save stays as it was
     Given the user's settings cannot be written
     When the user turns off the capture sound
     Then the sound is still on
     And the user is told the save failed with the reason
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The sound menu offers Off, Whoosh and Click
     When the user opens the capture sound choices
     Then the choices are Off, "Whoosh (Default)" and Click
@@ -378,12 +389,18 @@ Feature: Snap Shot settings
     Then Click plays once
     And the choices stay open and the sound in use does not change
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The panel explains why capture effects are not available
     Given a Linux session where <situation>
     When the panel loads
     Then the user is told "<message>"
 
+    Examples:
+      | situation                                                    | message                                                                 |
+      | any other desktop but Niri                                   | Capture effects aren't available on this desktop.                       |
+
+    # The Qt desktop has no capture helper or GNOME extension.
+    @backlog
     Examples:
       | situation                                                    | message                                                                 |
       | Hyprland has its helper ready but no effects                 | Capture effects aren't available on this desktop.                       |
@@ -392,35 +409,34 @@ Feature: Snap Shot settings
       | KDE Plasma has no helper or an outdated one                  | Install or update the capture helper to enable effects.                 |
       | the GNOME extension is installed but is the first version    | Update the GNOME extension, then sign out and back in to enable effects. |
       | GNOME setup has not been finished                            | Finish extension setup to enable effects.                               |
-      | any other desktop but Niri                                   | Capture effects aren't available on this desktop.                       |
 
-  @backlog @desktop
+  @desktop
   Scenario: A desktop that can only pick a window says so
     Given a desktop that gives only a window picker
     When the panel loads
     Then the capture row says "Automatic capture isn't available here. Choose a window instead."
     And the shortcut row says "Choose a window to capture from any app."
 
-  @backlog @desktop
+  @desktop
   Scenario: The panel catches up when the user returns or the shortcut changes elsewhere
     Given the panel is open
     When the user returns to the app after changing capture access or the shortcut outside it
     Then the panel shows the current state without being reopened
     And it does the same when the desktop reports the shortcut changed
 
-  @backlog @desktop
+  @desktop
   Scenario: A permission error is shown once and can be retried
     Given the user asked for shortcut permission and the desktop failed
     Then the user is told what went wrong once
     And the user can ask again
 
-  @backlog @desktop
+  @desktop
   Scenario: Setup errors stay in setup
     Given setup is open and a step fails
     Then the error is shown in setup
     And closing setup does not repeat it in the panel
 
-  @backlog @desktop
+  @desktop
   Scenario: Finishing later restores capture to how it was before setup opened
     Given Snap Shot was off and the user opened setup
     When the user chooses to finish later
@@ -429,7 +445,7 @@ Feature: Snap Shot settings
     When the user chooses to finish later
     Then capture is still on
 
-  @backlog @desktop
+  @desktop
   Scenario: Setup that cannot save the opt-in keeps finishing later available
     Given Snap Shot is off
     And turning it on succeeds but the following status check fails
@@ -437,14 +453,14 @@ Feature: Snap Shot settings
     Then setup opens at its first step
     And finishing later turns capture back off
 
-  @backlog @desktop
+  @desktop
   Scenario: Setup has two steps, access then shortcut
     When the user opens setup
     Then the title says "Set up snapshots for" the user's desktop, or just "Set up snapshots"
     And the steps are capture access and the shortcut
     And the user can go back to access but cannot jump ahead to the shortcut
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Setup is closed with Close once it has been on, otherwise Finish later
     Given Snap Shot was <state> when the user opened setup
     Then the setup footer offers "<button>"
@@ -512,7 +528,7 @@ Feature: Snap Shot settings
     Then setup says "Let's fix capture access"
     And suggests reinstalling the capture helper and checking again
 
-  @backlog @desktop
+  @desktop
   Scenario: Checking capture access that cannot be read is not reported as a success
     Given the desktop cannot report whether capture is supported
     When the user checks capture access
@@ -547,14 +563,14 @@ Feature: Snap Shot settings
     Then the user is told macOS may ask to bypass its window picker and to choose Allow
     And the test image is discarded
 
-  @backlog @desktop
+  @desktop
   Scenario: Finishing needs capture access to still be there
     Given the user is on the shortcut step
     When capture access is lost
     Then setup says "Capture needs attention. Go back to check access."
     And the user cannot finish until access is back
 
-  @backlog @desktop
+  @desktop
   Scenario: A shortcut that changed must be saved before setup finishes
     Given the user is on the shortcut step with a saved shortcut
     When the user records a different one
@@ -562,18 +578,23 @@ Feature: Snap Shot settings
     When the user records nothing
     Then the button reads "Done"
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The shortcut step explains what to press
     Given the user is on the shortcut step on <platform>
     Then setup says "<instruction>"
 
     Examples:
       | platform                                    | instruction                                              |
-      | a desktop that records modifier pairs       | Use both Shift keys, or record a different shortcut.     |
       | a desktop that gives shortcuts by portal    | Choose your keys, then approve the permission prompt if asked. |
       | while recording                             | Click the shortcut, then press the keys you want.        |
 
-  @backlog @desktop
+    # No Linux desktop the Qt app supports records modifier pairs yet.
+    @backlog
+    Examples:
+      | platform                                    | instruction                                              |
+      | a desktop that records modifier pairs       | Use both Shift keys, or record a different shortcut.     |
+
+  @desktop
   Scenario: Leaving setup while the desktop's prompt is open is allowed, a refusal is not
     Given setup asked the desktop for a shortcut and its prompt is pending
     Then the user can finish setup and approve the prompt later
@@ -783,7 +804,7 @@ Feature: Snap Shot settings
       | Ctrl+Shift with an arrow key  |
       | Ctrl+Alt with Home            |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A shortcut the system or common apps already use says why
     Given the user is changing the shortcut
     When the user records <shortcut>
@@ -794,10 +815,22 @@ Feature: Snap Shot settings
       | shortcut      | message                                                                  |
       | Shift+K       | Shift combinations are used for typing and text selection. Add another modifier. |
       | Ctrl+C        | This shortcut is Copy in most apps.                                      |
-      | Ctrl+S        | This shortcut is Save in most apps.                                      |
-      | Ctrl+Z        | This shortcut is Undo in most apps.                                      |
       | Alt+Tab       | The system uses Alt+Tab to switch apps.                                  |
       | Super+L       | The system already uses this shortcut.                                   |
+
+  # HAL-C2 binds Ctrl+S and Ctrl+Z itself, and its own keybindings are checked first.
+  @desktop
+  Scenario Outline: A common app shortcut HAL-C2 does not bind says why
+    Given "<command>" was rebound to <elsewhere>
+    And the user is changing the shortcut
+    When the user records <shortcut>
+    Then the shortcut row says "<message>"
+    And Save is not available
+
+    Examples:
+      | command        | elsewhere   | shortcut | message                             |
+      | composer.stash | mod+alt+s   | Ctrl+S   | This shortcut is Save in most apps. |
+      | thread.undo    | mod+alt+z   | Ctrl+Z   | This shortcut is Undo in most apps. |
 
   @backlog @desktop
   Scenario Outline: A shortcut of one modifier key warns that it is observed, not reserved
@@ -827,7 +860,7 @@ Feature: Snap Shot settings
     Then the shortcut row says modifier-pair shortcuts aren't available in this Wayland session
     And it suggests another shortcut or Take snapshot from the command palette
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The shortcut row says what the desktop did with the shortcut request
     Given a desktop that gives shortcuts through the desktop portal
     When <outcome>
@@ -841,7 +874,7 @@ Feature: Snap Shot settings
       | the desktop grants the shortcut but assigns no keys, and can ask again        | No shortcut is assigned. Open shortcut permissions to choose one.                        |
       | the desktop grants the shortcut but assigns no keys, and cannot ask again     | No shortcut is assigned. Choose one in your desktop's shortcut settings.                 |
 
-  @backlog @desktop
+  @desktop
   Scenario: The portal's shortcut prompt is waited for up to two minutes
     Given a desktop that gives shortcuts through the desktop portal
     And the desktop's shortcut permission prompt is open
@@ -875,7 +908,7 @@ Feature: Snap Shot settings
     When the user asks for the shortcut permission
     Then the user is told to open the desktop's shortcut settings and allow HAL-C2's capture shortcut
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A shortcut service that fails says what to do
     Given a desktop that gives shortcuts through the desktop portal
     When <failure>
@@ -921,7 +954,7 @@ Feature: Snap Shot settings
     Then the shortcut row says to configure the capture shortcut in the compositor's config and save it
     And HAL-C2 does not register the shortcut itself
 
-  @backlog @desktop
+  @desktop
   Scenario: Saving unrelated settings leaves the shortcut registered
     Given Snap Shot is on and its shortcut is registered
     When the user changes a setting that is not about Snap Shot

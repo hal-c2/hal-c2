@@ -26,14 +26,24 @@ const QString kShortcuts = QStringLiteral("org.freedesktop.portal.GlobalShortcut
 const QString kProperties = QStringLiteral("org.freedesktop.DBus.Properties");
 // The Screenshot portal's `target` for the window in front.
 constexpr uint kWindowTarget = 8;
-constexpr int kPromptTimeoutMs = 120'000;
-constexpr int kTimeoutMs = 5'000;
 constexpr qint64 kMaxPngBytes = 32 * 1024 * 1024;
 
-struct PortalShortcut {
-  QString id;
-  QVariantMap properties;
+struct Waits {
+  QString bus;
+  int timeoutMs = PortalSnapShot::kTimeoutMs;
+  int promptTimeoutMs = PortalSnapShot::kPromptTimeoutMs;
 };
+
+Waits& waits() {
+  static Waits state;
+  return state;
+}
+
+QDBusConnection bus() {
+  return waits().bus.isEmpty() ? QDBusConnection::sessionBus() : QDBusConnection(waits().bus);
+}
+
+}  // namespace
 
 QDBusArgument& operator<<(QDBusArgument& argument, const PortalShortcut& shortcut) {
   argument.beginStructure();
@@ -49,9 +59,7 @@ const QDBusArgument& operator>>(const QDBusArgument& argument, PortalShortcut& s
   return argument;
 }
 
-QDBusConnection bus() {
-  return QDBusConnection::sessionBus();
-}
+namespace {
 
 QString token() {
   return QStringLiteral("hal_c2_") + QUuid::createUuid().toString(QUuid::Id128);
@@ -87,7 +95,9 @@ bool sandboxed() {
 
 }  // namespace
 
-Q_DECLARE_METATYPE(PortalShortcut)
+void PortalSnapShot::useBus(const QString& name, int timeoutMs, int promptTimeoutMs) {
+  waits() = {name, timeoutMs, promptTimeoutMs};
+}
 
 // --- PortalRequest ---------------------------------------------------------------
 
@@ -163,18 +173,36 @@ void PortalSnapShot::registerApp() {
 
 void PortalSnapShot::probe() {
   if (m_session.ready || m_probing) return;
+  readScreenshot();
+}
+
+// The user may have changed what the desktop allows while away.
+void PortalSnapShot::refresh() {
+  if (!m_session.ready || m_probing) return;
+  readScreenshot();
+}
+
+void PortalSnapShot::readScreenshot() {
   m_probing = true;
   registerApp();
   QDBusMessage message = QDBusMessage::createMethodCall(kService, kPath, kProperties, QStringLiteral("GetAll"));
   message.setArguments({kScreenshot});
   call(message, this, [this](const QDBusMessage& reply) {
     m_probing = false;
-    const QVariantMap properties = reply.type() == QDBusMessage::ReplyMessage
-                                       ? qdbus_cast<QVariantMap>(reply.arguments().value(0))
-                                       : QVariantMap{};
-    const uint version = unwrap(properties.value(QStringLiteral("version"))).toUInt();
-    const uint targets = unwrap(properties.value(QStringLiteral("AvailableTargets"))).toUInt();
-    m_session.backend = version >= 3 && (targets & kWindowTarget) ? QStringLiteral("screenshot-portal") : QStringLiteral("picker");
+    QString backend = m_session.backend;
+    QString message;
+    if (reply.type() == QDBusMessage::ReplyMessage) {
+      const QVariantMap properties = qdbus_cast<QVariantMap>(reply.arguments().value(0));
+      const uint version = unwrap(properties.value(QStringLiteral("version"))).toUInt();
+      const uint targets = unwrap(properties.value(QStringLiteral("AvailableTargets"))).toUInt();
+      backend = version >= 3 && (targets & kWindowTarget) ? QStringLiteral("screenshot-portal") : QStringLiteral("picker");
+    } else {
+      // Not knowing is not the picker: the screenshot portal may be missing too.
+      message = QStringLiteral("Your desktop could not say whether it can capture windows.");
+    }
+    if (m_session.ready && backend == m_session.backend && message == m_session.message) return;
+    m_session.backend = backend;
+    m_session.message = message;
     m_session.ready = true;
     emit changed();
   });
@@ -210,7 +238,7 @@ void PortalSnapShot::capture() {
     // The picker: the user chooses the window.
     options.insert(QStringLiteral("interactive"), true);
   }
-  request(kScreenshot, QStringLiteral("Screenshot"), {QString()}, options, kPromptTimeoutMs, [this](uint status, const QVariantMap& results) {
+  request(kScreenshot, QStringLiteral("Screenshot"), {QString()}, options, waits().promptTimeoutMs, [this](uint status, const QVariantMap& results) {
     m_capturing = false;
     if (status == 1) {
       emit failed(QStringLiteral("Snapshot was cancelled."));
@@ -286,12 +314,18 @@ void PortalSnapShot::bind(const QString& trigger) {
   call(version, this, [this, generation](const QDBusMessage& reply) {
     if (generation != m_generation) return;
     if (reply.type() != QDBusMessage::ReplyMessage) {
-      shortcutFailed(QStringLiteral("This desktop doesn't offer app shortcuts. Choose a shortcut in your desktop's settings instead."));
+      static const QStringList unreachable{QStringLiteral("org.freedesktop.DBus.Error.ServiceUnknown"),
+                                           QStringLiteral("org.freedesktop.DBus.Error.NoReply"),
+                                           QStringLiteral("org.freedesktop.DBus.Error.Disconnected"),
+                                           QStringLiteral("org.freedesktop.DBus.Error.NoServer")};
+      shortcutFailed(unreachable.contains(reply.errorName())
+                         ? QStringLiteral("Could not connect to your desktop's shortcut service.")
+                         : QStringLiteral("This desktop doesn't offer app shortcuts. Choose a shortcut in your desktop's settings instead."));
       return;
     }
     m_shortcutsVersion = unwrap(reply.arguments().value(0)).toUInt();
     const QVariantMap create{{QStringLiteral("session_handle_token"), token()}};
-    request(kShortcuts, QStringLiteral("CreateSession"), {}, create, kTimeoutMs, [this, generation](uint status, const QVariantMap& results) {
+    request(kShortcuts, QStringLiteral("CreateSession"), {}, create, waits().timeoutMs, [this, generation](uint status, const QVariantMap& results) {
       const QString handle = handleOf(unwrap(results.value(QStringLiteral("session_handle"))));
       if (generation != m_generation) {
         if (status == 0 && !handle.isEmpty()) closeObject(handle, kSession);
@@ -310,10 +344,16 @@ void PortalSnapShot::bind(const QString& trigger) {
            {{QStringLiteral("description"), QStringLiteral("Capture a window")}, {QStringLiteral("preferred_trigger"), m_trigger}}}};
       // Every session binds, even when the desktop remembers the approval.
       request(kShortcuts, QStringLiteral("BindShortcuts"),
-              {QVariant::fromValue(QDBusObjectPath(handle)), QVariant::fromValue(shortcuts), QString()}, {}, kPromptTimeoutMs,
+              {QVariant::fromValue(QDBusObjectPath(handle)), QVariant::fromValue(shortcuts), QString()}, {}, waits().promptTimeoutMs,
               [this, generation](uint status, const QVariantMap& results) {
                 if (generation != m_generation) return;
+                if (results.contains(QStringLiteral("timeout"))) {
+                  shortcutFailed(QStringLiteral("Shortcut permission request timed out. Try again."));
+                  return;
+                }
                 if (status != 0) {
+                  // Asking again starts a session of its own, and the desktop asks again.
+                  closeSession();
                   setShortcut({false, false, {},
                                m_shortcutsVersion >= 2
                                    ? QStringLiteral("Shortcut permission wasn't granted. Open shortcut permissions to allow it.")

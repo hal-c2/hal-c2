@@ -115,19 +115,24 @@ SettingsPage {
             return "";
         }
 
-        Keys.onShortcutOverride: event => event.accepted = (recorder.shortcut?.recording ?? false) && event.key !== Qt.Key_Tab
-                                                          && event.key !== Qt.Key_Backtab
+        // A plain Tab moves focus on (the controller ignores it too).
+        function plainTab(event) {
+            return (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
+                && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier));
+        }
+
+        Keys.onShortcutOverride: event => event.accepted = (recorder.shortcut?.recording ?? false) && !recorder.plainTab(event)
         Keys.onPressed: event => {
-            if (!(recorder.shortcut?.recording ?? false) || event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
+            if (!(recorder.shortcut?.recording ?? false) || recorder.plainTab(event))
                 return;
             event.accepted = true;
-            if (event.isAutoRepeat)
-                return;
             const held = modifier(event.key);
-            if (held.length > 0)
-                Shell.dispatch("snapShot.record.modifier", { modifier: held, code: event.nativeScanCode, down: true });
-            else
-                Shell.dispatch("snapShot.record.key", { key: event.key, modifiers: event.modifiers });
+            if (held.length > 0) {
+                if (!event.isAutoRepeat)
+                    Shell.dispatch("snapShot.record.modifier", { modifier: held, code: event.nativeScanCode, down: true });
+            } else {
+                Shell.dispatch("snapShot.record.key", { key: event.key, modifiers: event.modifiers, repeat: event.isAutoRepeat });
+            }
         }
         Keys.onReleased: event => {
             const held = modifier(event.key);
@@ -355,11 +360,11 @@ SettingsPage {
                 objectName: "control"
                 outline: true
                 implicitWidth: 170
-                readonly property var sounds: ["off", "soft-pop", "camera-shutter"]
-                model: [qsTr("Off"), qsTr("Whoosh (Default)"), qsTr("Click")]
-                currentIndex: sounds.indexOf(snap.settings?.sound?.value ?? "soft-pop")
+                readonly property var sounds: snap.settings?.sound?.choices ?? []
+                model: sounds.map(choice => choice.label)
+                currentIndex: sounds.findIndex(choice => choice.value === (snap.settings?.sound?.value ?? "soft-pop"))
                 Accessible.name: qsTr("Sound")
-                onActivated: index => Shell.dispatch("snapShot.sound", { value: sounds[index] })
+                onActivated: index => Shell.dispatch("snapShot.sound", { value: sounds[index].value })
             }
         }
 

@@ -32,7 +32,9 @@ Item {
             accessibility: root.toggle({ enabled: false, status: "Not available on this desktop." }),
             flash: root.toggle({ checked: true, enabled: false }),
             animations: root.toggle({ checked: true, enabled: false }),
-            sound: { value: "soft-pop", label: "Whoosh (Default)" },
+            sound: { value: "soft-pop", label: "Whoosh (Default)",
+                     choices: [{ value: "off", label: "Off" }, { value: "soft-pop", label: "Whoosh (Default)" },
+                               { value: "camera-shutter", label: "Click" }] },
             wizard: null
         }, overrides);
     }
