@@ -34,7 +34,11 @@ defmodule HalC2.Space do
 
   # --- Spaces -------------------------------------------------------------------------
 
-  @doc "The Spaces in the order they were made; Personal first, made when there are none."
+  @doc """
+  The Spaces in the order they were made; Personal first, made when there are none.
+  That one write is accepted from read-only callers (`space.list`, `hal_c2_page_list`):
+  it makes the Space any first look would find.
+  """
   def list do
     Streams.transact(@index, :space, fn state ->
       {changes, spaces} = seeded(state)
@@ -159,6 +163,9 @@ defmodule HalC2.Space do
   def set_checked(space_id, id, checked, author \\ @user),
     do: transact(space_id, &Blocks.set_checked(&1, id, checked, author))
 
+  def edit_block(space_id, id, text, checked, author \\ @user),
+    do: transact(space_id, &Blocks.edit(&1, id, text, checked, author))
+
   def move_block(space_id, id, after_id, author \\ @user),
     do: transact(space_id, &Blocks.move(&1, id, after_id, author))
 
@@ -213,7 +220,7 @@ defmodule HalC2.Space do
   def import_markdown(space_id, markdown, title, parent_id, extra, author)
       when is_binary(markdown) do
     {heading, specs} = Markdown.parse(markdown)
-    title = title || heading || "Untitled"
+    title = title || (heading && nonblank(heading)) || "Untitled"
 
     transact(space_id, fn state ->
       with {page_changes, {:ok, page}} <- Pages.create(state, space_id, title, parent_id, extra),

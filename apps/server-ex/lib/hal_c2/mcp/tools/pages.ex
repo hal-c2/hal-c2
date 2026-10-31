@@ -47,13 +47,9 @@ defmodule HalC2.Mcp.Tools.Pages do
     |> block()
   end
 
-  # Text and the tick each change when given; a block given neither is returned as is.
+  # Text and the tick change together when given; a block given neither is returned as is.
   def run("hal_c2_page_block_update", %{"spaceId" => s, "blockId" => b} = args, caller) do
-    with {:ok, block} <- text(s, b, args["text"], author(caller)),
-         {:ok, block} <- checked(s, block, args["checked"], author(caller)) do
-      {:ok, %{"block" => block}}
-    end
-    |> reply()
+    s |> Space.edit_block(b, args["text"], args["checked"], author(caller)) |> block()
   end
 
   def run("hal_c2_page_block_delete", %{"spaceId" => s, "blockId" => b}, _caller) do
@@ -78,21 +74,6 @@ defmodule HalC2.Mcp.Tools.Pages do
     {:ok, state} = Space.state(space["id"])
     pages = for page <- Pages.live(state), do: Map.take(page, ~w(id title parentPageId))
     space |> Map.take(~w(id name)) |> Map.put("pages", pages)
-  end
-
-  defp text(s, b, nil, _author), do: block_of(s, b)
-  defp text(s, b, text, author), do: Space.update_block(s, b, text, author)
-
-  defp checked(_s, block, nil, _author), do: {:ok, block}
-  defp checked(s, block, checked, author), do: Space.set_checked(s, block["id"], checked, author)
-
-  defp block_of(s, b) do
-    with {:ok, state} <- Space.state(s) do
-      case HalC2.StreamState.get(state, "block")[b] do
-        nil -> {:error, :not_found, "There is no block #{b} in this Space."}
-        block -> {:ok, block}
-      end
-    end
   end
 
   defp block(result), do: with({:ok, block} <- result, do: {:ok, %{"block" => block}}) |> reply()

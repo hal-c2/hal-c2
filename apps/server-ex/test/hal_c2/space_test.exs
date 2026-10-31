@@ -238,6 +238,11 @@ defmodule HalC2.SpaceTest do
                Markdown.parse("[Old](#gone)")
     end
 
+    test "a blank top heading imports as Untitled", %{space: space} do
+      {:ok, page} = Space.import_markdown(space, "#  \n\nShip")
+      assert page["title"] == "Untitled"
+    end
+
     test "a link to a page the Space lacks is imported as a paragraph", %{space: space} do
       {:ok, page} = Space.import_markdown(space, "[Old](#gone)", "Copy")
       assert texts(space, page["id"]) == ["[Old](#gone)"]

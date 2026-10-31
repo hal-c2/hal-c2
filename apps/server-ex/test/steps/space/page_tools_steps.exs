@@ -53,6 +53,12 @@ defmodule HalC2.Steps.Space.PageTools do
     context
   end
 
+  step "the agent in {string} changes the block {string} to {string} and ticks it",
+       %{args: [thread, text, next]} = context do
+    arguments = Map.merge(block_ref(context, text), %{"text" => next, "checked" => true})
+    tool(context, thread, "hal_c2_page_block_update", arguments)
+  end
+
   step "the agent in {string} deletes the block {string}", %{args: [thread, text]} = context do
     context = tool(context, thread, "hal_c2_page_block_delete", block_ref(context, text))
     assert {:ok, _} = context.page_tool

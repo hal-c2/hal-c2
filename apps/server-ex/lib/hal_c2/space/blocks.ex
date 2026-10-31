@@ -71,20 +71,42 @@ defmodule HalC2.Space.Blocks do
   end
 
   def update_text(state, id, text, author) when is_binary(text),
-    do: change(state, id, author, fn _ -> {:ok, %{"text" => text}} end)
+    do: edit(state, id, text, nil, author)
 
   def update_text(_state, _id, _text, _author),
     do: Pages.refused({:error, :invalid, "A block's text is a string."})
 
-  def set_checked(state, id, checked, author) when is_boolean(checked) do
-    change(state, id, author, fn
-      %{"kind" => "checklist"} -> {:ok, %{"checked" => checked}}
-      _ -> {:error, :invalid, "Only a checklist item can be ticked."}
-    end)
-  end
+  def set_checked(state, id, checked, author) when is_boolean(checked),
+    do: edit(state, id, nil, checked, author)
 
   def set_checked(_state, _id, _checked, _author),
     do: Pages.refused({:error, :invalid, "checked is true or false."})
+
+  @doc """
+  Changes a block's text and tick in one step: either refused, nothing changes. A
+  `nil` text or tick stays as it is.
+  """
+  def edit(state, id, text, checked, author) do
+    change(state, id, author, fn block ->
+      with {:ok, text} <- text_change(text),
+           {:ok, tick} <- tick_change(block, checked),
+           do: {:ok, Map.merge(text, tick)}
+    end)
+  end
+
+  defp text_change(nil), do: {:ok, %{}}
+  defp text_change(text) when is_binary(text), do: {:ok, %{"text" => text}}
+  defp text_change(_), do: {:error, :invalid, "A block's text is a string."}
+
+  defp tick_change(_block, nil), do: {:ok, %{}}
+
+  defp tick_change(%{"kind" => "checklist"}, checked) when is_boolean(checked),
+    do: {:ok, %{"checked" => checked}}
+
+  defp tick_change(_block, checked) when is_boolean(checked),
+    do: {:error, :invalid, "Only a checklist item can be ticked."}
+
+  defp tick_change(_block, _), do: {:error, :invalid, "checked is true or false."}
 
   def move(state, id, after_id, author) do
     change(state, id, author, fn block ->

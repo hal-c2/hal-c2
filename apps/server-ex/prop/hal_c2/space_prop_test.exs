@@ -2,7 +2,7 @@ defmodule HalC2.SpacePropTest do
   @moduledoc """
   A state machine over the pages, blocks and comments of one Space (`HalC2.Space`):
   pages made, moved, trashed, restored and deleted for good; blocks inserted, moved,
-  ticked and deleted; comments added, resolved and reopened; and the Space's streams
+  ticked, edited and deleted; comments added, resolved and reopened; and the Space's streams
   restarting, which reads everything back from the event log.
 
   After each command the test reads the Space's stream back and checks it against
@@ -14,6 +14,7 @@ defmodule HalC2.SpacePropTest do
     restored page whose parent is hidden goes to the top of the Space;
   - deleting a page for good takes its subpages, their blocks and comments with it;
   - a page's blocks are in the order inserted and moved, with strictly ordered keys;
+  - an edit of a block's text and tick together is refused whole, or changes both;
   - each command writes one event per entity it changes, and a refusal, a tick to
     the same value, or resolving a resolved comment (reopening an open one) writes none.
   """
@@ -60,7 +61,7 @@ defmodule HalC2.SpacePropTest do
   # --- model ----------------------------------------------------------------------
 
   # pages: name => %{parent, trashed}; order: page => its block names in order;
-  # blocks: name => %{page, kind, checked}; comments: name => %{block, resolved}.
+  # blocks: name => %{page, kind, checked, text}; comments: name => %{block, resolved}.
   def initial_state, do: %{pages: %{}, order: %{}, blocks: %{}, comments: %{}}
 
   def command(s) do
@@ -87,6 +88,9 @@ defmodule HalC2.SpacePropTest do
           else: [
             {3, {:call, __MODULE__, :move_block, [elements(blocks), after_block(blocks)]}},
             {2, {:call, __MODULE__, :set_checked, [elements(blocks), boolean()]}},
+            {2,
+             {:call, __MODULE__, :edit_block,
+              [elements(blocks), oneof([nil, "x", "y"]), oneof([nil, boolean()])]}},
             {1, {:call, __MODULE__, :delete_block, [elements(blocks)]}},
             {2, {:call, __MODULE__, :add_comment, [elements(@comments), elements(blocks)]}}
           ]
@@ -139,8 +143,9 @@ defmodule HalC2.SpacePropTest do
       when cmd in [:trash_page, :restore_page, :delete_page],
       do: Map.has_key?(s.pages, name)
 
-  def precondition(s, {:call, _, cmd, [name | _]}) when cmd in [:set_checked, :delete_block],
-    do: Map.has_key?(s.blocks, name)
+  def precondition(s, {:call, _, cmd, [name | _]})
+      when cmd in [:set_checked, :edit_block, :delete_block],
+      do: Map.has_key?(s.blocks, name)
 
   def precondition(s, {:call, _, cmd, [name]}) when cmd in [:resolve_comment, :reopen_comment],
     do: Map.has_key?(s.comments, name)
@@ -220,7 +225,7 @@ defmodule HalC2.SpacePropTest do
         {:not_found, s, 0}
 
       true ->
-        block = %{page: page, kind: kind, checked: kind == "checklist" and checked}
+        block = %{page: page, kind: kind, checked: kind == "checklist" and checked, text: name}
         order = place(s.order[page], after_id, name)
         {:ok, %{s | blocks: Map.put(s.blocks, name, block), order: %{s.order | page => order}}, 1}
     end
@@ -255,6 +260,23 @@ defmodule HalC2.SpacePropTest do
       block.kind != "checklist" -> {:invalid, s, 0}
       block.checked == checked -> {:ok, s, 0}
       true -> {:ok, put_in(s.blocks[name].checked, checked), 1}
+    end
+  end
+
+  defp step(s, :edit_block, [name, text, checked]) do
+    block = s.blocks[name]
+
+    next = %{
+      block
+      | text: text || block.text,
+        checked: if(checked == nil, do: block.checked, else: checked)
+    }
+
+    cond do
+      not live?(s, block.page) -> {:trashed, s, 0}
+      checked != nil and block.kind != "checklist" -> {:invalid, s, 0}
+      next == block -> {:ok, s, 0}
+      true -> {:ok, put_in(s.blocks[name], next), 1}
     end
   end
 
@@ -333,6 +355,10 @@ defmodule HalC2.SpacePropTest do
 
   def move_block(name, after_id), do: act(&Space.move_block(&1, id(name), id(after_id)))
   def set_checked(name, checked), do: act(&Space.set_checked(&1, id(name), checked))
+
+  def edit_block(name, text, checked),
+    do: act(&Space.edit_block(&1, id(name), text, checked))
+
   def delete_block(name), do: act(&Space.delete_block(&1, id(name)))
 
   def add_comment(name, block) do
@@ -398,7 +424,12 @@ defmodule HalC2.SpacePropTest do
       blocks:
         Map.new(StreamState.list(state, "block"), fn block ->
           {name.(block["id"]),
-           %{page: name.(block["pageId"]), kind: block["kind"], checked: block["checked"]}}
+           %{
+             page: name.(block["pageId"]),
+             kind: block["kind"],
+             checked: block["checked"],
+             text: block["text"]
+           }}
         end),
       comments:
         Map.new(StreamState.list(state, "comment"), fn comment ->

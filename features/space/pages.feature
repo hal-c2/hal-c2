@@ -333,6 +333,11 @@ Feature: Pages in a Space
       And the agent in "Work" deletes the block "Shipped"
       Then the blocks of "Roadmap" read ""
 
+    Scenario: An agent's refused edit changes nothing
+      When the agent in "Work" changes the block "Ship it" to "Shipped" and ticks it
+      Then the agent is refused
+      And the blocks of "Roadmap" read "Ship it"
+
     Scenario: An agent cannot edit a trashed page
       Given the page "Roadmap" is in the trash
       When the agent in "Work" adds the block "Agent note" to "Roadmap"
