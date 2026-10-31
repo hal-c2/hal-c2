@@ -1427,6 +1427,17 @@ const Steps steps([] {
   step(S("the user opens the Space %1").arg(q), [](World& world, const Captures& c, const Table&) {
     look(world, idOfSpace(world, c[0]));
   });
+  step(S("the user opens the page %1 of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    look(world, idOfSpace(world, c[1]));
+    world.tap(S("spacePage:") + c[0]);
+    expectStep(world, S("page"));
+  });
+  step(S("the Space screen shows the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.sync();
+    expectStep(world, S("page"));
+    const QString title = viewOf(world)->page().value(S("title")).toString();
+    expect(title == c[0], S("another page shows: %1").arg(title));
+  });
   step(S("the user unfolds the phone"), [](World& world, const Captures&, const Table&) {
     world.resize(1024, 800);
   });

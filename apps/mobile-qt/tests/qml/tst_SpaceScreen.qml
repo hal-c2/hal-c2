@@ -156,6 +156,37 @@ Item {
             compare(dropped.count, 1);
         }
 
+        function test_pickingAnotherSpaceStopsWaitingForTheNewPage() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.pageExpected = true;
+            screen.openSpace("s2");
+            Spaces.spaceId = "s2";
+            Spaces.pageId = "p9";
+            compare(screen.view, "pages");
+        }
+
+        function test_aScreenMadeAgainIsBackOnItsStep() {
+            const first = makeScreen();
+            const moved = createTemporaryQmlObject("import QtTest; SignalSpy { signalName: \"stepMoved\" }", first);
+            moved.target = first;
+            first.openSpace("s1");
+            first.openPage("p1");
+            first.showComments("");
+            compare(moved.signalArguments[moved.count - 1][0].view, "comments");
+            const screen = makeScreen({}, { resumeStep: first.step });
+            compare(screen.view, "comments");
+            compare(screen.openedPageId, "p1");
+            verify(screen.stepBack());
+            compare(screen.view, "page");
+        }
+
+        function test_aStepWhoseSelectionWentResumesAsNearAsItCan() {
+            const step = { view: "page", spaceId: "s1", pageId: "p1" };
+            compare(makeScreen({ page: root.pageOf("p4") }, { resumeStep: step }).view, "pages");
+            compare(makeScreen({ spaceId: "s2" }, { resumeStep: step }).view, "spaces");
+        }
+
         function test_aWrittenPageSelectedBeforeTheScreenOpens() {
             const screen = makeScreen({ spaceId: "s2", page: root.pageOf("p9") }, { awaitedPageId: "p9" });
             compare(screen.view, "page");
@@ -242,6 +273,16 @@ Item {
             verify(!findChild(screen, "spaceAddBlock").visible);
             verify(findChild(screen, "spaceBlockEditor:One").readOnly);
             verify(!findChild(screen, "spaceBlockMenu:One").visible);
+        }
+
+        function test_aCommentOnAPageInTheTrashCannotBeResolved() {
+            const comment = { id: "c1", blockText: "", body: "Note", resolved: false, byAgent: false };
+            const screen = makeScreen({ comments: [comment], page: root.pageOf("p1", { trashed: true }) });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            screen.showComments("");
+            waitForRendering(screen);
+            verify(!findChild(screen, "spaceCommentResolve:Note").visible);
         }
 
         function test_whatWasWrittenGoesToTheMcWhenTheEditorLosesFocus() {

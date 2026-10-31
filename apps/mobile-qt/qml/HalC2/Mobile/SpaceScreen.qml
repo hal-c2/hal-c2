@@ -22,6 +22,9 @@ Item {
     property string awaitedPageId: ""
     property string openedSpaceId: ""
     property string openedPageId: ""
+    // The step this screen was on before a layout change made it again.
+    property var resumeStep: null
+    readonly property var step: ({ view: view, spaceId: openedSpaceId, pageId: openedPageId })
     // What the controller already holds when the screen loads is no arrival:
     // the bindings report it as a change while the screen is being made.
     property bool settled: false
@@ -34,6 +37,8 @@ Item {
     signal pageArrived
     // The user picked another Space, so the page written from a thread no longer opens.
     signal awaitDropped
+    // The user moved to `step`, for the shell to hand back as `resumeStep`.
+    signal stepMoved(var step)
 
     // One step back within the screen; false at its first step.
     function stepBack() {
@@ -50,8 +55,10 @@ Item {
     }
 
     function openSpace(id) {
-        if (id !== spaceId)
+        if (id !== spaceId) {
+            pageExpected = false;
             awaitDropped();
+        }
         openedSpaceId = id;
         Shell.dispatch("space.select", { spaceId: id });
         view = "pages";
@@ -224,6 +231,15 @@ Item {
         text.ask({ title: qsTr("New comment"), placeholder: qsTr("Comment"), action: qsTr("Comment"), multiline: true }, body => Shell.dispatch("space.comment.add", Object.assign({ body: body }, add)));
     }
 
+    // Back on the step, or as near as what the controller now has selected allows.
+    function resume() {
+        if (resumeStep === null || resumeStep.view === "spaces" || resumeStep.spaceId !== spaceId)
+            return;
+        openedSpaceId = resumeStep.spaceId;
+        openedPageId = resumeStep.pageId;
+        view = resumeStep.view === "pages" || resumeStep.pageId === pageId ? resumeStep.view : "pages";
+    }
+
     function openArrived() {
         openedSpaceId = spaceId;
         openedPageId = pageId;
@@ -247,12 +263,17 @@ Item {
         if (settled && !pageExpected && awaitedPageId === "" && view !== "spaces" && spaceId !== openedSpaceId)
             view = "spaces";
     }
+    onStepChanged: {
+        if (settled)
+            stepMoved(step);
+    }
     onErrorChanged: {
         if (error !== "")
             pageExpected = false;
     }
 
     Component.onCompleted: {
+        resume();
         settled = true;
         // Selected before the screen was made.
         if (pageId !== "" && pageId === awaitedPageId)

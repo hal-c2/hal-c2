@@ -72,6 +72,12 @@ ShellWindow {
     property string spacePageComing: ""
     readonly property string spaceWritten: (Shell.state.space ?? {}).written ?? ""
     onSpaceWrittenChanged: spacePageComing = layout === "phone" ? spaceWritten : ""
+    // The step the phone's Space screen is on, kept while a wide layout replaces it.
+    property var spaceStep: null
+    onScreenChanged: {
+        if (screen !== "space")
+            spaceStep = null;
+    }
 
     // One step back: out of the scanner, from pairing with another
     // environment to the one the device has, out of an open popup, in the
@@ -245,6 +251,8 @@ ShellWindow {
                             awaitedPageId: root.spacePageComing
                             onPageArrived: root.spacePageComing = ""
                             onAwaitDropped: root.spacePageComing = ""
+                            resumeStep: root.spaceStep
+                            onStepMoved: step => root.spaceStep = step
                             onBackRequested: root.stepBack()
                         }
                     }

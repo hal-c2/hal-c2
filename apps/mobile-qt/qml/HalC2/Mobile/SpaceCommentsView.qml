@@ -102,6 +102,7 @@ ColumnLayout {
 
                 MobileButton {
                     objectName: (comment.resolved ? "spaceCommentReopen:" : "spaceCommentResolve:") + comment.body
+                    visible: (Spaces.page ?? {}).trashed !== true
                     subtle: true
                     text: comment.resolved ? qsTr("Reopen") : qsTr("Resolve")
                     onClicked: Shell.dispatch(comment.resolved ? "space.comment.reopen" : "space.comment.resolve", { commentId: comment.model.id })

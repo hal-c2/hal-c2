@@ -24,6 +24,12 @@ Feature: Spaces on a phone
     When the page from the thread is written
     Then the new page holds the generated summary
 
+  Scenario: A phone unfolded and folded again is back on the page it showed
+    When the user opens the page "Draft" of "Ideas"
+    And the user unfolds the phone
+    And the window narrows to a phone's width
+    Then the Space screen shows the page "Draft"
+
   Scenario: A page that opened in the wide layout is not awaited on the phone
     When the user makes a page in "Research" from the thread "Work"
     And the user unfolds the phone
