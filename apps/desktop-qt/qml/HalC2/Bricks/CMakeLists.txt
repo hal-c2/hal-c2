@@ -50,6 +50,8 @@ qt_add_qml_module(hal_c2_bricks
     ShellCheckBox.qml
     ShellWindow.qml
     Sidebar.qml
+    SidebarUpdateButton.qml
+    DesktopUpdateSettings.qml
     SidebarThreadRow.qml
     HalC2Wordmark.qml
     KeybindingsSettings.qml

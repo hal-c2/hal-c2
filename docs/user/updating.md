@@ -61,6 +61,23 @@ An MC running from a source checkout updates with `mix hal_c2.upgrade` instead.
 
 After the restart the app learns whether the update committed or rolled back.
 
+## Update the desktop app
+
+The desktop app on Linux (the AppImage) and macOS checks for a new version by itself
+shortly after it starts and every few minutes after that. The update button at the
+foot of the sidebar shows where things stand: click it to download the update, and
+again to restart and install it. Restarting stops running agents and terminal
+commands, and the app comes back with the same windows. To check now, open the
+command palette and choose **Check for Updates**.
+
+**Settings → General** shows the installed version and switches between the Stable
+and Nightly tracks. Nightly updates list what changed. Leaving Nightly can offer a
+Stable release older than the build you run; installing it goes back to that version.
+
+Builds you made yourself, or started with `HAL_C2_DISABLE_AUTO_UPDATE=1`, do not update
+themselves; **Settings → General** and **Check for Updates** say why. On an Apple Silicon Mac running the
+Intel build, the next update installs the Apple Silicon build.
+
 ## If an update fails
 
 Keep the client open until it reconnects or reports a failure. A release that fails its

@@ -8,6 +8,9 @@ SettingsPage {
     title: qsTr("General")
     rows: Rows.general
 
+    // This desktop app's version and updates.
+    DesktopUpdateSettings {}
+
     // Its rows of the MC apply to the environments chosen here.
     SettingsScopeSentence {}
 }
