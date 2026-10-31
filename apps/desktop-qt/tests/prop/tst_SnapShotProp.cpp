@@ -145,11 +145,14 @@ struct Model {
   void askAboutCandidate() {
     forgetChecks();
     if (!changed()) return;
-    if (holdChecks) {
+    // Refused here, before the desktop is asked.
+    if (!*kChords[*candidate].trigger) {
+      check = false;
+    } else if (holdChecks) {
       held.push_back(true);
       checking = true;
     } else {
-      check = *kChords[*candidate].trigger != 0;
+      check = true;
     }
   }
   void stopRecording() {
@@ -416,6 +419,23 @@ private slots:
                        rc::state::gen::execOneOfWithArgs<Panel, Panel, Enable, OpenSetup, CloseSetup, RecordStart, RecordStart, Press,
                                                          Press, Press, StopRecording, Save, Save, Discard, Shoot, Shoot, HoldChecks, AnswerCheck, AnswerCheck,
                                                          RefusePause, Work>());
+    }));
+  }
+
+  // The late desktop on its own: long runs of recording and answering, which
+  // the wider property rarely reaches.
+  void lateDesktop() {
+    Sut sut;
+    QVERIFY(rc::check("only the newest shortcut check counts, and setup waits while the desktop is asked", [&sut] {
+      sut.reset();
+      sut.native->controller<NavigationController>()->open(NavigationController::Route::settings(SnapShotController::kSection));
+      sut.portal()->holdChecks = true;
+      Model model;
+      model.panel = true;
+      model.holdChecks = true;
+      rc::state::check(model, sut,
+                       rc::state::gen::execOneOfWithArgs<RecordStart, RecordStart, Press, Press, AnswerCheck, AnswerCheck, StopRecording,
+                                                         Save, Discard, RefusePause, Work, OpenSetup, CloseSetup>());
     }));
   }
 };
