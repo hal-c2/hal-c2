@@ -32,6 +32,9 @@ defmodule HalC2.Web.Protocol do
     * `{"type": "serverUpdate", "mc": n, "input": ServerSelfUpdateInput}`: moves
       that MC to another version (`HalC2.Upgrade`), streaming its progress and
       ending after `complete`
+    * `{"type": "desktopUpdateControl", "mc"?: n}`: this client as the desktop app
+      that started that MC (`HalC2.DesktopUpdate`); the update control messages
+      (`DesktopUpdateControlMessage`) the MC sends it
     * `{"type": "localServers", "mc": n}`: web servers listening on that MC's
       host (`DiscoveredLocalServerList`), then the list whenever it changes
     * `{"type": "devices", "mc": n}`: that MC's simulators, emulators and
@@ -105,6 +108,7 @@ defmodule HalC2.Web.Protocol do
       {"t": "config.ready", "id", "environment", "updateOutcome"} (the MC moved to
         another version in place: its new descriptor, and how the update went)
       {"t": "serverUpdate", "id", "event"} (ServerSelfUpdateProgressEvent)
+      {"t": "desktopUpdateControl", "id", "event"} (DesktopUpdateControlMessage)
       {"t": "config.themes", "id", "themes"} (the EnvironmentTheme[] it publishes; after
         the snapshot, then on every change)
       {"t": "config.usageLimitSources", "id", "sources"} (its UsageLimitSourceSnapshot[];
@@ -180,7 +184,7 @@ defmodule HalC2.Web.Protocol do
 
   # The shapes a client may name by environment. The rest are about the MC a client
   # talks to (shell, authAccess) or administer one MC's host (serverUpdate,
-  # resourceTelemetry, localServers, devices, slack, preview,
+  # desktopUpdateControl, resourceTelemetry, localServers, devices, slack, preview,
   # previewAutomation, scheduledTasks, backgroundPolicy, providerInstall),
   # and are asked of that MC by name. projectClones is routed because a client
   # starts a clone on any environment with a routed rpc and follows it there. A
@@ -299,6 +303,15 @@ defmodule HalC2.Web.Protocol do
   defp decode_shape(%{"type" => "serverUpdate", "mc" => mc, "input" => %{} = input}, mcs) do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:server_update, mc, input}}
   end
+
+  # The desktop app subscribes before it knows its MC's name, and only the MC it
+  # started serves this shape.
+  defp decode_shape(%{"type" => "desktopUpdateControl", "mc" => mc}, mcs) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:desktop_update_control, mc}}
+  end
+
+  defp decode_shape(%{"type" => "desktopUpdateControl"}, _mcs),
+    do: {:ok, {:desktop_update_control, node()}}
 
   defp decode_shape(%{"type" => "localServers", "mc" => mc}, mcs) do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:local_servers, mc}}

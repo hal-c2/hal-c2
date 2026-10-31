@@ -105,7 +105,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        proof: [cluster, code_review_claims, preview_forward, stream_relay, streams, thread_move, turns, rest]
+        proof:
+          [
+            cluster,
+            code_review_claims,
+            preview_forward,
+            stream_relay,
+            streams,
+            thread_move,
+            turns,
+            rest,
+          ]
     env:
       MIX_ENV: proof
     defaults:

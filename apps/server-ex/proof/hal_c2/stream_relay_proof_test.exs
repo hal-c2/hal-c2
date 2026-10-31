@@ -88,6 +88,7 @@ defmodule HalC2.StreamRelayProofTest do
       "HalC2.Web.Socket handle_info {:hal_c2_terminal_down, _, _, _}" => @other,
       "HalC2.Web.Socket handle_info {:nodeup, _, _}" => @other,
       "HalC2.Web.Socket handle_info {:hal_c2_server_update, _, _}" => @other,
+      "HalC2.Web.Socket handle_info {:hal_c2_desktop_update_control, _, _}" => @other,
       "HalC2.Web.Socket handle_info {:hal_c2_watched, _, _}" => @other,
       "HalC2.Web.Socket handle_info {:hal_c2_git_action, _, _}" => @other,
       "HalC2.Web.Socket handle_info {:hal_c2_preview_automation, _, _, _}" => @other,

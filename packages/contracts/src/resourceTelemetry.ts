@@ -364,6 +364,14 @@ export const DesktopTelemetryControlMessage = Schema.Union([
 ]);
 export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 
+/** What an MC sends the desktop app that started it over `subscribeDesktopUpdateControl`. */
+export const DesktopUpdateControlMessage = Schema.Union([
+  DesktopTelemetryRequestDesktopUpdate,
+  DesktopTelemetryCommitDesktopUpdate,
+  DesktopTelemetryCancelDesktopUpdate,
+]);
+export type DesktopUpdateControlMessage = typeof DesktopUpdateControlMessage.Type;
+
 export const ResourceTelemetryProcess = Schema.Struct({
   identity: ResourceTelemetryProcessIdentity,
   ppid: NonNegativeInt,

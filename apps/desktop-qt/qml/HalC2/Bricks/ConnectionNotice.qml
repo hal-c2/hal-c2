@@ -6,7 +6,7 @@ import HalC2.Shell
 // What the window says while its connection to the environment is not live
 // (ConnectionHealthController publishes `connection`): reconnecting and why,
 // waiting for the network, a credential to pair again, a side to update, or
-// a server behind this app.
+// a server behind this app, with its way to update.
 Rectangle {
     id: notice
 
@@ -50,6 +50,13 @@ Rectangle {
             font.pixelSize: Math.round(12 * Theme.fontScale)
             color: Theme.palette.color("textMuted", "#a1a1aa")
             wrapMode: Text.Wrap
+        }
+
+        ServerUpdateAction {
+            Layout.fillWidth: true
+            visible: offered && !notice.troubled && notice.warning !== null
+            environmentId: notice.warning ? (notice.warning.environmentId ?? "") : ""
+            label: qsTr("Update server")
         }
 
         RowLayout {

@@ -959,6 +959,28 @@ Rectangle {
             Layout.topMargin: 4
         }
 
+        ProviderUpdateNotice {
+            Layout.fillWidth: true
+            Layout.leftMargin: 8
+            Layout.rightMargin: 8
+            Layout.topMargin: 4
+        }
+
+        // The Intel build on an Apple Silicon Mac says to switch.
+        Text {
+            readonly property var warning: Shell.state.desktopUpdate?.warning ?? null
+
+            objectName: "sidebarUpdateWarning"
+            Layout.fillWidth: true
+            Layout.leftMargin: 12
+            Layout.rightMargin: 12
+            visible: sidebar.showFooter && warning !== null
+            text: warning !== null ? warning.title + ". " + warning.description : ""
+            color: Theme.palette.color("warning", "#fbbf24")
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+            wrapMode: Text.Wrap
+        }
+
         RowLayout {
             Layout.fillWidth: true
             Layout.margins: 8
@@ -982,6 +1004,8 @@ Rectangle {
                 Accessible.name: qsTr("Usage")
                 onClicked: Shell.dispatch("usage.open")
             }
+
+            SidebarUpdateButton {}
 
             FooterButton {
                 objectName: "spaceButton"

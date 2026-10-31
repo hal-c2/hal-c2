@@ -11,6 +11,7 @@
 #include "LayoutController.h"
 #include "LicensesController.h"
 #include "LocalFolderModel.h"
+#include "Maintenance.h"
 #include "NativeShell.h"
 #include "Notifications.h"
 #include "PlatformWindow.h"
@@ -88,6 +89,8 @@ MobileApp::MobileApp(const Options& options) : m_storage(resolveStoragePaths(opt
   m_notifications = std::make_unique<Notifications>(m_bridge.get(), m_native.get(), m_pairing.get(),
                                                     options.pushSystem ? options.pushSystem : devicePushSystem(m_storage.data), m_storage.data);
   m_scanner = std::make_unique<Scanner>(m_bridge.get(), options.camera ? options.camera : deviceCamera());
+  // Its environments' versions and providers, and their updates.
+  m_maintenance = std::make_unique<Maintenance>(m_bridge.get(), m_native.get());
   // A `hal-c2:` link the system opens the app with (the manifest's
   // `hal-c2://pair`, and the `hal-c2://threads/...` a tapped notification
   // opens, which Notifications takes and passes the rest on). Qt for Android hands a running app's link, and the one
