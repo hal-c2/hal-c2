@@ -54,7 +54,7 @@ defmodule HalC2.Web.Socket do
               hal_c2_devices hal_c2_slack hal_c2_project_clones hal_c2_scheduled_tasks
               hal_c2_background_policy hal_c2_pull_request_refreshes hal_c2_plugins
               hal_c2_plugin_topic hal_c2_worktree_setup hal_c2_provider_install
-              hal_c2_provider_auth hal_c2_vcs hal_c2_terminals)a
+              hal_c2_provider_auth hal_c2_vcs hal_c2_terminals hal_c2_space_presence)a
 
   @doc "How long a client RPC may run before it fails as timed out (`:rpc_timeout`)."
   def rpc_timeout, do: Application.get_env(:hal_c2, :rpc_timeout, :timer.minutes(10))
@@ -654,6 +654,22 @@ defmodule HalC2.Web.Socket do
 
       {:error, reason} ->
         {:push, Protocol.encode(error_frame(id, reason)), state}
+    end
+  end
+
+  # Being on a page: the service is told this socket's device, which only this MC can
+  # name, and monitored so that, if it starts again, the client follows the page anew
+  # (`handle_info/2`'s `:DOWN`, as for a stream) and is back on it.
+  defp subscribe(state, id, {:space_presence, mc, space, page}, offset) do
+    shape = {:space_presence, mc, space, page, device(state)}
+
+    case subscribe(state, id, shape, offset) do
+      {:push, _frame, %{subs: %{^id => ^shape}} = next} = pushed ->
+        monitor = Process.monitor({HalC2.Space.Presence, mc})
+        put_elem(pushed, 2, put_in(next.monitors[monitor], {id, HalC2.Space.Presence}))
+
+      other ->
+        other
     end
   end
 
@@ -1320,6 +1336,15 @@ defmodule HalC2.Web.Socket do
         :erpc.cast(mc, HalC2.PreviewAutomation, :disconnect, [client_id, self()])
         %{state | subs: subs, by_terminal: Map.delete(state.by_terminal, key)}
 
+      {{:space_presence, _mc, _space, _page, _device} = shape, subs} ->
+        state = unwatch(%{state | subs: subs}, id, shape)
+
+        {monitor, _} =
+          Enum.find(state.monitors, {nil, nil}, fn {_, {sub, _}} -> sub == id end)
+
+        if monitor, do: Process.demonitor(monitor, [:flush])
+        %{state | monitors: Map.delete(state.monitors, monitor)}
+
       {{:stream, mc, stream_id}, _subs} ->
         # By its tag, so it ends no subscription that follows, whenever it arrives.
         case stream_route(state, id, stream_id) do
@@ -1392,6 +1417,11 @@ defmodule HalC2.Web.Socket do
       {{:worktree_setup, thread_id}, mc, HalC2.WorktreeSetup, :subscribe, :unsubscribe,
        [thread_id, self()]}
 
+  defp watch_spec({:space_presence, mc, space, page, device}),
+    do:
+      {{:space_presence, space, page}, mc, HalC2.Space.Presence, :subscribe, :unsubscribe,
+       [self(), space, page, device]}
+
   defp watch_spec({:provider_auth, mc, instance}),
     do:
       {{:provider_auth, instance}, mc, HalC2.ProviderAuth, :subscribe, :unsubscribe,
@@ -1427,6 +1457,9 @@ defmodule HalC2.Web.Socket do
 
   defp snapshot({:worktree_setup, _mc, thread_id}, setup),
     do: {:hal_c2_worktree_setup, thread_id, setup}
+
+  defp snapshot({:space_presence, _mc, space, page, _device}, view),
+    do: {:hal_c2_space_presence, space, page, view}
 
   defp snapshot({:provider_auth, _mc, instance}, {:ok, auth}),
     do: {:hal_c2_provider_auth, instance, auth}
@@ -1568,13 +1601,46 @@ defmodule HalC2.Web.Socket do
   defp watched_frame({:hal_c2_provider_install, instance, install}, _state),
     do: {{:provider_install, instance}, "providerInstall", %{"state" => install}}
 
+  defp watched_frame({:hal_c2_space_presence, space, page, view}, state),
+    do:
+      {{:space_presence, space, page}, "spacePresence",
+       %{"viewers" => space_viewers(view, device_key(state))}}
+
   defp watched_frame({:hal_c2_provider_auth, instance, auth}, _state),
     do: {{:provider_auth, instance}, "providerAuth", %{"state" => auth}}
 
-  # Drops a stream subscription here, telling its stream nothing.
-  defp forget_stream(state, id) do
-    {{:stream, _mc, stream_id}, subs} = Map.pop(state.subs, id)
+  # This socket's device on a page: its session's, or for the MC's own token, itself.
+  defp device(state) do
+    name = if state.session, do: HalC2.Auth.device_name(state.session)
+    %{key: device_key(state), label: name || "Another client"}
+  end
 
+  defp device_key(%{session: nil}), do: inspect(self())
+  defp device_key(%{session: session}), do: session
+
+  # Everyone on the page but this device; all of the user's devices are one viewer.
+  defp space_viewers(%{devices: devices, agents: agents}, own) do
+    labels = for(device <- devices, device.key != own, uniq: true, do: device.label)
+    user = if labels != [], do: [%{"type" => "user", "devices" => Enum.sort(labels)}], else: []
+
+    user ++
+      for agent <- agents,
+          do: %{"type" => "agent", "threadId" => agent.thread_id, "title" => agent.title}
+  end
+
+  # Drops a subscription whose service went away, telling that service nothing.
+  defp forget_stream(state, id) do
+    case Map.pop(state.subs, id) do
+      {{:space_presence, _mc, _space, _page, _device} = shape, subs} ->
+        unwatch(%{state | subs: subs}, id, shape)
+
+      {{:stream, _mc, stream_id}, subs} ->
+        forget_stream(state, id, stream_id, subs)
+    end
+  end
+
+  # Drops a stream subscription here, telling its stream nothing.
+  defp forget_stream(state, id, stream_id, subs) do
     %{
       state
       | subs: subs,

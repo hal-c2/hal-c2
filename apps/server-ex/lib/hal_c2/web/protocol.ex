@@ -112,6 +112,7 @@ defmodule HalC2.Web.Protocol do
       {"t": "terminal", "id", "event"}   (TerminalAttachStreamEvent)
       {"t": "terminals", "id", "event"}  (TerminalMetadataStreamEvent)
       {"t": "vcs", "id", "event"}        (VcsStatusStreamEvent)
+      {"t": "spacePresence", "id", "viewers"} (SpacePresenceStreamEvent)
       {"t": "gitAction", "id", "event"}  (GitActionProgressEvent)
       {"t": "providerAuth", "id", "state"} (ProviderAuthState)
       {"t": "providerInstall", "id", "state"} (ProviderInstallState)
@@ -186,7 +187,7 @@ defmodule HalC2.Web.Protocol do
   # starts a clone on any environment with a routed rpc and follows it there. A
   # plugin's UI parts follow the environment the plugin is installed on.
   @routed ~w(stream terminal terminals config vcs gitAction worktreeSetup providerAuth
-             pullRequestRefreshes projectClones plugins plugin)
+             pullRequestRefreshes projectClones plugins plugin spacePresence)
 
   @doc "The shape types a client may name by environment rather than MC."
   def routed, do: @routed
@@ -340,6 +341,11 @@ defmodule HalC2.Web.Protocol do
   defp decode_shape(%{"type" => "worktreeSetup", "mc" => mc, "threadId" => id}, mcs)
        when is_binary(id) do
     with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:worktree_setup, mc, id}}
+  end
+
+  defp decode_shape(%{"type" => "spacePresence", "mc" => mc, "spaceId" => s, "pageId" => p}, mcs)
+       when is_binary(s) and is_binary(p) do
+    with {:ok, mc} <- known_mc(mc, mcs), do: {:ok, {:space_presence, mc, s, p}}
   end
 
   defp decode_shape(%{"type" => "providerAuth", "mc" => mc, "instanceId" => id}, mcs)

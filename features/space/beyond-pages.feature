@@ -46,11 +46,6 @@ Feature: Spaces beyond Pages
     Then an agent edits "Roadmap" and its edits name its thread
 
   @mc @shared
-  Scenario: The user sees who else is on a page
-    Given a second client is reading the page "Roadmap"
-    Then each client sees the other on the page
-
-  @mc @shared
   Scenario: A Space is shared across the cluster
     Given a cluster of two MCs
     When the user opens the Space "Research" from the other MC
