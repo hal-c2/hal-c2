@@ -57,6 +57,7 @@ public:
 
   bool sessionOpen() const { return !m_session.isEmpty(); }
   bool prompting() const { return m_held.has_value(); }
+  bool screenshotHeld() const { return m_heldScreenshot.has_value(); }
   // The held prompt: the user approves (or refuses) it.
   void answer(bool approve);
   void answerScreenshot();
@@ -110,6 +111,7 @@ public:
   QStringList triggers;
   bool sessionOpen() const { return false; }
   bool prompting() const { return false; }
+  bool screenshotHeld() const { return false; }
   void answer(bool) {}
   void answerScreenshot() {}
   void restartService() {}

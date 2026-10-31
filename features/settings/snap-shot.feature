@@ -271,21 +271,16 @@ Feature: Snap Shot settings
       | the desktop says the shortcut is free                     | Ready to save.                                  |
       | the shortcut is one HAL-C2 uses for "Terminal: Toggle"    | HAL-C2 already uses this for "Terminal: Toggle". |
       | the user presses only modifier keys on a Wayland desktop  | Add a letter, number, or function key to your shortcut. |
-
-    # The desktop portal is not asked whether a shortcut is free before it is saved.
-    @backlog
-    Examples:
-      | moment                                                    | message                                         |
       | the desktop is being asked if the shortcut is free        | Checking shortcut…                              |
 
-  @backlog @desktop
+  @desktop
   Scenario: A shortcut that cannot be checked is reported, not assumed free
     Given the user recorded a new shortcut
     When the desktop fails while checking it
     Then the shortcut row shows the failure, or "Could not check this shortcut."
     And Save is not available
 
-  @backlog @desktop
+  @desktop
   Scenario: Only the newest shortcut check counts
     Given the user recorded a shortcut and its check is still running
     When the user records another shortcut
@@ -307,7 +302,7 @@ Feature: Snap Shot settings
     Then no capture starts
     And pausing the capture shortcut ends when recording ends, is cancelled, or the panel closes
 
-  @backlog @desktop
+  @desktop
   Scenario: Recording a shortcut cannot start when the desktop will not pause capture
     Given the desktop fails to pause the capture shortcut
     When the user starts recording a shortcut
@@ -382,7 +377,7 @@ Feature: Snap Shot settings
       | Whoosh (Default) |
       | Click            |
 
-  @backlog @desktop
+  @desktop
   Scenario: A capture sound can be heard before choosing it
     Given the capture sound choices are open
     When the user plays Click without selecting it
@@ -470,7 +465,9 @@ Feature: Snap Shot settings
       | on    | Close        |
       | off   | Finish later |
 
-  @backlog @desktop
+  # Saving is a local setting and finishes at once; asking the desktop for
+  # access again is what setup waits on.
+  @desktop
   Scenario: Setup cannot be dismissed while it is working
     Given setup is checking access or saving
     Then the user cannot close setup or move between its steps until it has finished
@@ -793,16 +790,21 @@ Feature: Snap Shot settings
     When the user saves
     Then nothing is written and the user is asked to review again
 
-  @backlog @desktop
-  Scenario Outline: A shortcut on a key the Wayland portal cannot name is refused
+  # Upstream's portal names arrow keys and Home (portalShortcutTrigger in
+  # linuxCaptureSession.ts), so these were never refused. Every key the
+  # recorder can produce has a portal name; the refusal only meets a saved
+  # shortcut from elsewhere.
+  @desktop
+  Scenario Outline: A shortcut on an arrow key or Home is named to the Wayland portal
     Given a desktop that gives shortcuts through the desktop portal
     When the user records <shortcut>
-    Then the shortcut row says "This key isn't supported as a Wayland capture shortcut. Choose another key."
+    Then the shortcut row says "Ready to save."
+    And saving asks the desktop for "<trigger>"
 
     Examples:
-      | shortcut                      |
-      | Ctrl+Shift with an arrow key  |
-      | Ctrl+Alt with Home            |
+      | shortcut         | trigger          |
+      | Ctrl+Alt+Up      | CTRL+ALT+Up      |
+      | Ctrl+Alt+Home    | CTRL+ALT+Home    |
 
   @desktop
   Scenario Outline: A shortcut the system or common apps already use says why
@@ -853,12 +855,16 @@ Feature: Snap Shot settings
     Then the shortcut row says that key is not available on this system
     And capture does not claim the shortcut is registered
 
-  @backlog @desktop
+  # Upstream keeps its "Modifier-pair shortcuts aren't available" reason off
+  # the settings row (SnapShotSettings.logic.ts): the recorder refuses a pair
+  # on Wayland, and a saved pair is left unbound while the row suggests a
+  # letter-based shortcut.
+  @desktop
   Scenario: A modifier-pair shortcut is not offered in a Wayland session that cannot watch keys
-    Given a Wayland session that is not Hyprland
-    When the user chooses the shortcut of pressing both Shift keys
-    Then the shortcut row says modifier-pair shortcuts aren't available in this Wayland session
-    And it suggests another shortcut or Take snapshot from the command palette
+    Given a desktop that gives shortcuts through the desktop portal
+    And the saved shortcut is pressing both Shift keys
+    Then the shortcut row suggests a shortcut such as Ctrl+Shift+2
+    And pressing both Shift keys is not offered as the shortcut
 
   @desktop
   Scenario Outline: The shortcut row says what the desktop did with the shortcut request
@@ -901,12 +907,15 @@ Feature: Snap Shot settings
     When the user asks for the shortcut permission
     Then the user is told to change the capture binding in the Hyprland config and save it
 
-  @backlog @desktop
-  Scenario: Asking again without a shortcut session says where to allow it
+  # Upstream asks again by binding afresh when there is no session
+  # (retry-shortcut in DesktopSnapShot.ts); "open your desktop's shortcut
+  # settings" is only for a session too old to configure.
+  @desktop
+  Scenario: Asking again without a shortcut session starts a new one
     Given a desktop that gives shortcuts through the desktop portal
     And the desktop's shortcut session could not be started
-    When the user asks for the shortcut permission
-    Then the user is told to open the desktop's shortcut settings and allow HAL-C2's capture shortcut
+    When the user asks for shortcut permission again
+    Then a new shortcut session asks the desktop for the shortcut
 
   @desktop
   Scenario Outline: A shortcut service that fails says what to do

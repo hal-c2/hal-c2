@@ -159,6 +159,19 @@ QString SnapShotBackend::portalTrigger(const QJsonObject& shortcut, QString* err
   return parts.join(QLatin1Char('+'));
 }
 
+void SnapShotBackend::checkShortcut(const QJsonObject& shortcut, std::function<void(const Check&)> done) {
+  if (session().mode != QLatin1String("portal")) {
+    done({false, QStringLiteral("SnapShots are not supported on this platform.")});
+    return;
+  }
+  QString problem;
+  if (portalTrigger(shortcut, &problem).isEmpty()) {
+    done({false, problem});
+    return;
+  }
+  done({true, QStringLiteral("Your desktop will confirm this shortcut when you save it.")});
+}
+
 // No audio module: the desktop's own player, from a copy of the sound in the
 // cache (the players read files).
 void SnapShotBackend::play(const QString& sound) {
