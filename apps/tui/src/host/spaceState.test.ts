@@ -177,7 +177,69 @@ describe("the Space's stream", () => {
   });
 });
 
+const deck = (id: string, title: string, fields: Record<string, unknown> = {}) =>
+  [
+    "deck",
+    id,
+    { id, spaceId: "s1", title, trashedAt: null, createdAt: at, updatedAt: at, ...fields },
+  ] as const;
+const slide = (id: string, title: string, order: string, body = "") =>
+  ["slide", id, { id, deckId: "d1", title, body, order, createdAt: at, updatedAt: at }] as const;
+
+describe("the presenter", () => {
+  const presenting = (rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>) => {
+    const t = inResearch([deck("d1", "Pitch"), ...rows]);
+    t.select("deck:d1");
+    t.controller.dispatch("space.present", {});
+    return t;
+  };
+
+  test("a slide longer than the pane scrolls, and the next slide starts at its top", () => {
+    const body = Array.from({ length: 60 }, (_, line) => `line ${line}`).join("\n");
+    const t = presenting([slide("a", "Intro", "a", body), slide("b", "Plan", "b")]);
+    expect(t.view().rows[0]!.text).toBe("Intro");
+    t.controller.dispatch("space.pageDown", {});
+    expect(t.view().title).toBe("present · Pitch · 1 / 2");
+    expect(t.view().rows[0]!.text).not.toBe("Intro");
+    t.controller.dispatch("space.next", {});
+    expect(t.view().title).toBe("present · Pitch · 2 / 2");
+    expect(t.view().rows[0]!.text).toBe("Plan");
+  });
+
+  test("keys that would edit do nothing while a slide is on show", () => {
+    const t = presenting([slide("a", "Intro", "a")]);
+    const before = t.calls.length;
+    for (const action of ["space.delete", "space.new", "space.edit", "space.restore"]) {
+      expect(t.controller.dispatch(action, {})).toBe(true);
+    }
+    expect(t.calls.length).toBe(before);
+    expect(t.view().view).toBe("present");
+  });
+
+  test("Spaces close from the presenter", () => {
+    const t = presenting([slide("a", "Intro", "a")]);
+    t.controller.dispatch("space.close", {});
+    expect(t.view().open).toBe(false);
+  });
+
+  test("a deck deleted for good stops the presenter and leaves the deck", () => {
+    const t = presenting([slide("a", "Intro", "a")]);
+    t.send("space:s1", events([11, "deck", "d1", { d: true }], [12, "slide", "a", { d: true }]));
+    expect(t.view().view).toBe("pages");
+  });
+});
+
 describe("replies that come after the user moved on", () => {
+  test("a new deck does not open once the user left the Space", async () => {
+    const t = inResearch([page("p1", "Roadmap")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.deckFromPage", {});
+    t.controller.dispatch("space.back", {});
+    t.reply("space.deck.createFromPage", { deck: deck("d1", "Roadmap")[2] });
+    await t.controller.settled();
+    expect(t.view().view).toBe("spaces");
+  });
+
   test("a page written from a thread does not open once the user left the Space", async () => {
     const t = inResearch([]);
     t.controller.dispatch("space.fromThread", {});
