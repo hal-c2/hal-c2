@@ -490,6 +490,9 @@ bool SnapShotController::handle(const QString& action, const QVariant& payload) 
       stopRecording();
       m_wizard.reset();
       set(kResume, QString());
+      // Like closing setup: a review is only ever of this setup.
+      m_flow = {};
+      if (managed()) resetCandidate();
       set(QStringLiteral("snapShotEnabled"), false);
       publish();
     }

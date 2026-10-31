@@ -600,6 +600,28 @@ const Steps steps([] {
     settle(world);
     expect(read(scene().file).contains("hal-c2"), QStringLiteral("the save to land: %1").arg(QString::fromUtf8(read(scene().file))));
   });
+  step(QStringLiteral("the desktop is saving a reviewed shortcut change the user was still recording over"), [](World& world, const Captures&, const Table&) {
+    open(world, QStringLiteral("niri"));
+    reviewed(world);
+    send(world, QStringLiteral("record.start"));
+    expect(field(world, QStringLiteral("shortcut.recording")).toBool(), QStringLiteral("recording; Snap Shot is %1").arg(describe(world)));
+    compositor().hold = true;
+    send(world, QStringLiteral("config.save"));
+    compositor().waiting.acquire();
+  });
+  step(QStringLiteral("the user presses other keys"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("record.key"), {{QStringLiteral("key"), int(Qt::Key_K)}, {QStringLiteral("modifiers"), int(Qt::ControlModifier | Qt::AltModifier)}});
+    expect(!field(world, QStringLiteral("shortcut.recording")).toBool(), QStringLiteral("the save to end the recording; Snap Shot is %1").arg(describe(world)));
+  });
+  step(QStringLiteral("the user has a shortcut change under review"), [](World& world, const Captures&, const Table&) { reviewed(world); });
+  step(QStringLiteral("the user turns capture off and on again"), [](World& world, const Captures&, const Table&) {
+    send(world, QStringLiteral("enable"), {{QStringLiteral("on"), false}});
+    send(world, QStringLiteral("enable"), {{QStringLiteral("on"), true}});
+  });
+  step(QStringLiteral("no config change is under review"), [](World& world, const Captures&, const Table&) {
+    expect(field(world, QStringLiteral("wizard.step")) == QLatin1String("shortcut") && !field(world, QStringLiteral("config.review")).isValid(),
+           QStringLiteral("setup without the review; Snap Shot is %1").arg(describe(world)));
+  });
   step(QStringLiteral("the user asks to review another change"), [](World& world, const Captures&, const Table&) { send(world, QStringLiteral("config.review")); });
   step(QStringLiteral("the user is told to wait for the current config change to finish"), [](World& world, const Captures&, const Table&) {
     expectDetails(world, QStringLiteral("Wait for the current config change to finish."));

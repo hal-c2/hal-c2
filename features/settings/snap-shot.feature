@@ -740,6 +740,20 @@ Feature: Snap Shot settings
     And the user is told "Shortcut saved" and to use the shortcut from another app
 
   @desktop
+  Scenario: Saving ends a recording, so no key can replace the review being saved
+    Given the desktop is saving a reviewed shortcut change the user was still recording over
+    When the user presses other keys
+    Then setup stays open on the review until the save finishes
+    And the user is told "Shortcut saved" and to use the shortcut from another app
+
+  @desktop
+  Scenario: Turning capture off drops a review, which does not come back with setup
+    Given a Niri or Hyprland session
+    And the user has a shortcut change under review
+    When the user turns capture off and on again
+    Then no config change is under review
+
+  @desktop
   Scenario: A shortcut that is not a letter, number or function key with Ctrl, Alt or Super is refused for the config
     Given a Niri or Hyprland session
     When the user records a shortcut of Shift and a letter, or of a punctuation key
