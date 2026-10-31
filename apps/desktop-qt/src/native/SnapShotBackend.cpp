@@ -8,6 +8,8 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 
+#include "GnomeSnapShot.h"
+
 #ifdef HAL_C2_HAS_DBUS
 #include "PortalSnapShot.h"
 #endif
@@ -21,6 +23,11 @@ std::optional<QProcessEnvironment>& environmentOverride() {
 
 SnapShotBackend::PortalFactory& portalFactory() {
   static SnapShotBackend::PortalFactory factory;
+  return factory;
+}
+
+SnapShotBackend::GnomeFactory& gnomeFactory() {
+  static SnapShotBackend::GnomeFactory factory;
   return factory;
 }
 
@@ -68,6 +75,10 @@ void SnapShotBackend::setPortalFactory(PortalFactory factory) {
   portalFactory() = std::move(factory);
 }
 
+void SnapShotBackend::setGnomeFactory(GnomeFactory factory) {
+  gnomeFactory() = std::move(factory);
+}
+
 SnapShotBackend::Platform SnapShotBackend::detect(const QProcessEnvironment& env, bool onLinux) {
   if (!onLinux) return {false, {}, QStringLiteral("SnapShots are not supported on this platform.")};
   const QString type = env.value(QStringLiteral("XDG_SESSION_TYPE")).toLower();
@@ -99,12 +110,16 @@ SnapShotBackend* SnapShotBackend::create(QObject* parent) {
 #endif
   const Platform platform = detect(environmentOverride().value_or(QProcessEnvironment::systemEnvironment()), onLinux);
   if (!platform.portal) return new UnavailableSnapShot(platform.message, parent);
-  if (portalFactory()) return portalFactory()(platform, parent);
+  SnapShotBackend* portal = nullptr;
+  if (portalFactory()) portal = portalFactory()(platform, parent);
 #ifdef HAL_C2_HAS_DBUS
-  return new PortalSnapShot(platform, parent);
-#else
-  return new UnavailableSnapShot(QStringLiteral("SnapShots are not supported on this platform."), parent);
+  else portal = new PortalSnapShot(platform, parent);
 #endif
+  if (!portal) return new UnavailableSnapShot(QStringLiteral("SnapShots are not supported on this platform."), parent);
+  if (platform.desktop != QLatin1String("gnome")) return portal;
+  // A test's stand-in portal never reaches the real GNOME Shell.
+  if (gnomeFactory()) return gnomeFactory()(portal, parent);
+  return portalFactory() ? portal : GnomeSnapShot::create(portal, parent);
 }
 
 // DesktopSnapShotSetupError's unsupported-session messages.

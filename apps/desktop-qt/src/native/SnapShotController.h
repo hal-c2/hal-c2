@@ -75,6 +75,8 @@ private:
   struct Wizard {
     QString step;
     bool wasEnabled = false;
+    // The user asked to check access again, and nothing has changed since.
+    bool checked = false;
   };
 
   QVariant setting(const QString& key) const;
