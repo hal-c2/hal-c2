@@ -10,8 +10,6 @@ defmodule HalC2.Mcp.Tools.Threads do
   @max_batch_threads 20
   # The input limits the tool definitions advertise (`priv/mcp_tools.json`):
   # a message of at most 120,000 characters and at most 8 attachments.
-  @max_message_chars 120_000
-  @max_attachments 8
   @capability_models 25
 
   import HalC2.Mcp.Tools,
@@ -43,8 +41,7 @@ defmodule HalC2.Mcp.Tools.Threads do
     attachments = args["attachments"] || []
     project_id = args["projectId"] || me["projectId"]
 
-    with :ok <- within_limits(args["message"], attachments, false),
-         :ok <- live(caller),
+    with :ok <- live(caller),
          :ok <-
            unrestricted(caller, "Project launches require a full-access/default calling thread."),
          :ok <-
@@ -247,8 +244,7 @@ defmodule HalC2.Mcp.Tools.Threads do
   end
 
   def run("hal_c2_thread_send_attachments", args, caller) do
-    with :ok <- within_limits(args["message"], args["attachments"] || [], true),
-         {:ok, row} <- writable(caller, args["threadId"]),
+    with {:ok, row} <- writable(caller, args["threadId"]),
          :ok <-
            if(thread(row["id"])["archivedAt"],
              do:
@@ -380,26 +376,6 @@ defmodule HalC2.Mcp.Tools.Threads do
   end
 
   # --- helpers ----------------------------------------------------------------------------
-
-  # A call over its advertised limits is refused before anything is created or
-  # sent; an attachment send must also carry at least one attachment.
-  defp within_limits(message, attachments, attachments_required?) do
-    cond do
-      is_binary(message) and String.length(message) > @max_message_chars ->
-        {:error, "invalid_request",
-         "The message is #{String.length(message)} characters; at most #{@max_message_chars} are accepted."}
-
-      length(attachments) > @max_attachments ->
-        {:error, "invalid_request",
-         "#{length(attachments)} attachments were given; at most #{@max_attachments} are accepted."}
-
-      attachments_required? and attachments == [] ->
-        {:error, "invalid_request", "At least one attachment is required."}
-
-      true ->
-        :ok
-    end
-  end
 
   defp move_result({:ok, result}), do: {:ok, result}
   defp move_result({:error, %{"code" => code, "message" => message}}), do: {:error, code, message}

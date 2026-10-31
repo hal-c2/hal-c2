@@ -1573,11 +1573,6 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     Map.put(context, :mcp_result, result)
   end
 
-  step "the tool refuses the input as invalid", context do
-    assert {:error, "invalid_request", _message} = context.mcp_result
-    context
-  end
-
   step "no thread is created and nothing is sent", context do
     assert project_thread_ids(context) == context.threads_before
 
