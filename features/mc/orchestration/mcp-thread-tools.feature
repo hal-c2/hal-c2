@@ -429,3 +429,11 @@ Feature: Agents working with threads through MCP tools
     Given the agent of "caller" interrupted "t2" with request key "k1"
     When it repeats the interrupt with request key "k1"
     Then the turn of "t2" was interrupted once
+
+  @mc
+  Scenario: Repeating an interrupt that found nothing running leaves a later turn alone
+    Given the agent of "caller" interrupted idle "t2" with request key "k1"
+    And "t2" has a turn running
+    When it repeats the interrupt with request key "k1"
+    Then the answer's status is no_active_run
+    And the new turn of "t2" was not interrupted

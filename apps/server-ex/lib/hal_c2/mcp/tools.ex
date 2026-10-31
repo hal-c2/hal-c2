@@ -937,9 +937,17 @@ defmodule HalC2.Mcp.Tools do
       args["runId"] != nil ->
         {:error, "invalid_request", "Run #{args["runId"]} was not found in the thread."}
 
+      # Kept too: a retry must not interrupt a run that started after this answer.
       true ->
-        {:ok,
-         %{"threadId" => id, "runId" => nil, "status" => "no_active_run", "interrupted" => false}}
+        answer = %{
+          "threadId" => id,
+          "runId" => nil,
+          "status" => "no_active_run",
+          "interrupted" => false
+        }
+
+        keep_interrupt_receipt(args["clientRequestId"], command_id, answer)
+        {:ok, answer}
     end
   end
 

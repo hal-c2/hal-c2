@@ -1784,14 +1784,39 @@ defmodule HalC2.Steps.Orchestration.McpThreadTools do
     Map.merge(context, %{interrupted_run: run_id, interrupt_caller: caller})
   end
 
+  step "the agent of {string} interrupted idle {string} with request key {string}",
+       %{args: [caller, thread, key]} = context do
+    result =
+      World.mcp_tool(context, caller, "hal_c2_thread_interrupt", %{
+        "threadId" => World.thread_id(context, thread),
+        "clientRequestId" => key
+      })
+
+    assert {:ok, %{"status" => "no_active_run"}} = result
+    Map.merge(context, %{interrupted_run: nil, interrupt_caller: caller})
+  end
+
+  step "the new turn of {string} was not interrupted", %{args: [thread]} = context do
+    run_id = World.row(context, thread)["activeRunId"]
+    assert run_id != nil
+
+    refute Enum.any?(
+             StreamState.list(World.state(context, thread), "turn-item"),
+             &(&1["type"] == "run_interrupt_request" and &1["runId"] == run_id)
+           )
+
+    assert Enum.find(World.runs(context, thread), &(&1["id"] == run_id))["status"] in @active
+    context
+  end
+
   step "it repeats the interrupt with request key {string}", %{args: [key]} = context do
     # The retry comes after the run has ended, as one after a lost response
     # would: only the first call's receipt can still answer it.
-    run_id = context.interrupted_run
-
-    World.await_state(context, "t2", fn state ->
-      StreamState.get(state, "run")[run_id]["status"] == "interrupted"
-    end)
+    if run_id = context.interrupted_run do
+      World.await_state(context, "t2", fn state ->
+        StreamState.get(state, "run")[run_id]["status"] == "interrupted"
+      end)
+    end
 
     result =
       World.mcp_tool(context, context.interrupt_caller, "hal_c2_thread_interrupt", %{
