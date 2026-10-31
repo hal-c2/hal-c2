@@ -10,14 +10,17 @@
 #include <QVariantMap>
 
 #include <functional>
+#include <memory>
 #include <optional>
 
+#include "CaptureShortcutConfig.h"
 #include "NativeController.h"
 
 class NativeWindow;
 class McClient;
 class ShellBridge;
 class ShellStore;
+class QThread;
 class SnapShotBackend;
 
 // Snap Shot: the capture
@@ -46,7 +49,15 @@ class SnapShotBackend;
 //   snapShot.shortcut.save, snapShot.shortcut.discard,
 //   snapShot.shortcut.permissions, snapShot.set {key, value} (accessibility,
 //   flash, animations), snapShot.sound {value: off | soft-pop | camera-shutter},
-//   snapShot.sound.play {sound}.
+//   snapShot.sound.play {sound}, and on a desktop that keeps the shortcut in
+//   its own config (Niri, Hyprland): snapShot.config.review {remove?, file?},
+//   snapShot.config.save {id?}, snapShot.config.cancel, snapShot.config.copy,
+//   snapShot.config.complete.
+//
+// On those desktops the user reviews each change to that config before it is
+// written (`config` in the state); CaptureShortcutConfig reads, edits and
+// writes on a thread of its own, one change at a time, because the compositor's
+// tools it runs can take seconds.
 class SnapShotController : public QObject, public NativeController {
   Q_OBJECT
 
@@ -63,6 +74,9 @@ public:
   void setMaxImageBytes(qint64 bytes) { m_maxImageBytes = bytes; }
   void setClock(std::function<QDateTime()> now) { m_now = std::move(now); }
 
+  // Tests stand in for `niri` and `hyprctl`.
+  static void setConfigTools(const std::optional<CaptureShortcutConfig::Tools>& tools);
+
   static inline const QString kSection = QStringLiteral("/settings/snap-shot");
   static constexpr qint64 kMaxImageBytes = 10 * 1024 * 1024;
 
@@ -78,6 +92,24 @@ private:
   struct Wizard {
     QString step;
     bool wasEnabled = false;
+  };
+
+  // The compositor config change under review, and how the last one went.
+  struct ConfigFlow {
+    std::optional<CaptureShortcutConfig::Preview> preview;
+    bool preparing = false;
+    bool saving = false;
+    QString error;
+    // Why, for Advanced.
+    QString details;
+    QString result;
+    QString backup;
+    // The file the user chose; empty for the compositor's default.
+    QString file;
+    bool copied = false;
+    // The user is removing the binding, not adding it.
+    bool removing = false;
+    bool saved = false;
   };
 
   QVariant setting(const QString& key) const;
@@ -115,6 +147,17 @@ private:
   QString target(NativeWindow* window);
   void noteRoute(NativeWindow* window);
 
+  // Keeps the shortcut in the compositor's config: niri or hyprland.
+  bool managed() const;
+  CaptureShortcutConfig::Target configTarget() const;
+  QString binding() const;
+  void review(bool remove, const QString& file);
+  void saveReview(const QString& id);
+  void withdrawReview();
+  // Runs `work` on the config's thread and `done` back here; false while one runs.
+  bool runConfig(std::function<void()> work, std::function<void()> done);
+  QVariant configState() const;
+
   void publish();
   QVariantMap state() const;
 
@@ -138,4 +181,7 @@ private:
   // Each window's last thread or draft (by window id).
   QHash<QString, QString> m_lastTarget;
   QVariantMap m_published;
+  std::unique_ptr<CaptureShortcutConfig> m_config;
+  QThread* m_configThread = nullptr;
+  ConfigFlow m_flow;
 };

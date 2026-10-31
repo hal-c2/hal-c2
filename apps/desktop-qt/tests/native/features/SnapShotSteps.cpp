@@ -48,6 +48,8 @@ struct FakeDesktop {
   // Each capture: true when the user picked the window.
   QList<bool> captures;
   QStringList played;
+  // The desktop does not answer a shortcut's bind.
+  bool holdShortcuts = false;
 };
 
 FakeDesktop& desktop() {
@@ -97,7 +99,9 @@ public:
   void bind(const QString& trigger) override {
     desktop().binds.append(trigger);
     m_shortcut = {};
-    if (desktop().refuse.isEmpty()) {
+    if (desktop().holdShortcuts) {
+      m_shortcut.pending = true;
+    } else if (desktop().refuse.isEmpty()) {
       m_shortcut.registered = true;
       m_shortcut.label = describeTrigger(trigger);
     } else {
@@ -1247,3 +1251,43 @@ const Steps steps([] {
 });
 
 }  // namespace
+
+// For SnapShotConfigSteps.cpp: the panel, and the desktop FakePortal plays.
+namespace snapshot {
+
+void openPanel(World& world) {
+  ::openPanel(world);
+}
+QVariant field(World& world, const QString& path) {
+  return ::field(world, path);
+}
+QString describe(World& world) {
+  return show(snapShot(world));
+}
+void send(World& world, const QString& action, const QVariantMap& payload) {
+  ::send(world, action, payload);
+}
+void set(World& world, const QString& key, const QVariant& value) {
+  settings(world)->set(key, value);
+}
+QVariant setting(World& world, const QString& key) {
+  return settings(world)->setting(key);
+}
+void press(World& world, int key, Qt::KeyboardModifiers modifiers) {
+  ::press(world, key, modifiers);
+}
+void session(World& world, const QProcessEnvironment& env) {
+  resetDesktop(world, env);
+}
+void shortcutRefused(const QString& reason) {
+  desktop().holdShortcuts = false;
+  desktop().refuse = reason;
+}
+void holdShortcuts() {
+  desktop().holdShortcuts = true;
+}
+QStringList binds() {
+  return desktop().binds;
+}
+
+}  // namespace snapshot

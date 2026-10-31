@@ -41,6 +41,8 @@ public:
   static FakeDesktopPortal& instance();
   // The connection the app's PortalSnapShot uses (PortalSnapShot::useBus).
   static QString appConnection();
+  // Another program on that bus (the portal's own connection).
+  QDBusConnection otherConnection() const { return m_bus; }
 
   // A fresh desktop that owns the portal's name, with no session.
   void reset();
