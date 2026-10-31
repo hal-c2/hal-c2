@@ -109,16 +109,61 @@ Item {
         });
     }
 
+    // What can be done with the open page's update. Only the open page's is known,
+    // so the tree's menus do not offer it.
+    function updateRows(id) {
+        if (view !== "page" || id !== Spaces.pageId)
+            return [];
+        const schedule = Spaces.page.schedule ?? {};
+        if ((schedule.instruction ?? "") === "")
+            return [{ id: "update", label: qsTr("Update itself…"), icon: "clock" }];
+        return [
+            { id: "update", label: qsTr("Change its update…"), icon: "clock" },
+            { id: "updateRun", label: qsTr("Run its update now"), icon: "play", enabled: schedule.lastRunStatus !== "running" },
+            { id: "updatePause", label: schedule.enabled === true ? qsTr("Pause its update") : qsTr("Resume its update"), icon: schedule.enabled === true ? "pause" : "play" },
+            { id: "updateRemove", label: qsTr("Remove its update"), icon: "x" }
+        ];
+    }
+
+    // The instruction, then the cadence, each in a control a finger wide. A time
+    // the MC cannot read comes back as its refusal.
+    function askUpdate() {
+        const schedule = Spaces.page.schedule ?? {};
+        const given = (schedule.instruction ?? "") !== "";
+        text.ask({ title: given ? qsTr("Change this page's update") : qsTr("Have this page update itself"), placeholder: qsTr("Summarise yesterday's threads"), text: schedule.instruction ?? "", action: qsTr("Next"), multiline: true }, instruction => {
+            const save = cadence => Shell.dispatch("space.page.schedule.set", { pageId: Spaces.pageId, instruction: instruction, cadence: cadence });
+            const hours = [1, 2, 6, 12].map(count => ({ id: "every:" + count, label: qsTr("Every %n hour(s)", "", count), icon: "clock" }));
+            const keep = given ? [{ id: "keep", label: qsTr("Keep: %1").arg(schedule.cadenceLabel), icon: "check" }] : [];
+            sheet.ask(keep.concat(hours, [{ id: "time", label: qsTr("At a time of day…"), icon: "clock" }]), choice => {
+                if (choice === "keep")
+                    save(schedule.cadence);
+                else if (choice === "time")
+                    text.ask({ title: qsTr("What time of day?"), placeholder: "09:00", text: schedule.cadence?.timeOfDay ?? "09:00", action: qsTr("Save") }, time => save({ type: "fixed_time", timeOfDay: time, weekdays: schedule.cadence?.weekdays ?? [] }));
+                else
+                    save({ type: "interval", everyMs: Number(choice.slice("every:".length)) * 3600000 });
+            });
+        });
+    }
+
     function pageMenu(id, title, parentPageId) {
         sheet.ask([
             { id: "rename", label: qsTr("Rename"), icon: "pencil" },
             { id: "subpage", label: qsTr("New subpage"), icon: "plus" },
             { id: "into", label: qsTr("Move into…"), icon: "folder" },
             { id: "top", label: qsTr("Move to the top"), icon: "arrow-up", enabled: parentPageId !== "" },
-            { id: "copy", label: qsTr("Copy as Markdown"), icon: "copy" },
+            { id: "copy", label: qsTr("Copy as Markdown"), icon: "copy" }
+        ].concat(updateRows(id), [
             { id: "trash", label: qsTr("Move to trash"), icon: "trash", destructive: true }
-        ], choice => {
-            if (choice === "rename") {
+        ]), choice => {
+            if (choice === "update") {
+                askUpdate();
+            } else if (choice === "updateRun") {
+                Shell.dispatch("space.page.schedule.runNow", { pageId: id });
+            } else if (choice === "updatePause") {
+                Shell.dispatch("space.page.schedule.setEnabled", { pageId: id, enabled: Spaces.page.schedule?.enabled !== true });
+            } else if (choice === "updateRemove") {
+                Shell.dispatch("space.page.schedule.remove", { pageId: id });
+            } else if (choice === "rename") {
                 text.ask({ title: qsTr("Rename page"), placeholder: qsTr("Title"), text: title, action: qsTr("Rename") }, renamed => Shell.dispatch("space.page.rename", { pageId: id, title: renamed }));
             } else if (choice === "subpage") {
                 askNewPage(id);

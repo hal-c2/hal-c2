@@ -78,7 +78,7 @@ Rectangle {
 
                 objectName: "spaceBlockEditor:" + row.text
                 Layout.fillWidth: true
-                visible: row.kind !== "subpage_link"
+                visible: row.kind !== "subpage_link" && row.kind !== "generated"
                 readOnly: row.readOnly
                 wrapMode: TextEdit.Wrap
                 color: Theme.palette.color("text", "#e4e4e7")
@@ -101,6 +101,29 @@ Rectangle {
                         editor.focus = false;
                     else
                         event.accepted = false;
+                }
+            }
+
+            // What a page's update wrote: Markdown nobody edits by hand.
+            Loader {
+                Layout.fillWidth: true
+                active: row.kind === "generated"
+                visible: active
+
+                sourceComponent: ColumnLayout {
+                    spacing: 2
+
+                    Markdown {
+                        objectName: "spaceGenerated"
+                        Layout.fillWidth: true
+                        text: row.text
+                    }
+
+                    Label {
+                        text: qsTr("Written by this page's update")
+                        color: Theme.palette.color("textMuted", "#a1a1aa")
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
                 }
             }
 
