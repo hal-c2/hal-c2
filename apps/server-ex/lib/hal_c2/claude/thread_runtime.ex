@@ -1111,8 +1111,9 @@ defmodule HalC2.Claude.ThreadRuntime do
         ),
       disallowed_tools: Map.get(turn.launch, :disallowed_tools, []),
       extra_args: Map.get(turn.launch, :extra_args, []),
-      # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude.
-      env: session_env(turn),
+      # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude,
+      # over the project's environment when the project loads it.
+      env: HalC2.ProjectEnvironment.for_turn(turn, session_env(turn), command(turn)),
       log: state.thread_id
     ]
 

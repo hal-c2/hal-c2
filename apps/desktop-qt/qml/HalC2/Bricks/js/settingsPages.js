@@ -26,8 +26,9 @@ var sections = [
     { to: "/settings/projects", label: "Project", brick: "ProjectSettings", requires: "projectSettings",
       detail: "Name, icon, checkouts and how new threads start",
       settings: [{ title: "Default model", targetId: "model", keywords: "model provider new threads automatic" },
+                 { title: "Project environment", targetId: "environment", keywords: "environment variables env dotenv .env mise direnv envrc mcp" },
                  { title: "Actions", targetId: "projectActions", keywords: "actions scripts commands setup dev test run hal-c2.json import" }],
-      keywords: "project projects name rename title icon emoji favicon checkout checkouts remove delete default model permissions runtime mode workspace worktree submodules new threads" },
+      keywords: "project projects name rename title icon emoji favicon checkout checkouts remove delete default model permissions runtime mode workspace worktree submodules environment variables dotenv mise direnv new threads" },
     { to: "/settings/keybindings", label: "Keybindings", brick: "KeybindingsSettings", action: "keybindings.open",
       detail: "Shortcuts and when they apply", keywords: "keybindings shortcuts keys hotkeys conditions when recorder" },
     { to: "/settings/plugins", label: "Plugins", brick: "PluginsSettings", requires: "plugins",
@@ -57,6 +58,10 @@ var sections = [
       settings: [{ title: "Load balancing", targetId: "load-balancing", requires: "loadBalancing",
                    keywords: "automatic machine environment resources cpu memory capacity preference weight shared projects" }],
       keywords: "connections pairing link code clients revoke access remote" },
+    // Only a client that receives its MC's pushes (apps/mobile-qt) publishes `notifications`.
+    { to: "/settings/notifications", label: "Notifications", brick: "NotificationsSettings", requires: "notifications",
+      detail: "Alerts, ongoing agent activity and quiet hours",
+      keywords: "notifications notification alerts push unifiedpush ntfy distributor live activity ongoing card lock screen live update quiet hours do not disturb permission" },
     // Only a client that paired itself (apps/mobile-qt) publishes `pairing`.
     { to: "/settings/pairing", label: "Pairing", brick: "PairingSettings", requires: "pairing",
       detail: "The environment this device is paired with",

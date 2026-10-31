@@ -24,6 +24,7 @@ defmodule HalC2.WorktreeSetup do
   # A `submodules` stage joins after `checkout` when the worktree has submodules.
   @stages ~w(fetch checkout setup-script agent)
   @tail_lines 5
+  @untrusted "this branch's hal-c2.json setup script differs from the main checkout's, so it was not run"
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -332,18 +333,21 @@ defmodule HalC2.WorktreeSetup do
     submodules(root, path, set, status)
     if branch == temporary, do: rename_later(thread_id, path, branch, text)
 
-    setup = setup_script(project)
     Orchestration.progress_prepared(thread_id, run_id, "setup")
 
-    wait =
-      case setup do
-        nil ->
+    {setup, wait} =
+      case setup_script(project, root, path) do
+        :none ->
           status.("setup-script", "skipped", %{})
-          nil
+          {nil, nil}
 
-        script ->
+        {:skip, reason} ->
+          status.("setup-script", "skipped", %{"detail" => reason})
+          {nil, nil}
+
+        {:run, script} ->
           status.("setup-script", "running", %{})
-          start_script(thread_id, path, script, set)
+          {script, start_script(thread_id, root, path, script, set)}
       end
 
     # A blocking script finishes before the agent starts.
@@ -402,20 +406,96 @@ defmodule HalC2.WorktreeSetup do
     |> Kernel.||("hal-c2-" <> hex)
   end
 
-  # The project's script marked to run on a new worktree.
-  defp setup_script(project),
-    do: Enum.find(project["scripts"] || [], &(&1["runOnWorktreeCreate"] == true))
+  @doc """
+  The script to run in a new worktree at `path` of the project checked out at `root`:
+  `{:run, script}` for the one the project's saved actions mark to run on worktree
+  creation, else for the one the worktree's own `hal-c2.json` marks (the branch's file,
+  which the clients read from the thread's checkout too); `:none` when neither marks one.
+  Like the clients' import, the first marked script wins; the file has no per-platform
+  field, so a Windows variant has to come after the POSIX one.
+
+  The user saved their actions, but anyone with a branch can write its file. So the
+  file's script runs only when `root`'s own file marks one with the same command that
+  blocks the agent the same way; otherwise it is `{:skip, reason}`. That keeps a branch
+  from choosing the command, not from shaping what it does: the command still runs
+  against the branch's files (its `mise.toml`, `package.json`, `mix.exs`), as a saved
+  setup script does. Requiring the branch's commits to be in `root` would skip setup
+  for worktrees off feature branches, which is what `delegate_task` makes.
+  """
+  def setup_script(project, root, path) do
+    with nil <- Enum.find(saved_scripts(project), &setup?/1),
+         %{} = script <- Enum.find(HalC2.ProjectFile.scripts(path), &setup?/1) do
+      if Enum.any?(HalC2.ProjectFile.scripts(root), &same_setup?(&1, script)),
+        do: {:run, script},
+        else: {:skip, @untrusted}
+    else
+      nil -> :none
+      script -> {:run, script}
+    end
+  end
+
+  defp same_setup?(trusted, script),
+    do:
+      setup?(trusted) and trusted["command"] == script["command"] and
+        trusted["async"] == false == (script["async"] == false)
+
+  defp setup?(script), do: script["runOnWorktreeCreate"] == true
+
+  # The project's actions as the clients resolve them (`resolveProjectScripts`): its own
+  # list in settings, else the environment's defaults once the legacy fields are folded.
+  # Before that, the legacy `projectScriptOverrides` map (which TS clients still write
+  # back with every settings change; null there meant the defaults), else the scripts
+  # its row carries, else the defaults.
+  defp saved_scripts(project) do
+    {settings, _} = HalC2.Settings.get()
+    id = project["id"]
+    defaults = settings["defaultProjectScripts"] || []
+    legacy = settings["projectScriptOverrides"] || %{}
+    own = project["scripts"] || []
+
+    cond do
+      is_list(
+        scripts = get_in(settings, ["projectSettingsOverrides", id, "defaultProjectScripts"])
+      ) ->
+        scripts
+
+      settings["projectSettingsFolded"] == true ->
+        defaults
+
+      is_map_key(legacy, id) ->
+        legacy[id] || defaults
+
+      true ->
+        if own == [], do: defaults, else: own
+    end
+  end
+
+  @doc """
+  What a setup script's terminal adds to its environment: where the project and the
+  worktree are, as project scripts the clients run see them (the T3CODE_ names are what
+  scripts written before the rename use). It can run before a client attaches, so
+  nothing advertises truecolor: tools that probe for it wait on a reply nobody sends.
+  """
+  def script_env(root, path) do
+    %{
+      "COLORTERM" => "",
+      "HAL_C2_PROJECT_ROOT" => root,
+      "T3CODE_PROJECT_ROOT" => root,
+      "HAL_C2_WORKTREE_PATH" => path,
+      "T3CODE_WORKTREE_PATH" => path
+    }
+  end
 
   # Runs the script in the thread's "setup" terminal; its exit code comes back as a
   # marker line the command prints after it.
-  defp start_script(thread_id, path, script, set) do
+  defp start_script(thread_id, root, path, script, set) do
     token = Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
 
     input = %{
       "threadId" => thread_id,
       "terminalId" => "setup",
       "cwd" => path,
-      "env" => %{"NO_COLOR" => "1", "FORCE_COLOR" => "0"}
+      "env" => Map.merge(%{"NO_COLOR" => "1", "FORCE_COLOR" => "0"}, script_env(root, path))
     }
 
     with {:ok, _} <- terminal(:open, [input]),

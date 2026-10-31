@@ -14,6 +14,17 @@
          opens the scanner; Qt Multimedia's own list also has the microphone
          and Bluetooth, which nothing here uses. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Agent alerts and the activity card (src/Notifications.h), asked for
+         when the user turns notifications on; Android 16 promotes the card to
+         a live update with the second. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+    <!-- The UnifiedPush distributors installed, which the user picks from. -->
+    <queries>
+        <intent>
+            <action android:name="org.unifiedpush.android.distributor.REGISTER" />
+        </intent>
+    </queries>
     <!-- %%INSERT_FEATURES -->
     <!-- Phones, tablets and laptops alike: a device with no touchscreen (a
          mouse or trackpad is its pointer) installs the app too. Android
@@ -86,6 +97,23 @@
                 android:name="android.app.arguments"
                 android:value="-- %%INSERT_APP_ARGUMENTS%% --" />
         </activity>
+
+        <!-- The distributor's broadcasts: an endpoint, and the MC's messages,
+             which reach the app's push inbox through its library. -->
+        <receiver
+            android:name="io.github.halc2.mobile.PushReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.MESSAGE" />
+                <action android:name="org.unifiedpush.android.connector.NEW_ENDPOINT" />
+                <action android:name="org.unifiedpush.android.connector.UNREGISTERED" />
+                <action android:name="org.unifiedpush.android.connector.REGISTRATION_FAILED" />
+            </intent-filter>
+        </receiver>
+        <!-- The activity card swiped away, or its dismiss action. -->
+        <receiver
+            android:name="io.github.halc2.mobile.DismissReceiver"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

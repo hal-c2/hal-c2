@@ -19,7 +19,8 @@ defmodule HalC2.CodeReviewPropTest do
     and none before, and a retry replaces a run rather than adding one;
   - every post is the one the model expects, on the commit its run reviewed and opening
     with the count and severities of the findings kept, and a late answer to a
-    superseded post leaves the newer run alone;
+    superseded post leaves the newer run alone; a commit whose review GitHub already
+    took is not posted again, but one it refused or never got is;
   - a report with nothing to post goes back to the agent as an error, and one posted
     automatically is answered once GitHub has, with how the post went;
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
@@ -199,7 +200,8 @@ defmodule HalC2.CodeReviewPropTest do
   # (the head the last look saw, 1 or 2), reviewed, changed, verdict, comments (one
   # dismissed flag each), publish_error, seq (order queued)}. `runs`: key → whether
   # each run so far got its thread and checkout, kept when a review is discarded.
-  # `posts`: every post that reached GitHub, `{key, reviewed, comments, event, headline}`.
+  # `posts`: every post that reached GitHub, `{key, reviewed, comments, event, headline}`;
+  # `github`: the `{key, reviewed}` of those GitHub took.
   # `held_runs`/`held_pubs`: checkouts held at the fetch and posts held at GitHub.
   # Every pull request starts open, so the first look finds them all ready.
   def initial_state do
@@ -216,6 +218,7 @@ defmodule HalC2.CodeReviewPropTest do
       reviews: %{},
       runs: %{},
       posts: [],
+      github: MapSet.new(),
       gate: :open,
       refusing: false,
       hold: false,
@@ -531,7 +534,10 @@ defmodule HalC2.CodeReviewPropTest do
   defp step(m, {:call, _, :gate, [:open]}) do
     held = m.held_pubs
     m = %{m | gate: :open, held_pubs: []}
-    {Enum.reduce(held, m, fn {key, run, refused}, m -> complete(m, key, run, refused) end), :ok}
+
+    {Enum.reduce(held, m, fn {key, run, reviewed, refused}, m ->
+       complete(m, key, run, reviewed, refused)
+     end), :ok}
   end
 
   defp step(m, {:call, _, :refuse, [refusing]}), do: {%{m | refusing: refusing}, :ok}
@@ -681,19 +687,26 @@ defmodule HalC2.CodeReviewPropTest do
     end
   end
 
-  # Posts the review of `key` as it is now; GitHub answers at once unless the gate holds it.
+  # Posts the review of `key` as it is now, unless GitHub already took a review of its
+  # commit; GitHub answers at once unless the gate holds it.
   defp post(m, key) do
     r = m.reviews[key]
     kept = Enum.count(r.comments, &(not &1))
+    sent = {key, r.reviewed, kept, @events[r.verdict], headline(r.comments)}
 
-    m = %{
-      m
-      | posts: m.posts ++ [{key, r.reviewed, kept, @events[r.verdict], headline(r.comments)}]
-    }
+    cond do
+      {key, r.reviewed} in m.github ->
+        {put_review(m, key, %{r | status: :waiting, publish_error: true}), :error}
 
-    if m.gate == :closed,
-      do: {%{m | held_pubs: m.held_pubs ++ [{key, r.run, m.refusing}]}, :held},
-      else: {complete(m, key, r.run, m.refusing), if(m.refusing, do: :error, else: :ok)}
+      m.gate == :closed ->
+        m = %{m | posts: m.posts ++ [sent]}
+        {%{m | held_pubs: m.held_pubs ++ [{key, r.run, r.reviewed, m.refusing}]}, :held}
+
+      true ->
+        m = %{m | posts: m.posts ++ [sent]}
+
+        {complete(m, key, r.run, r.reviewed, m.refusing), if(m.refusing, do: :error, else: :ok)}
+    end
   end
 
   # The line a post opens with: the findings of a report the user kept, where a
@@ -712,8 +725,11 @@ defmodule HalC2.CodeReviewPropTest do
       else: "#{count} #{noun}."
   end
 
-  # GitHub's answer to the post of run `run` lands only on that run, still being posted.
-  defp complete(m, key, run, refused) do
+  # GitHub's answer to the post of run `run` lands only on that run, still being posted;
+  # what GitHub took is there whatever became of the run.
+  defp complete(m, key, run, reviewed, refused) do
+    m = if refused, do: m, else: %{m | github: MapSet.put(m.github, {key, reviewed})}
+
     case m.reviews[key] do
       %{status: :publishing, run: ^run} = r ->
         r =
@@ -1440,6 +1456,7 @@ defmodule HalC2.CodeReviewPropTest do
     home = HalC2.Prop.scratch_home("code-review")
     fx = fx_dir()
     File.write!(fx_path("calls.jsonl"), "")
+    File.write!(fx_path("taken.jsonl"), "")
 
     for name <- ~w(gate.closed fetch.hold list.hold gate.pids list.pids),
         do: File.rm(fx_path(name))
@@ -1593,13 +1610,37 @@ defmodule HalC2.CodeReviewPropTest do
       }
     }
 
+    # The reviews of each pull request GitHub took, read before a post.
+    taken = fx_path("taken.jsonl")
+
+    activity =
+      for {_key, {repo, number}} <- @prs do
+        %{
+          "args" => ["pr view #{number} ", "github.com/acme/#{repo}", "author,comments,reviews"],
+          "stdout" => %{"author" => %{"login" => "octocat"}, "comments" => [], "commits" => []},
+          "reviews" => %{
+            "path" => taken,
+            "match" => "acme/#{repo}/pulls/#{number}/reviews",
+            "login" => "monalisa"
+          }
+        }
+      end
+
     rules =
       [%{"args" => ["api user"], "stdout" => %{"id" => 7, "login" => "monalisa"}}] ++
         lists ++
         details(world) ++
+        activity ++
         [permissions_rule()] ++
         if(world.refusing, do: [refusal], else: []) ++
-        [%{"args" => ["--method POST", "pulls/"], "run" => gate, "stdout" => "{}"}]
+        [
+          %{
+            "args" => ["--method POST", "pulls/"],
+            "run" => gate,
+            "stdout" => "{}",
+            "record" => taken
+          }
+        ]
 
     path = fx_path("rules.json")
     File.write!(path <> ".tmp", JSON.encode!(rules))

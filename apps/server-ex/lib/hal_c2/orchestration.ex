@@ -3921,6 +3921,8 @@ defmodule HalC2.Orchestration do
       fork: handoff.fork,
       cwd: cwd,
       scope_id: scope_id,
+      # Whose project settings the session's launch reads (`HalC2.ProjectEnvironment`).
+      project_id: thread["projectId"],
       model: selection["model"],
       # The model options picked in the composer: option id -> value.
       options:

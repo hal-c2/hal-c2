@@ -355,6 +355,19 @@ Feature: Worktrees and setup scripts
     And the agent continues in the worktree with the prompt
 
   @mc
+  Scenario: The agent's new worktree runs the setup script hal-c2.json marks
+    Given the agent works in "shop" without a worktree, and its hal-c2.json marks the setup script
+    When the agent hands the thread off to a new worktree on "feature/pay" with a continuation prompt
+    Then the setup script is started
+
+  @mc
+  Scenario: The agent's new worktree does not run a setup script its branch changed
+    Given the agent works in "shop" without a worktree, and its hal-c2.json marks the setup script
+    And the branch "contrib" changes the setup script's command
+    When the agent hands the thread off to a new worktree of "contrib"
+    Then the handoff skips the setup script because it differs from the main checkout's
+
+  @mc
   Scenario: A thread already in a worktree cannot be handed off again
     Given the thread already works in a worktree
     When the agent hands the thread off to a new worktree

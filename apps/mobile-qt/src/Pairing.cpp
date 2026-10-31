@@ -233,6 +233,7 @@ void Pairing::forget() {
   // An exchange in flight has nobody to answer.
   ++m_attempt;
   m_pairing = false;
+  emit forgetting();
   // The session is gone, so the environment is forgotten whatever follows;
   // what the device had kept of its threads may still be on disk.
   const bool emptied = !m_paired || m_shell->close();

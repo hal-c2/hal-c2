@@ -115,6 +115,7 @@ qt_add_qml_module(hal_c2_bricks
     PluginContext.qml
     PluginThreadPart.qml
     PluginSettings.qml
+    NotificationsSettings.qml
     PairingSettings.qml
     TerminalPanel.qml
     PullRequestsPanel.qml
@@ -136,6 +137,10 @@ qt_add_qml_module(hal_c2_bricks
     StorageSettings.qml
     ProjectSettings.qml
     DevicePanel.qml
+    DeviceToolsPanel.qml
+    DeviceSetup.qml
+    DeviceBanners.qml
+    DeviceBody3D.qml
     OpenSourceLicenses.qml
     DiagnosticsSettings.qml
     WelcomeWizard.qml
@@ -147,4 +152,7 @@ qt_add_qml_module(hal_c2_bricks
     qmldir
     plugin/Text.qml
     icons/antigravity.png
+    models/phone.glb
+    models/tablet.glb
+    models/tablet-keyboard.glb
 )

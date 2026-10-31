@@ -2,6 +2,7 @@ defmodule HalC2.PluginsTest do
   use ExUnit.Case, async: false
 
   alias HalC2.Plugins
+  alias HalC2.Plugins.Host
 
   @moduletag :tmp_dir
   @moduletag capture_log: true
@@ -204,6 +205,160 @@ defmodule HalC2.PluginsTest do
     assert "3" = busy(:version, [])
   end
 
+  # What a peer answers for a plugin: only a function the running version has, so a
+  # machine on an older version or without the plugin is left out rather than failing.
+  test "a peer answers for a function its plugin has, and leaves out what it lacks" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "busy", "acceptPermissions" => []})
+
+    label = HalC2.Environment.label()
+    assert {:ok, %{"machine" => ^label, "result" => "1"}} = Host.peer("busy", :version, [])
+    assert :none = Host.peer("busy", :claims, [["acme/api#1"]])
+    assert :none = Host.peer("missing", :version, [])
+    # Not distributed: no other machine to ask.
+    assert [] = Host.peers("busy", :version, [])
+  end
+
+  test "a check of a package whose code has a syntax error says where, and enables nothing" do
+    code_package("typo", "1", [
+      {"a.ex",
+       String.replace(busy_source("1"), "HalC2PluginsTest.Busy", "HalC2PluginsTest.Typo")},
+      {"b.ex", "defmodule HalC2PluginsTest.Broken do\n  def broken(, do: :x\nend\n"}
+    ])
+
+    Plugins.handle("rescan", %{})
+
+    assert {:ok,
+            %{"ok" => false, "error" => "mc/b.ex:2: " <> _, "diagnostics" => diagnostics} =
+              check} = compile("typo")
+
+    assert [%{"file" => "mc/b.ex", "line" => 2, "severity" => "error"}] = diagnostics
+
+    assert %{"status" => "disabled", "enabled" => false, "compileCheck" => ^check} =
+             listed("typo")
+
+    refute :code.is_loaded(HalC2PluginsTest.Typo)
+    assert plugin("typo").sup == nil
+  end
+
+  test "code that throws or exits as it compiles fails the check, where it did" do
+    code_package("thrown", "1", [
+      {"a.ex", "defmodule HalC2PluginsTest.Thrown do\n  throw(:not_today)\nend\n"}
+    ])
+
+    code_package("exited", "1", [
+      {"a.ex",
+       "defmodule HalC2PluginsTest.Exited do\n  def x, do: 1\n  exit({:timeout, :no})\nend\n"}
+    ])
+
+    Plugins.handle("rescan", %{})
+
+    assert {:ok, %{"ok" => false, "error" => "mc/a.ex:2: ** (throw) :not_today"}} =
+             compile("thrown")
+
+    assert %{"compileCheck" => %{"ok" => false}} = listed("thrown")
+
+    assert {:ok, %{"ok" => false, "error" => "mc/a.ex:3: ** (exit) " <> _}} = compile("exited")
+  end
+
+  test "what a package's code does to the VM as it compiles stays in the check" do
+    code_package("eager", "1", [
+      {"a.ex",
+       """
+       defmodule HalC2PluginsTest.Eager do
+         @behaviour HalC2.Plugins.Extension
+         :persistent_term.put(:hal_c2_plugins_test_eager, :compiled)
+         Process.register(spawn(fn -> Process.sleep(:infinity) end), :hal_c2_plugins_test_eager)
+         :ets.new(:hal_c2_plugins_test_eager, [:named_table, :public])
+         def call(method, _input, _context), do: {:error, "no method " <> method}
+       end
+       """}
+    ])
+
+    Plugins.handle("rescan", %{})
+
+    assert {:ok, %{"ok" => true, "error" => nil, "diagnostics" => []}} = compile("eager")
+    assert :persistent_term.get(:hal_c2_plugins_test_eager, nil) == nil
+    assert Process.whereis(:hal_c2_plugins_test_eager) == nil
+    assert :ets.whereis(:hal_c2_plugins_test_eager) == :undefined
+    refute :code.is_loaded(HalC2PluginsTest.Eager)
+    assert Path.wildcard(Path.join(HalC2.Paths.data_dir(), "**/*.beam")) == []
+    assert Path.wildcard(Path.join(HalC2.Paths.cache_dir(), "**/*.beam")) == []
+  end
+
+  test "a check of a package with a running plugin's module leaves the running code, and work in it" do
+    code_package("busy", "1", [{"a.ex", busy_source("1")}])
+    Plugins.handle("rescan", %{})
+    assert {:ok, _} = Plugins.handle("enable", %{"id" => "busy", "acceptPermissions" => []})
+
+    me = self()
+    {waiter, ref} = spawn_monitor(fn -> busy(:wait, [me]) end)
+    assert_receive {:parked, ^waiter}
+
+    code_package("fork", "1", [{"a.ex", busy_source("2")}])
+    Plugins.handle("rescan", %{})
+    assert {:ok, %{"ok" => true}} = compile("fork")
+
+    assert "1" = busy(:version, [])
+    assert Process.alive?(waiter)
+    send(waiter, :go)
+    assert_receive {:DOWN, ^ref, :process, ^waiter, :normal}
+    assert %{"status" => "running"} = listed("busy")
+  end
+
+  test "a new version or enabling the package drops what a check found" do
+    code_package("later", "1", [
+      {"a.ex", "defmodule HalC2PluginsTest.Later do\n  def x(, do: 1\nend\n"}
+    ])
+
+    Plugins.handle("rescan", %{})
+    assert {:ok, %{"ok" => false}} = compile("later")
+
+    # Rescanning the same version keeps it.
+    Plugins.handle("rescan", %{})
+    assert %{"compileCheck" => %{"ok" => false}} = listed("later")
+
+    code_package("later", "2", [{"a.ex", busy_source("2")}])
+    Plugins.handle("rescan", %{})
+    assert %{"compileCheck" => nil} = listed("later")
+
+    assert {:ok, %{"ok" => true}} = compile("later")
+    assert %{"compileCheck" => %{"ok" => true}} = listed("later")
+
+    assert {:ok, %{"compileCheck" => nil}} =
+             Plugins.handle("enable", %{"id" => "later", "acceptPermissions" => []})
+  end
+
+  test "a package with two plugin modules fails the check as enabling it would" do
+    code_package("two", "1", [
+      {"a.ex", busy_source("1")},
+      {"b.ex",
+       String.replace(busy_source("1"), "HalC2PluginsTest.Busy", "HalC2PluginsTest.Other")}
+    ])
+
+    Plugins.handle("rescan", %{})
+
+    assert {:ok, %{"ok" => false, "error" => "mc/ has more than one plugin module" <> _}} =
+             compile("two")
+  end
+
+  test "only installed plugin packages are checked" do
+    assert {:error, %{"_tag" => "PluginNotFound"}} = compile("nothing")
+
+    File.mkdir_p!(plugins_dir())
+
+    File.write!(
+      Path.join(plugins_dir(), "broken/plugin.json") |> tap(&File.mkdir_p!(Path.dirname(&1))),
+      "{not json"
+    )
+
+    Plugins.handle("rescan", %{})
+
+    assert {:error, %{"_tag" => "PluginUnavailable", "message" => message}} = compile("broken")
+    assert message =~ "JSON"
+  end
+
   test "a crash reported by a supervisor that is gone is not charged to the plugin" do
     package("notes", "1")
     Plugins.handle("rescan", %{})
@@ -355,6 +510,7 @@ defmodule HalC2.PluginsTest do
     do: Plugins.handle("saveSettings", %{"id" => id, "settings" => settings})
 
   defp stored(id), do: get_in(HalC2.Settings.settings(), ["plugins", id, "settings"]) || %{}
+  defp compile(id), do: Plugins.handle("compile", %{"id" => id})
   defp main_page(id), do: Plugins.handle("file", %{"id" => id, "path" => "ui/main.qml"})
   defp plugin(id), do: :sys.get_state(Plugins).plugins[id]
 

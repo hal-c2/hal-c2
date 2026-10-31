@@ -112,6 +112,60 @@ defmodule HalC2.TurnLifecycleTest do
     await_statuses(thread_id, ["interrupted"])
   end
 
+  # A store write that waited past its minute exited the runtime making it, and
+  # TurnWatch abandoned the run as one whose session ended (hal-c2/hal-c2#644).
+  @tag capture_log: true
+  test "a turn whose store is slow finishes once the store catches up",
+       %{thread_id: thread_id, dir: dir} do
+    gate = Path.join(dir, "gate")
+    File.mkdir_p!(gate)
+
+    Application.put_env(:hal_c2, :codex_command, [
+      "env",
+      "FAKE_CODEX_GATE=#{gate}",
+      "python3",
+      "-u",
+      @fake_codex
+    ])
+
+    {:ok, _} = send_message(thread_id, "m1", "answer from gate")
+    await_statuses(thread_id, ["running"])
+    [{runtime, _}] = Registry.lookup(HalC2.Codex.Registry, thread_id)
+    store = suspend_store()
+
+    # The agent answers and ends its turn; the runtime's commit waits on the store,
+    # and so does a client reading the thread behind it.
+    File.write!(Path.join(gate, "answer"), "done")
+    assert_receive {:logged, :warning, "a store append has waited" <> _}, 5_000
+    test = self()
+    spawn(fn -> send(test, {:read, current(thread_id)}) end)
+
+    assert Process.alive?(runtime)
+    resume_store(store)
+
+    assert_receive {:read, %StreamState{}}, 5_000
+    await_statuses(thread_id, ["completed"])
+  end
+
+  @tag capture_log: true
+  test "a turn whose store is slow can still be stopped", %{thread_id: thread_id} do
+    {:ok, _} = send_message(thread_id, "m1")
+    [running] = await_statuses(thread_id, ["running"])
+    store = suspend_store()
+    test = self()
+
+    spawn(fn ->
+      stop = %{"type" => "run.interrupt", "threadId" => thread_id, "runId" => running["id"]}
+      send(test, {:stopped, Orchestration.dispatch(stop)})
+    end)
+
+    assert_receive {:logged, :warning, "a store append has waited" <> _}, 5_000
+    resume_store(store)
+
+    assert_receive {:stopped, {:ok, _}}, 5_000
+    await_statuses(thread_id, ["interrupted"])
+  end
+
   # The provider's turn ending after a delete cancelled its run wrote the run as
   # interrupted over the cancel.
   test "a turn that ends after its thread was deleted stays cancelled", %{thread_id: thread_id} do
@@ -514,6 +568,21 @@ defmodule HalC2.TurnLifecycleTest do
     }
 
   defp current(thread_id), do: HalC2.Streams.Server.state(HalC2.Streams.ensure(thread_id))
+
+  # Suspends the store, and has every write it holds up log at once.
+  defp suspend_store do
+    Application.put_env(:hal_c2, :store_slow_write_ms, 0)
+    on_exit(fn -> Application.delete_env(:hal_c2, :store_slow_write_ms) end)
+    HalC2.Test.LogTap.attach()
+    store = Process.whereis(HalC2.Store)
+    :ok = :sys.suspend(store)
+    store
+  end
+
+  defp resume_store(store) do
+    Application.delete_env(:hal_c2, :store_slow_write_ms)
+    :ok = :sys.resume(store)
+  end
 
   defp suspend_watch do
     watch = Process.whereis(TurnWatch)

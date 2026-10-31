@@ -48,18 +48,39 @@ defmodule HalC2.Plugins.Host do
   end
 
   @doc """
-  The agents threads can run on, for a plugin that starts threads to pick from:
-  `%{"instanceId", "name", "models" => [%{"slug", "name", "isDefault", "options"}]}`,
-  where a model's `options` are its option descriptors (`%{"id", "label",
-  "type", "options"}`) — reasoning effort among them — for a plugin that picks
-  a model for its threads to pick among too.
+  The agents threads can run on, as clients list them (`HalC2.Environment.providers/0`,
+  so `name` is the one the user gave the instance), for a plugin that starts threads
+  to pick from:
+  `%{"instanceId", "name", "driverKind", "enabled", "installed", "status",
+  "availability", "auth" => %{"status"}, "models" => [%{"slug", "name",
+  "isDefault", "options"}]}`.
+
+  `driverKind` is the driver behind the instance (`"codex"`, `"claudeAgent"`,
+  `"opencode"`, `"acpRegistry"` for an agent from the ACP registry, a provider
+  plugin's driver), the same one `orchestrator_capabilities` names, so a plugin can
+  tell what kind of agent a user-named instance is. `enabled`, `installed`, `status`
+  (`ready`, `warning`, `error`, `disabled`), `availability` (`available`,
+  `unavailable`) and `auth.status` (`authenticated`, `unauthenticated`, `unknown`)
+  are the instance's provider status, for a plugin that offers only the instances
+  that can run a thread now. An instance's settings and messages are left out.
+
+  A model's `options` are its option descriptors (`%{"id", "label", "type",
+  "options"}`) — reasoning effort among them — for a plugin that picks a model for
+  its threads to pick among too.
   """
   def providers(_id) do
     {:ok,
-     for provider <- Plugins.providers() || [] do
+     for provider <- HalC2.Environment.providers() do
        %{
          "instanceId" => provider["instanceId"],
          "name" => provider["displayName"] || provider["instanceId"],
+         "driverKind" => provider["driver"],
+         "enabled" => provider["enabled"] != false,
+         "installed" => provider["installed"] != false,
+         "status" => provider["status"],
+         # A snapshot without one is available (`ServerProvider.availability`).
+         "availability" => provider["availability"] || "available",
+         "auth" => %{"status" => get_in(provider, ["auth", "status"]) || "unknown"},
          "models" =>
            for model <- provider["models"] || [] do
              %{
@@ -151,6 +172,32 @@ defmodule HalC2.Plugins.Host do
   def organize_thread(id, thread_id, changes) do
     with :ok <- permit(id, "threads:organize"),
          do: HalC2.Orchestration.organize_plugin_thread(thread_id, id, changes)
+  end
+
+  @doc """
+  Calls `function` of the plugin's MC part with `args` on every other machine of
+  the cluster connected now that runs the plugin, all at once:
+  `[%{"machine" => label, "node" => node, "result" => result}]`. A machine that
+  does not answer within `timeout`, does not run the plugin, or runs a version
+  without `function` (or without this call) is left out, as one out of reach is,
+  so a plugin that defers to its peers keeps working alone.
+  """
+  def peers(id, function, args, timeout \\ 5_000) do
+    nodes = Node.list()
+    results = :erpc.multicall(nodes, __MODULE__, :peer, [id, function, args], timeout)
+
+    for {node, {:ok, {:ok, answer}}} <- Enum.zip(nodes, results),
+        do: Map.put(answer, "node", to_string(node))
+  end
+
+  @doc false
+  def peer(id, function, args) do
+    with {:ok, module, _context} <- GenServer.call(Plugins, {:context, id}),
+         true <- function_exported?(module, function, length(args)) do
+      {:ok, %{"machine" => HalC2.Environment.label(), "result" => apply(module, function, args)}}
+    else
+      _ -> :none
+    end
   end
 
   @doc "Whether plugin `id` was granted `permission`."

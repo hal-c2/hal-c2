@@ -58,7 +58,7 @@ defmodule HalC2.Settings do
                      textGenerationModelSelection sourceControlWriterModelSelection
                      sourceControlWritingStyle pullRequestMergeMethod sidebarAutoSettleOnMerge
                      sidebarAutoSettleAfterDays continueThreadsAfterServerUpdate
-                     responseStreamingMode)
+                     responseStreamingMode projectEnvironment projectEnvironmentFile)
 
   @doc """
   The settings as they apply to one project: its `projectSettingsOverrides` entry
@@ -396,13 +396,52 @@ defmodule HalC2.Settings do
     kind, reason -> {:error, Exception.format_banner(kind, reason)}
   end
 
-  # An edit already made stands when its record cannot be saved: the next edit, a
-  # member's merge or a start finds the file unlike its record and stamps it then.
-  defp stamp_keybindings(state) do
-    put_shared(state, local_keybindings(state.shared, state))
+  # A member's records are taken up all or nothing. Every file they change is written
+  # beside itself before any is moved into place, so one this MC cannot write lets the
+  # merge go, not the table every service reads: the member's next gossip brings it
+  # again. A records file left behind its values would have them stamped later as this
+  # MC's own edit, over a newer one from another member.
+  defp merge_shared(state, records) do
+    # A rules file unlike its record was edited by hand since. It is stamped first, so
+    # the merge weighs the edit rather than writing over it.
+    ours =
+      if File.exists?(HalC2.Keybindings.path()),
+        do: local_keybindings(state.shared, state),
+        else: state.shared
+
+    merged = Shared.merge(ours, Shared.sanitize(records))
+
+    if merged == state.shared do
+      state
+    else
+      rules = merged["keybindings"]["value"] || []
+
+      rules? =
+        merged["keybindings"] != state.shared["keybindings"] and
+          rules != HalC2.Keybindings.rules()
+
+      settings = Shared.apply(state.settings, merged)
+      shared = local_shared(merged, settings, Shared.document_keys(), state)
+
+      # Moved into place records last, like a save: a crash in between then reads as a
+      # local edit of the new value.
+      [
+        rules? && {HalC2.Keybindings.path(), rules},
+        settings != state.settings && {state.path, settings},
+        {shared_path(), shared}
+      ]
+      |> Enum.filter(& &1)
+      |> write_all!()
+
+      :ets.insert(__MODULE__, {:shared, shared})
+      HalC2.Cluster.share_settings()
+      state = %{state | shared: shared}
+      if rules?, do: HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
+      if settings == state.settings, do: state, else: save(state, settings, false)
+    end
   rescue
     exception ->
-      Logger.error("keybindings record not saved: #{Exception.message(exception)}")
+      Logger.error("member's shared settings not merged: #{Exception.message(exception)}")
       state
   end
 
@@ -423,12 +462,20 @@ defmodule HalC2.Settings do
     end
   end
 
-  # Saves, publishes and tells the members the records, after whatever they stamp has
-  # been written: a crash in between then reads as a local edit of the new value.
+  # Saves, publishes and tells the members the records of a local change, after whatever
+  # they stamp has been written: a crash in between then reads as a local edit of the
+  # new value. A records file that cannot be written fails neither the change nor its
+  # stamp: the records are kept and shared as made, and the next records written, or a
+  # start, which stamps at the file's time, brings the file up to them.
   defp put_shared(state, shared) when shared == state.shared, do: state
 
   defp put_shared(state, shared) do
-    write!(shared_path(), shared)
+    try do
+      write!(shared_path(), shared)
+    rescue
+      exception -> Logger.error("shared settings not saved: #{Exception.message(exception)}")
+    end
+
     :ets.insert(__MODULE__, {:shared, shared})
     HalC2.Cluster.share_settings()
     %{state | shared: shared}
@@ -481,7 +528,9 @@ defmodule HalC2.Settings do
     case edit_keybindings_file(fun) do
       {:ok, rules} ->
         HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
-        {:reply, {:ok, %{"rules" => rules}}, stamp_keybindings(state)}
+
+        {:reply, {:ok, %{"rules" => rules}},
+         put_shared(state, local_keybindings(state.shared, state))}
 
       error ->
         {:reply, error, state}
@@ -501,36 +550,7 @@ defmodule HalC2.Settings do
 
   def handle_cast({:merge_shared, _records}, %{held: true} = state), do: {:noreply, state}
 
-  def handle_cast({:merge_shared, records}, state) do
-    # A rules file unlike its record was edited by hand since. It is stamped first, so
-    # the merge weighs the edit rather than writing over it.
-    ours =
-      if File.exists?(HalC2.Keybindings.path()),
-        do: local_keybindings(state.shared, state),
-        else: state.shared
-
-    merged = Shared.merge(ours, Shared.sanitize(records))
-
-    if merged == state.shared do
-      {:noreply, state}
-    else
-      # The rules file is written before the record that stamps it, like settings.json.
-      if merged["keybindings"] != state.shared["keybindings"] do
-        rules = merged["keybindings"]["value"] || []
-
-        if rules != HalC2.Keybindings.rules() do
-          HalC2.Keybindings.write(rules)
-          HalC2.Watchers.notify(state.watchers, {:hal_c2_keybindings, node(), rules})
-        end
-      end
-
-      settings = Shared.apply(state.settings, merged)
-
-      if settings == state.settings,
-        do: {:noreply, put_shared(state, merged)},
-        else: {:noreply, save(state, settings, true, merged)}
-    end
-  end
+  def handle_cast({:merge_shared, records}, state), do: {:noreply, merge_shared(state, records)}
 
   def handle_cast({:usage_limit_sources_changed, sources}, state) do
     HalC2.Watchers.notify(state.watchers, {:hal_c2_usage_limit_sources, node(), sources})
@@ -659,11 +679,25 @@ defmodule HalC2.Settings do
   defp publish(settings, version), do: :ets.insert(__MODULE__, {:settings, {settings, version}})
 
   # Written to a temporary file and renamed, so a crash never leaves half a file.
-  defp write!(path, settings) do
+  defp write!(path, settings), do: path |> stage!(settings) |> commit!()
+
+  defp stage!(path, settings) do
     File.mkdir_p!(Path.dirname(path))
     tmp = path <> ".tmp"
     File.write!(tmp, JSON.encode_to_iodata!(settings))
     File.chmod!(tmp, 0o600)
-    File.rename!(tmp, path)
+    {tmp, path}
   end
+
+  # Each of `files` written beside itself, then all moved into place in order, so one
+  # that cannot be written moves none. Whatever fails, nothing is left beside them.
+  defp write_all!(files) do
+    files |> Enum.map(fn {path, data} -> stage!(path, data) end) |> Enum.each(&commit!/1)
+  rescue
+    exception ->
+      for {path, _} <- files, do: File.rm(path <> ".tmp")
+      reraise exception, __STACKTRACE__
+  end
+
+  defp commit!({tmp, path}), do: File.rename!(tmp, path)
 end

@@ -2086,7 +2086,7 @@
           ]
         }
       },
-      "required": ["title", "workspaceRoot"],
+      "required": ["workspaceRoot"],
       "additionalProperties": true
     }
   },

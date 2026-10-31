@@ -85,6 +85,11 @@ public:
   // lists as a desktop), and its OS.
   static pairing::Client thisDevice();
 
+signals:
+  // The user forgot the environment: its session is off the device, and the
+  // connection is about to close.
+  void forgetting();
+
 private:
   struct Environment {
     QUrl origin;

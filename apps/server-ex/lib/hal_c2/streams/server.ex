@@ -106,7 +106,7 @@ defmodule HalC2.Streams.Server do
     do:
       HalC2.Streams.with_server(
         stream_id,
-        &GenServer.call(&1, {:subscribe, pid, offset, :plain})
+        &GenServer.call(&1, {:subscribe, pid, offset, :plain}, :infinity)
       )
 
   @spec subscribe(String.t(), pid, non_neg_integer | nil, client) :: :ok
@@ -122,7 +122,7 @@ defmodule HalC2.Streams.Server do
   @spec follow(String.t(), pid, non_neg_integer | nil, client) :: {:ok, pid}
   def follow(stream_id, pid, offset, %{} = client) do
     HalC2.Streams.with_server(stream_id, fn server ->
-      :ok = GenServer.call(server, {:subscribe, pid, offset, client})
+      :ok = GenServer.call(server, {:subscribe, pid, offset, client}, :infinity)
       {:ok, server}
     end)
   end
@@ -132,7 +132,7 @@ defmodule HalC2.Streams.Server do
     do:
       HalC2.Streams.with_server(
         stream_id,
-        &GenServer.call(&1, {:subscribe, pid, nil, :watch})
+        &GenServer.call(&1, {:subscribe, pid, nil, :watch}, :infinity)
       )
 
   @doc """
@@ -174,9 +174,10 @@ defmodule HalC2.Streams.Server do
     end
   end
 
-  # Writes wait as long as the store does (its own write timeout bounds them): a
-  # caller that gave up sooner would be wrong about what landed, and a turn would
-  # die over a slow disk.
+  # Every call to a stream waits as long as it takes, as the store's writes do: a
+  # stream answers between commits, so on a slow disk a read waits behind a write.
+  # A caller that gave up sooner would be wrong about what landed, and a turn would
+  # die over a slow disk (hal-c2/hal-c2#644). A stream that stops still ends the call.
   @spec commit(GenServer.server(), Store.stream_kind(), [Store.change()]) ::
           {:ok, non_neg_integer}
   def commit(server, stream_kind, changes) do
@@ -196,11 +197,11 @@ defmodule HalC2.Streams.Server do
 
   @doc "The stream's sequence: answering a command reads no history to get it."
   @spec sequence(GenServer.server()) :: non_neg_integer
-  def sequence(server), do: GenServer.call(server, :sequence)
+  def sequence(server), do: GenServer.call(server, :sequence, :infinity)
 
   @doc "One entity of the stream by kind and id, without copying its state."
   @spec get(GenServer.server(), String.t(), String.t()) :: map | nil
-  def get(server, kind, id), do: GenServer.call(server, {:get, kind, id})
+  def get(server, kind, id), do: GenServer.call(server, {:get, kind, id}, :infinity)
 
   @doc """
   Runs `fun` against the stream's current state inside the stream process and
@@ -220,11 +221,11 @@ defmodule HalC2.Streams.Server do
   end
 
   @spec state(GenServer.server()) :: StreamState.t()
-  def state(server), do: GenServer.call(server, :state)
+  def state(server), do: GenServer.call(server, :state, :infinity)
 
   @doc "Puts the stream's sidebar row now instead of after the debounce."
   @spec flush_shell(GenServer.server()) :: :ok
-  def flush_shell(server), do: GenServer.call(server, :flush_shell)
+  def flush_shell(server), do: GenServer.call(server, :flush_shell, :infinity)
 
   @impl true
   def init(stream_id) do

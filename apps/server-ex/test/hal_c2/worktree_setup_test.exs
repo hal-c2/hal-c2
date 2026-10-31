@@ -184,7 +184,7 @@ defmodule HalC2.WorktreeSetupTest do
       %{
         "id" => "setup",
         "name" => "Setup",
-        "command" => "echo ready > setup.txt",
+        "command" => ~s(echo "$HAL_C2_PROJECT_ROOT $HAL_C2_WORKTREE_PATH" > setup.txt),
         "icon" => "configure",
         "runOnWorktreeCreate" => true,
         "async" => false
@@ -197,7 +197,240 @@ defmodule HalC2.WorktreeSetupTest do
     assert %{"status" => "done", "detail" => "exited with 0"} =
              Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
 
-    assert File.read!(Path.join(snapshot["worktreePath"], "setup.txt")) == "ready\n"
+    path = snapshot["worktreePath"]
+    assert File.read!(Path.join(path, "setup.txt")) == "#{repo} #{path}\n"
+  end
+
+  # The repository's own hal-c2.json lists a PowerShell variant after the POSIX one.
+  @project_file JSON.encode!(%{
+                  "scripts" => [
+                    %{"name" => "Dev", "command" => "echo dev"},
+                    %{
+                      "name" => " Setup Worktree ",
+                      "command" => "echo file > setup.txt",
+                      "runOnWorktreeCreate" => true,
+                      "async" => false
+                    },
+                    %{
+                      "name" => "Setup Worktree (Windows)",
+                      "command" => "New-Item -ItemType File -Path setup.txt",
+                      "runOnWorktreeCreate" => true
+                    }
+                  ]
+                })
+
+  test "a new worktree runs the setup script its hal-c2.json marks", %{repo: repo} do
+    commit(repo, "hal-c2.json", @project_file)
+    project(repo, [])
+
+    snapshot = launch("list the files") |> await_phase("done")
+
+    assert %{"status" => "done", "detail" => "exited with 0"} =
+             Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+
+    assert %{"name" => "Setup Worktree", "command" => "echo file > setup.txt"} =
+             snapshot["setupScript"]
+
+    assert File.read!(Path.join(snapshot["worktreePath"], "setup.txt")) == "file\n"
+  end
+
+  test "a saved setup script wins over hal-c2.json", %{repo: repo} do
+    commit(repo, "hal-c2.json", @project_file)
+
+    project(repo, [
+      %{
+        "id" => "setup",
+        "name" => "Setup",
+        "command" => "echo saved > setup.txt",
+        "icon" => "configure",
+        "runOnWorktreeCreate" => true,
+        "async" => false
+      }
+    ])
+
+    snapshot = launch("list the files") |> await_phase("done")
+    assert File.read!(Path.join(snapshot["worktreePath"], "setup.txt")) == "saved\n"
+  end
+
+  test "hal-c2.json is read from the new worktree, not the project folder", %{repo: repo} do
+    File.write!(Path.join(repo, "hal-c2.json"), @project_file)
+    project(repo, [])
+
+    snapshot = launch("list the files") |> await_phase("done")
+    assert %{"status" => "skipped"} = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+  end
+
+  test "a malformed hal-c2.json runs no setup script", %{repo: repo} do
+    commit(
+      repo,
+      "hal-c2.json",
+      ~s({"scripts": [{"name": "Setup", "command": "echo file > setup.txt", "runOnWorktreeCreate": true})
+    )
+
+    project(repo, [])
+
+    snapshot = launch("list the files") |> await_phase("done")
+    assert %{"status" => "skipped"} = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+    refute File.exists?(Path.join(snapshot["worktreePath"], "setup.txt"))
+
+    assert [%{"status" => "completed"}] =
+             await_completed(snapshot["threadId"]) |> StreamState.list("run")
+  end
+
+  test "a branch's changed setup script is not run", %{repo: repo} do
+    commit(repo, "hal-c2.json", @project_file)
+
+    changed =
+      String.replace(@project_file, "echo file > setup.txt", "echo branch > setup.txt")
+
+    commit_on(repo, "contrib", "hal-c2.json", changed)
+    project(repo, [])
+
+    snapshot = launch("list the files", %{"baseRef" => "contrib"}) |> await_phase("done")
+    assert_untrusted(snapshot)
+  end
+
+  test "a setup script only a branch's hal-c2.json has is not run", %{repo: repo} do
+    commit_on(repo, "contrib", "hal-c2.json", @project_file)
+    project(repo, [])
+
+    snapshot = launch("list the files", %{"baseRef" => "contrib"}) |> await_phase("done")
+    assert_untrusted(snapshot)
+  end
+
+  defp assert_untrusted(snapshot) do
+    assert %{
+             "status" => "skipped",
+             "detail" =>
+               "this branch's hal-c2.json setup script differs from the main checkout's, so it was not run"
+           } = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+
+    refute File.exists?(Path.join(snapshot["worktreePath"], "setup.txt"))
+
+    assert [%{"status" => "completed"}] =
+             await_completed(snapshot["threadId"]) |> StreamState.list("run")
+  end
+
+  test "which setup script a new worktree runs", %{tmp_dir: dir} do
+    [root, worktree] = for name <- ~w(root checkout), do: Path.join(dir, name)
+    File.mkdir_p!(root)
+    File.mkdir_p!(worktree)
+    setup = &HalC2.WorktreeSetup.setup_script(%{"id" => "p1", "scripts" => &1}, root, worktree)
+    marked = &%{"name" => &1, "command" => "echo #{&1}", "runOnWorktreeCreate" => true}
+    both = &for(dir <- [root, worktree], do: File.write!(Path.join(dir, &1), &2))
+
+    assert setup.([]) == :none
+
+    # The legacy t3.json, with comments and a trailing comma as the clients allow.
+    both.("t3.json", """
+    // shared with the team
+    {"scripts": [{"name": "Old", "command": "echo old", "runOnWorktreeCreate": true},]}
+    """)
+
+    assert {:run, %{"name" => "Old"}} = setup.([])
+
+    both.("hal-c2.json", @project_file)
+    assert {:run, %{"name" => "Setup Worktree"}} = setup.([])
+
+    # Saved actions without a setup script leave it to the file.
+    assert {:run, %{"name" => "Setup Worktree"}} =
+             setup.([%{"name" => "Dev", "command" => "echo dev"}])
+
+    assert {:run, %{"name" => "Saved"}} = setup.([marked.("Saved")])
+
+    # The main checkout's file vouches for the branch's script: the same command,
+    # blocking the same way, under any name or place in the list.
+    vouch = fn scripts ->
+      File.write!(Path.join(root, "hal-c2.json"), JSON.encode!(%{"scripts" => scripts}))
+      setup.([])
+    end
+
+    script = %{"command" => "echo file > setup.txt", "runOnWorktreeCreate" => true}
+    async = Map.put(script, "async", true)
+
+    assert {:run, %{"name" => "Setup Worktree"}} =
+             vouch.([marked.("A"), Map.merge(script, %{"name" => "Other", "async" => false})])
+
+    for untrusted <- [[], [Map.put(script, "name", "x")], [Map.put(async, "name", "x")]],
+        do: assert({:skip, "this branch's" <> _} = vouch.(untrusted))
+
+    assert {:skip, _} =
+             vouch.([%{"name" => "x", "command" => "echo file > setup.txt", "async" => false}])
+
+    File.rm!(Path.join(root, "hal-c2.json"))
+    File.rm!(Path.join(root, "t3.json"))
+    assert {:skip, _} = setup.([])
+    assert {:run, %{"name" => "Saved"}} = setup.([marked.("Saved")])
+    File.rm!(Path.join(worktree, "hal-c2.json"))
+    File.rm!(Path.join(worktree, "t3.json"))
+
+    # A project's own list in settings, then the environment's defaults, count as saved.
+    {_, version} = HalC2.Settings.get()
+
+    {:ok, version} =
+      HalC2.Settings.put(%{"defaultProjectScripts" => [marked.("Default")]}, version)
+
+    assert {:run, %{"name" => "Default"}} = setup.([])
+    assert {:run, %{"name" => "Saved"}} = setup.([marked.("Saved")])
+
+    # Until the legacy fields are folded, the old map comes before the row's scripts;
+    # null there meant the defaults.
+    {:ok, version} =
+      HalC2.Settings.put(
+        %{
+          "defaultProjectScripts" => [marked.("Default")],
+          "projectScriptOverrides" => %{"p1" => [marked.("Legacy")]}
+        },
+        version
+      )
+
+    assert {:run, %{"name" => "Legacy"}} = setup.([marked.("Saved")])
+
+    {:ok, version} =
+      HalC2.Settings.put(
+        %{
+          "defaultProjectScripts" => [marked.("Default")],
+          "projectScriptOverrides" => %{"p1" => nil}
+        },
+        version
+      )
+
+    assert {:run, %{"name" => "Default"}} = setup.([marked.("Saved")])
+
+    {:ok, version} =
+      HalC2.Settings.put(
+        %{
+          "defaultProjectScripts" => [marked.("Default")],
+          "projectScriptOverrides" => %{"p1" => [marked.("Legacy")]},
+          "projectSettingsFolded" => true
+        },
+        version
+      )
+
+    assert {:run, %{"name" => "Default"}} = setup.([marked.("Saved")])
+
+    {:ok, _} =
+      HalC2.Settings.put(
+        %{
+          "defaultProjectScripts" => [marked.("Default")],
+          "projectScriptOverrides" => %{"p1" => [marked.("Legacy")]},
+          "projectSettingsOverrides" => %{"p1" => %{"defaultProjectScripts" => [marked.("Own")]}}
+        },
+        version
+      )
+
+    assert {:run, %{"name" => "Own"}} = setup.([marked.("Saved")])
+
+    # A file that does not match the format declares nothing, scripts included.
+    for bad <- [
+          ~s({"scripts": [{"name": "Setup", "command": "  ", "runOnWorktreeCreate": true}]}),
+          ~s({"iconPath": 3, "scripts": [{"name": "Setup", "command": "x", "runOnWorktreeCreate": true}]}),
+          ~s({"scripts": [{"name": "Setup", "command": "x", "icon": "rocket", "runOnWorktreeCreate": true}]}),
+          ~s({"scripts": [{"name": "Setup", "command": "x", "runOnWorktreeCreate": "yes"}]}),
+          ~s([])
+        ] do
+      assert HalC2.ProjectFile.parse(bad) == :error
+    end
   end
 
   test "cancelling setup removes the worktree and cancels the run", %{repo: repo} do
@@ -222,6 +455,21 @@ defmodule HalC2.WorktreeSetupTest do
     state = current(thread_id)
     assert [%{"status" => "cancelled"}] = StreamState.list(state, "run")
     assert %{"worktreePath" => nil} = StreamState.get(state, "thread")[thread_id]
+  end
+
+  # Commits `file` on a new `branch` off main, leaving the checkout on main.
+  defp commit_on(repo, branch, file, contents) do
+    {_, 0} = System.cmd("git", ~w(checkout -q -b) ++ [branch], cd: repo)
+    commit(repo, file, contents)
+    {_, 0} = System.cmd("git", ~w(checkout -q main), cd: repo)
+  end
+
+  defp commit(repo, file, contents) do
+    File.write!(Path.join(repo, file), contents)
+    {_, 0} = System.cmd("git", ["add", file], cd: repo)
+
+    {_, 0} =
+      System.cmd("git", ~w(-c user.email=t@t -c user.name=t commit -q -m) ++ [file], cd: repo)
   end
 
   defp await_running_script(thread_id) do

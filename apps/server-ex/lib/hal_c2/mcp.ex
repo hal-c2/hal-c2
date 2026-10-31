@@ -335,7 +335,11 @@ defmodule HalC2.Mcp do
     case method do
       "initialize" ->
         session_id = Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
-        :ets.insert(@sessions, {session_id, caller})
+        # Session bookkeeping never answers the handshake: a table this server
+        # has not made (new code loaded over one started before sessions were
+        # kept) must not turn every agent's connect into a 500.
+        if :ets.whereis(@sessions) != :undefined,
+          do: :ets.insert(@sessions, {session_id, caller})
 
         {200, %{"mcp-session-id" => session_id},
          result(id, %{
@@ -361,6 +365,17 @@ defmodule HalC2.Mcp do
     end
   end
 
+  # A call outside its tool's advertised input schema never reaches the tool:
+  # refused as an `invalid_request` tool failure, as the Node server's
+  # toolkits refused it before their handlers ran. Tools this MC does not
+  # advertise (a plugin's, an unknown name) keep their own answers.
+  defp validate(name, arguments) do
+    case Enum.find(HalC2.Mcp.Tools.list(), &(&1["name"] == name)) do
+      %{"inputSchema" => schema} -> HalC2.Mcp.Schema.validate(schema, arguments)
+      _ -> :ok
+    end
+  end
+
   # Tools of the enabled tool packs and extensions (`HalC2.Plugins`) for the caller's
   # thread; HAL-C2's own keep their names.
   defp plugin_tools(caller) do
@@ -371,8 +386,13 @@ defmodule HalC2.Mcp do
   # A tool's answer as MCP content; a failure is an error result the agent can read.
   # `tool_use` is the provider's id for the call, which Claude sends.
   defp call(name, arguments, caller, tool_use) do
+    valid = validate(name, arguments)
+
     answer =
       cond do
+        match?({:error, _}, valid) ->
+          {:error, "invalid_request", elem(valid, 1)}
+
         name == "delegate_task" and native_subagent?(caller, tool_use) ->
           {:error, "capability_denied", @subagent_delegation}
 
@@ -417,9 +437,25 @@ defmodule HalC2.Mcp do
 
   @impl true
   def init(nil) do
-    :ets.new(@table, [:named_table, :public, read_concurrency: true])
-    :ets.new(@sessions, [:named_table, :public, read_concurrency: true])
+    ensure_tables()
     {:ok, nil}
+  end
+
+  # Code loaded over this server (`HalC2.Hot`) migrates it here, never through
+  # init: a table a newer module keeps is made now, in this process, so the
+  # requests the new code answers find it there.
+  @impl true
+  def code_change(_old, state, _extra) do
+    ensure_tables()
+    {:ok, state}
+  end
+
+  defp ensure_tables do
+    for name <- [@table, @sessions], :ets.whereis(name) == :undefined do
+      :ets.new(name, [:named_table, :public, read_concurrency: true])
+    end
+
+    :ok
   end
 
   # Resolves the thread's credential on `instance`: a still-valid one whose

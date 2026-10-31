@@ -95,7 +95,7 @@ defmodule HalC2.Orchestration.IdleSessions do
         do: settle_quiet_task(thread_id)
   end
 
-  # A thread too busy to answer, or failing, is left to the next check: it neither
+  # A thread whose check fails is left to the next check: it neither
   # stops the others' tasks settling nor the sessions' release.
   defp settle_quiet_task(thread_id) do
     HalC2.Orchestration.Delegation.settle_if_quiet(thread_id)

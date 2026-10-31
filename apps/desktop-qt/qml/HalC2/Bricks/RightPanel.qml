@@ -35,6 +35,9 @@ Rectangle {
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#8b8b93")
 
+    // The tab being renamed in place (double-click its title), else "".
+    property string editingId: ""
+
     // Whether the panel draws its own open/close button. A layout that puts
     // the toggle in the header strip (Workspace.panelToggle) turns this off,
     // and the closed panel then takes no width.
@@ -191,12 +194,54 @@ Rectangle {
                         Text {
                             id: titleText
 
+                            visible: panel.editingId !== tab.modelData.id
                             text: tab.modelData.title
                             width: Math.min(implicitWidth, 112)
                             elide: Text.ElideRight
                             color: tab.active ? panel.foreground : panel.muted
                             font.pixelSize: Math.round(12 * Theme.fontScale)
                             anchors.verticalCenter: parent.verticalCenter
+
+                            TapHandler {
+                                onDoubleTapped: {
+                                    panel.editingId = tab.modelData.id;
+                                    renameField.text = tab.modelData.title;
+                                    renameField.forceActiveFocus();
+                                    renameField.selectAll();
+                                }
+                            }
+                        }
+
+                        ShellTextField {
+                            id: renameField
+
+                            objectName: "panelRename-" + tab.modelData.id
+                            visible: panel.editingId === tab.modelData.id
+                            width: 112
+                            anchors.verticalCenter: parent.verticalCenter
+                            property bool cancelled: false
+                            onAccepted: {
+                                Shell.dispatch("rightPanel.rename", {
+                                    id: tab.modelData.id,
+                                    title: text
+                                });
+                                panel.editingId = "";
+                            }
+                            onEditingFinished: {
+                                if (panel.editingId === tab.modelData.id && !cancelled) {
+                                    Shell.dispatch("rightPanel.rename", {
+                                        id: tab.modelData.id,
+                                        title: text
+                                    });
+                                }
+                                cancelled = false;
+                                if (panel.editingId === tab.modelData.id)
+                                    panel.editingId = "";
+                            }
+                            Keys.onEscapePressed: {
+                                cancelled = true;
+                                panel.editingId = "";
+                            }
                         }
 
                         ShellButton {

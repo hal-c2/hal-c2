@@ -132,6 +132,7 @@ defmodule HalC2.Orchestration.Rollback do
         {:ok,
          %{
            thread_id: thread["id"],
+           project_id: thread["projectId"],
            instance: provider_thread["providerInstanceId"],
            driver: provider_thread["driver"],
            provider_thread: provider_thread,

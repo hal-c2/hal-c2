@@ -158,6 +158,8 @@ defmodule HalC2.Test.Machines do
   def user_home(home) when is_binary(home), do: home <> "-user"
 
   # The fake agents keep sessions the way the real ones do, in the machine's own homes.
+  # gh's config is the machine's too: a peer boots as an MC, and one that found the
+  # developer's gh sign-in would send the fake GitHub's remotes to the real one.
   defp sessions(home) do
     user = user_home(home)
 
@@ -165,7 +167,8 @@ defmodule HalC2.Test.Machines do
       {"FAKE_SESSIONS", "1"},
       {"CLAUDE_CONFIG_DIR", Path.join(user, ".claude")},
       {"CODEX_HOME", Path.join(user, ".codex")},
-      {"PI_CODING_AGENT_DIR", Path.join(user, ".pi/agent")}
+      {"PI_CODING_AGENT_DIR", Path.join(user, ".pi/agent")},
+      {"GH_CONFIG_DIR", Path.join(user, ".config/gh")}
     ]
   end
 

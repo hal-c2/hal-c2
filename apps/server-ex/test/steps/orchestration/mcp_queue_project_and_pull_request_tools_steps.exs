@@ -286,6 +286,68 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     context
   end
 
+  # Stored projects, written as data: registering 120 real checkouts would
+  # only slow the paging scenarios down.
+  step "this MC has 120 projects that are not deleted", context do
+    existing =
+      Enum.count(
+        HalC2.Shell.rows(),
+        fn {{mc, _}, {kind, row}} -> mc == node() and kind == "project" and !row["deletedAt"] end
+      )
+
+    at = World.iso_from_now(0)
+    root = World.project(context, "demo").root
+
+    ids =
+      for n <- Enum.to_list(1..max(120 - existing, 0)//1) do
+        id = "paged-#{n}"
+
+        project = %{
+          "id" => id,
+          "title" => id,
+          "workspaceRoot" => root,
+          "scripts" => [],
+          "createdAt" => at,
+          "updatedAt" => at,
+          "deletedAt" => nil
+        }
+
+        {:ok, _} =
+          HalC2.Streams.commit(id, :project, [{"project", id, HalC2.Patch.diff(nil, project)}])
+
+        :ok = HalC2.Streams.flush_shell(id)
+        id
+      end
+
+    if ids != [], do: World.await_row(List.last(ids), & &1)
+    context
+  end
+
+  step(
+    "the agent of {string} lists the projects without a limit",
+    %{args: [caller]} = context,
+    do: tool(context, caller, "hal_c2_project_list")
+  )
+
+  step "the agent of {string} lists the projects with a limit of {int}",
+       %{args: [caller, limit]} = context do
+    tool(context, caller, "hal_c2_project_list", %{"limit" => limit})
+  end
+
+  step "it receives {int} projects and a cursor for the rest", %{args: [count]} = context do
+    assert {:ok, %{"projects" => projects, "nextCursor" => ^count, "total" => 120}} =
+             context.mcp_result
+
+    assert length(projects) == count
+    context
+  end
+
+  step "the tool refuses the input as invalid", context do
+    assert {:error, "invalid_request", message} = context.mcp_result
+    assert message =~ "limit"
+    context
+  end
+
   step "the agent of {string} creates a project for an existing folder",
        %{args: [caller]} = context do
     folder = HalC2.Test.Mc.tmp_dir(context.mc, "notes-app")
@@ -774,6 +836,106 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
     context
   end
 
+  # The project's repository identity as the shell carries it (its host's
+  # provider kind and remote), with the checkout's origin to match.
+  step ~r/^the project of "(?<caller>[^"]+)" is hosted on (?<kind>GitLab with a nested group|Forgejo served from a port and a path prefix|GitHub|GitLab)$/,
+       %{args: [caller, kind]} = context do
+    {provider, key, remote, repository} =
+      case kind do
+        "GitLab with a nested group" ->
+          {"gitlab", "gitlab.com/group/sub/project", "git@gitlab.com:group/sub/project.git",
+           "group/sub/project"}
+
+        "Forgejo served from a port and a path prefix" ->
+          {"forgejo", "forge.example/git/owner/repo",
+           "http://forge.example:3000/git/owner/repo.git", "git/owner/repo"}
+
+        "GitHub" ->
+          {"github", "github.com/owner/repo", "git@github.com:owner/repo.git", "owner/repo"}
+
+        "GitLab" ->
+          {"gitlab", "gitlab.com/owner/repo", "git@gitlab.com:owner/repo.git", "owner/repo"}
+      end
+
+    identity = %{
+      "canonicalKey" => key,
+      "locator" => %{"source" => "git-remote", "remoteName" => "origin", "remoteUrl" => remote},
+      "provider" => provider,
+      "displayName" => repository
+    }
+
+    id = World.row(context, caller)["projectId"]
+    World.git!(World.project(context, "demo").root, ["remote", "add", "origin", remote])
+
+    {:ok, _} =
+      HalC2.Streams.commit(id, :project, [
+        {"project", id, %{"s" => %{"repositoryIdentity" => identity}}}
+      ])
+
+    :ok = HalC2.Streams.flush_shell(id)
+    World.await_row(id, &(&1["repositoryIdentity"]["canonicalKey"] == key))
+    Map.put(context, :hosted_repository, repository)
+  end
+
+  step "the agent of {string} links pull request {int} of its repository by number",
+       %{args: [caller, number]} = context do
+    tool(context, caller, "link_pull_request", %{
+      "repository" => context.hosted_repository,
+      "number" => number
+    })
+  end
+
+  step "the agent of {string} links pull request {int} of {string} on {string}",
+       %{args: [caller, number, repository, host]} = context do
+    tool(context, caller, "link_pull_request", %{
+      "host" => host,
+      "repository" => repository,
+      "number" => number
+    })
+  end
+
+  step("the pull request is linked with the URL {string}", %{args: [url]} = context,
+    do: linked_url(context, url)
+  )
+
+  step ~r/^the pull request is linked with the URL (?<url>https?:\/\/\S+)$/,
+       %{args: [url]} = context do
+    linked_url(context, url)
+  end
+
+  step "the project's own host is not used to guess its shape", context do
+    assert {:ok, %{"host" => "other.example", "url" => url}} = context.mcp_result
+    assert url =~ "/pull/"
+    refute url =~ "merge_requests"
+    context
+  end
+
+  step "{string} has a Forgejo pull request linked as host {string} with the URL {string}",
+       %{args: [thread, host, url]} = context do
+    %{repository: repository, number: number} =
+      HalC2.Projection.PullRequests.parse_change_request_url(url)
+
+    World.patch_thread(context, thread, %{
+      "pullRequests" => [
+        %{
+          "host" => host,
+          "repository" => repository,
+          "number" => number,
+          "url" => url,
+          "source" => "manual",
+          "linkedAt" => World.iso_from_now(0),
+          "snapshot" => nil,
+          "stack" => nil
+        }
+      ]
+    })
+  end
+
+  step "the pull request is reported on host {string}", %{args: [host]} = context do
+    assert {:ok, %{"pullRequests" => [%{"host" => ^host, "number" => 42}]}} = context.mcp_result
+    context
+  end
+
   # --- helpers ---------------------------------------------------------------------
 
   defp tool(context, caller, name, arguments \\ %{}),
@@ -886,4 +1048,10 @@ defmodule HalC2.Steps.Orchestration.McpQueueProjectAndPullRequestTools do
 
   defp links(context, thread),
     do: HalC2.Projection.PullRequests.of(World.thread(context, thread) || %{})
+
+  defp linked_url(context, url) do
+    assert {:ok, %{"url" => ^url, "number" => 42, "alreadyLinked" => false}} = context.mcp_result
+    assert [%{"url" => ^url, "source" => "agent"}] = links(context, "caller")
+    context
+  end
 end

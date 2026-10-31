@@ -15,8 +15,13 @@ defmodule HalC2.Store do
 
   The writer never checkpoints the WAL itself: a checkpoint syncs the database file,
   which can take seconds on a busy disk, and every write queued behind it would wait
-  long enough to time out a running turn. A linked process checkpoints from its own
-  connection instead, which SQLite runs alongside writes.
+  for it. A linked process checkpoints from its own connection instead, which SQLite
+  runs alongside writes.
+
+  A write has no timeout: a slow store slows its writers down, and a running turn with
+  them, rather than exiting them mid-turn (hal-c2/hal-c2#644). A write that has waited
+  `:store_slow_write_ms` (10 s) logs one warning and goes on waiting. A store that
+  dies still ends the call, as any `GenServer.call/3` does.
 
   The meta table records the schema version the file was written with. An MC
   refuses to open a store from a newer schema rather than misread it. It also holds
@@ -31,7 +36,10 @@ defmodule HalC2.Store do
 
   @schema_version 1
   @compress_over 1024
-  @write_timeout 60_000
+  # How long a stop waits for the store to finish the calls it holds.
+  @shutdown 60_000
+  # How long a write waits before it says the store is slow (it keeps waiting).
+  @slow_write 10_000
   # How long a write waits for the store to restart, and how often it looks.
   @restart_wait 5_000
   @restart_poll 5
@@ -99,17 +107,17 @@ defmodule HalC2.Store do
           at: integer
         }
 
-  # The shutdown is the write timeout, not the 5s default: a stop waits for the call
-  # in hand (`init/1` traps exits), and callers may wait `@write_timeout` for it, so a
-  # shorter cap would have the supervisor kill the store mid-transaction instead.
-  # The budget covers more than one call: the calls already queued ahead of the
-  # supervisor's exit signal are answered first, so a deep backlog can still spend
-  # it and be killed mid-queue; those callers exit `:killed` and are not retried.
+  # The shutdown is a minute, not the 5s default: a stop waits for the call in hand
+  # (`init/1` traps exits), which on a busy disk can take seconds, and a shorter cap
+  # would have the supervisor kill the store mid-transaction instead. The budget
+  # covers more than one call: the calls already queued ahead of the supervisor's
+  # exit signal are answered first, so a deep backlog can still spend it and be
+  # killed mid-queue; those callers exit `:killed` and are not retried.
   def child_spec(opts),
     do: %{
       id: Keyword.get(opts, :name, __MODULE__),
       start: {__MODULE__, :start_link, [opts]},
-      shutdown: @write_timeout
+      shutdown: @shutdown
     }
 
   @spec start_link(keyword) :: GenServer.on_start()
@@ -173,7 +181,7 @@ defmodule HalC2.Store do
   # crash reason, which a caller cannot tell from a crash inside the call it
   # took, so retrying it could replay a write that landed.
   defp write(store, request, deadline \\ nil) do
-    GenServer.call(store, request, @write_timeout)
+    call(store, request)
   catch
     :exit, {reason, _} = exit when is_atom(store) and restartable(reason) ->
       deadline = deadline || System.monotonic_time(:millisecond) + @restart_wait
@@ -185,6 +193,33 @@ defmodule HalC2.Store do
         exit(exit)
       end
   end
+
+  # `GenServer.call(store, request, :infinity)` that logs once when the store is slow.
+  # It exits as that call would, so the restart wait above still sees `:noproc` and
+  # `:shutdown`.
+  defp call(store, request) do
+    req = :gen_server.send_request(store, request)
+
+    response =
+      with :timeout <- :gen_server.wait_response(req, slow_write()) do
+        Logger.warning(
+          "a store #{kind(request)} has waited #{slow_write()} ms, which is slow; " <>
+            "it keeps waiting"
+        )
+
+        :gen_server.receive_response(req, :infinity)
+      end
+
+    case response do
+      {:reply, reply} -> reply
+      {:error, {reason, _}} -> exit({reason, {GenServer, :call, [store, request, :infinity]}})
+    end
+  end
+
+  defp kind(request) when is_tuple(request), do: elem(request, 0)
+  defp kind(request), do: request
+
+  defp slow_write, do: Application.get_env(:hal_c2, :store_slow_write_ms, @slow_write)
 
   @doc "Every stored sidebar row as `{stream_id, kind, row}`."
   @spec list_shell(String.t()) :: [{String.t(), String.t(), map}]
@@ -302,7 +337,7 @@ defmodule HalC2.Store do
          {_, _} = key <- path_key(pid) do
       # A store that was running before it kept an id (the MC took this version's
       # code in place) reads it the first time it is asked.
-      :persistent_term.get({:id, key}, nil) || GenServer.call(pid, :id, @write_timeout)
+      :persistent_term.get({:id, key}, nil) || call(pid, :id)
     else
       _ -> exit({:noproc, {__MODULE__, :id, [store]}})
     end

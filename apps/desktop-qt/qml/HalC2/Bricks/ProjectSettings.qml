@@ -377,6 +377,32 @@ SettingsPage {
         description: qsTr("Which submodules a new worktree checks out.")
     }
 
+    // Loading runs the checkout's own configuration, which the row says before
+    // anyone turns it on.
+    Choice {
+        id: environment
+
+        project: page
+        name: "environment"
+        title: qsTr("Project environment")
+        description: qsTr("Gives agents the variables a terminal in the thread's checkout would have. Loading runs the checkout's own mise, direnv or dotenv configuration, so turn it on only for a checkout you trust.")
+
+        TextField {
+            objectName: "file"
+            visible: environment.entry?.value === "dotenv"
+            implicitWidth: 120
+            enabled: page.editable
+            text: environment.entry?.file ?? ""
+            placeholderText: ".env"
+            selectByMouse: true
+            Accessible.name: qsTr("Dotenv file")
+            onEditingFinished: {
+                if (text.trim() !== (environment.entry?.file ?? "")) page.send("environmentFile", { file: text });
+                else text = Qt.binding(() => environment.entry?.file ?? "");
+            }
+        }
+    }
+
     ProjectActionsSettings {}
 
     Caption {

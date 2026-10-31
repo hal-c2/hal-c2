@@ -85,6 +85,12 @@ Feature: Preparing a new thread's worktree
     And the user can open that terminal to follow it
 
   @mc
+  Scenario: The setup script knows where the project and the worktree are
+    Given the setup script records "HAL_C2_PROJECT_ROOT" and "HAL_C2_WORKTREE_PATH"
+    When the environment prepares the worktree
+    Then the setup script saw the project folder and the new worktree
+
+  @mc
   Scenario: A setup script that must finish first stops the thread when it fails
     Given the setup script must finish before the agent starts
     When the setup script exits with 1

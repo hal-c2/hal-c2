@@ -2411,6 +2411,18 @@ defmodule HalC2.Steps.Threads do
     World.put_client(context, client)
   end
 
+  step "the setup script records {string} and {string}", %{args: [first, second]} = context do
+    put_in(context, [:setup_script, "command"], ~s(echo "$#{first} $#{second}" > seen.txt))
+  end
+
+  step "the setup script saw the project folder and the new worktree", context do
+    {final, context} = await_setup(context, &(&1["phase"] != "running"))
+    path = final["worktreePath"]
+    root = World.project(context).root
+    assert File.read!(Path.join(path, "seen.txt")) == "#{root} #{path}\n"
+    context
+  end
+
   step "the setup script must finish before the agent starts", context do
     put_in(context, [:setup_script, "async"], false)
   end
