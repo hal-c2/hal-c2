@@ -1,6 +1,8 @@
 import { WS_METHODS } from "@hal-c2/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import { ClusterRpcError, type ClusterSocket, type ShapeFrame } from "./clusterSocket.ts";
 import { makeV3Session } from "./session.ts";
@@ -73,6 +75,44 @@ describe("makeV3Session", () => {
       expect(calls).toEqual([
         { environment: ENVIRONMENT, method: WS_METHODS.filesLocalPath, payload },
       ]);
+    }),
+  );
+
+  it.effect("follows who else is on a page, by the page's own shape", () =>
+    Effect.gen(function* () {
+      const shapes: Array<{ readonly type: string }> = [];
+      const socket = {
+        subscribe: (shape: { readonly type: string }, listener: (frame: ShapeFrame) => void) => {
+          shapes.push(shape);
+          queueMicrotask(() =>
+            listener(
+              shape.type === "spacePresence"
+                ? {
+                    t: "spacePresence",
+                    viewers: [{ type: "agent", threadId: "t1", title: "Plans" }],
+                  }
+                : { t: "config", mc: "hal_c2@here", config: CONFIG },
+            ),
+          );
+          return () => {};
+        },
+      } as unknown as ClusterSocket;
+      const session = yield* makeV3Session({ socket, environmentId: ENVIRONMENT });
+
+      const first = yield* session.client[WS_METHODS.subscribeSpacePresence]({
+        spaceId: "s1",
+        pageId: "p1",
+      } as never).pipe(Stream.runHead);
+
+      expect(Option.getOrThrow(first)).toEqual({
+        viewers: [{ type: "agent", threadId: "t1", title: "Plans" }],
+      });
+      expect(shapes.at(-1)).toEqual({
+        type: "spacePresence",
+        mc: "hal_c2@here",
+        spaceId: "s1",
+        pageId: "p1",
+      });
     }),
   );
 

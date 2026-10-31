@@ -12,6 +12,9 @@ import {
   type ScheduledTask,
   type ServerProvider,
   type ServerSettings,
+  type SpaceId,
+  type SpacePageId,
+  type SpacePresenceViewer,
   type UsageLimitSourceSnapshots,
   WS_METHODS,
 } from "@hal-c2/contracts";
@@ -80,6 +83,15 @@ export interface TuiSettingsClient {
     stream: string,
     onFrame: (frame: EntityStreamFrame) => void,
     onError?: (message: string) => void,
+  ) => () => void;
+  /**
+   * Puts this client on a page of a Space until the returned function is called, and
+   * says who else is on it: at once, on every change, and anew after a reconnection.
+   */
+  readonly subscribeSpacePresence: (
+    spaceId: SpaceId,
+    pageId: SpacePageId,
+    onViewers: (viewers: ReadonlyArray<SpacePresenceViewer>) => void,
   ) => () => void;
 }
 
@@ -178,6 +190,12 @@ export function makeTuiSettingsClient(
       drain(
         subscribe(WS_METHODS.subscribeResourceTelemetry, {}).pipe(
           Stream.tap((snapshot) => Effect.sync(() => onSnapshot(snapshot))),
+        ),
+      ),
+    subscribeSpacePresence: (spaceId, pageId, onViewers) =>
+      drain(
+        subscribe(WS_METHODS.subscribeSpacePresence, { spaceId, pageId }).pipe(
+          Stream.tap((event) => Effect.sync(() => onViewers(event.viewers))),
         ),
       ),
     subscribeMcStream: (stream, onFrame, onError) =>

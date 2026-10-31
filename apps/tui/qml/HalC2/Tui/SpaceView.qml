@@ -29,6 +29,16 @@ Rectangle {
     }
 
     Text {
+        objectName: "spaceViewers"
+        visible: view.space.viewers !== ""
+        flexShrink: 0
+        wrapMode: "none"
+        truncate: true
+        text: view.space.viewers
+        color: Theme.colors.dim
+    }
+
+    Text {
         objectName: "spaceMessage"
         visible: view.space.message !== ""
         text: view.space.message

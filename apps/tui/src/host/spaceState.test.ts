@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { SpacePresenceViewer } from "@hal-c2/contracts";
 import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 
 import type { PickRequest } from "./composerState.ts";
@@ -68,6 +69,8 @@ function setup() {
   const calls: Array<{ method: string; payload: unknown }> = [];
   const statuses: string[] = [];
   const menus: PickRequest[] = [];
+  const onPage = new Set<string>();
+  const tellPage: Array<(viewers: ReadonlyArray<SpacePresenceViewer>) => void> = [];
   let state: TuiSpaceState | null = null;
   const controller = createSpaceController({
     client: {
@@ -85,6 +88,13 @@ function setup() {
         list.push(onFrame);
         streams.set(stream, list);
         return () => {};
+      },
+      subscribeSpacePresence: (_spaceId, pageId, onViewers) => {
+        onPage.add(pageId);
+        tellPage.push(onViewers);
+        return () => {
+          onPage.delete(pageId);
+        };
       },
     },
     height: () => 30,
@@ -108,7 +118,20 @@ function setup() {
       .rows.filter((row) => row.kind === kind && row.first)
       .map((row) => row.text.slice(2).trim());
   const select = (key: string) => controller.dispatch("space.select", { key });
-  return { controller, send, reply, view, texts, select, calls, statuses, menus, streams };
+  return {
+    controller,
+    send,
+    reply,
+    view,
+    texts,
+    select,
+    calls,
+    statuses,
+    menus,
+    streams,
+    onPage,
+    tellPage,
+  };
 }
 
 /** Open the Spaces, and the Space s1 ("Research") with its pages. */
@@ -174,6 +197,48 @@ describe("the Space's stream", () => {
     t.send("space:s1", events([11, "page", "p9", { s: page("p9", "Stray")[2] }]), 0);
     expect(t.view().title).toBe("space · Lab");
     expect(t.texts("page")).toEqual(["Bench"]);
+  });
+});
+
+describe("who else is on the page", () => {
+  const onRoadmap = () => {
+    const t = inResearch([page("p1", "Roadmap")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+
+  test("the pages of a Space are not being on a page", () => {
+    expect(inResearch([page("p1", "Roadmap")]).onPage.size).toBe(0);
+  });
+
+  test("a page deleted while open is left", () => {
+    const t = onRoadmap();
+    expect([...t.onPage]).toEqual(["p1"]);
+    t.send("space:s1", events([11, "page", "p1", { d: true }]));
+    expect(t.onPage.size).toBe(0);
+  });
+
+  test("closing the pane leaves the page and forgets who was on it", () => {
+    const t = onRoadmap();
+    t.tellPage[0]!([{ type: "user", devices: ["Phone"] }]);
+    expect(t.view().viewers).toBe("Also here: Phone");
+    t.controller.close();
+    expect(t.onPage.size).toBe(0);
+    expect(t.view().viewers).toBe("");
+  });
+
+  test("a late answer for a page the user left does not reach the next", () => {
+    const t = onRoadmap();
+    t.controller.dispatch("space.back", {});
+    t.tellPage[0]!([{ type: "user", devices: ["Phone"] }]);
+    expect(t.view().viewers).toBe("");
+  });
+
+  test("ending the client leaves the page", () => {
+    const t = onRoadmap();
+    t.controller.dispose();
+    expect(t.onPage.size).toBe(0);
   });
 });
 

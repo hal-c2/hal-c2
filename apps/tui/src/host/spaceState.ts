@@ -13,6 +13,7 @@ import {
   type SpaceComment,
   type SpaceId,
   type SpacePage,
+  type SpacePageId,
   spaceStreamId,
   WS_METHODS,
 } from "@hal-c2/contracts";
@@ -63,6 +64,8 @@ export interface TuiSpaceState {
   readonly title: string;
   readonly hint: string;
   readonly status: "loading" | "ready" | "error";
+  /** Who else is on the open page, "" when nobody is. */
+  readonly viewers: string;
   /** The body line when there are no rows (loading, empty, the stream's refusal). */
   readonly message: string;
   /** The rows that fit, windowed around the selection. */
@@ -70,7 +73,7 @@ export interface TuiSpaceState {
 }
 
 export interface SpaceControllerOptions {
-  readonly client: Pick<TuiClient, "mcCall" | "subscribeMcStream">;
+  readonly client: Pick<TuiClient, "mcCall" | "subscribeMcStream" | "subscribeSpacePresence">;
   readonly height: () => number;
   readonly width: () => number;
   readonly palette?: Palette;
@@ -111,6 +114,7 @@ const CLOSED: TuiSpaceState = {
   title: "",
   hint: "",
   status: "loading",
+  viewers: "",
   message: "",
   rows: [],
 };
@@ -182,6 +186,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   let spaceError: string | null = null;
   let unsubscribeSpace: (() => void) | null = null;
   let pageId: string | null = null;
+  let viewersPage: string | null = null;
+  let viewers = "";
+  let unsubscribeViewers: (() => void) | null = null;
   // The selected entry per level, by row key, so the selection stays put as rows come and go.
   const selected: Record<TuiSpaceView, string | null> = { spaces: null, pages: null, page: null };
   // The last selected index per level: where the selection lands when its row goes away.
@@ -452,6 +459,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   const publish = () => {
+    followViewers();
     if (!open) {
       options.publish(CLOSED);
       return;
@@ -469,7 +477,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
             : "An empty page · n adds a block";
     }
     // Window the rows around the selection.
-    const room = Math.max(1, options.height() - SPACE_CHROME_ROWS - (message === "" ? 0 : 1));
+    const room = Math.max(
+      1,
+      options.height() - SPACE_CHROME_ROWS - (message === "" ? 0 : 1) - (viewers === "" ? 0 : 1),
+    );
     const first = rows.findIndex((row) => row.selected);
     const last = rows.findLastIndex((row) => row.selected);
     if (first >= 0) {
@@ -483,12 +494,41 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       title: titleText(),
       hint: HINTS[view],
       status,
+      viewers,
       message,
       rows: rows.slice(top, top + room),
     });
   };
 
   // --- streams ---
+
+  // Being subscribed is being on the page, so only while the page shows.
+  const followViewers = () => {
+    const wanted = open && view === "page" && spaceId !== null ? pageId : null;
+    if (wanted === viewersPage) return;
+    unsubscribeViewers?.();
+    unsubscribeViewers = null;
+    viewersPage = wanted;
+    viewers = "";
+    if (wanted === null) return;
+    let live = true;
+    const stop = client.subscribeSpacePresence(
+      spaceId as SpaceId,
+      wanted as SpacePageId,
+      (next) => {
+        if (!live) return;
+        const names = next.flatMap((viewer) =>
+          viewer.type === "user" ? viewer.devices : [`the agent of “${viewer.title}”`],
+        );
+        viewers = names.length === 0 ? "" : `Also here: ${names.join(", ")}`;
+        publish();
+      },
+    );
+    unsubscribeViewers = () => {
+      live = false;
+      stop();
+    };
+  };
 
   const followSpaces = () => {
     if (unsubscribeSpaces) return;
@@ -1078,7 +1118,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   const page = (delta: number) =>
-    move(delta * Math.max(1, options.height() - SPACE_CHROME_ROWS - 1));
+    move(delta * Math.max(1, options.height() - SPACE_CHROME_ROWS - 1 - (viewers === "" ? 0 : 1)));
 
   /** The actions that need the pane open on a level. */
   const inView = (fn: () => void) => () => {
@@ -1183,6 +1223,8 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       while (pending.size > 0) await Promise.allSettled(pending);
     },
     dispose: () => {
+      unsubscribeViewers?.();
+      unsubscribeViewers = null;
       unsubscribeSpaces?.();
       unsubscribeSpaces = null;
       stopSpace();

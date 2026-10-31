@@ -293,6 +293,67 @@ step("the Space {string} with the page {string}", (ctx: SpaceWorld, name: string
   seedPage(ctx, page);
 });
 
+// --- who else is on the page ---
+
+step("the user opens the page {string}", (ctx: SpaceWorld, title: string) => openPage(ctx, title));
+
+step("the Space's page {string}", (ctx: SpaceWorld, title: string) => {
+  seedPage(ctx, title);
+});
+
+step("a thread {string}", () => {});
+
+step("the page {string} is open on the device {string}", (ctx: SpaceWorld, title, device) => {
+  mc(ctx).deviceOn(pageId(ctx, title), device);
+});
+
+step("the device {string} opens the page {string}", async (ctx: SpaceWorld, device, title) => {
+  mc(ctx).deviceOn(pageId(ctx, title), device);
+  await settle(ctx);
+});
+
+const deviceGone = async (ctx: SpaceWorld, device: string) => {
+  mc(ctx).deviceGone(device);
+  await settle(ctx);
+};
+step("the device {string} leaves the page {string}", deviceGone);
+step("the connection of the device {string} drops", deviceGone);
+
+step("the agent in {string} is working on the page {string}", (ctx: SpaceWorld, thread, title) => {
+  mc(ctx).agentOn(pageId(ctx, title), thread);
+});
+
+step("the turn of the agent in {string} ends", async (ctx: SpaceWorld, thread: string) => {
+  mc(ctx).agentGone(thread);
+  await settle(ctx);
+});
+
+step("the page shows nobody else", (ctx: World) => {
+  expect(pane(ctx).viewers).toBe("");
+});
+
+step("the page shows the user also on {string}", (ctx: World, device: string) => {
+  expect(pane(ctx).viewers).toBe(`Also here: ${device}`);
+});
+
+step("the page shows one person, also on {string} and {string}", (ctx: World, a, b) => {
+  expect(pane(ctx).viewers).toBe(`Also here: ${a}, ${b}`);
+});
+
+step("the page shows the agent of {string}", (ctx: World, thread: string) => {
+  expect(pane(ctx).viewers).toBe(`Also here: the agent of “${thread}”`);
+});
+
+step("the user leaves the page", async (ctx: World) => {
+  await pressKey(ctx, "Esc");
+  await settle(ctx);
+  expect(pane(ctx).view).toBe("pages");
+});
+
+step("the user is no longer on the page {string}", (ctx: SpaceWorld, title: string) => {
+  expect(mc(ctx).clientsOn(pageId(ctx, title))).toBe(0);
+});
+
 // --- a second client ---
 
 async function secondClient(ctx: SpaceWorld): Promise<Host> {
