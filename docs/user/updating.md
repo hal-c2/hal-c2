@@ -62,3 +62,15 @@ before. If the update still fails:
 2. Check that you updated the MC's machine, not only the device you are using.
 3. For an MC started by hand, stop it and run the MC file for the version shown in the notice
    ([Install HAL-C2](./install.md#command-line)).
+
+## Update providers
+
+When a provider such as Codex or Claude has a newer release, HAL-C2 offers to update it
+when it starts. Choose **Update** to run the provider's update command on the MC, or
+open **Settings → Providers** when the update has to be done by hand. A dismissed offer
+returns when a newer release comes out.
+
+While an update runs, and after it finishes, a notice at the bottom of the sidebar says how
+it went; choose it to open the provider settings. When the offer covers several connected
+machines, each machine gets its own row and updates on its own. A machine that has not
+answered after six minutes shows **Update timed out**; retry it from its row.

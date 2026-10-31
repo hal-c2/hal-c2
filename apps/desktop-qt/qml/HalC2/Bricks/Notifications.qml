@@ -362,6 +362,60 @@ Item {
                         wrapMode: Text.Wrap
                     }
 
+                    // One row per environment, each with its own state and
+                    // button (a provider update across environments).
+                    Repeater {
+                        model: card.toast ? card.toast.rows ?? [] : []
+
+                        delegate: RowLayout {
+                            id: toastRow
+
+                            required property var modelData
+
+                            objectName: "notificationRow-" + card.toastId + "-" + modelData.id
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 0
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: toastRow.modelData.label
+                                    color: Theme.palette.color("text", "#e4e4e7")
+                                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                                    font.weight: Font.Medium
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: toastRow.modelData.text
+                                    color: toastRow.modelData.kind === "failed" ? host.typeColor("error") : toastRow.modelData.kind === "unchanged" ? host.typeColor("warning") : toastRow.modelData.kind === "success" ? host.typeColor("success") : Theme.palette.color("textMuted", "#8b8b93")
+                                    font.pixelSize: Math.round(11 * Theme.fontScale)
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+
+                            // Still icons: a spinner would repaint every frame.
+                            ShellIcon {
+                                visible: toastRow.modelData.action === "" && (toastRow.modelData.kind === "loading" || toastRow.modelData.kind === "success")
+                                name: toastRow.modelData.kind === "success" ? "check" : "refresh-cw"
+                                size: 14
+                                color: toastRow.modelData.kind === "success" ? host.typeColor("success") : host.typeColor("loading")
+                            }
+                            ShellButton {
+                                objectName: "notificationRowAction-" + card.toastId + "-" + toastRow.modelData.id
+                                visible: toastRow.modelData.action !== ""
+                                text: toastRow.modelData.action
+                                onClicked: Shell.dispatch("notification.rowAction", {
+                                    id: card.toastId,
+                                    rowId: toastRow.modelData.id
+                                })
+                            }
+                        }
+                    }
+
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.topMargin: 4

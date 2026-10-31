@@ -27,6 +27,23 @@ bool ToastController::handle(const QString& action, const QVariant& payload) {
     setExpanded(payload.toMap().value(QStringLiteral("expanded")).toBool());
     return true;
   }
+  if (action == QLatin1String("notification.rowAction")) {
+    const QString id = payload.toMap().value(QStringLiteral("id")).toString();
+    const QString rowId = payload.toMap().value(QStringLiteral("rowId")).toString();
+    std::function<void(const QString&)> run;
+    for (const Toast& toast : m_toasts) {
+      if (toast.id != id) continue;
+      // A click on a button the row no longer shows (a spinner took its
+      // place) leaves it be.
+      if (std::any_of(toast.rows.cbegin(), toast.rows.cend(),
+                      [&rowId](const Row& row) { return row.id == rowId && !row.action.isEmpty(); })) {
+        run = toast.runRow;
+      }
+      break;
+    }
+    if (run) run(rowId);
+    return true;
+  }
   if (action != QLatin1String("notification.dismiss") && action != QLatin1String("notification.action")) {
     return false;
   }
@@ -138,6 +155,19 @@ void ToastController::dismiss(const QString& id) {
   schedule();
 }
 
+bool ToastController::setRows(const QString& id, QList<Row> rows, std::function<void(const QString&)> run) {
+  for (Toast& toast : m_toasts) {
+    if (toast.id != id) continue;
+    toast.runRow = std::move(run);
+    if (toast.rows != rows) {
+      toast.rows = std::move(rows);
+      publish();
+    }
+    return true;
+  }
+  return false;
+}
+
 bool ToastController::update(const QString& id, const QString& title, const QString& description) {
   for (Toast& toast : m_toasts) {
     if (toast.id != id) continue;
@@ -236,6 +266,14 @@ void ToastController::publish() {
           {QStringLiteral("primary"), index == 0},
       });
     }
+    QVariantList rows;
+    for (const Row& row : toast.rows) {
+      rows.append(QVariantMap{{QStringLiteral("id"), row.id},
+                              {QStringLiteral("label"), row.label},
+                              {QStringLiteral("text"), row.text},
+                              {QStringLiteral("kind"), row.kind},
+                              {QStringLiteral("action"), row.action}});
+    }
     items.append(QVariantMap{
         {QStringLiteral("id"), toast.id},
         {QStringLiteral("type"), toast.type},
@@ -244,6 +282,7 @@ void ToastController::publish() {
          toast.description.isEmpty() ? QVariant::fromValue(nullptr) : QVariant(toast.description)},
         {QStringLiteral("updateKey"), toast.revision},
         {QStringLiteral("actions"), actions},
+        {QStringLiteral("rows"), rows},
     });
   }
   m_bridge->publish(QStringLiteral("toasts"),

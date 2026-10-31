@@ -76,6 +76,7 @@ qt_add_qml_module(hal_c2_bricks
     EditFromHereDialog.qml
     WorktreeSetupCard.qml
     LimitRecoveryBanner.qml
+    ProviderUpdateNotice.qml
     ThreadLineage.qml
     DiffPanel.qml
     FilesPanel.qml
