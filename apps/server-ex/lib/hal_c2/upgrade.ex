@@ -730,7 +730,16 @@ defmodule HalC2.Upgrade do
   recorded as the last outcome, and told to the clients watching this MC's config.
   """
   def desktop_failed(outcome) do
-    record(outcome)
+    # A disk that cannot take it (the install may have failed for that very reason)
+    # must not keep clients from hearing; only a restart forgets it then.
+    try do
+      record(outcome)
+    rescue
+      error in File.Error ->
+        Logger.warning("Could not save a failed desktop update: #{Exception.message(error)}")
+        :persistent_term.put({__MODULE__, :outcome}, outcome)
+    end
+
     announce()
   end
 

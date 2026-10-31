@@ -63,9 +63,10 @@ public:
     QNetworkReply* reply = m_network.get(request);
     // Hashed as it arrives: a whole AppImage at the end would freeze the window.
     auto hash = std::make_shared<QCryptographicHash>(QCryptographicHash::Sha256);
-    const auto take = [reply, file, hash] {
+    auto writable = std::make_shared<bool>(true);
+    const auto take = [reply, file, hash, writable] {
       const QByteArray bytes = reply->readAll();
-      file->write(bytes);
+      if (file->write(bytes) != bytes.size()) *writable = false;
       hash->addData(bytes);
     };
     QObject::connect(reply, &QNetworkReply::readyRead, reply, take);
@@ -73,10 +74,18 @@ public:
       if (total <= 0) total = release.size;
       if (total > 0) progress(int(std::min<qint64>(100, received * 100 / total)));
     });
-    QObject::connect(reply, &QNetworkReply::finished, reply, [this, reply, file, hash, take, path, release, done] {
+    QObject::connect(reply, &QNetworkReply::finished, reply, [this, reply, file, hash, writable, take, path, release, done] {
       reply->deleteLater();
       take();
+      // The digest covers what arrived: what reached the disk has to be checked apart.
+      const bool written = *writable && file->flush();
+      const QString writeError = file->errorString();
       file->close();
+      if (!written) {
+        QFile::remove(path);
+        done(writeError);
+        return;
+      }
       if (reply->error() != QNetworkReply::NoError) {
         QFile::remove(path);
         done(reply->errorString());

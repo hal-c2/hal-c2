@@ -30,8 +30,6 @@ defmodule HalC2.DesktopUpdate do
 
   use GenServer
 
-  require Logger
-
   @update_timeout :timer.minutes(20)
   @install_timeout :timer.minutes(2)
   @unavailable "This server was not started by the HAL-C2 desktop app, so it cannot drive a desktop update."
@@ -277,20 +275,13 @@ defmodule HalC2.DesktopUpdate do
   defp install_report(state, _report), do: state
 
   defp install_failed(%{install: install} = state, reason) do
-    # A disk that cannot take the outcome must not keep the install going: it would
-    # come back from its record and fail here again at every deadline.
-    try do
-      HalC2.Upgrade.desktop_failed(%{
-        "id" => install.id,
-        "fromVersion" => install.from,
-        "targetVersion" => install.target,
-        "status" => "failed",
-        "reason" => reason
-      })
-    rescue
-      error in File.Error ->
-        Logger.warning("Could not record a failed desktop update: #{Exception.message(error)}")
-    end
+    HalC2.Upgrade.desktop_failed(%{
+      "id" => install.id,
+      "fromVersion" => install.from,
+      "targetVersion" => install.target,
+      "status" => "failed",
+      "reason" => reason
+    })
 
     install_done(state)
   end

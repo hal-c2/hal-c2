@@ -353,6 +353,20 @@ defmodule HalC2.Steps.Settings.Updates do
 
   step "the MC stops being able to write its update state", context do
     block_upgrades_dir()
+    config = Mc.sub(Mc.connect(context.mc), 2, %{"type" => "config", "mc" => mc()})
+    {_, config} = Mc.await(config, &(&1["t"] == "config"))
+    World.put_client(context, "config", config)
+  end
+
+  step "clients watching the MC's config are told it failed saying {string}",
+       %{args: [reason]} = context do
+    {frame, _config} =
+      Mc.await(
+        context.clients["config"],
+        &(&1["updateOutcome"]["id"] == context.request)
+      )
+
+    assert frame["updateOutcome"]["reason"] == reason
     context
   end
 

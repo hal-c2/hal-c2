@@ -486,6 +486,8 @@ Feature: Updating the server, the desktop app and providers
       And the MC stops being able to write its update state
       When the app reconnects and reports that the install failed because "disk full"
       Then the MC keeps running with no install left waiting
+      And the MC's last update outcome is failed saying "disk full"
+      And clients watching the MC's config are told it failed saying "disk full"
 
     @mc
     Scenario: An MC the desktop app started offers the update through the app
