@@ -103,6 +103,9 @@ const QList<Row>& rows() {
       {"snapShotSound", true, QStringLiteral("soft-pop")},
       {"snapShotFlash", true, true},
       {"snapShotAnimations", true, true},
+      // Whether setup was open when macOS quit the app: enabled | disabled, by
+      // how capture stood before it.
+      {"snapShotSetupResume", true, QString()},
   };
   return list;
 }

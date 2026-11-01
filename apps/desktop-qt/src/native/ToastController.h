@@ -15,7 +15,8 @@ class ShellBridge;
 
 // The shell's toasts. Controllers call show() directly; the Notifications
 // brick renders `toasts`. Publishes `toasts`: {items, expanded}, items newest
-// first, each {id, type, title, description, updateKey, actions}. Dismiss and action clicks come back by id. No toast
+// first, each {id, type, title, description, updateKey, actions, rows}. Dismiss,
+// action and row clicks come back by id. No toast
 // is dropped for lack of room: the brick stacks them, and `expanded` (the
 // pointer over the stack, or a tap on a phone) spreads them out and holds
 // every toast's time.
@@ -32,6 +33,18 @@ public:
     // What kind of change it takes back ("Settled", "Snoozed"): consecutive
     // toasts of one group are undone together.
     QString group;
+  };
+
+  // A line a toast lists under its text, with a button of its own (a
+  // provider update per environment): `kind` is idle, loading, success,
+  // failed or unchanged, and `action` the button's label, none when empty.
+  struct Row {
+    QString id;
+    QString label;
+    QString text;
+    QString kind;
+    QString action;
+    bool operator==(const Row&) const = default;
   };
 
   ToastController(ShellBridge* bridge, McClient* client, QObject* parent = nullptr);
@@ -64,6 +77,10 @@ public:
   // its success or failure), its time starting afresh; false once it is gone.
   bool replace(const QString& id, const QString& type, const QString& title, const QString& description,
                QList<Action> actions, int timeoutMs);
+  // The rows the toast `id` lists; a row's button runs `run` with its id
+  // (`notification.rowAction` {id, rowId}) and leaves the toast. False once
+  // it is gone.
+  bool setRows(const QString& id, QList<Row> rows, std::function<void(const QString& rowId)> run);
   // Runs the action of the newest toast offering `label` (the undo shortcut's
   // "Undo"), as clicking it would; false when none does. The toasts next to
   // it offering the same action for the same group run with it.
@@ -95,6 +112,8 @@ private:
     QString title;
     QString description;
     QList<Action> actions;
+    QList<Row> rows;
+    std::function<void(const QString&)> runRow;
     // Set while its time runs; while the stack is expanded the time left
     // sits in `remainingMs` instead.
     std::optional<QDateTime> deadline;

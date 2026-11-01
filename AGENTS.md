@@ -124,7 +124,7 @@ Most code changes do not need an internal documentation change. Agents can read 
 
 ## Plans and work artifacts
 
-- Do not commit implementation plans, research notes, or agent scratch files. Keep temporary working material outside the worktree. `.plans/` is gitignored only as a safety net for tooling that writes there.
+- Do not commit implementation plans, research notes, or agent scratch files. Keep temporary working material outside the worktree, under `$TMPDIR` (a thread's own, removed with it) rather than a literal `/tmp`. `.plans/` is gitignored only as a safety net for tooling that writes there.
 - Track active work in the `hal-c2/hal-c2` issue that owns it. External proposals follow `CONTRIBUTING.md` and belong in the fork's Ideas discussions. Changes that make sense for everyone belong upstream.
 - A merged PR is the implementation record. Close or update its tracking item when the work lands; do not preserve a second checklist in the repository.
 

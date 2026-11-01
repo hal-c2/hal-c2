@@ -104,6 +104,16 @@ defmodule HalC2.Rpc do
 
   def handle("server.updateServer", input), do: HalC2.Upgrade.update(input)
 
+  # The desktop app's socket reports to its own MC (`HalC2.Web.Socket`); any other
+  # caller is refused here.
+  def handle("server.reportDesktopUpdateStatus", _input),
+    do:
+      {:error,
+       %{
+         "_tag" => "ServerSelfUpdateError",
+         "reason" => "Only the desktop app that started this MC can report its updates."
+       }}
+
   def handle("server.acceptAcpRegistryUrlAuth", input), do: HalC2.Acp.UrlAuth.accept(input)
 
   def handle("provider.uploadFeedback", input),

@@ -17,9 +17,12 @@ defmodule HalC2.ProjectEnvironment do
   that is not `direnv allow`ed or a mise config that is not `mise trust`ed is reported,
   never bypassed.
 
-  Precedence, lowest first: the MC's own environment, the project's, then the
-  launch environment the adapter built (the provider instance's variables and those
-  HAL-C2 sets for the session). The project never sets a `HAL_C2_*` variable, nor one
+  Every session also gets its thread's temp folder (`HalC2.Scratch`), whether or not
+  the project's environment is on.
+
+  Precedence, lowest first: the MC's own environment, the thread's temp folder, the
+  project's, then the launch environment the adapter built (the provider instance's
+  variables and those HAL-C2 sets for the session). The project never sets a `HAL_C2_*` variable, nor one
   the launch command removes with `env -u`.
 
   Loading runs under one timeout, shared by both managers, and never fails a launch: a manager that fails, is not
@@ -49,8 +52,8 @@ defmodule HalC2.ProjectEnvironment do
 
   @doc """
   `env`, the launch environment an adapter built for a session of `context` (a turn:
-  `:cwd`, `:project_id` and, to show a notice on its run, `:ids`), with the project
-  environment under it. `command` is the launch command, whose `env -u` names stay
+  `:cwd`, `:project_id`, the thread as `:thread_id` or in `:ids`, which also shows a
+  notice on its run), with the project environment and the thread's temp folder under it. `command` is the launch command, whose `env -u` names stay
   unset. A failure to load is a notice on the run and a log line, never an error.
   """
   @spec for_turn(map, env, [String.t()]) :: env
@@ -58,14 +61,21 @@ defmodule HalC2.ProjectEnvironment do
     project = Map.get(context, :project_id)
     cwd = Map.get(context, :cwd)
 
-    if is_binary(project) and is_binary(cwd) do
-      {loaded, warnings} = load(HalC2.Settings.for_project(project), cwd)
-      if warnings != [], do: notice(context, warnings)
-      merge(env, loaded, unset_by(command))
-    else
-      env
-    end
+    loaded =
+      if is_binary(project) and is_binary(cwd) do
+        {loaded, warnings} = load(HalC2.Settings.for_project(project), cwd)
+        if warnings != [], do: notice(context, warnings)
+        loaded
+      else
+        []
+      end
+
+    merge(env, overlay(temp_folder(context), loaded), unset_by(command))
   end
+
+  defp temp_folder(%{ids: %{thread: id}}) when is_binary(id), do: HalC2.Scratch.thread_env(id)
+  defp temp_folder(%{thread_id: id}) when is_binary(id), do: HalC2.Scratch.thread_env(id)
+  defp temp_folder(_context), do: []
 
   @doc """
   The project environment for `cwd` under the resolved `settings`, as

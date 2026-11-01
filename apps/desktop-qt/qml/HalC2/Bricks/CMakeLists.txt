@@ -32,6 +32,8 @@ qt_add_qml_module(hal_c2_bricks
     ProviderModelList.qml
     ComposerUsageLimits.qml
     ConnectionStatusRow.qml
+    ServerUpdateAction.qml
+    ServerUpdatesList.qml
     ShellButton.qml
     ShellCard.qml
     ShellChevron.qml
@@ -48,6 +50,8 @@ qt_add_qml_module(hal_c2_bricks
     ShellCheckBox.qml
     ShellWindow.qml
     Sidebar.qml
+    SidebarUpdateButton.qml
+    DesktopUpdateSettings.qml
     SidebarThreadRow.qml
     HalC2Wordmark.qml
     KeybindingsSettings.qml
@@ -76,6 +80,7 @@ qt_add_qml_module(hal_c2_bricks
     EditFromHereDialog.qml
     WorktreeSetupCard.qml
     LimitRecoveryBanner.qml
+    ProviderUpdateNotice.qml
     ThreadLineage.qml
     DiffPanel.qml
     FilesPanel.qml
@@ -117,6 +122,7 @@ qt_add_qml_module(hal_c2_bricks
     PluginSettings.qml
     NotificationsSettings.qml
     PairingSettings.qml
+    MaintenanceSettings.qml
     TerminalPanel.qml
     PullRequestsPanel.qml
     PullRequestReviewPanel.qml

@@ -52,3 +52,6 @@ void saveOn(FakeMc& mc, const QString& environment, const QString& key, const QJ
 FakeConfig::Document& documentOf(FakeMc& mc, const QString& environment);
 // The MC's providers become `providers`, announced as `config.providers`.
 void publishProviders(FakeMc& mc, const QJsonArray& providers);
+// The same on any environment: another one's providers are kept in
+// `elsewhere`, its first ones answering its subscribers' wait for a snapshot.
+void publishProvidersOn(FakeMc& mc, const QString& environment, const QJsonArray& providers);

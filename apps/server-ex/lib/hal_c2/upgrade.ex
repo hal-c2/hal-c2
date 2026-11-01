@@ -47,8 +47,17 @@ defmodule HalC2.Upgrade do
   @doc "The release this MC runs from, or nil when it runs from a checkout."
   def release_root, do: System.get_env("RELEASE_ROOT")
 
-  @doc "`serverSelfUpdate` for the descriptor: only a release can install a version."
-  def capability, do: if(release_root(), do: "hot-upgrade")
+  @doc """
+  `serverSelfUpdate` for the descriptor: the desktop app that started this MC updates
+  it, and otherwise only a release can install a version.
+  """
+  def capability do
+    cond do
+      HalC2.DesktopUpdate.available?() -> "desktop-managed"
+      release_root() -> "hot-upgrade"
+      true -> nil
+    end
+  end
 
   @doc "This machine's bundle platform, e.g. `darwin-arm64`."
   def platform do
@@ -69,8 +78,17 @@ defmodule HalC2.Upgrade do
   `server.updateServer`: moves this MC to `targetVersion`. `progress` gets
   `{:hal_c2_server_update, mc, %{"type" => "progress", "stage" => stage}}` as it goes. `{:ok, ServerSelfUpdateResult}` once
   the new version runs (hot) or is about to (restart).
+
+  An MC the desktop app started is updated with the app (`HalC2.DesktopUpdate`),
+  which cancels the update when `owner` (the caller when nil) goes away.
   """
-  def update(input, progress \\ nil) do
+  def update(input, progress \\ nil, owner \\ nil) do
+    if HalC2.DesktopUpdate.available?(),
+      do: HalC2.DesktopUpdate.update(progress, owner),
+      else: hot_update(input, progress)
+  end
+
+  defp hot_update(input, progress \\ nil) do
     GenServer.call(__MODULE__, {:update, input, progress}, :timer.minutes(15))
   catch
     :exit, {:noproc, _} -> failure("This MC cannot update itself.")
@@ -87,7 +105,7 @@ defmodule HalC2.Upgrade do
       :ok = HalC2.Upgrade.Source.put(version, platform(), path)
       input = %{"targetVersion" => version}
       members = update_members(Node.list(), input)
-      with {:ok, result} <- update(input), do: {:ok, Map.put(result, "members", members)}
+      with {:ok, result} <- hot_update(input), do: {:ok, Map.put(result, "members", members)}
     else
       failure("#{path} is not a bundle.")
     end
@@ -173,7 +191,7 @@ defmodule HalC2.Upgrade do
     # this MC, so they reach `pid` in order.
     Task.start(fn ->
       event =
-        case update(input, pid) do
+        case update(input, pid, pid) do
           {:ok, result} -> %{"type" => "complete", "result" => result}
           {:error, error} -> {:error, error}
         end
@@ -705,6 +723,24 @@ defmodule HalC2.Upgrade do
 
     if outcome["status"] != "restarting",
       do: :persistent_term.put({__MODULE__, :outcome}, outcome)
+  end
+
+  @doc """
+  A desktop app update that failed after it was committed (`HalC2.DesktopUpdate`):
+  recorded as the last outcome, and told to the clients watching this MC's config.
+  """
+  def desktop_failed(outcome) do
+    # A disk that cannot take it (the install may have failed for that very reason)
+    # must not keep clients from hearing; only a restart forgets it then.
+    try do
+      record(outcome)
+    rescue
+      error in File.Error ->
+        Logger.warning("Could not save a failed desktop update: #{Exception.message(error)}")
+        :persistent_term.put({__MODULE__, :outcome}, outcome)
+    end
+
+    announce()
   end
 
   # Clients watching this MC's config see its new descriptor and the outcome.

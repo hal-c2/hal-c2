@@ -143,3 +143,13 @@ install(TARGETS hal-c2-qt
   BUNDLE DESTINATION .
   RUNTIME DESTINATION bin
 )
+
+# Snap Shot's KDE Plasma and Hyprland capture helpers (native/*-snap-shot),
+# which setup copies into the user's data directory. Built by cargo before
+# packaging (mise run desktop:helpers); a build without them says so in setup.
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+  foreach(_hal_c2_helper kde hyprland)
+    install(PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/../../native/${_hal_c2_helper}-snap-shot/target/release/hal-c2-${_hal_c2_helper}-snap-shot"
+            DESTINATION "share/hal-c2/${_hal_c2_helper}-capture" OPTIONAL)
+  endforeach()
+endif()

@@ -13,7 +13,10 @@ defmodule HalC2.Git do
 
   @doc """
   Runs `git args` in `cwd`. Options: `:env` (`[{name, value}]`), `:input` (stdin),
-  `:max_bytes` (default 50 MB) and `:timeout` (ms; none by default). Fails only when
+  `:max_bytes` (default 50 MB), `:timeout` (ms; none by default), `:on_stderr` (called
+  with each chunk of stderr as it arrives) and `:stop_children` (a key: a git that does not
+  finish takes the programs it started with it before this returns; see
+  `stop_children/1`). Fails only when
   git cannot be started, will not exit, or runs past its timeout, saying which.
   `Application.get_env(:hal_c2, :git_command)` stands in for `git`.
   """
@@ -21,10 +24,62 @@ defmodule HalC2.Git do
   def run(cwd, args, opts \\ []) do
     argv = [Application.get_env(:hal_c2, :git_command, "git") | args]
 
-    case within(opts[:timeout], fn -> stream("git", argv, cwd, opts) end) do
+    run = fn argv -> within(opts[:timeout], fn -> stream("git", argv, cwd, opts) end) end
+
+    key = opts[:stop_children]
+
+    case if(key, do: stopping_children(key, argv, run), else: run.(argv)) do
       {:ok, result} -> result
       {:exit, reason} -> {:error, "git #{hd(args)} exited: #{inspect(reason)}"}
       :timeout -> {:error, "git #{hd(args)} timed out after #{opts[:timeout]} ms"}
+    end
+  end
+
+  # Exile starts a program as the leader of its own session, so its children are in the
+  # group its pid names; killing the task signals only the program, and only afterwards.
+  # The program says its pid before it becomes git, as Exile's stream does not tell it,
+  # and says it where `stop_children/1` can find it when the caller was killed instead.
+  defp stopping_children(key, argv, run) do
+    File.mkdir_p!(Path.dirname(children_file(key)))
+    result = run.(["sh", "-c", ~s(echo $$ > "$0"; exec "$@"), children_file(key) | argv])
+
+    if match?({:ok, {:ok, _}}, result),
+      do: File.rm(children_file(key)),
+      else: stop_children(key)
+
+    result
+  end
+
+  @doc """
+  Kills what a `run/3` with `stop_children: key` still has running, git and the programs
+  it started, and returns once they are gone. Nothing when it has ended.
+  """
+  def stop_children(key) do
+    file = children_file(key)
+
+    with {:ok, pid} <- File.read(file), {group, _} <- Integer.parse(pid) do
+      stop_group(group)
+    end
+
+    File.rm(file)
+    :ok
+  end
+
+  defp children_file(key),
+    do: Path.join([HalC2.Paths.state_dir(), "git", "#{System.pid()}-#{:erlang.phash2(key)}"])
+
+  # SIGKILL cannot be held off, so this waits only for the kernel to take them down.
+  defp stop_group(group, tries \\ 100) do
+    case System.cmd("kill", ["-s", "KILL", "--", "-#{group}"], stderr_to_stdout: true) do
+      {_, 0} when tries > 0 ->
+        Process.sleep(50)
+        stop_group(group, tries - 1)
+
+      {_, 0} ->
+        Logger.warning("git's process group #{group} outlived SIGKILL")
+
+      _gone ->
+        :ok
     end
   end
 
@@ -85,6 +140,8 @@ defmodule HalC2.Git do
           {out, err, size + IO.iodata_length(data), status}
 
         {:stderr, data}, {out, {err, kept}, size, status} ->
+          if on_stderr = opts[:on_stderr], do: on_stderr.(data)
+
           # A rolling tail, not a head that fills and then discards: the
           # lines a caller acts on are at the end of a long stderr. It is
           # cut back to `max` only once it holds twice that, so a chatty git

@@ -1044,7 +1044,8 @@ defmodule HalC2.Acp.ThreadRuntime do
     do:
       launch(state, plan.instance, state.mode || "approval-required", %{
         cwd: plan.cwd,
-        project_id: plan[:project_id]
+        project_id: plan[:project_id],
+        thread_id: plan.thread_id
       })
 
   # A session carried from another machine (`HalC2.PortableSessions`) is the thread's

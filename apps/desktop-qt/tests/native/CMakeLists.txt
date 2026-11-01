@@ -39,6 +39,11 @@ add_executable(tst_LocalCache tst_LocalCache.cpp ../../src/native/LocalCache.cpp
 target_include_directories(tst_LocalCache PRIVATE ../../src/native)
 target_link_libraries(tst_LocalCache PRIVATE Qt6::Core Qt6::Sql Qt6::Test)
 add_test(NAME LocalCache COMMAND tst_LocalCache)
+# The update button's release notes, from a GitHub release's body.
+add_executable(tst_ReleaseNotes tst_ReleaseNotes.cpp ../../src/native/DesktopUpdateLogic.cpp)
+target_include_directories(tst_ReleaseNotes PRIVATE ../../src/native)
+target_link_libraries(tst_ReleaseNotes PRIVATE Qt6::Core Qt6::Test)
+add_test(NAME ReleaseNotes COMMAND tst_ReleaseNotes)
 add_executable(tst_BackendProcess tst_BackendProcess.cpp ../../src/BackendProcess.cpp)
 target_include_directories(tst_BackendProcess PRIVATE ../../src)
 target_link_libraries(tst_BackendProcess PRIVATE Qt6::Core Qt6::Test)
