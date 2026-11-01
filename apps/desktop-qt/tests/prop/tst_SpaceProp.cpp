@@ -16,6 +16,12 @@
 // projection of it (the user's edits shown until the stream catches up with
 // them), QAbstractItemModelTester finds nothing wrong with the row signals, every
 // row whose roles changed was redrawn, and no row that stayed the same was.
+//
+// The second property is of images: what happens to one shows on every block of
+// it and in the lists, and an address is asked for exactly when an image is on
+// screen and has none on its way: never twice at once, never for a deleted one,
+// again after a failure once the rows change, and a late answer from a Space
+// the user left is dropped.
 
 #include "Prop.h"
 
@@ -220,7 +226,12 @@ QList<QVariantMap> blocksOf(const Model& model) {
                  {QStringLiteral("linkedPageId"), linked},
                  {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : titleOf(model.held, linked)},
                  {QStringLiteral("byAgent"), byAgent(block, "createdBy")},
-                 {QStringLiteral("openComments"), open}});
+                 {QStringLiteral("openComments"), open},
+                 {QStringLiteral("imageId"), QString()},
+                 {QStringLiteral("imageState"), QString()},
+                 {QStringLiteral("imageUrl"), QString()},
+                 {QStringLiteral("imageWidth"), 0},
+                 {QStringLiteral("imageHeight"), 0}});
   }
   return rows;
 }
@@ -981,6 +992,385 @@ struct Answer : Command {
   }
 };
 
+// --- Images -----------------------------------------------------------------------
+
+struct ImagesModel {
+  // Image ids, oldest first, and whether each is in the trash.
+  QStringList order;
+  QSet<QString> binned;
+  int made = 0;
+  // Each block's page and image, in the order placed; a block outlives its image.
+  QList<std::pair<QString, QString>> blocks;
+  QString open = QStringLiteral("page-1");
+  bool browser = false;
+  QSet<QString> inFlight;
+  QMap<QString, QString> addresses;
+  // The addresses whose end has come; shown until a new one arrives.
+  QSet<QString> lapsed;
+  // What the last step asked to have signed, sorted.
+  QStringList asked;
+  int seq = 1;
+};
+
+QString addressFor(const QString& id) { return QStringLiteral("http://mc/assets/space/%1?signature=x").arg(id); }
+
+QSet<QString> onScreen(const ImagesModel& model) {
+  QSet<QString> wanted;
+  for (const auto& [page, image] : model.blocks) {
+    if (page == model.open && model.order.contains(image) && !model.binned.contains(image)) wanted.insert(image);
+  }
+  if (model.browser) wanted.unite(QSet<QString>(model.order.cbegin(), model.order.cend()));
+  return wanted;
+}
+
+// Whether an image on screen has an address whose end the client must watch for.
+bool refreshDue(const ImagesModel& model) {
+  const QSet<QString> wanted = onScreen(model);
+  return std::any_of(wanted.cbegin(), wanted.cend(), [&model](const QString& id) {
+    return model.addresses.contains(id) && !model.lapsed.contains(id) && !model.inFlight.contains(id);
+  });
+}
+
+// Whatever rebuilds the rows asks for each image on screen with no good address.
+void askForImages(ImagesModel& model) {
+  const QSet<QString> wanted = onScreen(model);
+  for (const QString& id : wanted) {
+    if (model.inFlight.contains(id) || (model.addresses.contains(id) && !model.lapsed.contains(id))) continue;
+    model.inFlight.insert(id);
+    model.asked.append(id);
+  }
+  model.asked.sort();
+}
+
+struct ImagesSut {
+  SpacePages pages;
+  QStringList asked;
+  int changes = 0;
+  qint64 now = 1'800'000'000'000;
+
+  ImagesSut() {
+    pages.setClock([this] { return now; });
+    QObject::connect(&pages, &SpacePages::changed, &pages, [this] { ++changes; });
+    QObject::connect(&pages, &SpacePages::imagesNeeded, &pages, [this](const QStringList& ids) { asked.append(ids); });
+    QJsonArray spaces;
+    for (const QString& id : {kSpace, QStringLiteral("space-2")}) {
+      spaces.append(QJsonArray{QStringLiteral("space"), id, QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("name"), id}, {QStringLiteral("createdAt"), stamp(0)}}});
+    }
+    pages.receiveIndex({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("offset"), 1}, {QStringLiteral("part"), 0},
+                        {QStringLiteral("rows"), spaces}, {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("index-1")}});
+    pages.receiveIndex({{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("offset"), 1}, {QStringLiteral("handle"), QStringLiteral("index-1")}});
+    pages.selectSpace(kSpace);
+    follow({});
+  }
+
+  // The Space as the MC holds it, from a snapshot; `rows` beside the two pages.
+  void follow(QJsonArray rows) {
+    for (const QString& id : {QStringLiteral("page-1"), QStringLiteral("page-2")}) {
+      rows.append(QJsonArray{kPage, id, QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("title"), id}, {QStringLiteral("parentPageId"), QJsonValue::Null},
+                                                     {QStringLiteral("trashedAt"), QJsonValue::Null}, {QStringLiteral("createdAt"), stamp(0)}}});
+    }
+    pages.receiveSpace({{QStringLiteral("t"), QStringLiteral("snapshot")}, {QStringLiteral("offset"), 1}, {QStringLiteral("part"), 0}, {QStringLiteral("rows"), rows},
+                        {QStringLiteral("done"), true}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
+    pages.receiveSpace({{QStringLiteral("t"), QStringLiteral("live")}, {QStringLiteral("offset"), 1}, {QStringLiteral("handle"), QStringLiteral("log-1")}});
+    pages.selectPage(QStringLiteral("page-1"));
+  }
+
+  void event(int seq, const QString& kind, const QString& id, const QJsonObject& patch) {
+    pages.receiveSpace({{QStringLiteral("t"), QStringLiteral("events")}, {QStringLiteral("offset"), seq},
+                        {QStringLiteral("events"), QJsonArray{QJsonValue(QJsonArray{seq, kind, id, patch, stamp(seq)})}}});
+  }
+
+  void check(const ImagesModel& model) {
+    QStringList asking = asked;
+    asking.sort();
+    RC_ASSERT(asking == model.asked);
+    QList<QVariantMap> blocks;
+    for (qsizetype i = 0; i < model.blocks.size(); ++i) {
+      const auto& [page, image] = model.blocks.at(i);
+      if (page != model.open) continue;
+      const bool there = model.order.contains(image);
+      const bool binned = model.binned.contains(image);
+      blocks.append({{QStringLiteral("id"), QStringLiteral("block-%1").arg(i)},
+                     {QStringLiteral("imageId"), image},
+                     {QStringLiteral("imageState"), !there ? QStringLiteral("deleted") : binned ? QStringLiteral("trashed") : QStringLiteral("shown")},
+                     {QStringLiteral("imageUrl"), there && !binned ? model.addresses.value(image) : QString()},
+                     {QStringLiteral("imageWidth"), there ? 4 : 0},
+                     {QStringLiteral("imageHeight"), there ? 3 : 0}});
+    }
+    QList<QVariantMap> shown;
+    for (const QVariantMap& row : pages.blocks()->rows()) {
+      QVariantMap some;
+      for (const QString& role : {QStringLiteral("id"), QStringLiteral("imageId"), QStringLiteral("imageState"), QStringLiteral("imageUrl"), QStringLiteral("imageWidth"), QStringLiteral("imageHeight")}) {
+        some.insert(role, row.value(role));
+      }
+      shown.append(some);
+    }
+    RC_ASSERT(shown == blocks);
+    const auto listed = [](const SpaceRows* rows) {
+      QStringList out;
+      for (const QVariantMap& row : rows->rows()) out.append(row.value(QStringLiteral("id")).toString() + QLatin1Char(' ') + row.value(QStringLiteral("url")).toString());
+      return out;
+    };
+    QStringList kept;
+    QStringList binned;
+    for (auto it = model.order.crbegin(); it != model.order.crend(); ++it) {
+      (model.binned.contains(*it) ? binned : kept).append(*it + QLatin1Char(' ') + model.addresses.value(*it));
+    }
+    RC_ASSERT(listed(pages.images()) == kept);
+    RC_ASSERT(listed(pages.imageTrash()) == binned);
+    RC_ASSERT(refreshTimer()->isActive() == refreshDue(model));
+  }
+
+  QTimer* refreshTimer() { return pages.findChild<QTimer*>(QStringLiteral("spaceAddressRefresh")); }
+
+  void answer(const QString& image) { pages.setImageAddress(image, addressFor(image), now + 3'600'000); }
+};
+
+using ImageCommand = rc::state::Command<ImagesModel, ImagesSut>;
+
+// Runs one step: `apply` says what it should do, `act` does it to the client.
+template <typename Self>
+void imageStep(const Self& self, const ImagesModel& model, ImagesSut& sut) {
+  ImagesModel next = model;
+  self.apply(next);
+  sut.asked.clear();
+  self.act(next, sut);
+  sut.check(next);
+}
+
+QJsonObject imageEntity(const QString& id, int seq) {
+  return {{QStringLiteral("id"), id}, {QStringLiteral("name"), id}, {QStringLiteral("mimeType"), QStringLiteral("image/png")}, {QStringLiteral("width"), 4}, {QStringLiteral("height"), 3},
+          {QStringLiteral("prompt"), QJsonValue::Null}, {QStringLiteral("generatedBy"), QJsonValue::Null}, {QStringLiteral("trashedAt"), QJsonValue::Null}, {QStringLiteral("createdAt"), stamp(seq)}};
+}
+
+QJsonObject blockEntity(qsizetype index, const QString& page, const QString& image, int seq) {
+  return {{QStringLiteral("id"), QStringLiteral("block-%1").arg(index)}, {QStringLiteral("pageId"), page}, {QStringLiteral("kind"), QStringLiteral("image")}, {QStringLiteral("text"), image},
+          {QStringLiteral("imageId"), image}, {QStringLiteral("order"), stamp(seq)}, {QStringLiteral("createdAt"), stamp(seq)}};
+}
+
+struct AddImage : ImageCommand {
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    ++model.seq;
+    model.order.append(QStringLiteral("image-%1").arg(++model.made));
+    askForImages(model);
+  }
+  void act(const ImagesModel& next, ImagesSut& sut) const {
+    sut.event(next.seq, QStringLiteral("image"), next.order.last(), {{QStringLiteral("s"), imageEntity(next.order.last(), next.seq)}});
+  }
+  void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
+  void show(std::ostream& os) const override { os << "AddImage"; }
+};
+
+// Into the trash and out of it.
+struct BinImage : ImageCommand {
+  QString image;
+  explicit BinImage(const ImagesModel& model) {
+    RC_PRE(!model.order.isEmpty());
+    image = pick(model.order);
+  }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(model.order.contains(image)); }
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    ++model.seq;
+    if (!model.binned.remove(image)) model.binned.insert(image);
+    askForImages(model);
+  }
+  void act(const ImagesModel& next, ImagesSut& sut) const {
+    sut.event(next.seq, QStringLiteral("image"), image, {{QStringLiteral("s"), QJsonObject{{QStringLiteral("trashedAt"), next.binned.contains(image) ? QJsonValue(stamp(next.seq)) : QJsonValue(QJsonValue::Null)}}}});
+  }
+  void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
+  void show(std::ostream& os) const override { os << "BinImage(" << image.toStdString() << ")"; }
+};
+
+struct DeleteImage : ImageCommand {
+  QString image;
+  explicit DeleteImage(const ImagesModel& model) {
+    RC_PRE(!model.binned.isEmpty());
+    image = pick(model.binned.values());
+  }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(model.binned.contains(image)); }
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    ++model.seq;
+    model.order.removeAll(image);
+    model.binned.remove(image);
+    model.addresses.remove(image);
+    model.lapsed.remove(image);
+    askForImages(model);
+  }
+  void act(const ImagesModel& next, ImagesSut& sut) const { sut.event(next.seq, QStringLiteral("image"), image, {{QStringLiteral("d"), true}}); }
+  void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
+  void show(std::ostream& os) const override { os << "DeleteImage(" << image.toStdString() << ")"; }
+};
+
+struct PlaceImage : ImageCommand {
+  QString image;
+  QString page;
+  explicit PlaceImage(const ImagesModel& model) {
+    QStringList live;
+    for (const QString& id : model.order) {
+      if (!model.binned.contains(id)) live.append(id);
+    }
+    RC_PRE(!live.isEmpty());
+    image = pick(live);
+    page = pick({QStringLiteral("page-1"), QStringLiteral("page-2")});
+  }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(model.order.contains(image) && !model.binned.contains(image)); }
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    ++model.seq;
+    model.blocks.append({page, image});
+    askForImages(model);
+  }
+  void act(const ImagesModel& next, ImagesSut& sut) const {
+    const qsizetype index = next.blocks.size() - 1;
+    sut.event(next.seq, kBlock, QStringLiteral("block-%1").arg(index), {{QStringLiteral("s"), blockEntity(index, page, image, next.seq)}});
+  }
+  void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
+  void show(std::ostream& os) const override { os << "PlaceImage(" << image.toStdString() << " on " << page.toStdString() << ")"; }
+};
+
+struct OpenPage : ImageCommand {
+  QString page;
+  explicit OpenPage(const ImagesModel& model) { page = model.open == QLatin1String("page-1") ? QStringLiteral("page-2") : QStringLiteral("page-1"); }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(model.open != page); }
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    model.open = page;
+    askForImages(model);
+  }
+  void act(const ImagesModel&, ImagesSut& sut) const { sut.pages.selectPage(page); }
+  void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
+  void show(std::ostream& os) const override { os << "OpenPage(" << page.toStdString() << ")"; }
+};
+
+struct ToggleBrowser : ImageCommand {
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    model.browser = !model.browser;
+    askForImages(model);
+  }
+  void act(const ImagesModel& next, ImagesSut& sut) const { sut.pages.setImagesShown(next.browser); }
+  void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
+  void show(std::ostream& os) const override { os << "ToggleBrowser"; }
+};
+
+// The MC answers one request; a refusal leaves the image to be asked for when
+// the rows next change.
+struct AnswerAddress : ImageCommand {
+  QString image;
+  bool ok = *rc::gen::arbitrary<bool>();
+  explicit AnswerAddress(const ImagesModel& model) {
+    RC_PRE(!model.inFlight.isEmpty());
+    image = pick(model.inFlight.values());
+  }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(model.inFlight.contains(image)); }
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    model.inFlight.remove(image);
+    if (!ok) return;
+    model.lapsed.remove(image);
+    if (model.order.contains(image)) model.addresses.insert(image, addressFor(image));
+    askForImages(model);
+  }
+  void act(const ImagesModel&, ImagesSut& sut) const {
+    if (ok) {
+      sut.answer(image);
+      QCoreApplication::processEvents();
+    } else {
+      sut.pages.imageAddressFailed(image);
+    }
+  }
+  void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
+  void show(std::ostream& os) const override { os << "AnswerAddress(" << image.toStdString() << (ok ? " ok" : " refused") << ")"; }
+};
+
+// The MC answers everything on its way in one turn of the event loop: the rows
+// are rebuilt once, however many there are.
+struct AnswerAllAtOnce : ImageCommand {
+  explicit AnswerAllAtOnce(const ImagesModel& model) { RC_PRE(model.inFlight.size() >= 2); }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(model.inFlight.size() >= 2); }
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    for (const QString& image : std::as_const(model.inFlight)) {
+      model.lapsed.remove(image);
+      if (model.order.contains(image)) model.addresses.insert(image, addressFor(image));
+    }
+    model.inFlight.clear();
+    askForImages(model);
+  }
+  void run(const ImagesModel& model, ImagesSut& sut) const override {
+    ImagesModel next = model;
+    apply(next);
+    sut.asked.clear();
+    sut.changes = 0;
+    for (const QString& image : model.inFlight) sut.answer(image);
+    QCoreApplication::processEvents();
+    RC_ASSERT(sut.changes == 1);
+    sut.check(next);
+  }
+  void show(std::ostream& os) const override { os << "AnswerAllAtOnce"; }
+};
+
+// An hour or two pass with nothing changing in the Space. What is on screen is
+// signed anew by the client's own timer; what is not waits until it is shown.
+struct AddressesLapse : ImageCommand {
+  explicit AddressesLapse(const ImagesModel& model) { RC_PRE(!model.addresses.isEmpty()); }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(!model.addresses.isEmpty()); }
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    const bool fires = refreshDue(model);
+    for (auto it = model.addresses.cbegin(); it != model.addresses.cend(); ++it) model.lapsed.insert(it.key());
+    if (fires) askForImages(model);
+  }
+  void act(const ImagesModel&, ImagesSut& sut) const {
+    sut.now += 2 * 3'600'000;
+    if (sut.refreshTimer()->isActive()) {
+      sut.refreshTimer()->start(0);
+      QCoreApplication::processEvents();
+    }
+  }
+  void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
+  void show(std::ostream& os) const override { os << "AddressesLapse"; }
+};
+
+// The user goes to another Space and comes back: what was on its way answers
+// while they are gone and is dropped, and everything on screen is asked for anew.
+struct LeaveAndReturn : ImageCommand {
+  void apply(ImagesModel& model) const override {
+    model.asked.clear();
+    model.inFlight.clear();
+    model.addresses.clear();
+    model.lapsed.clear();
+    model.open = QStringLiteral("page-1");
+    askForImages(model);
+  }
+  void act(const ImagesModel&, ImagesSut& sut) const {}
+  void run(const ImagesModel& model, ImagesSut& sut) const override {
+    ImagesModel next = model;
+    apply(next);
+    sut.pages.selectSpace(QStringLiteral("space-2"));
+    for (const QString& id : model.inFlight) sut.pages.setImageAddress(id, addressFor(id), 4102444800000);
+    RC_ASSERT(sut.pages.images()->rows().isEmpty());
+    RC_ASSERT(sut.pages.blocks()->rows().isEmpty());
+    sut.pages.selectSpace(kSpace);
+    QJsonArray rows;
+    for (const QString& id : next.order) {
+      QJsonObject image = imageEntity(id, 1 + next.order.indexOf(id));
+      if (next.binned.contains(id)) image.insert(QStringLiteral("trashedAt"), stamp(1));
+      rows.append(QJsonArray{QStringLiteral("image"), id, image});
+    }
+    for (qsizetype i = 0; i < next.blocks.size(); ++i) {
+      rows.append(QJsonArray{kBlock, QStringLiteral("block-%1").arg(i), blockEntity(i, next.blocks.at(i).first, next.blocks.at(i).second, 1 + static_cast<int>(i))});
+    }
+    sut.asked.clear();
+    sut.follow(rows);
+    sut.check(next);
+  }
+  void show(std::ostream& os) const override { os << "LeaveAndReturn"; }
+};
+
 }  // namespace
 
 class SpaceProp : public QObject {
@@ -997,6 +1387,15 @@ private slots:
       rc::state::check(model, sut,
                        rc::state::gen::execOneOfWithArgs<Write, Write, Write, Write, Write, Subscribe, Subscribe, Drop, Resync,
                                                          Duplicate, NewLog, SelectPage, SelectPage, Edit, Edit, Answer, Answer>());
+    }));
+  }
+
+  void images() {
+    QVERIFY(rc::check("every image shows as the MC holds it, and an address is asked for once while it is on screen", [] {
+      ImagesModel model;
+      ImagesSut sut;
+      rc::state::check(model, sut,
+                       rc::state::gen::execOneOfWithArgs<AddImage, AddImage, BinImage, DeleteImage, PlaceImage, PlaceImage, OpenPage, ToggleBrowser, AnswerAddress, AnswerAddress, AnswerAllAtOnce, AddressesLapse, LeaveAndReturn>());
     }));
   }
 };

@@ -358,7 +358,7 @@ defmodule HalC2.Rpc do
     agentSessions.scan
     assets.createUrl vcs.refreshStatus vcs.listRefs preview.list device.list device.detail
     slack.status slack.manifest space.list space.page.exportMarkdown space.page.history
-    space.page.version
+    space.page.version space.image.providers
   )
   @pull_request_writes ~w(
     runAction update comment updateComment submitReview replyToThread setThreadResolution

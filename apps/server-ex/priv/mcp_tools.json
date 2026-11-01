@@ -4090,13 +4090,17 @@
         "pageId": { "type": "string" },
         "kind": {
           "type": "string",
-          "enum": ["paragraph", "heading", "checklist", "callout", "subpage_link"]
+          "enum": ["paragraph", "heading", "checklist", "callout", "subpage_link", "image"]
         },
         "text": { "type": "string" },
         "checked": { "type": "boolean", "description": "For a checklist item." },
         "linkedPageId": {
           "type": "string",
           "description": "For a subpage_link: the page it links to."
+        },
+        "imageId": {
+          "type": "string",
+          "description": "For an image: an image of this Space, named in a page's Markdown as space-image:<id>."
         },
         "afterBlockId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
       },
