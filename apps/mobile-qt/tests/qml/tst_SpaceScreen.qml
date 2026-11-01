@@ -548,6 +548,60 @@ Item {
             compare(dispatched("space.deck.restore")[0].deckId, "d1");
         }
 
+        function test_aSlideBeingWrittenSurvivesPickingADeckInTheTrash_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", write: { title: "First" } },
+                { tag: "body", field: "spaceSlideBody:0", write: { body: "First" } }
+            ];
+        }
+
+        function test_aSlideBeingWrittenSurvivesPickingADeckInTheTrash(data) {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, data.field) !== null);
+            const editor = findChild(screen, data.field);
+            editor.forceActiveFocus();
+            editor.text = "First";
+            Spaces.load(deckState({
+                spaceId: "s1",
+                spaceName: "Research",
+                decks: [],
+                deckTrash: [{ id: "d9", title: "Old", trashedAt: "2026-10-01T10:00:00Z" }],
+                deck: { id: "d9", title: "Old", trashed: true },
+                slides: [{ id: "s9", title: "Gone", body: "" }]
+            }));
+            tryVerify(() => dispatched("space.slide.update").length === 1);
+            compare(dispatched("space.slide.update")[0], Object.assign({ spaceId: "s1", slideId: "s1" }, data.write));
+        }
+
+        function test_aSlideBeingWrittenIsNotLostWithTheScreen() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, "spaceSlideBody:0") !== null);
+            const editor = findChild(screen, "spaceSlideBody:0");
+            editor.forceActiveFocus();
+            editor.text = "First";
+            screen.destroy();
+            tryVerify(() => dispatched("space.slide.update").length > 0);
+            waitForRendering(root);
+            compare(dispatched("space.slide.update"), [{ spaceId: "s1", slideId: "s1", body: "First" }]);
+        }
+
+        function test_leavingADeckInTheTrashWritesNothing() {
+            const screen = makeScreen(deckState({ decks: [], deckTrash: [{ id: "d1", title: "Pitch", trashedAt: "2026-10-01T10:00:00Z" }], deck: { id: "d1", title: "Pitch", trashed: true } }));
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, "spaceSlideTitle:0") !== null);
+            const title = findChild(screen, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.focus = false;
+            screen.destroy();
+            waitForRendering(root);
+            compare(dispatched("space.slide.update"), []);
+        }
+
         function test_aDeckInTheListOffersPresentingAndTheTrash() {
             const screen = makeScreen(deckState());
             screen.deckMenu("d1", "Pitch");

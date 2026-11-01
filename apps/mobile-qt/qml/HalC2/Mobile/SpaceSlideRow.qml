@@ -27,13 +27,15 @@ Rectangle {
 
     signal menuRequested
 
+    // A read-only editor cannot differ from its slide, so text that differs was
+    // written while the deck was live, even if a trashed deck has been picked since.
     function writeTitle() {
-        if (!readOnly && titleEditor.text !== title)
+        if (titleEditor.text !== title)
             Shell.dispatch("space.slide.update", { spaceId: spaceId, slideId: slideId, title: titleEditor.text });
     }
 
     function writeBody() {
-        if (!readOnly && bodyEditor.text !== body)
+        if (bodyEditor.text !== body)
             Shell.dispatch("space.slide.update", { spaceId: spaceId, slideId: slideId, body: bodyEditor.text });
     }
 
@@ -47,9 +49,12 @@ Rectangle {
             bodyEditor.text = body;
     }
     // Scrolled away or the screen left mid-edit: what was written still counts.
+    // An editor without focus wrote its text as it lost it.
     Component.onDestruction: {
-        writeTitle();
-        writeBody();
+        if (titleEditor.activeFocus)
+            writeTitle();
+        if (bodyEditor.activeFocus)
+            writeBody();
     }
 
     implicitHeight: Math.max(76, content.implicitHeight + 16)

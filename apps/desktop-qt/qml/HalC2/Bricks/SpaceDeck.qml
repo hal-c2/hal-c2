@@ -213,13 +213,15 @@ Rectangle {
 
                 Component.onCompleted: spaceId = Spaces.spaceId
 
+                // A read-only field cannot differ from its slide, so text that differs was
+                // written while the deck was live, even if a trashed deck has been picked since.
                 function writeTitle() {
-                    if (slideTitle.text !== card.title && !deck.trashed)
+                    if (slideTitle.text !== card.title)
                         Shell.dispatch("space.slide.update", { spaceId: card.spaceId, slideId: card.slideId, title: slideTitle.text });
                 }
 
                 function writeBody() {
-                    if (slideBody.text !== card.body && !deck.trashed)
+                    if (slideBody.text !== card.body)
                         Shell.dispatch("space.slide.update", { spaceId: card.spaceId, slideId: card.slideId, body: slideBody.text });
                 }
 

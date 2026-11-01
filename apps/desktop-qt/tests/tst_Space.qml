@@ -160,6 +160,40 @@ Item {
             compare(root.dispatched("space.slide.update")[0], { spaceId: "space-1", slideId: "s1", title: "First" });
         }
 
+        function test_a_slide_being_written_survives_picking_a_deck_in_the_trash_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", write: { title: "First" } },
+                { tag: "body", field: "spaceSlideBody:0", write: { body: "First" } }
+            ];
+        }
+
+        function test_a_slide_being_written_survives_picking_a_deck_in_the_trash(data) {
+            const view = pitch({});
+            const field = findChild(view, data.field);
+            field.forceActiveFocus();
+            field.text = "First";
+            Spaces.load({
+                spaceId: "space-1",
+                spaceName: "Research",
+                deck: { id: "deck-9", title: "Old", trashed: true },
+                deckTrash: [{ id: "deck-9", title: "Old", trashedAt: "t" }],
+                slides: [{ id: "s9", title: "Gone", body: "" }]
+            });
+            tryVerify(() => root.dispatched("space.slide.update").length === 1);
+            compare(root.dispatched("space.slide.update")[0], Object.assign({ spaceId: "space-1", slideId: "s1" }, data.write));
+        }
+
+        function test_leaving_a_slide_of_a_trashed_deck_writes_nothing() {
+            const view = pitch({ deck: { id: "deck-1", title: "Pitch", trashed: true }, decks: [], deckTrash: [{ id: "deck-1", title: "Pitch", trashedAt: "t" }] });
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.focus = false;
+            const body = findChild(view, "spaceSlideBody:0");
+            body.forceActiveFocus();
+            body.focus = false;
+            compare(root.dispatched("space.slide.update"), []);
+        }
+
         function test_a_slide_goes_below_the_one_the_user_added_from() {
             const view = pitch({});
             mouseClick(findChild(view, "spaceSlideAdd:0"));
