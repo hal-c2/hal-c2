@@ -1,4 +1,4 @@
-// Pages in a Space on the phone (features/space/pages.feature, self-updating-pages.feature): the screens of
+// Pages in a Space on the phone (features/space/pages.feature, self-updating-pages.feature, visualize.feature): the screens of
 // SpaceScreen.qml, tapped and typed into as the user does, against the MC's
 // `space.*` calls. The MC's side is the desktop's fake (its SpaceSteps.cpp) over
 // this client's streams (FakeThreads.h, served by ComposerSteps.cpp). What the
@@ -66,6 +66,10 @@ struct FakeSpaces {
   // The folder the last summary was written in, and the thread it was of.
   QString cwd;
   QString summarised;
+  // The chart text generation draws next; none when the request cannot be answered.
+  QJsonObject chart;
+  // The page the last chart was asked for on.
+  QString asked;
   // How the client's last `space.*` was answered.
   QString lastMethod;
   Answer last;
@@ -878,6 +882,27 @@ Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
     }
   }
 
+  if (method == QLatin1String("block.visualize")) {
+    if (const auto why = writable(mc, space, pageId)) return *why;
+    const QString tag = QStringLiteral("SpaceChartError");
+    const QJsonObject chart = fake(mc).chart;
+    if (fake(mc).generation == QLatin1String("unavailable")) return refused(QStringLiteral("unavailable"), QStringLiteral("No chart was drawn: no text generation provider is set up."), tag);
+    if (fake(mc).generation == QLatin1String("failed")) return refused(QStringLiteral("failed"), QStringLiteral("No chart was drawn: the provider stopped answering."), tag);
+    if (chart.isEmpty()) return refused(QStringLiteral("unanswerable"), QStringLiteral("No chart was drawn: the page and this MC's threads cannot answer that."), tag);
+    const QString summary = QStringLiteral("%1 (a chart; %2)").arg(text(chart, QLatin1String("title")), text(chart, QLatin1String("source")));
+    const QJsonObject fields{{QStringLiteral("kind"), QStringLiteral("chart")}, {QStringLiteral("text"), summary}, {QStringLiteral("chart"), chart}};
+    QString id = blockId;
+    if (id.isEmpty()) {
+      const QJsonValue after = in.contains(QLatin1String("afterBlockId")) ? in.value(QLatin1String("afterBlockId")) : QJsonValue::Undefined;
+      const Answer made = insertBlock(mc, space, pageId, {{QStringLiteral("kind"), QStringLiteral("paragraph")}, {QStringLiteral("text"), summary}}, after, kUser);
+      if (!made.error.isEmpty()) return made;
+      id = text(made.result.value(QLatin1String("block")).toObject(), QLatin1String("id"));
+    } else if (text(one(mc, stream, QStringLiteral("block"), id), QLatin1String("kind")) != QLatin1String("chart")) {
+      return refused(QStringLiteral("invalid"), QStringLiteral("Only a chart can be asked for again."));
+    }
+    set(mc, stream, QStringLiteral("block"), id, fields);
+    return {{{QStringLiteral("block"), one(mc, stream, QStringLiteral("block"), id)}}};
+  }
   if (method == QLatin1String("block.insert")) {
     return insertBlock(mc, space, pageId, in, in.contains(QLatin1String("afterBlockId")) ? in.value(QLatin1String("afterBlockId")) : QJsonValue::Undefined, kUser);
   }
@@ -1582,6 +1607,59 @@ void lookAtComments(World& world, const QString& id) {
   lookAtPage(world, id);
   world.tap(S("spaceComments"));
   expectStep(world, S("comments"));
+}
+
+const QString kFromThisPage = QStringLiteral("Numbers from this page");
+
+// A chart with one series, as the MC stores it.
+QJsonObject chartOf(const QString& type, const QString& title, const QString& source, const QList<std::pair<QString, int>>& points) {
+  QJsonArray labels;
+  QJsonArray values;
+  for (const auto& [label, value] : points) {
+    labels.append(label);
+    values.append(value);
+  }
+  return {{QStringLiteral("type"), type},
+          {QStringLiteral("title"), title},
+          {QStringLiteral("labels"), labels},
+          {QStringLiteral("series"), QJsonArray{QJsonObject{{QStringLiteral("name"), title}, {QStringLiteral("values"), values}}}},
+          {QStringLiteral("request"), QStringLiteral("signups")},
+          {QStringLiteral("source"), source}};
+}
+
+void givenChart(World& world, const QString& page, const QString& first, int a, const QString& next, int b) {
+  FakeSpaces& spaces = fake(world.mc);
+  spaces.asked = givenPage(world, page);
+  spaces.chart = chartOf(QStringLiteral("bar"), QStringLiteral("Signups"), kFromThisPage, {{first, a}, {next, b}});
+  given(world, QStringLiteral("block.visualize"), {{QStringLiteral("pageId"), spaces.asked}, {QStringLiteral("request"), QStringLiteral("signups")}});
+  spaces.chart = {};
+}
+
+// The same page with a chart missing a number, which the MC would refuse.
+void givenUnmatchedChart(World& world, const QString& page) {
+  FakeSpaces& spaces = fake(world.mc);
+  spaces.asked = givenPage(world, page);
+  spaces.chart = chartOf(QStringLiteral("bar"), QStringLiteral("Signups"), kFromThisPage, {{QStringLiteral("May"), 3}, {QStringLiteral("June"), 5}});
+  spaces.chart[QStringLiteral("series")] = QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("Signups")}, {QStringLiteral("values"), QJsonArray{3}}}};
+  given(world, QStringLiteral("block.visualize"), {{QStringLiteral("pageId"), spaces.asked}, {QStringLiteral("request"), QStringLiteral("signups")}});
+  spaces.chart = {};
+}
+
+// The chart row the open page shows, or none.
+QVariantMap shownChart(World& world) {
+  for (const QVariantMap& row : viewOf(world)->blocks()->rows()) {
+    if (row.value(QStringLiteral("kind")) == QLatin1String("chart")) return row;
+  }
+  return {};
+}
+
+bool drawing(World& world) {
+  return world.state(QStringLiteral("space")).toMap().value(QStringLiteral("drawing")).toBool();
+}
+
+// The words the dialog asks for: there, the feature's "/visualize" is already said.
+QString wordsOf(const QString& request) {
+  return QString(request).remove(QRegularExpression(QStringLiteral("^/visualize\\s*")));
 }
 
 const Steps steps([] {
@@ -2294,6 +2372,120 @@ const Steps steps([] {
     const QJsonObject thread = world.mc.threads.value(spaces.summarised);
     const QString folder = world.mc.projects.value(thread.value(QLatin1String("projectId")).toString()).value(QLatin1String("workspaceRoot")).toString();
     expect(!spaces.summarised.isEmpty() && !folder.isEmpty() && spaces.cwd == folder, S("the summary of %1 was written in \"%2\", not \"%3\"").arg(spaces.summarised, spaces.cwd, folder));
+  });
+  // Charts on a page (space/visualize.feature).
+  step(S("this MC's threads took turns this week"), [](World&, const Captures&, const Table&) {});
+  step(S("text generation charts the request from the MC's threads"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).chart = chartOf(S("bar"), S("Weekly turns"), S("Counted by this MC from its 2 threads, 12 weeks to 2026-11-01"), {{S("10-26"), 4}, {S("11-02"), 7}});
+  });
+  step(S("text generation answers with a (bar|line) chart of %1 (\\d+)(?: and %1 (\\d+))?").arg(q), [](World& world, const Captures& c, const Table&) {
+    QList<std::pair<QString, int>> points{{c[1], c[2].toInt()}};
+    if (!c.value(3).isEmpty()) points.append({c[3], c[4].toInt()});
+    fake(world.mc).chart = chartOf(c[0], S("Signups"), kFromThisPage, points);
+  });
+  step(S("text generation says the request cannot be answered"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).chart = {};
+  });
+  step(S("the page %1 has a chart of %1 (\\d+) and %1 (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenChart(world, c[0], c[1], c[2].toInt(), c[3], c[4].toInt());
+  });
+  step(S("the page %1 has a chart with 2 labels and 1 number").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenUnmatchedChart(world, c[0]);
+  });
+  step(S("the page %1 has the blocks %1 and a chart of %1 (\\d+) and %1 (\\d+) and the blocks %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], S("paragraph"), c[1]);
+    givenChart(world, c[0], c[2], c[3].toInt(), c[4], c[5].toInt());
+    givenBlock(world, c[0], S("paragraph"), c[6]);
+  });
+  step(S("%1 also says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], S("paragraph"), c[1]);
+  });
+  step(S("the user asks for %1 on the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world.mc).asked = idOfPage(world, c[1]);
+    lookAtPage(world, fake(world.mc).asked);
+    world.tap(S("spaceAddBlock"));
+    choose(world, S("chart"));
+    answer(world, wordsOf(c[0]));
+  });
+  step(S("the user asks again for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    expectShown(world, [&] { return !shownChart(world).isEmpty(); }, S("a chart on the page"));
+    blockMenu(world, shownChart(world).value(S("text")).toString(), S("again"));
+    // Typing replaces the words it offers, which are selected.
+    answer(world, wordsOf(c[0]));
+  });
+  step(S("the page shows a (bar|line) chart titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    const QString drawn = c[0] == QLatin1String("bar") ? S("spaceChartBar") : S("spaceChartLine");
+    expectShown(world, [&] {
+      const QQuickItem* title = world.find(S("spaceChartTitle"));
+      return title && title->property("text").toString() == c[1] && world.find(drawn);
+    }, S("a %1 chart titled %2").arg(c[0], c[1]));
+    expect(!drawing(world), S("the page still says a chart is being drawn"));
+  });
+  step(S("the chart says its numbers came from (this MC's threads|this page)"), [](World& world, const Captures& c, const Table&) {
+    const QString source = world.item(S("spaceChartSource"))->property("text").toString();
+    const QString start = c[0] == QLatin1String("this page") ? kFromThisPage : S("Counted by this MC");
+    expect(source.startsWith(start), S("the chart says its numbers came from \"%1\"").arg(source));
+  });
+  step(S("the second client sees a chart titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    second(world).selectPage(fake(world.mc).asked);
+    QStringList titles;
+    for (const QVariantMap& row : second(world).blocks()->rows()) titles.append(row.value(S("chart")).toMap().value(S("title")).toString());
+    expect(titles.contains(c[0]), S("the second client shows the charts %1").arg(show(titles)));
+  });
+  step(S("the user asks to see the numbers behind the chart"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    expectShown(world, [&] { return world.find(S("spaceChartNumbers")) != nullptr; }, S("a chart on the page"));
+    world.tap(S("spaceChartNumbers"));
+  });
+  step(S("the chart's numbers are not shown"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    world.item(S("spaceChartUnmatched"));
+    expect(world.find(S("spaceChartNumbers")) == nullptr, S("the chart offers its numbers"));
+    expect(world.find(S("spaceChartBar")) == nullptr, S("the chart draws its bars"));
+  });
+  step(S("the numbers read %1 (\\d+)(?: and %1 (\\d+))?").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    QVariantList labels{c[0]};
+    QVariantList values{c[1].toDouble()};
+    if (!c.value(2).isEmpty()) {
+      labels.append(c[2]);
+      values.append(c[3].toDouble());
+    }
+    expectShown(world, [&] {
+      const QVariantMap chart = shownChart(world).value(S("chart")).toMap();
+      const QVariantList series = chart.value(S("series")).toList();
+      return chart.value(S("labels")).toList() == labels && series.size() == 1 && series.first().toMap().value(S("values")).toList() == values;
+    }, S("the numbers to read %1").arg(c.join(QLatin1Char(' '))));
+    // And the table says so, once it is open.
+    expectShown(world, [&] { return world.find(S("spaceChartNumbers")) != nullptr; }, S("a chart on the page"));
+    const QQuickItem* table = world.find(S("spaceChartTable"));
+    if (!table || !table->isVisible()) world.tap(S("spaceChartNumbers"));
+    expectShown(world, [&] { return world.find(S("spaceChartCell:") + c[0]) != nullptr && world.find(S("spaceChartCell:") + c[1]) != nullptr; }, S("the table to read %1").arg(c.join(QLatin1Char(' '))));
+  });
+  step(S("the page shows one chart, between %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, [&] {
+      const QStringList kinds = column(viewOf(world)->blocks(), S("kind"));
+      const QStringList texts = column(viewOf(world)->blocks(), S("text"));
+      const qsizetype at = kinds.indexOf(S("chart"));
+      return kinds.count(S("chart")) == 1 && at > 0 && at + 1 < texts.size() && texts.at(at - 1) == c[0] && texts.at(at + 1) == c[1];
+    }, S("one chart between %1 and %2").arg(c[0], c[1]));
+  });
+  step(S("the user deletes the chart"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    expectShown(world, [&] { return !shownChart(world).isEmpty(); }, S("a chart on the page"));
+    blockMenu(world, shownChart(world).value(S("text")).toString(), S("delete"));
+    settle(world);
+  });
+  step(S("the page shows no chart"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    expectShown(world, [&] { return shownChart(world).isEmpty() && !world.find(S("spaceChart")); }, S("no chart on the page"));
+  });
+  step(S("the user is told no chart was drawn"), [](World& world, const Captures&, const Table&) {
+    const QString start = S("No chart was drawn");
+    world.waitFor([&] { return toldOf(world, start); }, [&] { return S("the user to be told \"%1\"; toasts %2").arg(start, show(toasts(world))); });
+    expect(!drawing(world), S("the page still says a chart is being drawn"));
   });
   step(S("the user is told text generation (is unavailable|failed)"), [](World& world, const Captures& c, const Table&) {
     const QString start = c[0] == QLatin1String("failed") ? S("Text generation failed, so no page was written: The provider stopped answering.")

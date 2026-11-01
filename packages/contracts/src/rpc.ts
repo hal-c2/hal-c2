@@ -363,6 +363,8 @@ import {
   SpacePageScheduleSetInput,
   SpaceRenameInput,
   SpaceResult,
+  SpaceBlockVisualizeInput,
+  SpaceChartError,
   SpaceSlideDeleteInput,
   SpaceSlideDeleteResult,
   SpaceSlideInsertInput,
@@ -554,6 +556,7 @@ export const WS_METHODS = {
   spaceBlockSetChecked: "space.block.setChecked",
   spaceBlockMove: "space.block.move",
   spaceBlockDelete: "space.block.delete",
+  spaceBlockVisualize: "space.block.visualize",
   spaceCommentAdd: "space.comment.add",
   spaceCommentResolve: "space.comment.resolve",
   spaceCommentReopen: "space.comment.reopen",
@@ -1913,6 +1916,12 @@ const WsSpacePageScheduleRemoveRpc = Rpc.make(WS_METHODS.spacePageScheduleRemove
   error: SpaceRpcError,
 });
 
+const WsSpaceBlockVisualizeRpc = Rpc.make(WS_METHODS.spaceBlockVisualize, {
+  payload: SpaceBlockVisualizeInput,
+  success: SpaceBlockResult,
+  error: Schema.Union([SpaceError, SpaceChartError, EnvironmentAuthorizationError]),
+});
+
 const WsSpaceBlockInsertRpc = Rpc.make(WS_METHODS.spaceBlockInsert, {
   payload: SpaceBlockInsertInput,
   success: SpaceBlockResult,
@@ -2160,6 +2169,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpaceBlockSetCheckedRpc,
   WsSpaceBlockMoveRpc,
   WsSpaceBlockDeleteRpc,
+  WsSpaceBlockVisualizeRpc,
   WsSpaceCommentAddRpc,
   WsSpaceCommentResolveRpc,
   WsSpaceCommentReopenRpc,

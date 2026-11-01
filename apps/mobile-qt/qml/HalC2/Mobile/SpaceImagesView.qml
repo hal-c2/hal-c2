@@ -97,17 +97,27 @@ ColumnLayout {
                     Image {
                         id: thumbnail
 
+                        objectName: "spaceImageThumbnail"
                         anchors.fill: parent
                         source: card.model.url
                         // A thumbnail, whatever the size of the file.
                         sourceSize: Qt.size(168, 168)
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
+                        // A new address for the same bytes must not blank the picture.
+                        retainWhileLoading: true
+
+                        // Whether the last load to finish left a picture. A renewal's load keeps it;
+                        // paintedWidth can't tell, as it keeps its value when the picture has gone.
+                        property bool hasPicture: false
+
+                        onStatusChanged: if (status !== Image.Loading) hasPicture = status === Image.Ready
                     }
 
                     ShellIcon {
+                        objectName: "spaceImagePlaceholder"
                         anchors.centerIn: parent
-                        visible: thumbnail.status !== Image.Ready
+                        visible: !thumbnail.hasPicture
                         name: "image"
                         size: 18
                         color: Theme.palette.color("iconMuted", "#a1a1aa")

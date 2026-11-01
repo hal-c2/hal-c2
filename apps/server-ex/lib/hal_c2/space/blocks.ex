@@ -15,13 +15,16 @@ defmodule HalC2.Space.Blocks do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState}
-  alias HalC2.Space.{Images, Order, Pages}
+  alias HalC2.Space.{Chart, Images, Order, Pages}
 
   @kinds ~w(paragraph heading checklist callout subpage_link image)
 
   @generated "generated"
 
-  @doc "The kinds of block a page holds that can be written by hand."
+  @doc """
+  The kinds of block written directly. A `chart` is only made by `put_chart/6`, and a
+  `generated` one by `write_generated/4`.
+  """
   def kinds, do: @kinds
 
   @doc "A page's blocks in order."
@@ -49,27 +52,29 @@ defmodule HalC2.Space.Blocks do
       {blocks, _} =
         Enum.map_reduce(specs, low, fn spec, low ->
           order = Order.between(low, high)
-
-          block = %{
-            "id" => HalC2.Environment.uuid4(),
-            "pageId" => page_id,
-            "kind" => spec["kind"],
-            "text" => text(state, spec),
-            "checked" => spec["kind"] == "checklist" and spec["checked"] == true,
-            "linkedPageId" => if(spec["kind"] == "subpage_link", do: spec["linkedPageId"]),
-            "order" => order,
-            "createdBy" => author,
-            "updatedBy" => author,
-            "createdAt" => at,
-            "updatedAt" => at
-          }
-
+          block = new_block(page_id, Map.put(spec, "text", text(state, spec)), order, author, at)
           {with_image(block, spec), order}
         end)
 
       {Enum.map(blocks, &{"block", &1["id"], Patch.diff(nil, &1)}), {:ok, blocks}}
     end
     |> Pages.refused()
+  end
+
+  defp new_block(page_id, spec, order, author, at) do
+    %{
+      "id" => HalC2.Environment.uuid4(),
+      "pageId" => page_id,
+      "kind" => spec["kind"],
+      "text" => spec["text"] || "",
+      "checked" => spec["kind"] == "checklist" and spec["checked"] == true,
+      "linkedPageId" => if(spec["kind"] == "subpage_link", do: spec["linkedPageId"]),
+      "order" => order,
+      "createdBy" => author,
+      "updatedBy" => author,
+      "createdAt" => at,
+      "updatedAt" => at
+    }
   end
 
   @doc "The text a block made from `spec` has: an image with no caption reads as its name."
@@ -91,6 +96,52 @@ defmodule HalC2.Space.Blocks do
       {changes, {:ok, [block]}} -> {changes, {:ok, block}}
       refused -> refused
     end
+  end
+
+  @doc """
+  Draws `chart` on a live page: a new block placed by `after_id`, or, with `block_id`,
+  in place of the chart in that block. A chart with a description `Chart.validate/1`
+  refuses is never written.
+  """
+  def put_chart(state, page_id, chart, nil, after_id, author) do
+    with {:ok, _page} <- Pages.fetch_live(state, page_id),
+         {:ok, low, high} <- place(state, page_id, after_id, nil),
+         {:ok, chart} <- valid_chart(chart) do
+      spec = %{"kind" => "chart", "text" => Chart.summary(chart)}
+      order = Order.between(low, high)
+      block = page_id |> new_block(spec, order, author, Entities.now()) |> Map.put("chart", chart)
+      {[{"block", block["id"], Patch.diff(nil, block)}], {:ok, block}}
+    end
+    |> Pages.refused()
+  end
+
+  def put_chart(state, page_id, chart, block_id, _after_id, author) do
+    with :ok <- chart_block(state, page_id, block_id),
+         {:ok, chart} <- valid_chart(chart) do
+      change(state, block_id, author, fn _ ->
+        {:ok, %{"chart" => chart, "text" => Chart.summary(chart)}}
+      end)
+    else
+      refused -> Pages.refused(refused)
+    end
+  end
+
+  @doc "Whether a chart can be drawn on the page, and in `block_id` when there is one."
+  def chart_place(state, page_id, block_id) do
+    with {:ok, page} <- Pages.fetch_live(state, page_id),
+         :ok <- if(block_id, do: chart_block(state, page_id, block_id), else: :ok),
+         do: {:ok, page}
+  end
+
+  defp chart_block(state, page_id, block_id) do
+    case StreamState.get(state, "block")[block_id] do
+      %{"pageId" => ^page_id, "kind" => "chart"} -> :ok
+      _ -> {:error, :not_found, "There is no chart #{block_id} on this page."}
+    end
+  end
+
+  defp valid_chart(chart) do
+    with {:error, message} <- Chart.validate(chart), do: {:error, :invalid, message}
   end
 
   def update_text(state, id, text, author) when is_binary(text),
@@ -121,6 +172,9 @@ defmodule HalC2.Space.Blocks do
 
   defp text_change(%{"kind" => @generated}, _text),
     do: {:error, :invalid, "What a page's update wrote cannot be edited by hand."}
+
+  defp text_change(%{"kind" => "chart"}, _),
+    do: {:error, :invalid, "A chart cannot be edited. Ask for it again."}
 
   defp text_change(_block, text) when is_binary(text), do: {:ok, %{"text" => text}}
   defp text_change(_block, _), do: {:error, :invalid, "A block's text is a string."}
@@ -168,20 +222,9 @@ defmodule HalC2.Space.Blocks do
 
     case generated(state, page_id) do
       nil ->
-        block = %{
-          "id" => HalC2.Environment.uuid4(),
-          "pageId" => page_id,
-          "kind" => @generated,
-          "text" => markdown,
-          "checked" => false,
-          "linkedPageId" => nil,
-          "order" => Order.between(state |> last_order(page_id), nil),
-          "createdBy" => author,
-          "updatedBy" => author,
-          "createdAt" => at,
-          "updatedAt" => at
-        }
-
+        spec = %{"kind" => @generated, "text" => markdown}
+        order = Order.between(last_order(state, page_id), nil)
+        block = new_block(page_id, spec, order, author, at)
         {[{"block", block["id"], Patch.diff(nil, block)}], {:ok, block}}
 
       block ->

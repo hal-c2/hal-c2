@@ -1,5 +1,5 @@
 # Sources:
-#   https://chatgpt.com/features/space/ (Slack, applets)
+#   https://chatgpt.com/features/space/ (Slack)
 #   spaces-feature-bdd-tests branch, features/space/ (the prototype; read for ideas only):
 #     slides-sites-and-images.feature (sites and images),
 #     living-pages-and-visualizations.feature, collaboration-agents-and-dots.feature
@@ -14,11 +14,6 @@ Feature: Spaces beyond Pages
     Given the Space "Research" is connected to a Slack channel
     When someone asks about "Roadmap" in that channel
     Then the answer cites the page "Roadmap"
-
-  @mc @shared
-  Scenario: The user visualises data on a page
-    When the user asks for "/visualize weekly turns" on the page "Status"
-    Then the page shows an applet drawing that data
 
   @mc @shared
   Scenario: The user asks an agent from inside a page

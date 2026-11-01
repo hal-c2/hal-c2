@@ -44,7 +44,8 @@ defmodule HalC2.StorePropTest do
   # --- model ------------------------------------------------------------------
 
   # streams: id => %{kind: "thread" | "project", events: [event] oldest first}
-  # shell: id => {kind, row}; messages: stream id => %{message id => {role, text, created_at}}
+  # shell: id => {kind, row}
+  # messages: stream id => %{message id => {role, text, created_at, typed?}}
   # clock numbers message creation times, which search orders by.
   def initial_state,
     do: %{
@@ -90,7 +91,8 @@ defmodule HalC2.StorePropTest do
          {:call, __MODULE__, :put_shell,
           [stream_id(), integer(0, max(state.seq, 1)), oneof(["thread", "project"]), entity()]}},
         {1, {:call, __MODULE__, :list_shell, []}},
-        {3, {:call, __MODULE__, :search_messages, [needle(), integer(1, 6)]}}
+        {3, {:call, __MODULE__, :search_messages, [needle(), integer(1, 6)]}},
+        {2, {:call, __MODULE__, :typed_messages_since, []}}
       ] ++
         if(mode == :restarting,
           do: [],
@@ -154,7 +156,12 @@ defmodule HalC2.StorePropTest do
   defp messages do
     resize(
       3,
-      list({oneof(["m1", "m2", "m3"]), oneof(["user", "assistant"]), text()})
+      list(
+        oneof([
+          {oneof(["m1", "m2", "m3"]), oneof(["user", "assistant"]), text(), boolean()},
+          {oneof(["m1", "m2", "m3"]), :deleted}
+        ])
+      )
     )
   end
 
@@ -194,8 +201,12 @@ defmodule HalC2.StorePropTest do
       indexed =
         messages
         |> Enum.with_index(clock)
-        |> Enum.reduce(Map.get(state.messages, id, %{}), fn {{mid, role, text}, n}, acc ->
-          Map.put(acc, mid, {role, text, created_at(n, id, mid)})
+        |> Enum.reduce(Map.get(state.messages, id, %{}), fn
+          {{mid, :deleted}, _n}, acc ->
+            Map.delete(acc, mid)
+
+          {{mid, role, text, typed?}, n}, acc ->
+            Map.put(acc, mid, {role, text, created_at(n, id, mid), typed?})
         end)
 
       %{state | messages: Map.put(state.messages, id, indexed), clock: clock + length(messages)}
@@ -263,11 +274,24 @@ defmodule HalC2.StorePropTest do
 
     expected =
       for {id, messages} <- state.messages,
-          {_, {role, text, created_at}} <- messages,
+          {_, {role, text, created_at, _typed?}} <- messages,
           String.contains?(String.downcase(text), needle),
           do: {id, role, text, created_at}
 
     result == expected |> Enum.sort_by(&elem(&1, 3), :desc) |> Enum.take(limit)
+  end
+
+  # A count holds what was typed and not deleted since, whatever else was indexed.
+  def postcondition(state, {:call, _, :typed_messages_since, []}, result) do
+    expected =
+      for {id, messages} <- state.messages,
+          {_, {_role, _text, created_at, true}} <- messages,
+          reduce: %{} do
+        counts -> Map.update(counts, {id, String.slice(created_at, 0, 10)}, 1, &(&1 + 1))
+      end
+
+    Map.new(result, fn {id, day, count} -> {{id, day}, count} end) == expected and
+      length(result) == map_size(expected)
   end
 
   def postcondition(state, {:call, _, :meta, [key]}, result), do: result == state.meta[key]
@@ -390,7 +414,10 @@ defmodule HalC2.StorePropTest do
     indexed =
       messages
       |> Enum.with_index(clock)
-      |> Enum.map(fn {{mid, role, text}, n} -> {mid, role, text, created_at(n, id, mid)} end)
+      |> Enum.map(fn
+        {{mid, :deleted}, _n} -> {mid, :deleted}
+        {{mid, role, text, typed?}, n} -> {mid, role, text, created_at(n, id, mid), typed?}
+      end)
 
     Store.index_messages(id, indexed)
     _ = :sys.get_state(Store)
@@ -401,6 +428,8 @@ defmodule HalC2.StorePropTest do
     escaped = String.replace(needle, ["!", "%", "_"], &("!" <> &1))
     Store.search_messages(Store.home_path(), "%" <> escaped <> "%", limit)
   end
+
+  def typed_messages_since, do: Store.typed_messages_since(Store.home_path(), "2026")
 
   def put_meta(key, value), do: Store.put_meta(key, value)
   def meta(key), do: Store.meta(Store.home_path(), key)

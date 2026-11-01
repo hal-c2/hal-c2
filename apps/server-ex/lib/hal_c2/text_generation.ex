@@ -174,6 +174,29 @@ defmodule HalC2.TextGeneration do
     end
   end
 
+  @doc """
+  How to draw a chart for `request`, given the page's text and the counts on offer
+  (`HalC2.Space.Visualize`): `%{"source", "type", "title", "chart"}`, as strings. Asked
+  in an empty directory, with the global text model, so all it reads is the prompt.
+  """
+  def chart(request, page_text, datasets) do
+    in_dir(nil, fn dir ->
+      case usable_selection(dir, :text) do
+        {:ok, selection} ->
+          run(
+            selection,
+            dir,
+            Prompts.chart(request, page_text, datasets),
+            %{"source" => :string, "type" => :string, "title" => :string, "chart" => :string},
+            isolate: true
+          )
+
+        {:error, message} ->
+          {:error, {:unavailable, message}}
+      end
+    end)
+  end
+
   # --- model selection ---------------------------------------------------------------
 
   @doc "The settings that apply to `cwd`: its project's, when it is in one."
