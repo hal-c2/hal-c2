@@ -498,7 +498,18 @@ defmodule HalC2.Web.SocketTest do
            } = error
   end
 
+  # The terminals run `cat`, which prints nothing of its own: a real shell's prompt comes
+  # whenever it has started, into a test that says exactly what the terminal told it.
   defp start_terminals do
+    previous_shell = System.get_env("SHELL")
+    System.put_env("SHELL", System.find_executable("cat"))
+
+    on_exit(fn ->
+      if previous_shell,
+        do: System.put_env("SHELL", previous_shell),
+        else: System.delete_env("SHELL")
+    end)
+
     start_supervised!({Registry, keys: :unique, name: HalC2.Terminal.Registry})
 
     start_supervised!(
