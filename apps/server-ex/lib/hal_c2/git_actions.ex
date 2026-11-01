@@ -452,7 +452,7 @@ defmodule HalC2.GitActions do
 
     base =
       (Git.base_branch(cwd, branch) || "main")
-      |> String.replace(~r{^[^/]+/}, "", global: false)
+      |> String.replace_prefix("#{Git.primary_remote(cwd)}/", "")
       |> then(&if(&1 == branch, do: "main", else: &1))
 
     case gh_json(
