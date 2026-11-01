@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Build Snap Shot's KDE Plasma and Hyprland capture helpers (native/*-snap-shot) that the desktop carries"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+for crate in kde-snap-shot hyprland-snap-shot; do
+  cargo build --locked --release --manifest-path "native/${crate}/Cargo.toml"
+done

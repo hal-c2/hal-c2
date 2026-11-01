@@ -1155,8 +1155,9 @@ defmodule HalC2.CodeReviewClaimsPropTest do
   defp await_restart(_sup, _old, 0), do: problem("code-review was not restarted after a crash")
 
   defp await_restart(sup, old, tries) do
-    case Supervisor.which_children(sup) do
-      [{_, pid, _, _}] when is_pid(pid) and pid != old ->
+    # The supervisor also holds the plugin's deliveries, once it has been sent an event.
+    case List.keyfind(Supervisor.which_children(sup), @server, 0) do
+      {_, pid, _, _} when is_pid(pid) and pid != old ->
         :ok
 
       _ ->

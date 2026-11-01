@@ -94,6 +94,8 @@ describe("storage cleanup settings", () => {
       worktreeUnchanged: false,
       browserArtifactsAfterDays: null,
       logsAfterDays: null,
+      threadTempAfterDays: 7,
+      temporaryFilesFolder: "",
     });
   });
 

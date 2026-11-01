@@ -73,6 +73,9 @@ public:
   // A new action's id: its name in lower case with dashes, numbered when taken.
   static QString nextId(const QString& name, const QSet<QString>& taken);
 
+  // Whether a new worktree on that environment starts from origin, by its settings.
+  bool startsWorktreesFromOrigin(const QString& environmentId) const;
+
 private:
   struct Editor {
     QString scriptId;

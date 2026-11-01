@@ -343,6 +343,11 @@ defmodule HalC2.Steps.Parity.Fixtures do
       "server.reportHostPowerState" ->
         {%{"onBattery" => false, "lowPowerMode" => false}, context}
 
+      # A paired client is not the desktop app, so this is refused as the contract says.
+      "server.reportDesktopUpdateStatus" ->
+        state = %{"enabled" => true, "status" => "idle", "currentVersion" => "1.2.3"}
+        {%{"version" => 1, "type" => "desktopUpdateStatus", "state" => state}, context}
+
       "pullRequests.list" ->
         {%{}, context}
 

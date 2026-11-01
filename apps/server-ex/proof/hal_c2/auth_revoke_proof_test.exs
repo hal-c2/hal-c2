@@ -29,6 +29,8 @@ defmodule HalC2.AuthRevokeProofTest do
       "HalC2.Web.Socket handle_info {:hal_c2_session_revoked, _}" => "socketCloses"
     },
     abstracts: %{
+      "HalC2.Auth.session_subject/1" =>
+        "reads who a session was granted to; takes no part in tickets or revoking",
       "HalC2.Web.Socket handle_info _" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_stream, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_stream, {_, _}, _}" => @socket_traffic,
@@ -39,6 +41,7 @@ defmodule HalC2.AuthRevokeProofTest do
       "HalC2.Web.Socket handle_info {:hal_c2_terminal_down, _, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:nodeup, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_server_update, _, _}" => @socket_traffic,
+      "HalC2.Web.Socket handle_info {:hal_c2_desktop_update_control, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_watched, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_git_action, _, _}" => @socket_traffic,
       "HalC2.Web.Socket handle_info {:hal_c2_preview_automation, _, _, _}" => @socket_traffic,

@@ -214,6 +214,26 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     {:ok, sub} =
       HalC2.Subprocess.start(["sh", "-c", ~s(sleep 60 & while read l; do echo "$l"; done)])
 
+    mc_died(sub)
+    Map.put(context, :orphan, sub)
+  end
+
+  # The provider stops on the MC's death, as on a closed stdin, and answers with the
+  # pid of the command it leaves running in its group.
+  step "a provider process had exited leaving a command in its group when the MC died",
+       context do
+    {:ok, sub} =
+      HalC2.Subprocess.start(["sh", "-c", ~s(sleep 60 & while read l; do echo $!; exit 0; done)])
+
+    pid = HalC2.Subprocess.os_pid(sub)
+    mc_died(sub)
+    :ok = HalC2.Subprocess.write_line(sub, "stop")
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
+    await_exit(pid)
+    Map.put(context, :left_command, String.to_integer(line))
+  end
+
+  defp mc_died(sub) do
     pid = HalC2.Subprocess.os_pid(sub)
     dir = HalC2.Subprocess.Orphans.dir()
 
@@ -226,15 +246,35 @@ defmodule HalC2.Steps.Orchestration.RecoveryAndIdleSessions do
     record = JSON.decode!(File.read!(path))
     gone = Map.put(record["mc"], "started", "an earlier boot")
     File.write!(path, JSON.encode!(%{record | "mc" => gone}))
-    Map.put(context, :orphan, sub)
+  end
+
+  # Nothing tells this test an outside process exited; the bound is how long a failure waits.
+  defp await_exit(pid, tries \\ 500) do
+    cond do
+      HalC2.Subprocess.Orphans.gone?(pid) ->
+        :ok
+
+      tries == 0 ->
+        flunk("#{pid} did not exit")
+
+      true ->
+        Process.sleep(10)
+        await_exit(pid, tries - 1)
+    end
   end
 
   step "the provider process and its background command have been killed", context do
-    sub = context.orphan
-    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
-    exit_ref = sub.proc.exit_ref
-    # Killed by SIGKILL.
-    assert_receive {^exit_ref, {:ok, 137}}
+    case context do
+      %{left_command: command} ->
+        assert HalC2.Subprocess.Orphans.gone?(command)
+
+      %{orphan: sub} ->
+        assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+        exit_ref = sub.proc.exit_ref
+        # Killed by SIGKILL.
+        assert_receive {^exit_ref, {:ok, 137}}
+    end
+
     context
   end
 

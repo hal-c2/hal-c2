@@ -8,9 +8,9 @@
 #     updateSettings writes the whole settings document back)
 #   packages/client-runtime/src/connection/compatibility.ts (SHAPE_PROTOCOL_VERSION, negotiation)
 #   packages/contracts/src/rpc.ts (the subscription methods each shape replaces)
-#   Counts: 5 client frames, 20 shape types (30 rows: the 10 routed shapes have an MC and an
-#   environment form), 39 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
-#   does not carry providerInstall. relayClientInstall left with HAL-C2 Connect
+#   Counts: 5 client frames, 21 shape types (31 rows: the 10 routed shapes have an MC and an
+#   environment form), 40 server frame types, 8 refusal reasons; all aligned, 1 dropped. The legacy client adapter
+#   does not carry providerInstall or desktopUpdateControl. relayClientInstall left with HAL-C2 Connect
 #   (connections/hal-c2-connect.feature).
 #   Behaviour of a single subscription (resume, merge, resync timing) lives in
 #   mc/platform/websocket-protocol.feature. This file is the frame-by-frame ledger.
@@ -58,10 +58,11 @@ Feature: Protocol 3 wire parity
     # shell and authAccess are about the MC the client talks to; scheduledTasks,
     # preview, previewAutomation, resourceTelemetry, localServers, devices,
     # serverUpdate and providerInstall administer one MC's host, which
-    # a client reaches by pairing with it.
+    # a client reaches by pairing with it; desktopUpdateControl is only for the desktop
+    # app that started the MC, on the session its bootstrap token made.
     # previewAutomation: the MC's broker and the TypeScript PreviewAutomationBroker both
     # send the host a connected event as it subscribes, before any agent request.
-    Examples: 30 shape forms
+    Examples: 31 shape forms
       | shape                | fields                  | first frame                                                     | later frames                                                                                                           | replaces                                                          |
       | shell                | none                    | a shell frame with every MC and every row                       | shell.rows, shell.environment and shell.mc frames                                                                      | orchestration.subscribeShell                                      |
       | stream               | mc, stream              | snapshot parts, the first with part 0                           | events frames after a live frame, or a resync                                                                          | orchestration.subscribeThread                                     |
@@ -93,6 +94,7 @@ Feature: Protocol 3 wire parity
       | gitAction            | environment, input      | the same frames as the MC form for the environment's MC         | the same frames as the MC form                                                                                         | git.runStackedAction                                              |
       | serverUpdate         | mc, input               | a serverUpdate frame as the update starts                       | serverUpdate progress frames                                                                                           | server.updateServerWithProgress                                   |
       | providerInstall      | mc, instanceId          | a providerInstall frame with the install state                  | providerInstall frames                                                                                                 | provider.install.subscribe                                        |
+      | desktopUpdateControl | mc                      | nothing until the MC asks the desktop app to update             | desktopUpdateControl frames, one control message each                                                                  | subscribeDesktopUpdateControl                                     |
 
   @mc
   Scenario Outline: A <shape> subscription ends on its own
@@ -164,6 +166,7 @@ Feature: Protocol 3 wire parity
       | devices            | devices            | a simulator, emulator or device session changes | id, state    |
       | gitAction          | gitAction          | a git action progresses                         | id, event    |
       | serverUpdate       | serverUpdate       | a version move progresses                       | id, event    |
+      | desktopUpdateControl | desktopUpdateControl | the MC asks the desktop app to update           | id, event    |
 
   @mc
   Scenario Outline: The MC refuses <case> with "<reason>"
