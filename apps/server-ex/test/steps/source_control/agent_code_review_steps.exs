@@ -983,11 +983,15 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> Map.put(:replaced_checkout, context.review["checkout"])
   end
 
-  step "the review's agent delegated a task and its turn ended", context do
-    {:ok, %{"taskId" => task}} =
+  step "the review's agent delegated a task that delegated another, and its turn ended",
+       context do
+    {:ok, %{"taskId" => task, "childThreadId" => child}} =
       HalC2.Orchestration.Delegation.delegate(%{"id" => context.thread}, "codex", %{
         "task" => "wait"
       })
+
+    {:ok, %{"taskId" => nested, "childThreadId" => nested_thread}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => child}, "codex", %{"task" => "wait"})
 
     context = end_turns(context)
 
@@ -1004,8 +1008,33 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
 
     context
     |> Map.put(:delegated_task, task)
+    |> Map.put(:delegated_child, child)
+    |> Map.put(:nested_task, nested)
+    |> Map.put(:nested_thread, nested_thread)
     |> Map.put(:replaced_thread, context.thread)
     |> Map.put(:replaced_checkout, context.review["checkout"])
+  end
+
+  step "the task that task delegated is cancelled and its agent is gone", context do
+    assert {:ok, %{"status" => "cancelled"}} =
+             HalC2.Orchestration.Delegation.task_status(
+               context.delegated_child,
+               context.nested_task
+             )
+
+    state = HalC2.Streams.state(context.nested_thread)
+
+    refute Enum.any?(
+             HalC2.StreamState.list(state, "run"),
+             &(&1["status"] in ~w(preparing starting running waiting))
+           )
+
+    assert Enum.all?(
+             HalC2.StreamState.list(state, "provider-session"),
+             &(&1["status"] == "stopped")
+           )
+
+    context
   end
 
   step "the delegated task is cancelled", context do

@@ -48,7 +48,7 @@ defmodule HalC2.DelegationProofTest do
       "HalC2.Orchestration.Delegation.flush_pending/1" =>
         "wakes the caller for results that landed while a wake was already with it; with one task no delivery is left pending that way, and its caller finished/3 is covered",
       "HalC2.Orchestration.Delegation.stop_tasks/1" =>
-        "cancel of each unfinished task, then the disposal stop_wakes does, for every run of the thread",
+        "the disposal stop_wakes does, for every run of the thread; the model has the cancel of what it returns",
       "HalC2.Orchestration.Delegation.stop_wakes/2" =>
         "stopping the caller's turn disposes its tasks' deliveries and cancels a queued wake; disposal is in the model through cancel, and a suppressed wake can only wake less",
       "HalC2.Orchestration.Delegation.accept_delivery/1" =>

@@ -315,6 +315,9 @@ defmodule HalC2.CodeReviewTest do
     {:ok, %{"taskId" => task_id, "childThreadId" => child}} =
       HalC2.Orchestration.Delegation.delegate(%{"id" => thread_id}, "codex", %{"task" => "wait"})
 
+    {:ok, %{"taskId" => nested_id, "childThreadId" => nested}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => child}, "codex", %{"task" => "wait"})
+
     File.write!(Path.join(context.dir, "gate/answer"), "")
     await_idle(thread_id)
     event = %{"type" => "turn.finished", "threadId" => thread_id, "status" => "failed"}
@@ -326,20 +329,32 @@ defmodule HalC2.CodeReviewTest do
     assert {:ok, %{"status" => "cancelled"}} =
              HalC2.Orchestration.Delegation.task_status(thread_id, task_id)
 
-    await_idle(child)
+    assert {:ok, %{"status" => "cancelled"}} =
+             HalC2.Orchestration.Delegation.task_status(child, nested_id)
+
+    for stopped <- [thread_id, child, nested] do
+      assert active_runs(stopped) == []
+      assert sessions_stopped?(stopped)
+    end
+
     runs = HalC2.StreamState.list(HalC2.Streams.state(thread_id), "run")
     assert [%{"status" => status}] = runs
     assert status not in ~w(queued preparing starting running waiting)
     refute File.exists?(review["checkout"])
   end
 
-  test "a stop gives up at its deadline on an agent that ignores it", _context do
+  test "a stop outlasts the deadline of its caller on an agent slow to go", context do
     System.put_env("FAKE_CODEX_IGNORE_INTERRUPT", "1")
     on_exit(fn -> System.delete_env("FAKE_CODEX_IGNORE_INTERRUPT") end)
     review = start_review()
 
     assert :busy = HalC2.Orchestration.stop_plugin_thread(review["threadId"], @id, 100)
     assert [_] = active_runs(review["threadId"])
+
+    # The agent goes in its own time, after the caller stopped waiting, and is released.
+    File.write!(Path.join(context.dir, "gate/answer"), "")
+    await_sessions_stopped(review["threadId"])
+    assert active_runs(review["threadId"]) == []
   end
 
   test "only the plugin that started a thread can stop it", _context do
@@ -808,6 +823,25 @@ defmodule HalC2.CodeReviewTest do
     HalC2.Streams.state(thread_id)
     |> HalC2.StreamState.list("run")
     |> Enum.filter(&(&1["status"] in ~w(preparing starting running waiting)))
+  end
+
+  defp sessions_stopped?(thread_id) do
+    HalC2.Streams.state(thread_id)
+    |> HalC2.StreamState.list("provider-session")
+    |> Enum.all?(&(&1["status"] == "stopped"))
+  end
+
+  defp await_sessions_stopped(thread_id) do
+    :ok = HalC2.Streams.watch(thread_id, self())
+    await_stopped(thread_id)
+    HalC2.Streams.Server.unsubscribe(thread_id, self())
+  end
+
+  defp await_stopped(thread_id) do
+    unless sessions_stopped?(thread_id) do
+      assert_receive {:hal_c2_stream, ^thread_id, _}, 15_000
+      await_stopped(thread_id)
+    end
   end
 
   defp await_idle(thread_id) do

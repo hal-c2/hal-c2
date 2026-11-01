@@ -110,9 +110,10 @@ Feature: Agent code review
     @mc
     Scenario: Discarding a review stops the task its idle agent left working
       Given a review of #12 is running
-      And the review's agent delegated a task and its turn ended
+      And the review's agent delegated a task that delegated another, and its turn ended
       When the user discards the review of #12
       Then the delegated task is cancelled
+      And the task that task delegated is cancelled and its agent is gone
       And the replaced thread is not woken
       And the replaced thread's checkout is removed
 

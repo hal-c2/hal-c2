@@ -687,20 +687,18 @@ defmodule HalC2.Orchestration.Delegation do
   end
 
   @doc """
-  Stops everything delegated from `thread_id`, whichever run started it: its unfinished
-  tasks are cancelled and nothing of them wakes the thread again. A task's result, if
-  any, stays readable from its status.
+  Stops the wakes of everything delegated from `thread_id`, whichever run started it,
+  and returns its unfinished tasks for the caller to `cancel/2` and stop. A task's
+  result, if any, stays readable from its status.
   """
   def stop_tasks(thread_id) do
     state = stream(thread_id)
+    dispose_wakes(thread_id, state |> StreamState.list("run") |> Enum.map(& &1["id"]))
 
     for task <- StreamState.list(state, "subagent"),
         task["origin"] == "app_owned",
-        task["status"] not in @terminal do
-      cancel(thread_id, task["id"])
-    end
-
-    dispose_wakes(thread_id, state |> StreamState.list("run") |> Enum.map(& &1["id"]))
+        task["status"] not in @terminal,
+        do: task
   end
 
   defp dispose_wakes(_thread_id, []), do: :ok

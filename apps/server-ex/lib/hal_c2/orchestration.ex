@@ -20,6 +20,8 @@ defmodule HalC2.Orchestration do
   alias HalC2.{Patch, StreamState}
   alias HalC2.Projection.{JS, PullRequests}
 
+  # How long a stopped thread's agent gets to go, after the caller has stopped waiting.
+  @thread_stop_ms 120_000
   @active_statuses ~w(preparing starting running waiting)
 
   # The built-in runtimes' registries, in the order a release visits them. One
@@ -1304,12 +1306,12 @@ defmodule HalC2.Orchestration do
   end
 
   @doc """
-  Stops a thread the plugin started: cancels its delegated tasks, interrupts whatever
-  it is running and releases its session, so nothing of its agent is left working in
-  its workspace or coming back to it. The thread stays, and a later message resumes it.
-  Answers once that is done, `:busy` if it is not within `timeout` ms (the stop goes on
-  without the caller), or `{:error, message}` for a thread that is not the plugin's to
-  stop.
+  Stops a thread the plugin started: stops the tasks delegated from it, and theirs in
+  turn, interrupts whatever it is running and releases its session, so nothing of its
+  agent is left working in its workspace or coming back to it. The thread stays, and a
+  later message resumes it. Answers once that is done, `:busy` if it is not within
+  `timeout` ms (the stop goes on without the caller, for `@thread_stop_ms` in all), or
+  `{:error, message}` for a thread that is not the plugin's to stop.
   """
   def stop_plugin_thread(thread_id, plugin_id, timeout \\ 15_000) do
     read = fn state ->
@@ -1339,12 +1341,8 @@ defmodule HalC2.Orchestration do
   # Interrupting and releasing each wait on a runtime without a bound of their own, so
   # they run apart from the caller, who stops waiting at the deadline.
   defp await_stop(thread_id, timeout) do
-    {stopper, ref} =
-      spawn_monitor(fn ->
-        :ok = HalC2.Streams.watch(thread_id, self())
-        deadline = System.monotonic_time(:millisecond) + timeout
-        exit({:shutdown, {:stopped, stop_runs(thread_id, nil, deadline)}})
-      end)
+    deadline = System.monotonic_time(:millisecond) + @thread_stop_ms
+    {stopper, ref} = spawn_monitor(fn -> stop_thread_tree(thread_id, deadline) end)
 
     receive do
       {:DOWN, ^ref, :process, ^stopper, {:shutdown, {:stopped, answer}}} -> answer
@@ -1356,11 +1354,49 @@ defmodule HalC2.Orchestration do
     end
   end
 
+  # Exits with its answer once the thread and every task below it have stopped.
+  defp stop_thread_tree(thread_id, deadline) do
+    :ok = HalC2.Streams.watch(thread_id, self())
+    {answer, tasks} = stop_runs(thread_id, nil, deadline, %{})
+    tasks_stopped = Enum.all?(Map.values(tasks), &task_stopped?(&1, deadline))
+
+    exit(
+      {:shutdown, {:stopped, if(answer == :ok and not tasks_stopped, do: :busy, else: answer)}}
+    )
+  end
+
+  defp task_stopped?(ref, deadline) do
+    receive do
+      {:DOWN, ^ref, :process, _, {:shutdown, {:stopped, :ok}}} -> true
+      {:DOWN, ^ref, :process, _, _} -> false
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) -> false
+    end
+  end
+
+  # A task stops apart from the others and from this thread, so one that is stuck holds
+  # up neither. `tasks` are the task ids already being stopped.
+  defp stop_tasks(thread_id, tasks, deadline) do
+    thread_id
+    |> HalC2.Orchestration.Delegation.stop_tasks()
+    |> Enum.reduce(tasks, fn %{"id" => id, "childThreadId" => child}, tasks ->
+      Map.put_new_lazy(tasks, id, fn ->
+        {_, ref} =
+          spawn_monitor(fn ->
+            HalC2.Orchestration.Delegation.cancel(thread_id, id)
+            stop_thread_tree(child, deadline)
+          end)
+
+        ref
+      end)
+    end)
+  end
+
   # A run promoted from the queue meanwhile is interrupted too; a runtime still closing
-  # its turn after the run ended answers `:busy`, and is asked again. Tasks are stopped
+  # its turn after the run ended answers `:busy`, and is asked again. Tasks are looked at
   # on every pass: the turn being stopped can still delegate, or a task's wake be queued.
-  defp stop_runs(thread_id, asked, deadline) do
-    HalC2.Orchestration.Delegation.stop_tasks(thread_id)
+  defp stop_runs(thread_id, asked, deadline, tasks) do
+    tasks = stop_tasks(thread_id, tasks, deadline)
     runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
     active = Enum.find_value(runs, &(&1["status"] in @active_statuses && &1["id"]))
 
@@ -1373,10 +1409,10 @@ defmodule HalC2.Orchestration do
 
     cond do
       released != :busy ->
-        released
+        {released, tasks}
 
       left <= 0 ->
-        :busy
+        {:busy, tasks}
 
       true ->
         receive do
@@ -1385,7 +1421,7 @@ defmodule HalC2.Orchestration do
           min(left, 500) -> :ok
         end
 
-        stop_runs(thread_id, active || asked, deadline)
+        stop_runs(thread_id, active || asked, deadline, tasks)
     end
   end
 

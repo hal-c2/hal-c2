@@ -632,7 +632,8 @@ for line in sys.stdin:
     elif method == "thread/backgroundTerminals/terminate":
         send({"id": mid, "result": {"terminated": True}})
     elif method == "turn/interrupt":
-        interrupted_turns.add(params["turnId"])
+        if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
+            interrupted_turns.add(params["turnId"])
         send({"id": mid, "result": {}})
         # FAKE_CODEX_IGNORE_INTERRUPT acknowledges the stop and never ends the turn.
         if not os.environ.get("FAKE_CODEX_IGNORE_INTERRUPT"):
