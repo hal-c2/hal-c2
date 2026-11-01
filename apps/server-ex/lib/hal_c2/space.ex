@@ -3,7 +3,7 @@ defmodule HalC2.Space do
   Spaces: Pages that people and agents write together (`features/space/`).
 
   The `spaces` stream indexes the Spaces, one `space` entity each, and each Space's
-  own `space:<id>` stream holds its `page`, `block` and `comment` entities. Every
+  own `space:<id>` stream holds its `page`, `block`, `comment` and `pageAgent` entities. Every
   change is a `HalC2.Streams.transact/3` on one of them, so the event log is the
   only record and clients follow both streams through the stream shape. The
   decisions live in `HalC2.Space.Pages` and `HalC2.Space.Blocks`.
@@ -14,7 +14,7 @@ defmodule HalC2.Space do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState, Streams}
-  alias HalC2.Space.{Blocks, History, Markdown, Pages}
+  alias HalC2.Space.{Blocks, History, Markdown, PageAgent, Pages}
 
   @index "spaces"
 
@@ -215,6 +215,17 @@ defmodule HalC2.Space do
       transact(space_id, &History.restore(&1, page_id, read, author))
     end
   end
+
+  # --- the agent of a page ----------------------------------------------------------------
+
+  @doc "See `HalC2.Space.PageAgent.ask/3`."
+  defdelegate ask_page_agent(space_id, page_id, request), to: PageAgent, as: :ask
+
+  @doc "See `HalC2.Space.PageAgent.stop/2`."
+  defdelegate stop_page_agent(space_id, page_id), to: PageAgent, as: :stop
+
+  @doc "See `HalC2.Space.PageAgent.dismiss/2`."
+  defdelegate dismiss_page_agent(space_id, page_id), to: PageAgent, as: :dismiss
 
   # --- Markdown and threads -----------------------------------------------------------
 

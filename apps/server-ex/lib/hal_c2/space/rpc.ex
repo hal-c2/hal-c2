@@ -64,6 +64,15 @@ defmodule HalC2.Space.Rpc do
   defp call("page.restoreVersion", %{"spaceId" => s, "pageId" => p, "version" => v}),
     do: page(Space.restore_page_version(s, p, v))
 
+  defp call("page.askAgent", %{"spaceId" => s, "pageId" => p, "request" => request}),
+    do: agent(Space.ask_page_agent(s, p, request))
+
+  defp call("page.stopAgent", %{"spaceId" => s, "pageId" => p}),
+    do: agent(Space.stop_page_agent(s, p))
+
+  defp call("page.dismissAgent", %{"spaceId" => s, "pageId" => p}),
+    do: with({:ok, _} <- Space.dismiss_page_agent(s, p), do: {:ok, %{"pageId" => p}})
+
   defp call("block.insert", %{"spaceId" => s, "pageId" => p, "kind" => _} = i) do
     spec = Map.take(i, ~w(kind text checked linkedPageId))
     block(Space.insert_block(s, p, spec, Map.get(i, "afterBlockId", :last)))
@@ -98,8 +107,12 @@ defmodule HalC2.Space.Rpc do
 
   @methods ~w(list create rename delete page.create page.rename page.move page.trash
     page.restore page.delete page.exportMarkdown page.importMarkdown page.createFromThread
-    page.history page.version page.restoreVersion block.insert block.update block.setChecked
+    page.history page.version page.restoreVersion page.askAgent page.stopAgent
+    page.dismissAgent block.insert block.update block.setChecked
     block.move block.delete comment.add comment.resolve comment.reopen)
+
+  defp agent({:ok, agent}), do: {:ok, %{"agent" => agent}}
+  defp agent(refused), do: refused
 
   @doc "The methods after `space.`."
   def methods, do: @methods

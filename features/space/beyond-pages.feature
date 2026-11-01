@@ -41,11 +41,6 @@ Feature: Spaces beyond Pages
     Then the page shows an applet drawing that data
 
   @mc @shared
-  Scenario: The user asks an agent from inside a page
-    When the user asks "@agent tidy this page" on the page "Roadmap"
-    Then an agent edits "Roadmap" and its edits name its thread
-
-  @mc @shared
   Scenario: The user sees who else is on a page
     Given a second client is reading the page "Roadmap"
     Then each client sees the other on the page

@@ -135,9 +135,14 @@ defmodule HalC2.Space.Pages do
               comment["pageId"] in ids or comment["blockId"] in gone_blocks,
               do: {"comment", comment["id"], Patch.delete()}
 
+        agents =
+          for agent <- StreamState.list(state, "pageAgent"),
+              agent["pageId"] in ids,
+              do: {"pageAgent", agent["id"], Patch.delete()}
+
         changes =
           Enum.map(ids, &{"page", &1, Patch.delete()}) ++
-            Enum.map(gone_blocks, &{"block", &1, Patch.delete()}) ++ comments
+            Enum.map(gone_blocks, &{"block", &1, Patch.delete()}) ++ comments ++ agents
 
         {changes, {:ok, Enum.to_list(ids)}}
 

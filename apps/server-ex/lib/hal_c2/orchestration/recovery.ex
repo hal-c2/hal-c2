@@ -171,6 +171,8 @@ defmodule HalC2.Orchestration.Recovery do
     delegating = :persistent_term.get({__MODULE__, :delegating}, [])
     :persistent_term.erase({__MODULE__, :delegating})
     for thread_id <- delegating, do: HalC2.Orchestration.Delegation.reconcile(thread_id, false)
+    # A page's agent this boot interrupted, and that did not go on, says so on its page.
+    for thread_id <- delegating, do: HalC2.Space.PageAgent.report(thread_id)
 
     :ok
   end

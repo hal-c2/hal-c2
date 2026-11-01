@@ -1354,7 +1354,7 @@ defmodule HalC2.Orchestration do
       Entities.thread(Map.put(input, "threadId", thread_id), at)
       |> Map.merge(workspace_fields(strategy))
       # A delegated task's thread is a subagent of the thread that asked for it.
-      |> Map.merge(Map.take(input, ["lineage"]))
+      |> Map.merge(Map.take(input, ["lineage", "spacePage"]))
       |> then(&if(mark = opts[:plugin], do: Map.put(&1, "plugin", mark), else: &1))
       |> then(&if(titling, do: Map.put(&1, "titleRegeneration", titling), else: &1))
 
