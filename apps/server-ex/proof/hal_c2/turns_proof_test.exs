@@ -99,6 +99,7 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.release_prepared/2" => @preparing,
       "HalC2.Orchestration.progress_prepared/3" => @preparing,
       "HalC2.Orchestration.fail_prepared/4" => @preparing,
+      "HalC2.Orchestration.warn_prepared/4" => @items,
       "HalC2.Orchestration.upsert/4" => @changes,
       "HalC2.Orchestration.create/3" => @changes,
       "HalC2.Orchestration.next_ordinal/1" => @changes,
