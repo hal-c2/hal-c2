@@ -59,18 +59,21 @@ defmodule HalC2.Subprocess.OrphansTest do
     :ok = Subprocess.write_line(sub, "leave")
     assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
     Subprocess.ack(sub)
-    await_gone(leader, 500)
+    await_reaped(leader, 500)
     String.to_integer(line)
   end
 
-  defp await_gone(pid, tries) when tries > 0 do
-    if Orphans.gone?(pid) do
-      :ok
-    else
+  # Not `Orphans.gone?`, which a zombie passes too: a boot kills the group a zombie still
+  # leads. Nor its exit status, which the port holds back while a command keeps its pipes;
+  # so this reads the process; the bound is only how long a failure waits.
+  defp await_reaped(pid, tries) when tries > 0 do
+    if Orphans.started(pid) do
       Process.sleep(10)
-      await_gone(pid, tries - 1)
+      await_reaped(pid, tries - 1)
     end
   end
+
+  defp await_reaped(pid, 0), do: flunk("#{pid} was never reaped")
 
   test "a boot kills what a program that exited after its MC died left in its group" do
     boot(:died, owner: dead_mc())
@@ -87,17 +90,52 @@ defmodule HalC2.Subprocess.OrphansTest do
 
   test "a boot spares a process in that group without the program's mark" do
     # What a later group with the same id looks like: no leader, and not this program's.
-    script = ~s(env -u HAL_C2_PROGRAM_ID sleep 60 & while read l; do echo $!; exit 0; done)
+    # It says its own pid: `$!` would name the fork, which has the mark until `env` execs.
+    stranger = ~S{env -u HAL_C2_PROGRAM_ID sh -c 'echo $$; exec sleep 60'}
     boot(:died, owner: dead_mc())
-    {:ok, sub} = Subprocess.start(["sh", "-c", script])
+    {:ok, sub} = Subprocess.start(["sh", "-c", stranger <> " & while read l; do exit 0; done"])
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
+    Subprocess.ack(sub)
+    stranger = String.to_integer(line)
     :ok = stop_supervised(:died)
-    stranger = left_behind(sub)
+    leader = Subprocess.os_pid(sub)
+    :ok = Subprocess.write_line(sub, "leave")
+    await_reaped(leader, 500)
 
     boot(:next)
 
     refute Orphans.gone?(stranger)
     assert File.ls!(Orphans.dir()) == []
     System.cmd("kill", ["-KILL", "#{stranger}"])
+  end
+
+  test "a boot kills the whole group of a program that exited but was not reaped yet" do
+    # A zombie leader, as in the unreaped-MC test below, with a command in a group of its
+    # own: `setsid` execs in place, as a background job leads no group. Its pid is held,
+    # so the group cannot be a later one's, and even an unmarked command in it goes.
+    leader = ~S{while [ "$(cat /proc/$PPID/comm)" != sleep ]; do sleep 0.01; done; }
+    child = ~s{setsid sh -c '#{leader}sleep 60 & echo $!'}
+    {:ok, holder} = Exile.Process.start_link(["sh", "-c", child <> " & echo $!; exec sleep 60"])
+    {:ok, line} = Exile.Process.read(holder)
+    zombie = line |> String.trim() |> String.to_integer()
+    {:ok, line} = Exile.Process.read(holder)
+    command = line |> String.trim() |> String.to_integer()
+    await_zombie(zombie, 500)
+    refute Orphans.gone?(command)
+
+    File.mkdir_p!(Orphans.dir())
+    record = "#{zombie}-1.json"
+
+    File.write!(
+      Path.join(Orphans.dir(), record),
+      JSON.encode!(%{"pid" => zombie, "started" => Orphans.started(zombie), "mc" => dead_mc()})
+    )
+
+    boot(:next)
+
+    assert Orphans.gone?(command)
+    assert File.ls!(Orphans.dir()) == [record]
+    :ok = Exile.Process.kill(holder, :sigkill)
   end
 
   test "only a marked process holds up a sweep when it cannot be read" do
