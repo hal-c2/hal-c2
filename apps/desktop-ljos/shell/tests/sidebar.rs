@@ -9,6 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use hal_c2_shell::bridge::Bridge;
+use hal_c2_shell::controllers::threads;
 use hal_c2_shell::json::Json;
 use hal_c2_shell::mc::{Mc, McError, OnFrame, OnReady, Reply, Resume, SubId};
 use hal_c2_shell::{Launch, store};
@@ -169,6 +170,7 @@ fn a_later_start_previews_what_the_cache_kept() {
         store::flush(&engine);
     }
     let (engine, mc) = start(dir.path());
+    threads::drain(&engine);
     // Kept rows show, nothing is decided on them.
     assert!(!hal_c2_shell::active(&engine));
     assert_eq!(titles(&engine), ["Thread t1"]);

@@ -335,3 +335,26 @@ fn origins_are_keyed_without_path_or_credentials() {
     assert_eq!(origin_key("https://host"), "https://host");
     assert_eq!(origin_key("not a url"), "not a url");
 }
+
+/// Found by store_prop: a machine that left while the shell was away, with
+/// the MC answering before the cache did, stayed kept and showed at the next
+/// start.
+#[test]
+fn a_machine_that_left_while_away_is_not_kept_when_its_mc_answers_first() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let mut store = cached(dir.path());
+        store.open(ORIGIN);
+        store.apply(&snapshot());
+    }
+    {
+        let mut store = cached(dir.path());
+        store.open(ORIGIN);
+        store.apply(&frame(json!({"t": "shell", "mcs": [], "rows": []})));
+        assert_eq!(kept(&mut store), Changes::default());
+    }
+    let mut store = cached(dir.path());
+    store.open(ORIGIN);
+    assert_eq!(kept(&mut store), Changes::default());
+    assert!(keys(&store).is_empty());
+}

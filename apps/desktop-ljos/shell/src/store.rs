@@ -210,7 +210,21 @@ impl ShellStore {
         let Some((asked, kept)) = self.kept.borrow_mut().take() else {
             return Changes::default();
         };
-        if asked != self.asked || self.synchronized || !self.mcs.is_empty() {
+        if asked != self.asked {
+            return Changes::default();
+        }
+        if self.synchronized {
+            // Its MC's rows stand, and it never said a machine that left
+            // while the shell was away is gone: only this read shows it.
+            for mc in &kept.mcs {
+                if !self.mcs.contains_key(&mc.mc) {
+                    self.unsaved(&mc.mc);
+                }
+            }
+            self.flush();
+            return Changes::default();
+        }
+        if !self.mcs.is_empty() {
             return Changes::default();
         }
         let origin = if self.origin.is_empty() {
