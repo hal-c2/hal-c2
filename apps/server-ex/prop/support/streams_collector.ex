@@ -5,7 +5,7 @@ defmodule HalC2.Prop.StreamsCollector do
   a test can ask it what it holds of each stream and what it was sent to get there.
 
   Per stream it keeps `msgs` (every message since its subscription was last
-  `reset/4`, oldest first), `entities` (`{kind, id} => entity`, what it holds),
+  `reset/5`, oldest first), `entities` (`{kind, id} => entity`, what it holds),
   `offset`, `handle` and `floor` (what it would resume from), and `from` (the offset
   the current subscription resumed from). A subscription with a tag is sent its
   messages under `{stream, tag}`: those of the tag `reset/5` last named count as
