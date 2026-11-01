@@ -266,6 +266,21 @@ defmodule HalC2.Store do
     end)
   end
 
+  @doc "The messages users sent since `since` (an ISO date), as `{stream id, day, count}`."
+  def turns_by_day(path, since) do
+    with_reader(path, fn db ->
+      {:ok, stmt} =
+        Sqlite3.prepare(db, """
+        SELECT s.id, substr(m.created_at, 1, 10), count(*) FROM messages m
+        JOIN streams s ON s.key = m.stream
+        WHERE m.role = 'user' AND m.created_at >= ?1 GROUP BY 1, 2
+        """)
+
+      :ok = Sqlite3.bind(stmt, [since])
+      step_reduce(db, stmt, [], fn [id, day, count], acc -> [{id, day, count} | acc] end)
+    end)
+  end
+
   @doc "A value from the store's `meta` table."
   def meta(path, key) do
     with_reader(path, fn db ->

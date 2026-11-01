@@ -1,0 +1,337 @@
+defmodule HalC2.Steps.Space.Visualize do
+  @moduledoc """
+  Steps for `features/space/visualize.feature`. Requests go over the socket as
+  `space.block.visualize`, with the fake text generation CLI answering; what a chart
+  holds is read from the Space's stream. `HalC2.Steps.Space.Pages` owns the page steps.
+  """
+  use Cucumber.StepDefinition
+  import ExUnit.Assertions
+
+  alias HalC2.{Space, Store, StreamState, Streams}
+  alias HalC2.Space.{Blocks, Chart}
+  alias HalC2.Test.Mc
+  alias HalC2.Test.Mc.World
+
+  # The second client `HalC2.Steps.Space.Pages` subscribes.
+  @watch 71
+  @page_source "Numbers from this page"
+
+  # --- real numbers ------------------------------------------------------------------
+
+  step "this MC's threads took turns this week", context do
+    context =
+      context
+      |> World.create_project("shop")
+      |> World.create_thread("Work", "shop")
+      |> World.add_message("Work", "user", "one")
+      |> World.add_message("Work", "assistant", "not a turn")
+      |> World.add_message("Work", "user", "two")
+
+    # Indexing is a cast the store has by the time it answers a write.
+    Store.put_meta("test.flush", "1")
+    Map.put(context, :turns_taken, 2)
+  end
+
+  # --- what the model says -----------------------------------------------------------
+
+  step "text generation charts the request from the MC's threads", context do
+    writes(context, %{
+      "source" => "turns_by_week",
+      "type" => "bar",
+      "title" => "Weekly turns",
+      "chart" => ""
+    })
+  end
+
+  step "text generation charts the request from the MC's threads and invents the values",
+       context do
+    writes(context, %{
+      "source" => "turns_by_week",
+      "type" => "bar",
+      "title" => "Weekly turns",
+      "chart" => JSON.encode!(data(%{"May" => 999}))
+    })
+  end
+
+  step "text generation charts the request from the dataset {string}", %{args: [id]} = context do
+    writes(context, %{"source" => id, "type" => "bar", "title" => "Counted", "chart" => ""})
+  end
+
+  step "text generation says the request cannot be answered", context do
+    writes(context, %{"source" => "none", "type" => "bar", "title" => "None", "chart" => ""})
+  end
+
+  step ~r/^text generation answers with a (?<type>bar|line) chart of (?<points>.+)$/,
+       %{args: [type, points]} = context do
+    title = if type == "line", do: "Signups", else: "Chart"
+    writes(context, page_answer(type, title, JSON.encode!(data(points(points)))))
+  end
+
+  step ~r/^text generation answers with the chart (?<json>\{.+\})$/, %{args: [json]} = context do
+    writes(context, page_answer("bar", "Chart", json))
+  end
+
+  step ~r/^text generation answers with a chart with (?<what>.+)$/, %{args: [what]} = context do
+    {title, data} = over_limit(what)
+    writes(context, page_answer("bar", title, JSON.encode!(data)))
+  end
+
+  # --- asking ------------------------------------------------------------------------
+
+  step "the user asks for {string} on the page {string}", %{args: [request, title]} = context do
+    ask(context, %{"pageId" => page_id(context, title), "request" => request})
+  end
+
+  step "the user asks again for {string}", %{args: [request]} = context do
+    block = chart_block(context)
+    ask(context, %{"pageId" => block["pageId"], "blockId" => block["id"], "request" => request})
+  end
+
+  step ~r/^the page "(?<title>[^"]+)" has a chart of (?<points>.+)$/,
+       %{args: [title, points]} = context do
+    put_chart(context, title, points(points))
+    context
+  end
+
+  step ~r/^the page "(?<title>[^"]+)" has the blocks "(?<before>[^"]+)" and a chart of (?<points>.+) and the blocks "(?<last>[^"]+)"$/,
+       %{args: [title, before, points, last]} = context do
+    insert(context, title, before)
+    put_chart(context, title, points(points))
+    insert(context, title, last)
+    context
+  end
+
+  step "{string} also says {string}", %{args: [title, text]} = context do
+    insert(context, title, text)
+    context
+  end
+
+  step "the user asks to see the numbers behind the chart", context do
+    assert chart_block(context)
+    context
+  end
+
+  step "the user deletes the chart", context do
+    payload = %{"spaceId" => context.space, "blockId" => chart_block(context)["id"]}
+    {_, context} = World.call!(context, "space.block.delete", payload)
+    context
+  end
+
+  step "the user edits the text of the chart", context do
+    payload = %{
+      "spaceId" => context.space,
+      "blockId" => chart_block(context)["id"],
+      "text" => "x"
+    }
+
+    {reply, context} = World.call(context, "space.block.update", payload)
+    Map.put(context, :space_reply, reply)
+  end
+
+  # --- what the page shows -----------------------------------------------------------
+
+  step "the page shows a {word} chart titled {string}", %{args: [type, title]} = context do
+    assert %{"type" => ^type, "title" => ^title} = chart_block(context)["chart"]
+    context
+  end
+
+  step "the chart says its numbers came from this MC's threads", context do
+    assert chart_block(context)["chart"]["source"] =~ "Counted by this MC from its 1 thread"
+    context
+  end
+
+  step "the chart says its numbers came from this page", context do
+    assert chart_block(context)["chart"]["source"] == @page_source
+    context
+  end
+
+  step "the second client sees a chart titled {string}", %{args: [title]} = context do
+    match? = fn frame ->
+      frame["t"] == "events" and frame["id"] == @watch and
+        Enum.any?(frame["events"], fn [_seq, kind, _id, patch | _] ->
+          kind == "block" and patch["s"]["chart"]["title"] == title
+        end)
+    end
+
+    {_, client} = Mc.await(World.client(context, "second"), match?, 5_000)
+    World.put_client(context, "second", client)
+  end
+
+  step ~r/^the numbers read (?<points>.+)$/, %{args: [points]} = context do
+    assert numbers(chart_block(context)["chart"]) == points(points)
+    context
+  end
+
+  step "the page shows one chart, between {string} and {string}",
+       %{args: [before, last]} = context do
+    block = chart_block(context)
+    assert [_] = charts(context)
+
+    assert [^before, :chart, ^last | _] =
+             state(context)
+             |> Blocks.of_page(block["pageId"])
+             |> Enum.map(&if(&1["kind"] == "chart", do: :chart, else: &1["text"]))
+
+    context
+  end
+
+  step "the page shows no chart", context do
+    assert charts(context) == []
+    context
+  end
+
+  step "the user is told no chart was drawn", context do
+    assert {:error, message, %{"_tag" => "SpaceChartError"}} = context.space_reply
+    assert message =~ "No chart was drawn"
+    context
+  end
+
+  step "the chart holds the turns the MC counted", context do
+    values = hd(chart_block(context)["chart"]["series"])["values"]
+    assert Enum.sum(values) == context.turns_taken
+    assert List.last(values) == context.turns_taken
+    context
+  end
+
+  step "the chart's series is {string} with a value for {string}",
+       %{args: [name, label]} = context do
+    chart = chart_block(context)["chart"]
+    assert [%{"name" => ^name, "values" => values}] = chart["series"]
+    assert Enum.at(values, Enum.find_index(chart["labels"], &(&1 == label))) > 0
+    context
+  end
+
+  step "the request and the page's text went to the model outside any project's folder",
+       context do
+    [call] =
+      Path.join(context.mc.home, "text-calls.jsonl")
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.map(&JSON.decode!/1)
+
+    assert call["prompt"] =~ "signups"
+    assert call["prompt"] =~ "Signups were 3 in May"
+    refute Map.has_key?(context[:projects] || %{}, call["cwd"])
+    refute HalC2.Projects.at(call["cwd"])
+    context
+  end
+
+  step "the largest chart a page can hold takes under 8 KiB on the Space's stream", context do
+    assert {:ok, chart} = Chart.validate(largest())
+    put_raw_chart(context, chart)
+    size = chart_block(context) |> JSON.encode!() |> byte_size()
+    assert size < 8 * 1024
+    assert byte_size(JSON.encode!(chart)) <= Chart.max_bytes()
+    context
+  end
+
+  step "the chart's text says {string} is a chart and where its numbers came from",
+       %{args: [title]} = context do
+    assert chart_block(context)["text"] == "#{title} (a chart; #{@page_source})"
+    context
+  end
+
+  # --- helpers -----------------------------------------------------------------------
+
+  defp writes(context, answer), do: World.text_writers(context, [:codex, :claude], answer)
+
+  defp page_answer(type, title, json),
+    do: %{"source" => "page", "type" => type, "title" => title, "chart" => json}
+
+  defp ask(context, input) do
+    payload = Map.put(input, "spaceId", context.space)
+    {reply, context} = World.call(context, "space.block.visualize", payload)
+    Map.put(context, :space_reply, reply)
+  end
+
+  # `"May" 3 and "June" 5` as `[{"May", 3}, {"June", 5}]`.
+  defp points(text) do
+    for [_, label, value] <- Regex.scan(~r/"([^"]+)" (\d+)/, text),
+        do: {label, String.to_integer(value)}
+  end
+
+  defp data(points) do
+    points = Enum.to_list(points)
+
+    %{
+      "labels" => Enum.map(points, &elem(&1, 0)),
+      "series" => [%{"name" => "s", "values" => Enum.map(points, &elem(&1, 1))}]
+    }
+  end
+
+  defp over_limit("25 labels"), do: {"Chart", data(for i <- 1..25, do: {"l#{i}", 1})}
+  defp over_limit("a 41 byte label"), do: {"Chart", data([{String.duplicate("a", 41), 1}])}
+  defp over_limit("a 121 byte title"), do: {String.duplicate("a", 121), data([{"a", 1}])}
+
+  defp over_limit("5 series") do
+    series = for i <- 1..5, do: %{"name" => "s#{i}", "values" => [1]}
+    {"Chart", %{"labels" => ["a"], "series" => series}}
+  end
+
+  defp largest do
+    wide = &String.duplicate("é", div(&1, 2))
+    labels = for i <- 1..24, do: wide.(36) <> String.pad_leading("#{i}", 4, "0")
+
+    %{
+      "type" => "line",
+      "title" => wide.(120),
+      "request" => wide.(200),
+      "source" => wide.(160),
+      "labels" => labels,
+      "series" =>
+        for i <- 1..4 do
+          name = wide.(38) <> "s#{i}"
+          %{"name" => name, "values" => for(_ <- 1..24, do: 123_456_789_012.34567)}
+        end
+    }
+  end
+
+  defp put_chart(context, title, points) do
+    put_raw_chart(
+      context,
+      %{
+        "type" => "bar",
+        "title" => "Signups",
+        "request" => "signups",
+        "source" => @page_source,
+        "labels" => Enum.map(points, &elem(&1, 0)),
+        "series" => [%{"name" => "Signups", "values" => Enum.map(points, &elem(&1, 1))}]
+      },
+      title
+    )
+  end
+
+  defp put_raw_chart(context, chart, title \\ "Status") do
+    assert {:ok, _} = Space.put_chart(context.space, page_id(context, title), chart, nil)
+  end
+
+  defp insert(context, title, text) do
+    spec = %{"kind" => "paragraph", "text" => text}
+    assert {:ok, _} = Space.insert_block(context.space, page_id(context, title), spec)
+  end
+
+  defp numbers(%{"labels" => labels, "series" => [%{"values" => values}]}),
+    do: Enum.zip(labels, values)
+
+  defp state(context), do: Streams.state(Space.stream_id(context.space))
+
+  defp charts(context) do
+    for block <- StreamState.list(state(context), "block"), block["kind"] == "chart", do: block
+  end
+
+  defp chart_block(context) do
+    case charts(context) do
+      [block] -> block
+      other -> flunk("expected one chart, found #{length(other)}")
+    end
+  end
+
+  defp page_id(context, title) do
+    page =
+      state(context)
+      |> StreamState.list("page")
+      |> Enum.find(&(&1["title"] == title))
+
+    (page || flunk("no page #{inspect(title)}"))["id"]
+  end
+end
