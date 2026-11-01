@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 
+import type { AskSpec } from "./askState.ts";
 import type { PickRequest } from "./composerState.ts";
 import {
   createSpaceController,
@@ -68,6 +69,7 @@ function setup() {
   const calls: Array<{ method: string; payload: unknown }> = [];
   const statuses: string[] = [];
   const menus: PickRequest[] = [];
+  const asks: AskSpec[] = [];
   let state: TuiSpaceState | null = null;
   const controller = createSpaceController({
     client: {
@@ -94,7 +96,7 @@ function setup() {
       state = next;
     },
     status: (text) => statuses.push(text),
-    ask: () => {},
+    ask: (spec) => asks.push(spec),
     menu: (spec) => menus.push(spec),
     threads: () => [{ id: "t1", title: "Work" }],
   });
@@ -108,7 +110,7 @@ function setup() {
       .rows.filter((row) => row.kind === kind && row.first)
       .map((row) => row.text.slice(2).trim());
   const select = (key: string) => controller.dispatch("space.select", { key });
-  return { controller, send, reply, view, texts, select, calls, statuses, menus, streams };
+  return { controller, send, reply, view, texts, select, calls, statuses, menus, asks, streams };
 }
 
 /** Open the Spaces, and the Space s1 ("Research") with its pages. */
@@ -198,6 +200,96 @@ describe("replies that come after the user moved on", () => {
     t.reply("space.page.createFromThread", { page: page("p5", "Release plan")[2] });
     await t.controller.settled();
     expect(t.view().title).toBe("page · Release plan");
+  });
+});
+
+describe("a chart on a page", () => {
+  const chart = (labels: number, series: number) => ({
+    type: "bar",
+    title: "Signups",
+    source: "Numbers from this page",
+    request: "signups by month",
+    labels: Array.from({ length: labels }, (_, index) => `m${index}`),
+    series: Array.from({ length: series }, (_, index) => ({
+      name: `s${index}`,
+      values: Array.from({ length: labels }, () => 1),
+    })),
+  });
+  const chartBlock = (id: string, labels = 2, series = 1) => {
+    const [kind, key, fields] = block(id, "p1", "Signups (a chart; Numbers from this page)", "b");
+    return [kind, key, { ...fields, kind: "chart", chart: chart(labels, series) }] as const;
+  };
+  const onPage = (...rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>) => {
+    const t = inResearch([page("p1", "Status"), ...rows]);
+    t.select("page:p1");
+    t.controller.dispatch("space.activate", {});
+    return t;
+  };
+
+  test("draws its title, its numbers and where they came from", () => {
+    const t = onPage(chartBlock("c1"));
+    const rows = t.view().rows.filter((row) => row.blockKind === "chart");
+    expect(rows.map((row) => row.key)).toEqual(Array(4).fill("block:c1"));
+    expect(rows[0]!.text).toContain("Signups");
+    expect(rows[1]!.text).toEndWith(" 1");
+    expect(rows.at(-1)!.text.trim()).toBe("Numbers from this page");
+    expect(rows.filter((row) => row.first)).toHaveLength(1);
+  });
+
+  test("shows its own words when the description cannot be read", () => {
+    const [kind, key, fields] = chartBlock("c1");
+    const t = onPage([kind, key, { ...fields, chart: "not a chart" }]);
+    expect(t.texts("block")).toEqual(["Signups (a chart; Numbers from this page)"]);
+  });
+
+  test("asks again from the words it was asked for in, and replaces itself", async () => {
+    const t = onPage(chartBlock("c1"));
+    t.select("block:c1");
+    t.controller.dispatch("space.activate", {});
+    const asked = t.asks.at(-1)!;
+    expect(asked.value).toBe("signups by month");
+    asked.onSubmit("signups by week");
+    expect(t.statuses.at(-1)).toBe("Drawing a chart…");
+    expect(t.calls.at(-1)).toEqual({
+      method: "space.block.visualize",
+      payload: { spaceId: "s1", pageId: "p1", request: "signups by week", blockId: "c1" },
+    });
+    t.reply("space.block.visualize", { block: chartBlock("c1")[2] });
+    await t.controller.settled();
+    expect(t.statuses.at(-1)).toBe("Drew “Signups”.");
+  });
+
+  test("a new chart goes after the selected block", () => {
+    const t = onPage(block("b1", "p1", "Before", "a"));
+    t.select("block:b1");
+    t.controller.dispatch("space.visualize", {});
+    expect(t.asks.at(-1)!.value).toBeUndefined();
+    t.asks.at(-1)!.onSubmit("signups");
+    expect(t.calls.at(-1)!.payload).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      request: "signups",
+      afterBlockId: "b1",
+    });
+  });
+
+  test("off a page there is nothing to chart on", () => {
+    const t = inResearch([page("p1", "Status")]);
+    t.controller.dispatch("space.visualize", {});
+    expect(t.asks).toEqual([]);
+    expect(t.statuses.at(-1)).toBe("Open a page to ask for a chart.");
+  });
+
+  test("scrolls through itself when it is taller than the pane, then moves on", () => {
+    const t = onPage(chartBlock("c1", 24, 4), block("b1", "p1", "After", "c"));
+    t.select("block:c1");
+    const top = () => t.view().rows[0]!.text;
+    const before = top();
+    t.controller.dispatch("space.next", {});
+    expect(top()).not.toBe(before);
+    expect(t.view().rows.some((row) => row.selected && row.key === "block:c1")).toBe(true);
+    for (let step = 0; step < 100; step += 1) t.controller.dispatch("space.next", {});
+    expect(t.view().rows.some((row) => row.selected && row.key === "block:b1")).toBe(true);
   });
 });
 
