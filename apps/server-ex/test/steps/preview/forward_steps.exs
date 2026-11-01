@@ -36,8 +36,7 @@ defmodule HalC2.Steps.Preview.Forward do
 
   step "a dev server on the second MC's machine listens on port 3000 for that machine only",
        context do
-    {port, _} = :erpc.call(context.peer, DevServer, :websocket, [@machine, 0, self()])
-    Map.put(context, :dev_port, port)
+    Map.put(context, :dev_port, dev_server(context.peer))
   end
 
   # --- forwarding ----------------------------------------------------------------------------
@@ -216,6 +215,20 @@ defmodule HalC2.Steps.Preview.Forward do
 
   # Opens the tab on the thread's MC, then asks this MC for its dev server, as
   # the desktop does before it opens the system browser.
+  # The second MC's web port is on 127.0.0.1, so the OS can give the dev server
+  # the same number on 127.0.0.2, which a real machine could not, and the MC
+  # rightly refuses to forward it. Such a dev server is put away for another.
+  defp dev_server(peer) do
+    {port, server} = :erpc.call(peer, DevServer, :websocket, [@machine, 0, self()])
+
+    if port in :erpc.call(peer, HalC2.PreviewForward.Grant, :reserved, []) do
+      DevServer.stop(server)
+      dev_server(peer)
+    else
+      port
+    end
+  end
+
   defp open_and_forward(context, environment, url) do
     url = local_url(context, url)
     input = %{"threadId" => @thread, "url" => url}
