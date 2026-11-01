@@ -1118,6 +1118,17 @@ defmodule HalC2.PlannerPropTest do
     end)
   end
 
+  # A push landing settles a change made before or while it was held, against the baseline
+  # that push went with.
+  defp owner_on_github?(before, m, {:call, _, cmd, _}, observed)
+       when cmd in [:answer, :resend_report] do
+    Enum.all?(before.flights, fn {slot, _} ->
+      Map.has_key?(m.flights, slot) or not Map.has_key?(m.items, slot) or
+        m.items[slot].sync != nil or
+        owner_replaced?(baseline(before, slot), m.items[slot], observed.assignees)
+    end)
+  end
+
   defp owner_on_github?(_before, _m, _call, _observed), do: true
 
   defp owner_replaced?(%{owner: old} = b, %{owner: owner, issue: n}, assignees) do
@@ -2462,7 +2473,7 @@ defmodule HalC2.PlannerPropTest do
         do: Map.merge(rule, %{"exit" => 1, "stderr" => "HTTP 422: refused owner #{kind}\n"}),
         else: Map.merge(rule, %{"stdout" => "{}", "record" => assignee_changes()})
     end ++
-      if MapSet.member?(Process.get(:pl_refusing), :drop),
+      if(MapSet.member?(Process.get(:pl_refusing), :drop),
         do: [
           %{
             "owner_rule" => true,
@@ -2472,6 +2483,7 @@ defmodule HalC2.PlannerPropTest do
           }
         ],
         else: []
+      )
   end
 
   defp assignee_changes, do: Path.join(Process.get(:pl_gh), "assignees")
