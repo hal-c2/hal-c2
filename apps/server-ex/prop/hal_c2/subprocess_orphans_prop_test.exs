@@ -10,9 +10,10 @@ defmodule HalC2.SubprocessOrphansPropTest do
   restarted no longer tracks stays until the next boot. A restart leaves a record
   being written alone. A boot that cannot list or read the records kills nothing and
   still comes up, and the next reap (a restart of the service, or a later boot) kills
-  what it left. A boot that cannot make the records dir still comes up, but runs
-  no program until the service restarts (or the MC dies) with the dir restored.
-  An orphan may exit on its own before the boot, leaving its background command in its
+  what it left. A boot that cannot make the records dir or read its own start time
+  still comes up, but runs no program until the failure ends: the next start then
+  reaps what the boot could not, as the MC the boot was given, before it runs
+  (hal-c2/hal-c2#451). An orphan may exit on its own before the boot, leaving its background command in its
   group: the boot kills that command all the same (hal-c2/hal-c2#380).
   """
 
@@ -62,9 +63,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
   # restarted forgets what it tracked. `records`: the ids that have a record naming
   # this MC, `left` the ones naming a dead MC. `orphans`: the ids a dead MC left
   # running, `exited` the ones among them whose program has since exited, leaving its
-  # background command. `unavailable`: tracking could not be set up this boot, so starts are
-  # refused. `dir_made`: the records dir has been made once; a dirless boot is
-  # only possible before that (an existing dir needs no making).
+  # background command. `unavailable`: tracking could not be set up this boot, so starts
+  # try again. `broken`: what it failed on still fails, so they are refused.
   def initial_state,
     do: %{
       up: false,
@@ -75,18 +75,17 @@ defmodule HalC2.SubprocessOrphansPropTest do
       orphans: [],
       exited: [],
       unavailable: false,
-      dir_made: false
+      broken: false
     }
 
   def command(%{up: false} = state) do
-    dirless =
-      if state.dir_made, do: [], else: [{1, {:call, __MODULE__, :dirless_boot, []}}]
-
     frequency(
       [
         {3, {:call, __MODULE__, :boot, []}},
-        {1, {:call, __MODULE__, :blind_boot, [oneof([:unlistable, :unreadable])]}}
-      ] ++ dirless ++ exits(state)
+        {1, {:call, __MODULE__, :blind_boot, [oneof([:unlistable, :unreadable])]}},
+        {1, {:call, __MODULE__, :dirless_boot, []}},
+        {1, {:call, __MODULE__, :timeless_boot, []}}
+      ] ++ exits(state)
     )
   end
 
@@ -96,19 +95,22 @@ defmodule HalC2.SubprocessOrphansPropTest do
         do: [],
         else: [{3, {:call, __MODULE__, :stop, [oneof(Map.keys(state.running))]}}]
 
-    # While unavailable no start succeeds, so there is nothing to start during a
-    # restart either; the restart itself (dir restored) is the way out.
+    # While unavailable there is no service to retry through during a restart, so
+    # nothing to start then either; the restart itself (failure ended) is one way out.
     during =
       if state.unavailable,
         do: [],
         else: [{1, {:call, __MODULE__, :start_during_restart, [state.next]}}]
+
+    # The other way out: the failure ends, and the next start heals.
+    heals = if state.broken, do: [{2, {:call, __MODULE__, :failure_ends, []}}], else: []
 
     frequency(
       [
         {4, {:call, __MODULE__, :start, [state.next]}},
         {1, {:call, __MODULE__, :restart_service, []}},
         {1, {:call, __MODULE__, :die, []}}
-      ] ++ during ++ stops
+      ] ++ during ++ heals ++ stops
     )
   end
 
@@ -124,7 +126,9 @@ defmodule HalC2.SubprocessOrphansPropTest do
 
   def precondition(state, {:call, _, :boot, []}), do: not state.up
   def precondition(state, {:call, _, :blind_boot, _}), do: not state.up
-  def precondition(state, {:call, _, :dirless_boot, []}), do: not state.up and not state.dir_made
+  def precondition(state, {:call, _, :dirless_boot, []}), do: not state.up
+  def precondition(state, {:call, _, :timeless_boot, []}), do: not state.up
+  def precondition(state, {:call, _, :failure_ends, []}), do: state.up and state.broken
 
   def precondition(state, {:call, _, :start_during_restart, _}),
     do: state.up and not state.unavailable
@@ -136,16 +140,27 @@ defmodule HalC2.SubprocessOrphansPropTest do
     do: %{state | exited: [id | state.exited]}
 
   def next_state(state, _, {:call, _, :boot, []}),
-    do: reaped(%{state | up: true, unavailable: false, dir_made: true})
+    do: reaped(%{state | up: true, unavailable: false})
 
   def next_state(state, _, {:call, _, :blind_boot, _}),
-    do: %{state | up: true, unavailable: false, dir_made: true}
+    do: %{state | up: true, unavailable: false}
 
+  # The records wait out of reach: nothing is reaped.
   def next_state(state, _, {:call, _, :dirless_boot, []}),
-    do: %{state | up: true, unavailable: true}
+    do: %{state | up: true, unavailable: true, broken: true}
 
-  # A start while unavailable is refused and records nothing.
-  def next_state(%{unavailable: true} = state, _, {:call, _, :start, _}), do: state
+  # The dir is fine, so the reap ran.
+  def next_state(state, _, {:call, _, :timeless_boot, []}),
+    do: reaped(%{state | up: true, unavailable: true, broken: true})
+
+  def next_state(state, _, {:call, _, :failure_ends, []}), do: %{state | broken: false}
+
+  # A start while the failure lasts is refused and records nothing.
+  def next_state(%{broken: true} = state, _, {:call, _, :start, _}), do: state
+
+  # The first start after it ended reaps, then runs.
+  def next_state(%{unavailable: true} = state, result, {:call, _, :start, _} = call),
+    do: next_state(reaped(%{state | unavailable: false}), result, call)
 
   def next_state(state, _, {:call, _, :start, [id]}),
     do: %{
@@ -165,13 +180,13 @@ defmodule HalC2.SubprocessOrphansPropTest do
     }
   end
 
-  # The dir is back by the restart, so tracking is available again.
+  # The failure is over by the restart, so tracking is available again.
   def next_state(state, _, {:call, _, :restart_service, []}),
     do:
       reaped(%{
         state
         | unavailable: false,
-          dir_made: true,
+          broken: false,
           running: Map.new(state.running, fn {id, _} -> {id, false} end)
       })
 
@@ -192,6 +207,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
       state
       | up: false,
         unavailable: false,
+        broken: false,
         running: %{},
         records: [],
         left: state.left ++ state.records,
@@ -209,12 +225,23 @@ defmodule HalC2.SubprocessOrphansPropTest do
   def postcondition(state, {:call, _, :blind_boot, _}, {alive, records}),
     do: alive == Enum.sort(state.orphans) and records == pids(state.left)
 
-  def postcondition(_state, {:call, _, :dirless_boot, []}, result), do: result == :ok
+  # The orphans still answer, their records out of reach or the reap not yet due.
+  def postcondition(state, {:call, _, :dirless_boot, []}, alive),
+    do: alive == Enum.sort(state.orphans)
 
-  def postcondition(state, {:call, _, :start, _} = call, {outcome, records}),
-    do:
-      outcome == if(state.unavailable, do: :error, else: :started) and
-        records == records_of(next_state(state, nil, call))
+  def postcondition(state, {:call, _, :timeless_boot, []}, {killed, records}),
+    do: Enum.sort(killed) == Enum.sort(state.orphans) and records == []
+
+  def postcondition(_state, {:call, _, :failure_ends, []}, result), do: result == :ok
+
+  # A start that heals answers only after its reap: what it returns to has been killed.
+  def postcondition(state, {:call, _, :start, _} = call, {outcome, killed, records}) do
+    healing? = state.unavailable and not state.broken
+
+    outcome == if(state.broken, do: :error, else: :started) and
+      Enum.sort(killed) == if(healing?, do: Enum.sort(state.orphans), else: []) and
+      records == records_of(next_state(state, nil, call))
+  end
 
   def postcondition(state, {:call, _, :stop, _} = call, {status, records}),
     do: status == {:ok, 0} and records == records_of(next_state(state, nil, call))
@@ -284,29 +311,66 @@ defmodule HalC2.SubprocessOrphansPropTest do
     {Enum.sort(alive), records()}
   end
 
-  # A new MC whose records dir cannot be made (a file where its parent goes).
-  # The filesystem is restored once it is up; tracking stays unavailable until
-  # the service restarts or the MC dies.
+  # A new MC whose records dir cannot be made: a file where its parent goes, the dir,
+  # with what a dead MC left in it, set aside until `failure_ends/0`. Returns the
+  # orphans that still answer.
   def dirless_boot do
     new_mc()
     parent = Path.dirname(Orphans.dir())
-    File.rm_rf!(parent)
-    File.write!(parent, "")
-    start_service()
-    File.rm!(parent)
     File.mkdir_p!(parent)
+    File.rename!(parent, parent <> ".aside")
+    File.write!(parent, "")
+    Process.put(:failure, :dir)
+    start_service()
+    Enum.sort(for id <- Process.get(:orphans, []), orphan_alive?(id), do: id)
+  end
+
+  # A new MC that cannot read its own start time until `failure_ends/0`. Its records
+  # dir is fine, so the reap runs. The function is what the service reads again.
+  # Returns the orphans the reap ended, and the records.
+  def timeless_boot do
+    new_mc()
+    owner = Process.get(:owner)
+    :persistent_term.put({__MODULE__, :timeless}, true)
+    Process.put(:failure, :start_time)
+
+    start_service(fn ->
+      if :persistent_term.get({__MODULE__, :timeless}, false),
+        do: %{owner | "started" => nil},
+        else: owner
+    end)
+
+    {killed(), records()}
+  end
+
+  def failure_ends do
+    case Process.delete(:failure) do
+      :dir ->
+        parent = Path.dirname(Orphans.dir())
+        File.rm!(parent)
+        File.rename!(parent <> ".aside", parent)
+
+      :start_time ->
+        :persistent_term.erase({__MODULE__, :timeless})
+
+      nil ->
+        :ok
+    end
+
     :ok
   end
 
   def start(id) do
+    healing? = match?({:unavailable, _}, :persistent_term.get(Orphans, nil))
+
     case Subprocess.start(@program) do
       {:ok, sub} ->
         Process.put({:sub, id}, sub)
         Process.put({:pid, id}, Subprocess.os_pid(sub))
-        {:started, records()}
+        {:started, if(healing?, do: killed(), else: []), records()}
 
       {:error, _reason} ->
-        {:error, records()}
+        {:error, [], records()}
     end
   end
 
@@ -325,10 +389,10 @@ defmodule HalC2.SubprocessOrphansPropTest do
   # the records, once that write is done; it fails when the restart dropped the write.
   def restart_service do
     kill_service()
-    # After a dirless boot the records dir was never made; the restart is what
-    # tracking coming back looks like, with the dir restored. No record write
-    # can be in flight then (every start was refused), so the half-written
-    # record is only planted when tracking was on.
+    # A failure ends by the restart, with the dir restored. No record write can be in
+    # flight then (every start was refused), so the half-written record is only
+    # planted when tracking was on.
+    failure_ends()
     File.mkdir_p!(Orphans.dir())
     in_flight = Path.join(Orphans.dir(), "#{System.pid()}-0.json.tmp")
 
@@ -357,6 +421,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
     mc = Process.delete(:mc)
     :ok = Exile.Process.kill(mc, :sigkill)
     {:ok, _} = Exile.Process.await_exit(mc)
+    failure_ends()
     # The VM's terms go with it: the next boot is not a restart.
     :persistent_term.erase(Orphans)
     Process.put(:orphans, for({id, _} <- subs(), do: id))
@@ -381,8 +446,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
     killed
   end
 
-  defp start_service,
-    do: {:ok, _} = GenServer.start(Orphans, [owner: Process.get(:owner)], name: Orphans)
+  defp start_service(owner \\ Process.get(:owner)),
+    do: {:ok, _} = GenServer.start(Orphans, [owner: owner], name: Orphans)
 
   defp kill_service do
     pid = Process.whereis(Orphans)
@@ -455,9 +520,15 @@ defmodule HalC2.SubprocessOrphansPropTest do
   defp pids(ids), do: ids |> Enum.map(&Process.get({:pid, &1})) |> Enum.sort()
 
   defp records do
-    dir = Orphans.dir()
+    dir =
+      if Process.get(:failure) == :dir do
+        parent = Path.dirname(Orphans.dir())
+        Path.join(parent <> ".aside", Path.basename(Orphans.dir()))
+      else
+        Orphans.dir()
+      end
 
-    # No records dir yet (a dirless boot) is no records.
+    # No records dir yet is no records.
     case File.ls(dir) do
       {:ok, names} ->
         names
@@ -472,6 +543,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
 
   defp cleanup do
     if Process.whereis(Orphans), do: kill_service()
+    failure_ends()
 
     # A command an orphan left has nothing else to stop it.
     for {{:command, _id}, command} <- Process.get(),

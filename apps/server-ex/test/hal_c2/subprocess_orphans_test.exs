@@ -353,6 +353,78 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert {:error, {:untracked, :no_records_dir}} = Subprocess.start(["/no/such/program"])
   end
 
+  # hal-c2/hal-c2#451. A file where the state dir goes; the dir, records and all, waits
+  # beside it until the returned function puts it back.
+  defp break_records_dir do
+    parent = Path.dirname(Orphans.dir())
+    File.mkdir_p!(parent)
+    File.rename!(parent, parent <> ".aside")
+    File.write!(parent, "")
+
+    fn ->
+      File.rm!(parent)
+      File.rename!(parent <> ".aside", parent)
+    end
+  end
+
+  test "a records dir that can be made again reaps, as the owner the boot was given, before any start" do
+    boot(:died, owner: dead_mc())
+    {:ok, orphan} = Subprocess.start(["sh", "-c", "sleep 60 & " <> @echo])
+    orphan_pid = Subprocess.os_pid(orphan)
+    :ok = stop_supervised(:died)
+
+    restore = break_records_dir()
+    owner = %{"pid" => String.to_integer(System.pid()), "started" => "the boot's own"}
+    boot(:next, owner: owner)
+
+    assert {:error, {:untracked, :no_records_dir}} = Subprocess.start(["sh", "-c", @echo])
+    alive!(orphan)
+
+    restore.()
+
+    # Starts at once, each behind the same attempt: every one that returns finds the
+    # orphan reaped already and its own record written, and none is refused.
+    results =
+      1..4
+      |> Enum.map(fn _ ->
+        Task.async(fn ->
+          {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+          reaped? = Orphans.gone?(orphan_pid)
+          record? = sub |> Subprocess.os_pid() |> record_of() |> Map.get("mc")
+          {:ok, 0} = Subprocess.stop(sub)
+          {reaped?, record?}
+        end)
+      end)
+      |> Task.await_many(10_000)
+
+    assert results == List.duplicate({true, owner}, 4)
+    assert_receive {:subprocess_eof, reader} when reader == orphan.reader, 5_000
+  end
+
+  defp record_of(pid) do
+    Orphans.dir()
+    |> File.ls!()
+    |> Enum.map(&(Path.join(Orphans.dir(), &1) |> File.read!() |> JSON.decode!()))
+    |> Enum.find(&(&1["pid"] == pid))
+  end
+
+  test "a start time that can be read again turns tracking on for the next start", %{tmp_dir: dir} do
+    me = String.to_integer(System.pid())
+    readable = Path.join(dir, "readable")
+    # A function, as the MC's own identity is: read again at each attempt.
+    owner = fn -> %{"pid" => me, "started" => if(File.exists?(readable), do: "now")} end
+    boot(:next, owner: owner)
+
+    assert {:error, {:untracked, :no_start_time}} = Subprocess.start(["sh", "-c", @echo])
+
+    File.write!(readable, "")
+
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    alive!(sub)
+    assert record_of(Subprocess.os_pid(sub))["mc"] == %{"pid" => me, "started" => "now"}
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
   test "in a running MC a program is not run untracked before the service has started" do
     # No service in this test: as in the window before the service's init, or
     # after a hot upgrade before it is started.

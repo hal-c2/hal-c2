@@ -58,15 +58,23 @@ defmodule HalC2.Subprocess.Orphans do
 
   Off Windows, tracking that cannot be set up fails closed rather than quietly
   off. If the records dir cannot be made, or this MC's own start time cannot be
-  read, the MC still boots, but `track/3` returns an error for the whole boot, so
+  read, the MC still boots, but `track/3` returns an error, so
   `HalC2.Subprocess.start` refuses to run a program no later boot could find —
   the same answer a failed record write gets, given before the program is
   started at all when the failure is already known. That refusal covers every
   program `HalC2.Subprocess` runs, not only provider CLIs: the Claude session
   and every JSON-RPC provider connection, and the device hub alike, so a
-  broken state dir refuses all of them for the boot. A single program whose start
+  broken state dir refuses all of them. A single program whose start
   time cannot be read (as against one already gone) is refused the same way, and
   so is a start in a running MC before this service has started.
+
+  A refused start first has this service try the setup again, so a moment's read
+  failure does not outlast the moment (`handle_call/3`). The attempt runs in the
+  service, one at a time, with the owner `init/1` was given, and reaps before it marks
+  tracking on: a dir that can be made again may hold records of a dead MC that
+  `init/1` never reaped, and a caller waiting on the attempt is answered after that
+  reap, so nothing resumes ahead of it. A failed attempt logs a warning, once per
+  refused start, and changes nothing.
 
   The boot-time reap is synchronous, in `init/1`, before Recovery resumes
   anything. Its cost is bounded per orphan, not in total: a program that does
@@ -81,7 +89,10 @@ defmodule HalC2.Subprocess.Orphans do
 
   require Logger
 
-  @doc "`opts[:owner]` replaces this MC's identity in the records it writes, for tests."
+  @doc """
+  `opts[:owner]` replaces this MC's identity in the records it writes, for tests: the
+  identity, or a function read at each attempt to set tracking up.
+  """
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   # The name is free of KEY, SECRET and TOKEN: providers that filter what their
@@ -94,9 +105,9 @@ defmodule HalC2.Subprocess.Orphans do
   @doc """
   Whether a program started now would be tracked, known before it exists: `:ok`,
   `{:error, reason}` with the reason `track/3` would refuse it (tracking could
-  not be set up this boot, or, in a running MC, this service has not started
-  yet), or `:off` where nothing is tracked by design (no MC services in this
-  VM, or Windows). `HalC2.Subprocess.start` refuses on the error before
+  not be set up, tried again just now, or, in a running MC, this service has not
+  started yet), or `:off` where nothing is tracked by design (no MC services in
+  this VM, or Windows). `HalC2.Subprocess.start` refuses on the error before
   spawning, so a known-unavailable boot starts no CLI just to kill it;
   `track/3` stays the authoritative check for what races past this one.
   """
@@ -104,9 +115,18 @@ defmodule HalC2.Subprocess.Orphans do
   def available? do
     case :persistent_term.get(__MODULE__, nil) do
       %{} -> :ok
-      {:unavailable, reason} -> {:error, reason}
+      {:unavailable, reason} -> retry_setup(reason)
       nil -> if tracking_expected?(), do: {:error, :not_started}, else: :off
     end
+  end
+
+  # Waits for the attempt, and for the reap that comes with it, as a boot waits for
+  # its own: bounded per orphan (see the moduledoc). A service that is not there
+  # (restarting) leaves the start refused, for the next one to try again.
+  defp retry_setup(reason) do
+    GenServer.call(__MODULE__, :retry_setup, :infinity)
+  catch
+    :exit, _ -> {:error, reason}
   end
 
   # An MC running its services off Windows is expected to track: no mark from
@@ -127,8 +147,8 @@ defmodule HalC2.Subprocess.Orphans do
   `track/3` writes the record in the calling process, not in this service, so a
   program started while the service restarts is still on disk for the next boot; only
   removing the record when the program ends needs the service. `{:error, reason}` when
-  the record could not be written, when tracking could not be set up this boot
-  (`:no_records_dir`, `:no_start_time`; see the moduledoc), or when the program's
+  the record could not be written, when tracking could not be set up, tried again
+  just now (`:no_records_dir`, `:no_start_time`; see the moduledoc), or when the program's
   start time could not be read (`:no_start_time`): the caller must stop the program
   rather than run it untracked. A program already gone has nothing to record. A
   no-op when this service has not been started in this VM and none is expected
@@ -140,7 +160,7 @@ defmodule HalC2.Subprocess.Orphans do
   def track(proc, os_pid, mark) do
     case :persistent_term.get(__MODULE__, nil) do
       %{dir: dir, owner: owner} -> record(dir, owner, proc, os_pid, mark)
-      {:unavailable, reason} -> {:error, reason}
+      {:unavailable, reason} -> with :ok <- retry_setup(reason), do: track(proc, os_pid, mark)
       nil -> untracked()
     end
   end
@@ -399,17 +419,24 @@ defmodule HalC2.Subprocess.Orphans do
     # So a supervisor's shutdown runs `terminate/2`.
     Process.flag(:trap_exit, true)
 
-    owner =
-      Keyword.get_lazy(opts, :owner, fn ->
-        pid = String.to_integer(System.pid())
-        %{"pid" => pid, "started" => started(pid)}
-      end)
+    owner = Keyword.get(opts, :owner, &own_identity/0)
 
     # Tracking still on is a restart inside this MC, after a crash: a program may be
     # being recorded right now, so its record's `.tmp` is not this reap's to drop.
     # Only the tracking mark means that: after an unavailable boot no record
     # write can be in flight, so its restart reaps `.tmp` records like a boot.
-    restart? = match?(%{}, :persistent_term.get(__MODULE__, nil))
+    set_up(owner, match?(%{}, :persistent_term.get(__MODULE__, nil)))
+
+    {:ok, %{programs: %{}, owner: owner}}
+  end
+
+  defp own_identity do
+    pid = String.to_integer(System.pid())
+    %{"pid" => pid, "started" => started(pid)}
+  end
+
+  defp set_up(owner, restart?) do
+    owner = if is_function(owner), do: owner.(), else: owner
     dir = dir()
 
     # Nothing here may stop the MC from booting (cf. `reap_one/1`): a records dir
@@ -446,8 +473,6 @@ defmodule HalC2.Subprocess.Orphans do
           do: :persistent_term.erase(__MODULE__),
           else: :persistent_term.put(__MODULE__, {:unavailable, :no_records_dir})
     end
-
-    {:ok, %{programs: %{}}}
   end
 
   defp mkdir(dir) do
@@ -458,6 +483,25 @@ defmodule HalC2.Subprocess.Orphans do
       Logger.warning("not tracking programs: cannot create #{dir}: #{Exception.message(e)}")
 
       :error
+  end
+
+  # Here rather than in the caller, so concurrent starts cannot reap twice, and the
+  # ones behind the attempt that succeeded find tracking on and do nothing. Reaps like
+  # a boot: the mark said no record write was in flight. One that began just before a
+  # crash and a failed `init/1` is at worst a live MC's record, which is kept, or a
+  # half-written `.tmp`, dropped, whose rename then fails and is written again.
+  @impl true
+  def handle_call(:retry_setup, _from, state) do
+    if match?({:unavailable, _}, :persistent_term.get(__MODULE__, nil)),
+      do: set_up(state.owner, false)
+
+    reply =
+      case :persistent_term.get(__MODULE__, nil) do
+        {:unavailable, reason} -> {:error, reason}
+        _tracking -> :ok
+      end
+
+    {:reply, reply, state}
   end
 
   @impl true
