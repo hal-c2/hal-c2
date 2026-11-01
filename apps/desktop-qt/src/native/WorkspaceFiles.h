@@ -291,6 +291,10 @@ private:
   void save(bool closing = false);
   // Sends the oldest waiting write, once the one under way is answered.
   void writeNext();
+  // A write of the open file is under way or waiting.
+  bool writingOpenFile() const;
+  // Reads the open file for the latest request, to show it.
+  void readOpenFile();
   // What the agent last did to the workspace, or empty.
   QString mutation() const;
   void followMutation();
@@ -372,7 +376,9 @@ private:
     bool closing;
   };
   QList<Write> m_writes;
-  bool m_writing = false;
+  std::optional<Write> m_underWay;
+  // The open file is loading, and reads once its writes have landed.
+  bool m_readAfterWrites = false;
   int m_revision = 0;
   QString m_saveProblem;
   // The environment that refused to write a file by its full path for want of

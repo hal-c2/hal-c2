@@ -181,6 +181,8 @@ void check(const Model& expected, Sut& sut) {
     if (outside(path)) RC_ASSERT(sut.disk.value(Sut::key(QStringLiteral("env-b"), path)) == QStringLiteral("env-b:") + path);
   }
   if (expected.openPath.isEmpty()) return;
+  // A file opened while its writes land reads after them; the read may be held too.
+  if (files.fileStatus() == QLatin1String("loading") && !(sut.held.isEmpty() && sut.heldReads.isEmpty())) return;
   // Until a read answers: the problem, or loading again.
   if (sut.readFailed && files.fileStatus() != QLatin1String("ready")) return;
   RC_ASSERT(files.text().contains(sut.typed));
@@ -333,7 +335,8 @@ struct Settle : Step<Settle> {
       RC_ASSERT(sut.disk.value(Sut::key(before.environment, before.openPath)) == before.environment + QLatin1Char(':') + before.openPath);
     } else {
       RC_ASSERT(!sut.files->unsaved());
-      if (sut.edited) RC_ASSERT(sut.disk.value(Sut::key(before.environment, before.openPath)) == sut.files->text());
+      // Edited here or before a visit elsewhere, it shows what is on disk.
+      RC_ASSERT(sut.disk.value(Sut::key(before.environment, before.openPath)) == sut.files->text());
     }
   }
   void show(std::ostream& os) const override { os << "answer every write"; }

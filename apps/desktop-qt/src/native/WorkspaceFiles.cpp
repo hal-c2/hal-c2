@@ -214,6 +214,8 @@ void WorkspaceFiles::followOpenFile() {
   // A path that could not be read may be a file now (a folder the agent replaced).
   if (m_fileStatus != QLatin1String("ready")) {
     if (m_fileStatus == QLatin1String("error")) reloadFile();
+    // The read under way may be from before this change.
+    else if (m_fileStatus == QLatin1String("loading")) m_rereadLater = true;
     return;
   }
   // The user's own text stays: the file is read once it is written.
@@ -225,6 +227,8 @@ void WorkspaceFiles::followOpenFile() {
 }
 
 void WorkspaceFiles::refreshFile() {
+  // The read waiting on the writes will show what is there.
+  if (m_readAfterWrites) return;
   const int request = ++m_fileRequest;
   const int revision = m_revision;
   m_rereadLater = false;
@@ -378,7 +382,23 @@ void WorkspaceFiles::reloadFile() {
   m_mediaRewritten = false;
   m_rereadLater = false;
   emit fileChanged();
+  m_readAfterWrites = false;
   if (!mediaKind().isEmpty()) return signMedia(request);
+  // A read now would show the text from before the writes still to land.
+  if (writingOpenFile()) {
+    m_readAfterWrites = true;
+    return;
+  }
+  readOpenFile();
+}
+
+bool WorkspaceFiles::writingOpenFile() const {
+  const auto isOpenFile = [this](const Write& write) { return write.path == m_openPath && write.root == m_root && write.environment == m_environment; };
+  return (m_underWay && isOpenFile(*m_underWay)) || std::any_of(m_writes.cbegin(), m_writes.cend(), isOpenFile);
+}
+
+void WorkspaceFiles::readOpenFile() {
+  const int request = m_fileRequest;
   m_client->call(this, m_environment, QStringLiteral("projects.readFile"),
                  QJsonObject{{QStringLiteral("cwd"), m_root}, {QStringLiteral("relativePath"), m_openPath}},
                  [this, request](const QJsonValue& result, const std::optional<QString>& error) {
@@ -401,6 +421,7 @@ void WorkspaceFiles::reloadFile() {
                    emit fileChanged();
                    m_revealLine = m_openLine > 0 ? std::clamp(m_openLine, 1, std::max(1, m_lines.rowCount())) : 0;
                    emit revealRequested();
+                   rereadIfDue();
                  });
 }
 
@@ -512,6 +533,7 @@ void WorkspaceFiles::closeFile() {
   if (std::exchange(m_editing, false)) emit renderedChanged();
   ++m_fileRequest;
   m_waitingTicks.clear();
+  m_readAfterWrites = false;
   const bool had = !m_openPath.isEmpty() || m_fileStatus != QLatin1String("none");
   m_openPath.clear();
   m_openLine = 0;
@@ -843,7 +865,11 @@ void WorkspaceFiles::save(bool closing) {
 void WorkspaceFiles::writeNext() {
   // The MC answers each call on its own, so two writes under way could land in
   // either order and put older text over newer.
-  if (m_writing || m_writes.isEmpty()) return;
+  if (m_underWay) return;
+  if (m_writes.isEmpty()) {
+    if (std::exchange(m_readAfterWrites, false)) readOpenFile();
+    return;
+  }
   const Write write = m_writes.takeFirst();
   if (m_hostWritesRefusedOn == write.environment && hostPath(write.path)) {
     // Refused while this one waited. The edit stays on screen, if it still is.
@@ -852,13 +878,17 @@ void WorkspaceFiles::writeNext() {
     writeNext();
     return;
   }
-  m_writing = true;
+  m_underWay = write;
+  if (m_readAfterWrites && !writingOpenFile()) {
+    m_readAfterWrites = false;
+    readOpenFile();
+  }
   const auto [environment, root, path, contents, revision, request, closing] = write;
   m_client->call(this, environment, QStringLiteral("projects.writeFile"),
                  QJsonObject{{QStringLiteral("cwd"), root}, {QStringLiteral("relativePath"), path}, {QStringLiteral("contents"), contents}},
                  [this, path, root, environment, revision, request, closing](const QJsonValue& detail, const std::optional<QString>& error) {
                    const auto next = qScopeGuard([this] {
-                     m_writing = false;
+                     m_underWay.reset();
                      writeNext();
                    });
                    // A session without terminal access may not write outside the workspace (Rpc.required_scope/2).

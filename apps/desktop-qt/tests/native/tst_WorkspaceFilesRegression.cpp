@@ -341,7 +341,7 @@ private slots:
   }
 
   // The MC answers each call on its own: a write from leaving the file, answered
-  // after one from coming back to it, put the older text back on disk.
+  // before the one already under way, had the older text land last.
   void writesGoOneAtATimeInOrder() {
     Held held;
     QVERIFY(held.ready());
@@ -358,22 +358,84 @@ private slots:
     QVERIFY(open(QStringLiteral("a.txt")));
     files.edit(QStringLiteral("first"));
     QVERIFY(QTest::qWaitFor([&] { return writes().size() == 1; }));
-    QVERIFY(open(QStringLiteral("b.txt")));
-    QVERIFY(open(QStringLiteral("a.txt")));
     files.edit(QStringLiteral("second"));
-    QTest::qWait(0);
+    QVERIFY(open(QStringLiteral("b.txt")));
     QVERIFY(held.settled());
     QCOMPARE(writes().size(), 1);
 
     QStringList sent;
-    for (qsizetype answered = 0; answered < 3; ++answered) {
+    for (qsizetype answered = 0; answered < 2; ++answered) {
       QVERIFY(QTest::qWaitFor([&] { return writes().size() == answered + 1; }));
       const FakeMc::Rpc write = writes().at(answered);
       sent.append(write.payload.value(QLatin1String("contents")).toString());
       held.mc.reply(write, QJsonObject{{QStringLiteral("relativePath"), write.payload.value(QLatin1String("relativePath"))}});
       QVERIFY(held.settled());
     }
-    QCOMPARE(sent, (QStringList{QStringLiteral("first"), QStringLiteral("first"), QStringLiteral("second")}));
+    QCOMPARE(sent, (QStringList{QStringLiteral("first"), QStringLiteral("second")}));
+  }
+
+  // Coming back to a file read it before its newest write was sent, so the viewer
+  // showed older text as saved and the next edit wrote over the newest.
+  void aFileReopenedWaitsForItsWrites() {
+    Held held;
+    QVERIFY(held.ready());
+    WorkspaceFiles files(&held.client);
+    files.setSaveDelay(0);
+    files.setTarget(QStringLiteral("env-a"), QStringLiteral("/w"));
+    const auto reads = [&] { return held.callsOf(QStringLiteral("projects.readFile")); };
+    const auto writes = [&] { return held.callsOf(QStringLiteral("projects.writeFile")); };
+    const auto answerRead = [&](const QString& contents) {
+      const FakeMc::Rpc read = reads().last();
+      held.mc.reply(read, QJsonObject{{QStringLiteral("relativePath"), read.payload.value(QLatin1String("relativePath"))}, {QStringLiteral("contents"), contents}});
+      return QTest::qWaitFor([&] { return files.fileStatus() == QLatin1String("ready"); });
+    };
+    const auto answerWrite = [&](qsizetype index) {
+      QVERIFY(QTest::qWaitFor([&] { return writes().size() == index + 1; }));
+      held.mc.reply(writes().at(index), QJsonObject{{QStringLiteral("relativePath"), QStringLiteral("a.txt")}});
+      QVERIFY(held.settled());
+    };
+
+    files.openFile(QStringLiteral("a.txt"));
+    QVERIFY(QTest::qWaitFor([&] { return reads().size() == 1; }));
+    QVERIFY(answerRead(QStringLiteral("disk")));
+    files.edit(QStringLiteral("first"));
+    QVERIFY(QTest::qWaitFor([&] { return writes().size() == 1; }));
+    files.edit(QStringLiteral("second"));
+    files.openFile(QStringLiteral("b.txt"));
+    QVERIFY(QTest::qWaitFor([&] { return reads().size() == 2; }));
+    QVERIFY(answerRead(QStringLiteral("b")));
+
+    files.openFile(QStringLiteral("a.txt"));
+    QVERIFY(held.settled());
+    QCOMPARE(files.fileStatus(), QStringLiteral("loading"));
+    QCOMPARE(reads().size(), 2);
+    answerWrite(0);
+    QCOMPARE(reads().size(), 2);
+    answerWrite(1);
+    QVERIFY(QTest::qWaitFor([&] { return reads().size() == 3; }));
+    QVERIFY(answerRead(QStringLiteral("second")));
+    QCOMPARE(files.text(), QStringLiteral("second"));
+    QVERIFY(!files.unsaved());
+  }
+
+  // The agent changing a file while its first read was out was not followed, so
+  // the viewer kept showing the text from before.
+  void aChangeWhileLoadingIsReadAfterwards() {
+    Held held;
+    QVERIFY(held.ready());
+    WorkspaceFiles files(&held.client);
+    files.setTarget(QStringLiteral("env-a"), QStringLiteral("/w"));
+    const auto reads = [&] { return held.callsOf(QStringLiteral("projects.readFile")); };
+    const auto answer = [&](const QString& contents) {
+      held.mc.reply(reads().last(), QJsonObject{{QStringLiteral("relativePath"), QStringLiteral("a.txt")}, {QStringLiteral("contents"), contents}});
+    };
+    files.openFile(QStringLiteral("a.txt"));
+    QVERIFY(QTest::qWaitFor([&] { return reads().size() == 1; }));
+    files.followOpenFile();
+    answer(QStringLiteral("before"));
+    QVERIFY(QTest::qWaitFor([&] { return reads().size() == 2; }));
+    answer(QStringLiteral("after"));
+    QVERIFY(QTest::qWaitFor([&] { return files.text() == QLatin1String("after"); }));
   }
 };
 
