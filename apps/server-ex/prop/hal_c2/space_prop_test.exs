@@ -612,6 +612,7 @@ defmodule HalC2.SpacePropTest do
   defp line(%{kind: "checklist", checked: true, text: text}), do: "- [x] " <> text
   defp line(%{kind: "checklist", text: text}), do: "- [ ] " <> text
   defp line(%{kind: "callout", text: text}), do: "> " <> text
+  defp line(%{kind: "image", text: text}), do: "[image: " <> text <> "]"
   defp line(%{text: text}), do: text
 
   defp live?(s, name) do

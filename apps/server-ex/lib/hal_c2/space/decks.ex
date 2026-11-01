@@ -91,6 +91,7 @@ defmodule HalC2.Space.Decks do
   defp line(_state, %{"kind" => "checklist", "checked" => true} = b), do: "- [x] " <> b["text"]
   defp line(_state, %{"kind" => "checklist"} = b), do: "- [ ] " <> b["text"]
   defp line(_state, %{"kind" => "callout"} = b), do: "> " <> b["text"]
+  defp line(_state, %{"kind" => "image"} = b), do: "[image: " <> b["text"] <> "]"
 
   defp line(state, %{"kind" => "subpage_link"} = b),
     do: (Pages.get(state, b["linkedPageId"]) || %{})["title"] || b["text"]

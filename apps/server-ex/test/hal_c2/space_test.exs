@@ -217,7 +217,7 @@ defmodule HalC2.SpaceTest do
                Enum.map(slides(space, deck["id"]), &{&1["title"], &1["body"]})
     end
 
-    test "an image on the page reaches its slide as its caption", %{space: space} do
+    test "an image on the page is marked on its slide, with its caption", %{space: space} do
       page = page!(space, "Roadmap")
       {:ok, image} = Space.add_image(space, upload(), "cat.png")
 
@@ -229,7 +229,7 @@ defmodule HalC2.SpaceTest do
         })
 
       {:ok, deck} = Space.create_deck_from_page(space, page)
-      assert [%{"title" => "Roadmap", "body" => "The cat"}] = slides(space, deck["id"])
+      assert [%{"title" => "Roadmap", "body" => "[image: The cat]"}] = slides(space, deck["id"])
     end
 
     test "an empty page makes one blank slide under its title", %{space: space} do

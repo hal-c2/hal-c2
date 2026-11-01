@@ -10,6 +10,7 @@ Feature: Slide decks in a Space
   with a title and a body of text. It lives on the Space's stream, so every client
   watching sees each edit as it lands. A deck made from a page is a copy: later edits
   of the page do not change it. Slide tables write a body's lines apart with " / ".
+  A slide's body is text, so an image on the page is marked there by its caption.
 
   Background:
     Given a connected environment
@@ -78,6 +79,18 @@ Feature: Slide decks in a Space
       Given a second client watching the Space "Research"
       When the user makes the deck "Pitch"
       Then the second client sees the deck "Pitch"
+
+  @mc
+  Rule: An image on the page a deck is made from
+
+    Scenario: A slide marks an image from its page
+      Given the page "Roadmap"
+      And the image "cat.png" in "Research"
+      And "Roadmap" shows the image "cat.png" already
+      When the user makes a deck from the page "Roadmap"
+      Then the deck "Roadmap" has the slides:
+        | title   | body             |
+        | Roadmap | [image: cat.png] |
 
   @mc @desktop @mobile @tui
   Rule: Slides
