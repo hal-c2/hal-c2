@@ -688,7 +688,8 @@ defmodule HalC2.CodeReviewPropTest do
   end
 
   # Posts the review of `key` as it is now, unless GitHub already took a review of its
-  # commit; GitHub answers at once unless the gate holds it.
+  # commit, which makes it published with nothing posted; GitHub answers at once unless
+  # the gate holds it.
   defp post(m, key) do
     r = m.reviews[key]
     kept = Enum.count(r.comments, &(not &1))
@@ -696,7 +697,7 @@ defmodule HalC2.CodeReviewPropTest do
 
     cond do
       {key, r.reviewed} in m.github ->
-        {put_review(m, key, %{r | status: :waiting, publish_error: true}), :error}
+        {put_review(m, key, %{r | status: :published, publish_error: false}), :ok}
 
       m.gate == :closed ->
         m = %{m | posts: m.posts ++ [sent]}
