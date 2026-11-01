@@ -253,15 +253,25 @@ void WorkspaceFiles::refreshFile() {
                    }
                    const QJsonObject file = result.toObject();
                    const QString contents = file.value(QLatin1String("contents")).toString();
+                   const QString notice = m_truncatedNotice;
+                   noteTruncation(file);
                    if (contents != m_text) {
                      // A task ticked against other text is not ticked: the user sees what is there now.
                      setText(contents);
-                     m_truncated = file.value(QLatin1String("truncated")).toBool();
                      emit fileChanged();
                    } else {
+                     // A file past the limit can change size with the same first 1 MB.
+                     if (notice != m_truncatedNotice) emit fileChanged();
                      for (const int task : ticks) applyTask(task);
                    }
                  });
+}
+
+void WorkspaceFiles::noteTruncation(const QJsonObject& file) {
+  m_truncated = file.value(QLatin1String("truncated")).toBool();
+  m_truncatedNotice = m_truncated ? QStringLiteral("Preview limited to the first 1 MB of a %1 byte file.")
+                                        .arg(QLocale(QLocale::English).toString(qint64(file.value(QLatin1String("byteLength")).toDouble())))
+                                  : QString();
 }
 
 void WorkspaceFiles::rereadIfDue() {
@@ -415,11 +425,7 @@ void WorkspaceFiles::readOpenFile() {
                    const QJsonObject file = result.toObject();
                    setText(file.value(QLatin1String("contents")).toString());
                    m_fileStatus = QStringLiteral("ready");
-                   m_truncated = file.value(QLatin1String("truncated")).toBool();
-                   if (m_truncated) {
-                     m_truncatedNotice = QStringLiteral("Preview limited to the first 1 MB of a %1 byte file.")
-                                             .arg(QLocale(QLocale::English).toString(qint64(file.value(QLatin1String("byteLength")).toDouble())));
-                   }
+                   noteTruncation(file);
                    emit fileChanged();
                    m_revealLine = m_openLine > 0 ? std::clamp(m_openLine, 1, std::max(1, m_lines.rowCount())) : 0;
                    emit revealRequested();

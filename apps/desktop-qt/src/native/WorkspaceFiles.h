@@ -305,6 +305,7 @@ private:
   // if the file is still what the user is looking at.
   void refreshFile();
   void rereadIfDue();
+  void noteTruncation(const QJsonObject& file);
   void applyTask(int index);
   void clearTrail();
   // What assets.createUrl serves the open file as.

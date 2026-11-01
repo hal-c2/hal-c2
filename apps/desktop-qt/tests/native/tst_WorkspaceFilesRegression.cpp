@@ -455,6 +455,41 @@ private slots:
     QVERIFY(QTest::qWaitFor([&] { return files.fileStatus() == QLatin1String("error"); }));
     QCOMPARE(reads().size(), 2);
   }
+
+  // The agent shrinks or grows a file past the preview limit while it is open.
+  void theLimitNoticeFollowsARereadFile() {
+    Held held;
+    QVERIFY(held.ready());
+    WorkspaceFiles files(&held.client);
+    files.setTarget(QStringLiteral("env-a"), QStringLiteral("/w"));
+    const auto reads = [&] { return held.callsOf(QStringLiteral("projects.readFile")); };
+    int asked = 0;
+    const auto answer = [&](const QString& contents, double byteLength, bool truncated) {
+      ++asked;
+      QVERIFY(QTest::qWaitFor([&] { return reads().size() == asked; }));
+      held.mc.reply(reads().last(), QJsonObject{{QStringLiteral("relativePath"), QStringLiteral("a.txt")},
+                                                {QStringLiteral("contents"), contents},
+                                                {QStringLiteral("byteLength"), byteLength},
+                                                {QStringLiteral("truncated"), truncated}});
+    };
+    files.openFile(QStringLiteral("a.txt"));
+    answer(QStringLiteral("first"), 2000000, true);
+    QVERIFY(QTest::qWaitFor([&] { return files.truncatedNotice().contains(QLatin1String("2,000,000")); }));
+
+    files.followOpenFile();
+    answer(QStringLiteral("first"), 3000000, true);
+    QVERIFY(QTest::qWaitFor([&] { return files.truncatedNotice().contains(QLatin1String("3,000,000")); }));
+
+    files.followOpenFile();
+    answer(QStringLiteral("all of it"), 9, false);
+    QVERIFY(QTest::qWaitFor([&] { return files.text() == QLatin1String("all of it"); }));
+    QVERIFY(files.truncatedNotice().isEmpty());
+
+    files.followOpenFile();
+    answer(QStringLiteral("grown"), 2000000, true);
+    QVERIFY(QTest::qWaitFor([&] { return files.text() == QLatin1String("grown"); }));
+    QVERIFY(files.truncatedNotice().contains(QLatin1String("2,000,000")));
+  }
 };
 
 QTEST_GUILESS_MAIN(WorkspaceFilesRegression)
