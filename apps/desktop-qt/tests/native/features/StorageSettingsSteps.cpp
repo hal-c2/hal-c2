@@ -166,7 +166,8 @@ const Steps steps([] {
     settings.insert(QStringLiteral("storageCleanup"), cleanup);
   });
   step(QStringLiteral("the user sets the temporary files folder to %1").arg(q), [](World& world, const Captures& c, const Table&) {
-    world.waitFor([&] { return storage(world).contains(QStringLiteral("temporaryFilesFolder")); },
+    // The page shows the field once the documents are read; a change before that has nothing to edit.
+    world.waitFor([&] { return storage(world).value(QStringLiteral("status")) == QLatin1String("ready") && storage(world).contains(QStringLiteral("temporaryFilesFolder")); },
                   [&] { return QStringLiteral("the folder to be offered; storage is %1").arg(show(storage(world))); });
     world.bridge().dispatch(QStringLiteral("storageSettings.temporaryFilesFolder"), QVariantMap{{QStringLiteral("folder"), c[0]}});
   });
