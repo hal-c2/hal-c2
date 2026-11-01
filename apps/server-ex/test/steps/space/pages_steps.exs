@@ -139,7 +139,8 @@ defmodule HalC2.Steps.Space.Pages do
 
   step "the trash of {string} holds {string}", %{args: [name, titles]} = context do
     state = Streams.state(Space.stream_id(space_id(context, name)))
-    assert Enum.map_join(Pages.trashed(state), ", ", & &1["title"]) == titles
+    trash = Pages.trashed(state) ++ HalC2.Space.Decks.trashed(state)
+    assert Enum.map_join(trash, ", ", & &1["title"]) == titles
     context
   end
 

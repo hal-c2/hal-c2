@@ -174,7 +174,7 @@ defmodule HalC2.Test.FakeAcp do
     """)
 
     File.chmod!(bin, 0o755)
-    fake = %{dir: dir, bin: bin, instance: instance}
+    fake = %{dir: dir, bin: bin, instance: instance, script: Keyword.get(opts, :script, @script)}
 
     settings(fn settings ->
       put_in(settings, [Access.key("providers", %{}), Access.key(instance, %{})], %{
@@ -186,6 +186,29 @@ defmodule HalC2.Test.FakeAcp do
     context
     |> Map.update(:fakes, %{instance => fake}, &Map.put(&1, instance, fake))
     |> Map.put(:provider, instance)
+  end
+
+  @doc """
+  Adds `id` as another enabled instance of the provider under test, with its own fake
+  and binary and the first's config. The scenario stays about the first instance.
+  """
+  def add_instance(context, id) do
+    first = fake(context)
+    config = JSON.decode!(File.read!(Path.join(first.dir, "config.json")))
+    added = install(context, id, config, script: first.script)
+    ExUnit.Callbacks.on_exit(fn -> HalC2.Acp.forget(id) end)
+
+    settings(fn settings ->
+      settings
+      |> Map.update!("providers", &Map.delete(&1, id))
+      |> put_in([Access.key("providerInstances", %{}), id], %{
+        "driver" => context.provider,
+        "enabled" => true,
+        "config" => %{"binaryPath" => added.fakes[id].bin}
+      })
+    end)
+
+    %{added | provider: context.provider}
   end
 
   @doc """
@@ -321,19 +344,27 @@ defmodule HalC2.Test.FakeAcp do
     Map.put(context, :thread, title)
   end
 
-  @doc "Sends a message in the scenario's thread; returns the context with the reply."
-  def send_message(context, text, title \\ nil) do
+  @doc """
+  Sends a message in the scenario's thread, with `fields` on the command; returns the
+  context with the reply.
+  """
+  def send_message(context, text, title \\ nil, fields \\ %{}) do
     thread_id = World.thread_id(context, title || context.thread)
 
     {:ok, _} =
-      HalC2.Orchestration.dispatch(%{
-        "type" => "message.dispatch",
-        "commandId" => "cmd-#{System.unique_integer([:positive])}",
-        "threadId" => thread_id,
-        "messageId" => "msg-#{System.unique_integer([:positive])}",
-        "text" => text,
-        "attachments" => []
-      })
+      HalC2.Orchestration.dispatch(
+        Map.merge(
+          %{
+            "type" => "message.dispatch",
+            "commandId" => "cmd-#{System.unique_integer([:positive])}",
+            "threadId" => thread_id,
+            "messageId" => "msg-#{System.unique_integer([:positive])}",
+            "text" => text,
+            "attachments" => []
+          },
+          fields
+        )
+      )
 
     context
   end

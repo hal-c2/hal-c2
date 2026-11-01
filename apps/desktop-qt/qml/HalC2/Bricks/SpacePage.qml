@@ -14,6 +14,10 @@ Rectangle {
 
     readonly property var current: Spaces.page
     readonly property bool trashed: current.trashed === true
+    readonly property var site: current.site ?? ({})
+    readonly property string siteUrl: site.url ?? ""
+    readonly property bool siteBehind: site.behind === true
+    readonly property bool siteLocalOnly: site.localOnly === true
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
     // The kind the composer adds, and the block it goes after ("" for the end).
@@ -245,6 +249,50 @@ Rectangle {
             }
 
             ShellMenuItem {
+                objectName: "spaceMakeDeck"
+                text: qsTr("Make a deck")
+                iconName: "monitor"
+                enabled: !page.trashed
+                onTriggered: Shell.dispatch("space.deck.createFromPage", { pageId: Spaces.pageId })
+            }
+
+            ShellMenuItem {
+                objectName: "spacePublish"
+                text: page.siteUrl === "" ? qsTr("Publish as a site") : qsTr("Publish again")
+                iconName: "globe"
+                visible: !page.trashed
+                height: visible ? implicitHeight : 0
+                onTriggered: Shell.dispatch("space.page.publish", { pageId: Spaces.pageId })
+            }
+
+            ShellMenuItem {
+                objectName: "spacePublishTailscale"
+                text: qsTr("Publish over Tailscale")
+                iconName: "globe"
+                visible: !page.trashed
+                height: visible ? implicitHeight : 0
+                onTriggered: Shell.dispatch("space.page.publish", { pageId: Spaces.pageId, tailscale: true })
+            }
+
+            ShellMenuItem {
+                objectName: "spaceCopySiteLink"
+                text: qsTr("Copy site link")
+                iconName: "copy"
+                visible: page.siteUrl !== ""
+                height: visible ? implicitHeight : 0
+                onTriggered: Shell.dispatch("space.page.copySiteLink", { pageId: Spaces.pageId })
+            }
+
+            ShellMenuItem {
+                objectName: "spaceUnpublish"
+                text: qsTr("Unpublish")
+                iconName: "circle-x"
+                visible: page.siteUrl !== ""
+                height: visible ? implicitHeight : 0
+                onTriggered: Shell.dispatch("space.page.unpublish", { pageId: Spaces.pageId })
+            }
+
+            ShellMenuItem {
                 text: qsTr("Move to the top of the Space")
                 iconName: "arrow-up"
                 visible: (page.current.parentPageId ?? "") !== "" && !page.trashed
@@ -268,6 +316,96 @@ Rectangle {
             text: qsTr("Made from the thread “%1”").arg(page.current.sourceThreadTitle ?? "")
             color: page.muted
             font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        // The page's site: where it is, whether it is behind the page, and the ways on and back.
+        Rectangle {
+            objectName: "spaceSiteBanner"
+            Layout.fillWidth: true
+            visible: page.siteUrl !== ""
+            implicitHeight: siteColumn.implicitHeight + 16
+            radius: Math.min(Theme.radius, 8)
+            color: Qt.alpha(page.foreground, 0.05)
+            border.color: Qt.alpha(page.foreground, 0.15)
+
+            ColumnLayout {
+                id: siteColumn
+
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 6
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    ShellIcon {
+                        name: "globe"
+                        size: 14
+                        color: page.foreground
+                    }
+
+                    Text {
+                        objectName: "spaceSiteStatus"
+                        Layout.fillWidth: true
+                        text: page.siteBehind
+                            ? qsTr("Published. This page has changes the site does not show until you publish again.")
+                            : qsTr("Published. The site shows this page as it is now.")
+                        color: page.foreground
+                        wrapMode: Text.Wrap
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                    }
+
+                    ShellButton {
+                        objectName: "spaceSiteCopy"
+                        text: qsTr("Copy link")
+                        iconName: "copy"
+                        onClicked: Shell.dispatch("space.page.copySiteLink", { pageId: Spaces.pageId })
+                    }
+
+                    ShellButton {
+                        objectName: "spaceSiteRepublish"
+                        text: qsTr("Publish again")
+                        onClicked: Shell.dispatch("space.page.publish", { pageId: Spaces.pageId })
+                    }
+
+                    ShellButton {
+                        objectName: "spaceSiteUnpublish"
+                        text: qsTr("Unpublish")
+                        onClicked: Shell.dispatch("space.page.unpublish", { pageId: Spaces.pageId })
+                    }
+                }
+
+                Text {
+                    objectName: "spaceSiteLink"
+                    Layout.fillWidth: true
+                    text: page.siteUrl
+                    color: page.muted
+                    elide: Text.ElideMiddle
+                    font.pixelSize: Math.round(12 * Theme.fontScale)
+                }
+
+                RowLayout {
+                    objectName: "spaceSiteLocalOnly"
+                    Layout.fillWidth: true
+                    visible: page.siteLocalOnly
+                    spacing: 8
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("Only this machine can open this link: the MC listens on loopback.")
+                        color: page.foreground
+                        wrapMode: Text.Wrap
+                        font.pixelSize: Math.round(12 * Theme.fontScale)
+                    }
+
+                    ShellButton {
+                        objectName: "spaceSiteTailscale"
+                        text: qsTr("Publish over Tailscale")
+                        onClicked: Shell.dispatch("space.page.publish", { pageId: Spaces.pageId, tailscale: true })
+                    }
+                }
+            }
         }
 
         Rectangle {

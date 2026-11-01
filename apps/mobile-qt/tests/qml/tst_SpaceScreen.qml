@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtTest
 import "../../qml/HalC2/Mobile"
 import HalC2.Shell
@@ -78,6 +79,67 @@ Item {
             compare(screen.view, "pages");
             screen.openPage("p1");
             compare(screen.view, "page");
+        }
+
+        function sheetIds(screen) {
+            return sheetOf(screen).rows.map(row => row.id);
+        }
+
+        function test_theOpenPageOffersPublishingAndAListedOneDoesNot() {
+            const screen = makeScreen();
+            screen.pageMenu("p1", "Roadmap", "");
+            verify(!sheetIds(screen).includes("publish"));
+            sheetOf(screen).close();
+            screen.pageMenu("p1", "Roadmap", "", {});
+            verify(sheetIds(screen).includes("publish"));
+            verify(sheetIds(screen).includes("publishTailscale"));
+            verify(!sheetIds(screen).includes("unpublish"));
+            verify(!sheetIds(screen).includes("copySite"));
+        }
+
+        function test_aPublishedPageShowsItsLinkAndTheWaysOnAndBack() {
+            const site = { url: "http://192.168.1.20:3773/sites/s1/token", localOnly: false, behind: false, publishedAt: "" };
+            const screen = makeScreen({ page: root.pageOf("p1", { site: site }) });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const notice = findChild(screen, "spaceSiteNotice");
+            verify(notice !== null);
+            verify(notice.visible);
+            compare(findChild(screen, "spaceSiteLink").text, site.url);
+            verify(!findChild(screen, "spaceSiteLocalOnly").visible);
+            verify(!findChild(screen, "spaceSiteTailscale").visible);
+            mouseClick(findChild(screen, "spaceSiteCopy"));
+            mouseClick(findChild(screen, "spaceSiteRepublish"));
+            mouseClick(findChild(screen, "spaceSiteUnpublish"));
+            compare(Shell.dispatchedActions.filter(entry => entry.action.startsWith("space.page.")).map(entry => entry.action),
+                    ["space.page.copySiteLink", "space.page.publish", "space.page.unpublish"]);
+            screen.pageMenu("p1", "Roadmap", "", site);
+            verify(sheetIds(screen).includes("copySite"));
+            verify(sheetIds(screen).includes("unpublish"));
+        }
+
+        function test_theSiteNoticeSaysWhenItIsBehindOrOnlyForThisMachine() {
+            const site = { url: "http://127.0.0.1:3773/sites/s1/token", localOnly: true, behind: false, publishedAt: "" };
+            const screen = makeScreen({ page: root.pageOf("p1", { site: site }) });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const upToDate = findChild(screen, "spaceSiteStatus").text;
+            verify(findChild(screen, "spaceSiteLocalOnly").visible);
+            const tailscale = findChild(screen, "spaceSiteTailscale");
+            // The row it wraps into is laid out on the next polish.
+            waitForItemPolished(tailscale.parent);
+            mouseClick(tailscale);
+            compare(dispatched("space.page.publish"), [{ pageId: "p1", tailscale: true }]);
+            Spaces.page = root.pageOf("p1", { site: Object.assign({}, site, { behind: true }) });
+            verify(findChild(screen, "spaceSiteStatus").text !== upToDate);
+        }
+
+        function test_anUnpublishedPageShowsNoSite() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            const notice = findChild(screen, "spaceSiteNotice");
+            verify(notice === null || !notice.visible);
         }
 
         function test_backTakesOneStepAtATimeThenLeaves() {
@@ -383,6 +445,264 @@ Item {
             screen.destroy();
             tryCompare(Shell, "dispatchCount", 3);
             compare(dispatched("space.block.update")[0].text, "Final");
+        }
+
+        function deckState(more) {
+            return Object.assign({
+                decks: [{ id: "d1", title: "Pitch" }],
+                slides: [{ id: "s1", title: "One", body: "" }, { id: "s2", title: "Two", body: "" }, { id: "s3", title: "Three", body: "" }],
+                deck: { id: "d1", title: "Pitch", trashed: false }
+            }, more ?? {});
+        }
+
+        function test_aNewDeckOpensWhenItArrives() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.askNewDeck();
+            dialogOf(screen).then("Pitch");
+            compare(dispatched("space.deck.create")[0].title, "Pitch");
+            compare(screen.view, "pages");
+            Spaces.deckId = "d9";
+            compare(screen.view, "deck");
+            compare(screen.openedDeckId, "d9");
+        }
+
+        function test_aDeckMadeFromAPageOpensWhenItArrives() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.pageMenu("p1", "Roadmap", "");
+            sheetOf(screen).choose("deck");
+            compare(dispatched("space.deck.createFromPage")[0].pageId, "p1");
+            Spaces.deckId = "d9";
+            compare(screen.view, "deck");
+        }
+
+        function test_aRefusedDeckLeavesTheUserWhereTheyWere() {
+            const screen = makeScreen();
+            screen.openSpace("s1");
+            screen.askNewDeck();
+            dialogOf(screen).then("Pitch");
+            publishSpace({ error: "No." });
+            Spaces.deckId = "d9";
+            compare(screen.view, "pages");
+        }
+
+        function test_backLeavesTheDeckForTheListOfPagesAndDecks() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            compare(dispatched("space.selectDeck")[0].deckId, "d1");
+            compare(screen.view, "deck");
+            verify(screen.stepBack());
+            compare(screen.view, "pages");
+        }
+
+        function test_aDeckThatGoesAwayLeadsBackToTheList() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            Spaces.deckId = "";
+            compare(screen.view, "pages");
+        }
+
+        function test_backLeavesThePresenterBeforeTheDeck() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            Spaces.presenting = true;
+            verify(screen.stepBack());
+            compare(dispatched("space.deck.leave").length, 1);
+            compare(screen.view, "deck");
+            Spaces.presenting = false;
+            verify(screen.stepBack());
+            compare(screen.view, "pages");
+        }
+
+        function test_aTapOnTheLeftThirdOfThePresenterGoesBack() {
+            const screen = makeScreen(deckState({ presenting: true, slide: { id: "s2", title: "Two", body: "" }, slideNumber: 2, slideCount: 3 }));
+            const tap = findChild(Overlay.overlay ?? screen, "spacePresenterTap") ?? findChild(screen, "spacePresenterTap");
+            tryVerify(() => tap.visible && tap.width > 0);
+            mouseClick(tap, tap.width / 6, tap.height / 2);
+            compare(dispatched("space.deck.step")[0].by, -1);
+            mouseClick(tap, tap.width * 5 / 6, tap.height / 2);
+            compare(dispatched("space.deck.step")[1].by, 1);
+        }
+
+        function test_aDeckScreenMadeAgainIsBackOnItsStep() {
+            const first = makeScreen(deckState());
+            first.openSpace("s1");
+            first.openDeck("d1");
+            const step = first.step;
+            compare(makeScreen(deckState(), { resumeStep: step }).view, "deck");
+            compare(makeScreen(deckState({ deck: { id: "d2", title: "Other", trashed: false } }), { resumeStep: step }).view, "pages");
+        }
+
+        function test_aSlideMovesToTheSlotOneRowAway_data() {
+            return [
+                { tag: "up to the top", row: 1, choice: "up", after: "" },
+                { tag: "up", row: 2, choice: "up", after: "s1" },
+                { tag: "down", row: 0, choice: "down", after: "s2" }
+            ];
+        }
+
+        function test_aSlideMovesToTheSlotOneRowAway(data) {
+            const screen = makeScreen(deckState());
+            const ids = ["s1", "s2", "s3"];
+            screen.slideMenu(data.row, ids[data.row]);
+            sheetOf(screen).choose(data.choice);
+            const move = dispatched("space.slide.move")[0];
+            compare(move.slideId, ids[data.row]);
+            compare(move.afterSlideId, data.after);
+        }
+
+        function test_aSlideCannotMovePastTheEnds() {
+            const screen = makeScreen(deckState());
+            const enabled = id => sheetOf(screen).rows.find(row => row.id === id).enabled;
+            screen.slideMenu(0, "s1");
+            compare(enabled("up"), false);
+            screen.slideMenu(2, "s3");
+            compare(enabled("down"), false);
+        }
+
+        function test_aDeckInTheTrashIsOnlyRead() {
+            const screen = makeScreen(deckState({ decks: [], deckTrash: [{ id: "d1", title: "Pitch", trashedAt: "2026-10-01T10:00:00Z" }], deck: { id: "d1", title: "Pitch", trashed: true } }));
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, "spaceSlideTitle:0") !== null);
+            verify(findChild(screen, "spaceDeckTrashedNotice").visible);
+            verify(!findChild(screen, "spaceAddSlide").visible);
+            verify(!findChild(screen, "spaceDeckPresent").visible);
+            verify(findChild(screen, "spaceSlideTitle:0").readOnly);
+            verify(!findChild(screen, "spaceSlideMenu:0").visible);
+            screen.deckTrashMenu("d1");
+            sheetOf(screen).choose("restore");
+            compare(dispatched("space.deck.restore")[0].deckId, "d1");
+        }
+
+        function test_aSlideBeingWrittenSurvivesPickingADeckInTheTrash_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", write: { title: "First" } },
+                { tag: "body", field: "spaceSlideBody:0", write: { body: "First" } }
+            ];
+        }
+
+        function test_aSlideBeingWrittenSurvivesPickingADeckInTheTrash(data) {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, data.field) !== null);
+            const editor = findChild(screen, data.field);
+            editor.forceActiveFocus();
+            editor.text = "First";
+            Spaces.load(deckState({
+                spaceId: "s1",
+                spaceName: "Research",
+                decks: [],
+                deckTrash: [{ id: "d9", title: "Old", trashedAt: "2026-10-01T10:00:00Z" }],
+                deck: { id: "d9", title: "Old", trashed: true },
+                slides: [{ id: "s9", title: "Gone", body: "" }]
+            }));
+            tryVerify(() => dispatched("space.slide.update").length === 1);
+            compare(dispatched("space.slide.update")[0], Object.assign({ spaceId: "s1", slideId: "s1" }, data.write));
+        }
+
+        function test_aSlideBeingWrittenIsNotLostWithTheScreen() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, "spaceSlideBody:0") !== null);
+            const editor = findChild(screen, "spaceSlideBody:0");
+            editor.forceActiveFocus();
+            editor.text = "First";
+            screen.destroy();
+            tryVerify(() => dispatched("space.slide.update").length > 0);
+            waitForRendering(root);
+            compare(dispatched("space.slide.update"), [{ spaceId: "s1", slideId: "s1", body: "First" }]);
+        }
+
+        function test_leavingASlideKeepsAnEditFromAnotherClient_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", role: "title" },
+                { tag: "body", field: "spaceSlideBody:0", role: "body" }
+            ];
+        }
+
+        function test_leavingASlideKeepsAnEditFromAnotherClient(data) {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, data.field) !== null);
+            const editor = findChild(screen, data.field);
+            editor.forceActiveFocus();
+            Spaces.slides.setProperty(0, data.role, "Theirs");
+            editor.focus = false;
+            compare(dispatched("space.slide.update"), []);
+            compare(editor.text, "Theirs");
+        }
+
+        function test_writingOverAnEditFromAnotherClientIsTheUsersToMake() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, "spaceSlideTitle:0") !== null);
+            const editor = findChild(screen, "spaceSlideTitle:0");
+            editor.forceActiveFocus();
+            editor.text = "Mine";
+            Spaces.slides.setProperty(0, "title", "Theirs");
+            editor.focus = false;
+            compare(dispatched("space.slide.update"), [{ spaceId: "s1", slideId: "s1", title: "Mine" }]);
+        }
+
+        function test_leavingADeckInTheTrashWritesNothing() {
+            const screen = makeScreen(deckState({ decks: [], deckTrash: [{ id: "d1", title: "Pitch", trashedAt: "2026-10-01T10:00:00Z" }], deck: { id: "d1", title: "Pitch", trashed: true } }));
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, "spaceSlideTitle:0") !== null);
+            const title = findChild(screen, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.focus = false;
+            screen.destroy();
+            waitForRendering(root);
+            compare(dispatched("space.slide.update"), []);
+        }
+
+        function test_aDeckInTheListOffersPresentingAndTheTrash() {
+            const screen = makeScreen(deckState());
+            screen.deckMenu("d1", "Pitch");
+            sheetOf(screen).choose("present");
+            compare(dispatched("space.deck.present")[0].deckId, "d1");
+            screen.deckMenu("d1", "Pitch");
+            sheetOf(screen).choose("trash");
+            compare(dispatched("space.deck.trash")[0].deckId, "d1");
+        }
+
+        function test_aRenameAnsweredAfterTheSpaceChangedGoesToItsOwnSpace() {
+            const screen = makeScreen(deckState());
+            screen.deckMenu("d1", "Pitch");
+            sheetOf(screen).choose("rename");
+            Spaces.spaceId = "s2";
+            dialogOf(screen).then("Renamed");
+            const rename = dispatched("space.deck.rename")[0];
+            compare(rename.spaceId, "s1");
+            compare(rename.deckId, "d1");
+            compare(rename.title, "Renamed");
+        }
+
+        function test_whatWasWrittenOnASlideGoesToTheMcWhenTheEditorLosesFocus() {
+            const screen = makeScreen(deckState());
+            screen.openSpace("s1");
+            screen.openDeck("d1");
+            tryVerify(() => findChild(screen, "spaceSlideBody:1") !== null);
+            const editor = findChild(screen, "spaceSlideBody:1");
+            editor.forceActiveFocus();
+            verify(findChild(screen, "spaceDeckDone").visible);
+            editor.text = "More to say";
+            screen.stepBack();
+            const update = dispatched("space.slide.update")[0];
+            compare(update.spaceId, "s1");
+            compare(update.slideId, "s2");
+            compare(update.body, "More to say");
+            verify(!("title" in update));
         }
     }
 }

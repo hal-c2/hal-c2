@@ -1,4 +1,5 @@
 #include "FakeFiles.h"
+#include "MediaFixtures.h"
 
 #include <QBuffer>
 #include <QDateTime>
@@ -27,6 +28,10 @@ bool signFile(FakeMc& mc, const FakeMc::Rpc& rpc) {
   if (tag != QLatin1String("workspace-file") && tag != QLatin1String("draft-workspace-file") && tag != QLatin1String("media-file")) return false;
   FakeFiles& fake = fakeFiles(mc);
   const QString path = resource.value(QLatin1String("path")).toString();
+  if (!fake.unsignable.isEmpty()) {
+    mc.refuse(rpc, fake.unsignable);
+    return true;
+  }
   if (!fake.files.contains(path) && !fake.outside.contains(path)) {
     mc.refuse(rpc, QStringLiteral("Workspace file was not found."));
     return true;
@@ -71,7 +76,8 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     } else {
       fake.downloaded.append(path);
       const bool image = QRegularExpression(QStringLiteral("\\.(png|jpe?g|gif|webp|bmp)$")).match(path).hasMatch();
-      const QByteArray body = image ? png() : fake.files.value(path, fake.outside.value(path)).toUtf8();
+      const QByteArray media = mediaFixture(path);
+      const QByteArray body = !media.isEmpty() ? media : image ? png() : fake.files.value(path, fake.outside.value(path)).toUtf8();
       socket->write("HTTP/1.1 200 OK\r\nContent-Type: " + QByteArray(image ? "image/png" : "application/octet-stream") +
                     "\r\nConnection: close\r\nContent-Length: " + QByteArray::number(body.size()) + "\r\n\r\n" + body);
     }
@@ -82,6 +88,14 @@ const FakeMc::Extension extension([](FakeMc& mc) {
     const QString folder = rpc.payload.value(QLatin1String("directoryPath")).toString();
     if (fake.cannotList || fake.failOnce.remove(folder)) {
       mc.refuse(rpc, QStringLiteral("Could not list %1.").arg(folder.isEmpty() ? QStringLiteral("the project") : folder));
+      return;
+    }
+    if (fake.goneFolders.contains(folder)) {
+      mc.refuse(rpc, QStringLiteral("'%1' does not exist.").arg(folder), QJsonObject{{QStringLiteral("failure"), QStringLiteral("directory_not_found")}});
+      return;
+    }
+    if (fake.emptyFolders.contains(folder) || fake.partialFolders.contains(folder)) {
+      mc.reply(rpc, QJsonObject{{QStringLiteral("entries"), QJsonArray()}, {QStringLiteral("truncated"), fake.partialFolders.contains(folder)}});
       return;
     }
     QSet<QString> children;
@@ -164,10 +178,19 @@ const FakeMc::Extension extension([](FakeMc& mc) {
       mc.refuse(rpc, QStringLiteral("Could not read %1.").arg(path));
       return;
     }
+    if (fake.unreadable.contains(path)) {
+      mc.refuse(rpc, QStringLiteral("'%1' is not a text file.").arg(path), QJsonObject{{QStringLiteral("failure"), fake.unreadable.value(path)}});
+      return;
+    }
     const QString contents = fake.files.contains(path) ? fake.files.value(path) : fake.outside.value(path);
-    mc.reply(rpc, QJsonObject{{QStringLiteral("contents"), contents},
-                                {QStringLiteral("byteLength"), double(fake.truncated.value(path, contents.toUtf8().size()))},
-                                {QStringLiteral("truncated"), fake.truncated.contains(path)}});
+    const QJsonObject answer{{QStringLiteral("contents"), contents},
+                             {QStringLiteral("byteLength"), double(fake.truncated.value(path, contents.toUtf8().size()))},
+                             {QStringLiteral("truncated"), fake.truncated.contains(path)}};
+    if (mc.holding(QStringLiteral("read"))) {
+      mc.defer([&mc, rpc, answer] { mc.reply(rpc, answer); });
+    } else {
+      mc.reply(rpc, answer);
+    }
   });
   // The folders in the typed path's parent whose names start with its last
   // segment; a path ending in "/" lists the whole folder.

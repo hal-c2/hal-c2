@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EntityStreamFrame } from "@hal-c2/client-runtime/state/stream-entities";
 
+import type { AskSpec } from "./askState.ts";
 import type { PickRequest } from "./composerState.ts";
 import {
   createSpaceController,
@@ -65,13 +66,13 @@ const events = (
 const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 /** A controller on a client whose streams and replies the test drives by hand. */
-function setup() {
+function setup(origin?: string) {
   const streams = new Map<string, Array<(frame: EntityStreamFrame) => void>>();
   const replies = new Map<string, Array<(value: unknown) => void>>();
   const calls: Array<{ method: string; payload: unknown }> = [];
   const statuses: string[] = [];
   const menus: PickRequest[] = [];
-  const asks: Array<(answer: string) => void> = [];
+  const asks: AskSpec[] = [];
   const uploads = { fails: false, sent: 0 };
   let state: TuiSpaceState | null = null;
   const controller = createSpaceController({
@@ -104,9 +105,10 @@ function setup() {
       state = next;
     },
     status: (text) => statuses.push(text),
-    ask: (spec) => asks.push(spec.onSubmit),
+    ask: (spec) => asks.push(spec),
     menu: (spec) => menus.push(spec),
     threads: () => [{ id: "t1", title: "Work" }],
+    ...(origin ? { origin } : {}),
   });
   /** Send a frame on `stream`; `subscription` picks an older follow of the same stream. */
   const send = (stream: string, frame: EntityStreamFrame, subscription = -1) =>
@@ -135,8 +137,11 @@ function setup() {
 }
 
 /** Open the Spaces, and the Space s1 ("Research") with its pages. */
-function inResearch(rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>) {
-  const t = setup();
+function inResearch(
+  rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>,
+  origin?: string,
+) {
+  const t = setup(origin);
   t.controller.dispatch("space.open", {});
   t.send("spaces", snapshot(1, [space("s1", "Research")]));
   t.select("space:s1");
@@ -200,7 +205,122 @@ describe("the Space's stream", () => {
   });
 });
 
+const deck = (id: string, title: string, fields: Record<string, unknown> = {}) =>
+  [
+    "deck",
+    id,
+    { id, spaceId: "s1", title, trashedAt: null, createdAt: at, updatedAt: at, ...fields },
+  ] as const;
+const slide = (id: string, title: string, order: string, body = "") =>
+  ["slide", id, { id, deckId: "d1", title, body, order, createdAt: at, updatedAt: at }] as const;
+
+describe("the presenter", () => {
+  const presenting = (rows: ReadonlyArray<readonly [string, string, Record<string, unknown>]>) => {
+    const t = inResearch([deck("d1", "Pitch"), ...rows]);
+    t.select("deck:d1");
+    t.controller.dispatch("space.present", {});
+    return t;
+  };
+
+  test("a slide longer than the pane scrolls, and the next slide starts at its top", () => {
+    const body = Array.from({ length: 60 }, (_, line) => `line ${line}`).join("\n");
+    const t = presenting([slide("a", "Intro", "a", body), slide("b", "Plan", "b")]);
+    expect(t.view().rows[0]!.text).toBe("Intro");
+    t.controller.dispatch("space.pageDown", {});
+    expect(t.view().title).toBe("present · Pitch · 1 / 2");
+    expect(t.view().rows[0]!.text).not.toBe("Intro");
+    t.controller.dispatch("space.next", {});
+    expect(t.view().title).toBe("present · Pitch · 2 / 2");
+    expect(t.view().rows[0]!.text).toBe("Plan");
+  });
+
+  test("keys that would edit do nothing while a slide is on show", () => {
+    const t = presenting([slide("a", "Intro", "a")]);
+    const before = t.calls.length;
+    for (const action of ["space.delete", "space.new", "space.edit", "space.restore"]) {
+      expect(t.controller.dispatch(action, {})).toBe(true);
+    }
+    expect(t.calls.length).toBe(before);
+    expect(t.view().view).toBe("present");
+  });
+
+  test("Spaces close from the presenter", () => {
+    const t = presenting([slide("a", "Intro", "a")]);
+    t.controller.dispatch("space.close", {});
+    expect(t.view().open).toBe(false);
+  });
+
+  test("a deck deleted for good stops the presenter and leaves the deck", () => {
+    const t = presenting([slide("a", "Intro", "a")]);
+    t.send("space:s1", events([11, "deck", "d1", { d: true }], [12, "slide", "a", { d: true }]));
+    expect(t.view().view).toBe("pages");
+  });
+});
+
+describe("editing a slide on one line", () => {
+  /** Opens the slide's body field, its title left alone, and gives what the field shows. */
+  const bodyField = (body: string) => {
+    const t = inResearch([deck("d1", "Pitch"), slide("a", "Intro", "a", body)]);
+    t.select("deck:d1");
+    t.controller.dispatch("space.activate", {});
+    t.select("slide:a");
+    t.controller.dispatch("space.edit", {});
+    t.asks.at(-1)!.onSubmit("Intro");
+    const field = t.asks.at(-1)!;
+    expect(field.label).toContain("slide body");
+    const sent = () => t.calls.filter((call) => call.method === "space.slide.update");
+    return { value: field.value!, submit: field.onSubmit, sent };
+  };
+
+  // Each is ambiguous to a field that writes a line break as " / ".
+  const bodies = [
+    "Either / or",
+    "ends with /\nthen more",
+    "first\n/ starts with",
+    "/ /",
+    "C:\\new\\table",
+    "two\n\nparagraphs",
+    "trailing line\n",
+    "\\",
+    "\\\n",
+  ];
+
+  test.each(bodies)("%j comes back as written after an edit", (body) => {
+    const field = bodyField(body);
+    expect(field.value).not.toContain("\n");
+    field.submit(`${field.value}!`);
+    expect(field.sent()).toEqual([
+      {
+        method: "space.slide.update",
+        payload: { spaceId: "s1", slideId: "a", body: `${body}!` },
+      },
+    ]);
+  });
+
+  test.each([...bodies, "  outer spaces  "])("%j left as it was sends nothing", (body) => {
+    const field = bodyField(body);
+    field.submit(field.value.trim());
+    expect(field.sent()).toEqual([]);
+  });
+
+  test("\\n typed in the field starts a new line, and any other backslash stays", () => {
+    const field = bodyField("");
+    field.submit("Up\\nDown \\o/");
+    expect(field.sent().at(-1)?.payload).toMatchObject({ body: "Up\nDown \\o/" });
+  });
+});
+
 describe("replies that come after the user moved on", () => {
+  test("a new deck does not open once the user left the Space", async () => {
+    const t = inResearch([page("p1", "Roadmap")]);
+    t.select("page:p1");
+    t.controller.dispatch("space.deckFromPage", {});
+    t.controller.dispatch("space.back", {});
+    t.reply("space.deck.createFromPage", { deck: deck("d1", "Roadmap")[2] });
+    await t.controller.settled();
+    expect(t.view().view).toBe("spaces");
+  });
+
   test("a page written from a thread does not open once the user left the Space", async () => {
     const t = inResearch([]);
     t.controller.dispatch("space.fromThread", {});
@@ -221,6 +341,35 @@ describe("replies that come after the user moved on", () => {
     t.reply("space.page.createFromThread", { page: page("p5", "Release plan")[2] });
     await t.controller.settled();
     expect(t.view().title).toBe("page · Release plan");
+  });
+});
+
+describe("publishing a page as a site", () => {
+  const publishPayload = (origin: string, action = "space.publish") => {
+    const t = inResearch([page("p1", "Roadmap")], origin);
+    t.select("page:p1");
+    t.controller.dispatch(action, {});
+    return t.calls.find((call) => call.method === "space.page.publish")?.payload;
+  };
+
+  test("a client that reached the MC on the LAN makes the link on that address", () => {
+    expect(publishPayload("http://192.168.1.20:3773")).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      baseUrl: "http://192.168.1.20:3773",
+    });
+  });
+
+  test("a client on loopback leaves the address to the MC", () => {
+    expect(publishPayload("http://127.0.0.1:3773")).toEqual({ spaceId: "s1", pageId: "p1" });
+  });
+
+  test("over Tailscale the MC names the address, wherever the client reached it", () => {
+    expect(publishPayload("http://192.168.1.20:3773", "space.publishTailscale")).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      tailscale: true,
+    });
   });
 });
 
@@ -284,7 +433,7 @@ describe("images", () => {
     t.controller.dispatch("space.images", {});
     t.controller.dispatch("space.import", {});
     t.uploads.fails = true;
-    t.asks.at(-1)!("/home/me/cat.png");
+    t.asks.at(-1)!.onSubmit("/home/me/cat.png");
     await Bun.sleep(0);
     t.reply("attachments.createUploadUrl", { attachmentId: "a1", relativeUrl: "/up/a1" });
     await t.controller.settled();

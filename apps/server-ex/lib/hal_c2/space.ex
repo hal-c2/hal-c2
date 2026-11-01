@@ -1,12 +1,14 @@
 defmodule HalC2.Space do
   @moduledoc """
-  Spaces: Pages that people and agents write together (`features/space/`).
+  Spaces: Pages that people and agents write together, and slide decks
+  (`features/space/`).
 
   The `spaces` stream indexes the Spaces, one `space` entity each, and each Space's
-  own `space:<id>` stream holds its `page`, `block`, `comment` and `image` entities.
-  Every change is a `HalC2.Streams.transact/3` on one of them, so the event log is the
-  only record and clients follow both streams through the stream shape. The
-  decisions live in `HalC2.Space.Pages`, `HalC2.Space.Blocks` and `HalC2.Space.Images`.
+  own `space:<id>` stream holds its `page`, `block`, `comment`, `image`, `site`, `deck` and
+  `slide` entities. Every change is a `HalC2.Streams.transact/3` on one of them, so the
+  event log is the only record and clients follow both streams through the stream shape.
+  The decisions live in `HalC2.Space.Pages`, `HalC2.Space.Blocks`, `HalC2.Space.Images`,
+  `HalC2.Space.Sites` and `HalC2.Space.Decks`.
 
   An image's bytes are the one thing not in the log: they are a file
   (`HalC2.Space.ImageFile`), written before the entity that names it and removed after
@@ -19,7 +21,7 @@ defmodule HalC2.Space do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState, Streams}
-  alias HalC2.Space.{Blocks, ImageFile, ImageGeneration, Images, Markdown, Pages}
+  alias HalC2.Space.{Blocks, Decks, ImageFile, ImageGeneration, Images, Markdown, Pages, Sites}
 
   @index "spaces"
 
@@ -93,11 +95,11 @@ defmodule HalC2.Space do
     end
   end
 
-  @doc "Deletes a Space with no pages or images, in the trash or out of it."
+  @doc "Deletes a Space with no pages, decks or images, in the trash or out of it."
   def delete(id) do
-    # Decided in the Space's stream, so no page can be made in it meanwhile.
+    # Decided in the Space's stream, so nothing can be made in it meanwhile.
     Streams.transact(stream_id(id), :space, fn state ->
-      if StreamState.get(state, "page") == %{} and StreamState.get(state, "image") == %{} do
+      if Enum.all?(~w(page deck image), &(StreamState.get(state, &1) == %{})) do
         reply =
           Streams.transact(@index, :space, fn index ->
             if StreamState.get(index, "space")[id],
@@ -137,11 +139,20 @@ defmodule HalC2.Space do
   def transact(space_id, fun) when is_binary(space_id) do
     Streams.transact(stream_id(space_id), :space, fn state ->
       # The index is asked from inside the Space's stream: a delete decides there too.
-      if Streams.get(@index, "space", space_id), do: fun.(state), else: {[], no_space(space_id)}
+      if Streams.get(@index, "space", space_id),
+        do: fun.(state) |> and_sites(state),
+        else: {[], no_space(space_id)}
     end)
   end
 
   def transact(_space_id, _fun), do: {:error, :invalid, "spaceId is required."}
+
+  # Whatever a command does to pages, their sites follow in the same step.
+  defp and_sites({changes, reply}, state) do
+    if Sites.affected?(state, changes),
+      do: {changes ++ Sites.follow(state, with_changes(state, changes), changes), reply},
+      else: {changes, reply}
+  end
 
   @doc "The Space's stream state, for reads."
   def state(space_id) do
@@ -181,6 +192,27 @@ defmodule HalC2.Space do
 
   def resolve_comment(space_id, id), do: transact(space_id, &Blocks.resolve(&1, id))
   def reopen_comment(space_id, id), do: transact(space_id, &Blocks.reopen(&1, id))
+
+  def create_deck(space_id, title), do: transact(space_id, &Decks.create(&1, space_id, title))
+
+  def create_deck_from_page(space_id, page_id),
+    do: transact(space_id, &Decks.create_from_page(&1, space_id, page_id))
+
+  def rename_deck(space_id, id, title), do: transact(space_id, &Decks.rename(&1, id, title))
+  def trash_deck(space_id, id), do: transact(space_id, &Decks.trash(&1, id))
+  def restore_deck(space_id, id), do: transact(space_id, &Decks.restore(&1, id))
+  def delete_deck(space_id, id), do: transact(space_id, &Decks.delete(&1, id))
+
+  def insert_slide(space_id, deck_id, spec, after_id \\ :last),
+    do: transact(space_id, &Decks.insert_slide(&1, deck_id, spec, after_id))
+
+  def update_slide(space_id, id, fields),
+    do: transact(space_id, &Decks.update_slide(&1, id, fields))
+
+  def move_slide(space_id, id, after_id),
+    do: transact(space_id, &Decks.move_slide(&1, id, after_id))
+
+  def delete_slide(space_id, id), do: transact(space_id, &Decks.delete_slide(&1, id))
 
   @doc "A page with its blocks and comments, trashed or not."
   def page(space_id, page_id) do
@@ -276,6 +308,29 @@ defmodule HalC2.Space do
   end
 
   # --- Markdown and threads -----------------------------------------------------------
+
+  def publish_page(space_id, page_id, where \\ %{}) do
+    # Refused first: reaching for the address can publish the MC over Tailscale.
+    with {:ok, _} <- transact(space_id, &{[], Pages.fetch_live(&1, page_id)}),
+         {:ok, reached} <- reached(where) do
+      transact(space_id, &Sites.publish(&1, page_id, reached, move: where["tailscale"] == true))
+    end
+  end
+
+  def unpublish_page(space_id, page_id), do: transact(space_id, &Sites.unpublish(&1, page_id))
+
+  @doc """
+  The site at this link: the Space's stream is only touched for a Space that exists, as
+  anyone can ask, and only this one entity is read from it.
+  """
+  def site(space_id, token) do
+    if Streams.get(@index, "space", space_id), do: Streams.get(stream_id(space_id), "site", token)
+  end
+
+  defp reached(where) do
+    with {:error, {:tailscale, message}} <- HalC2.Web.address(where),
+         do: {:error, :unavailable, message}
+  end
 
   def export_markdown(space_id, page_id) do
     with {:ok, state} <- state(space_id),
