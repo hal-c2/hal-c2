@@ -246,7 +246,8 @@ defmodule HalC2.OrchestrationPropTest do
         do: [],
         else: [
           {2, {:call, __MODULE__, :crash, [oneof(running)]}},
-          {2, {:call, __MODULE__, :restart, []}}
+          {2, {:call, __MODULE__, :restart, []}},
+          {1, {:call, __MODULE__, :restart_stuck, [oneof(running)]}}
         ]
 
     # A limit stop is worth choosing to resume, and an armed resume worth reaching.
@@ -271,6 +272,9 @@ defmodule HalC2.OrchestrationPropTest do
 
   def precondition(%{threads: threads}, {:call, _, :restart, []}),
     do: Enum.any?(threads, fn {_, t} -> running(t) != nil end)
+
+  def precondition(%{threads: threads}, {:call, _, :restart_stuck, [tid]}),
+    do: threads[tid] != nil and running(threads[tid]) != nil
 
   def precondition(%{threads: threads}, {:call, _, :promote, [tid, msg, :archived]}),
     do:
@@ -396,6 +400,10 @@ defmodule HalC2.OrchestrationPropTest do
 
     %{state | threads: threads}
   end
+
+  # A runtime killed by the stop reads the same as one that stopped.
+  def next_state(state, result, {:call, module, :restart_stuck, [_tid]}),
+    do: next_state(state, result, {:call, module, :restart, []})
 
   # The session goes and the next message starts it again; no run changes.
   def next_state(state, _result, {:call, _, :release, [_tid]}), do: state
@@ -1200,6 +1208,27 @@ defmodule HalC2.OrchestrationPropTest do
     HalC2.Orchestration.Recovery.run()
     HalC2.Orchestration.Recovery.continue()
     reply({:ok, %{}}, [])
+  end
+
+  # The MC stops with one runtime stuck past its shutdown limit, which kills it.
+  def restart_stuck(tid) do
+    HalC2.Orchestration.Recovery.leaving(true)
+
+    case Registry.lookup(HalC2.Codex.Registry, tid) do
+      [{pid, _}] ->
+        gone = Process.monitor(pid)
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^gone, :process, _, _} -> :ok
+        end
+
+      [] ->
+        :ok
+    end
+
+    _ = :sys.get_state(HalC2.Orchestration.TurnWatch)
+    restart()
   end
 
   defp thread_command(command), do: reply(Orchestration.dispatch(command), [])

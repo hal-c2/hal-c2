@@ -176,7 +176,7 @@ Feature: Queueing, steering and restarting
   Scenario: A steer an MC restart cut off reads as sent
     Given "t1" has a running turn on "codex"
     And the provider is holding the steer "Also" sent to "t1"
-    When the MC restarts
+    When the MC restarts while its runtime for "t1" is stuck on the provider
     Then sending "Also" again now succeeds
 
   @mc
