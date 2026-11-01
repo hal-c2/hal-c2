@@ -302,6 +302,16 @@ Item {
             compare(root.dispatched("space.images.show"), [{ shown: true }, { shown: false }]);
         }
 
+        function test_cards_stay_level_with_or_without_a_prompt() {
+            const view = root.research({ images: [root.imageRow("i1", "cat.png", { prompt: "a cat" }), root.imageRow("i2", "dog.png")] });
+            mouseClick(findChild(view, "spaceImages"));
+            const browser = findChild(view, "spaceImagesBrowser");
+            tryVerify(() => findChild(browser, "spaceImage:dog.png") !== null);
+            waitForItemPolished(findChild(browser, "spaceImageGrid").contentItem);
+            const nameOf = card => findChild(findChild(browser, card), "spaceImageName");
+            tryCompare(nameOf("spaceImage:dog.png"), "y", nameOf("spaceImage:cat.png").y);
+        }
+
         function test_the_generate_dialog_offers_only_who_can_generate() {
             Shell.state = Object.assign({}, Shell.state, { space: { imageProviders: { providers: [{ instanceId: "codex", status: "ready" }, { instanceId: "claudeAgent", status: "unsupported" }], selection: { instanceId: "codex", model: "gpt-5" } } } });
             const view = root.research({});

@@ -198,6 +198,11 @@ Rectangle {
                         color: browser.muted
                         font.pixelSize: Math.round(12 * Theme.fontScale)
                     }
+
+                    // Holds a card's top, with or without a prompt, level with the others.
+                    Item {
+                        Layout.fillHeight: true
+                    }
                 }
             }
         }
