@@ -28,13 +28,13 @@ Feature: Temporary files
       When an agent session of "work" is launched with TMPDIR set by its provider instance
       Then its TMPDIR is the one the provider instance set
 
-    # Stops a mistyped or unmounted location from taking agents down with it.
+    # An unmounted disk must not take agents down with it.
     @mc
-    Scenario: A session starts without one when the folder cannot be made
+    Scenario: While the chosen place cannot be used the default stands in
       Given a thread "work"
       And the MC cannot write to its temporary files location
       When an agent session of "work" is launched
-      Then its launch sets no temporary file variables
+      Then its temporary file variables are inside the MC's cache directory
 
   Rule: The user chooses where temporary files go
 
@@ -56,6 +56,30 @@ Feature: Temporary files
       Then two MCs with different homes keep their temporary files apart
 
     @mc
+    Scenario: The folder chosen in settings outranks HAL_C2_TMPDIR
+      Given HAL_C2_TMPDIR names a folder on another disk
+      And the user chose a folder for temporary files
+      When the MC makes a temporary folder of its own
+      Then the folder is inside the one the user chose
+
+    @mc
+    Scenario Outline: A folder that cannot be used is refused when chosen
+      When the user chooses <folder> for temporary files
+      Then the settings change is refused saying temporary files cannot go there
+
+      Examples:
+        | folder              |
+        | a relative path     |
+        | a path under a file |
+
+    @mc
+    Scenario: A folder that goes away later does not stop other settings changes
+      Given the user chose a folder for temporary files
+      And that folder can no longer be made
+      When the user changes another setting
+      Then the settings change is accepted
+
+    @mc
     Scenario: An HAL_C2_TMPDIR that is not an absolute path is ignored
       Given HAL_C2_TMPDIR is "relative/path"
       When the MC makes a temporary folder of its own
@@ -73,6 +97,7 @@ Feature: Temporary files
       Examples:
         | condition                  |
         | is deleted                 |
+        | has been idle for 31 days with the rule at 30 |
         | has been idle for 8 days   |
 
     @mc
@@ -88,6 +113,22 @@ Feature: Temporary files
         | has been idle for 8 days but has a run   |
 
     @mc
+    Scenario: Turning the rule off keeps an idle thread's temp folder
+      Given a thread "work" with a temp folder holding a file
+      And "work" has been idle for 8 days
+      And the user turned off deleting idle threads' temporary files
+      When the MC sweeps storage
+      Then the temp folder of "work" still holds its file
+
+    @mc
+    Scenario: A deleted thread's temp folder goes with the rule off
+      Given a thread "work" with a temp folder holding a file
+      And the user turned off deleting idle threads' temporary files
+      And "work" is deleted
+      When the MC sweeps storage
+      Then the temp folder of "work" is gone
+
+    @mc
     Scenario: A folder the MC did not name is left alone
       Given a thread "work" with a temp folder holding a file
       And a folder the MC did not name sits beside it
@@ -95,11 +136,13 @@ Feature: Temporary files
       Then that folder is still there
 
     @mc
-    Scenario: The next start removes what a crash left behind
-      Given a temporary file of the MC's is still there
-      When the MC prepares its files at the next start
-      Then that file is gone
-      And the temp folder of a thread is kept
+    Scenario: The sweep removes what an earlier MC left behind
+      Given a thread "work" with a temp folder holding a file
+      And a temporary file an earlier MC left is still there
+      And a temporary file this MC is using
+      When the MC sweeps storage
+      Then the earlier MC's file is gone
+      And the file this MC is using is still there
 
   # NVIDIA OpenShell does not fit: it copies the project in, and its live mounts bypass its
   # own policy. A private mount namespace per session needs only bubblewrap (Linux).

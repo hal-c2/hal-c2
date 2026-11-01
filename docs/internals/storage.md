@@ -59,8 +59,8 @@ holds. `HAL_C2_MC_HOME` is a root for the MC alone, so it has no `elixir` level,
 
 `/tmp` is often a tmpfs, so what agents leave there is held in memory and pushed to swap, and
 nothing says when it may go. The MC's scratch (`HalC2.Scratch`) and each thread's `TMPDIR` are in
-the cache directory instead, or under `HAL_C2_TMPDIR`. On a full disk this moves the pressure from
-memory to the disk, which is why a thread's folder is swept without a setting.
+the cache directory instead, or in the folder chosen in Settings > Storage or by `HAL_C2_TMPDIR`. On a full disk this moves the pressure from
+memory to the disk, which is why, unlike every other cleanup rule, the one for a thread's folder starts on.
 
 `TMPDIR` does not reach an agent that writes a literal `/tmp/x`, as most large build directories
 are written, and Claude Code reads only `CLAUDE_CODE_TMPDIR`. Only a private mount namespace can

@@ -4,8 +4,8 @@ defmodule HalC2.StorageCleanup do
   thread worktrees under `<home>/worktrees` (after days idle, once merged, once
   their thread is deleted, or when their branch is already in the default
   branch), browser artifacts and rotated logs (`*.log.N`, `*.ndjson.N` under
-  `<home>/logs`) past their age, and threads' temp folders (`HalC2.Scratch`), which
-  need no setting since nothing in them is anyone's to keep.
+  `<home>/logs`) past their age, and threads' temp folders (`HalC2.Scratch`), the one
+  rule on by default, since nothing in them is anyone's to keep.
 
   A sweep runs an hour apart and when the cleanup settings change. It is
   deliberately timid: a worktree goes only when exactly one thread uses it, that
@@ -100,8 +100,11 @@ defmodule HalC2.StorageCleanup do
       error -> Logger.warning("worktree cleanup failed: #{Exception.message(error)}")
     end
 
+    HalC2.Scratch.clear_leftovers()
+
     # An empty sidebar has not been read yet, and every folder would look like nobody's.
-    if HalC2.Shell.rows() != [], do: HalC2.Scratch.sweep(scratch_threads(), now)
+    if HalC2.Shell.rows() != [],
+      do: HalC2.Scratch.sweep(scratch_threads(), HalC2.Scratch.idle_days(settings), now)
 
     for {dir, key} <- [
           {Path.join(HalC2.Paths.data_dir(), "browser-artifacts"), "browserArtifactsAfterDays"},

@@ -72,9 +72,10 @@ directory instead, as its `config`, `data`, `state`, and `cache` subdirectories.
 
 Agents' temporary files go in `tmp` inside the MC's cache directory, not your
 machine's `/tmp`. Each thread has its own folder, removed once the thread is
-deleted or has been idle for a week. Set `HAL_C2_TMPDIR` to an absolute path in the
-MC's environment to keep them on another disk. An agent that writes to a literal
-`/tmp` path still reaches the machine's `/tmp`.
+deleted or has been idle for a week. To keep them on another disk or change how
+long they stay, use Settings > Storage. The folder there is per machine; setting
+`HAL_C2_TMPDIR` in the MC's environment gives the default when it is blank. An agent
+that writes to a literal `/tmp` path still reaches the machine's `/tmp`.
 
 ### Coming from T3 Code
 

@@ -85,3 +85,30 @@ step("the user is asked to update that machine first", async (ctx: SettingsWorld
   for (const rule of STORAGE_RULES) expect(pageText(ctx)).not.toContain(rule.label);
   expect(mc(ctx).callsTo("hal-c2.readSettings")).toEqual([]);
 });
+
+step("deleting idle threads' temporary files reads 7 days", (ctx: SettingsWorld) => {
+  expect(words(pageText(ctx))).toContain("Delete idle threads' temporary files after 7 days");
+});
+
+step(
+  "the machine's temporary files folder is set to {string}",
+  (ctx: SettingsWorld, folder: string) => {
+    documentOf(ctx, fixture(ctx).local.id).settings = {
+      storageCleanup: { temporaryFilesFolder: folder },
+    };
+  },
+);
+
+step(
+  "the user sets the temporary files folder to {string}",
+  async (ctx: SettingsWorld, folder: string) => {
+    await chooseRow(ctx, "Temporary files folder");
+    ctx.host!.dispatch("section.input.submit", { text: folder });
+    await ctx.host!.settled();
+  },
+);
+
+step("the machine's temporary files folder is {string}", (ctx: SettingsWorld, folder: string) => {
+  const { settings } = documentOf(ctx, fixture(ctx).local.id);
+  expect((settings.storageCleanup as Record<string, unknown>).temporaryFilesFolder).toBe(folder);
+});

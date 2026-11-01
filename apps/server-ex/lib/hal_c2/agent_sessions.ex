@@ -171,8 +171,8 @@ defmodule HalC2.AgentSessions do
         [
           Path.join(home, "Downloads"),
           Path.join([home, "Documents", "Codex"]),
-          hal_c2_home,
-          Path.expand(HalC2.Paths.scratch_dir())
+          hal_c2_home
+          | HalC2.Scratch.roots()
         ],
         &(path == &1 or String.starts_with?(path, &1 <> "/"))
       ) or String.contains?(path <> "/", ["/.hal-c2/worktrees/", "/.t3/worktrees/"])

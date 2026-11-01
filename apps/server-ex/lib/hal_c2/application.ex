@@ -156,7 +156,6 @@ defmodule HalC2.Application do
        do: HalC2.Migration.run(opts)
 
     HalC2.Paths.ensure!()
-    HalC2.Scratch.clear_leftovers()
     # The tokens of the environments an MC linked to outside its cluster, before MCs
     # connected only by clustering.
     HalC2.Secrets.delete("environment-links")

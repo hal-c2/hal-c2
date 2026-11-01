@@ -11,7 +11,7 @@ The `hal-c2` MCP server provides app-owned orchestration. Treat these concepts d
 
 ### Temporary files
 
-Put temporary files and scratch build output under `$TMPDIR`, not a literal `/tmp`. HAL-C2 gives each thread its own there and removes it once the thread is deleted or has been idle for a week.
+Put temporary files and scratch build output under `$TMPDIR`, not a literal `/tmp`. HAL-C2 gives each thread its own there and removes it once the thread is deleted or has been idle for a while.
 
 ### A declined approval is the user's answer
 

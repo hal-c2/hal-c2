@@ -3,13 +3,14 @@ defmodule HalC2.Scratch do
   Disposable files, kept apart from the machine's shared temp folder, where they cannot
   collide with another MC's and something knows when they may go.
 
-  `HalC2.Paths.scratch_dir/0` holds two folders:
+  They go where the user chose (`storageCleanup.temporaryFilesFolder`, then
+  `HAL_C2_TMPDIR`, see `HalC2.Paths.scratch_dir/1`), or to the default while that cannot
+  be used, a disk being away, say. A folder holds:
 
   - `mc`: what the MC itself needs for a moment (`path/2`, `dir/1`). Its owner removes
-    each one; what a crash left behind goes when the next MC starts, `HomeLock` having
-    made sure no other MC uses this home.
+    each one; `clear_leftovers/0` removes what a crash left behind.
   - `t/<key>`: one thread's, the temp folder its agent sessions are launched with
-    (`thread_env/1`). `HalC2.StorageCleanup` removes it once `stale/3` says so.
+    (`thread_env/1`). `HalC2.StorageCleanup` removes it once `stale/4` says so.
 
   The key is short, and so is the rest of the path: programs put unix sockets under
   their temp folder, and a socket path may hold only about 100 bytes.
@@ -20,11 +21,11 @@ defmodule HalC2.Scratch do
   alias HalC2.Paths
 
   @day_ms 86_400_000
-  @idle_days 7
+  @default_idle_days 7
 
   @doc "A new path for a scratch file or folder of the MC, not yet created."
   def path(prefix, extension \\ "") do
-    dir = Path.join(Paths.scratch_dir(), "mc")
+    dir = Path.join(root(), "mc")
     Paths.mkdir_private!(dir)
     Path.join(dir, "#{prefix}-#{System.pid()}-#{System.unique_integer([:positive])}#{extension}")
   end
@@ -36,14 +37,26 @@ defmodule HalC2.Scratch do
     dir
   end
 
-  @doc "Removes what an earlier MC on this home left. Only at boot, under the home's lock."
+  @doc """
+  Removes what an earlier MC on this home left: every name but this OS process's.
+  `HomeLock` has made sure no other MC is using the home.
+  """
   def clear_leftovers do
-    File.rm_rf(Path.join(Paths.scratch_dir(), "mc"))
+    mine = "-#{System.pid()}-"
+
+    for root <- roots(),
+        dir = Path.join(root, "mc"),
+        {:ok, names} <- [File.ls(dir)],
+        name <- names,
+        not String.contains?(name, mine) do
+      File.rm_rf(Path.join(dir, name))
+    end
+
     :ok
   end
 
   @doc "The folder for `thread_id`'s temporary files."
-  def thread_dir(thread_id), do: Path.join(threads_dir(), key(thread_id))
+  def thread_dir(thread_id), do: Path.join([root(), "t", key(thread_id)])
 
   @doc """
   The variables that send an agent session's temporary files to its thread's folder,
@@ -60,34 +73,62 @@ defmodule HalC2.Scratch do
       []
   end
 
+  @doc "Days a thread may sit idle before its folder goes, or nil to keep folders of idle threads."
+  def idle_days(settings) do
+    case Map.fetch(settings["storageCleanup"] || %{}, "threadTempAfterDays") do
+      :error -> @default_idle_days
+      {:ok, days} when is_integer(days) and days > 0 -> days
+      {:ok, _off} -> nil
+    end
+  end
+
   @doc """
   Which of `keys`, the thread folders on disk, may go: those of no thread here (a deleted
   thread's, one moved to another MC), and those of a thread with nothing running for
-  #{@idle_days} days. `threads` is `{id, last_active_ms, running?}` for this MC's threads
-  that are not deleted.
+  `days` days. `threads` is `{id, last_active_ms, running?}` for this MC's threads that
+  are not deleted.
   """
-  def stale(keys, threads, now) do
+  def stale(keys, threads, days, now) do
     kept =
       for {id, active_at, running?} <- threads,
-          running? or active_at >= now - @idle_days * @day_ms,
+          running? or days == nil or active_at >= now - days * @day_ms,
           into: MapSet.new(),
           do: key(id)
 
     Enum.reject(keys, &MapSet.member?(kept, &1))
   end
 
-  @doc "Removes the thread folders `stale/3` picks."
-  def sweep(threads, now) do
-    with {:ok, names} <- File.ls(threads_dir()) do
-      for key <- stale(Enum.filter(names, &(&1 =~ ~r/^[0-9a-f]{8}$/)), threads, now) do
-        File.rm_rf(Path.join(threads_dir(), key))
+  @doc """
+  Removes the thread folders `stale/4` picks, wherever temporary files have lately gone:
+  a folder chosen before this one is the user's to remove, having no record here.
+  """
+  def sweep(threads, days, now) do
+    for root <- roots(), dir = Path.join(root, "t"), {:ok, names} <- [File.ls(dir)] do
+      for key <- stale(Enum.filter(names, &(&1 =~ ~r/^[0-9a-f]{8}$/)), threads, days, now) do
+        File.rm_rf(Path.join(dir, key))
       end
     end
 
     :ok
   end
 
-  defp threads_dir, do: Path.join(Paths.scratch_dir(), "t")
+  @doc "Every place the MC may have put scratch: the default, `HAL_C2_TMPDIR`, the chosen one."
+  def roots, do: Enum.uniq([Paths.default_scratch_dir(), Paths.scratch_dir(), root()])
+
+  # The chosen place while it can be used. `get/0` reads a table, so a launch can afford it.
+  defp root do
+    chosen = get_in(HalC2.Settings.settings(), ["storageCleanup", "temporaryFilesFolder"])
+    wanted = Paths.scratch_dir(if chosen != "", do: chosen)
+
+    try do
+      Paths.mkdir_private!(wanted)
+      wanted
+    rescue
+      error in File.Error ->
+        Logger.warning("temporary files go to the default: #{Exception.message(error)}")
+        Paths.default_scratch_dir()
+    end
+  end
 
   defp key(thread_id) do
     :crypto.hash(:sha256, thread_id) |> Base.encode16(case: :lower) |> binary_part(0, 8)

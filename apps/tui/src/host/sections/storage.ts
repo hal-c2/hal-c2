@@ -15,9 +15,11 @@ interface Rule {
   readonly key: string;
   readonly label: string;
   readonly days: boolean;
+  /** The days a rule that was never set reads as; without it the rule starts off. */
+  readonly unset?: number;
 }
 
-/** The MC's cleanup rules (`settings.storageCleanup`); every one is off until turned on. */
+/** The MC's cleanup rules (`settings.storageCleanup`). */
 export const STORAGE_RULES: ReadonlyArray<Rule> = [
   { key: "worktreeOnDelete", label: "Delete worktrees with deleted threads", days: false },
   { key: "worktreeAfterDays", label: "Delete inactive worktrees", days: true },
@@ -25,6 +27,12 @@ export const STORAGE_RULES: ReadonlyArray<Rule> = [
   { key: "worktreeUnchanged", label: "Delete unchanged worktrees", days: false },
   { key: "browserArtifactsAfterDays", label: "Delete old browser artifacts", days: true },
   { key: "logsAfterDays", label: "Delete old rotated logs", days: true },
+  {
+    key: "threadTempAfterDays",
+    label: "Delete idle threads' temporary files",
+    days: true,
+    unset: 7,
+  },
 ];
 
 const UPDATE_NOTICE =
@@ -37,10 +45,20 @@ export function ruleValue(
 ): { readonly mixed: boolean; readonly value: StorageValue } {
   const values = documents.map((document) => {
     const cleanup = (document.settings.storageCleanup ?? {}) as Record<string, StorageValue>;
-    return cleanup[rule.key] ?? (rule.days ? null : false);
+    const value = cleanup[rule.key];
+    return value === undefined && rule.unset !== undefined
+      ? rule.unset
+      : (value ?? (rule.days ? null : false));
   });
   const first = values[0] ?? (rule.days ? null : false);
   return { mixed: values.some((value) => value !== first), value: first };
+}
+
+function folderOf(document: SettingsDocument): string {
+  const { temporaryFilesFolder } = (document.settings.storageCleanup ?? {}) as {
+    temporaryFilesFolder?: string;
+  };
+  return temporaryFilesFolder ?? "";
 }
 
 /**
@@ -97,7 +115,7 @@ export function storageSection(host: SectionHost): SettingsSection {
     host.refresh();
   };
 
-  const set = (rule: Rule, value: StorageValue) => {
+  const set = (rule: Pick<Rule, "key">, value: StorageValue | string) => {
     const asked = generation;
     void host.track(
       Promise.all(
@@ -136,7 +154,7 @@ export function storageSection(host: SectionHost): SettingsSection {
       {
         id: "section.storage",
         title: "Storage settings",
-        keywords: "cleanup worktrees disk logs artifacts delete",
+        keywords: "cleanup worktrees disk logs artifacts delete temporary files tmp tmpdir folder",
         action: "section.open",
         payload: { id: "storage" },
       },
@@ -203,7 +221,7 @@ export function storageSection(host: SectionHost): SettingsSection {
       }
       items.push({
         kind: "note",
-        text: "Cleanup errs on the side of keeping work. Every rule is off until turned on.",
+        text: "Cleanup errs on the side of keeping work. Rules for worktrees, artifacts and logs are off until turned on.",
       });
       for (const rule of STORAGE_RULES) {
         const { mixed, value } = ruleValue(rule, read);
@@ -239,6 +257,24 @@ export function storageSection(host: SectionHost): SettingsSection {
             : () => set(rule, mixed ? true : value !== true),
         });
       }
+      const folder = read[0] === undefined ? "" : folderOf(read[0]);
+      const folderMixed = read.some((document) => folderOf(document) !== folder);
+      items.push({
+        kind: "row",
+        id: "temporary-files-folder",
+        label: "Temporary files folder",
+        value: folderMixed ? "mixed" : folder === "" ? "cache directory" : folder,
+        tone: folderMixed ? "warning" : folder === "" ? "dim" : "success",
+        run: () =>
+          host.ask(
+            {
+              label: "Folder",
+              value: folderMixed ? "" : folder,
+              placeholder: "an absolute path, or blank for the cache directory",
+            },
+            (text) => set({ key: "temporaryFilesFolder" }, text.trim()),
+          ),
+      });
       return { title: "storage", items };
     },
   };

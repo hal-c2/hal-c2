@@ -8,7 +8,8 @@
 
 Feature: Storage cleanup
   The MC can remove worktrees and old files it created so disk use does not
-  grow forever. Every rule is off until the user turns it on, and cleanup errs
+  grow forever. Every rule but the one for temporary files is off until the user
+  turns it on, and cleanup errs
   on the side of keeping work.
 
   Background:
@@ -160,6 +161,24 @@ Feature: Storage cleanup
       Given "laptop" deletes inactive worktrees and "server" does not
       When the user views storage settings for both machines
       Then that rule shows as mixed
+
+    @shared @backlog-mobile
+    Scenario: The rule for idle threads' temporary files reads seven days until changed
+      When the user opens storage settings
+      Then deleting idle threads' temporary files reads 7 days
+
+    @shared @backlog-mobile
+    Scenario: The user chooses the folder for temporary files
+      When the user opens storage settings
+      And the user sets the temporary files folder to "/mnt/scratch"
+      Then the machine's temporary files folder is "/mnt/scratch"
+
+    @shared @backlog-mobile
+    Scenario: Blanking the temporary files folder goes back to the default
+      Given the machine's temporary files folder is set to "/mnt/scratch"
+      When the user opens storage settings
+      And the user sets the temporary files folder to ""
+      Then the machine's temporary files folder is ""
 
     @shared @backlog-mobile
     Scenario: A machine too old for storage cleanup asks to be updated

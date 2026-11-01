@@ -204,7 +204,7 @@ defmodule HalC2.Settings do
 
     case invalid do
       [] ->
-        :ok
+        validate_temporary_files_folder(settings)
 
       [{id, name} | _] ->
         {:error,
@@ -219,6 +219,37 @@ defmodule HalC2.Settings do
                "underscores, not starting with a digit."
          }}
     end
+  end
+
+  # Only a folder being chosen is tried: a disk that is away now must not refuse every
+  # other change to settings. `HalC2.Scratch` falls back for as long as it stays away.
+  defp validate_temporary_files_folder(settings) do
+    folder = get_in(settings, ["storageCleanup", "temporaryFilesFolder"])
+    held = get_in(settings(), ["storageCleanup", "temporaryFilesFolder"])
+
+    cond do
+      folder in [nil, "", held] -> :ok
+      HalC2.Paths.absolute(folder, HalC2.Paths.platform()) == nil -> relative_folder(folder)
+      true -> make_folder(folder)
+    end
+  end
+
+  defp relative_folder(folder), do: temporary_files_error(folder, ": it must be an absolute path")
+
+  defp make_folder(folder) do
+    HalC2.Paths.mkdir_private!(HalC2.Paths.scratch_dir(folder))
+  rescue
+    error in File.Error -> temporary_files_error(folder, ": #{:file.format_error(error.reason)}")
+  end
+
+  defp temporary_files_error(folder, why) do
+    {:error,
+     %{
+       "_tag" => "ServerSettingsError",
+       "settingsPath" => path(),
+       "operation" => "normalize",
+       "message" => "Temporary files cannot go in \"#{folder}\"#{why}."
+     }}
   end
 
   @doc "`{settings, version}`."

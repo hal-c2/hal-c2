@@ -87,8 +87,9 @@ defmodule HalC2.Steps.Platform.TemporaryFiles do
     context
   end
 
-  step "its launch sets no temporary file variables", context do
-    for name <- @names, do: refute(List.keymember?(context.launch, name, 0))
+  step "its temporary file variables are inside the MC's cache directory", context do
+    {_, dir} = List.keyfind(context.launch, "TMPDIR", 0)
+    assert String.starts_with?(dir, Paths.cache_dir() <> "/")
     context
   end
 
@@ -168,24 +169,86 @@ defmodule HalC2.Steps.Platform.TemporaryFiles do
     context
   end
 
-  step "a temporary file of the MC's is still there", context do
-    context = World.create_thread(context, "work")
-    launch(context, "work")
-    Map.put(context, :leftover, Scratch.dir("hal-c2-crash"))
+  step "a temporary file an earlier MC left is still there", context do
+    mine = Scratch.dir("hal-c2-using")
+    earlier = Path.join(Path.dirname(mine), "hal-c2-crash-1-1")
+    File.mkdir_p!(earlier)
+    Map.put(context, :earlier, earlier)
   end
 
-  step "the MC prepares its files at the next start", context do
-    Scratch.clear_leftovers()
+  step "a temporary file this MC is using", context do
+    Map.put(context, :using, Scratch.dir("hal-c2-using"))
+  end
+
+  step "the earlier MC's file is gone", context do
+    refute File.exists?(context.earlier)
     context
   end
 
-  step "that file is gone", context do
-    refute File.exists?(context.leftover)
+  step "the file this MC is using is still there", context do
+    assert File.dir?(context.using)
     context
   end
 
-  step "the temp folder of a thread is kept", context do
-    assert File.dir?(folder(context, "work"))
+  step "the user chose a folder for temporary files", context do
+    dir = Path.join(Paths.data_dir(), "chosen")
+    World.merge_settings(%{"storageCleanup" => %{"temporaryFilesFolder" => dir}})
+    Map.put(context, :chosen, dir)
+  end
+
+  step "the folder is inside the one the user chose", context do
+    assert String.starts_with?(context.made, context.chosen <> "/")
     context
+  end
+
+  step "the user chooses a relative path for temporary files", context do
+    Map.put(context, :refused, choose("relative/path"))
+  end
+
+  step "the user chooses a path under a file for temporary files", context do
+    file = Path.join(Paths.data_dir(), "a-file")
+    File.write!(file, "")
+    Map.put(context, :refused, choose(Path.join(file, "below")))
+  end
+
+  step "the settings change is refused saying temporary files cannot go there", context do
+    assert {:error, %{"_tag" => "ServerSettingsError", "message" => message}} = context.refused
+    assert message =~ "Temporary files cannot go in"
+    context
+  end
+
+  step "that folder can no longer be made", context do
+    File.rm_rf!(context.chosen)
+    File.write!(context.chosen, "")
+    context
+  end
+
+  step "the user changes another setting", context do
+    {settings, _} = HalC2.Settings.get()
+    Map.put(context, :outcome, HalC2.Settings.validate(Map.put(settings, "theme", "dark")))
+  end
+
+  step "the settings change is accepted", context do
+    assert context.outcome == :ok
+    context
+  end
+
+  step "{string} has been idle for 31 days with the rule at 30", %{args: [title]} = context do
+    backdate(context, title, 31)
+    World.merge_settings(%{"storageCleanup" => %{"threadTempAfterDays" => 30}})
+    context
+  end
+
+  step "the user turned off deleting idle threads' temporary files", context do
+    World.merge_settings(%{"storageCleanup" => %{"threadTempAfterDays" => nil}})
+    context
+  end
+
+  defp choose(folder) do
+    {settings, _} = HalC2.Settings.get()
+
+    settings
+    |> Map.put("storageCleanup", %{"temporaryFilesFolder" => folder})
+    |> HalC2.Settings.validate()
   end
 end
