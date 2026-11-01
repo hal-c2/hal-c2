@@ -80,7 +80,10 @@ defmodule HalC2.WorktreeSetup do
   def retry(%{"threadId" => thread_id}),
     do: {:ok, %{"retried" => GenServer.call(__MODULE__, {:retry, thread_id})}}
 
-  @doc "The thread went on without its failed setup: a new turn, or it was deleted or moved."
+  @doc """
+  The thread went on without its setup: a new turn, or it was deleted or moved. A failed
+  setup goes now; a running one is marked, so that its failure is not kept for a retry.
+  """
   def superseded(thread_id), do: GenServer.cast(__MODULE__, {:superseded, thread_id})
 
   # --- server ----------------------------------------------------------------------
@@ -126,7 +129,8 @@ defmodule HalC2.WorktreeSetup do
       naming: nil,
       renaming: nil,
       cancelling: false,
-      cancellable: true
+      cancellable: true,
+      superseded: false
     }
 
     state = put_in(state.setups[thread_id], setup)
@@ -267,6 +271,9 @@ defmodule HalC2.WorktreeSetup do
       %{snapshot: %{"phase" => "failed"} = snapshot} ->
         {:noreply, if(retryable?(snapshot), do: forget(state, thread_id), else: state)}
 
+      %{snapshot: %{"phase" => "running"}} ->
+        {:noreply, put_in(state.setups[thread_id].superseded, true)}
+
       _ ->
         {:noreply, state}
     end
@@ -398,7 +405,7 @@ defmodule HalC2.WorktreeSetup do
   defp retain(%{expiry: _} = setup, _thread_id), do: setup
 
   defp retain(setup, thread_id) do
-    if retryable?(setup.snapshot) do
+    if not setup.superseded and retryable?(setup.snapshot) do
       setup
     else
       ref = make_ref()
@@ -414,8 +421,10 @@ defmodule HalC2.WorktreeSetup do
 
   defp retryable?(_snapshot), do: false
 
-  @doc "Whether `setup` may run again: it failed before its agent, and its worker has ended."
-  def can_retry?(%{worker: nil, snapshot: snapshot}), do: retryable?(snapshot)
+  @doc "Whether `setup` may run again: it failed before its agent, its worker has ended, and the thread waits for it."
+  def can_retry?(%{worker: nil, superseded: false, snapshot: snapshot}),
+    do: retryable?(snapshot)
+
   def can_retry?(_setup), do: false
 
   @doc "`setup` as a retry leaves it, with `worker` running it."

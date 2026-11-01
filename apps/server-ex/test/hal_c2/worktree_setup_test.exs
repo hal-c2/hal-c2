@@ -573,7 +573,7 @@ defmodule HalC2.WorktreeSetupTest do
 
     :sys.replace_state(WorktreeSetup, fn state ->
       snapshot = %{"phase" => "running", "sequence" => 3, "stages" => []}
-      put_in(state.setups["t"], %{snapshot: snapshot, cancellable: true})
+      put_in(state.setups["t"], %{snapshot: snapshot, cancellable: true, superseded: false})
     end)
 
     assert %{"phase" => "running"} = WorktreeSetup.subscribe("t", self())
@@ -713,6 +713,31 @@ defmodule HalC2.WorktreeSetupTest do
       })
 
     assert_receive {:hal_c2_worktree_setup, ^thread_id, nil}, 5_000
+  end
+
+  test "a setup whose thread was deleted while it ran is not kept for a retry", %{repo: repo} do
+    blocking_setup(
+      repo,
+      ~S(until test -e "$HAL_C2_PROJECT_ROOT/.fail"; do sleep 0.05; done; exit 3)
+    )
+
+    Application.put_env(:hal_c2, :worktree_setup_retention, 3_600_000)
+    on_exit(fn -> Application.delete_env(:hal_c2, :worktree_setup_retention) end)
+    thread_id = launch("list the files")
+
+    {:ok, _} =
+      Orchestration.dispatch(%{
+        "type" => "thread.delete",
+        "commandId" => "delete",
+        "threadId" => thread_id
+      })
+
+    assert %{superseded: true} = :sys.get_state(HalC2.WorktreeSetup).setups[thread_id]
+    File.write!(Path.join(repo, ".fail"), "")
+    await_phase(thread_id, "failed")
+
+    assert %{expiry: _} = :sys.get_state(HalC2.WorktreeSetup).setups[thread_id]
+    assert {:ok, %{"retried" => false}} = HalC2.WorktreeSetup.retry(%{"threadId" => thread_id})
   end
 
   test "a retry after a follow-up is refused and leaves the worktree alone", %{repo: repo} do

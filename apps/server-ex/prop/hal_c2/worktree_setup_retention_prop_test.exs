@@ -3,7 +3,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
   How `HalC2.WorktreeSetup` keeps each thread's setup, against a model: progress counts
   only while it runs, its end is kept with one expiry, and only that expiry's own message
   removes it; a failure the agent's stage never reached has no expiry, and goes only when
-  the thread goes on without it, or a retry, once its worker has ended, runs it again.
+  the thread goes on without it, or a retry, once its worker has ended, runs it again;
+  one that the thread went on without while it ran is kept with an expiry like any other.
   Setups are put in the server's state directly, since a real one has a
   worker racing the commands; retention is long enough that only a sent `:expire` acts.
 
@@ -84,7 +85,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
   # --- model ------------------------------------------------------------------------
 
   # thread => %{phase: "running" | ended phase, sequence: n, branch: what a cancel deletes,
-  # renaming: the name it may have taken already, worker: whether a retry's worker is live}
+  # renaming: the name it may have taken already, worker: whether a retry's worker is live,
+  # superseded: whether the thread went on without it while it ran}
   def initial_state, do: %{}
 
   def command(_state) do
@@ -114,12 +116,13 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
         sequence: 0,
         branch: "temporary",
         renaming: nil,
-        worker: false
+        worker: false,
+        superseded: false
       })
 
   def next_state(state, _result, {:call, _, :retry, [thread]}) do
     case state[thread] do
-      %{phase: "failed", worker: false} = setup ->
+      %{phase: "failed", worker: false, superseded: false} = setup ->
         Map.put(state, thread, %{
           setup
           | phase: "running",
@@ -189,7 +192,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
 
   def next_state(state, _result, {:call, _, :expire_own, [thread]}) do
     case state[thread] do
-      %{phase: phase} when phase in ~w(running failed) -> state
+      %{phase: "running"} -> state
+      %{phase: "failed", superseded: false} -> state
       _ -> Map.delete(state, thread)
     end
   end
@@ -197,6 +201,7 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
   def next_state(state, _result, {:call, _, :superseded, [thread]}) do
     case state[thread] do
       %{phase: "failed"} -> Map.delete(state, thread)
+      %{phase: "running"} = setup -> Map.put(state, thread, %{setup | superseded: true})
       _ -> state
     end
   end
@@ -204,7 +209,7 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
   def next_state(state, _result, _call), do: state
 
   # After every step the server holds what the model does, and an ended setup that cannot
-  # be retried alone has an expiry.
+  # be retried has an expiry.
   def postcondition(state, {:call, _, :cleaned_up, _} = call, result),
     do: result == :answered and same_as_model?(state, call)
 
@@ -221,11 +226,14 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
          sequence: setup.snapshot["sequence"],
          branch: setup.new_branch,
          renaming: setup.renaming,
-         worker: setup.worker != nil
+         worker: setup.worker != nil,
+         superseded: setup.superseded
        }}
     end) == model and
       Enum.all?(setups, fn {_, setup} ->
-        Map.has_key?(setup, :expiry) == setup.snapshot["phase"] not in ~w(running failed)
+        phase = setup.snapshot["phase"]
+        kept = phase == "running" or (phase == "failed" and not setup.superseded)
+        Map.has_key?(setup, :expiry) == not kept
       end)
   end
 
@@ -252,7 +260,8 @@ defmodule HalC2.WorktreeSetupRetentionPropTest do
         run_id: "run",
         worker: nil,
         new_branch: "temporary",
-        renaming: nil
+        renaming: nil,
+        superseded: false
       }
 
       put_in(state.setups[thread], setup)
