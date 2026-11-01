@@ -166,6 +166,7 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["space", "x"],
       },
       { keys: "l", description: "Spaces: link a subpage", chords: ["l"] },
+      { keys: "u", description: "Spaces: give a page an update", chords: ["u"] },
       { keys: "t", description: "Spaces: write a page from a thread", chords: ["t"] },
       {
         keys: "Tab · ^Enter",
