@@ -7,7 +7,7 @@
 #   apps/server-ex/lib/hal_c2/space/sites.ex
 #   apps/server-ex/lib/hal_c2/web.ex (the address a link is made from, as for pairing links)
 
-@backlog-desktop @backlog-mobile @backlog-tui
+@backlog-mobile @backlog-tui
 Feature: A page published as a site
   The user publishes a page and gets a link. Anyone who can reach the MC's address opens
   the link in an ordinary browser and reads the page as a plain HTML page, without pairing
@@ -31,7 +31,7 @@ Feature: A page published as a site
     Scenario: The user copies the link of a published page
       Given the page "Roadmap" is published as a site
       When the user copies the site link of the page "Roadmap"
-      Then the clipboard holds the site link of the page "Roadmap"
+      Then the site link of the page "Roadmap" is on the clipboard
 
     @mc
     Scenario: Anyone with the link reads the page without signing in

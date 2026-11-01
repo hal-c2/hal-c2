@@ -55,6 +55,13 @@ struct FakeSpaces {
   QHash<QString, QString> named;
   // The Space the scenario writes in.
   QString current;
+  // Where the MC makes a site's link: on the address it knows, marked when only
+  // this machine can open that, and what Tailscale names the machine (none: not running).
+  QString address = QStringLiteral("http://192.168.1.20:3773");
+  bool localOnly = false;
+  QString tailnet;
+  // The link each page was last published on, kept after it stops working.
+  QHash<QString, QString> links;
   // Where the log of the current Space stood when a block moved, and what
   // the client's blocks did since.
   qsizetype mark = 0;
@@ -438,7 +445,65 @@ void seed(FakeMc& mc) {
   if (all(mc, kIndex, QStringLiteral("space")).isEmpty()) makeSpace(mc, QStringLiteral("Personal"));
 }
 
+// What a site shows of the page: its title and its blocks' text.
+QJsonArray siteSnapshot(FakeMc& mc, const QString& space, const QJsonObject& page) {
+  QJsonArray shown{text(page, QLatin1String("title"))};
+  for (const QJsonObject& block : sortedBy(all(mc, streamOf(space), QStringLiteral("block")), QLatin1String("order"))) {
+    if (text(block, QLatin1String("pageId")) == text(page, QLatin1String("id"))) shown.append(text(block, QLatin1String("text")));
+  }
+  return shown;
+}
+
+QJsonObject siteOfPage(FakeMc& mc, const QString& space, const QString& pageId) {
+  for (const QJsonObject& site : all(mc, streamOf(space), QStringLiteral("site"))) {
+    if (text(site, QLatin1String("pageId")) == pageId) return site;
+  }
+  return {};
+}
+
+Answer publishPage(FakeMc& mc, const QString& space, const QJsonObject& page, const QJsonObject& in) {
+  FakeSpaces& spaces = fake(mc);
+  const bool overTailscale = in.value(QLatin1String("tailscale")).toBool();
+  if (overTailscale && spaces.tailnet.isEmpty()) return refused(QStringLiteral("unavailable"), QStringLiteral("Tailscale is not running on this machine."));
+  const QString base = text(in, QLatin1String("baseUrl"));
+  const QString address = overTailscale ? QStringLiteral("https://") + spaces.tailnet : !base.isEmpty() ? base : spaces.address;
+  const bool localOnly = !overTailscale && base.isEmpty() && spaces.localOnly;
+  const QJsonObject before = siteOfPage(mc, space, text(page, QLatin1String("id")));
+  // Published again it keeps its token, and an address only this machine can open never replaces one others reach.
+  const QString id = before.isEmpty() ? newId(mc, QStringLiteral("token")) : text(before, QLatin1String("id"));
+  const bool keepsAddress = !before.isEmpty() && localOnly && !before.value(QLatin1String("localOnly")).toBool();
+  const QString url = keepsAddress ? text(before, QLatin1String("url")) : QStringLiteral("%1/sites/%2/%3").arg(address, space, id);
+  set(mc, streamOf(space), QStringLiteral("site"), id,
+      {{QStringLiteral("id"), id}, {QStringLiteral("spaceId"), space}, {QStringLiteral("pageId"), page.value(QLatin1String("id"))},
+       {QStringLiteral("url"), url}, {QStringLiteral("localOnly"), keepsAddress ? false : localOnly}, {QStringLiteral("publishedAt"), stamp(mc)},
+       {QStringLiteral("behind"), false}, {QStringLiteral("snapshot"), siteSnapshot(mc, space, page)}});
+  spaces.links.insert(text(page, QLatin1String("id")), url);
+  return {{{QStringLiteral("site"), one(mc, streamOf(space), QStringLiteral("site"), id)}}};
+}
+
+Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in);
+
+// A change, with what it means for the Space's sites: the site of a page gone or
+// in the trash comes down, and the others are behind when publishing would change them.
 Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
+  const Answer answer = decide(mc, method, in);
+  const QString space = text(in, QLatin1String("spaceId"));
+  if (space.isEmpty()) return answer;
+  const QString stream = streamOf(space);
+  for (const QJsonObject& site : all(mc, stream, QStringLiteral("site"))) {
+    const QJsonObject page = one(mc, stream, QStringLiteral("page"), text(site, QLatin1String("pageId")));
+    const QString id = text(site, QLatin1String("id"));
+    if (page.isEmpty() || !live(mc, space, page)) {
+      remove(mc, stream, QStringLiteral("site"), id);
+      continue;
+    }
+    const bool behind = siteSnapshot(mc, space, page) != site.value(QLatin1String("snapshot")).toArray();
+    if (behind != site.value(QLatin1String("behind")).toBool()) set(mc, stream, QStringLiteral("site"), id, {{QStringLiteral("behind"), behind}});
+  }
+  return answer;
+}
+
+Answer decide(FakeMc& mc, const QString& method, const QJsonObject& in) {
   const QString space = text(in, QLatin1String("spaceId"));
   const QString stream = streamOf(space);
   const QString pageId = text(in, QLatin1String("pageId"));
@@ -520,7 +585,13 @@ Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
       for (const QString& id : gone) remove(mc, stream, QStringLiteral("page"), id);
       return {{{QStringLiteral("deletedPageIds"), QJsonArray::fromStringList(gone)}}};
     }
+    if (method == QLatin1String("page.unpublish")) {
+      const QJsonObject site = siteOfPage(mc, space, pageId);
+      if (!site.isEmpty()) remove(mc, stream, QStringLiteral("site"), text(site, QLatin1String("id")));
+      return {{{QStringLiteral("pageId"), pageId}}};
+    }
     if (!live(mc, space, page)) return refused(QStringLiteral("trashed"), QStringLiteral("The page is in the trash."));
+    if (method == QLatin1String("page.publish")) return publishPage(mc, space, page, in);
     if (method == QLatin1String("page.rename")) {
       if (blank(in.value(QLatin1String("title")))) return refused(QStringLiteral("invalid"), QStringLiteral("A page needs a title."));
       set(mc, stream, QStringLiteral("page"), pageId, {{QStringLiteral("title"), text(in, QLatin1String("title")).trimmed()}, {QStringLiteral("updatedAt"), stamp(mc)}});
@@ -855,6 +926,20 @@ SpacePages& second(World& world) {
   return *pages;
 }
 
+// Waits for what the open page `title` shows of its site to be `wanted`.
+void expectSite(World& world, const QString& title, const std::function<bool(const QVariantMap&)>& shown, const QString& wanted) {
+  lookAtPage(world, idOfPage(world, title));
+  expectShown(world, [&] { return shown(viewOf(world)->page().value(QStringLiteral("site")).toMap()); }, QStringLiteral("%1 to %2").arg(title, wanted));
+}
+
+// The link the page was last published on, working or not.
+QString linkOf(World& world, const QString& title) {
+  const QString link = fake(world.mc).links.value(idOfPage(world, title));
+  expect(!link.isEmpty(), QStringLiteral("the page %1 was never published").arg(title));
+  return link;
+}
+
+
 }  // namespace
 
 bool spaceTick(World& world, const QString& said, bool checked) {
@@ -1126,6 +1211,67 @@ const Steps steps([] {
   step(QStringLiteral("the second client sees the block %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QStringList texts = column(second(world).blocks(), QStringLiteral("text"));
     expect(texts.contains(c[0]), QStringLiteral("the second client shows the blocks %1").arg(show(texts)));
+  });
+
+  // Sites (features/space/sites.feature).
+  step(QStringLiteral("the user publishes the page %1 as a site").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnPage(world, idOfPage(world, c[0]), QStringLiteral("space.page.publish"), {});
+  });
+  step(QStringLiteral("the user publishes the page %1 over Tailscale").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnPage(world, idOfPage(world, c[0]), QStringLiteral("space.page.publish"), {{QStringLiteral("tailscale"), true}});
+  });
+  step(QStringLiteral("the page %1 is published as a site").arg(q), [](World& world, const Captures& c, const Table&) {
+    given(world, QStringLiteral("page.publish"), {{QStringLiteral("pageId"), givenPage(world, c[0])}});
+    fake(world.mc).named.insert(QStringLiteral("link\n") + c[0], linkOf(world, c[0]));
+  });
+  step(QStringLiteral("the user unpublishes the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    actOnPage(world, idOfPage(world, c[0]), QStringLiteral("space.page.unpublish"), {});
+  });
+  step(QStringLiteral("the user copies the site link of the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [](const QVariantMap& site) { return !site.isEmpty(); }, QStringLiteral("show it is published"));
+    world.clipboard.clear();
+    actOnPage(world, idOfPage(world, c[0]), QStringLiteral("space.page.copySiteLink"), {});
+  });
+  step(QStringLiteral("the site link of the page %1 is on the clipboard").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(world.clipboard == linkOf(world, c[0]), QStringLiteral("the clipboard holds \"%1\"").arg(world.clipboard));
+  });
+  step(QStringLiteral("the page %1 shows it is published with a link").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString link = linkOf(world, c[0]);
+    expectSite(world, c[0], [&](const QVariantMap& site) { return site.value(QStringLiteral("url")).toString() == link; }, QStringLiteral("show its link"));
+  });
+  step(QStringLiteral("the page %1 shows it is not published").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [](const QVariantMap& site) { return site.isEmpty(); }, QStringLiteral("show it is not published"));
+  });
+  // The fake serves no pages, so what stops a link here is its site being gone from the MC.
+  step(QStringLiteral("the site link of the page %1 no longer opens").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(siteOfPage(world.mc, current(world), idOfPage(world, c[0])).isEmpty(), QStringLiteral("the MC still has the site of %1").arg(c[0]));
+  });
+  step(QStringLiteral("the second client sees the page %1 published").arg(q), [](World& world, const Captures& c, const Table&) {
+    expect(!second(world).siteOf(idOfPage(world, c[0])).isEmpty(), QStringLiteral("the second client does not show %1 published").arg(c[0]));
+  });
+  step(QStringLiteral("the page %1 shows its site is behind").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [](const QVariantMap& site) { return site.value(QStringLiteral("behind")).toBool(); }, QStringLiteral("show its site is behind"));
+  });
+  step(QStringLiteral("the page %1 shows its site is up to date").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [](const QVariantMap& site) { return !site.isEmpty() && !site.value(QStringLiteral("behind")).toBool(); }, QStringLiteral("show its site is up to date"));
+  });
+  step(QStringLiteral("the page %1 has the same site link").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString earlier = fake(world.mc).named.value(QStringLiteral("link\n") + c[0]);
+    expect(!earlier.isEmpty(), QStringLiteral("the page %1 had no link").arg(c[0]));
+    expectSite(world, c[0], [&](const QVariantMap& site) { return site.value(QStringLiteral("url")).toString() == earlier; }, QStringLiteral("keep the link %1").arg(earlier));
+  });
+  step(QStringLiteral("the MC listens only on this machine"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).address = world.mc.origin().toString();
+    fake(world.mc).localOnly = true;
+  });
+  step(QStringLiteral("the page %1 says only this machine can open its site link").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [](const QVariantMap& site) { return site.value(QStringLiteral("localOnly")).toBool(); }, QStringLiteral("say only this machine can open its link"));
+  });
+  step(QStringLiteral("Tailscale names the MC's machine %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world.mc).tailnet = c[0];
+  });
+  step(QStringLiteral("the site link of the page %1 starts with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectSite(world, c[0], [&](const QVariantMap& site) { return site.value(QStringLiteral("url")).toString().startsWith(c[1]); }, QStringLiteral("have a link starting with %1").arg(c[1]));
   });
 
   // Comments.
