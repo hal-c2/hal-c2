@@ -180,6 +180,14 @@ defmodule HalC2.TerminalTest do
       # come back to a live shell whatever it names.
       assert {:ok, %{"pid" => shell}} = Terminal.open(input)
       assert {:ok, %{"pid" => ^shell}} = Terminal.attach(codex, self())
+
+      # A shell that ended is not started again without the instance's variables.
+      {:ok, nil} = Terminal.write(Map.put(input, "data", "exit 3\n"))
+      assert_receive {:hal_c2_terminal, _, %{"type" => "exited", "exitCode" => 3}}, 5_000
+
+      assert {:ok, %{"status" => "exited", "pid" => nil}} =
+               Terminal.attach(Map.put(codex, "restartIfNotRunning", true), self())
+
       {:ok, nil} = Terminal.close(input)
 
       File.write!(settings, "{}")
