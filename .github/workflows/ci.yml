@@ -49,6 +49,9 @@ jobs:
           persist-credentials: false
 
       - id: changes
+        # Naming the shell turns on pipefail. Without it a failed script is tee's success:
+        # no outputs, every job skipped, and a run that tested nothing looks clean.
+        shell: bash
         run: .github/scripts/ci-changes.sh ${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && 'merged' || 'all' }} | tee -a "$GITHUB_OUTPUT"
 
   pr_assets:
