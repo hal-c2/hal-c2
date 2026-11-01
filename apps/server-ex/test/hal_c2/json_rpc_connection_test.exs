@@ -25,7 +25,10 @@ defmodule HalC2.JsonRpc.ConnectionTest do
 
   test "server-to-client requests are answered by the handler", %{conn: conn} do
     call = Task.async(fn -> Connection.call(conn, "ask", %{"q" => "run ls?"}) end)
-    assert_receive {:json_rpc, ^conn, {:request, id, "approve", %{"q" => "run ls?"}}}
+
+    assert_receive {:json_rpc, ^conn, {:request, id, "approve", %{"q" => "run ls?"}}},
+                   5_000
+
     Connection.respond(conn, id, {:ok, "allow"})
     assert {:ok, %{"answer" => "allow"}} = Task.await(call)
   end

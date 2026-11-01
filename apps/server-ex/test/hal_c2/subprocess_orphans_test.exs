@@ -142,15 +142,42 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert {:ok, 0} = Subprocess.stop(sub)
   end
 
-  test "a kernel with no pidfds gets the kill it always got", %{tmp_dir: dir} do
+  # No pidfds (4), and what a binary that will not load comes back as (8, 127).
+  for status <- [4, 8, 127] do
+    test "a helper exiting #{status} gets the kill it always got", %{tmp_dir: dir} do
+      boot(:died, owner: dead_mc())
+      {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+      :ok = stop_supervised(:died)
+      pid_kill_stub(dir, "exit #{unquote(status)}")
+
+      boot(:next)
+
+      assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+      assert File.ls!(Orphans.dir()) == []
+    end
+  end
+
+  test "a program that exits just before the helper's check still has its commands swept",
+       %{tmp_dir: dir} do
     boot(:died, owner: dead_mc())
-    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    {:ok, sub} = Subprocess.start(["sh", "-c", "sleep 60 & echo $!; " <> @echo])
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
+    Subprocess.ack(sub)
+    command = String.to_integer(line)
+    leader = Subprocess.os_pid(sub)
     :ok = stop_supervised(:died)
-    pid_kill_stub(dir, "exit 4")
+
+    # The first run ends the program alone and finds it gone, as the helper would; the
+    # sweep's run is a plain kill of the command.
+    pid_kill_stub(
+      dir,
+      ~s(if [ "$1" = --group ]; then kill -KILL "$2"; exit 3; fi; exec kill -KILL "$1")
+    )
 
     boot(:next)
 
-    assert_receive {:subprocess_eof, reader} when reader == sub.reader, 5_000
+    assert Orphans.gone?(leader)
+    assert Orphans.gone?(command)
     assert File.ls!(Orphans.dir()) == []
   end
 

@@ -525,8 +525,10 @@ defmodule HalC2.Subprocess.Orphans do
   end
 
   @pid_kill "hal-c2-pid-kill"
-  # Its exit status when the kernel has no pidfds.
-  @no_pidfds 4
+  @not_that_process 3
+  # Its verdicts: delivered, failed, and no longer that process. Any other status (no
+  # pidfds in the kernel, a binary that will not load) says nothing about the program.
+  @pid_kill_verdicts [0, 1, @not_that_process]
   # Built by `vp run build:pid-kill` in a checkout; a release bundles it in priv/bin.
   @pid_kill_checkout Path.expand("../../../../../native/pid-kill/target", __DIR__)
 
@@ -554,7 +556,7 @@ defmodule HalC2.Subprocess.Orphans do
     helper = pid_kill_helper()
 
     case helper && pid_kill(helper, pid, started, leader?) do
-      {_out, status} = result when status != @no_pidfds -> result
+      {_out, status} = result when status in @pid_kill_verdicts -> result
       _ -> System.cmd("kill", kill_args(pid, leader?), stderr_to_stdout: true)
     end
   end
@@ -570,8 +572,13 @@ defmodule HalC2.Subprocess.Orphans do
   end
 
   # A program that survives keeps its record, so the next boot tries again.
-  defp kill(path, pid, started, leader?) do
+  defp kill(path, pid, started, leader?, mark) do
     case send_kill(pid, started, leader?) do
+      # It exited since the last read, and nothing was signalled, so what it left in
+      # its group is still there.
+      {_, @not_that_process} ->
+        sweep(path, pid, mark)
+
       {_, 0} ->
         # Exit 0 proves the signal was delivered, not that the program died:
         # one in uninterruptible sleep takes SIGKILL only when it wakes. The
@@ -686,7 +693,7 @@ defmodule HalC2.Subprocess.Orphans do
         # unreadable record does; dropping it would spare the orphan forever.
         case process_result(pid) do
           {:ok, {_state, ^started, group}} ->
-            kill(path, pid, started, group == pid)
+            kill(path, pid, started, group == pid, record["mark"])
 
           :unknown ->
             :kept
