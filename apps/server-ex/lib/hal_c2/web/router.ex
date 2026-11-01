@@ -111,6 +111,26 @@ defmodule HalC2.Web.Router do
     """)
   end
 
+  # A page published as a site, for anyone holding its link and nobody else: a link
+  # that is not one gets the answer any unknown address gets.
+  get "/sites/:space/:token" do
+    case HalC2.Space.site(space, token) do
+      nil ->
+        send_resp(conn, 404, "not found")
+
+      site ->
+        @cors_headers
+        |> Enum.reduce(conn, fn {name, _}, conn -> delete_resp_header(conn, name) end)
+        |> put_resp_content_type("text/html")
+        |> put_resp_header("content-security-policy", HalC2.Space.Sites.policy())
+        |> put_resp_header("referrer-policy", "no-referrer")
+        |> put_resp_header("x-content-type-options", "nosniff")
+        |> put_resp_header("x-robots-tag", "noindex")
+        |> put_resp_header("cache-control", "no-store")
+        |> send_resp(200, HalC2.Space.Sites.html(site))
+    end
+  end
+
   # Pairing: exchange a one-time pairing token for a bearer access token, or with a
   # `DPoP` proof for a token bound to the client's key. `scope` asks for fewer scopes.
   # A credential minted for one device key needs that key's proof.

@@ -66,19 +66,55 @@ defmodule HalC2.Web do
     end
   end
 
-  # An MC listening on every interface is reached at the address it reports to members.
+  # An MC listening on every interface is reached at the address it reports to members,
+  # or when it has none on the network address of this machine that others most likely
+  # share.
   def address(_input) do
-    wildcard? = Application.get_env(:hal_c2, :host, "127.0.0.1") in ["0.0.0.0", "::"]
-
-    with true <- wildcard?,
-         %{"clustered" => true, "addresses" => [address | _]} <- HalC2.Cluster.status(),
-         [ip | _] <- String.split(address, ":"),
-         false <- String.starts_with?(ip, "127.") do
-      {:ok, reached_at("http://#{ip}:#{port()}")}
+    if Application.get_env(:hal_c2, :host, "127.0.0.1") in ["0.0.0.0", "::"] do
+      case member_ip() || network_ip(:inet.getifaddrs()) do
+        nil -> {:ok, reached_at(base_url())}
+        ip -> {:ok, reached_at("http://#{ip}:#{port()}")}
+      end
     else
-      _ -> {:ok, reached_at(base_url())}
+      {:ok, reached_at(base_url())}
     end
   end
+
+  defp member_ip do
+    with %{"clustered" => true, "addresses" => [address | _]} <- HalC2.Cluster.status(),
+         [ip | _] <- String.split(address, ":"),
+         false <- String.starts_with?(ip, "127.") do
+      ip
+    else
+      _ -> nil
+    end
+  end
+
+  @doc """
+  The IPv4 address of an interface that is up in `:inet.getifaddrs/0`'s answer, not
+  loopback or link-local: a home or office network first, a tailnet or public address
+  last, and a container bridge's 172.16.0.0/12 after the other private ranges.
+  """
+  def network_ip({:ok, interfaces}) do
+    ips =
+      for {_name, opts} <- interfaces,
+          :up in Keyword.get(opts, :flags, []),
+          {:addr, {a, b, _, _} = ip} <- opts,
+          a != 127 and {a, b} != {169, 254},
+          do: ip
+
+    case Enum.sort_by(ips, &network_rank/1) do
+      [ip | _] -> List.to_string(:inet.ntoa(ip))
+      [] -> nil
+    end
+  end
+
+  def network_ip(_), do: nil
+
+  defp network_rank({192, 168, _, _}), do: 0
+  defp network_rank({10, _, _, _}), do: 1
+  defp network_rank({172, b, _, _}) when b in 16..31, do: 2
+  defp network_rank(_), do: 3
 
   defp reached_at(base),
     do: %{"address" => base, "localOnly" => loopback?(URI.parse(base).host)}

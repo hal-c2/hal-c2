@@ -7,7 +7,7 @@
 #   apps/server-ex/lib/hal_c2/space/sites.ex
 #   apps/server-ex/lib/hal_c2/web.ex (the address a link is made from, as for pairing links)
 
-@backlog-mc @backlog-desktop @backlog-mobile @backlog-tui
+@backlog-desktop @backlog-mobile @backlog-tui
 Feature: A page published as a site
   The user publishes a page and gets a link. Anyone who can reach the MC's address opens
   the link in an ordinary browser and reads the page as a plain HTML page, without pairing
@@ -67,7 +67,7 @@ Feature: A page published as a site
 
     @mc @desktop @mobile @tui
     Scenario: Every client watching the Space sees the page published
-      Given a second client watching the Space
+      Given a second client watching the Space "Research"
       When the user publishes the page "Roadmap" as a site
       Then the second client sees the page "Roadmap" published
 
@@ -112,7 +112,7 @@ Feature: A page published as a site
     @mc
     Scenario: A comment does not put the site behind and is never published
       Given the page "Roadmap" is published as a site
-      When the user comments "Private note" on "Ship pages"
+      When the user comments "Private note" on the block "Ship pages"
       Then the page "Roadmap" shows its site is up to date
       When the user publishes the page "Roadmap" as a site
       And a browser with no pairing opens the site link of the page "Roadmap"
@@ -179,9 +179,15 @@ Feature: A page published as a site
 
     @mc
     Scenario: Publishing needs a session that may change the Space
-      Given a session with read-only access
+      Given a session that may only read
       When that session publishes the page "Roadmap" as a site
-      Then the request is refused for lack of access
+      Then that session is refused for lack of access
+
+    @mc
+    Scenario: Publishing over Tailscale needs the right to open the MC to the tailnet
+      Given a session that may change the Space but not access
+      When that session publishes the page "Roadmap" over Tailscale
+      Then that session is refused for lack of access
 
   Rule: The page is a plain, safe document
 
@@ -210,7 +216,7 @@ Feature: A page published as a site
     @mc
     Scenario: A link to another page renders as plain text
       Given the page "Milestones" inside "Roadmap"
-      And the page "Roadmap" links to "Milestones"
+      And the user links "Milestones" from "Roadmap"
       And the page "Roadmap" is published as a site
       When a browser with no pairing opens the site link of the page "Roadmap"
       Then the browser reads "Milestones"
@@ -219,7 +225,7 @@ Feature: A page published as a site
     @mc
     Scenario: A link to a page in the trash is left out of the site
       Given the page "Milestones" inside "Roadmap"
-      And the page "Roadmap" links to "Milestones"
+      And the user links "Milestones" from "Roadmap"
       And the page "Milestones" is in the trash
       And the page "Roadmap" is published as a site
       When a browser with no pairing opens the site link of the page "Roadmap"
