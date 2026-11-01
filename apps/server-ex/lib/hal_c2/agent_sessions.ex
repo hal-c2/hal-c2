@@ -160,14 +160,20 @@ defmodule HalC2.AgentSessions do
   defp cwd(_), do: nil
 
   # The user's home, temp folders, downloads, Codex scratch folders, and HAL-C2's own
-  # data (its worktrees among it, under `.hal-c2` or `.t3` before XDG) are never projects.
+  # data and scratch (its worktrees among it, under `.hal-c2` or `.t3` before XDG) are
+  # never projects.
   defp excluded?(path) do
     home = user_home()
     hal_c2_home = Path.expand(HalC2.Paths.data_dir())
 
     path in [home, Path.expand(System.tmp_dir!()), "/tmp", "/private/tmp"] or
       Enum.any?(
-        [Path.join(home, "Downloads"), Path.join([home, "Documents", "Codex"]), hal_c2_home],
+        [
+          Path.join(home, "Downloads"),
+          Path.join([home, "Documents", "Codex"]),
+          hal_c2_home,
+          Path.expand(HalC2.Paths.scratch_dir())
+        ],
         &(path == &1 or String.starts_with?(path, &1 <> "/"))
       ) or String.contains?(path <> "/", ["/.hal-c2/worktrees/", "/.t3/worktrees/"])
   end

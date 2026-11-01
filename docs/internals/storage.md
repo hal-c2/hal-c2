@@ -55,6 +55,17 @@ TUI keep in the same root, and from the files an install that came from the Node
 holds. `HAL_C2_MC_HOME` is a root for the MC alone, so it has no `elixir` level, and it outranks
 `HAL_C2_HOME` for the MC.
 
+## Temporary files
+
+`/tmp` is often a tmpfs, so what agents leave there is held in memory and pushed to swap, and
+nothing says when it may go. The MC's scratch (`HalC2.Scratch`) and each thread's `TMPDIR` are in
+the cache directory instead, or under `HAL_C2_TMPDIR`. On a full disk this moves the pressure from
+memory to the disk, which is why a thread's folder is swept without a setting.
+
+`TMPDIR` does not reach an agent that writes a literal `/tmp/x`, as most large build directories
+are written, and Claude Code reads only `CLAUDE_CODE_TMPDIR`. Only a private mount namespace can
+catch the literal path; see [temporary-files.feature](../../features/mc/platform/temporary-files.feature).
+
 ## Migration copies, once
 
 `~/.t3` and `~/.hal-c2` are sources, never homes. A user coming from T3 Code may still run it

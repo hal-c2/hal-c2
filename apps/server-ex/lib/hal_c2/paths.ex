@@ -76,6 +76,21 @@ defmodule HalC2.Paths do
     :ok
   end
 
+  @doc """
+  Where the MC keeps disposable files (`HalC2.Scratch`): the cache directory, or a folder
+  of this home's own under `HAL_C2_TMPDIR`, so MCs given the same one never meet.
+  """
+  def scratch_dir do
+    case absolute(System.get_env("HAL_C2_TMPDIR"), platform()) do
+      nil ->
+        Path.join(cache_dir(), "tmp")
+
+      dir ->
+        home = :crypto.hash(:sha256, data_dir()) |> Base.encode16(case: :lower)
+        Path.join(dir, "hal-c2-" <> binary_part(home, 0, 8))
+    end
+  end
+
   @doc "The user's home directory: `HOME` when set, as the XDG specification reads it."
   def user_home, do: System.get_env("HOME") || System.user_home!()
 

@@ -70,6 +70,12 @@ Set `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, or `XDG_CACHE_HOME` to
 an absolute path to move one kind. Set `HAL_C2_HOME` to keep all four under one
 directory instead, as its `config`, `data`, `state`, and `cache` subdirectories.
 
+Agents' temporary files go in `tmp` inside the MC's cache directory, not your
+machine's `/tmp`. Each thread has its own folder, removed once the thread is
+deleted or has been idle for a week. Set `HAL_C2_TMPDIR` to an absolute path in the
+MC's environment to keep them on another disk. An agent that writes to a literal
+`/tmp` path still reaches the machine's `/tmp`.
+
 ### Coming from T3 Code
 
 The first time HAL-C2 starts with no data of its own, it copies your projects,
