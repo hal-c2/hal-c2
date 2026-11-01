@@ -39,9 +39,10 @@ all_proofs='^(apps/server-ex/(mix\.exs|mix\.lock|config/proof\.exs|proof/support
 
 proofs=$(git ls-tree --name-only HEAD apps/server-ex/proof/hal_c2/ | sed -nE 's|.*/(.*)_proof_test\.exs$|\1|p')
 
-# Whether anything changed outside the paths a job cannot depend on.
+# Whether anything changed outside the paths a job cannot depend on. Not `| grep -q .`: it
+# exits at its first match, and pipefail then reads the writer's SIGPIPE as nothing changed.
 needed() {
-  grep -vE "$not_mc" <<<"$changed" | grep -vE "$1" | grep -q . && echo true || echo false
+  [ -n "$(grep -vE "$not_mc" <<<"$changed" | grep -vE "$1" || true)" ] && echo true || echo false
 }
 
 # The groups holding the changed scenarios, or all of them when more than scenarios changed.
