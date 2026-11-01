@@ -677,6 +677,13 @@ Feature: Viewing and editing files
       When the user ticks "Ship cart" and "Tell everyone" before either read is answered
       Then "TODO.md" records both tasks as done
 
+    @desktop
+    Scenario: A task ticked just before an edit does not tick another task
+      Given "TODO.md" has the unticked task "Ship cart"
+      And the user is looking at the rendered view
+      When the user ticks "Ship cart" and adds a task above it before the read is answered
+      Then "TODO.md" holds the user's edit and no task was ticked
+
   Rule: Paths stay inside the project
 
     @mc

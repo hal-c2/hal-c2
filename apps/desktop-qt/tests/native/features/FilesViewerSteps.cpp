@@ -1003,6 +1003,17 @@ const Steps backlogSteps([] {
   step(QStringLiteral("the user ticks %1 and %1 before either read is answered").arg(q), [](World& world, const Captures& c, const Table&) {
     for (const QString& task : {c[0], c[1]}) files(world).toggleTask(taskLink(world, task).section(QLatin1Char(':'), 1).toInt());
   });
+  step(QStringLiteral("the user ticks %1 and adds a task above it before the read is answered").arg(q), [](World& world, const Captures& c, const Table&) {
+    files(world).toggleTask(taskLink(world, c[0]).section(QLatin1Char(':'), 1).toInt());
+    viewer(world).rewritten = files(world).text().replace(QStringLiteral("- [x] Draft the plan\n"), QStringLiteral("- [ ] Something first\n- [x] Draft the plan\n"));
+    files(world).edit(viewer(world).rewritten);
+  });
+  step(QStringLiteral("%1 holds the user's edit and no task was ticked").arg(q), [](World& world, const Captures& c, const Table&) {
+    world.waitFor([&] { return fakeFiles(world.mc).files.value(c[0]) == viewer(world).rewritten && !files(world).unsaved(); }, [&] { return describeViewer(world); });
+    // The read after the save answers, and whatever it would write comes.
+    for (int round = 0; round < 3; ++round) world.sync();
+    expect(fakeFiles(world.mc).files.value(c[0]) == viewer(world).rewritten && files(world).text() == viewer(world).rewritten, QStringLiteral("%1 holds \"%2\"").arg(c[0], fakeFiles(world.mc).files.value(c[0])));
+  });
   step(QStringLiteral("%1 records both tasks as done").arg(q), [](World& world, const Captures& c, const Table&) {
     const QString wanted = QStringLiteral("# To do\n\n- [x] Draft the plan\n- [x] Ship cart\n- [x] Tell everyone\n");
     world.waitFor([&] { return fakeFiles(world.mc).files.value(c[0]) == wanted; }, [&] { return QStringLiteral("%1 holds \"%2\"").arg(c[0], fakeFiles(world.mc).files.value(c[0])); });

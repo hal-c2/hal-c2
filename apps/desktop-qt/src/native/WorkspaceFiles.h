@@ -295,8 +295,8 @@ private:
   // The newest file change the agent made names `path`.
   bool newestChangeNames(const QString& path) const;
   // The agent changed the workspace: the open file shows what is there now.
-  // Reads the open file while it stays on screen; `task`, when not -1, is
-  // ticked if the file is still what the user is looking at.
+  // Reads the open file while it stays on screen; the waiting ticks are applied
+  // if the file is still what the user is looking at.
   void refreshFile();
   void rereadIfDue();
   void applyTask(int index);

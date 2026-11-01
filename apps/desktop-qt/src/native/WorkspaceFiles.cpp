@@ -779,6 +779,8 @@ void WorkspaceFiles::edit(const QString& contents) {
   if (!editable() || contents == m_text) return;
   m_text = contents;
   ++m_revision;
+  // A waiting tick counted the boxes of the text that was just replaced.
+  m_waitingTicks.clear();
   m_pending = true;
   m_saveProblem.clear();
   emit textChanged();
