@@ -4013,8 +4013,24 @@ defmodule HalC2.OrchestrationTest do
       :ok = HalC2.Shell.subscribe(self())
       await_shell_row(thread_id, &(&1["activeRunId"] == nil))
 
-      assert HalC2.Orchestration.IdleSessions.check() == [thread_id]
-      assert Registry.lookup(HalC2.Codex.Registry, thread_id) == []
+      # The next message reads this registry, so a released session is gone from it when
+      # the check returns. Its partitions held back, the registry's own asynchronous
+      # cleanup of the dead pid cannot make the lookup pass, nor missing it fail it now
+      # and then (#436).
+      partitions =
+        for {_id, partition, :worker, _} <-
+              Supervisor.which_children(HalC2.Codex.Registry),
+            do: partition
+
+      assert partitions != []
+      Enum.each(partitions, &:sys.suspend/1)
+
+      try do
+        assert HalC2.Orchestration.IdleSessions.check() == [thread_id]
+        assert Registry.lookup(HalC2.Codex.Registry, thread_id) == []
+      after
+        Enum.each(partitions, &:sys.resume/1)
+      end
 
       assert [%{"status" => "stopped"}] =
                StreamState.list(current(thread_id), "provider-session")
