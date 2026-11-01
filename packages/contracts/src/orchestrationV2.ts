@@ -25,6 +25,8 @@ import {
   RunId,
   RuntimeRequestId,
   ScheduledTaskId,
+  SpaceId,
+  SpacePageId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
@@ -371,6 +373,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   /** The plugin that started the thread and the kind of thread it is (`plugin.ts`). */
   plugin: Schema.optional(Schema.NullOr(ThreadPluginMark)),
+  /** The page this thread's agent was asked from (`space.page.askAgent`). */
+  spacePage: Schema.optional(Schema.Struct({ spaceId: SpaceId, pageId: SpacePageId })),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   lineage: OrchestrationV2AppThreadLineage,
