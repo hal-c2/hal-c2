@@ -591,6 +591,51 @@ Item {
             compare(source.closed, 1, "the close button is reachable");
         }
 
+        // A font scale can make the text buttons wider than the tab: they move into a
+        // menu that does what they do, and the way out of the file stays on screen.
+        function test_aLargeFontMovesTheHeaderTextButtonsIntoAMenu() {
+            Shell.state = Object.assign({}, Shell.state, { workspace: { editors: [{ id: "vscode", label: "VS Code" }] } });
+            const source = createTemporaryObject(fakeFiles, root);
+            source.renderKind = "markdown";
+            const files = createTemporaryObject(filesComponent, root, { source: source, width: 360 });
+            const viewer = findChild(files, "fileViewer");
+            const explorer = findChild(files, "filesExplorer");
+            const textButtons = ["fileRender", "fileEdit", "fileWrap"].map(name => findChild(files, name));
+            const menuButton = findChild(files, "fileHeaderMenu");
+            tryVerify(() => viewer.visible);
+            verify(textButtons.every(button => button.visible), "the buttons fit at the ordinary font");
+            verify(!menuButton.visible);
+            compare(files.headerFullWidth, viewer.Layout.minimumWidth, "the measure agrees with what the layout asks for");
+
+            textButtons[2].forceActiveFocus();
+            tryVerify(() => textButtons[2].activeFocus, 5000, "the Wrap button has focus before the font grows");
+            Theme.fontScale = 4;
+            tryVerify(() => files.headerFullWidth > 360, 5000, "the text outgrew the tab: " + files.headerFullWidth);
+            tryVerify(() => menuButton.visible);
+            verify(textButtons.every(button => !button.visible), "no text button is left to overflow");
+            tryVerify(() => menuButton.activeFocus, 5000, "focus moves from a button that left to the menu that holds it");
+            verify(!explorer.visible, "the tree still waits for the room the full header needs");
+            for (const name of ["fileCopy", "fileOpenInEditor", "fileHeaderMenu", "fileExplorerToggle", "fileClose"]) {
+                const button = findChild(files, name);
+                verify(button.visible, name);
+                tryVerify(() => button.mapToItem(files, button.width, 0).x <= files.width + 0.5, 5000, name + " stays inside the tab");
+            }
+
+            mouseClick(menuButton);
+            const wrapItem = findChild(menuButton, "fileWrapItem");
+            tryVerify(() => wrapItem && wrapItem.visible && wrapItem.height > 0);
+            const wrapped = source.wrap;
+            wrapItem.clicked();
+            compare(source.wrap, !wrapped, "the menu does what the button did");
+
+            mouseClick(findChild(files, "fileClose"));
+            compare(source.closed, 1, "the close button is reachable");
+
+            // The way back: the ordinary font brings the buttons out again.
+            Theme.fontScale = 1;
+            tryVerify(() => textButtons.every(button => button.visible) && !menuButton.visible);
+        }
+
         // A tab too narrow to leave the tree room beside the header's buttons shows the
         // file alone: no sliver of a tree that still takes focus.
         function test_aTabTooNarrowForTheTreeShowsTheFileAlone() {
