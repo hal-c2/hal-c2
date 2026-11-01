@@ -67,20 +67,12 @@ defmodule HalC2.Web do
     end
   end
 
-  # An MC listening on every interface is reached at the address it reports to members,
-  # or when it has none on the network address of this machine that others most likely
-  # share.
+  # An MC listening on every interface is reached at the address it was told to use for
+  # its members, or when it has none on the network address of this machine that others
+  # most likely share.
   def address(_input) do
     if Application.get_env(:hal_c2, :host, "127.0.0.1") in ["0.0.0.0", "::"] do
-      interfaces = :inet.getifaddrs()
-
-      addresses =
-        case HalC2.Cluster.status() do
-          %{"clustered" => true, "addresses" => addresses} -> addresses
-          _ -> []
-        end
-
-      case member_ip(addresses, interfaces) || network_ip(interfaces) do
+      case cluster_listen_ip() || network_ip(:inet.getifaddrs()) do
         nil -> {:ok, reached_at(base_url())}
         ip -> {:ok, reached_at("http://#{ip}:#{port()}")}
       end
@@ -89,39 +81,30 @@ defmodule HalC2.Web do
     end
   end
 
-  @virtual_interfaces ~w(docker br- virbr veth vmnet vboxnet podman cni lxcbr lxdbr bridge)
-
-  @doc """
-  The first of the `ip:port` addresses an MC reports to members that another machine can
-  reach, given `:inet.getifaddrs/0`'s answer: members are told of every interface, a
-  bridge for this machine's containers and VMs among them.
-  """
-  def member_ip(addresses, interfaces) do
-    bridges =
-      with {:ok, interfaces} <- interfaces do
-        for {name, opts} <- interfaces,
-            virtual?(name),
-            {:addr, {_, _, _, _} = ip} <- opts,
-            do: List.to_string(:inet.ntoa(ip))
-      else
-        _ -> []
-      end
-
-    addresses
-    |> Enum.map(&(&1 |> String.split(":") |> hd()))
-    |> Enum.find(&(not String.starts_with?(&1, "127.") and &1 not in bridges))
+  defp cluster_listen_ip do
+    with ip when is_binary(ip) <- Application.get_env(:hal_c2, :cluster_listen),
+         {:ok, {a, _, _, _}} when a not in [0, 127] <-
+           :inet.parse_ipv4strict_address(String.to_charlist(ip)) do
+      ip
+    else
+      _ -> nil
+    end
   end
 
+  @virtual_interfaces ~w(docker br- virbr veth vmnet vboxnet podman cni lxcbr lxdbr bridge
+                         flannel kube- cilium incusbr mpqemubr)
+
   @doc """
-  The IPv4 address of an interface that is up in `:inet.getifaddrs/0`'s answer, not
+  The IPv4 address of an interface that is up and running in `:inet.getifaddrs/0`'s answer, not
   loopback, link-local or a bridge for this machine's containers and VMs, which nobody
   else can reach: a home or office network first, a tailnet or public address last.
   """
   def network_ip({:ok, interfaces}) do
     ips =
       for {name, opts} <- interfaces,
-          not virtual?(name),
-          :up in Keyword.get(opts, :flags, []),
+          not String.starts_with?(to_string(name), @virtual_interfaces),
+          flags = Keyword.get(opts, :flags, []),
+          :up in flags and :running in flags,
           {:addr, {a, b, _, _} = ip} <- opts,
           a != 127 and {a, b} != {169, 254},
           do: ip
@@ -133,8 +116,6 @@ defmodule HalC2.Web do
   end
 
   def network_ip(_), do: nil
-
-  defp virtual?(name), do: String.starts_with?(to_string(name), @virtual_interfaces)
 
   defp network_rank({192, 168, _, _}), do: 0
   defp network_rank({10, _, _, _}), do: 1
