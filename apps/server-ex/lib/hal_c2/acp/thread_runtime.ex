@@ -32,6 +32,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   import HalC2.Orchestration.TurnWriter
 
   alias HalC2.JsonRpc.Connection
+  alias HalC2.Subprocess.Durable
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, NativeSubagent}
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
@@ -139,6 +140,10 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  @doc "Goes on with the program an earlier MC left running (`HalC2.Subprocess.Durable`)."
+  def adopt(thread_id, survivor),
+    do: GenServer.call(ensure(thread_id), {:adopt, survivor}, 30_000)
+
   # --- server ------------------------------------------------------------------
 
   @impl true
@@ -214,6 +219,37 @@ defmodule HalC2.Acp.ThreadRuntime do
        # An Antigravity process's runtime temp directory, removed with it.
        temp_dir: nil
      }}
+  end
+
+  # A program an earlier MC left running: this runtime goes on from its checkpoint.
+  @impl true
+  def handle_call({:adopt, %{dir: dir, snapshot: snapshot}}, _from, state) do
+    Process.flag(:trap_exit, true)
+
+    with {:ok, conn} <-
+           Connection.start_link(
+             adopt: %{dir: dir, offset: snapshot.offset, channel: snapshot.channel},
+             handler: self(),
+             dialect: :v2,
+             log: snapshot.state.thread_id,
+             stderr_prefix: Antigravity.stderr_prefix(snapshot.state.agent)
+           ),
+         {:ok, restored} <- code_change(nil, snapshot.state, nil) do
+      {:reply, :ok,
+       Durable.restored(
+         %{
+           restored
+           | prompts: :gen_server.reqids_new(),
+             mcp_bridge: nil,
+             wire: restored.wire && %{restored.wire | timer: nil}
+         },
+         :conn,
+         conn,
+         snapshot
+       )}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
@@ -464,6 +500,23 @@ defmodule HalC2.Acp.ThreadRuntime do
         {:reply, :ok, resolve_request(%{state | requests: requests}, request_id, decision)}
     end
   end
+
+  @impl true
+  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state) do
+    Durable.save(checkpoint, __MODULE__, state)
+    {:noreply, state}
+  end
+
+  # The turn's prompt, sent by the MC before this one, answered: the turn is over.
+  def handle_info(
+        {:json_rpc, _conn, {:response_after_restart, "session/prompt", reply}},
+        %{turn: %{}, prompt: prompt} = state
+      )
+      when prompt != nil,
+      do: answered(state, reply)
+
+  def handle_info({:json_rpc, _conn, {:response_after_restart, _method, _reply}}, state),
+    do: {:noreply, state}
 
   @impl true
   def handle_info(
@@ -988,6 +1041,7 @@ defmodule HalC2.Acp.ThreadRuntime do
              env: env,
              dialect: :v2,
              log: state.thread_id,
+             durable: state.thread_id,
              stderr_prefix: Antigravity.stderr_prefix(instance)
            ),
          {:ok, init} <-

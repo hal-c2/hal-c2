@@ -31,6 +31,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   import HalC2.Orchestration.TurnWriter
 
   alias HalC2.Claude.Provider
+  alias HalC2.Subprocess.Durable
   alias HalC2.Claude.Session
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, NativeSubagent}
@@ -219,6 +220,10 @@ defmodule HalC2.Claude.ThreadRuntime do
     end
   end
 
+  @doc "Goes on with the program an earlier MC left running (`HalC2.Subprocess.Durable`)."
+  def adopt(thread_id, survivor),
+    do: GenServer.call(ensure(thread_id), {:adopt, survivor}, 30_000)
+
   # --- server ------------------------------------------------------------------
 
   @impl true
@@ -271,6 +276,24 @@ defmodule HalC2.Claude.ThreadRuntime do
        # messages newest first, nil once the thread refused it a run.
        wake: nil
      }}
+  end
+
+  # A program an earlier MC left running: this runtime goes on from its checkpoint.
+  @impl true
+  def handle_call({:adopt, %{dir: dir, snapshot: snapshot}}, _from, state) do
+    Process.flag(:trap_exit, true)
+
+    with {:ok, session} <-
+           Session.start_link(
+             adopt: %{dir: dir, offset: snapshot.offset, channel: snapshot.channel},
+             handler: self(),
+             log: snapshot.state.thread_id
+           ),
+         {:ok, restored} <- code_change(nil, snapshot.state, nil) do
+      {:reply, :ok, Durable.restored(restored, :session, session, snapshot)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   # The run of a wake: nothing is sent to Claude. What it said so far is replayed into
@@ -537,6 +560,12 @@ defmodule HalC2.Claude.ThreadRuntime do
     settle = Application.get_env(:hal_c2, :claude_interrupt_timeout_ms, 10_000)
     Process.send_after(self(), {:settle_interrupt, turn.ids.run}, settle)
     %{state | interrupted: true}
+  end
+
+  @impl true
+  def handle_info({:claude, _session, {:checkpoint, checkpoint}}, state) do
+    Durable.save(checkpoint, __MODULE__, state)
+    {:noreply, state}
   end
 
   # What a CLI stopped for another instance's (`ensure_session/2`) had already sent
@@ -1114,7 +1143,8 @@ defmodule HalC2.Claude.ThreadRuntime do
       # The instance's variables in settings (such as CLAUDE_CONFIG_DIR) reach Claude,
       # over the project's environment when the project loads it.
       env: HalC2.ProjectEnvironment.for_turn(turn, session_env(turn), command(turn)),
-      log: state.thread_id
+      log: state.thread_id,
+      durable: state.thread_id
     ]
 
     case Session.start_link(Keyword.put(opts, :command, command(turn))) do

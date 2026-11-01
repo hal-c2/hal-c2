@@ -10,6 +10,11 @@ defmodule HalC2.Claude.Session do
   kinds named at `initialize`) arrives as `{:claude, session, {:dialog, request_id, kind,
   payload}}` and is answered with `answer_dialog/3`. `control/3` sends any control request
   (`"interrupt"`, `"set_model"`, `"set_permission_mode"`, ...) and waits for its reply.
+
+  With `:durable` (a thread id) the CLI outlives the MC: the handler gets
+  `{:claude, session, {:checkpoint, checkpoint}}` after each batch to save with its state
+  (`HalC2.Subprocess.Durable.save/3`), and `:adopt` starts a session on a CLI an earlier
+  MC saved so. No `initialize` is sent then: it already answered one.
   """
 
   use GenServer
@@ -50,28 +55,20 @@ defmodule HalC2.Claude.Session do
   @impl true
   def init(opts) do
     Process.flag(:trap_exit, true)
-    # `:command` replaces the `claude` executable (with its own leading args), e.g. in tests.
-    cmd =
-      Keyword.get(opts, :command, [Keyword.get(opts, :executable, "claude")]) ++
-        Protocol.cli_args(opts)
 
-    with {:ok, sub} <- Subprocess.start(cmd, Keyword.take(opts, [:cd, :env])),
-         :ok <-
-           Subprocess.write_line(
-             sub,
-             Protocol.control_request("init", "initialize", %{
-               "supportedDialogKinds" => @dialog_kinds
-             })
-           ) do
+    with {:ok, sub} <- subprocess(opts) do
+      channel = get_in(opts, [:adopt, :channel]) || %{next_id: 1, permissions: %{}}
+
       {:ok,
        %{
          v: @state_version,
          sub: sub,
          handler: Keyword.fetch!(opts, :handler),
-         next_id: 1,
+         next_id: channel.next_id,
          pending: %{},
+         offset: get_in(opts, [:adopt, :offset]) || 0,
          # Tool input is echoed back on "allow", so keep it until the prompt is answered.
-         permissions: %{},
+         permissions: channel.permissions,
          log: Keyword.get(opts, :log)
        }}
     else
@@ -79,11 +76,37 @@ defmodule HalC2.Claude.Session do
     end
   end
 
+  defp subprocess(opts) do
+    case opts[:adopt] do
+      %{dir: dir, offset: offset} ->
+        Subprocess.adopt(dir, offset)
+
+      nil ->
+        # `:command` replaces the `claude` executable (with its own leading args), e.g. in tests.
+        cmd =
+          Keyword.get(opts, :command, [Keyword.get(opts, :executable, "claude")]) ++
+            Protocol.cli_args(opts)
+
+        with {:ok, sub} <- Subprocess.start(cmd, Keyword.take(opts, [:cd, :env, :durable])),
+             :ok <-
+               Subprocess.write_line(
+                 sub,
+                 Protocol.control_request("init", "initialize", %{
+                   "supportedDialogKinds" => @dialog_kinds
+                 })
+               ) do
+          {:ok, sub}
+        end
+    end
+  end
+
   @impl true
   def handle_call({:control, subtype, params}, from, state) do
     id = "hal-c2-#{state.next_id}"
     :ok = Subprocess.write_line(state.sub, Protocol.control_request(id, subtype, params))
-    {:noreply, %{state | next_id: state.next_id + 1, pending: Map.put(state.pending, id, from)}}
+
+    {:noreply,
+     checkpoint(%{state | next_id: state.next_id + 1, pending: Map.put(state.pending, id, from)})}
   end
 
   @impl true
@@ -92,7 +115,7 @@ defmodule HalC2.Claude.Session do
 
   def handle_cast({:user_message, content, opts}, state) do
     :ok = Subprocess.write_line(state.sub, Protocol.user_message(content, opts))
-    {:noreply, state}
+    {:noreply, checkpoint(state)}
   end
 
   def handle_cast({:answer_permission, id, decision}, state) do
@@ -102,13 +125,13 @@ defmodule HalC2.Claude.Session do
 
       {input, permissions} ->
         :ok = Subprocess.write_line(state.sub, Protocol.permission_reply(id, decision, input))
-        {:noreply, %{state | permissions: permissions}}
+        {:noreply, checkpoint(%{state | permissions: permissions})}
     end
   end
 
   def handle_cast({:answer_dialog, id, result}, state) do
     :ok = Subprocess.write_line(state.sub, Protocol.dialog_reply(id, result))
-    {:noreply, state}
+    {:noreply, checkpoint(state)}
   end
 
   @impl true
@@ -117,6 +140,9 @@ defmodule HalC2.Claude.Session do
     Subprocess.ack(state.sub)
     {:noreply, state}
   end
+
+  def handle_info({:subprocess_offset, _reader, offset}, state),
+    do: {:noreply, checkpoint(%{state | offset: offset})}
 
   def handle_info({:subprocess_eof, _reader}, state), do: {:stop, :normal, state}
   def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
@@ -129,7 +155,25 @@ defmodule HalC2.Claude.Session do
   end
 
   @impl true
-  def code_change(_old_vsn, state, _extra), do: {:ok, Map.put(state, :v, @state_version)}
+  def code_change(_old_vsn, state, _extra),
+    do: {:ok, state |> Map.put_new(:offset, 0) |> Map.put(:v, @state_version)}
+
+  # After what the CLI wrote and after what it was sent.
+  defp checkpoint(%{sub: %{durable: %{dir: dir}}} = state) do
+    notify(
+      state,
+      {:checkpoint,
+       %{
+         dir: dir,
+         offset: state.offset,
+         channel: %{next_id: state.next_id, permissions: state.permissions}
+       }}
+    )
+
+    state
+  end
+
+  defp checkpoint(state), do: state
 
   defp handle_line(line, state) do
     HalC2.ProviderLog.native(Map.get(state, :log), line)

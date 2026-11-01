@@ -48,8 +48,9 @@ defmodule HalC2.Subprocess.Orphans do
 
   The kernel's parent-death signal (`PR_SET_PDEATHSIG`) is not used. It would kill
   the program but leave its background commands with no leader to check the group
-  against, and macOS has none. A release under systemd loses the unit's processes
-  when the MC stops anyway (`KillMode=mixed`).
+  against, and macOS has none. A thread's provider program is outside all this: it
+  outlives the MC on purpose (`HalC2.Subprocess.Durable`), and this only tracks the
+  helper connecting the MC to it.
 
   macOS reads processes with `ps` and kills with BSD `kill`; no test runs there but
   the one of how `ps` output is read. Windows has neither `/proc` nor `ps`, so an MC
@@ -195,6 +196,14 @@ defmodule HalC2.Subprocess.Orphans do
          :ok <- File.rename(tmp, path),
          do: :ok
   end
+
+  @doc """
+  A durable program's helper `proc` was attached to `dir`. If the helper ends with the
+  program still recorded while this MC goes on (something killed what connected them),
+  no one could reach the program and the thread's next turn would start a second one,
+  so it is killed. An MC that is stopping leaves it for the next boot.
+  """
+  def watch_durable(proc, dir), do: GenServer.cast(__MODULE__, {:watch_durable, proc, dir})
 
   defp untracked do
     if Application.get_env(:hal_c2, :start_mc, false) and
@@ -466,10 +475,27 @@ defmodule HalC2.Subprocess.Orphans do
     {:noreply, put_in(state.programs[ref], path)}
   end
 
+  def handle_cast({:watch_durable, proc, dir}, state) do
+    ref = Process.monitor(proc)
+    {:noreply, put_in(state.programs[ref], {:durable, dir})}
+  end
+
   @impl true
   def handle_info({:DOWN, ref, :process, _proc, _reason}, state) do
     {path, programs} = Map.pop(state.programs, ref)
-    if path, do: File.rm(path)
+
+    case path do
+      nil ->
+        :ok
+
+      {:durable, dir} ->
+        unless HalC2.Orchestration.Recovery.stopping?(),
+          do: HalC2.Subprocess.Durable.kill_dir(dir)
+
+      path ->
+        File.rm(path)
+    end
+
     {:noreply, %{state | programs: programs}}
   end
 
