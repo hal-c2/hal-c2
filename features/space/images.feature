@@ -139,6 +139,19 @@ Feature: Images in a Space
       When the user generates an image of "a red fox" in "Research"
       Then the image remembers it was made by grok
 
+    Scenario: With no choice the MC also uses a provider instance the user added
+      Given a codex instance "codex-work" that can generate images
+      And no other provider is available
+      When the user generates an image of "a red fox" in "Research"
+      Then the image remembers it was made by codex-work
+
+    Scenario: An agent that never finishes makes no image and leaves nothing behind
+      Given grok is installed and never finishes
+      When the user generates an image of "a red fox" in "Research" with grok
+      Then the user is told image generation timed out
+      And the images of "Research" are ""
+      And no agent's scratch folder is left
+
     Scenario: An agent that leaves no image makes no image
       Given grok is installed and leaves no file
       When the user generates an image of "a red fox" in "Research" with grok

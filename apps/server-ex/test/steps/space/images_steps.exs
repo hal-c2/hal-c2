@@ -122,6 +122,32 @@ defmodule HalC2.Steps.Space.Images do
 
   step("no other provider is available", context, do: context)
 
+  step "a codex instance {string} that can generate images", %{args: [id]} = context do
+    instance = %{"driver" => "codex", "enabled" => true, "config" => %{"binaryPath" => @fake}}
+
+    context
+    |> install([])
+    |> World.update_settings(%{"providerInstances" => %{id => instance}})
+  end
+
+  step "grok is installed and never finishes", context do
+    World.put_env("FAKE_IMAGE_MODE", "hang")
+    World.put_app_env(:image_generation_timeout, 500)
+    install(context, [:grok])
+  end
+
+  step "the user is told image generation timed out", context do
+    context = told(context, "failed")
+    assert inspect(context.space_reply) =~ "timed out"
+    context
+  end
+
+  step "no agent's scratch folder is left", context do
+    scratch = Path.dirname(HalC2.Scratch.path("probe"))
+    assert Path.wildcard(Path.join(scratch, "hal-c2-image-*")) == []
+    context
+  end
+
   step "grok is installed and leaves no file", context do
     World.put_env("FAKE_IMAGE_MODE", "none")
     install(context, [:grok])

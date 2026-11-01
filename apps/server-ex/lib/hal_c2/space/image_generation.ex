@@ -58,7 +58,8 @@ defmodule HalC2.Space.ImageGeneration do
   defp unsupported(id), do: "#{id} does not generate images here."
   defp unavailable(id), do: "#{id} is not enabled or not installed."
 
-  # The model chosen for writing text when it can make images, else the first that can.
+  # The model chosen for writing text when it can make images, else the first instance
+  # that can, the built-in ones before those settings add.
   defp default(settings) do
     text = settings["textGenerationModelSelection"]
 
@@ -66,9 +67,10 @@ defmodule HalC2.Space.ImageGeneration do
          TextGeneration.usable?(settings, text) do
       selection(text)
     else
-      Enum.find_value(@supported, fn driver ->
-        selection = %{"instanceId" => driver, "model" => TextGeneration.default_model(driver)}
-        if TextGeneration.usable?(settings, selection), do: selection
+      Enum.find_value(instances(settings), fn id ->
+        driver = TextGeneration.driver(id)
+        selection = %{"instanceId" => id, "model" => TextGeneration.default_model(driver)}
+        if driver in @supported and TextGeneration.usable?(settings, selection), do: selection
       end)
     end
   end

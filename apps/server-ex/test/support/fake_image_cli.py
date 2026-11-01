@@ -2,8 +2,8 @@
 # Fake `codex exec` and `grok -p` for image generation tests. Appends each call (argv,
 # cwd, prompt) to $FAKE_IMAGE_LOG and leaves a small PNG in the directory it runs in.
 # $FAKE_IMAGE_MODE changes that: "none" leaves nothing, "text" leaves a file that is not
-# an image, and "fail" fails the call.
-import base64, json, os, sys
+# an image, "fail" fails the call, and "hang" outlasts the MC's patience.
+import base64, json, os, sys, time
 
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
@@ -21,6 +21,8 @@ mode = os.environ.get("FAKE_IMAGE_MODE") or "png"
 if mode == "fail":
     sys.stderr.write("the model is overloaded\n")
     sys.exit(1)
+if mode == "hang":
+    time.sleep(30)
 if mode == "text":
     with open("image.png", "w") as f:
         f.write("not an image")
