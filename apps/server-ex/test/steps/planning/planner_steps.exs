@@ -2742,13 +2742,13 @@ defmodule HalC2.Steps.Planning.Planner do
     ])
   end
 
-  # GitHub takes moving #`number` out of any milestone once the scenario answers it. Nothing
-  # answers it in a scenario that only reads the push it was held for.
+  # GitHub takes moving #`number` out of any milestone once the scenario answers it.
   step "GitHub takes moving \#{int} out of its milestone late", %{args: [number]} = context do
     gate = Path.join(context.mc.home, "gh-gate-#{number}-out")
     {_, 0} = System.cmd("mkfifo", [gate])
 
-    World.cli_rules(context, [
+    context
+    |> World.cli_rules([
       %{
         "args" => ["--method PATCH", "repos/#{context.repository}/issues/#{number} "],
         "stdin" => [~s("milestone":null)],
@@ -2756,6 +2756,7 @@ defmodule HalC2.Steps.Planning.Planner do
         "stdout" => %{"number" => number}
       }
     ])
+    |> Map.put(:gh_gate_out, gate)
   end
 
   # GitHub takes moving #`number` to the milestone `title` once the scenario answers it,
@@ -2786,8 +2787,7 @@ defmodule HalC2.Steps.Planning.Planner do
     assert_receive {:DOWN, ^ref, :process, _, :killed}, 5_000
     {_, context} = await_topic(context, "plan", &(item(&1, to)["syncError"] != nil))
 
-    # Killing the runner may have taken GitHub's call with it.
-    release(context.gh_gates[to], "answer")
+    let_go(context.gh_gates[to])
     Task.shutdown(moving, :brutal_kill)
     context
   end
@@ -2815,6 +2815,7 @@ defmodule HalC2.Steps.Planning.Planner do
     reply =
       as_lost_runner(flight.runner, fn -> report_again(context.push_projects, id, flight) end)
 
+    let_go(context.gh_gate_out)
     Task.shutdown(context.push_moving, :brutal_kill)
     Map.put(context, :reported_again, reply)
   end
@@ -2827,6 +2828,13 @@ defmodule HalC2.Steps.Planning.Planner do
            inspect(ops)
 
     context
+  end
+
+  # Ends the wait on `gate` of a gh no one will answer again: one on it goes, and one that
+  # gets there later finds no gate, so neither outlives the scenario.
+  defp let_go(gate) do
+    release(gate, "answer")
+    File.rm!(gate)
   end
 
   # Moves `title` in a client of its own, held at GitHub, and removes `removed` meanwhile;
