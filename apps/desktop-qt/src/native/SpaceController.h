@@ -118,7 +118,9 @@ class SpacePages : public QObject {
   Q_PROPERTY(QString spaceId READ spaceId NOTIFY changed)
   Q_PROPERTY(QString spaceName READ spaceName NOTIFY changed)
   Q_PROPERTY(QString pageId READ pageId NOTIFY changed)
-  // {id, title, parentPageId, trashed, sourceThreadId, sourceThreadTitle}, or empty.
+  // {id, title, parentPageId, trashed, sourceThreadId, sourceThreadTitle, site},
+  // or empty. `site` is what the page has published, {url, localOnly, behind,
+  // publishedAt}, or empty.
   Q_PROPERTY(QVariantMap page READ page NOTIFY changed)
   // loading, live or unreachable: the selected Space's stream (the index's
   // before a Space is selected).
@@ -140,6 +142,7 @@ public:
   QString spaceName() const;
   QString pageId() const { return m_pageId; }
   QVariantMap page() const;
+  QVariantMap siteOf(const QString& pageId) const;
   QString status() const;
   QVariantMap viewers() const { return m_viewers; }
 
@@ -264,6 +267,8 @@ private:
 // `space.page.move {pageId, parentPageId}`, `space.page.trash {pageId}`,
 // `space.page.restore {pageId}`, `space.page.delete {pageId}`,
 // `space.page.copyMarkdown {pageId}`, `space.page.saveMarkdown {pageId, url}`,
+// `space.page.publish {pageId, tailscale}`, `space.page.unpublish {pageId}`,
+// `space.page.copySiteLink {pageId}`,
 // `space.page.importMarkdown {markdown}`, `space.page.importFile {url}`,
 // `space.pageFromThread {threadKey}`,
 // `space.block.insert {pageId, kind, text, checked, linkedPageId, imageId, afterBlockId}`

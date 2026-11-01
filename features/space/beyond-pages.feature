@@ -1,22 +1,18 @@
 # Sources:
-#   https://chatgpt.com/features/space/ (slides, sites, Slack, scheduled pages, applets)
+#   https://chatgpt.com/features/space/ (slides, Slack, scheduled pages, applets)
 #   spaces-feature-bdd-tests branch, features/space/ (the prototype; read for ideas only):
 #     slides-sites-and-images.feature, self-updating-pages-and-schedules.feature,
 #     living-pages-and-visualizations.feature, collaboration-agents-and-dots.feature
 
 @backlog
 Feature: Spaces beyond Pages
-  Pages are the first part of Spaces. These are the parts still to come.
+  Pages are the first part of Spaces. These are the parts still to come. Sites have
+  their own file, `sites.feature`.
 
   @mc @shared
   Scenario: The user makes a slide deck in a Space
     When the user makes a slide deck from the page "Roadmap"
     Then the deck has a slide for each section of the page
-
-  @mc @shared
-  Scenario: The user publishes a page as a site
-    When the user publishes the page "Roadmap" as a site
-    Then the site shows the page as it is now
 
   @mc @shared
   Scenario: A Space talks to a Slack channel

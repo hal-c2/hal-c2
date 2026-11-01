@@ -142,16 +142,33 @@ Item {
         });
     }
 
-    function pageMenu(id, title, parentPageId) {
-        sheet.ask([
+    // `site`: the open page's site (SpaceController's `page.site`). Of a page only
+    // listed nothing is known, so its site is reached by opening it.
+    function pageMenu(id, title, parentPageId, site) {
+        const siteRows = site === undefined ? [] : [
+            { id: "publish", label: (site.url ?? "") === "" ? qsTr("Publish as a site") : qsTr("Publish again"), icon: "globe" },
+            { id: "publishTailscale", label: qsTr("Publish over Tailscale"), icon: "globe" }
+        ].concat((site.url ?? "") === "" ? [] : [
+            { id: "copySite", label: qsTr("Copy site link"), icon: "copy" },
+            { id: "unpublish", label: qsTr("Unpublish"), icon: "circle-x" }
+        ]);
+        sheet.ask(siteRows.concat([
             { id: "rename", label: qsTr("Rename"), icon: "pencil" },
             { id: "subpage", label: qsTr("New subpage"), icon: "plus" },
             { id: "into", label: qsTr("Move into…"), icon: "folder" },
             { id: "top", label: qsTr("Move to the top"), icon: "arrow-up", enabled: parentPageId !== "" },
             { id: "copy", label: qsTr("Copy as Markdown"), icon: "copy" },
             { id: "trash", label: qsTr("Move to trash"), icon: "trash", destructive: true }
-        ], choice => {
-            if (choice === "rename") {
+        ]), choice => {
+            if (choice === "publish") {
+                Shell.dispatch("space.page.publish", { pageId: id });
+            } else if (choice === "publishTailscale") {
+                Shell.dispatch("space.page.publish", { pageId: id, tailscale: true });
+            } else if (choice === "copySite") {
+                Shell.dispatch("space.page.copySiteLink", { pageId: id });
+            } else if (choice === "unpublish") {
+                Shell.dispatch("space.page.unpublish", { pageId: id });
+            } else if (choice === "rename") {
                 text.ask({ title: qsTr("Rename page"), placeholder: qsTr("Title"), text: title, action: qsTr("Rename") }, renamed => Shell.dispatch("space.page.rename", { pageId: id, title: renamed }));
             } else if (choice === "subpage") {
                 askNewPage(id);
