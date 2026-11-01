@@ -72,6 +72,15 @@ defmodule HalC2.Subprocess.OrphansTest do
     end
   end
 
+  defp await_reaped(pid, tries) when tries > 0 do
+    if Orphans.started(pid) do
+      Process.sleep(10)
+      await_reaped(pid, tries - 1)
+    else
+      :ok
+    end
+  end
+
   test "a boot kills what a program that exited after its MC died left in its group" do
     boot(:died, owner: dead_mc())
     {:ok, sub} = Subprocess.start(["sh", "-c", @leaves])
@@ -118,7 +127,10 @@ defmodule HalC2.Subprocess.OrphansTest do
     boot(:died, owner: dead_mc())
     {:ok, sub} = Subprocess.start(["sh", "-c", @leaves])
     :ok = stop_supervised(:died)
+    leader = Subprocess.os_pid(sub)
     command = left_behind(sub)
+    # A leader not yet reaped still holds its pid, and a boot kills its group.
+    await_reaped(leader, 500)
     [record] = File.ls!(Orphans.dir())
     path = Path.join(Orphans.dir(), record)
 
