@@ -19,7 +19,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
     Application.put_env(:hal_c2, :durable_programs, true)
 
     ExUnit.Callbacks.on_exit(fn ->
-      Application.delete_env(:hal_c2, :durable_programs)
+      Application.put_env(:hal_c2, :durable_programs, false)
       Recovery.leaving(false)
     end)
 

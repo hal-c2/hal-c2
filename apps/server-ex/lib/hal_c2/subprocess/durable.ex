@@ -416,8 +416,12 @@ defmodule HalC2.Subprocess.Durable do
 
   defp running?(dir) do
     case meta(dir) do
-      %{"pid" => pid, "started" => started} -> Orphans.started(pid) == started
-      _ -> false
+      # A zombie keeps its pid and start time, and runs nothing.
+      %{"pid" => pid, "started" => started} ->
+        Orphans.started(pid) == started and not Orphans.gone?(pid)
+
+      _ ->
+        false
     end
   end
 
