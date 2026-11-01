@@ -40,12 +40,12 @@ Feature: Worktrees and setup scripts
     When the user picks the current checkout mode
     Then the thread will start in the project folder
 
-  @tui @mobile @backlog-mobile
+  @tui @mobile
   Scenario: Choosing a new worktree from the terminal client and phone
     When the user starts a thread in a new worktree of "shop"
     Then the thread starts in a worktree of its own
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Picking the base ref for a new worktree
     When the user starts a thread in a new worktree based on "release/2"
     Then the worktree starts from "release/2"
@@ -316,7 +316,7 @@ Feature: Worktrees and setup scripts
     When the thread starts another worktree setup
     Then clients see only the new setup from its first stage on
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: The setup card shows the base, branch and path
     When the user sends the first message of a thread in a new worktree
     Then the thread shows the worktree's base, branch and path with the stages
@@ -340,7 +340,7 @@ Feature: Worktrees and setup scripts
     When the user removes that worktree with force
     Then its folder is gone
 
-  @desktop @mobile @backlog-mobile
+  @desktop @mobile
   Scenario: Returning to the previous worktree
     Given the user just finished a thread in the worktree on "feature/tax"
     When the user starts a new thread in "shop"
@@ -379,7 +379,7 @@ Feature: Worktrees and setup scripts
     When the agent asks for its worktree status
     Then it learns it is attached, with the worktree path, branch and project root
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: The workspace choice is named for what it is
     Given the user is writing the first message of a new thread in "shop" <where>
     When the user opens the workspace choice
@@ -390,7 +390,7 @@ Feature: Worktrees and setup scripts
       | in the project folder      | Current checkout  |
       | in an existing worktree    | Current worktree  |
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: A thread that has started keeps its workspace
     Given a thread in "shop" has started <where>
     When the user looks at the thread's workspace
@@ -401,26 +401,26 @@ Feature: Worktrees and setup scripts
       | in the project folder     | Local checkout  |
       | in a worktree             | Worktree        |
 
-  @backlog @desktop
+  @desktop
   Scenario: Several chosen models always get a worktree each
     Given the user chose two models for a new thread in "shop"
     When the user looks at the workspace choice
     Then it reads "New worktree" and cannot be changed
     And it says each model starts in its own worktree
 
-  @backlog @desktop
+  @desktop
   Scenario: The previous worktree is named after its branch
     Given the most recently used worktree of "shop" is on "feature/tax"
     When the user opens the workspace choice of a new thread
     Then it offers "Previous worktree (feature/tax)"
 
-  @backlog @desktop
+  @desktop
   Scenario: A previous worktree with no branch is just called the previous worktree
     Given the most recently used worktree of "shop" is on no branch
     When the user opens the workspace choice of a new thread
     Then it offers "Previous worktree"
 
-  @backlog @desktop
+  @desktop
   Scenario Outline: Some worktrees are not offered as the previous worktree
     Given the most recently used worktree of "shop" <situation>
     And an older thread in "shop" used another worktree
@@ -432,22 +432,29 @@ Feature: Worktrees and setup scripts
       | is the worktree the new thread is already in       |
       | belongs only to an archived thread                 |
 
-  @backlog @desktop
+  @desktop
   Scenario: No previous worktree is offered when there is none
     Given no thread in "shop" has used a worktree
     When the user opens the workspace choice of a new thread
     Then the choices are the current checkout and a new worktree only
 
-  @backlog @desktop
+  @desktop
   Scenario: The base of a new worktree can be started from origin
     Given the user chose a new worktree for a new thread in "shop"
     When the user opens the base picker
     Then it offers "Start from origin" with a switch for starting the worktree from origin
     And it explains this creates the worktree from the latest matching branch on origin instead of the local branch
 
-  @backlog @desktop
+  @desktop
   Scenario: The choice to start from origin belongs to the new thread
     Given "Start new worktrees from origin" is off in the settings
     When the user turns on "Start from origin" in a new thread's base picker
     Then that thread's worktree starts from origin
     And the setting stays off
+
+  @desktop
+  Scenario: A new worktree starts as the setting says, and the thread can differ
+    Given "Start new worktrees from origin" is on in the settings
+    When the user turns off "Start from origin" in a new thread's base picker
+    Then that thread's worktree starts from the local branch
+    And the setting stays on
