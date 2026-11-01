@@ -276,6 +276,13 @@ Feature: Worktrees and setup scripts
     Then the setup fails with a message starting "Could not create the worktree:"
 
   @mc
+  Scenario: A checkout that fails partway leaves no branch behind
+    Given the checkout of a new worktree in "shop" fails partway
+    When the user sends the first message of a thread in a new worktree
+    Then the setup fails with a message starting "Could not create the worktree:"
+    And neither the worktree nor its new branch is left in "shop"
+
+  @mc
   Scenario: Cancelling setup before the agent starts
     Given a thread's worktree setup is still checking out files
     When the user cancels the setup
@@ -284,6 +291,20 @@ Feature: Worktrees and setup scripts
     And neither the worktree nor its new branch is left in "shop"
     And the thread no longer points at a worktree
     And the setup is reported as cancelled
+
+  @mc
+  Scenario: Cancelling setup after its branch was named takes the named branch
+    Given a thread's worktree setup is running its script after its branch was named
+    When the user cancels the setup
+    Then the branch "claude-branch" is not left in "shop"
+    And neither the worktree nor its new branch is left in "shop"
+
+  @mc
+  Scenario: Cancelling setup keeps a branch its script switched to
+    Given a thread's setup script has switched its worktree to the branch "kept"
+    When the user cancels the setup
+    Then the branch "kept" is still in "shop"
+    And neither the worktree nor its new branch is left in "shop"
 
   @mc
   Scenario: Cancelling setup while its branch is being named

@@ -368,6 +368,50 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     })
   end
 
+  step "a thread's worktree setup is running its script after its branch was named", context do
+    context = context |> Shared.answering_writer() |> put_setup(nil, "read _", false)
+    context = launch(context, "list the files")
+
+    {_, context} =
+      World.await_setup(context, &(World.setup_stage(&1, "setup-script") == "running"))
+
+    await_thread(context.setup_thread, &(&1["branch"] =~ "claude-branch"))
+    context
+  end
+
+  step "a thread's setup script has switched its worktree to the branch {string}",
+       %{args: [branch]} = context do
+    World.git!(World.project(context).root, ["branch", branch])
+    switched = Path.join(Mc.tmp_dir(context.mc, "script"), "switched")
+    {_, 0} = System.cmd("mkfifo", [switched])
+    context = put_setup(context, nil, "git switch #{branch}; echo > #{switched}; read _", false)
+    context = launch(context, "list the files")
+
+    # Opening the pipe waits for the script to have switched.
+    {_, 0} = System.cmd("cat", [switched])
+    context
+  end
+
+  step "the branch {string} is still in {string}", %{args: [branch, title]} = context do
+    assert World.git!(World.project(context, title).root, ~w(branch --list) ++ [branch]) =~ branch
+    context
+  end
+
+  step "the branch {string} is not left in {string}", %{args: [branch, title]} = context do
+    refute World.git!(World.project(context, title).root, ~w(branch --list)) =~ branch
+    context
+  end
+
+  step "the checkout of a new worktree in {string} fails partway", %{args: [title]} = context do
+    root = World.project(context, title).root
+    File.write!(Path.join(root, ".gitattributes"), "* filter=broken\n")
+    World.git!(root, ~w(add .gitattributes))
+    World.git!(root, ~w(-c user.name=t -c user.email=t@t commit -q -m attributes))
+    World.git!(root, ~w(config filter.broken.smudge false))
+    World.git!(root, ~w(config filter.broken.required true))
+    context
+  end
+
   step "the branch is no longer being named", context do
     refute Process.alive?(context.naming)
     context

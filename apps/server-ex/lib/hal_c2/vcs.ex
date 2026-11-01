@@ -650,10 +650,15 @@ defmodule HalC2.Vcs do
   # Git stopped before it could say anything, by the time limit, has not cleaned up after
   # itself as a git that fails does: what it left is the locked worktree and the branch
   # it was to make (`branch`, nil when there was none or it was there before), in a path
-  # that was free. A failure with an exit code changed nothing.
+  # that was free. A git that fails cleans up its worktree but keeps the branch.
   defp clear_cut_short({:error, error}, cwd, path, branch)
        when not is_map_key(error, "exitCode"),
        do: clear_worktree(cwd, path, branch)
+
+  defp clear_cut_short({:error, _}, cwd, _path, branch) when is_binary(branch) do
+    Git.run(cwd, ["branch", "-D", branch])
+    changed(cwd)
+  end
 
   defp clear_cut_short(_result, _cwd, _path, _branch), do: :ok
 

@@ -457,6 +457,46 @@ defmodule HalC2.WorktreeSetupTest do
     assert %{"worktreePath" => nil} = StreamState.get(state, "thread")[thread_id]
   end
 
+  test "the server answers others while a cancel removes the worktree", %{
+    repo: repo,
+    tmp_dir: dir
+  } do
+    project(repo, [
+      %{
+        "id" => "slow",
+        "name" => "Slow",
+        "command" => "sleep 30",
+        "icon" => "configure",
+        "runOnWorktreeCreate" => true,
+        "async" => false
+      }
+    ])
+
+    thread_id = launch("list the files")
+    await_running_script(thread_id)
+
+    [started, hold] = for name <- ~w(started hold), do: Path.join(dir, name)
+    for pipe <- [started, hold], do: {_, 0} = System.cmd("mkfifo", [pipe])
+    git = Path.join(dir, "git-holds")
+
+    File.write!(git, """
+    #!/bin/sh
+    case "$*" in *"worktree remove"*) echo > "#{started}"; cat "#{hold}" > /dev/null;; esac
+    exec git "$@"
+    """)
+
+    File.chmod!(git, 0o755)
+    Application.put_env(:hal_c2, :git_command, git)
+    on_exit(fn -> Application.delete_env(:hal_c2, :git_command) end)
+
+    cancel = Task.async(fn -> HalC2.WorktreeSetup.cancel(%{"threadId" => thread_id}) end)
+    {_, 0} = System.cmd("cat", [started])
+    assert %{setups: _} = :sys.get_state(HalC2.WorktreeSetup, 2_000)
+
+    {_, 0} = System.cmd("sh", ["-c", "echo go > \"$0\"", hold])
+    assert {:ok, %{"cancelled" => true}} = Task.await(cancel, 30_000)
+  end
+
   # Commits `file` on a new `branch` off main, leaving the checkout on main.
   defp commit_on(repo, branch, file, contents) do
     {_, 0} = System.cmd("git", ~w(checkout -q -b) ++ [branch], cd: repo)

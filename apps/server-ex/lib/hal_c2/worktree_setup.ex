@@ -122,16 +122,26 @@ defmodule HalC2.WorktreeSetup do
     {:reply, get_in(state.setups, [thread_id, :snapshot]), %{state | watchers: watchers}}
   end
 
-  def handle_call({:cancel, thread_id}, _from, state) do
+  # The removal can take minutes, and every other thread's setup talks to this server, so
+  # it runs apart and the caller gets its answer when it has finished.
+  def handle_call({:cancel, thread_id}, from, state) do
     case state.setups[thread_id] do
       %{cancellable: true, worker: worker} = setup when is_pid(worker) ->
         Process.unlink(worker)
         Process.exit(worker, :kill)
         stop_naming(setup.naming)
-        cleanup(thread_id, setup)
-        state = update(state, thread_id, &finish(&1, "cancelled", nil))
-        state = put_in(state.setups[thread_id].worker, nil)
-        {:reply, true, state}
+        server = self()
+
+        spawn_link(fn ->
+          try do
+            cleanup(thread_id, setup)
+          after
+            send(server, {:cancelled, thread_id, setup.run_id, from})
+          end
+        end)
+
+        setup = %{setup | worker: nil, cancellable: false}
+        {:noreply, put_in(state.setups[thread_id], setup)}
 
       _ ->
         {:reply, false, state}
@@ -164,6 +174,17 @@ defmodule HalC2.WorktreeSetup do
       %{worker: ^worker, run_id: run_id} ->
         naming = rename_later(thread_id, run_id, path, old, text)
         {:reply, :ok, put_in(state.setups[thread_id].naming, naming)}
+
+      _ ->
+        {:reply, :ok, state}
+    end
+  end
+
+  # What a cancel deletes follows the name; HEAD says nothing, as the script can move it.
+  def handle_call({:renamed, thread_id, run_id, name}, _from, state) do
+    case state.setups[thread_id] do
+      %{run_id: ^run_id, new_branch: branch} = setup when is_binary(branch) ->
+        {:reply, :ok, put_in(state.setups[thread_id], %{setup | new_branch: name})}
 
       _ ->
         {:reply, :ok, state}
@@ -215,6 +236,18 @@ defmodule HalC2.WorktreeSetup do
         {:noreply, state}
 
       nil ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:cancelled, thread_id, run_id, from}, state) do
+    GenServer.reply(from, true)
+
+    case state.setups[thread_id] do
+      %{run_id: ^run_id, snapshot: %{"phase" => "running"}} ->
+        {:noreply, update(state, thread_id, &finish(&1, "cancelled", nil))}
+
+      _ ->
         {:noreply, state}
     end
   end
@@ -322,7 +355,7 @@ defmodule HalC2.WorktreeSetup do
       HalC2.Git.stop_children(path)
 
       if setup.claimed do
-        HalC2.Vcs.clear_worktree(setup.root, path, made_branch(setup, path))
+        HalC2.Vcs.clear_worktree(setup.root, path, setup.new_branch)
       else
         HalC2.Git.run(setup.root, ["worktree", "unlock", path])
         HalC2.Vcs.remove_worktree(%{"cwd" => setup.root, "path" => path, "force" => true})
@@ -339,19 +372,6 @@ defmodule HalC2.WorktreeSetup do
     Orchestration.fail_prepared(thread_id, setup.run_id, "cancelled")
   rescue
     error -> Logger.warning("worktree cleanup for #{thread_id}: #{Exception.message(error)}")
-  end
-
-  # The branch the setup made, under the name it has now: naming it may have finished.
-  # A folder without `.git` would answer for whatever repository is around it.
-  defp made_branch(%{new_branch: nil}, _path), do: nil
-
-  defp made_branch(%{new_branch: branch}, path) do
-    with true <- File.exists?(Path.join(path, ".git")),
-         {:ok, out} when out != "" <- HalC2.Git.ok(path, ["branch", "--show-current"]) do
-      String.trim(out)
-    else
-      _ -> branch
-    end
   end
 
   # Gone when this returns, so nothing it would write lands after the cancel's own.
@@ -771,6 +791,7 @@ defmodule HalC2.WorktreeSetup do
           case HalC2.Vcs.rename_branch(path, old, name) do
             {:ok, new} ->
               HalC2.Vcs.Watch.refresh(path)
+              GenServer.call(__MODULE__, {:renamed, thread_id, run_id, new})
 
               Orchestration.dispatch(%{
                 "type" => "thread.metadata.update",
