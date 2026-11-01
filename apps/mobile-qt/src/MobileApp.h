@@ -9,6 +9,7 @@
 #include "push/PushSystem.h"
 #include "StoragePaths.h"
 
+class Maintenance;
 class NativeShell;
 class Notifications;
 class Scanner;
@@ -52,6 +53,7 @@ public:
   NativeShell& native() { return *m_native; }
   ThemeStore& theme() { return *m_theme; }
   ShellRuntime& runtime() { return *m_runtime; }
+  Maintenance& maintenance() { return *m_maintenance; }
 
   // Opens the environment the phone remembers, if it has one, and shows the
   // window.
@@ -68,4 +70,5 @@ private:
   std::unique_ptr<Pairing> m_pairing;
   std::unique_ptr<Notifications> m_notifications;
   std::unique_ptr<Scanner> m_scanner;
+  std::unique_ptr<Maintenance> m_maintenance;
 };

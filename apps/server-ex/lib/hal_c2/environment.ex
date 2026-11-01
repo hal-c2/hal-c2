@@ -80,10 +80,16 @@ defmodule HalC2.Environment do
     }
 
     # Only a release can install a version; a checkout omits the capability.
-    case HalC2.Upgrade.capability() do
-      nil -> base
-      method -> put_in(base, ["capabilities", "serverSelfUpdate"], method)
-    end
+    base =
+      case HalC2.Upgrade.capability() do
+        nil -> base
+        method -> put_in(base, ["capabilities", "serverSelfUpdate"], method)
+      end
+
+    # The desktop app that started this MC updates when asked (`HalC2.DesktopUpdate`).
+    if HalC2.DesktopUpdate.available?(),
+      do: put_in(base, ["capabilities", "desktopAppUpdate"], true),
+      else: base
   end
 
   @doc """

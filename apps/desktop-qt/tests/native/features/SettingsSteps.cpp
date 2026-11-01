@@ -438,3 +438,21 @@ void publishProviders(FakeMc& mc, const QJsonArray& providers) {
   fakeConfig(mc).config.insert(QStringLiteral("providers"), providers);
   sendConfig(mc, mc.environmentId, {{QStringLiteral("t"), QStringLiteral("config.providers")}, {QStringLiteral("providers"), providers}});
 }
+
+void publishProvidersOn(FakeMc& mc, const QString& environment, const QJsonArray& providers) {
+  if (environment == mc.environmentId) {
+    publishProviders(mc, providers);
+    return;
+  }
+  FakeConfig& fake = fakeConfig(mc);
+  if (!fake.elsewhere.contains(environment) && !fake.documents.contains(environment)) {
+    // Its MC answers at last: the snapshot its subscribers waited for.
+    fake.elsewhere.insert(environment, QJsonObject{{QStringLiteral("providers"), providers}});
+    QJsonObject config = fake.elsewhere.value(environment);
+    config.insert(QStringLiteral("settings"), QJsonObject{});
+    sendConfig(mc, environment, {{QStringLiteral("t"), QStringLiteral("config")}, {QStringLiteral("config"), config}});
+    return;
+  }
+  fake.elsewhere[environment].insert(QStringLiteral("providers"), providers);
+  sendConfig(mc, environment, {{QStringLiteral("t"), QStringLiteral("config.providers")}, {QStringLiteral("providers"), providers}});
+}

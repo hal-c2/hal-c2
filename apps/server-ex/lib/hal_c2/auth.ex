@@ -301,6 +301,18 @@ defmodule HalC2.Auth do
     end)
   end
 
+  @doc "Who `session_id` was granted to (`pairing-link`, `desktop-bootstrap`, ...), or nil."
+  def session_subject(nil), do: nil
+
+  def session_subject(session_id) do
+    with_db(HalC2.Store.path(), fn db ->
+      case query(db, "SELECT subject FROM auth_sessions WHERE id = ?1", [session_id]) do
+        [[subject]] -> subject
+        [] -> nil
+      end
+    end)
+  end
+
   @doc "Called by a socket of `session_id` once open; it counts as connected until it exits."
   def connected(session_id), do: GenServer.cast(__MODULE__, {:connected, session_id, self()})
 

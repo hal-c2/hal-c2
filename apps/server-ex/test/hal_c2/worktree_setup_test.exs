@@ -457,6 +457,76 @@ defmodule HalC2.WorktreeSetupTest do
     assert %{"worktreePath" => nil} = StreamState.get(state, "thread")[thread_id]
   end
 
+  test "the server answers others while a cancel removes the worktree", %{
+    repo: repo,
+    tmp_dir: dir
+  } do
+    project(repo, [
+      %{
+        "id" => "slow",
+        "name" => "Slow",
+        "command" => "sleep 30",
+        "icon" => "configure",
+        "runOnWorktreeCreate" => true,
+        "async" => false
+      }
+    ])
+
+    thread_id = launch("list the files")
+    await_running_script(thread_id)
+
+    [started, hold] = for name <- ~w(started hold), do: Path.join(dir, name)
+    for pipe <- [started, hold], do: {_, 0} = System.cmd("mkfifo", [pipe])
+    git = Path.join(dir, "git-holds")
+
+    File.write!(git, """
+    #!/bin/sh
+    case "$*" in *"worktree remove"*) echo > "#{started}"; cat "#{hold}" > /dev/null;; esac
+    exec git "$@"
+    """)
+
+    File.chmod!(git, 0o755)
+    Application.put_env(:hal_c2, :git_command, git)
+    on_exit(fn -> Application.delete_env(:hal_c2, :git_command) end)
+
+    cancel = Task.async(fn -> HalC2.WorktreeSetup.cancel(%{"threadId" => thread_id}) end)
+    {_, 0} = System.cmd("cat", [started])
+    assert %{setups: _} = :sys.get_state(HalC2.WorktreeSetup, 2_000)
+
+    # A second click while it goes ahead is not told the cancel failed.
+    assert {:ok, %{"cancelled" => true}} = HalC2.WorktreeSetup.cancel(%{"threadId" => thread_id})
+
+    {_, 0} = System.cmd("sh", ["-c", "echo go > \"$0\"", hold])
+    assert {:ok, %{"cancelled" => true}} = Task.await(cancel, 30_000)
+  end
+
+  test "a terminal that will not close does not stop the cleanup", %{repo: repo} do
+    project(repo, [
+      %{
+        "id" => "slow",
+        "name" => "Slow",
+        "command" => "sleep 30",
+        "icon" => "configure",
+        "runOnWorktreeCreate" => true,
+        "async" => false
+      }
+    ])
+
+    thread_id = launch("list the files")
+    %{"worktreePath" => path} = await_running_script(thread_id)
+
+    # A terminal that does not answer makes closing it exit.
+    [{terminal, _}] = Registry.lookup(HalC2.Terminal.Registry, {thread_id, "setup"})
+    :sys.suspend(terminal)
+    assert {:ok, %{"cancelled" => true}} = HalC2.WorktreeSetup.cancel(%{"threadId" => thread_id})
+    await_phase(thread_id, "cancelled")
+    refute File.exists?(path)
+
+    state = current(thread_id)
+    assert [%{"status" => "cancelled"}] = StreamState.list(state, "run")
+    assert %{"worktreePath" => nil} = StreamState.get(state, "thread")[thread_id]
+  end
+
   # Commits `file` on a new `branch` off main, leaving the checkout on main.
   defp commit_on(repo, branch, file, contents) do
     {_, 0} = System.cmd("git", ~w(checkout -q -b) ++ [branch], cd: repo)
@@ -493,5 +563,61 @@ defmodule HalC2.WorktreeSetupTest do
         15_000 -> flunk("the run never completed")
       end
     end
+  end
+
+  test "a finished setup is gone once its half minute is up" do
+    alias HalC2.WorktreeSetup
+
+    Application.put_env(:hal_c2, :worktree_setup_retention, 10)
+    on_exit(fn -> Application.delete_env(:hal_c2, :worktree_setup_retention) end)
+
+    :sys.replace_state(WorktreeSetup, fn state ->
+      snapshot = %{"phase" => "running", "sequence" => 3, "stages" => []}
+      put_in(state.setups["t"], %{snapshot: snapshot, cancellable: true})
+    end)
+
+    assert %{"phase" => "running"} = WorktreeSetup.subscribe("t", self())
+    :ok = GenServer.call(WorktreeSetup, {:update, "t", &WorktreeSetup.finish(&1, "done", nil)})
+    assert_receive {:hal_c2_worktree_setup, "t", %{"phase" => "done"}}
+    assert_receive {:hal_c2_worktree_setup, "t", nil}, 1_000
+    assert WorktreeSetup.subscribe("t", self()) == nil
+  end
+
+  # An interactive zsh runs `#` as a command unless told otherwise before it reads the line.
+  test "a script may end in a comment in every shell" do
+    for shell <- ~w(/bin/sh /bin/bash /bin/zsh), File.exists?(shell) do
+      line = HalC2.WorktreeSetup.wrap_script("(exit 4)\n# done", shell, "END_")
+      {out, _} = System.cmd(shell, ["-c", String.replace(line, "\r", "\n")])
+      assert out =~ "END_start\n"
+      assert out =~ "END_4\n"
+    end
+  end
+
+  test "a script's syntax error is its exit status, and the end still comes" do
+    for shell <- ~w(/bin/sh /bin/bash /bin/zsh), File.exists?(shell) do
+      line =
+        HalC2.WorktreeSetup.wrap_script("echo a\nif true; then echo b; fi; fi", shell, "END_")
+
+      {out, _} =
+        System.cmd(shell, ["-c", String.replace(line, "\r", "\n")], stderr_to_stdout: true)
+
+      assert out =~ "END_start\n"
+      assert [_, status] = Regex.run(~r/END_(\d+)\n/, out)
+      assert status != "0"
+    end
+  end
+
+  test "a script's quotes and exit stay its own" do
+    for shell <- ~w(/bin/sh /bin/bash /bin/zsh), File.exists?(shell) do
+      line = HalC2.WorktreeSetup.wrap_script(~S(echo 'it'"'"'s' "a\\b"; exit 6), shell, "END_")
+      {out, _} = System.cmd(shell, ["-c", String.replace(line, "\r", "\n")])
+      assert out =~ "it's"
+      assert out =~ "END_6\n"
+    end
+  end
+
+  test "fish runs the script in a new fish, its quotes kept" do
+    line = HalC2.WorktreeSetup.wrap_script(~S(echo 'a\b'; exit 6), "/usr/bin/fish", "END_")
+    assert line =~ ~S(/usr/bin/fish -c 'echo \'a\\b\'; exit 6'; printf)
   end
 end

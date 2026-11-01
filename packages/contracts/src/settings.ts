@@ -1195,6 +1195,8 @@ export const StorageCleanupSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  threadTempAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(7))),
+  temporaryFilesFolder: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
@@ -1612,6 +1614,8 @@ export const ServerSettingsPatch = Schema.Struct({
       worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
       browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
       logsAfterDays: Schema.optionalKey(StorageRetentionDays),
+      threadTempAfterDays: Schema.optionalKey(StorageRetentionDays),
+      temporaryFilesFolder: Schema.optionalKey(Schema.String),
     }),
   ),
   // Server settings

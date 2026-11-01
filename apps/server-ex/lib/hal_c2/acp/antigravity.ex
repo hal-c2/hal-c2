@@ -741,10 +741,7 @@ defmodule HalC2.Acp.Antigravity do
   defp setup_workspace do
     dir =
       Application.get_env(:hal_c2, :antigravity_setup_dir) ||
-        Path.join(
-          System.tmp_dir!(),
-          "hal-c2-antigravity-setup-#{System.unique_integer([:positive])}"
-        )
+        HalC2.Scratch.path("hal-c2-antigravity-setup")
 
     case File.mkdir_p(dir) do
       :ok -> {:ok, dir}
