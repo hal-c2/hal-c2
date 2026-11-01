@@ -781,15 +781,18 @@ Feature: Planner
       Given the plan has "API"
       When the user opens the task "API"
       And the user enters "<address>" to link
+      And the user presses Enter in the link field
       Then the pull request cannot be linked
 
       Examples:
-        | address                                             |
-        | https://github.example.com/acme/other/issues/12     |
-        | https://github.example.com/acme/other/pull/012      |
-        | https://github.example.com:99999/acme/other/pull/12 |
-        | https://git_hub.example.com/acme/other/pull/12      |
-        | ftp://github.example.com/acme/other/pull/12         |
+        | address                                                     |
+        | https://github.example.com/acme/other/issues/12             |
+        | https://github.example.com/acme/other/pull/012              |
+        | https://github.example.com:99999/acme/other/pull/12         |
+        | https://git_hub.example.com/acme/other/pull/12              |
+        | ftp://github.example.com/acme/other/pull/12                 |
+        | https://[1:2]/acme/other/pull/12                            |
+        | https://github.example.com/acme/other/pull/9007199254740993 |
 
     @mc
     Scenario: Open issues of a followed repository become tasks

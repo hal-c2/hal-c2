@@ -955,8 +955,14 @@ const Steps steps([] {
     waitShownNamed(world, QStringLiteral("plannerItemLink"))->setProperty("text", c[0]);
     world.sync();
   });
+  step(QStringLiteral("the user presses Enter in the link field"), [](World& world, const Captures&, const Table&) {
+    expect(QMetaObject::invokeMethod(waitShownNamed(world, QStringLiteral("plannerItemLink")), "accepted"), QStringLiteral("the link field cannot be accepted"));
+    world.sync();
+  });
   step(QStringLiteral("the pull request cannot be linked"), [](World& world, const Captures&, const Table&) {
     expect(!waitShownNamed(world, QStringLiteral("plannerItemLinkButton"))->isEnabled(), QStringLiteral("the Link PR button is enabled"));
+    expect(asked(world, QStringLiteral("link")).isEmpty(), QStringLiteral("the MC was asked %1").arg(showAsked(world, QStringLiteral("link"))));
+    expect(!textOf(world, QStringLiteral("plannerItemLink")).isEmpty(), QStringLiteral("the field lost what the user entered"));
   });
 
   step(QStringLiteral("the run of %1 proposes moving %1 to end on %1").arg(q), [](World& world, const Captures& c, const Table&) {
