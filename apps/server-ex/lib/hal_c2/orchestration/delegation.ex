@@ -688,8 +688,9 @@ defmodule HalC2.Orchestration.Delegation do
 
   @doc """
   Stops the wakes of everything delegated from `thread_id`, whichever run started it,
-  and returns its unfinished tasks for the caller to `cancel/2` and stop. A task's
-  result, if any, stays readable from its status.
+  and returns its tasks for the caller to `cancel/2` and stop. That includes those that
+  ended, as a task cancelled on its own leaves its own tasks working. A task's result,
+  if any, stays readable from its status.
   """
   def stop_tasks(thread_id) do
     state = stream(thread_id)
@@ -697,7 +698,7 @@ defmodule HalC2.Orchestration.Delegation do
 
     for task <- StreamState.list(state, "subagent"),
         task["origin"] == "app_owned",
-        task["status"] not in @terminal,
+        is_binary(task["childThreadId"]),
         do: task
   end
 

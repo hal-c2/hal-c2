@@ -2207,7 +2207,7 @@ defmodule HalC2Plugins.CodeReview do
         |> Map.values()
         |> Enum.sort_by(&{Enum.find_index(@order, fn s -> s == &1["status"] end), &1["repository"], -&1["number"]})
         |> Enum.map(fn review ->
-          review = Map.drop(review, ["root"])
+          review = Map.drop(review, ["root", "replaced"])
 
           review =
             if review["elsewhere"],

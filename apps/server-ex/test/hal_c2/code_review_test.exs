@@ -277,6 +277,7 @@ defmodule HalC2.CodeReviewTest do
 
     assert message =~ "replaced by a newer run for #{String.slice(sha, 0, 7)}"
     assert %{"status" => "running", "threadId" => ^new, "verdict" => nil} = review()
+    refute Map.has_key?(review(), "replaced")
   end
 
   test "discarding a failed review stops the agent still working in its checkout", _context do
@@ -341,6 +342,51 @@ defmodule HalC2.CodeReviewTest do
     assert [%{"status" => status}] = runs
     assert status not in ~w(queued preparing starting running waiting)
     refute File.exists?(review["checkout"])
+  end
+
+  test "stopping a thread cancels its queue, so no run starts in the removed checkout",
+       _context do
+    review = start_review()
+    thread_id = review["threadId"]
+
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => thread_id,
+        "messageId" => "queued-message",
+        "text" => "and another thing",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "queue_after_active"}
+      })
+
+    assert :ok = HalC2.Orchestration.stop_plugin_thread(thread_id, @id)
+
+    runs = HalC2.StreamState.list(HalC2.Streams.state(thread_id), "run")
+    assert length(runs) == 2
+    assert Enum.count(runs, &(&1["status"] == "cancelled")) == 1
+    assert active_runs(thread_id) == []
+    assert sessions_stopped?(thread_id)
+  end
+
+  test "a stop walks through a task that already ended to the task below it", _context do
+    review = start_review()
+    thread_id = review["threadId"]
+
+    {:ok, %{"taskId" => task_id, "childThreadId" => child}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => thread_id}, "codex", %{"task" => "wait"})
+
+    {:ok, %{"taskId" => nested_id, "childThreadId" => nested}} =
+      HalC2.Orchestration.Delegation.delegate(%{"id" => child}, "codex", %{"task" => "wait"})
+
+    {:ok, _} = HalC2.Orchestration.Delegation.cancel(thread_id, task_id)
+
+    assert :ok = HalC2.Orchestration.stop_plugin_thread(thread_id, @id)
+
+    assert {:ok, %{"status" => "cancelled"}} =
+             HalC2.Orchestration.Delegation.task_status(child, nested_id)
+
+    assert active_runs(nested) == []
+    assert sessions_stopped?(nested)
   end
 
   test "a stop outlasts the deadline of its caller on an agent slow to go", context do

@@ -108,6 +108,19 @@ Feature: Agent code review
       And the replaced thread's checkout is removed
 
     @mc
+    Scenario: A message queued on a replaced thread does not start in its removed checkout
+      Given "code-review" reviews new pushes
+      And a review of #12 is running
+      And a message waits in the queue of the review's thread
+      And the review's agent is still working after its review failed
+      And #12 has a new head commit
+      When "code-review" looks at "acme/api" again
+      Then a new review of #12 starts for the new head commit
+      And the replaced thread has no running turn
+      And the replaced thread's queued message never starts
+      And the replaced thread's checkout is removed
+
+    @mc
     Scenario: Discarding a review stops the task its idle agent left working
       Given a review of #12 is running
       And the review's agent delegated a task that delegated another, and its turn ended

@@ -983,6 +983,33 @@ defmodule HalC2.Steps.SourceControl.AgentCodeReview do
     |> Map.put(:replaced_checkout, context.review["checkout"])
   end
 
+  step "a message waits in the queue of the review's thread", context do
+    {:ok, _} =
+      HalC2.Orchestration.dispatch(%{
+        "type" => "message.dispatch",
+        "threadId" => context.thread,
+        "messageId" => "queued-message",
+        "text" => "and another thing",
+        "attachments" => [],
+        "dispatchMode" => %{"type" => "queue_after_active"}
+      })
+
+    World.await_stream(context.thread, fn state ->
+      Enum.any?(HalC2.StreamState.list(state, "run"), &(&1["status"] == "queued"))
+    end)
+
+    context
+  end
+
+  step "the replaced thread's queued message never starts", context do
+    runs = HalC2.StreamState.list(HalC2.Streams.state(context.replaced_thread), "run")
+
+    assert length(runs) == 2 and Enum.count(runs, &(&1["status"] == "cancelled")) == 1,
+           inspect(runs)
+
+    context
+  end
+
   step "the review's agent delegated a task that delegated another, and its turn ended",
        context do
     {:ok, %{"taskId" => task, "childThreadId" => child}} =

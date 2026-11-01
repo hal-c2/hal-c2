@@ -1307,9 +1307,9 @@ defmodule HalC2.Orchestration do
 
   @doc """
   Stops a thread the plugin started: stops the tasks delegated from it, and theirs in
-  turn, interrupts whatever it is running and releases its session, so nothing of its
-  agent is left working in its workspace or coming back to it. The thread stays, and a
-  later message resumes it. Answers once that is done, `:busy` if it is not within
+  turn, cancels its queue, interrupts whatever it is running and releases its session,
+  so nothing of its agent is left working in its workspace or coming back to it. The
+  thread stays, and a later message resumes it. Answers once that is done, `:busy` if it is not within
   `timeout` ms (the stop goes on without the caller, for `@thread_stop_ms` in all), or
   `{:error, message}` for a thread that is not the plugin's to stop.
   """
@@ -1383,6 +1383,7 @@ defmodule HalC2.Orchestration do
       Map.put_new_lazy(tasks, id, fn ->
         {_, ref} =
           spawn_monitor(fn ->
+            # Refused for a task that already ended, whose thread may still have tasks.
             HalC2.Orchestration.Delegation.cancel(thread_id, id)
             stop_thread_tree(child, deadline)
           end)
@@ -1404,7 +1405,10 @@ defmodule HalC2.Orchestration do
       dispatch(%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => active})
     end
 
-    released = if active, do: :busy, else: release_session(thread_id)
+    # Read before the queue: nothing was active and nothing is queued, so nothing is left
+    # for the end of a run to start. Whatever the queue held is looked at again.
+    queued = cancel_queued(thread_id)
+    released = if active || queued, do: :busy, else: release_session(thread_id)
     left = deadline - System.monotonic_time(:millisecond)
 
     cond do
@@ -1423,6 +1427,18 @@ defmodule HalC2.Orchestration do
 
         stop_runs(thread_id, active || asked, deadline, tasks)
     end
+  end
+
+  # Whether a queued run was cancelled. A thread that refuses it, deleted or moved, starts
+  # nothing from its queue here anyway.
+  defp cancel_queued(thread_id) do
+    thread_id
+    |> HalC2.Streams.state()
+    |> queued_runs()
+    |> Enum.map(
+      &dispatch(%{"type" => "queued-run.cancel", "threadId" => thread_id, "runId" => &1["id"]})
+    )
+    |> Enum.any?(&match?({:ok, _}, &1))
   end
 
   defp organize_fields(thread, changes, at) do
