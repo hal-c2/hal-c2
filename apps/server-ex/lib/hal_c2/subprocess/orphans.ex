@@ -25,7 +25,9 @@ defmodule HalC2.Subprocess.Orphans do
   or the ancestry recorded at spawn (hal-c2/hal-c2#387).
 
   A program that had already exited by the boot (a CLI that stopped on its closed
-  stdin) may have left background commands in its group. With no leader, the group's
+  stdin) may have left background commands in its group. A leader that exited but is
+  not reaped yet still holds its pid, so its group can be no other and is killed whole,
+  as for a running one. With no leader, the group's
   id alone cannot be told from a later group's: a daemon that reused the pid and
   called `setsid` has the same one. So each program runs with a random mark in its
   environment (`HAL_C2_PROGRAM_ID`), which its record names and its descendants

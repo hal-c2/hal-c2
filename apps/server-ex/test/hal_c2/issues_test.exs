@@ -160,6 +160,18 @@ defmodule HalC2.IssuesTest do
                Map.merge(@input, %{"number" => 9, "assignees" => "dana"})
              )
 
+    # The same cases as the add and remove endpoints and a task's owner.
+    for bad <- HalC2.Test.LoginCases.bad() do
+      assert {:error, "assignees must be a list of logins."} =
+               Issues.handle(
+                 "create",
+                 Map.merge(@input, %{"title" => "x", "assignees" => [bad]})
+               )
+
+      assert {:error, "assignees must be a list of logins."} =
+               Issues.handle("update", Map.merge(@input, %{"number" => 9, "assignees" => [bad]}))
+    end
+
     assert length(calls(dir)) == 4
 
     # An empty assignee list on update clears the list at GitHub, unlike an absent one.

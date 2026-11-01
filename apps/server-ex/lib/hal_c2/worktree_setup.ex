@@ -1,7 +1,7 @@
 defmodule HalC2.WorktreeSetup do
   @moduledoc """
   Preparing a new thread's git worktree before its first turn (`subscribeWorktreeSetup`,
-  `worktreeSetup.cancel`).
+  `worktreeSetup.cancel`, `worktreeSetup.retry`).
 
   A thread launched with the `worktree` strategy gets a `preparing` run; a worker then
   fetches the base branch when asked, adds the worktree on a temporary
@@ -10,10 +10,12 @@ defmodule HalC2.WorktreeSetup do
   its submodules, runs the project's setup script in a terminal, and releases the run
   (`HalC2.Orchestration.release_prepared/2`). Its progress is a `WorktreeSetupSnapshot`
   that subscribers get on every change. Until the agent starts the setup can be
-  cancelled, which removes the worktree and cancels the run.
+  cancelled, which removes the worktree and cancels the run. One that failed before the
+  agent can be retried: the same run goes on from the worktree, if it got that far.
 
   Snapshots live in memory: after a restart a thread shows no setup. A finished one stays
-  readable for half a minute, so a late subscriber sees how it ended, then goes.
+  readable for half a minute, so a late subscriber sees how it ended, then goes. One that
+  can be retried stays until the retry, or until the thread goes on without it.
   """
 
   use GenServer
@@ -32,6 +34,9 @@ defmodule HalC2.WorktreeSetup do
   @error_max 1_000
   @partial_max 4_096
   @retention 30_000
+  # How long a shell's startup may take before the script has begun. A script that has
+  # begun may take as long as it likes.
+  @start_timeout 60_000
   # Colours, cursor movement and titles, then whatever control characters are left.
   @terminal_control ~r/\e\[[0-9;?]*[ -\/]*[@-~]|\e\][^\a\e]*(?:\a|\e\\)|\e[()][A-Za-z0-9]|\e[=>]/
   @stray_control ~r/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/
@@ -67,6 +72,19 @@ defmodule HalC2.WorktreeSetup do
          "cancelled" =>
            GenServer.call(__MODULE__, {:cancel, thread_id}, HalC2.Vcs.worktree_timeout() + 60_000)
        }}
+
+  @doc """
+  `worktreeSetup.retry`: runs again a setup that failed before the agent started, in the
+  worktree it made. A thread that has gone on without it cannot.
+  """
+  def retry(%{"threadId" => thread_id}),
+    do: {:ok, %{"retried" => GenServer.call(__MODULE__, {:retry, thread_id})}}
+
+  @doc """
+  The thread went on without its setup: a new turn, or it was deleted or moved. A failed
+  setup goes now; a running one is marked, so that its failure is not kept for a retry.
+  """
+  def superseded(thread_id), do: GenServer.cast(__MODULE__, {:superseded, thread_id})
 
   # --- server ----------------------------------------------------------------------
 
@@ -104,13 +122,15 @@ defmodule HalC2.WorktreeSetup do
       snapshot: snapshot,
       worker: worker,
       run_id: run_id,
+      launch: {project, strategy, text},
       root: project["workspaceRoot"],
       claimed: nil,
       new_branch: nil,
       naming: nil,
       renaming: nil,
       cancelling: false,
-      cancellable: true
+      cancellable: true,
+      superseded: false
     }
 
     state = put_in(state.setups[thread_id], setup)
@@ -151,6 +171,22 @@ defmodule HalC2.WorktreeSetup do
 
       _ ->
         {:reply, false, state}
+    end
+  end
+
+  def handle_call({:retry, thread_id}, _from, state) do
+    with %{snapshot: snapshot, run_id: run_id, launch: launch} = setup <-
+           state.setups[thread_id],
+         true <- can_retry?(setup),
+         :ok <- Orchestration.retry_prepared(thread_id, run_id) do
+      server = self()
+      path = snapshot["worktreePath"]
+      worker = spawn_link(fn -> rerun(server, thread_id, run_id, launch, path) end)
+      state = put_in(state.setups[thread_id], retried(setup, worker))
+      broadcast(state, thread_id)
+      {:reply, true, state}
+    else
+      _ -> {:reply, false, state}
     end
   end
 
@@ -230,6 +266,19 @@ defmodule HalC2.WorktreeSetup do
     {:noreply, %{state | watchers: watchers}}
   end
 
+  def handle_cast({:superseded, thread_id}, state) do
+    case state.setups[thread_id] do
+      %{snapshot: %{"phase" => "failed"} = snapshot} ->
+        {:noreply, if(retryable?(snapshot), do: forget(state, thread_id), else: state)}
+
+      %{snapshot: %{"phase" => "running"}} ->
+        {:noreply, put_in(state.setups[thread_id].superseded, true)}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   @impl true
   def handle_info({:EXIT, worker, reason}, state) do
     case Enum.find(state.setups, fn {_, setup} -> setup.worker == worker end) do
@@ -242,14 +291,11 @@ defmodule HalC2.WorktreeSetup do
               state
 
             {:shutdown, {:failed, message}} ->
-              Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message))
-              update(state, thread_id, &finish(&1, "failed", message))
+              failed(state, thread_id, setup, message)
 
             other ->
               Logger.warning("worktree setup for #{thread_id} crashed: #{inspect(other)}")
-              message = "Worktree setup failed."
-              Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message))
-              update(state, thread_id, &finish(&1, "failed", message))
+              failed(state, thread_id, setup, "Worktree setup failed.")
           end
 
         {:noreply, state}
@@ -274,14 +320,7 @@ defmodule HalC2.WorktreeSetup do
   def handle_info({:expire, thread_id, ref}, state) do
     case state.setups[thread_id] do
       %{expiry: {_, ^ref}} ->
-        state = %{state | setups: Map.delete(state.setups, thread_id)}
-
-        HalC2.Watchers.notify(
-          Map.get(state.watchers, thread_id, %{}),
-          {:hal_c2_worktree_setup, thread_id, nil}
-        )
-
-        {:noreply, state}
+        {:noreply, forget(state, thread_id)}
 
       _ ->
         {:noreply, state}
@@ -312,7 +351,36 @@ defmodule HalC2.WorktreeSetup do
           entry
       end)
 
-    {:ok, %{state | watchers: watchers}}
+    # One from before retries has no launch to run again, so it ends like any other.
+    setups =
+      Map.new(state.setups, fn {id, setup} ->
+        {id, Map.put_new(setup, :superseded, not is_map_key(setup, :launch))}
+      end)
+
+    {:ok, %{state | watchers: watchers, setups: setups}}
+  end
+
+  defp forget(state, thread_id) do
+    state = %{state | setups: Map.delete(state.setups, thread_id)}
+
+    HalC2.Watchers.notify(
+      Map.get(state.watchers, thread_id, %{}),
+      {:hal_c2_worktree_setup, thread_id, nil}
+    )
+
+    state
+  end
+
+  # A delegated child's caller hears of this failure at once and may hand the task to
+  # another agent, so its first message is not run later: the agent's stage ends here.
+  defp failed(state, thread_id, setup, message) do
+    delegated = Orchestration.delegated?(thread_id)
+    Orchestration.fail_prepared(thread_id, setup.run_id, "failed", failure(message))
+
+    update(state, thread_id, fn snapshot ->
+      ended = finish(snapshot, "failed", message)
+      if delegated, do: set_stage(ended, "agent", "skipped", %{}), else: ended
+    end)
   end
 
   # How a preparation failure is recorded on the run.
@@ -343,10 +411,48 @@ defmodule HalC2.WorktreeSetup do
   defp retain(%{expiry: _} = setup, _thread_id), do: setup
 
   defp retain(setup, thread_id) do
-    ref = make_ref()
-    after_ms = Application.get_env(:hal_c2, :worktree_setup_retention, @retention)
-    timer = Process.send_after(self(), {:expire, thread_id, ref}, after_ms)
-    Map.put(setup, :expiry, {timer, ref})
+    if not setup.superseded and retryable?(setup.snapshot) do
+      setup
+    else
+      ref = make_ref()
+      after_ms = Application.get_env(:hal_c2, :worktree_setup_retention, @retention)
+      timer = Process.send_after(self(), {:expire, thread_id, ref}, after_ms)
+      Map.put(setup, :expiry, {timer, ref})
+    end
+  end
+
+  # Failed before the agent's stage began: the run's message has not reached an agent.
+  defp retryable?(%{"phase" => "failed", "stages" => stages}),
+    do: Enum.any?(stages, &(&1["id"] == "agent" and &1["status"] == "pending"))
+
+  defp retryable?(_snapshot), do: false
+
+  @doc "Whether `setup` may run again: it failed before its agent, its worker has ended, and the thread waits for it."
+  def can_retry?(%{worker: nil, superseded: false, snapshot: snapshot}),
+    do: retryable?(snapshot)
+
+  def can_retry?(_setup), do: false
+
+  @doc "`setup` as a retry leaves it, with `worker` running it."
+  def retried(setup, worker),
+    do: %{setup | snapshot: again(setup.snapshot), worker: worker, cancellable: true}
+
+  # `snapshot` as a retry starts it: what the worktree's being there settled stays.
+  defp again(snapshot) do
+    kept = if snapshot["worktreePath"], do: ~w(fetch checkout submodules), else: []
+
+    stages =
+      Enum.map(snapshot["stages"], &if(&1["id"] in kept, do: &1, else: stage(&1["id"])))
+
+    %{
+      snapshot
+      | "phase" => "running",
+        "endedAt" => nil,
+        "error" => nil,
+        "setupScript" => nil,
+        "stages" => stages
+    }
+    |> Map.update!("sequence", &(&1 + 1))
   end
 
   defp broadcast(state, thread_id) do
@@ -493,6 +599,27 @@ defmodule HalC2.WorktreeSetup do
     if branch == temporary,
       do: GenServer.call(server, {:name_branch, thread_id, path, branch, text})
 
+    script_and_agent(server, thread_id, run_id, project, path)
+  end
+
+  # A retry goes on from the worktree when the setup got that far. The project is read
+  # again, as the retry may be for a script the user has just corrected.
+  defp rerun(server, thread_id, run_id, {project, strategy, text}, path) do
+    project =
+      case HalC2.Shell.row(node(), project["id"]) do
+        {"project", row} -> row
+        _ -> project
+      end
+
+    if path,
+      do: script_and_agent(server, thread_id, run_id, project, path),
+      else: run(server, thread_id, run_id, project, strategy, text)
+  end
+
+  defp script_and_agent(server, thread_id, run_id, project, path) do
+    root = project["workspaceRoot"]
+    set = fn fun -> GenServer.call(server, {:update, thread_id, fun}) end
+    status = fn id, status, extra -> set.(&set_stage(&1, id, status, extra)) end
     Orchestration.progress_prepared(thread_id, run_id, "setup")
 
     {setup, wait} =
@@ -647,8 +774,8 @@ defmodule HalC2.WorktreeSetup do
   end
 
   @doc """
-  What is typed into the terminal to run `command`: it prints `sentinel` and `start` on a
-  line of its own as it begins, so the shell's prompt and echo before that are not its
+  What the terminal's shell runs for `command`: it prints `sentinel` and `start` on a
+  line of its own as it begins, so what the shell's startup prints before that is not its
   output, and `sentinel` with its exit status as it ends. The script is one quoted word,
   so a syntax error in it is its exit status and not the wrapper's, and it may end in a
   comment or hold a here-document. It runs in a child, so it may `exit`: a subshell that
@@ -656,7 +783,7 @@ defmodule HalC2.WorktreeSetup do
   new fish.
   """
   def wrap_script(command, shell, sentinel) do
-    body = command |> String.trim_trailing() |> String.replace(~r/\r?\n/, "\r")
+    body = command |> String.trim_trailing() |> String.replace(~r/\r\n?/, "\n")
     start = "printf '\\n#{sentinel}start\\n'"
 
     case Path.basename(shell || "") do
@@ -668,7 +795,7 @@ defmodule HalC2.WorktreeSetup do
 
       # An interactive zsh takes `#` for a command unless told, before it reads the line.
       "zsh" ->
-        "setopt interactive_comments\r" <> subshell(start, body, sentinel)
+        "setopt interactive_comments\n" <> subshell(start, body, sentinel)
 
       _ ->
         subshell(start, body, sentinel)
@@ -678,6 +805,15 @@ defmodule HalC2.WorktreeSetup do
   defp subshell(start, body, sentinel) do
     quoted = String.replace(body, "'", "'\\''")
     "( #{start}; eval '#{quoted}' ); printf '\\n#{sentinel}%s\\n' \"$?\""
+  end
+
+  # What follows the script in its terminal: the user's shell, for whoever opens it.
+  defp then_shell(shell) do
+    case Path.basename(shell || "") do
+      "fish" -> "exec $SHELL"
+      "zsh" -> "exec $SHELL -o nopromptsp"
+      _ -> "exec ${SHELL:-/bin/sh}"
+    end
   end
 
   @doc """
@@ -705,27 +841,23 @@ defmodule HalC2.WorktreeSetup do
 
   # Runs the script in the thread's "setup" terminal; its exit status comes back as a
   # line the wrapper prints after it, under a token nothing the script prints can know.
+  # The script is the shell's argument, as anything typed into a starting shell can be
+  # read by whatever its startup runs. A retry's script gets a shell of its own too.
   defp start_script(thread_id, root, path, script, set) do
     sentinel = "__hal_c2_setup_#{Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)}_"
-    line = wrap_script(script["command"], System.get_env("SHELL"), sentinel)
+    shell = System.get_env("SHELL")
+    command = wrap_script(script["command"], shell, sentinel) <> "\n" <> then_shell(shell)
+    terminal = %{"threadId" => thread_id, "terminalId" => "setup"}
 
-    input = %{
-      "threadId" => thread_id,
-      "terminalId" => "setup",
-      "cwd" => path,
-      "env" => Map.merge(%{"NO_COLOR" => "1", "FORCE_COLOR" => "0"}, script_env(root, path))
-    }
+    input =
+      Map.merge(terminal, %{
+        "cwd" => path,
+        "command" => command,
+        "env" => Map.merge(%{"NO_COLOR" => "1", "FORCE_COLOR" => "0"}, script_env(root, path))
+      })
 
-    with {:ok, _} <- terminal(:open, [input]),
-         {:ok, _} <- terminal(:attach, [input, self()]),
-         {:ok, _} <-
-           terminal(:write, [
-             %{
-               "threadId" => thread_id,
-               "terminalId" => "setup",
-               "data" => line <> "\r"
-             }
-           ]) do
+    with {:ok, _} <- terminal(:close, [Map.put(terminal, "deleteHistory", true)]),
+         {:ok, %{"status" => status}} when status != "error" <- terminal(:attach, [input, self()]) do
       set.(
         &Map.put(&1, "setupScript", %{
           "name" => script["name"],
@@ -734,11 +866,16 @@ defmodule HalC2.WorktreeSetup do
         })
       )
 
-      {thread_id, sentinel}
+      {thread_id, sentinel, now_ms() + start_timeout()}
     else
       _ -> fail("Could not start the setup script.")
     end
   end
+
+  defp start_timeout,
+    do: Application.get_env(:hal_c2, :worktree_setup_start_timeout, @start_timeout)
+
+  defp now_ms, do: System.monotonic_time(:millisecond)
 
   # The terminal service may be down; that is a script that cannot start.
   defp terminal(fun, args) do
@@ -747,10 +884,20 @@ defmodule HalC2.WorktreeSetup do
     :exit, _ -> {:error, :unavailable}
   end
 
-  defp await_script({thread_id, sentinel}, status, set, opts) do
-    script = %{start: sentinel <> "start", exit: ~r/^#{sentinel}(\d+)$/}
+  defp await_script({thread_id, sentinel, deadline}, status, set, opts) do
+    script = %{start: sentinel <> "start", exit: ~r/^#{sentinel}(\d+)$/, deadline: deadline}
 
     case collect({thread_id, "setup"}, script, false, "", [], set) do
+      :not_started ->
+        # Its shell goes too, or the script could still begin after this says it did not.
+        terminal(:close, [%{"threadId" => thread_id, "terminalId" => "setup"}])
+        status.("setup-script", "failed", %{"detail" => "did not start"})
+
+        if opts[:fatal] do
+          seconds = div(start_timeout(), 1000)
+          fail("The setup script did not start within #{seconds} seconds.")
+        end
+
       {0, tail} ->
         status.("setup-script", "done", %{"detail" => "exited with 0", "tail" => tail})
 
@@ -769,8 +916,11 @@ defmodule HalC2.WorktreeSetup do
   end
 
   # Reads the terminal from the wrapper's first line to its last or the terminal's end,
-  # which leaves no exit status, keeping the last lines as the stage's tail.
+  # which leaves no exit status, keeping the last lines as the stage's tail. Without that
+  # first line by the deadline, nothing is running and nothing will end: `:not_started`.
   defp collect(key, script, started, partial, tail, set) do
+    wait = if started, do: :infinity, else: max(script.deadline - now_ms(), 0)
+
     receive do
       {:hal_c2_terminal, ^key, %{"type" => "output", "data" => data}} ->
         {lines, partial} = script_lines(partial, data)
@@ -795,6 +945,8 @@ defmodule HalC2.WorktreeSetup do
 
       {:hal_c2_terminal, ^key, _event} ->
         collect(key, script, started, partial, tail, set)
+    after
+      wait -> :not_started
     end
   end
 

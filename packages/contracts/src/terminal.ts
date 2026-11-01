@@ -328,10 +328,13 @@ export class TerminalProviderEnvironmentError extends Schema.TaggedError<Termina
   {
     providerInstanceId: ProviderInstanceId,
     cause: Schema.Defect(),
+    // What to tell the user, unlike `cause`, which may carry secrets.
+    reason: Schema.optional(Schema.String),
   },
 ) {
   override get message() {
-    return `Could not prepare the terminal environment for provider instance: ${this.providerInstanceId}`;
+    const message = `Could not prepare the terminal environment for provider instance: ${this.providerInstanceId}`;
+    return this.reason ? `${message}: ${this.reason}` : message;
   }
 }
 

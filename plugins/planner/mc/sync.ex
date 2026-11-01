@@ -1371,6 +1371,35 @@ defmodule HalC2Plugins.Planner.Sync do
   end
 
   @doc """
+  Milestone id → the marks (`misplaced/2`) of issues GitHub has in it that no push will
+  ask out: a task whose move GitHub refused no longer has its old milestone hold it, so
+  when the task leaves its issue, by a relink, an unlink or its removal, nothing in the
+  plan names the issue as in that milestone any more. A milestone that holds the task
+  asks by itself. `before` and `items` are the plan either side of a change.
+  """
+  def left(before, items) do
+    for {id, %{"issue" => %{"milestone" => number} = issue}} <- before,
+        is_integer(number),
+        not Plan.same_ref?(issue, get_in(items, [id, "issue"])),
+        {holder, %{"milestone" => %{"number" => ^number} = ref} = milestone} <- before,
+        same?(ref["repository"], issue["repository"]),
+        id not in milestone["after"],
+        reduce: %{} do
+      left ->
+        mark = %{"task" => id, "issue" => Map.take(issue, ~w(repository number))}
+        Map.update(left, holder, [mark], &(&1 ++ [mark]))
+    end
+  end
+
+  @doc "`synced` with the marks of `left/2`; nothing else when there are none."
+  def left_behind(synced, []), do: synced
+
+  def left_behind(synced, marks) do
+    at = Map.new(marks, &{issue_key(&1["issue"]), &1})
+    Map.put(synced, "misplaced", Map.merge(marks(synced), at))
+  end
+
+  @doc """
   `synced` without the tasks the milestone `item` holds again as misplaced, while they
   name the issue marked: GitHub has it in the milestone, as the plan does, so there is
   nothing to correct and no push would clear it. A task that names another issue now
