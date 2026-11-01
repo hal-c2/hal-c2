@@ -132,7 +132,7 @@ Item {
         const given = (schedule.instruction ?? "") !== "";
         text.ask({ title: given ? qsTr("Change this page's update") : qsTr("Have this page update itself"), placeholder: qsTr("Summarise yesterday's threads"), text: schedule.instruction ?? "", action: qsTr("Next"), multiline: true }, instruction => {
             const save = cadence => Shell.dispatch("space.page.schedule.set", { pageId: Spaces.pageId, instruction: instruction, cadence: cadence });
-            const hours = [1, 2, 6, 12].map(count => ({ id: "every:" + count, label: qsTr("Every %n hour(s)", "", count), icon: "clock" }));
+            const hours = [1, 2, 6, 12].map(count => ({ id: "every:" + count, label: count === 1 ? qsTr("Every hour") : qsTr("Every %1 hours").arg(count), icon: "clock" }));
             const keep = given ? [{ id: "keep", label: qsTr("Keep: %1").arg(schedule.cadenceLabel), icon: "check" }] : [];
             sheet.ask(keep.concat(hours, [{ id: "time", label: qsTr("At a time of day…"), icon: "clock" }]), choice => {
                 if (choice === "keep")
