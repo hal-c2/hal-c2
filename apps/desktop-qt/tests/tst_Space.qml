@@ -413,8 +413,9 @@ Item {
                 [{ status: "stopped", error: "its thread was deleted" }, "The agent stopped: its thread was deleted."],
                 [{ status: "failed", error: "out of credits" }, "The agent failed: out of credits. The page stays as it last wrote it."]
             ];
+            const view = root.research({});
             for (const [agent, text] of says) {
-                const view = root.research({ agent: Object.assign({ request: "tidy", threadId: "t9" }, agent) });
+                Spaces.agent = Object.assign({ request: "tidy", threadId: "t9" }, agent);
                 compare(findChild(view, "spaceAgentText").text, text);
                 verify(!findChild(view, "spaceAgentStop").visible);
                 verify(findChild(view, "spaceAgentHistory").visible);
