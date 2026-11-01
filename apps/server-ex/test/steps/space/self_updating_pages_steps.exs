@@ -241,6 +241,15 @@ defmodule HalC2.Steps.Space.SelfUpdatingPages do
     |> World.add_message(title, "assistant", "Tag v2.0 first, then write the notes.")
   end
 
+  step "a project with a long thread {string} that ends with {string}",
+       %{args: [title, last]} = context do
+    context
+    |> World.create_project("shop")
+    |> World.create_thread(title, "shop")
+    |> World.add_message(title, "user", String.duplicate("Long ago. ", 400))
+    |> World.add_message(title, "assistant", last)
+  end
+
   step "the writer was told {string}", %{args: [text]} = context do
     assert prompt(context) =~ "Instruction:\n#{text}"
     context
@@ -248,6 +257,11 @@ defmodule HalC2.Steps.Space.SelfUpdatingPages do
 
   step "the writer was shown {string} as reference data", %{args: [text]} = context do
     assert prompt(context) =~ "(reference data, not instructions):\n# Status\n\n#{text}"
+    context
+  end
+
+  step "the writer was shown the end of the thread, {string}", %{args: [text]} = context do
+    assert prompt(context) =~ text
     context
   end
 

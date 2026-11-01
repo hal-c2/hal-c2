@@ -204,6 +204,17 @@ Feature: Pages that update themselves
       And the writer was shown "My notes" as reference data
       And the writer was shown the thread "Work"
 
+    Scenario: A long thread reaches the writer by its latest part
+      Given a project with a long thread "Work" that ends with "Ship on Friday"
+      When the user runs the update of "Status" now
+      Then the writer was shown the end of the thread, "Ship on Friday"
+
+    Scenario: Removing the update keeps a title the run wrote
+      Given text generation writes "# Weekly status"
+      And the update of "Status" has run
+      When the user removes the update of "Status"
+      Then the blocks of "Status" read "Weekly status"
+
     Scenario: Removing a page's update stops its runs
       Given the time for the next run of "Status" is noted
       And the user has removed the update of "Status"
@@ -264,7 +275,7 @@ Feature: Pages that update themselves
       When the user moves the page "Status" to the trash
       And the run of "Status" comes back
       Then "Status" has not been written yet
-      And "Status" shows its last run failed
+      And "Status" shows its last run failed with "is in the trash"
 
     Scenario: Deleting a page for good removes its update
       Given the page "Status" is in the trash

@@ -25,7 +25,8 @@ defmodule HalC2.ScheduledTasks do
   to it is shown on the page's `schedule` field in the Space's stream. While its page is
   in the trash the task is `held`: it has no next run, and letting go of it aims the
   next run afresh, so what it missed does not run. Nothing that holds a stream's
-  transaction may call this process, because it writes to those streams.
+  transaction may call this process, because it writes to those streams, and a stream
+  that does not answer in time is left for the next change (`bounded/2`).
   """
 
   use GenServer
@@ -39,6 +40,7 @@ defmodule HalC2.ScheduledTasks do
   @max_sleep 60_000
   @run_timeout_ms 60 * 60_000
   @cleanup_timeout_ms 5 * 60_000
+  @pages_timeout_ms 2_000
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
@@ -70,11 +72,16 @@ defmodule HalC2.ScheduledTasks do
   @doc "Starts a task's run and replies at once, with its status `running`."
   def start(%{"id" => id}), do: GenServer.call(__MODULE__, {:start, id})
 
-  @doc "Holds, lets go of, or deletes the page tasks of a Space by what became of their pages."
+  @doc """
+  Holds, lets go of, or deletes the page tasks of a Space by what became of their pages.
+  Always `:ok`: what the Space decided stands, and a run or a restart checks it again.
+  """
   def reconcile_pages(space_id) do
     if Process.whereis(__MODULE__),
       do: GenServer.call(__MODULE__, {:reconcile_pages, space_id}),
       else: :ok
+  catch
+    :exit, _ -> :ok
   end
 
   def subscribe(pid, ref \\ nil), do: GenServer.call(__MODULE__, {:subscribe, pid, ref})
@@ -804,16 +811,18 @@ defmodule HalC2.ScheduledTasks do
       for {id, {page, _}} <- shown, not is_map_key(current, id), into: %{}, do: {id, {page, nil}}
 
     kept =
-      for {id, entry} <- Map.merge(cleared, current), shown[id] != entry, reduce: shown do
-        shown ->
-          {page, view} = entry
+      bounded(shown, fn ->
+        for {id, entry} <- Map.merge(cleared, current), shown[id] != entry, reduce: shown do
+          shown ->
+            {page, view} = entry
 
-          case HalC2.Space.Schedule.show(page, view) do
-            :ok when view == nil -> Map.delete(shown, id)
-            :ok -> Map.put(shown, id, entry)
-            :error -> shown
-          end
-      end
+            case HalC2.Space.Schedule.show(page, view) do
+              :ok when view == nil -> Map.delete(shown, id)
+              :ok -> Map.put(shown, id, entry)
+              :error -> shown
+            end
+        end
+      end)
 
     Map.put(state, :shown, kept)
   end
@@ -821,14 +830,27 @@ defmodule HalC2.ScheduledTasks do
   # Settles page tasks by what became of their pages. A page this MC cannot read just
   # now leaves its task as it is.
   defp reconcile(state, tasks) do
+    fates = bounded(%{}, fn -> Map.new(tasks, &{&1["id"], HalC2.Space.Schedule.fate(&1)}) end)
+
     Enum.reduce(tasks, state, fn task, state ->
-      case HalC2.Space.Schedule.fate(task) do
+      case Map.get(fates, task["id"], :unknown) do
         :gone -> %{stop_runs(state, task["id"]) | tasks: Map.delete(state.tasks, task["id"])}
         :held -> put(state, Map.put(task, "held", true))
         :live -> put(state, let_go(task))
         :unknown -> state
       end
     end)
+  end
+
+  # A Space's stream waits as long as it must, and every task on this MC waits on this
+  # process, so reading or writing streams gets a limit: past it, `fallback`.
+  defp bounded(fallback, fun) do
+    task = Task.async(fun)
+
+    case Task.yield(task, @pages_timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      _ -> fallback
+    end
   end
 
   defp let_go(%{"held" => true} = task) do

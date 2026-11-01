@@ -85,7 +85,7 @@ defmodule HalC2.Space.Schedule do
     specs =
       case Enum.find(Blocks.of_page(state, page_id), &(&1["kind"] == "generated")) do
         nil -> []
-        block -> block["text"] |> Markdown.parse() |> elem(1) |> Enum.map(&Space.links(state, &1))
+        block -> block["text"] |> Markdown.blocks() |> Enum.map(&Space.links(state, &1))
       end
 
     Blocks.release_generated(state, page_id, specs, @author)
@@ -102,8 +102,9 @@ defmodule HalC2.Space.Schedule do
              page_text(state, page),
              recent_threads()
            ),
-         {:ok, markdown} <- written(markdown) do
-      write(space_id, page_id, markdown)
+         {:ok, markdown} <- written(markdown),
+         {:ok, _} = done <- write(space_id, page_id, markdown) do
+      done
     else
       {:error, _reason, message} -> {:error, message}
       {:error, {:unavailable, message}} -> {:error, message}
@@ -139,7 +140,7 @@ defmodule HalC2.Space.Schedule do
   end
 
   # Generators have no tools, so "yesterday's threads" reach them here: this MC's
-  # threads active in the last two days, newest first, each cut to fit.
+  # threads active in the last two days, newest first, each cut to its latest part.
   defp recent_threads do
     since = DateTime.add(DateTime.utc_now(), -@recent_ms, :millisecond) |> DateTime.to_iso8601()
 
@@ -163,7 +164,7 @@ defmodule HalC2.Space.Schedule do
       {text, _attachments} = Prompts.thread_context(messages)
 
       "Thread \"#{row["title"]}\" (#{row["updatedAt"]}):\n" <>
-        String.slice(text, 0, @thread_chars)
+        String.slice(text, max(String.length(text) - @thread_chars, 0), @thread_chars)
     end)
   end
 
