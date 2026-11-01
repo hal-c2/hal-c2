@@ -83,8 +83,7 @@ defmodule HalC2.Space.ImageGeneration do
   def generate(prompt, selection) do
     with {:ok, selection} <- choose(selection),
          selection = with_model(selection) do
-      dir = Path.join(System.tmp_dir!(), "hal-c2-image-#{HalC2.Environment.uuid4()}")
-      File.mkdir_p!(dir)
+      dir = HalC2.Scratch.dir("hal-c2-image")
 
       try do
         with {:ok, _} <- run(selection, dir, instruction(prompt)),
