@@ -10,8 +10,8 @@
 # thought of runs everything.
 set -euo pipefail
 
-not_mc='^(docs/|apps/(tui|desktop-qt|mobile-qt|marketing)/|assets/|.*\.md$)'
-not_tui='^(docs/|apps/(server-ex|mobile-qt|marketing)/|native/|assets/|.*\.md$)'
+not_mc='^(docs/|apps/(tui|desktop-qt|mobile-qt|marketing)/|assets/|[^/]*\.md$|(.*/)?README\.md$)'
+not_tui='^(docs/|apps/(server-ex|mobile-qt|marketing)/|native/|assets/|[^/]*\.md$)'
 
 # A model check depends on the model and how it is checked, never on the MC's code:
 # `mix proof --only` in mc_check holds the model to the code on every change. So a proof
@@ -23,7 +23,8 @@ proofs=$(git ls-tree --name-only HEAD apps/server-ex/proof/hal_c2/ | sed -nE 's|
 if [ "${1:-}" = all ] || ! git rev-parse -q --verify HEAD^1 >/dev/null; then
   mc=true tui=true selected=$proofs
 else
-  changed=$(git diff --name-only HEAD^1 HEAD)
+  # Without rename detection a moved file lists both paths: it left one place and reached another.
+  changed=$(git diff --no-renames --name-only HEAD^1 HEAD)
   mc=false tui=false
   if grep -qvE "$not_mc" <<<"$changed"; then mc=true; fi
   if grep -qvE "$not_tui" <<<"$changed"; then tui=true; fi
