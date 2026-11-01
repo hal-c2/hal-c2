@@ -319,6 +319,51 @@ defmodule HalC2.Steps.Orchestration.QueueAndSteering do
     |> Map.put(:sent, text)
   end
 
+  # The first send is not linked to the test: an MC restart ends it, as it ends a real one.
+  step "the provider is holding the steer {string} sent to {string}",
+       %{args: [text, thread]} = context do
+    message_id = "msg-#{System.unique_integer([:positive])}"
+
+    command = %{
+      "type" => "message.dispatch",
+      "threadId" => World.thread_id(context, thread),
+      "messageId" => message_id,
+      "text" => text,
+      "attachments" => [],
+      "deliveryIntent" => "steer"
+    }
+
+    hold = Path.join(context.mc.home, "hold-steer")
+    File.touch!(hold)
+    spawn(fn -> HalC2.Orchestration.dispatch(command) end)
+
+    World.await_state(context, thread, fn state ->
+      StreamState.get(state, "turn-item")["turn-item:user:#{message_id}"] != nil
+    end)
+
+    context |> Map.put(:thread, thread) |> Map.put(:repeat_command, command)
+  end
+
+  step "the running turn of {string} ends", %{args: [thread]} = context do
+    thread_id = World.thread_id(context, thread)
+
+    :ok =
+      HalC2.Streams.transact(thread_id, :thread, fn state ->
+        ended =
+          HalC2.Orchestration.upsert(state, "run", context.running, fn run ->
+            Map.put(run, "status", "completed")
+          end)
+
+        {[ended], :ok}
+      end)
+
+    context
+  end
+
+  step "the user's client sends the steer {string} again", context do
+    Map.put(context, :replies, [nil, HalC2.Orchestration.dispatch(context.repeat_command)])
+  end
+
   step "the first send succeeds", context do
     assert [{:ok, _}, _] = context.replies
     context

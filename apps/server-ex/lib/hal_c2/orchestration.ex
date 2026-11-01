@@ -2363,8 +2363,10 @@ defmodule HalC2.Orchestration do
   # stops between the two leaves the message in the turn
   # `HalC2.Orchestration.Recovery` ends as interrupted, clearing the mark, though the
   # provider never read it. Its session ended with the MC, and that loss is accepted.
-  # A send that dies while the MC stays up leaves the mark until the MC restarts: its
-  # repeats keep hearing "try again" for a message that stays in the turn.
+  # A send that dies while the MC stays up leaves the mark: its repeats keep hearing
+  # "try again" for a message that stays in the turn. A restart clears it only while
+  # the run is still active; once the run has ended, recovery skips the thread and the
+  # mark stays (#704).
   defp reserve_steer(state, run, command) do
     at = Entities.now()
     message_id = command["messageId"] || Entities.new_id("message")
