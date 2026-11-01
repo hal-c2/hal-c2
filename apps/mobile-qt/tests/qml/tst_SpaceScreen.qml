@@ -456,6 +456,18 @@ Item {
             compare(dispatched("space.deck.trash")[0].deckId, "d1");
         }
 
+        function test_aRenameAnsweredAfterTheSpaceChangedGoesToItsOwnSpace() {
+            const screen = makeScreen(deckState());
+            screen.deckMenu("d1", "Pitch");
+            sheetOf(screen).choose("rename");
+            Spaces.spaceId = "s2";
+            dialogOf(screen).then("Renamed");
+            const rename = dispatched("space.deck.rename")[0];
+            compare(rename.spaceId, "s1");
+            compare(rename.deckId, "d1");
+            compare(rename.title, "Renamed");
+        }
+
         function test_whatWasWrittenOnASlideGoesToTheMcWhenTheEditorLosesFocus() {
             const screen = makeScreen(deckState());
             screen.openSpace("s1");
