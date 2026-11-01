@@ -1,9 +1,9 @@
 defmodule HalC2.WebAddressTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias HalC2.Web
 
-  defp up(ip), do: {"if", [flags: [:up], addr: ip]}
+  defp up(ip), do: {"if", [flags: [:up, :running], addr: ip]}
 
   describe "the network address of an MC listening on every interface" do
     test "a home or office network comes before the rest of the private ranges, and those before anything else" do
@@ -16,16 +16,17 @@ defmodule HalC2.WebAddressTest do
     # Found on a machine running Compose: a bridge's 192.168 address outranked the Wi-Fi's 10.
     test "a bridge for this machine's containers and VMs does not count" do
       bridges =
-        for name <- ~w(docker0 br-e0f16321754d virbr0),
-            do: {~c"#{name}", [flags: [:up], addr: {192, 168, 144, 1}]}
+        for name <-
+              ~w(docker0 br-e0f16321754d virbr0 flannel.1 kube-bridge cilium_host incusbr0 mpqemubr0),
+            do: {~c"#{name}", [flags: [:up, :running], addr: {192, 168, 144, 1}]}
 
       assert Web.network_ip(
-               {:ok, bridges ++ [{~c"wlan0", [flags: [:up], addr: {10, 0, 3, 114}]}]}
+               {:ok, bridges ++ [{~c"wlan0", [flags: [:up, :running], addr: {10, 0, 3, 114}]}]}
              ) == "10.0.3.114"
 
       assert Web.network_ip({:ok, bridges}) == nil
 
-      assert Web.network_ip({:ok, [{~c"br0", [flags: [:up], addr: {192, 168, 1, 20}]}]}) ==
+      assert Web.network_ip({:ok, [{~c"br0", [flags: [:up, :running], addr: {192, 168, 1, 20}]}]}) ==
                "192.168.1.20"
     end
 
@@ -35,29 +36,43 @@ defmodule HalC2.WebAddressTest do
       assert Web.network_ip({:ok, [{"if", [flags: [], addr: {192, 168, 1, 20}]}]}) == nil
       assert Web.network_ip({:error, :enotsup}) == nil
     end
+
+    # An unplugged port with a static address is up, and would outrank the Wi-Fi that works.
+    test "an interface with no carrier does not count" do
+      unplugged = {~c"eth0", [flags: [:up], addr: {192, 168, 1, 20}]}
+      wifi = {~c"wlan0", [flags: [:up, :running], addr: {10, 0, 3, 114}]}
+      assert Web.network_ip({:ok, [unplugged, wifi]}) == "10.0.3.114"
+    end
   end
 
-  describe "the address a clustered MC listening on every interface reports to members" do
-    @interfaces {:ok,
-                 [
-                   {~c"lo", [flags: [:up], addr: {127, 0, 0, 1}]},
-                   {~c"docker0", [flags: [:up], addr: {172, 17, 0, 1}]},
-                   {~c"wlan0", [flags: [:up], addr: {10, 0, 3, 114}]}
-                 ]}
+  describe "the address of an MC listening on every interface" do
+    setup do
+      for key <- [:host, :cluster_listen] do
+        previous = Application.get_env(:hal_c2, key)
+        on_exit(fn -> restore(key, previous) end)
+      end
 
-    # Members are told of every interface in the system's order, so a bridge can come first.
-    test "skips a bridge for this machine's containers and VMs" do
-      assert Web.member_ip(["172.17.0.1:4369", "10.0.3.114:4369", "127.0.0.1:4369"], @interfaces) ==
-               "10.0.3.114"
+      Application.put_env(:hal_c2, :host, "0.0.0.0")
+      :ok
     end
 
-    test "is nothing when only a bridge and loopback are left" do
-      assert Web.member_ip(["172.17.0.1:4369", "127.0.0.1:4369"], @interfaces) == nil
-      assert Web.member_ip([], @interfaces) == nil
+    defp restore(key, nil), do: Application.delete_env(:hal_c2, key)
+    defp restore(key, value), do: Application.put_env(:hal_c2, key, value)
+
+    test "is the one it was told to use for its members" do
+      Application.put_env(:hal_c2, :cluster_listen, "10.9.8.7")
+
+      assert {:ok, %{"address" => "http://10.9.8.7:" <> _, "localOnly" => false}} =
+               Web.address(%{})
     end
 
-    test "still names an address when the interfaces cannot be read" do
-      assert Web.member_ip(["10.0.3.114:4369"], {:error, :enotsup}) == "10.0.3.114"
+    test "is this machine's network address when that one is loopback or there is none" do
+      for listen <- ["127.0.0.1", nil] do
+        restore(:cluster_listen, listen)
+        {:ok, %{"address" => address}} = Web.address(%{})
+        ip = Web.network_ip(:inet.getifaddrs())
+        assert address == "http://#{ip || "localhost"}:#{Web.port()}"
+      end
     end
   end
 end
