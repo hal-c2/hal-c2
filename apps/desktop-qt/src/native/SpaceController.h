@@ -198,7 +198,8 @@ private:
 // toast and kept in `error`.
 //
 // Publishes `space`: {error (the last refusal, until the next request), busy
-// (a page from a thread is being written)}.
+// (a page from a thread is being written), drawing (a chart is being asked for),
+// written}.
 //
 // Actions (each payload's `spaceId` defaults to the selected Space):
 // `space.open`, `space.select {spaceId}`, `space.selectPage {pageId}`,
@@ -210,7 +211,8 @@ private:
 // `space.page.importMarkdown {markdown}`, `space.page.importFile {url}`,
 // `space.pageFromThread {threadKey}`,
 // `space.block.insert {pageId, kind, text, checked, linkedPageId, afterBlockId}`
-// (afterBlockId: "" first, absent last), `space.block.update {blockId, text}`,
+// (afterBlockId: "" first, absent last), `space.block.visualize {pageId, request,
+// blockId (the chart it replaces), afterBlockId}`, `space.block.update {blockId, text}`,
 // `space.block.setChecked {blockId, checked}`, `space.block.move {blockId,
 // afterBlockId}`, `space.block.delete {blockId}`, `space.comment.add {pageId,
 // blockId, body}`, `space.comment.resolve {commentId}`, `space.comment.reopen
@@ -257,6 +259,7 @@ private:
   QString m_followedSpace;
   QString m_error;
   int m_writing = 0;
+  int m_drawing = 0;
   // The page last written from a thread.
   QString m_written;
 };

@@ -18,6 +18,7 @@ Popup {
         { kind: "heading", label: qsTr("Heading"), icon: "hash", words: "heading title" },
         { kind: "checklist", label: qsTr("Checklist"), icon: "square-check", words: "checklist todo task" },
         { kind: "callout", label: qsTr("Callout"), icon: "info", words: "callout note" },
+        { kind: "chart", label: qsTr("Chart"), icon: "chart-no-axes-column", words: "chart visualize graph" },
         { kind: "subpage_link", label: qsTr("Link to a subpage"), icon: "link", words: "link subpage page" }
     ]
     readonly property var shown: kinds.filter(entry => query.length === 0 || entry.label.toLowerCase().startsWith(query.toLowerCase()) || entry.words.split(" ").some(word => word.startsWith(query.toLowerCase())))

@@ -1,4 +1,4 @@
-// Pages in a Space (features/space/pages.feature): the MC's `space.*` calls,
+// Pages in a Space (features/space/pages.feature, visualize.feature): the MC's `space.*` calls,
 // faked here as the MC answers them (lib/hal_c2/space.ex and space/*.ex),
 // its `spaces` and `space:<id>` streams (served as every `stream` is, by
 // TimelineSteps.cpp), and what SpaceController shows of them.
@@ -48,6 +48,10 @@ struct FakeSpaces {
   // The folder the last summary was written in, and the thread it was of.
   QString cwd;
   QString summarised;
+  // The chart text generation draws next; none when the request cannot be answered.
+  QJsonObject chart;
+  // The page the last chart was asked for on.
+  QString asked;
   // How the client's last `space.*` was answered.
   QString lastMethod;
   Answer last;
@@ -546,6 +550,27 @@ Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
   if (method == QLatin1String("block.insert")) {
     return insertBlock(mc, space, pageId, in, in.contains(QLatin1String("afterBlockId")) ? in.value(QLatin1String("afterBlockId")) : QJsonValue::Undefined, kUser);
   }
+  if (method == QLatin1String("block.visualize")) {
+    if (const auto why = writable(mc, space, pageId)) return *why;
+    const QString tag = QStringLiteral("SpaceChartError");
+    const QJsonObject chart = fake(mc).chart;
+    if (fake(mc).generation == QLatin1String("unavailable")) return refused(QStringLiteral("unavailable"), QStringLiteral("No chart was drawn: no text generation provider is set up."), tag);
+    if (fake(mc).generation == QLatin1String("failed")) return refused(QStringLiteral("failed"), QStringLiteral("No chart was drawn: the provider stopped answering."), tag);
+    if (chart.isEmpty()) return refused(QStringLiteral("unanswerable"), QStringLiteral("No chart was drawn: the page and this MC's threads cannot answer that."), tag);
+    const QString summary = QStringLiteral("%1 (a chart; %2)").arg(text(chart, QLatin1String("title")), text(chart, QLatin1String("source")));
+    const QJsonObject fields{{QStringLiteral("kind"), QStringLiteral("chart")}, {QStringLiteral("text"), summary}, {QStringLiteral("chart"), chart}};
+    QString id = blockId;
+    if (id.isEmpty()) {
+      const QJsonValue after = in.contains(QLatin1String("afterBlockId")) ? in.value(QLatin1String("afterBlockId")) : QJsonValue::Undefined;
+      const Answer made = insertBlock(mc, space, pageId, {{QStringLiteral("kind"), QStringLiteral("paragraph")}, {QStringLiteral("text"), summary}}, after, kUser);
+      if (!made.error.isEmpty()) return made;
+      id = text(made.result.value(QLatin1String("block")).toObject(), QLatin1String("id"));
+    } else if (text(one(mc, stream, QStringLiteral("block"), id), QLatin1String("kind")) != QLatin1String("chart")) {
+      return refused(QStringLiteral("invalid"), QStringLiteral("Only a chart can be asked for again."));
+    }
+    set(mc, stream, QStringLiteral("block"), id, fields);
+    return {{{QStringLiteral("block"), one(mc, stream, QStringLiteral("block"), id)}}};
+  }
   if (method.startsWith(QLatin1String("block."))) {
     const QJsonObject block = one(mc, stream, QStringLiteral("block"), blockId);
     if (block.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("There is no block %1.").arg(blockId));
@@ -837,6 +862,44 @@ std::optional<QVariantMap> rowOf(const SpaceRows* rows, const QString& id) {
 }
 
 // Another client of the MC following the Spaces, and the Space `id` when set.
+const QString kFromThisPage = QStringLiteral("Numbers from this page");
+
+// A chart with one series, as the MC stores it.
+QJsonObject chartOf(const QString& type, const QString& title, const QString& source, const QList<std::pair<QString, int>>& points) {
+  QJsonArray labels;
+  QJsonArray values;
+  for (const auto& [label, value] : points) {
+    labels.append(label);
+    values.append(value);
+  }
+  return {{QStringLiteral("type"), type},
+          {QStringLiteral("title"), title},
+          {QStringLiteral("labels"), labels},
+          {QStringLiteral("series"), QJsonArray{QJsonObject{{QStringLiteral("name"), title}, {QStringLiteral("values"), values}}}},
+          {QStringLiteral("request"), QStringLiteral("signups")},
+          {QStringLiteral("source"), source}};
+}
+
+void givenChart(World& world, const QString& page, const QString& first, int a, const QString& next, int b) {
+  FakeSpaces& spaces = fake(world.mc);
+  spaces.asked = givenPage(world, page);
+  spaces.chart = chartOf(QStringLiteral("bar"), QStringLiteral("Signups"), kFromThisPage, {{first, a}, {next, b}});
+  given(world, QStringLiteral("block.visualize"), {{QStringLiteral("pageId"), spaces.asked}, {QStringLiteral("request"), QStringLiteral("/visualize signups")}});
+  spaces.chart = {};
+}
+
+// The chart row the open page shows, or none.
+QVariantMap shownChart(World& world) {
+  for (const QVariantMap& row : viewOf(world)->blocks()->rows()) {
+    if (row.value(QStringLiteral("kind")) == QLatin1String("chart")) return row;
+  }
+  return {};
+}
+
+bool drawing(World& world) {
+  return world.state(QStringLiteral("space")).toMap().value(QStringLiteral("drawing")).toBool();
+}
+
 void watch(World& world, const QString& id = {}) {
   FakeSpaces& spaces = fake(world.mc);
   seed(world.mc);
@@ -1192,6 +1255,100 @@ const Steps steps([] {
     expectShown(world, [&] { return viewOf(world)->pageId() == page; }, QStringLiteral("%1 to open").arg(c[0]));
     const Table wanted = table.mid(1);
     expectShown(world, [&] { return blockTable(world) == wanted; }, QStringLiteral("the blocks %1").arg(show(tableOf(wanted))));
+  });
+
+  // Charts on a page (space/visualize.feature).
+  step(QStringLiteral("this MC's threads took turns this week"), [](World&, const Captures&, const Table&) {});
+  step(QStringLiteral("text generation charts the request from the MC's threads"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).chart = chartOf(QStringLiteral("bar"), QStringLiteral("Weekly turns"), QStringLiteral("Counted by this MC from its 2 threads, 12 weeks to 2026-11-01"),
+                                   {{QStringLiteral("10-26"), 4}, {QStringLiteral("11-02"), 7}});
+  });
+  step(QStringLiteral("text generation answers with a (bar|line) chart of %1 (\\d+)(?: and %1 (\\d+))?").arg(q), [](World& world, const Captures& c, const Table&) {
+    QList<std::pair<QString, int>> points{{c[1], c[2].toInt()}};
+    if (!c.value(3).isEmpty()) points.append({c[3], c[4].toInt()});
+    fake(world.mc).chart = chartOf(c[0], QStringLiteral("Signups"), kFromThisPage, points);
+  });
+  step(QStringLiteral("text generation says the request cannot be answered"), [](World& world, const Captures&, const Table&) {
+    fake(world.mc).chart = {};
+  });
+  step(QStringLiteral("the page %1 has a chart of %1 (\\d+) and %1 (\\d+)").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenChart(world, c[0], c[1], c[2].toInt(), c[3], c[4].toInt());
+  });
+  step(QStringLiteral("the page %1 has the blocks %1 and a chart of %1 (\\d+) and %1 (\\d+) and the blocks %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], QStringLiteral("paragraph"), c[1]);
+    givenChart(world, c[0], c[2], c[3].toInt(), c[4], c[5].toInt());
+    givenBlock(world, c[0], QStringLiteral("paragraph"), c[6]);
+  });
+  step(QStringLiteral("%1 also says %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    givenBlock(world, c[0], QStringLiteral("paragraph"), c[1]);
+  });
+  step(QStringLiteral("the user asks for %1 on the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    fake(world.mc).asked = idOfPage(world, c[1]);
+    actOnPage(world, fake(world.mc).asked, QStringLiteral("space.block.visualize"), {{QStringLiteral("request"), c[0]}});
+  });
+  step(QStringLiteral("the user asks again for %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    actOnPage(world, fake(world.mc).asked, QStringLiteral("space.block.visualize"),
+              {{QStringLiteral("request"), c[0]}, {QStringLiteral("blockId"), shownChart(world).value(QStringLiteral("id"))}});
+  });
+  step(QStringLiteral("the page shows a (bar|line) chart titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    expectShown(world, [&] {
+      const QVariantMap chart = shownChart(world).value(QStringLiteral("chart")).toMap();
+      return chart.value(QStringLiteral("type")) == c[0] && chart.value(QStringLiteral("title")) == c[1];
+    }, QStringLiteral("a %1 chart titled %2").arg(c[0], c[1]));
+    expect(!drawing(world), QStringLiteral("the page still says a chart is being drawn"));
+  });
+  step(QStringLiteral("the chart says its numbers came from (this MC's threads|this page)"), [](World& world, const Captures& c, const Table&) {
+    const QString source = shownChart(world).value(QStringLiteral("chart")).toMap().value(QStringLiteral("source")).toString();
+    const QString start = c[0] == QLatin1String("this page") ? kFromThisPage : QStringLiteral("Counted by this MC");
+    expect(source.startsWith(start), QStringLiteral("the chart says its numbers came from \"%1\"").arg(source));
+  });
+  step(QStringLiteral("the second client sees a chart titled %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    second(world).selectPage(fake(world.mc).asked);
+    QStringList titles;
+    for (const QVariantMap& row : second(world).blocks()->rows()) titles.append(row.value(QStringLiteral("chart")).toMap().value(QStringLiteral("title")).toString());
+    expect(titles.contains(c[0]), QStringLiteral("the second client shows the charts %1").arg(show(titles)));
+  });
+  // The toggle is the brick's; tst_Space.qml presses it. What it reads is the row asserted below.
+  step(QStringLiteral("the user asks to see the numbers behind the chart"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    expectShown(world, [&] { return !shownChart(world).isEmpty(); }, QStringLiteral("a chart on the page"));
+  });
+  step(QStringLiteral("the numbers read %1 (\\d+)(?: and %1 (\\d+))?").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    QVariantList labels{c[0]};
+    QVariantList values{c[1].toDouble()};
+    if (!c.value(2).isEmpty()) {
+      labels.append(c[2]);
+      values.append(c[3].toDouble());
+    }
+    expectShown(world, [&] {
+      const QVariantMap chart = shownChart(world).value(QStringLiteral("chart")).toMap();
+      const QVariantList series = chart.value(QStringLiteral("series")).toList();
+      return chart.value(QStringLiteral("labels")).toList() == labels && series.size() == 1 && series.first().toMap().value(QStringLiteral("values")).toList() == values;
+    }, QStringLiteral("the numbers to read %1").arg(c.join(QLatin1Char(' '))));
+  });
+  step(QStringLiteral("the page shows one chart, between %1 and %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectShown(world, [&] {
+      const QStringList kinds = column(viewOf(world)->blocks(), QStringLiteral("kind"));
+      const QStringList texts = column(viewOf(world)->blocks(), QStringLiteral("text"));
+      const qsizetype at = kinds.indexOf(QStringLiteral("chart"));
+      return kinds.count(QStringLiteral("chart")) == 1 && at > 0 && at + 1 < texts.size() && texts.at(at - 1) == c[0] && texts.at(at + 1) == c[1];
+    }, QStringLiteral("one chart between %1 and %2").arg(c[0], c[1]));
+  });
+  step(QStringLiteral("the user deletes the chart"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    act(world, QStringLiteral("space.block.delete"), {{QStringLiteral("blockId"), shownChart(world).value(QStringLiteral("id"))}});
+  });
+  step(QStringLiteral("the page shows no chart"), [](World& world, const Captures&, const Table&) {
+    lookAtPage(world, fake(world.mc).asked);
+    expectShown(world, [&] { return shownChart(world).isEmpty(); }, QStringLiteral("no chart on the page"));
+  });
+  step(QStringLiteral("the user is told no chart was drawn"), [](World& world, const Captures&, const Table&) {
+    const QString start = QStringLiteral("No chart was drawn");
+    world.waitFor([&] { return toldOf(world, start); }, [&] { return QStringLiteral("the user to be told \"%1\"; toasts %2").arg(start, show(toasts(world))); });
+    expect(!drawing(world), QStringLiteral("the page still says a chart is being drawn"));
   });
 
   // A page from a thread.

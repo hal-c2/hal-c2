@@ -99,6 +99,7 @@ SpaceWorkspace 1.0 SpaceWorkspace.qml
 SpaceSidebar 1.0 SpaceSidebar.qml
 SpacePage 1.0 SpacePage.qml
 SpaceBlock 1.0 SpaceBlock.qml
+SpaceChart 1.0 SpaceChart.qml
 SpaceSlashMenu 1.0 SpaceSlashMenu.qml
 SpaceComments 1.0 SpaceComments.qml
 UsageChart 1.0 UsageChart.qml

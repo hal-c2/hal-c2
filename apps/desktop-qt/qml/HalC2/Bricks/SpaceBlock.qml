@@ -6,8 +6,9 @@ import HalC2.Shell
 
 // One block of a page (a row of Spaces.blocks): its text edited in place and
 // written when the user leaves it or presses Return, a checklist item's tick,
-// a callout's tint, a subpage link that opens the page, and the block's own
-// actions (comment, add a block below, move up or down, delete).
+// a callout's tint, a subpage link that opens the page, a chart drawn from its
+// description, and the block's own actions (comment, add a block below, ask
+// again for a chart, move up or down, delete).
 Item {
     id: block
 
@@ -25,6 +26,8 @@ Item {
     property string beforePreviousId: ""
     property string nextId: ""
     property bool readOnly: false
+    // A chart block's description (SpaceChart in packages/contracts).
+    property var chart: ({})
 
     readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
     readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
@@ -33,6 +36,7 @@ Item {
 
     signal commentRequested(string blockId)
     signal addBelowRequested(string blockId)
+    signal askAgainRequested(string blockId, string request)
 
     // Writes what the user typed, if it differs from the block's text.
     function commit() {
@@ -123,12 +127,22 @@ Item {
             }
         }
 
+        Loader {
+            Layout.fillWidth: true
+            active: block.kind === "chart"
+            visible: active
+
+            sourceComponent: SpaceChart {
+                chart: block.chart
+            }
+        }
+
         TextEdit {
             id: editor
 
             objectName: "spaceBlockEditor:" + block.text
             Layout.fillWidth: true
-            visible: block.kind !== "subpage_link"
+            visible: block.kind !== "subpage_link" && block.kind !== "chart"
             readOnly: block.readOnly
             wrapMode: TextEdit.Wrap
             selectByMouse: true
@@ -169,6 +183,7 @@ Item {
         }
 
         RowLayout {
+            Layout.alignment: block.kind === "chart" ? Qt.AlignTop : Qt.AlignVCenter
             spacing: 0
             // Kept in the layout so the text does not reflow on hover.
             opacity: hover.hovered || block.editing || block.openComments > 0 ? 1 : 0
@@ -193,6 +208,18 @@ Item {
                 Accessible.name: qsTr("Add a block below")
                 visible: !block.readOnly
                 onClicked: block.addBelowRequested(block.blockId)
+            }
+
+            ShellButton {
+                objectName: "spaceAskAgain:" + block.text
+                subtle: true
+                iconName: "refresh-cw"
+                implicitHeight: 26
+                implicitWidth: 26
+                Accessible.name: qsTr("Ask again")
+                toolTip: qsTr("Ask again")
+                visible: block.kind === "chart" && !block.readOnly
+                onClicked: block.askAgainRequested(block.blockId, block.chart.request ?? "")
             }
 
             ShellButton {

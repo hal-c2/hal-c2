@@ -104,6 +104,7 @@ qt_add_qml_module(hal_c2_bricks
     js/panelTabs.js
     js/terminalLinks.js
     js/scheduledTasks.js
+    js/spaceChart.js
     js/usageChart.js
     RevertDialog.qml
     TerminalSplits.qml

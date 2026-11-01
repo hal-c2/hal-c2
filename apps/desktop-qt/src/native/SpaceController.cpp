@@ -229,7 +229,7 @@ SpacePages::SpacePages(QObject* parent)
       m_pages(new SpaceRows({"id", "title", "depth", "parentPageId", "hasChildren", "fromThread"}, this)),
       m_trash(new SpaceRows({"id", "title", "trashedAt"}, this)),
       m_blocks(new SpaceRows(
-          {"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments"}, this)),
+          {"id", "kind", "text", "checked", "linkedPageId", "linkedTitle", "byAgent", "openComments", "chart"}, this)),
       m_comments(new SpaceRows({"id", "blockId", "blockText", "body", "resolved", "byAgent", "createdAt"}, this)) {}
 
 QString SpacePages::spaceName() const {
@@ -467,7 +467,8 @@ void SpacePages::rebuild() {
                    {QStringLiteral("linkedPageId"), linked},
                    {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : titleOf(linked)},
                    {QStringLiteral("byAgent"), byAgent(block.value(QLatin1String("createdBy")))},
-                   {QStringLiteral("openComments"), open.value(id)}});
+                   {QStringLiteral("openComments"), open.value(id)},
+                   {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()}});
   }
   m_blocks->setRows(blocks);
 
@@ -625,6 +626,7 @@ void SpaceController::toast(const QString& type, const QString& title, const QSt
 void SpaceController::publish() {
   m_bridge->publish(QStringLiteral("space"), QVariantMap{{QStringLiteral("error"), m_error},
                                                           {QStringLiteral("busy"), m_writing > 0},
+                                                          {QStringLiteral("drawing"), m_drawing > 0},
                                                           {QStringLiteral("written"), m_written}});
 }
 
@@ -805,6 +807,23 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
   } else if (action == QLatin1String("space.block.move")) {
     QJsonObject move = orNull(pick({"spaceId", "blockId"}), QLatin1String("afterBlockId"));
     call(QStringLiteral("block.move"), move);
+  } else if (action == QLatin1String("space.block.visualize")) {
+    QJsonObject ask = orNull(pick({"spaceId", "request", "blockId"}), QLatin1String("afterBlockId"));
+    ask.insert(QStringLiteral("pageId"), pageId);
+    ++m_drawing;
+    publish();
+    call(
+        QStringLiteral("block.visualize"), ask,
+        [this](const QJsonObject&) {
+          --m_drawing;
+          publish();
+        },
+        // The MC's refusal says why no chart was drawn.
+        [this](const QJsonObject&) {
+          --m_drawing;
+          publish();
+          return QString();
+        });
   } else if (action == QLatin1String("space.block.delete")) {
     call(QStringLiteral("block.delete"), pick({"spaceId", "blockId"}));
   } else if (action == QLatin1String("space.comment.add")) {
