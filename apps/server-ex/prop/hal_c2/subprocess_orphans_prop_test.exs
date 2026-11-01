@@ -12,6 +12,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
   still comes up, and the next reap (a restart of the service, or a later boot) kills
   what it left. A boot that cannot make the records dir still comes up, but runs
   no program until the service restarts (or the MC dies) with the dir restored.
+  An orphan may exit on its own before the boot, leaving its background command in its
+  group: the boot kills that command all the same (hal-c2/hal-c2#380).
   """
 
   use ExUnit.Case, async: false
@@ -31,8 +33,13 @@ defmodule HalC2.SubprocessOrphansPropTest do
                end)
 
   # An echo with a command in the background that holds stdout too, so end of file
-  # says both are gone. A closed stdin ends both.
-  @program ["sh", "-c", ~s(sleep 60 & while read l; do echo "$l"; done; kill $!)]
+  # says both are gone. A closed stdin ends both; the line `leave` ends only the
+  # program, which answers with its background command's pid.
+  @program [
+    "sh",
+    "-c",
+    ~s(sleep 60 & while read l; do [ "$l" = leave ] && { echo $!; exit 0; }; echo "$l"; done; kill $!)
+  ]
 
   @tag skip: @chmod_skip
   property "a boot kills what a dead MC left running and nothing else",
@@ -54,7 +61,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
   # `running`: id => whether this incarnation of the service tracks it; one that
   # restarted forgets what it tracked. `records`: the ids that have a record naming
   # this MC, `left` the ones naming a dead MC. `orphans`: the ids a dead MC left
-  # running. `unavailable`: tracking could not be set up this boot, so starts are
+  # running, `exited` the ones among them whose program has since exited, leaving its
+  # background command. `unavailable`: tracking could not be set up this boot, so starts are
   # refused. `dir_made`: the records dir has been made once; a dirless boot is
   # only possible before that (an existing dir needs no making).
   def initial_state,
@@ -65,6 +73,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
       records: [],
       left: [],
       orphans: [],
+      exited: [],
       unavailable: false,
       dir_made: false
     }
@@ -77,7 +86,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
       [
         {3, {:call, __MODULE__, :boot, []}},
         {1, {:call, __MODULE__, :blind_boot, [oneof([:unlistable, :unreadable])]}}
-      ] ++ dirless
+      ] ++ dirless ++ exits(state)
     )
   end
 
@@ -103,6 +112,16 @@ defmodule HalC2.SubprocessOrphansPropTest do
     )
   end
 
+  defp exits(state) do
+    case state.orphans -- state.exited do
+      [] -> []
+      orphans -> [{3, {:call, __MODULE__, :orphan_exits, [oneof(orphans)]}}]
+    end
+  end
+
+  def precondition(state, {:call, _, :orphan_exits, [id]}),
+    do: not state.up and id in state.orphans and id not in state.exited
+
   def precondition(state, {:call, _, :boot, []}), do: not state.up
   def precondition(state, {:call, _, :blind_boot, _}), do: not state.up
   def precondition(state, {:call, _, :dirless_boot, []}), do: not state.up and not state.dir_made
@@ -112,6 +131,9 @@ defmodule HalC2.SubprocessOrphansPropTest do
 
   def precondition(state, {:call, _, :stop, [id]}), do: state.up and is_map_key(state.running, id)
   def precondition(state, {:call, _, _, _}), do: state.up
+
+  def next_state(state, _, {:call, _, :orphan_exits, [id]}),
+    do: %{state | exited: [id | state.exited]}
 
   def next_state(state, _, {:call, _, :boot, []}),
     do: reaped(%{state | up: true, unavailable: false, dir_made: true})
@@ -177,7 +199,9 @@ defmodule HalC2.SubprocessOrphansPropTest do
     }
 
   # A reap kills what dead MCs left running and drops every record naming one.
-  defp reaped(state), do: %{state | left: [], orphans: []}
+  defp reaped(state), do: %{state | left: [], orphans: [], exited: []}
+
+  def postcondition(_state, {:call, _, :orphan_exits, _}, result), do: result == :ok
 
   def postcondition(state, {:call, _, :boot, []}, {killed, records, foreign_left}),
     do: Enum.sort(killed) == Enum.sort(state.orphans) and records == [] and foreign_left
@@ -209,6 +233,25 @@ defmodule HalC2.SubprocessOrphansPropTest do
 
   # --- commands ----------------------------------------------------------------------
 
+  # An orphan stops on its own, as a provider does on its closed stdin, leaving its
+  # background command, which stays in its group with nothing left to answer for it.
+  def orphan_exits(id) do
+    sub = Process.get({:sub, id})
+    reader = sub.reader
+    :ok = Subprocess.write_line(sub, "leave")
+
+    command =
+      receive do
+        {:subprocess_lines, ^reader, [line]} ->
+          Subprocess.ack(sub)
+          String.to_integer(line)
+      end
+
+    await_gone(Process.get({:pid, id}), 500)
+    Process.put({:command, id}, command)
+    :ok
+  end
+
   # A new MC: a stand-in OS process for it, then the service, which reaps as it starts.
   # Returns the orphans whose program and background command ended, the records,
   # and whether a file in the records dir that is not a record was left alone.
@@ -237,7 +280,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
     start_service()
     File.chmod!(dir, 0o700)
     for name <- names, do: File.chmod!(Path.join(dir, name), 0o600)
-    alive = for id <- Process.get(:orphans, []), alive?(Process.get({:sub, id})), do: id
+    alive = for id <- Process.get(:orphans, []), orphan_alive?(id), do: id
     {Enum.sort(alive), records()}
   end
 
@@ -333,7 +376,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
 
   # The orphans the reap that just ran ended, each with its background command.
   defp killed do
-    killed = for id <- Process.get(:orphans, []), ended?(Process.delete({:sub, id})), do: id
+    killed = for id <- Process.get(:orphans, []), orphan_ended?(id), do: id
     Process.put(:orphans, [])
     killed
   end
@@ -346,6 +389,33 @@ defmodule HalC2.SubprocessOrphansPropTest do
     ref = Process.monitor(pid)
     Process.exit(pid, :kill)
     receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+  end
+
+  defp orphan_alive?(id) do
+    case Process.get({:command, id}) do
+      nil -> alive?(Process.get({:sub, id}))
+      command -> not Orphans.gone?(command)
+    end
+  end
+
+  # An orphan that exited has only its command left to have ended: the reap is over,
+  # so that is read once.
+  defp orphan_ended?(id) do
+    sub = Process.delete({:sub, id})
+
+    case Process.delete({:command, id}) do
+      nil -> ended?(sub)
+      command -> Orphans.gone?(command)
+    end
+  end
+
+  defp await_gone(pid, tries) when tries > 0 do
+    if Orphans.gone?(pid) do
+      :ok
+    else
+      Process.sleep(10)
+      await_gone(pid, tries - 1)
+    end
   end
 
   defp subs, do: for({{:sub, id}, sub} <- Process.get(), do: {id, sub})
@@ -403,6 +473,10 @@ defmodule HalC2.SubprocessOrphansPropTest do
   defp cleanup do
     if Process.whereis(Orphans), do: kill_service()
 
+    # A command an orphan left has nothing else to stop it.
+    for {{:command, _id}, command} <- Process.get(),
+        do: System.cmd("kill", ["-KILL", "#{command}"], stderr_to_stdout: true)
+
     for {_id, sub} <- subs() do
       try do
         Subprocess.stop(sub, 500)
@@ -416,7 +490,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
     :persistent_term.erase(Orphans)
 
     for {key, _} <- Process.get(),
-        match?({:sub, _}, key) or match?({:pid, _}, key) or key in [:mc, :owner, :orphans],
+        match?({:sub, _}, key) or match?({:pid, _}, key) or match?({:command, _}, key) or
+          key in [:mc, :owner, :orphans],
         do: Process.delete(key)
   end
 end

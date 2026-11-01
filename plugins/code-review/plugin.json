@@ -34,7 +34,7 @@
     },
     {
       "id": "threads:organize",
-      "reason": "To settle a review thread when its review is done, and to keep review threads out of the thread list when you show reviews on the Reviews page only."
+      "reason": "To settle a review thread when its review is done, to stop one a newer run of its review replaces, and to keep review threads out of the thread list when you show reviews on the Reviews page only."
     },
     {
       "id": "agentTools",

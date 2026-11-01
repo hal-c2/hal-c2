@@ -180,7 +180,7 @@ defmodule HalC2.Mcp.Devices do
         "  #{executable} snapshot -i #{target}                     # accessibility tree with @eN refs",
         "  #{executable} click @e3 #{target}",
         "  #{executable} fill @e5 \"text\" #{target}",
-        "  #{executable} screenshot /tmp/shot.png #{target}        # or call device_screenshot",
+        "  #{executable} screenshot \"$TMPDIR/shot.png\" #{target}        # or call device_screenshot",
         "  #{executable} install <app> <path-to-.app-or-.apk> #{target}",
         "Prefer snapshot refs over coordinates. Run #{executable} help for workflow guides and #{executable} <command> --help for flags.",
         "Do not call simctl, adb, xcrun, or serve-sim directly while these tools are attached; use agent-device.",

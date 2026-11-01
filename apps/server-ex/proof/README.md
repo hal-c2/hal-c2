@@ -46,6 +46,12 @@ names the scenarios in `features/` it proves, and fails when one is renamed away
 When the code changes, change the model with it: a mapping updated without the
 model is a proof of something else.
 
+CI leans on this. A model check's answer depends on the model and not on the MC's code, so
+on each change CI runs only the coverage test of every proof, and the checks of the
+proofs whose model changed (`.github/scripts/ci-changes.sh`); all of them run nightly. A
+proof whose model should have changed is caught only by the coverage test, so a fact
+mapped to a rule has to mean it.
+
 ## Reading a counterexample
 
 A failed `refute_reachable` prints the rule labels from the initial state to the bad
