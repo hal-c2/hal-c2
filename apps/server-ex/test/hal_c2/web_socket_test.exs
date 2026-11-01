@@ -574,7 +574,9 @@ defmodule HalC2.Web.SocketTest do
     assert {output, client} = terminal_output(client)
     assert Enum.sort(output) == [{1, "for-both\r\n"}, {2, "for-both\r\n"}]
 
+    # Nothing answers an unsub. The socket reads frames in order, so its pong says it has.
     client = WsClient.send_json(client, %{"t" => "unsub", "id" => 1})
+    assert {[], client} = terminal_output(client)
     print_terminal(input, "for-second\r\n")
     assert {output, _client} = terminal_output(client)
     assert output == [{2, "for-second\r\n"}]
