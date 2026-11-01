@@ -58,7 +58,7 @@ defmodule HalC2.Subprocess.Orphans do
 
   Off Windows, tracking that cannot be set up fails closed rather than quietly
   off. If the records dir cannot be made, or this MC's own start time cannot be
-  read, the MC still boots, but `track/2` returns an error for the whole boot, so
+  read, the MC still boots, but `track/3` returns an error for the whole boot, so
   `HalC2.Subprocess.start` refuses to run a program no later boot could find —
   the same answer a failed record write gets, given before the program is
   started at all when the failure is already known. That refusal covers every
@@ -93,12 +93,12 @@ defmodule HalC2.Subprocess.Orphans do
 
   @doc """
   Whether a program started now would be tracked, known before it exists: `:ok`,
-  `{:error, reason}` with the reason `track/2` would refuse it (tracking could
+  `{:error, reason}` with the reason `track/3` would refuse it (tracking could
   not be set up this boot, or, in a running MC, this service has not started
   yet), or `:off` where nothing is tracked by design (no MC services in this
   VM, or Windows). `HalC2.Subprocess.start` refuses on the error before
   spawning, so a known-unavailable boot starts no CLI just to kill it;
-  `track/2` stays the authoritative check for what races past this one.
+  `track/3` stays the authoritative check for what races past this one.
   """
   @spec available?() :: :ok | :off | {:error, term}
   def available? do
@@ -124,7 +124,7 @@ defmodule HalC2.Subprocess.Orphans do
 
   @doc """
   Records the program `os_pid`, started with the environment entry of `mark`, run by the Exile process `proc`, until `proc` ends.
-  `track/2` writes the record in the calling process, not in this service, so a
+  `track/3` writes the record in the calling process, not in this service, so a
   program started while the service restarts is still on disk for the next boot; only
   removing the record when the program ends needs the service. `{:error, reason}` when
   the record could not be written, when tracking could not be set up this boot

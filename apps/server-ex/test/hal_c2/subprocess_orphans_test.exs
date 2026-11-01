@@ -57,7 +57,7 @@ defmodule HalC2.Subprocess.OrphansTest do
   defp left_behind(sub) do
     leader = Subprocess.os_pid(sub)
     :ok = Subprocess.write_line(sub, "leave")
-    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader
+    assert_receive {:subprocess_lines, reader, [line]} when reader == sub.reader, 5_000
     Subprocess.ack(sub)
     await_gone(leader, 500)
     String.to_integer(line)

@@ -90,7 +90,7 @@ defmodule HalC2.Subprocess do
   # record. The wait is bounded: one in uninterruptible sleep takes SIGKILL only once it
   # wakes, and the caller is a session's start. A program already gone (its Exile
   # process ended, or the port has no pid) has nothing to record, as in
-  # `Orphans.track/2`.
+  # `Orphans.track/3`.
   defp track(proc, mark) do
     case os_pid_of(proc) do
       {:ok, os_pid} ->
