@@ -222,6 +222,17 @@ void ComposerController::activate() {
     carryDrafts();
     reconcileUnsent();
     settleRuntimeModes();
+    refreshPathSearch();
+    publish();
+  });
+  // A dropped connection fails its calls while the store still says online.
+  connect(m_client, &McClient::readyChanged, this, [this] {
+    refreshPathSearch();
+    publish();
+  });
+  // The route's checkout arrived or moved, so an @ word can now be searched.
+  connect(shell->controller<WorkspaceController>(), &WorkspaceController::placeChanged, this, [this] {
+    refreshPathSearch();
     publish();
   });
   // The route environment's providers are the picker's catalogue.
@@ -2276,6 +2287,7 @@ void ComposerController::follow() {
     }
   }
   reconcileUnsent();
+  refreshPathSearch();
   publish();
 }
 
@@ -2769,20 +2781,39 @@ void ComposerController::searchPaths(const QString& target) {
   const std::optional<composer::Trigger> trigger = composer::trigger(draft(target), m_drafts.value(target).cursor);
   if (!trigger || trigger->kind != QLatin1String("path") || trigger->query.isEmpty()) return;
   if (m_paths.target == target && m_paths.query == trigger->query) return;
+  if (!canSearchPaths(target)) return;
   const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
-  if (!place || place->cwd().isEmpty() || !m_store->environmentOnline(place->environmentId)) return;
-  m_paths = {target, trigger->query, false, {}, m_paths.request + 1};
+  m_paths = {target, trigger->query, false, false, {}, m_paths.request + 1};
   const int request = m_paths.request;
   WorkspaceFiles::searchEntries(m_client, this, place->environmentId, place->cwd(), trigger->query, 80,
                                 [this, request](const QList<FileTreeModel::Entry>& entries, bool,
-                                                const std::optional<QString>&) {
+                                                const std::optional<QString>& error) {
                                   if (request != m_paths.request) return;
                                   m_paths.done = true;
+                                  m_paths.failed = error.has_value();
                                   for (const FileTreeModel::Entry& entry : entries) {
                                     m_paths.entries.append({entry.path, entry.directory});
                                   }
                                   publish();
                                 });
+}
+
+// Whether the route's own checkout is known and its environment reachable.
+bool ComposerController::canSearchPaths(const QString& target) const {
+  const auto& place = NativeShell::of(this)->controller<WorkspaceController>()->place();
+  if (!m_client->isReady() || !place || place->cwd().isEmpty() || !m_store->environmentOnline(place->environmentId)) return false;
+  return (place->draftId.isEmpty() ? place->threadKey() : place->draftId) == target;
+}
+
+// A search the environment took down with it (unanswered, or failed) is
+// forgotten, so the same word is asked again once it can be.
+void ComposerController::refreshPathSearch() {
+  const QString target = this->target();
+  if (target.isEmpty()) return;
+  if ((!m_paths.done || m_paths.failed) && !m_paths.query.isEmpty() && !canSearchPaths(m_paths.target)) {
+    m_paths = {{}, {}, false, false, {}, m_paths.request + 1};
+  }
+  searchPaths(target);
 }
 
 void ComposerController::refreshCatalogue() {
@@ -2864,11 +2895,16 @@ QVariant ComposerController::composerState(const QVariantMap& turn) const {
   }
   QVariant emptyText = QVariant::fromValue(nullptr);
   if (trigger && suggestionList.isEmpty()) {
-    // A path search says nothing until it has answered. A bare `@` is not
-    // searched, so it says so at once, as the web's menu did.
-    const bool waiting = trigger->kind == QLatin1String("path") && !trigger->query.isEmpty() &&
-                         (m_paths.target != target || m_paths.query != trigger->query || !m_paths.done);
-    if (!waiting && !composer::emptyText(trigger->kind).isEmpty()) emptyText = composer::emptyText(trigger->kind);
+    // A path search says nothing until it has answered, and that it could not
+    // search when it cannot or failed. A bare `@` is not searched, so it says
+    // nothing matches at once, as the web's menu did.
+    const bool searched = trigger->kind == QLatin1String("path") && !trigger->query.isEmpty();
+    const bool answered = m_paths.target == target && m_paths.query == trigger->query && m_paths.done;
+    if (searched && (answered ? m_paths.failed : !canSearchPaths(target))) {
+      emptyText = composer::pathSearchUnavailableText();
+    } else if ((!searched || answered) && !composer::emptyText(trigger->kind).isEmpty()) {
+      emptyText = composer::emptyText(trigger->kind);
+    }
   }
 
   const QVariantList attachments = shownAttachments(kept.attachments, true);

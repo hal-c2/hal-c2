@@ -212,6 +212,51 @@ private slots:
     QTRY_COMPARE(shown().value(QStringLiteral("suggestionsEmptyText")).toString(), QStringLiteral("No matching files or folders."));
   }
 
+  // The @ menu said nothing at all for a word it could not search, and never
+  // asked again when the environment returned.
+  void theAtMenuSaysItCannotSearchAndAsksAgainOnReturn() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto emptyText = [&shell] {
+      return shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("suggestionsEmptyText"));
+    };
+    FakeFiles& files = fakeFiles(shell.mc);
+    const QString environment = shell.mc.environmentId;
+
+    shell.mc.setOnline(environment, false);
+    QTRY_VERIFY(!shell.native->store()->environmentOnline(environment));
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(emptyText().toString(), QStringLiteral("Can't search files right now."));
+    QCOMPARE(files.searches, 0);
+
+    shell.mc.setOnline(environment, true);
+    QTRY_COMPARE(files.searches, 1);
+    QTRY_COMPARE(emptyText().toString(), QStringLiteral("No matching files or folders."));
+  }
+
+  // A dropped connection failed the search, which then claimed nothing matched
+  // and was not asked again after the reconnect.
+  void aSearchLostWithTheConnectionIsAskedAgain() {
+    QTemporaryDir home;
+    Shell shell(home.path());
+    QTRY_VERIFY(shell.native->isActive() && shell.native->store()->threadOnline(shell.key));
+    QVERIFY(shell.open());
+    const auto emptyText = [&shell] {
+      return shell.bridge->state()->value(QStringLiteral("composer")).toMap().value(QStringLiteral("suggestionsEmptyText"));
+    };
+    FakeFiles& files = fakeFiles(shell.mc);
+    shell.mc.hold(QStringLiteral("search"));
+    shell.type(QStringLiteral("@src"));
+    QTRY_COMPARE(files.searches, 1);
+    shell.mc.dropHeld();
+
+    shell.mc.drop();
+    QTRY_COMPARE(files.searches, 2);
+    QTRY_COMPARE(emptyText().toString(), QStringLiteral("No matching files or folders."));
+  }
+
   // A queued run that arrived before its message was listed as a blank row;
   // it now waits off the list until the message is here.
   void aQueuedRunWithoutItsMessageIsNotListed() {

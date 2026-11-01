@@ -407,6 +407,8 @@ private:
   QList<composer::Suggestion> suggestions(const QString& target, const std::optional<composer::Trigger>& trigger) const;
   // Searches the workspace for an @ query the menu has no answer for yet.
   void searchPaths(const QString& target);
+  bool canSearchPaths(const QString& target) const;
+  void refreshPathSearch();
 
   // The catalogue of the route's environment.
   void refreshCatalogue();
@@ -511,6 +513,7 @@ private:
     QString target;
     QString query;
     bool done = false;
+    bool failed = false;
     QList<std::pair<QString, bool>> entries;
     int request = 0;
   };
