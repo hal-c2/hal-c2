@@ -57,6 +57,9 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
       the only place it may start an editor or a file manager. Absent when the
       host has none, or on servers that predate it. */
   machineId: Schema.optionalKey(Schema.String),
+  /** The Linux host runs under WSL, so Windows' file manager shows its files.
+      Absent otherwise, or on servers that predate it. */
+  wsl: Schema.optionalKey(Schema.Boolean),
 });
 
 /**

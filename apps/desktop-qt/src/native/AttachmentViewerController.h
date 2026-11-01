@@ -46,6 +46,9 @@ private:
   // Signs an address anew and reads it, so a viewer open for an hour still
   // reaches the MC. `problem` is what to tell the user when it could not.
   void fetch(Fetched done);
+  // The same read, for one thing that outlives the viewer's own: no later
+  // request drops it, and `request`, when not 0, must still be the latest.
+  void read(int request, Fetched done);
   void sign(Signed done);
   // A local copy of a document, the one thing Qt PDF opens, held while it shows.
   QUrl keepDocument(const QByteArray& bytes);

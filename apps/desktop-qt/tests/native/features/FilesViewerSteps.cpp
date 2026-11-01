@@ -1000,6 +1000,13 @@ const Steps backlogSteps([] {
     QTest::mouseClick(&world.brick->window(), Qt::LeftButton, Qt::NoModifier, taskBox(world, c[0]));
     world.waitFor([&] { return files(world).text() == viewer(world).rewritten; }, [&] { return describeViewer(world); });
   });
+  step(QStringLiteral("the user ticks %1 and %1 before either read is answered").arg(q), [](World& world, const Captures& c, const Table&) {
+    for (const QString& task : {c[0], c[1]}) files(world).toggleTask(taskLink(world, task).section(QLatin1Char(':'), 1).toInt());
+  });
+  step(QStringLiteral("%1 records both tasks as done").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString wanted = QStringLiteral("# To do\n\n- [x] Draft the plan\n- [x] Ship cart\n- [x] Tell everyone\n");
+    world.waitFor([&] { return fakeFiles(world.mc).files.value(c[0]) == wanted; }, [&] { return QStringLiteral("%1 holds \"%2\"").arg(c[0], fakeFiles(world.mc).files.value(c[0])); });
+  });
   step(QStringLiteral("%1 is not changed").arg(q), [](World& world, const Captures& c, const Table&) {
     world.sync();
     expect(writes(world).isEmpty() && fakeFiles(world.mc).files.value(c[0]) == viewer(world).rewritten, QStringLiteral("%1 was written").arg(c[0]));

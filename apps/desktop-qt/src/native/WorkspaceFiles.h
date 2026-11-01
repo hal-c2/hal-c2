@@ -297,7 +297,7 @@ private:
   // The agent changed the workspace: the open file shows what is there now.
   // Reads the open file while it stays on screen; `task`, when not -1, is
   // ticked if the file is still what the user is looking at.
-  void refreshFile(int task = -1);
+  void refreshFile();
   void rereadIfDue();
   void applyTask(int index);
   void clearTrail();
@@ -322,6 +322,8 @@ private:
   bool m_searchTruncated = false;
   QString m_searchProblem;
   QString m_openPath;
+  // Task boxes ticked and waiting on the read that checks the file has not moved.
+  QList<int> m_waitingTicks;
   int m_openLine = 0;
   // Opened at a line, so shown as source until the user asks otherwise; not a preference.
   bool m_lineSource = false;

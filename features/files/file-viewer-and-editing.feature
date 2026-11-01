@@ -670,6 +670,13 @@ Feature: Viewing and editing files
       When the user ticks "Ship cart"
       Then "TODO.md" is not changed
 
+    @desktop
+    Scenario: Two tasks ticked before the file has been read again are both recorded
+      Given "TODO.md" has the unticked task "Ship cart"
+      And the user is looking at the rendered view
+      When the user ticks "Ship cart" and "Tell everyone" before either read is answered
+      Then "TODO.md" records both tasks as done
+
   Rule: Paths stay inside the project
 
     @mc
@@ -923,6 +930,25 @@ Feature: Viewing and editing files
         | state                                         | message                                  |
         | the environment is unreachable                | Reconnect to the environment and try again. |
         | the environment no longer has the attachment  | The attachment is unavailable.           |
+
+    @desktop
+    Scenario: A save goes on after the viewer closes
+      Given the user is viewing an attachment of a sent message
+      When the user saves it and closes the viewer before it has downloaded
+      Then the file is downloaded under its own name
+
+    @desktop
+    Scenario: A web page in a draft shows its source
+      Given the user has attached "page.html" to a draft
+      When the user switches to its source
+      Then the source of the draft's page is shown
+
+    @desktop
+    Scenario: A draft's attachment that failed to load can be tried again
+      Given the user has attached "build.log" to a draft
+      And the attachment fails to load
+      When the user tries it again
+      Then it is shown as text
 
     @desktop
     Scenario: A failed save of an attachment is reported

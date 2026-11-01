@@ -1,10 +1,11 @@
 // AttachmentViewerController opening a sent attachment against a fake MC that
 // holds every signature and every download and answers them in any order, while
-// the user opens other attachments, retries and closes.
+// the user opens other attachments, retries, saves and closes.
 //
 // What the user is promised: the viewer only ever shows what they last opened,
 // loading until the latest fetch is answered; an answer to an older request,
-// however late, changes nothing; and a closed viewer stays closed.
+// however late, changes nothing; a closed viewer stays closed; and a save lands
+// in its folder whatever the viewer does meanwhile, and disturbs nothing.
 
 #include "AttachmentViewerController.h"
 #include "FakeMc.h"
@@ -33,6 +34,7 @@ QString contentsOf(const QString& id) { return QStringLiteral("the contents of "
 struct Held {
   int request = 0;
   QString id;
+  bool save = false;
 };
 
 struct Model {
@@ -42,6 +44,7 @@ struct Model {
   int request = 0;
   QList<Held> signatures;
   QList<Held> downloads;
+  int saved = 0;
 };
 
 struct Sut {
@@ -52,6 +55,8 @@ struct Sut {
   QList<FakeMc::Rpc> signatures;
   QList<QPointer<QTcpSocket>> downloads;
   int asked = 0;
+  // Addresses in the order they were signed: HTTP may bring them in any other.
+  int signedCount = 0;
 
   Sut() {
     mc.projects.insert(QStringLiteral("p1"), QJsonObject{{QStringLiteral("id"), QStringLiteral("p1")},
@@ -74,7 +79,10 @@ struct Sut {
       socket->read(head.size());
       const QString path = QString::fromUtf8(head.left(head.indexOf('\r')).split(' ').value(1));
       socket->setProperty("attachment", contentsOf(path.section(QLatin1Char('/'), 4, 4).section(QLatin1Char('?'), 0, 0)));
-      downloads.append(socket);
+      socket->setProperty("signed", path.section(QStringLiteral("n="), 1).toInt());
+      qsizetype at = downloads.size();
+      while (at > 0 && downloads.at(at - 1)->property("signed").toInt() > socket->property("signed").toInt()) --at;
+      downloads.insert(at, socket);
     });
     bridge = std::make_unique<ShellBridge>();
     native = std::make_unique<NativeShell>(bridge.get());
@@ -82,6 +90,7 @@ struct Sut {
     native->restoreWindows();
     native->open(mc.origin(), QStringLiteral("mc-token"));
     RC_ASSERT(prop::until([this] { return native->isActive() && native->client()->isReady() && native->store()->threadOnline(kThread); }));
+    native->controller<AttachmentViewerController>()->setSaveFolder(home.filePath(QStringLiteral("saved")));
     bridge->dispatch(QStringLiteral("thread.open"), QVariantMap{{QStringLiteral("key"), kThread}});
     RC_ASSERT(prop::until([this] { return native->controller<ThreadStore>()->activeThread() == kThread; }));
   }
@@ -90,6 +99,7 @@ struct Sut {
     bridge.reset();
   }
 
+  int saved() const { return int(QDir(home.filePath(QStringLiteral("saved"))).entryList(QDir::Files).size()); }
   QVariantMap shown() const { return bridge->state()->value(QStringLiteral("attachmentViewer")).toMap(); }
 };
 
@@ -97,6 +107,7 @@ struct Sut {
 void check(const Model& expected, Sut& sut) {
   RC_ASSERT(prop::until([&] { return sut.signatures.size() == expected.signatures.size() && sut.downloads.size() == expected.downloads.size(); }));
   RC_ASSERT(prop::until([&] { return sut.shown().value(QStringLiteral("kind")).toString() == expected.kind; }));
+  RC_ASSERT(prop::until([&] { return sut.saved() == expected.saved; }));
   const QVariantMap shown = sut.shown();
   if (expected.open.isEmpty()) {
     RC_ASSERT(shown.isEmpty());
@@ -144,6 +155,14 @@ struct Retry : Step<Retry> {
   void show(std::ostream& os) const override { os << "retry"; }
 };
 
+struct Save : Step<Save> {
+  explicit Save(const Model& model) { RC_PRE(!model.open.isEmpty()); }
+  void checkPreconditions(const Model& model) const override { RC_PRE(!model.open.isEmpty()); }
+  void apply(Model& model) const override { model.signatures.append({0, model.open, true}); }
+  void act(Sut& sut) const { sut.bridge->dispatch(QStringLiteral("attachment.viewer.save")); }
+  void show(std::ostream& os) const override { os << "save"; }
+};
+
 struct Close : Step<Close> {
   explicit Close(const Model&) {}
   void apply(Model& model) const override {
@@ -164,15 +183,15 @@ struct AnswerSignature : Step<AnswerSignature> {
   void checkPreconditions(const Model& model) const override { RC_PRE(index < model.signatures.size()); }
   void apply(Model& model) const override {
     const Held held = model.signatures.takeAt(index);
-    if (held.request != model.request) return;
-    if (refuse) model.kind = QStringLiteral("failed");
-    else model.downloads.append(held);
+    if (!held.save && held.request != model.request) return;
+    if (!refuse) model.downloads.append(held);
+    else if (!held.save) model.kind = QStringLiteral("failed");
   }
   void act(Sut& sut) const {
     const FakeMc::Rpc rpc = sut.signatures.takeAt(index);
     if (refuse) return sut.mc.refuse(rpc, QStringLiteral("No such attachment."));
     const QString id = rpc.payload.value(QLatin1String("resource")).toObject().value(QLatin1String("attachmentId")).toString();
-    sut.mc.reply(rpc, QJsonObject{{QStringLiteral("relativeUrl"), QStringLiteral("/api/assets/attachment/") + id},
+    sut.mc.reply(rpc, QJsonObject{{QStringLiteral("relativeUrl"), QStringLiteral("/api/assets/attachment/%1?n=%2").arg(id).arg(sut.signedCount++)},
                                   {QStringLiteral("expiresAt"), 4102444800000.0}});
   }
   void show(std::ostream& os) const override { os << "answer signature " << index << (refuse ? " refused" : ""); }
@@ -186,7 +205,8 @@ struct AnswerDownload : Step<AnswerDownload> {
   void checkPreconditions(const Model& model) const override { RC_PRE(index < model.downloads.size()); }
   void apply(Model& model) const override {
     const Held held = model.downloads.takeAt(index);
-    if (held.request == model.request) model.kind = gone ? QStringLiteral("failed") : QStringLiteral("text");
+    if (held.save) model.saved += gone ? 0 : 1;
+    else if (held.request == model.request) model.kind = gone ? QStringLiteral("failed") : QStringLiteral("text");
   }
   void act(Sut& sut) const {
     const QPointer<QTcpSocket> socket = sut.downloads.takeAt(index);
@@ -212,7 +232,7 @@ private slots:
     QVERIFY(rc::check("the viewer shows only what was last opened", [] {
       Sut sut;
       Model model;
-      const auto commands = *rc::gen::scale(0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<View, View, Retry, Close, AnswerSignature, AnswerSignature, AnswerDownload, AnswerDownload>()));
+      const auto commands = *rc::gen::scale(0.5, rc::state::gen::commands(model, rc::state::gen::execOneOfWithArgs<View, View, Retry, Save, Close, AnswerSignature, AnswerSignature, AnswerDownload, AnswerDownload>()));
       rc::state::runAll(commands, model, sut);
     }));
   }

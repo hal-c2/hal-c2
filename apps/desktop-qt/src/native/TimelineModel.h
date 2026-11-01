@@ -342,6 +342,9 @@ private:
   QSet<QString> m_expandedGroups;
   QSet<QString> m_keptOpen;  // run ids
   QHash<QString, AttachmentUrl> m_attachmentUrls;  // by attachment id
+  // A Snap Shot's tree as JSON, by attachment id: a list reads its role on every bind.
+  mutable QHash<QString, QString> m_accessJson;
+  QString accessJson(const QString& id, const QJsonObject& tree) const;
   QDateTime m_workingSince;
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;

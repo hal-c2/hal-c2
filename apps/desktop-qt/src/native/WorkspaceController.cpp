@@ -541,7 +541,7 @@ QString WorkspaceController::placeLabel() const {
 }
 
 QString WorkspaceController::sshNote() const {
-  return farFromHere() && !sshHost().isEmpty() ? QStringLiteral("Opens over SSH. Needs your key on %1").arg(placeLabel())
+  return farFromHere() && !sshHost().isEmpty() ? QStringLiteral("Opens over SSH at %1. Needs your key on %2").arg(sshHost(), placeLabel())
                                                : QString();
 }
 

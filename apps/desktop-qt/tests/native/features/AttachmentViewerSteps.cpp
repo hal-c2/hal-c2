@@ -500,6 +500,7 @@ const Steps steps([] {
         {QStringLiteral("receipt.png"), {QStringLiteral("image/png"), picture()}},
         {QStringLiteral("notes.md"), {QStringLiteral("text/markdown"), "# Notes\n"}},
         {QStringLiteral("build.log"), {QStringLiteral("text/plain"), "built\n"}},
+        {QStringLiteral("page.html"), {QStringLiteral("text/html"), kPage}},
         {QStringLiteral("invoice.pdf"), {QStringLiteral("application/pdf"), mediaFixture(QStringLiteral("invoice.pdf"))}},
     };
     const auto kind = kinds.value(c[0]);
@@ -594,6 +595,18 @@ const Steps steps([] {
     openSent(world, QStringLiteral("build.log"), QStringLiteral("text/plain"), "built\n");
     expect(viewed(world).value(QStringLiteral("kind")) == QLatin1String("text"), QStringLiteral("the viewer is %1").arg(show(viewed(world))));
   });
+  step(QStringLiteral("the user saves it and closes the viewer before it has downloaded"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("attachment.viewer.save"));
+    world.bridge().dispatch(QStringLiteral("attachment.viewer.close"));
+  });
+  step(QStringLiteral("the source of the draft's page is shown"), [](World& world, const Captures&, const Table&) {
+    world.waitFor([&] { auto* text = world.brick->root()->findChild<QQuickItem*>(QStringLiteral("attachmentViewerText")); return text && text->property("text").toByteArray() == kPage; }, QStringLiteral("the source"));
+  });
+  step(QStringLiteral("the attachment fails to load"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("attachment.viewer.mediaFailed"));
+    world.waitFor([&] { return viewed(world).value(QStringLiteral("kind")) == QLatin1String("failed"); }, [&] { return show(viewed(world)); });
+  });
+  step(QStringLiteral("the user tries it again"), [](World& world, const Captures&, const Table&) { world.brick->click(QStringLiteral("attachmentViewerRetry")); });
   step(QStringLiteral("the user saves it"), [](World& world, const Captures&, const Table&) { world.brick->click(QStringLiteral("attachmentViewerSave")); });
   step(QStringLiteral("the file is downloaded under its own name"), [](World& world, const Captures&, const Table&) {
     expectToast(world, QStringLiteral("success"), QStringLiteral("Saved build.log"));

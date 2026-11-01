@@ -143,13 +143,15 @@ void AttachmentViewerController::sign(Signed done) {
                  });
 }
 
-void AttachmentViewerController::fetch(Fetched done) {
-  const int request = ++m_request;
+void AttachmentViewerController::fetch(Fetched done) { read(++m_request, std::move(done)); }
+
+void AttachmentViewerController::read(int request, Fetched done) {
+  const auto dropped = [this, request] { return request != 0 && request != m_request; };
   sign([=, this](const QString& relative, const QString& problem, const QString& reason) {
-    if (request != m_request) return;
+    if (dropped()) return;
     if (!problem.isEmpty()) return done({}, problem, reason);
     m_client->download(this, relative, [=, this](const QByteArray& bytes, const std::optional<QString>& error) {
-      if (request != m_request) return;
+      if (dropped()) return;
       if (!error) return done(bytes, {}, {});
       // Without an HTTP answer the MC said nothing about the file.
       done({}, error->startsWith(QLatin1String("HTTP ")) ? tr("The attachment is unavailable.") : tr("Reconnect to the environment and try again."), *error);
@@ -216,7 +218,8 @@ void AttachmentViewerController::save() {
   const auto toast = [this](const QString& type, const QString& title, const QString& description) {
     if (auto* toasts = NativeShell::of(this)->controller<ToastController>()) toasts->show(type, title, description);
   };
-  fetch([=, this](const QByteArray& bytes, const QString& problem, const QString& reason) {
+  // A save does not depend on the viewer: it finishes after a close, and leaves a read under way alone.
+  read(0, [=, this](const QByteArray& bytes, const QString& problem, const QString& reason) {
     const QString couldNot = tr("Could not save %1").arg(name);
     if (!problem.isEmpty()) return toast(QStringLiteral("error"), couldNot, reason.isEmpty() ? problem : problem + QStringLiteral(" (") + reason + u')');
     const QDir folder(m_saveFolder.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) : m_saveFolder);
@@ -268,8 +271,15 @@ bool AttachmentViewerController::handle(const QString& action, const QVariant& p
     openSent();
   } else if (action == QLatin1String("attachment.viewer.retry")) {
     if (!m_sent.isEmpty()) openSent();
+    else if (!m_viewing.isEmpty()) return handle(QStringLiteral("attachment.view"), QVariantMap{{QStringLiteral("id"), m_viewing}});
   } else if (action == QLatin1String("attachment.viewer.source")) {
-    if (m_sent.isEmpty()) return true;
+    // A draft's page is here already.
+    if (m_sent.isEmpty()) {
+      QVariantMap shown = m_shown;
+      shown.insert(QStringLiteral("source"), m_shown.value(QStringLiteral("text")));
+      show(shown);
+      return true;
+    }
     QVariantMap asking = m_shown;
     asking.remove(QStringLiteral("sourceProblem"));
     show(asking);

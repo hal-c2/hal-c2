@@ -223,13 +223,13 @@ void WorkspaceFiles::followOpenFile() {
   refreshFile();
 }
 
-void WorkspaceFiles::refreshFile(int task) {
+void WorkspaceFiles::refreshFile() {
   const int request = ++m_fileRequest;
   const int revision = m_revision;
   m_rereadLater = false;
   m_client->call(this, m_environment, QStringLiteral("projects.readFile"),
                  QJsonObject{{QStringLiteral("cwd"), m_root}, {QStringLiteral("relativePath"), m_openPath}},
-                 [this, request, revision, task](const QJsonValue& result, const std::optional<QString>& error) {
+                 [this, request, revision](const QJsonValue& result, const std::optional<QString>& error) {
                    if (request != m_fileRequest) return;
                    // Read before the user's edit, so older than what they see.
                    if (revision != m_revision || m_pending || m_saving || m_editing) {
@@ -237,6 +237,8 @@ void WorkspaceFiles::refreshFile(int task) {
                      rereadIfDue();
                      return;
                    }
+                   // Every tick waited on this read; older ones lost theirs to it.
+                   const QList<int> ticks = std::exchange(m_waitingTicks, {});
                    if (error) {
                      m_fileStatus = QStringLiteral("error");
                      m_fileProblem = readProblem(result, *error);
@@ -251,8 +253,8 @@ void WorkspaceFiles::refreshFile(int task) {
                      setText(contents);
                      m_truncated = file.value(QLatin1String("truncated")).toBool();
                      emit fileChanged();
-                   } else if (task >= 0) {
-                     applyTask(task);
+                   } else {
+                     for (const int task : ticks) applyTask(task);
                    }
                  });
 }
@@ -365,6 +367,7 @@ QString WorkspaceFiles::readProblem(const QJsonValue& detail, const QString& err
 void WorkspaceFiles::reloadFile() {
   if (m_openPath.isEmpty()) return;
   save(true);
+  m_waitingTicks.clear();
   const int request = ++m_fileRequest;
   m_fileStatus = QStringLiteral("loading");
   m_fileProblem.clear();
@@ -507,6 +510,7 @@ void WorkspaceFiles::closeFile() {
   save(true);
   if (std::exchange(m_editing, false)) emit renderedChanged();
   ++m_fileRequest;
+  m_waitingTicks.clear();
   const bool had = !m_openPath.isEmpty() || m_fileStatus != QLatin1String("none");
   m_openPath.clear();
   m_openLine = 0;
@@ -789,7 +793,8 @@ void WorkspaceFiles::toggleTask(int index) {
   if (m_pending || m_saving) {
     applyTask(index);
   } else {
-    refreshFile(index);
+    m_waitingTicks.append(index);
+    refreshFile();
   }
 }
 

@@ -1312,6 +1312,12 @@ void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const Q
   }
 }
 
+QString TimelineModel::accessJson(const QString& id, const QJsonObject& tree) const {
+  auto known = m_accessJson.find(id);
+  if (known == m_accessJson.end()) known = m_accessJson.insert(id, QString::fromUtf8(QJsonDocument(tree).toJson()));
+  return *known;
+}
+
 // --- Rows --------------------------------------------------------------------------
 
 int TimelineModel::rowCount(const QModelIndex& parent) const {
@@ -1574,7 +1580,7 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         const QString flat = text(tree, QLatin1String("format")) == QLatin1String("flat-text") ? text(tree, QLatin1String("text")) : text(source, QLatin1String("accessibleText"));
         if (!tree.isEmpty() && text(tree, QLatin1String("format")) != QLatin1String("flat-text")) {
           image.insert(QStringLiteral("accessFormat"), QStringLiteral("json"));
-          image.insert(QStringLiteral("accessText"), QString::fromUtf8(QJsonDocument(tree).toJson()));
+          image.insert(QStringLiteral("accessText"), accessJson(id, tree));
         } else if (!flat.isEmpty()) {
           image.insert(QStringLiteral("accessFormat"), QStringLiteral("text"));
           image.insert(QStringLiteral("accessText"), flat);
