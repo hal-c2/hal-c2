@@ -13,7 +13,8 @@ defmodule HalC2.Git do
 
   @doc """
   Runs `git args` in `cwd`. Options: `:env` (`[{name, value}]`), `:input` (stdin),
-  `:max_bytes` (default 50 MB) and `:timeout` (ms; none by default). Fails only when
+  `:max_bytes` (default 50 MB), `:timeout` (ms; none by default) and `:on_stderr` (called
+  with each chunk of stderr as it arrives). Fails only when
   git cannot be started, will not exit, or runs past its timeout, saying which.
   `Application.get_env(:hal_c2, :git_command)` stands in for `git`.
   """
@@ -85,6 +86,8 @@ defmodule HalC2.Git do
           {out, err, size + IO.iodata_length(data), status}
 
         {:stderr, data}, {out, {err, kept}, size, status} ->
+          if on_stderr = opts[:on_stderr], do: on_stderr.(data)
+
           # A rolling tail, not a head that fills and then discards: the
           # lines a caller acts on are at the end of a long stderr. It is
           # cut back to `max` only once it holds twice that, so a chatty git

@@ -494,4 +494,32 @@ defmodule HalC2.WorktreeSetupTest do
       end
     end
   end
+
+  test "a finished setup is gone once its half minute is up" do
+    alias HalC2.WorktreeSetup
+
+    Application.put_env(:hal_c2, :worktree_setup_retention, 10)
+    on_exit(fn -> Application.delete_env(:hal_c2, :worktree_setup_retention) end)
+
+    :sys.replace_state(WorktreeSetup, fn state ->
+      snapshot = %{"phase" => "running", "sequence" => 3, "stages" => []}
+      put_in(state.setups["t"], %{snapshot: snapshot, cancellable: true})
+    end)
+
+    assert %{"phase" => "running"} = WorktreeSetup.subscribe("t", self())
+    :ok = GenServer.call(WorktreeSetup, {:update, "t", &WorktreeSetup.finish(&1, "done", nil)})
+    assert_receive {:hal_c2_worktree_setup, "t", %{"phase" => "done"}}
+    assert_receive {:hal_c2_worktree_setup, "t", nil}, 1_000
+    assert WorktreeSetup.subscribe("t", self()) == nil
+  end
+
+  # An interactive zsh runs `#` as a command unless told otherwise before it reads the line.
+  test "a script may end in a comment in every shell" do
+    for shell <- ~w(/bin/sh /bin/bash /bin/zsh), File.exists?(shell) do
+      line = HalC2.WorktreeSetup.wrap_script("(exit 4)\n# done", shell, "END_")
+      {out, _} = System.cmd(shell, ["-c", String.replace(line, "\r", "\n")])
+      assert out =~ "END_start\n"
+      assert out =~ "END_4\n"
+    end
+  end
 end

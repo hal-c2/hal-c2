@@ -1656,6 +1656,42 @@ defmodule HalC2.Orchestration do
   end
 
   @doc """
+  Tells the user something went wrong with a prepared run's workspace that does not stop
+  the run: an error item on the thread.
+  """
+  def warn_prepared(thread_id, run_id, title, message) do
+    HalC2.Streams.transact(thread_id, :thread, fn state ->
+      case StreamState.get(state, "run")[run_id] do
+        nil ->
+          {[], {:error, "Run #{run_id} does not exist."}}
+
+        run ->
+          ids = %{
+            thread: thread_id,
+            run: run_id,
+            root_node: run["rootNodeId"],
+            provider_thread: run["providerThreadId"]
+          }
+
+          id = "turn-item:workspace-preparation-warning:#{run_id}"
+
+          item =
+            Entities.turn_item(ids, id, "error", next_ordinal(state), "failed", Entities.now(), %{
+              "title" => title,
+              "failure" => %{
+                "class" => "validation_error",
+                "message" => message,
+                "code" => nil,
+                "retryable" => false
+              }
+            })
+
+          {[create("turn-item", id, item)], :ok}
+      end
+    end)
+  end
+
+  @doc """
   Ends a run whose workspace could not be prepared (`failed` or `cancelled`). A
   failure (`OrchestrationV2ProviderFailure`) is shown on the preparation item and as
   an error item, as `prepared-run.fail` does.

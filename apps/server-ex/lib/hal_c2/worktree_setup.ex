@@ -12,7 +12,8 @@ defmodule HalC2.WorktreeSetup do
   that subscribers get on every change. Until the agent starts the setup can be
   cancelled, which removes the worktree and cancels the run.
 
-  Snapshots live in memory: after a restart a thread shows no setup.
+  Snapshots live in memory: after a restart a thread shows no setup. A finished one stays
+  readable for half a minute, so a late subscriber sees how it ended, then goes.
   """
 
   use GenServer
@@ -24,6 +25,16 @@ defmodule HalC2.WorktreeSetup do
   # A `submodules` stage joins after `checkout` when the worktree has submodules.
   @stages ~w(fetch checkout setup-script agent)
   @tail_lines 5
+  # What a client is shown (packages/contracts/src/worktreeSetup.ts) and what a script
+  # that never ends a line can make the worker hold.
+  @line_max 400
+  @detail_max 200
+  @error_max 1_000
+  @partial_max 4_096
+  @retention 30_000
+  # Colours, cursor movement and titles, then whatever control characters are left.
+  @terminal_control ~r/\e\[[0-9;?]*[ -\/]*[@-~]|\e\][^\a\e]*(?:\a|\e\\)|\e[()][A-Za-z0-9]|\e[=>]/
+  @stray_control ~r/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/
   @untrusted "this branch's hal-c2.json setup script differs from the main checkout's, so it was not run"
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -50,7 +61,12 @@ defmodule HalC2.WorktreeSetup do
 
   @doc "`worktreeSetup.cancel`: stops a setup that has not handed off to the agent."
   def cancel(%{"threadId" => thread_id}),
-    do: {:ok, %{"cancelled" => GenServer.call(__MODULE__, {:cancel, thread_id}, 60_000)}}
+    do:
+      {:ok,
+       %{
+         "cancelled" =>
+           GenServer.call(__MODULE__, {:cancel, thread_id}, HalC2.Vcs.worktree_timeout() + 60_000)
+       }}
 
   # --- server ----------------------------------------------------------------------
 
@@ -63,6 +79,8 @@ defmodule HalC2.WorktreeSetup do
   @impl true
   def handle_call({:start, thread_id, run_id, project, strategy, text}, _from, state) do
     at = now()
+    previous = state.setups[thread_id]
+    with %{expiry: {timer, _}} <- previous, do: Process.cancel_timer(timer)
 
     snapshot = %{
       "threadId" => thread_id,
@@ -75,7 +93,8 @@ defmodule HalC2.WorktreeSetup do
       "setupScript" => nil,
       "stages" => Enum.map(@stages, &stage/1),
       "error" => nil,
-      "sequence" => 0
+      # Clients keep the highest they saw, so a replacing setup counts on.
+      "sequence" => if(previous, do: previous.snapshot["sequence"] + 1, else: 0)
     }
 
     server = self()
@@ -117,8 +136,12 @@ defmodule HalC2.WorktreeSetup do
   end
 
   # Progress from the worker: snapshot changes, and notes on what to undo.
-  def handle_call({:update, thread_id, fun}, _from, state),
-    do: {:reply, :ok, update(state, thread_id, fun)}
+  # A cancel can end the setup while the worker's last word waits in the queue.
+  def handle_call({:update, thread_id, fun}, _from, state) do
+    if get_in(state.setups, [thread_id, :snapshot, "phase"]) == "running",
+      do: {:reply, :ok, update(state, thread_id, fun)},
+      else: {:reply, :ok, state}
+  end
 
   # The worktree's folder, claimed before `git worktree add` so a cancel during the
   # checkout still removes it.
@@ -180,6 +203,23 @@ defmodule HalC2.WorktreeSetup do
     end
   end
 
+  def handle_info({:expire, thread_id, ref}, state) do
+    case state.setups[thread_id] do
+      %{expiry: {_, ^ref}} ->
+        state = %{state | setups: Map.delete(state.setups, thread_id)}
+
+        HalC2.Watchers.notify(
+          Map.get(state.watchers, thread_id, %{}),
+          {:hal_c2_worktree_setup, thread_id, nil}
+        )
+
+        {:noreply, state}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info({:DOWN, ref, :process, pid, _}, state) do
     watchers =
       for {id, w} <- state.watchers,
@@ -223,10 +263,22 @@ defmodule HalC2.WorktreeSetup do
 
       setup ->
         snapshot = fun.(setup.snapshot) |> Map.update!("sequence", &(&1 + 1))
-        state = put_in(state.setups[thread_id].snapshot, snapshot)
+        setup = %{setup | snapshot: snapshot}
+        state = put_in(state.setups[thread_id], retain(setup, thread_id))
         broadcast(state, thread_id)
         state
     end
+  end
+
+  # A setup that ended starts its way out, once.
+  defp retain(%{snapshot: %{"phase" => "running"}} = setup, _thread_id), do: setup
+  defp retain(%{expiry: _} = setup, _thread_id), do: setup
+
+  defp retain(setup, thread_id) do
+    ref = make_ref()
+    after_ms = Application.get_env(:hal_c2, :worktree_setup_retention, @retention)
+    timer = Process.send_after(self(), {:expire, thread_id, ref}, after_ms)
+    Map.put(setup, :expiry, {timer, ref})
   end
 
   defp broadcast(state, thread_id) do
@@ -308,13 +360,16 @@ defmodule HalC2.WorktreeSetup do
     unless File.exists?(path), do: GenServer.call(server, {:claim, thread_id, path})
 
     {path, branch} =
-      case HalC2.Vcs.create_worktree(%{
-             "cwd" => root,
-             "refName" => start_ref,
-             "newRefName" => branch,
-             "path" => path,
-             "submodules" => false
-           }) do
+      case HalC2.Vcs.create_worktree(
+             %{
+               "cwd" => root,
+               "refName" => start_ref,
+               "newRefName" => branch,
+               "path" => path,
+               "submodules" => false
+             },
+             on_progress: &status.("checkout", "running", %{"percent" => &1})
+           ) do
         {:ok, %{"worktree" => %{"path" => path, "refName" => branch}}} -> {path, branch}
         {:error, error} -> fail("Could not create the worktree: #{message(error)}")
       end
@@ -329,9 +384,9 @@ defmodule HalC2.WorktreeSetup do
         "branch" => branch
       })
 
-    status.("checkout", "done", %{})
+    status.("checkout", "done", %{"percent" => 100})
     submodules(root, path, set, status)
-    if branch == temporary, do: rename_later(thread_id, path, branch, text)
+    if branch == temporary, do: rename_later(thread_id, run_id, path, branch, text)
 
     Orchestration.progress_prepared(thread_id, run_id, "setup")
 
@@ -379,7 +434,7 @@ defmodule HalC2.WorktreeSetup do
           status.("submodules", "skipped", %{})
 
         {:error, detail} ->
-          status.("submodules", "warning", %{"detail" => String.slice(message(detail), 0, 200)})
+          status.("submodules", "warning", %{"detail" => message(detail)})
       end
     end
   end
@@ -486,10 +541,57 @@ defmodule HalC2.WorktreeSetup do
     }
   end
 
-  # Runs the script in the thread's "setup" terminal; its exit code comes back as a
-  # marker line the command prints after it.
+  @doc """
+  What is typed into the terminal to run `command`: it prints `sentinel` and `start` on a
+  line of its own as it begins, so the shell's prompt and echo before that are not its
+  output, and `sentinel` with its exit status as it ends. A group of its own, so a script
+  may end in a comment, hold a here-document or `exit` without taking the rest with it.
+  """
+  def wrap_script(command, shell, sentinel) do
+    body = command |> String.trim_trailing() |> String.replace(~r/\r?\n/, "\r")
+    start = "printf '\\n#{sentinel}start\\n'"
+
+    case Path.basename(shell || "") do
+      "fish" ->
+        "begin\r#{start}\r#{body}\rend; printf '\\n#{sentinel}%s\\n' $status"
+
+      # An interactive zsh takes `#` for a command unless told, before it reads the line.
+      "zsh" ->
+        "setopt interactive_comments\r( #{start}\r#{body}\r); printf '\\n#{sentinel}%s\\n' \"$?\""
+
+      _ ->
+        "( #{start}\r#{body}\r); printf '\\n#{sentinel}%s\\n' \"$?\""
+    end
+  end
+
+  @doc """
+  Adds `data` from a terminal to `partial`, the line it was still writing: `{lines,
+  partial}`. A carriage return ends a line too, so a redrawn progress bar is one line per
+  redraw. Lines come without terminal control; of an endless line only the tail is kept.
+  """
+  def script_lines(partial, data) do
+    {lines, [rest]} = (partial <> data) |> String.split(~r/\r\n|\r|\n/) |> Enum.split(-1)
+
+    rest =
+      if byte_size(rest) > @partial_max,
+        do: String.slice(rest, -@partial_max..-1//1),
+        else: rest
+
+    {Enum.map(lines, &plain/1), rest}
+  end
+
+  defp plain(line) do
+    line
+    |> String.replace(@terminal_control, "")
+    |> String.replace(@stray_control, "")
+    |> String.trim_trailing()
+  end
+
+  # Runs the script in the thread's "setup" terminal; its exit status comes back as a
+  # line the wrapper prints after it, under a token nothing the script prints can know.
   defp start_script(thread_id, root, path, script, set) do
-    token = Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)
+    sentinel = "__hal_c2_setup_#{Base.encode16(:crypto.strong_rand_bytes(6), case: :lower)}_"
+    line = wrap_script(script["command"], System.get_env("SHELL"), sentinel)
 
     input = %{
       "threadId" => thread_id,
@@ -505,7 +607,7 @@ defmodule HalC2.WorktreeSetup do
              %{
                "threadId" => thread_id,
                "terminalId" => "setup",
-               "data" => "#{script["command"]}; printf '\\n__hal_c2_setup_#{token}_%s\\n' $?\r"
+               "data" => line <> "\r"
              }
            ]) do
       set.(
@@ -516,7 +618,7 @@ defmodule HalC2.WorktreeSetup do
         })
       )
 
-      {thread_id, token}
+      {thread_id, sentinel}
     else
       _ -> fail("Could not start the setup script.")
     end
@@ -529,10 +631,20 @@ defmodule HalC2.WorktreeSetup do
     :exit, _ -> {:error, :unavailable}
   end
 
-  defp await_script({thread_id, token}, status, set, opts) do
-    case collect({thread_id, "setup"}, Regex.compile!("__hal_c2_setup_#{token}_(\\d+)"), "", set) do
+  defp await_script({thread_id, sentinel}, status, set, opts) do
+    script = %{start: sentinel <> "start", exit: ~r/^#{sentinel}(\d+)$/}
+
+    case collect({thread_id, "setup"}, script, false, "", [], set) do
       {0, tail} ->
         status.("setup-script", "done", %{"detail" => "exited with 0", "tail" => tail})
+
+      {nil, tail} ->
+        status.("setup-script", "failed", %{
+          "detail" => "exited with no exit code",
+          "tail" => tail
+        })
+
+        if opts[:fatal], do: fail("Setup script exited with no exit code.")
 
       {code, tail} ->
         status.("setup-script", "failed", %{"detail" => "exited with #{code}", "tail" => tail})
@@ -540,52 +652,75 @@ defmodule HalC2.WorktreeSetup do
     end
   end
 
-  # Reads the terminal until the marker, keeping the last lines as the stage's tail.
-  defp collect(key, marker, buffer, set) do
+  # Reads the terminal from the wrapper's first line to its last or the terminal's end,
+  # which leaves no exit status, keeping the last lines as the stage's tail.
+  defp collect(key, script, started, partial, tail, set) do
     receive do
       {:hal_c2_terminal, ^key, %{"type" => "output", "data" => data}} ->
-        buffer = String.slice(buffer <> strip_ansi(data), -8_000..-1//1)
+        {lines, partial} = script_lines(partial, data)
+        {started, lines} = from_start(started, lines, script.start)
+        {output, rest} = Enum.split_while(lines, &(not Regex.match?(script.exit, &1)))
+        next = tail(tail, output)
 
-        case Regex.run(marker, buffer) do
-          [_, code] ->
-            {String.to_integer(code), tail(buffer)}
+        case rest do
+          [last | _] ->
+            [_, code] = Regex.run(script.exit, last)
+            {String.to_integer(code), next}
 
-          nil ->
-            set.(&set_stage(&1, "setup-script", "running", %{"tail" => tail(buffer)}))
-            collect(key, marker, buffer, set)
+          [] ->
+            if next != tail,
+              do: set.(&set_stage(&1, "setup-script", "running", %{"tail" => next}))
+
+            collect(key, script, started, partial, next, set)
         end
 
-      {:hal_c2_terminal, ^key, %{"type" => "exited"}} ->
-        {1, tail(buffer)}
+      {:hal_c2_terminal, ^key, %{"type" => type}} when type in ~w(exited closed) ->
+        {nil, tail}
 
       {:hal_c2_terminal, ^key, _event} ->
-        collect(key, marker, buffer, set)
+        collect(key, script, started, partial, tail, set)
     end
   end
 
-  # The last lines of the script's output, without the exit marker.
-  defp tail(buffer) do
-    buffer
-    |> String.split(~r/\r?\n/, trim: true)
-    |> Enum.reject(&String.contains?(&1, "__hal_c2_setup_"))
-    |> Enum.take(-@tail_lines)
-    |> Enum.map(&String.slice(&1, 0, 200))
+  defp from_start(true, lines, _start), do: {true, lines}
+
+  defp from_start(false, lines, start) do
+    case Enum.drop_while(lines, &(&1 != start)) do
+      [] -> {false, []}
+      [_start | lines] -> {true, lines}
+    end
   end
 
-  # The temporary branch gets a name from the first message, in the background.
-  defp rename_later(thread_id, path, old, text) do
+  defp tail(tail, lines) do
+    shown = lines |> Enum.reject(&(&1 == "")) |> Enum.map(&String.slice(&1, 0, @line_max))
+    Enum.take(tail ++ shown, -@tail_lines)
+  end
+
+  # The temporary branch gets a name from the first message, in the background. The
+  # worktree works on its temporary branch if that fails.
+  defp rename_later(thread_id, run_id, path, old, text) do
     Task.start(fn ->
       with {:ok, %{"branch" => generated}} <- HalC2.TextGeneration.branch_name(path, text || ""),
-           new when new != "" <- available(path, sanitize(generated)),
-           {:ok, _} <- HalC2.Git.ok(path, ["branch", "-m", old, new]) do
-        HalC2.Vcs.Watch.refresh(path)
+           name when name != "" <- sanitize(generated) do
+        case HalC2.Vcs.rename_branch(path, old, name) do
+          {:ok, new} ->
+            HalC2.Vcs.Watch.refresh(path)
 
-        Orchestration.dispatch(%{
-          "type" => "thread.metadata.update",
-          "threadId" => thread_id,
-          "branch" => new,
-          "worktreePath" => path
-        })
+            Orchestration.dispatch(%{
+              "type" => "thread.metadata.update",
+              "threadId" => thread_id,
+              "branch" => new,
+              "worktreePath" => path
+            })
+
+          {:error, reason} ->
+            Orchestration.warn_prepared(
+              thread_id,
+              run_id,
+              "The branch was not renamed",
+              message(reason)
+            )
+        end
       else
         {:error, reason} -> Logger.warning("branch name not generated: #{message(reason)}")
         _ -> :ok
@@ -603,15 +738,6 @@ defmodule HalC2.WorktreeSetup do
     |> String.replace(~r/-+/, "-")
     |> String.trim("-")
     |> String.slice(0, 64)
-  end
-
-  defp available(path, name) do
-    Enum.find([name | Enum.map(2..20, &"#{name}-#{&1}")], fn candidate ->
-      match?(
-        {:error, _},
-        HalC2.Git.ok(path, ["rev-parse", "--verify", "refs/heads/#{candidate}"])
-      ) and not HalC2.Git.branch_path_taken?(path, candidate)
-    end) || ""
   end
 
   # --- snapshots -------------------------------------------------------------------
@@ -632,7 +758,8 @@ defmodule HalC2.WorktreeSetup do
     %{snapshot | "stages" => List.insert_at(snapshot["stages"], index, stage(id))}
   end
 
-  defp set_stage(snapshot, id, status, extra) do
+  @doc false
+  def set_stage(snapshot, id, status, extra) do
     at = now()
 
     stages =
@@ -640,6 +767,7 @@ defmodule HalC2.WorktreeSetup do
         %{"id" => ^id} = stage ->
           stage
           |> Map.merge(extra)
+          |> Map.update!("detail", &clamp(&1, @detail_max))
           |> Map.put("status", status)
           |> then(
             &if(status == "running" and &1["startedAt"] == nil,
@@ -661,8 +789,33 @@ defmodule HalC2.WorktreeSetup do
     %{snapshot | "stages" => stages}
   end
 
-  defp finish(snapshot, phase, error),
-    do: Map.merge(snapshot, %{"phase" => phase, "endedAt" => now(), "error" => error})
+  @doc """
+  `snapshot` ended as `phase` (`done`, `failed` or `cancelled`) with `error`. A stage still
+  running ends with it; one that never started stays as it was.
+  """
+  def finish(snapshot, phase, error) do
+    at = now()
+    settled = if phase == "cancelled", do: "skipped", else: phase
+
+    stages =
+      Enum.map(snapshot["stages"], fn
+        %{"status" => "running"} = stage -> %{stage | "status" => settled, "endedAt" => at}
+        stage -> stage
+      end)
+
+    Map.merge(snapshot, %{
+      "phase" => phase,
+      "endedAt" => at,
+      "error" => clamp(error, @error_max),
+      "stages" => stages
+    })
+  end
+
+  defp clamp(nil, _max), do: nil
+
+  defp clamp(text, max) do
+    if String.length(text) > max, do: String.slice(text, 0, max - 1) <> "…", else: text
+  end
 
   defp fail(message), do: exit({:shutdown, {:failed, message}})
 
@@ -670,8 +823,6 @@ defmodule HalC2.WorktreeSetup do
   defp message(%{"detail" => detail}) when is_binary(detail), do: detail
   defp message(reason) when is_binary(reason), do: reason
   defp message(reason), do: inspect(reason)
-
-  defp strip_ansi(text), do: String.replace(text, ~r/\e\[[0-9;?]*[a-zA-Z]/, "")
 
   defp now, do: HalC2.Orchestration.Entities.now()
 end

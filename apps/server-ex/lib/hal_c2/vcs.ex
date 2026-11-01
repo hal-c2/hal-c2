@@ -10,6 +10,9 @@ defmodule HalC2.Vcs do
 
   alias HalC2.Git
 
+  # A big repository's checkout or removal takes minutes.
+  @worktree_timeout 300_000
+
   @refs_limit 100
 
   # --- status ---------------------------------------------------------------------
@@ -607,9 +610,11 @@ defmodule HalC2.Vcs do
 
   @doc """
   `vcs.createWorktree`: checks out `refName` (or a new branch from it) in a new
-  worktree, by default `<home>/worktrees/<repo>/<branch>`, with its submodules.
+  worktree, by default `<home>/worktrees/<repo>/<branch>`, with its submodules. A new
+  branch remembers the branch it started from, for its pull request. `:on_progress` is
+  called with the share of files checked out as git reports it.
   """
-  def create_worktree(%{"cwd" => cwd, "refName" => ref} = input) do
+  def create_worktree(%{"cwd" => cwd, "refName" => ref} = input, opts \\ []) do
     branch = input["newRefName"] || ref
     path = input["path"] || worktree_path(cwd, branch)
 
@@ -618,7 +623,16 @@ defmodule HalC2.Vcs do
         do: ["worktree", "add", "-b", input["newRefName"], path, ref],
         else: ["worktree", "add", path, ref]
 
-    with :ok <- run(cwd, args, "vcs.createWorktree", "git worktree add failed") do
+    with :ok <-
+           run(
+             cwd,
+             args,
+             "vcs.createWorktree",
+             "git worktree add failed",
+             [timeout: worktree_timeout()] ++ checkout_progress(opts[:on_progress])
+           ) do
+      if input["newRefName"], do: remember_base(cwd, input["newRefName"], ref)
+
       # `git worktree add` leaves submodules empty; filling them is best effort.
       # `HalC2.WorktreeSetup` passes `"submodules" => false` and fills them as its own stage.
       if input["submodules"] != false, do: init_submodules(cwd, path)
@@ -626,6 +640,61 @@ defmodule HalC2.Vcs do
       {:ok, %{"worktree" => %{"path" => path, "refName" => branch}}}
     end
   end
+
+  @doc "How long `git worktree add` and `git worktree remove` may run, in ms."
+  def worktree_timeout, do: Application.get_env(:hal_c2, :worktree_timeout, @worktree_timeout)
+
+  # Git holds its progress back for a moment and words it for the locale; this asks for
+  # it at once, in English. Each write is one percent more, so at most a hundred calls.
+  defp checkout_progress(nil), do: []
+
+  defp checkout_progress(on_progress) do
+    [
+      env: [{"GIT_PROGRESS_DELAY", "0"}, {"LC_ALL", "C"}],
+      on_stderr: fn data ->
+        case Regex.scan(~r/Updating files:\s+(\d+)%/, data) |> List.last() do
+          [_, percent] -> on_progress.(String.to_integer(percent))
+          nil -> :ok
+        end
+      end
+    ]
+  end
+
+  # `branch.<name>.gh-merge-base`, which `Git.base_branch/2` reads: `ref` without its
+  # remote, when it is a branch at all and not a tag or a commit.
+  defp remember_base(cwd, branch, ref) do
+    base =
+      cond do
+        ref?(cwd, "refs/heads/#{ref}") -> ref
+        ref?(cwd, "refs/remotes/#{ref}") -> ref |> String.split("/", parts: 2) |> List.last()
+        true -> nil
+      end
+
+    if base, do: Git.run(cwd, ["config", "branch.#{branch}.gh-merge-base", base])
+  end
+
+  @doc """
+  Renames the branch `old` of the checkout `cwd` to `new`, or to `new-1` through
+  `new-100` when that is taken: `{:ok, name}`, or `{:error, message}` leaving it as it was.
+  """
+  def rename_branch(cwd, old, new) do
+    candidates = [new | Enum.map(1..100, &"#{new}-#{&1}")]
+
+    case Enum.find(candidates, &branch_free?(cwd, &1)) do
+      nil ->
+        {:error, "Could not find an available branch name for '#{new}'."}
+
+      name ->
+        case Git.ok(cwd, ["branch", "-m", "--", old, name]) do
+          {:ok, _} -> {:ok, name}
+          {:error, {_status, err}} -> {:error, err}
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
+  defp branch_free?(cwd, name),
+    do: not ref?(cwd, "refs/heads/#{name}") and not Git.branch_path_taken?(cwd, name)
 
   @doc "Where a new worktree of `cwd` on `branch` goes when no path is given."
   def worktree_path(cwd, branch) do
@@ -676,7 +745,7 @@ defmodule HalC2.Vcs do
   def remove_worktree(%{"cwd" => cwd, "path" => path} = input) do
     args = ["worktree", "remove"] ++ if(input["force"], do: ["--force"], else: []) ++ [path]
 
-    case Git.run(cwd, args) do
+    case Git.run(cwd, args, timeout: worktree_timeout()) do
       {:ok, %{status: 0}} ->
         changed(cwd)
         {:ok, nil}
@@ -701,8 +770,8 @@ defmodule HalC2.Vcs do
 
   defp ref?(cwd, ref), do: match?({:ok, _}, Git.ok(cwd, ["show-ref", "--verify", "--quiet", ref]))
 
-  defp run(cwd, args, operation, detail) do
-    case Git.run(cwd, args, max_bytes: 1024 * 1024) do
+  defp run(cwd, args, operation, detail, opts \\ []) do
+    case Git.run(cwd, args, [max_bytes: 1024 * 1024] ++ opts) do
       {:ok, %{status: 0}} ->
         :ok
 
