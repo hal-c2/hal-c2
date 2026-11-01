@@ -46,6 +46,9 @@
   ],
   "onCreateCommand": "bash .devcontainer/on-create.sh",
   "updateContentCommand": "bash .devcontainer/update-content.sh",
+  // update-content.sh leaves this file when the MC install failed; under a
+  // prebuild that run's output is never seen.
+  "postAttachCommand": "cat .hal-c2/devcontainer-mc-install-warning 2>/dev/null || true",
   "forwardPorts": [3780],
   "portsAttributes": {
     "3780": {
