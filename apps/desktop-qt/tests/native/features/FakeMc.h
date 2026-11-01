@@ -178,9 +178,17 @@ public:
   QHash<QString, QString> peers;
   // A member's label, when its environment has one.
   QHash<QString, QString> peerLabels;
+  // What else an environment's descriptor says (`serverVersion`, and
+  // `capabilities` added to the MC's), by environment, the MC's own
+  // included; announceEnvironment() or join() again says it.
+  QHash<QString, QJsonObject> descriptorFields;
   // A member's `platform` (its `machineId`), when it has one; join() again
   // announces a change.
   QHash<QString, QJsonObject> peerPlatforms;
+  // More of an environment's descriptor, the MC's own or a member's, by
+  // environment: its `serverVersion`, or `capabilities` of its own. Announced
+  // with the environment.
+  QHash<QString, QJsonObject> descriptors;
   // Members whose MC is down: their rows stay, and requests for them fail.
   QSet<QString> offline;
   // Each member's rows, by environment then id: [id, kind, row].
@@ -222,6 +230,8 @@ private:
   void answerHttp(QTcpSocket* socket, const QByteArray& request);
   void onMessage(QWebSocket* socket, const QString& text);
   void dispatchCommand(const Rpc& rpc);
+  // An environment's id, the MC's capabilities and its descriptorFields.
+  QJsonObject describe(const QString& environment) const;
   QJsonObject peerEnvironment(const QString& environment) const;
   QJsonObject ownEnvironment() const;
   // The MC's rows as they are now, by id: [id, kind, row].

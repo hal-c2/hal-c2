@@ -1798,7 +1798,8 @@ defmodule HalC2.OrchestrationTest do
       end
     end
 
-    # #98: the steer is recorded before Codex is asked, so the repeat finds it sent.
+    # #98: the steer is recorded before Codex is asked, so the repeat finds it. #384: it
+    # hears it was sent only once Codex took it.
     test "the same steer sent twice at once reaches the provider once", %{tmp_dir: dir} do
       log = Path.join(dir, "codex-requests.log")
       gates = held_steers(dir, ["FAKE_CODEX_LOG=#{log}"])
@@ -1815,9 +1816,11 @@ defmodule HalC2.OrchestrationTest do
       # The repeat is decided while Codex holds the first.
       first = Task.async(steer)
       :ok = await_turn_item(thread_id, "turn-item:user:m2")
-      assert {:ok, _} = steer.()
+      assert {:error, %{"message" => still}} = steer.()
+      assert still =~ "still being sent"
       File.touch!(Path.join(gates, "steer"))
       assert {:ok, _} = Task.await(first)
+      assert {:ok, _} = steer.()
 
       state = await_statuses(thread_id, ["completed"])
 
@@ -1831,6 +1834,125 @@ defmodule HalC2.OrchestrationTest do
 
       assert [%{"id" => "m2"}] =
                Enum.filter(StreamState.list(state, "message"), &(&1["id"] == "m2"))
+    end
+
+    # #384: the repeat of a steer Codex goes on to refuse never heard it was sent, its
+    # answer leaves no receipt to replay, and a send after the refusal goes through.
+    test "a repeat of a steer Codex refuses hears it is still being sent", %{tmp_dir: dir} do
+      hold = Path.join(dir, "hold-steer")
+      reject = Path.join(dir, "reject-steer")
+
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_HOLD_STEER=#{hold}",
+        "FAKE_CODEX_REJECT_STEER=#{reject}",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+
+      steer = fn ->
+        HalC2.Orchestration.dispatch_once(%{
+          "type" => "message.dispatch",
+          "commandId" => "command-m2",
+          "threadId" => thread_id,
+          "messageId" => "m2",
+          "text" => "say again",
+          "attachments" => [],
+          "dispatchMode" => %{"type" => "start_immediately"},
+          "deliveryIntent" => "steer"
+        })
+      end
+
+      File.touch!(hold)
+      File.touch!(reject)
+      first = Task.async(steer)
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+      assert {:error, %{"message" => still}} = steer.()
+      assert still =~ "still being sent"
+      assert HalC2.Store.meta(HalC2.Store.path(), "command-receipt:command-m2") == nil
+
+      File.rm!(hold)
+      assert {:error, refused} = Task.await(first)
+      assert refused =~ "did not take the message"
+      refute StreamState.get(current(thread_id), "message")["m2"]
+      assert {:error, ^refused} = steer.()
+
+      File.rm!(reject)
+      assert {:ok, _} = send_message(thread_id, "m2", "say again", %{"deliveryIntent" => "steer"})
+      state = await_statuses(thread_id, ["completed"])
+      refute Map.has_key?(StreamState.get(state, "message")["m2"], "steer")
+    end
+
+    # #384: a refusal can still drop the message once its turn ended, so the repeat has
+    # no more reason to call it sent than while the turn ran.
+    test "a repeat of a steer whose turn ended mid-ask is still being sent", %{tmp_dir: dir} do
+      hold = Path.join(dir, "hold-steer")
+
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_HOLD_STEER=#{hold}",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch("wait for it")
+      [%{"id" => run_id}] = await_run(thread_id, "running") |> StreamState.list("run")
+      command = %{"dispatchMode" => %{"type" => "start_immediately"}, "deliveryIntent" => "steer"}
+      File.touch!(hold)
+      first = Task.async(fn -> send_message(thread_id, "m2", "hold this", command) end)
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+
+      :ok =
+        HalC2.Streams.transact(thread_id, :thread, fn state ->
+          ended = Orchestration.upsert(state, "run", run_id, &Map.put(&1, "status", "completed"))
+          {[ended], :ok}
+        end)
+
+      assert {:error, %{"message" => still}} = send_message(thread_id, "m2", "hold this", command)
+      assert still =~ "still being sent"
+
+      File.rm!(hold)
+      assert {:ok, _} = Task.await(first)
+      assert {:ok, _} = send_message(thread_id, "m2", "hold this", command)
+    end
+
+    # #384: boot recovery clears the mark, since no send is left to answer for the steer.
+    test "a steer an MC restart cut off reads as sent", %{tmp_dir: dir} do
+      hold = Path.join(dir, "hold-steer")
+
+      Application.put_env(:hal_c2, :codex_command, [
+        "env",
+        "FAKE_CODEX_HOLD_STEER=#{hold}",
+        "python3",
+        "-u",
+        @fake_codex
+      ])
+
+      thread_id = launch("wait for it")
+      _ = await_run(thread_id, "running")
+      :ok = HalC2.Shell.subscribe(self())
+      await_shell_row(thread_id, &(&1["activeRunId"] != nil))
+      command = %{"dispatchMode" => %{"type" => "start_immediately"}, "deliveryIntent" => "steer"}
+      File.touch!(hold)
+      first = Task.async(fn -> send_message(thread_id, "m2", "hold this", command) end)
+      :ok = await_turn_item(thread_id, "turn-item:user:m2")
+
+      Task.shutdown(first, :brutal_kill)
+
+      for {pid, _} <- Registry.lookup(HalC2.Codex.Registry, thread_id),
+          do: :ok = DynamicSupervisor.terminate_child(HalC2.Codex.Supervisor, pid)
+
+      File.rm!(hold)
+      assert thread_id in HalC2.Orchestration.Recovery.run()
+      state = await_statuses(thread_id, ["interrupted"])
+      refute Map.has_key?(StreamState.get(state, "message")["m2"], "steer")
+
+      assert {:ok, _} = send_message(thread_id, "m2", "hold this", command)
     end
 
     # The message is in the turn before Codex is asked, so a runtime that stops as it

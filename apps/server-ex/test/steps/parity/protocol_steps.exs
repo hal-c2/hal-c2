@@ -205,10 +205,11 @@ defmodule HalC2.Steps.Parity.Protocol do
     "a simulator, emulator or device session changes" => "devices",
     "a git action progresses" => "gitAction",
     "a version move progresses" => "serverUpdate",
-    "a managed runtime installation progresses" => "providerInstall"
+    "a managed runtime installation progresses" => "providerInstall",
+    "the MC asks the desktop app to update" => "desktopUpdateControl"
   }
 
-  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one MC change|an MC's environment descriptor changes|an MC joins or leaves the cluster|a stream subscription starts without a usable offset|stream entities change|a stream has caught up|a client asks for the runs before its window|a client falls behind|a shape is over|a config subscription opens|the MC moves to another version in place|the MC's settings change|the MC's published themes change|the MC's usage limit sources change|the MC's keybinding rules change|the MC's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses)$/,
+  step ~r/^(?<when>the socket opens|the client pings|a frame or subscription is refused|a method succeeds|a method fails|the shell subscription opens|projects or threads on one MC change|an MC's environment descriptor changes|an MC joins or leaves the cluster|a stream subscription starts without a usable offset|stream entities change|a stream has caught up|a client asks for the runs before its window|a client falls behind|a shape is over|a config subscription opens|the MC moves to another version in place|the MC's settings change|the MC's published themes change|the MC's usage limit sources change|the MC's keybinding rules change|the MC's providers change|an attached terminal emits|terminal summaries change|a checkout's status changes|a provider's sign-in state changes|a thread's worktree setup progresses|a scheduled task changes|a pairing link or paired client changes|a project clone progresses|pull requests are refreshed|a preview tab changes|an agent drives the client's browser|the resource monitor takes a sample|a web server starts or stops on the host|a simulator, emulator or device session changes|a git action progresses|a version move progresses|a managed runtime installation progresses|the MC asks the desktop app to update)$/,
        %{args: [text]} = context do
     frame = Map.fetch!(@whens, text)
 
@@ -543,7 +544,8 @@ defmodule HalC2.Steps.Parity.Shapes do
     "pullRequestRefreshes" => 17,
     "gitAction" => 18,
     "serverUpdate" => 19,
-    "providerInstall" => 20
+    "providerInstall" => 20,
+    "desktopUpdateControl" => 21
   }
 
   # The services an MC-wide shape reads, as `HalC2.Application` starts them.
@@ -619,7 +621,8 @@ defmodule HalC2.Steps.Parity.Shapes do
 
   def settle(context, _type), do: context
 
-  defp first(client, "preview", id), do: {[], quiet(client, id)}
+  defp first(client, type, id) when type in ~w(preview desktopUpdateControl),
+    do: {[], quiet(client, id)}
 
   defp first(client, "config", id) do
     Mc.await_all(
@@ -701,6 +704,9 @@ defmodule HalC2.Steps.Parity.Shapes do
         assert is_list(clones)
 
       {"preview", []} ->
+        :ok
+
+      {"desktopUpdateControl", []} ->
         :ok
 
       {"resourceTelemetry", [frame]} ->
@@ -798,6 +804,9 @@ defmodule HalC2.Steps.Parity.Shapes do
 
       "serverUpdate" ->
         {Map.put(mc, "input", %{"targetVersion" => @target}), update_gate(context)}
+
+      "desktopUpdateControl" ->
+        {mc, desktop_host(context)}
 
       "providerInstall" ->
         ensure(Fixtures.provider_auth() ++ [HalC2.Acp.Antigravity.Installation])
@@ -1005,6 +1014,15 @@ defmodule HalC2.Steps.Parity.Shapes do
         {_, context} = World.call(context, "provider.install.start", input, "caller")
         await(context, t, id, &(&1["state"]["phase"] == "downloading"))
 
+      "desktopUpdateControl" ->
+        # A client's request, which the desktop app is asked to carry out; its
+        # requester then goes, which cancels it.
+        task = Task.async(fn -> HalC2.DesktopUpdate.update() end)
+        request = &(&1["event"]["type"] == "requestDesktopUpdate")
+        result = await(context, t, id, request, 5_000)
+        Task.shutdown(task, :brutal_kill)
+        result
+
       "serverUpdate" ->
         serve_bundle()
         installing = &(&1["event"]["stage"] == "installing")
@@ -1062,6 +1080,21 @@ defmodule HalC2.Steps.Parity.Shapes do
 
   # A release root the MC updates from a loopback server, restarting into the new
   # version through a stand-in for `System.stop/1`.
+  # The MC as the desktop app starts it, and the default socket as the app's, on the
+  # session its bootstrap token makes.
+  defp desktop_host(context) do
+    World.put_env("HAL_C2_DESKTOP_HOST", "1")
+    Application.put_env(:hal_c2, :desktop_token, "parity-desktop-token")
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:hal_c2, :desktop_token) end)
+    context = %{context | mc: Mc.restart(context.mc), clients: %{}}
+    Mc.ensure(HalC2.DesktopUpdate)
+
+    assert {200, %{"access_token" => access}} =
+             Mc.exchange(context.mc, "parity-desktop-token", %{"client_label" => "HAL-C2 desktop"})
+
+    World.put_client(context, Mc.connect_as(context.mc, access))
+  end
+
   defp update_gate(context) do
     root = Mc.tmp_dir(context.mc, "release")
     for dir <- ~w(releases lib bin), do: File.mkdir_p!(Path.join(root, dir))

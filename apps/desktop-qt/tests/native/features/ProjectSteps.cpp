@@ -369,6 +369,10 @@ const Steps steps([] {
   step(QStringLiteral("the user cancels"), [](World& world, const Captures&, const Table&) {
     if (world.answerQuestion) return std::exchange(world.answerQuestion, {})(false);
     if (cancelRewindQuestion(world)) return;  // CheckpointEditSteps.cpp: "Edit from here?"
+    // SnapShotSteps.cpp: a recorded shortcut waiting on Save or Cancel.
+    if (at(world.state(QStringLiteral("snapShot")), QStringLiteral("shortcut.changed")).toBool()) {
+      return world.bridge().dispatch(QStringLiteral("snapShot.shortcut.discard"), QVariantMap());
+    }
     world.bridge().dispatch(QStringLiteral("project.remove.cancel"), QVariantMap());
   });
   step(QStringLiteral("the folder explorer shows %1").arg(q), [](World& world, const Captures& c, const Table&) {

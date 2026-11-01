@@ -2,12 +2,23 @@ name: CI
 
 # The MC (apps/server-ex) and the TUI (apps/tui). The Qt desktop builds and
 # tests in desktop-qt.yml.
+#
+# Cheapest first: `changes` picks the jobs a commit needs, and nothing of the MC's starts
+# until mc_check has passed, so a formatting slip costs a minute, not every runner the
+# repository may use at once. A job that fails can be re-run alone. A merge to main runs
+# only mc_check, to save its build: its tests ran on its pull request.
 
 on:
   pull_request:
   push:
     branches:
       - main
+  # Every job, proofs included, whatever changed: what no commit changes (the runner image,
+  # a flake in a proof) still gets looked at. Not Maude's latest release, which `mix proof`
+  # installs only if the build it restored has none.
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,6 +28,32 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: What changed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      mc: ${{ steps.changes.outputs.mc }}
+      unit: ${{ steps.changes.outputs.unit }}
+      props: ${{ steps.changes.outputs.props }}
+      tui: ${{ steps.changes.outputs.tui }}
+      scenarios: ${{ steps.changes.outputs.scenarios }}
+      named: ${{ steps.changes.outputs.named }}
+      proofs: ${{ steps.changes.outputs.proofs }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          filter: blob:none
+          sparse-checkout: .github
+          persist-credentials: false
+
+      - id: changes
+        # Naming the shell turns on pipefail. Without it a failed script is tee's success:
+        # no outputs, every job skipped, and a run that tested nothing looks clean.
+        shell: bash
+        run: .github/scripts/ci-changes.sh ${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && 'merged' || 'all' }} | tee -a "$GITHUB_OUTPUT"
+
   pr_assets:
     name: PR assets
     runs-on: ubuntu-24.04
@@ -35,12 +72,13 @@ jobs:
             exit 1
           fi
 
-  mc:
-    name: MC (server-ex)
+  # The one job that saves the build every other MC job restores.
+  mc_check:
+    name: MC check
+    needs: changes
+    if: needs.changes.outputs.mc == 'true'
     runs-on: ubuntu-24.04
-    # The property tests alone run a quarter of an hour; the old cap left
-    # this job seconds of headroom.
-    timeout-minutes: 25
+    timeout-minutes: 20
     env:
       MIX_ENV: test
     defaults:
@@ -51,24 +89,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Elixir
-        id: beam
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: "29"
-          elixir-version: "1.20.3"
-
-      - name: Cache Mix deps and build
-        uses: actions/cache@v6
-        with:
-          path: |
-            apps/server-ex/deps
-            apps/server-ex/_build
-          key: mix-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('apps/server-ex/mix.lock') }}
-          restore-keys: mix-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-
-
-      - name: Fetch deps
-        run: mix deps.get
+      - name: Setup the MC
+        id: mc
+        uses: ./.github/actions/setup-mc
 
       - name: Check formatting
         run: mix format --check-formatted
@@ -76,8 +99,49 @@ jobs:
       - name: Compile
         run: mix compile --warnings-as-errors
 
-      - name: Git identity for test repositories
-        run: git config --global user.name CI && git config --global user.email ci@example.com
+      - name: Compile the property tests
+        run: mix compile
+        env:
+          MIX_ENV: prop
+
+      # Takes Maude only to read the models; no model checking. The test is a drift check:
+      # the code against what each model says it covers, which every change can break.
+      - name: The models still cover the code
+        run: mix proof --only "test:test the model covers the code"
+        env:
+          MIX_ENV: proof
+          # maude.install asks the GitHub API for releases; unauthenticated, runners hit its rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
+
+      # Only main's, which every branch can restore; a pull request's serves that pull
+      # request alone, and fills the repository's 10 GB with copies of main's.
+      - name: Save deps, build and Maude
+        if: github.ref == 'refs/heads/main' && steps.mc.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            apps/server-ex/deps
+            apps/server-ex/_build
+          key: ${{ steps.mc.outputs.cache-key }}
+
+  mc:
+    name: MC tests
+    needs: [changes, mc_check]
+    if: needs.changes.outputs.unit == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      MIX_ENV: test
+    defaults:
+      run:
+        working-directory: apps/server-ex
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup the MC
+        uses: ./.github/actions/setup-mc
 
       # The tests that mount another machine's folder skip without it (HalC2.MachineFiles).
       - name: Build the machine-files helper
@@ -88,24 +152,57 @@ jobs:
       - name: Test
         run: mix test
 
-      # GPL-3.0 (PropCheck), so in their own environment: apps/server-ex/prop/README.md.
-      - name: Property tests
-        run: mix prop
-        env:
-          MIX_ENV: prop
-
-  # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
-  # Jobs of their own, as model checking peaks at several GB and a proof's checks run
-  # one after another: the slowest proofs run alone, and `rest` runs every other one,
-  # new ones included.
-  mc_proofs:
-    name: MC proofs (${{ matrix.proof }})
+  # GPL-3.0 (PropCheck), so in their own environment: apps/server-ex/prop/README.md.
+  # They run the real code on sampled cases and take a quarter of an hour, split by file
+  # so one failed property re-runs a part of that. New files join a partition on their own.
+  mc_props:
+    name: MC properties (${{ matrix.partition }}/3)
+    needs: [changes, mc_check]
+    if: needs.changes.outputs.props == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        proof: [cluster, code_review_claims, preview_forward, stream_relay, streams, thread_move, turns, rest]
+        partition: [1, 2, 3]
+    env:
+      MIX_ENV: prop
+    defaults:
+      run:
+        working-directory: apps/server-ex
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup the MC
+        uses: ./.github/actions/setup-mc
+
+      - name: Build the machine-files helper
+        run: |
+          sudo apt-get update && sudo apt-get install -y fuse3
+          cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
+
+      - name: Property tests
+        run: mix prop --partitions 3
+        env:
+          MIX_TEST_PARTITION: ${{ matrix.partition }}
+
+  # Maude is GPL and installed by `mix proof`, never shipped: apps/server-ex/proof/README.md.
+  # Only the proofs whose model changed (ci-changes.sh); mc_check holds every model to the
+  # code. One job per proof, as model checking peaks at several GB and a proof's checks
+  # run one after another.
+  mc_proofs:
+    name: MC proofs (${{ matrix.proof }})
+    needs: [changes, mc_check]
+    if: needs.changes.outputs.proofs != '[]'
+    runs-on: ubuntu-24.04
+    # code_review_claims has taken from 13 to over 30 minutes on the same model.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        proof: ${{ fromJSON(needs.changes.outputs.proofs) }}
     env:
       MIX_ENV: proof
     defaults:
@@ -116,70 +213,32 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Setup Elixir
-        id: beam
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: "29"
-          elixir-version: "1.20.3"
-
-      - name: Cache Mix deps, build and Maude
-        uses: actions/cache@v6
-        with:
-          path: |
-            apps/server-ex/deps
-            apps/server-ex/_build
-          key: proof-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('apps/server-ex/mix.lock') }}
-          restore-keys: proof-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-
-
-      - name: Fetch deps
-        run: mix deps.get
+      - name: Setup the MC
+        uses: ./.github/actions/setup-mc
 
       - name: Proofs
-        run: |
-          if [ "${{ matrix.proof }}" = rest ]; then
-            files=$(ls proof/hal_c2/*_proof_test.exs | grep -vE '/(cluster|code_review_claims|preview_forward|stream_relay|streams|thread_move|turns)_proof_test\.exs$')
-          else
-            files=proof/hal_c2/${{ matrix.proof }}_proof_test.exs
-          fi
-          mix proof $files
+        run: mix proof proof/hal_c2/${{ matrix.proof }}_proof_test.exs
         env:
           # maude.install asks the GitHub API for releases; unauthenticated, runners hit its rate limit.
           GITHUB_TOKEN: ${{ github.token }}
 
-  # The @mc scenarios of features/, one directory per job so a slow or hung
-  # directory stays visible; mc/ is split in two to fit the time limit.
+  # The @mc scenarios of features/, in the groups ci-changes.sh defines and selects.
   # HAL_C2_FEATURES without `--only cucumber` keeps @backlog out (test_helper.exs);
   # naming scenarios_test.exs keeps the unit suite, which the mc job runs, out.
-  # Add a directory here when it gains @mc scenarios.
   mc_scenarios:
-    name: MC scenarios (${{ matrix.dir }})
+    name: MC scenarios (${{ matrix.dirs }})
+    needs: [changes, mc_check]
+    if: needs.changes.outputs.scenarios != '[]'
     runs-on: ubuntu-24.04
-    # The mc/orchestration shard runs its thousand scenarios at the old
-    # 15-minute cap now that the MCP server scenarios are no longer @backlog.
-    timeout-minutes: 20
+    # The mc/orchestration shard runs its thousand scenarios in about 16 minutes.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        dir:
-          - composer
-          - connections
-          - files
-          - navigation
-          - mc/orchestration
-          - mc/platform
-          - parity
-          - plugins
-          - preview
-          - providers
-          - settings
-          - source-control
-          - space
-          - terminal
-          - threads
-          - timeline
+        dirs: ${{ fromJSON(needs.changes.outputs.scenarios) }}
     env:
       MIX_ENV: test
+      NAMED: ${{ needs.changes.outputs.named }}
     defaults:
       run:
         working-directory: apps/server-ex
@@ -187,13 +246,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-
-      - name: Setup Elixir
-        id: beam
-        uses: erlef/setup-beam@v1
-        with:
-          otp-version: "29"
-          elixir-version: "1.20.3"
 
       # The parity steps read packages/contracts' RPC schemas with Bun
       # (test/support/contract_keys.ts) when they compile, and drive
@@ -214,40 +266,38 @@ jobs:
         with:
           bun-version: "1.4.2"
 
-      - name: Restore Mix deps and build
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            apps/server-ex/deps
-            apps/server-ex/_build
-          key: mix-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('apps/server-ex/mix.lock') }}
-          restore-keys: mix-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-
-
-      - name: Fetch deps
-        run: mix deps.get
-
-      - name: Git identity for test repositories
-        run: git config --global user.name CI && git config --global user.email ci@example.com
+      - name: Setup the MC
+        uses: ./.github/actions/setup-mc
 
       # The terminal scenarios open zsh, which the runner image lacks.
       - name: Install zsh
-        if: matrix.dir == 'terminal'
+        if: contains(matrix.dirs, 'terminal')
         run: sudo apt-get update && sudo apt-get install -y zsh
 
       # Files on another machine mount them with FUSE; they skip without the helper.
       - name: Build the machine-files helper
-        if: matrix.dir == 'files'
+        if: contains(matrix.dirs, 'files')
         run: |
           sudo apt-get update && sudo apt-get install -y fuse3
           cargo build --locked --release --manifest-path ../../native/machine-files/Cargo.toml
 
       - name: Scenarios
         env:
-          HAL_C2_FEATURES: "${{ matrix.dir }}/**/*.feature"
-        run: mix test test/hal_c2/scenarios_test.exs
+          DIRS: ${{ matrix.dirs }}
+        run: |
+          if [ "$DIRS" = rest ]; then
+            globs=$(cd ../../features && find . -name '*.feature' -printf '%h\n' | sed 's|^\./||' | sort -u \
+              | grep -vE "^($NAMED)(/|$)" | sed 's|$|/*.feature|' | paste -sd,)
+          else
+            globs=$(printf '%s/**/*.feature\n' $DIRS | paste -sd,)
+          fi
+          echo "$globs"
+          HAL_C2_FEATURES="$globs" mix test test/hal_c2/scenarios_test.exs
 
   tui:
     name: TUI
+    needs: changes
+    if: needs.changes.outputs.tui == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

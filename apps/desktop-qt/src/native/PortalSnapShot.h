@@ -2,6 +2,7 @@
 
 #ifdef HAL_C2_HAS_DBUS
 
+#include <QDBusArgument>
 #include <QDBusMessage>
 #include <QDBusServiceWatcher>
 #include <QObject>
@@ -14,6 +15,15 @@
 #include <functional>
 
 #include "SnapShotBackend.h"
+
+// One GlobalShortcuts shortcut on the wire: (sa{sv}).
+struct PortalShortcut {
+  QString id;
+  QVariantMap properties;
+};
+Q_DECLARE_METATYPE(PortalShortcut)
+QDBusArgument& operator<<(QDBusArgument& argument, const PortalShortcut& shortcut);
+const QDBusArgument& operator>>(const QDBusArgument& argument, PortalShortcut& shortcut);
 
 // One xdg-desktop-portal Request: its Response, or a failure when the portal
 // never answers. Deletes itself once it has answered.
@@ -54,10 +64,21 @@ public:
   Session session() const override { return m_session; }
   Shortcut shortcut() const override { return m_shortcut; }
   void probe() override;
+  void refresh() override;
   void bind(const QString& trigger) override;
   void release() override;
   void configure() override;
   void capture() override;
+
+  // How long the desktop's prompts (the shortcut permission, the window
+  // picker) are waited for, and its other answers.
+  static constexpr int kPromptTimeoutMs = 120'000;
+  static constexpr int kTimeoutMs = 5'000;
+  // Tests talk to a portal of their own on the connection named `name`, and
+  // wait less; empty is the session bus and the waits above.
+  static void useBus(const QString& name, int timeoutMs = kTimeoutMs, int promptTimeoutMs = kPromptTimeoutMs);
+  // The bus that is: what Snap Shot's other D-Bus services sit on too.
+  static QDBusConnection connection();
 
 private slots:
   void onShortcutSignal(const QDBusMessage& message);
@@ -70,6 +91,8 @@ private:
   void request(const QString& interface, const QString& method, QVariantList arguments, QVariantMap options, int timeoutMs,
                PortalRequest::Done done);
   QString requestPrefix() const;
+  // Reads what the Screenshot portal offers.
+  void readScreenshot();
   void registerApp();
   void setShortcut(const Shortcut& shortcut);
   // Ends the session (letting the shortcut go) without saying so.
@@ -85,6 +108,8 @@ private:
   uint m_shortcutsVersion = 0;
   QString m_trigger;
   QString m_shortcutId;
+  // Hyprland: the keys live in its config, the portal session only holds the action.
+  bool m_keysInConfig = false;
   QString m_sessionHandle;
   // Bumped whenever the session is dropped, so a late answer for the one
   // before is ignored.

@@ -302,6 +302,13 @@ defmodule HalC2.ProjectEnvironmentTest do
     defp ids,
       do: %{thread: "thread:pe", run: "run:pe", root_node: "node:pe", provider_thread: "pt:pe"}
 
+    # The variables `for_turn/3` adds beyond the thread's temp folder, which every launch has.
+    defp added(turn, launch) do
+      turn
+      |> ProjectEnvironment.for_turn(launch)
+      |> Enum.reject(fn {name, _} -> name in ~w(TMPDIR TMP TEMP CLAUDE_CODE_TMPDIR) end)
+    end
+
     defp notice,
       do: HalC2.Streams.get("thread:pe", "turn-item", "turn-item:project-environment:run:pe")
 
@@ -310,15 +317,14 @@ defmodule HalC2.ProjectEnvironmentTest do
       turn = %{cwd: root, project_id: "p1", ids: ids()}
       launch = [{"CLAUDE_CONFIG_DIR", "/c"}]
 
-      assert ProjectEnvironment.for_turn(turn, launch) == launch
+      assert added(turn, launch) == launch
 
       choose("p1", %{"projectEnvironment" => "dotenv"})
 
-      assert ProjectEnvironment.for_turn(turn, launch) ==
-               [{"SOME_URL", "https://example.test/mcp"} | launch]
+      assert added(turn, launch) == [{"SOME_URL", "https://example.test/mcp"} | launch]
 
       choose("p1", %{"projectEnvironment" => "off"})
-      assert ProjectEnvironment.for_turn(turn, launch) == launch
+      assert added(turn, launch) == launch
       assert notice() == nil
     end
 
@@ -330,7 +336,7 @@ defmodule HalC2.ProjectEnvironmentTest do
 
       turn = %{cwd: root, project_id: "p1", ids: ids()}
 
-      assert ProjectEnvironment.for_turn(turn, [{"A", "1"}]) == [{"A", "1"}]
+      assert added(turn, [{"A", "1"}]) == [{"A", "1"}]
 
       assert %{"type" => "system_notice", "status" => "completed", "message" => message} =
                notice()
@@ -338,7 +344,7 @@ defmodule HalC2.ProjectEnvironmentTest do
       assert message =~ ".env.missing was not found"
 
       # A second launch in the same run does not repeat it.
-      assert ProjectEnvironment.for_turn(turn, []) == []
+      assert added(turn, []) == []
 
       assert HalC2.Streams.state("thread:pe") |> HalC2.StreamState.get("turn-item") |> map_size() ==
                1

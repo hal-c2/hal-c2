@@ -188,6 +188,356 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context
   end
 
+  step "the branch {string} already exists", %{args: [branch]} = context do
+    World.git!(World.project(context).root, ["branch", branch])
+    context
+  end
+
+  step "{string} and the hundred numbered names after it already exist",
+       %{args: [branch]} = context do
+    root = World.project(context).root
+
+    for name <- [branch | Enum.map(1..100, &"#{branch}-#{&1}")],
+        do: World.git!(root, ["branch", name])
+
+    context
+  end
+
+  step "the temporary branch of a new worktree is renamed to {string}",
+       %{args: [name]} = context do
+    context = Shared.answering_writer(context)
+    Shared.put_env("FAKE_TEXT_ANSWER", JSON.encode!(%{"branch" => name}))
+    context = launch(context, "Add tax to the cart")
+    {snapshot, context} = World.await_setup(context, & &1["worktreePath"])
+    Map.put(context, :worktree, %{path: snapshot["worktreePath"], branch: snapshot["branch"]})
+  end
+
+  step "the worktree's branch is {string}", %{args: [branch]} = context do
+    thread = await_thread(context.setup_thread, &(&1["branch"] == branch))
+    assert World.git!(thread["worktreePath"], ~w(branch --show-current)) == branch
+    context
+  end
+
+  step "the user is told no available branch name could be found for {string}",
+       %{args: [name]} = context do
+    item = await_error_item(context.setup_thread)
+    assert item["failure"]["message"] == "Could not find an available branch name for '#{name}'."
+    context
+  end
+
+  step "the worktree stays on its temporary branch", context do
+    %{path: path, branch: temporary} = context.worktree
+    assert temporary =~ ~r/^hal-c2\/[0-9a-f]{8}$/
+    assert World.git!(path, ~w(branch --show-current)) == temporary
+    assert await_thread(context.setup_thread, & &1)["branch"] == temporary
+    context
+  end
+
+  # --- checkout progress and time limits ---------------------------------------------
+
+  # A filter that takes its time on each file, so git reports between them.
+  step "{string} is large enough that checking out its files takes a while",
+       %{args: [title]} = context do
+    root = World.project(context, title).root
+    World.git!(root, ["config", "filter.slow.smudge", "sleep 0.05; cat"])
+    World.git!(root, ["config", "filter.slow.clean", "cat"])
+
+    files =
+      Map.new(1..20, &{"file-#{&1}.slow", "#{&1}\n"})
+      |> Map.put(".gitattributes", "*.slow filter=slow\n")
+
+    World.commit!(root, files, "Many files")
+    context
+  end
+
+  step "the \"Check out files\" stage reports the share of files checked out as it grows",
+       context do
+    {_, context} = World.await_setup(context, &(&1["phase"] != "running"))
+
+    shares =
+      context.setup_snapshots
+      |> Enum.map(&Enum.find(&1["stages"], fn stage -> stage["id"] == "checkout" end))
+      |> Enum.filter(&(&1["status"] == "running" and &1["percent"]))
+      |> Enum.map(& &1["percent"])
+
+    assert length(Enum.uniq(shares)) >= 2, inspect(shares)
+    assert shares == Enum.sort(shares)
+    context
+  end
+
+  step "the stage ends at its full share when the checkout finishes", context do
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    checkout = Enum.find(snapshot["stages"], &(&1["id"] == "checkout"))
+    assert %{"status" => "done", "percent" => 100} = checkout
+    context
+  end
+
+  # Git that hangs on the one command: the scenario's time limit is cut to a moment, and
+  # what it would be otherwise is read once that limit has been seen to stop git.
+  step ~r/^"(?<project>[^"]+)" is so large that (?<action>checking out files|removing the worktree) takes 2 minutes$/,
+       %{args: [_title, action]} = context do
+    command = if action == "removing the worktree", do: "worktree remove", else: "worktree add"
+
+    context =
+      if action == "removing the worktree",
+        do: add_worktree(context, "feature/big"),
+        else: context
+
+    git = Path.join(Mc.tmp_dir(context.mc, "git"), "git-hangs")
+
+    File.write!(
+      git,
+      "#!/bin/sh\ncase \"$*\" in *\"#{command}\"*) exec sleep 120;; esac\nexec git \"$@\"\n"
+    )
+
+    File.chmod!(git, 0o755)
+    World.put_app_env(:git_command, git)
+    World.put_app_env(:worktree_timeout, 300)
+    context
+  end
+
+  step "git hangs on {string} once its new worktree is made", context do
+    git = Path.join(Mc.tmp_dir(context.mc, "git"), "git-hangs")
+
+    File.write!(
+      git,
+      "#!/bin/sh\ncase \"$*\" in *\"worktree add\"*) git \"$@\"; exec sleep 120;; esac\nexec git \"$@\"\n"
+    )
+
+    File.chmod!(git, 0o755)
+    World.put_app_env(:git_command, git)
+    World.put_app_env(:worktree_timeout, 300)
+    context
+  end
+
+  # What `git worktree add` starts to fill the worktree goes on after git itself is
+  # stopped, and puts back what is removed around it.
+  step "git is stopped on {string} while it is still filling its new worktree", context do
+    dir = Mc.tmp_dir(context.mc, "git")
+    git = Path.join(dir, "git-fills")
+    writer = Path.join(dir, "writer")
+
+    File.write!(git, """
+    #!/bin/sh
+    case "$*" in
+    *"worktree add"*)
+      git "$@"
+      while [ "$1" != "-b" ]; do shift; done
+      path=$3
+      echo "$path" > "#{writer}.path"
+      (i=0; while [ $i -lt 600 ]; do mkdir -p "$path"; : > "$path/late"; sleep 0.05; i=$((i + 1)); done) &
+      echo $! > "#{writer}.pid"
+      exec sleep 120;;
+    esac
+    exec git "$@"
+    """)
+
+    File.chmod!(git, 0o755)
+    World.put_app_env(:git_command, git)
+    World.put_app_env(:worktree_timeout, 300)
+    Map.put(context, :writer, writer)
+  end
+
+  step "nothing is still writing where the worktree was", context do
+    pid = String.trim(File.read!(context.writer <> ".pid"))
+    assert {_, status} = System.cmd("kill", ["-0", pid], stderr_to_stdout: true)
+    assert status != 0, "the checkout's writer #{pid} is still running"
+    refute File.exists?(String.trim(File.read!(context.writer <> ".path")))
+    context
+  end
+
+  step "a thread's worktree setup is running its script while its branch is being named",
+       context do
+    context = context |> Shared.answering_writer() |> put_setup(nil, "read _", false)
+    writer = Path.join(Mc.tmp_dir(context.mc, "writer"), "held")
+    File.write!(writer, "#!/bin/sh\nexec sleep 600\n")
+    File.chmod!(writer, 0o755)
+    Application.put_env(:hal_c2, :text_claude_command, writer)
+
+    context = launch(context, "list the files")
+
+    {snapshot, context} =
+      World.await_setup(context, &(World.setup_stage(&1, "setup-script") == "running"))
+
+    naming = :sys.get_state(HalC2.WorktreeSetup).setups[context.setup_thread].naming
+    assert Process.alive?(naming)
+
+    Map.merge(context, %{
+      naming: naming,
+      worktree: %{path: snapshot["worktreePath"], root: World.project(context).root}
+    })
+  end
+
+  step "a thread's worktree setup is running its script after its branch was named", context do
+    context = context |> Shared.answering_writer() |> put_setup(nil, "read _", false)
+    context = launch(context, "list the files")
+
+    {_, context} =
+      World.await_setup(context, &(World.setup_stage(&1, "setup-script") == "running"))
+
+    await_thread(context.setup_thread, &(&1["branch"] =~ "claude-branch"))
+    context
+  end
+
+  step "a thread's worktree setup has renamed its branch and not yet said so", context do
+    dir = Mc.tmp_dir(context.mc, "git")
+    renamed = Path.join(dir, "renamed")
+    {_, 0} = System.cmd("mkfifo", [renamed])
+    git = Path.join(dir, "git-renames")
+
+    File.write!(git, """
+    #!/bin/sh
+    case "$*" in *"branch -m"*) git "$@"; echo > "#{renamed}"; exec sleep 600;; esac
+    exec git "$@"
+    """)
+
+    File.chmod!(git, 0o755)
+    World.put_app_env(:git_command, git)
+
+    context = context |> Shared.answering_writer() |> put_setup(nil, "read _", false)
+    context = launch(context, "list the files")
+
+    {_, context} =
+      World.await_setup(context, &(World.setup_stage(&1, "setup-script") == "running"))
+
+    # Opening the pipe waits for git to have taken the name.
+    {_, 0} = System.cmd("cat", [renamed])
+    context
+  end
+
+  step "a thread's setup script has switched its worktree to the branch {string}",
+       %{args: [branch]} = context do
+    World.git!(World.project(context).root, ["branch", branch])
+    switched = Path.join(Mc.tmp_dir(context.mc, "script"), "switched")
+    {_, 0} = System.cmd("mkfifo", [switched])
+    context = put_setup(context, nil, "git switch #{branch}; echo > #{switched}; read _", false)
+    context = launch(context, "list the files")
+
+    # Opening the pipe waits for the script to have switched.
+    {_, 0} = System.cmd("cat", [switched])
+    context
+  end
+
+  step "the branch {string} is still in {string}", %{args: [branch, title]} = context do
+    assert World.git!(World.project(context, title).root, ~w(branch --list) ++ [branch]) =~ branch
+    context
+  end
+
+  step "the branch {string} is not left in {string}", %{args: [branch, title]} = context do
+    refute World.git!(World.project(context, title).root, ~w(branch --list)) =~ branch
+    context
+  end
+
+  step "the checkout of a new worktree in {string} fails partway", %{args: [title]} = context do
+    root = World.project(context, title).root
+    File.write!(Path.join(root, ".gitattributes"), "* filter=broken\n")
+    World.git!(root, ~w(add .gitattributes))
+    World.git!(root, ~w(-c user.name=t -c user.email=t@t commit -q -m attributes))
+    World.git!(root, ~w(config filter.broken.smudge false))
+    World.git!(root, ~w(config filter.broken.required true))
+    context
+  end
+
+  step "the branch is no longer being named", context do
+    refute Process.alive?(context.naming)
+    context
+  end
+
+  step "what the checkout started is no longer running", context do
+    {_, status} = System.cmd("kill", ["-0", context.hook_pid], stderr_to_stdout: true)
+    assert status != 0, "the checkout's hook #{context.hook_pid} is still running"
+    context
+  end
+
+  step "the setup fails when the limit stops git", context do
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "failed", inspect(snapshot)
+    context
+  end
+
+  step "neither the worktree nor its new branch is left in {string}",
+       %{args: [title]} = context do
+    root = World.project(context, title).root
+    assert [_root_only] = String.split(World.git!(root, ~w(worktree list)), "\n")
+    refute World.git!(root, ~w(branch --list)) =~ "hal-c2"
+    context
+  end
+
+  step "the user removes the worktree", context do
+    remove_worktree(context, false)
+  end
+
+  step "the git command is not stopped by the usual 30 second limit", context do
+    context =
+      if context[:setup_thread] do
+        {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+        assert snapshot["error"] =~ "timed out after 300 ms"
+        context
+      else
+        assert elem(context.reply, 0) == :error
+        assert inspect(context.reply) =~ "timed out after 300 ms"
+        context
+      end
+
+    Application.delete_env(:hal_c2, :worktree_timeout)
+    assert HalC2.Vcs.worktree_timeout() > 30_000
+    context
+  end
+
+  step "it is stopped only after 5 minutes", context do
+    assert HalC2.Vcs.worktree_timeout() == 5 * 60_000
+    context
+  end
+
+  # --- what a worktree's branch and folder are ---------------------------------------
+
+  step "a worktree is created for the new branch {string} based on {string}",
+       %{args: [branch, "origin/" <> base]} = context do
+    context = Shared.thread_in_git_project(context, "store")
+    root = World.project(context, "store").root
+    World.git!(root, ["branch", base])
+    World.git!(root, ["push", "-q", "origin", base])
+    World.git!(root, ["fetch", "-q", "origin"])
+
+    {reply, context} =
+      World.call(context, "vcs.createWorktree", %{
+        "cwd" => root,
+        "refName" => "origin/#{base}",
+        "newRefName" => branch
+      })
+
+    assert {:ok, %{"worktree" => %{"path" => path}}} = reply
+    World.commit!(path, %{"tax.txt" => "10%\n"}, "Charge tax")
+    Map.put(context, :worktree, %{path: path, root: root, branch: branch})
+  end
+
+  step "the pull request for {string} is created", %{args: [branch]} = context do
+    context = World.create_thread(context, "Tax", "store", %{"branch" => branch})
+
+    {events, context} =
+      World.git_action(context, context.worktree.path, "create_pr", %{
+        "threadId" => World.thread_id(context, "Tax")
+      })
+
+    last = List.last(events)
+    assert last["kind"] == "action_finished", "the action failed: #{inspect(last)}"
+    context
+  end
+
+  step "it targets {string}", %{args: [base]} = context do
+    assert [%{"args" => args}] = World.cli_calls(context, "pr create")
+    assert Enum.at(args, Enum.find_index(args, &(&1 == "--base")) + 1) == base
+    context
+  end
+
+  step "its folder under the repository's name is {string}", %{args: [folder]} = context do
+    %{path: path, root: root} = context.worktree
+    assert Path.basename(path) == folder
+    assert Path.basename(Path.dirname(path)) == Path.basename(root)
+    assert File.dir?(path)
+    context
+  end
+
   step "the setup reports the stage {string} with its status", %{args: [label]} = context do
     id = Map.fetch!(@stages, label)
     {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
@@ -208,7 +558,11 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   step "{string} has a setup script set to run when a worktree is created",
        %{args: [title]} = context do
     log = Path.join(Mc.tmp_dir(context.mc, "setup"), "cwd")
-    context |> put_setup(title, "pwd > '#{log}'", false) |> Map.put(:setup_log, log)
+    # What the script's terminal tells the tools in it comes back beside its folder.
+    command =
+      ~s(pwd > '#{log}'; printf '%s|%s|%s' "$NO_COLOR" "$FORCE_COLOR" "$COLORTERM" > '#{log}.env')
+
+    context |> put_setup(title, command, false) |> Map.put(:setup_log, log)
   end
 
   step "the script runs in the thread's {string} terminal inside the new worktree",
@@ -241,6 +595,174 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     type(context, "\r")
     {done, context} = World.await_setup(context, &(&1["phase"] != "running"))
     assert done["phase"] == "done"
+    context
+  end
+
+  step "{string} has a setup script that prints colored text and cursor movements",
+       %{args: [title]} = context do
+    command = ~S"printf '\033[1;31mred\033[0m \033[2K\033[1Gplain\033[?25l\n'"
+    context |> put_setup(title, command, false) |> Map.put(:expected_tail, ["red plain"])
+  end
+
+  step "{string} has a setup script that prints a progress bar that redraws one line with carriage returns",
+       %{args: [title]} = context do
+    command = ~S"printf 'bar 10%%\rbar 50%%\rbar 100%%\n'"
+
+    context
+    |> put_setup(title, command, false)
+    |> Map.put(:expected_tail, ["bar 10%", "bar 50%", "bar 100%"])
+  end
+
+  step "{string} has a setup script that prints a single line of 1,000 characters",
+       %{args: [title]} = context do
+    command = ~S"printf 'x%.0s' $(seq 1 1000); echo"
+
+    context
+    |> put_setup(title, command, false)
+    |> Map.put(:expected_tail, [String.duplicate("x", 400)])
+  end
+
+  step "{string} has a setup script that prints output that never ends a line",
+       %{args: [title]} = context do
+    command = ~S"printf 'x%.0s' $(seq 1 20000)"
+
+    context
+    |> put_setup(title, command, false)
+    |> Map.put(:expected_tail, [String.duplicate("x", 400)])
+  end
+
+  step "the setup script stage shows the same text without the colors and movement", context do
+    shows_expected_tail(context)
+  end
+
+  step "the setup script stage shows each redraw as a line of its own", context do
+    shows_expected_tail(context)
+  end
+
+  step "the setup script stage shows the first 400 characters of it", context do
+    shows_expected_tail(context)
+  end
+
+  step "the setup script stage shows no more than the last few thousand characters kept in memory",
+       context do
+    {lines, partial} = HalC2.WorktreeSetup.script_lines("", String.duplicate("x", 20_000))
+    assert lines == []
+    assert String.length(partial) == 4_096
+    shows_expected_tail(context)
+  end
+
+  step "{string} has a setup script that ends with a comment line", %{args: [title]} = context do
+    ending_script(context, title, "(exit 4)\n# all done", 4)
+  end
+
+  step "{string} has a setup script that reads from its input until it is closed",
+       %{args: [title]} = context do
+    context
+    |> ending_script(title, "echo waiting; cat > /dev/null; exit 5", 5)
+    |> Map.put(:script_reads, true)
+  end
+
+  step "{string} has a setup script that prints a line that looks like a completion mark",
+       %{args: [title]} = context do
+    command = "echo __hal_c2_setup_000000000000_0; exit 6"
+
+    context
+    |> ending_script(title, command, 6)
+    |> Map.put(:script_prints, "__hal_c2_setup_000000000000_0")
+  end
+
+  step "{string} has a setup script that is a few lines long with a here-document",
+       %{args: [title]} = context do
+    ending_script(context, title, "cat <<EOF\nhello from here\nEOF\n(exit 7)", 7)
+  end
+
+  step "{string} has a setup script that has a syntax error on its last line",
+       %{args: [title]} = context do
+    ending_script(context, title, "echo a\nif true; then echo b; fi; fi", 2)
+  end
+
+  step "the setup script stage ends with the script's own exit status", context do
+    context =
+      if context[:script_reads] do
+        {_, context} = World.await_setup(context, &(tail(&1) == ["waiting"]))
+        type(context, "\x04")
+        context
+      else
+        context
+      end
+
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    stage = Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))
+    assert stage["status"] == "failed"
+    assert stage["detail"] == "exited with #{context.script_exit}", inspect(stage)
+    context
+  end
+
+  step "nothing the script printed is taken for its end", context do
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["error"] == "Setup script exited with #{context.script_exit}."
+    if text = context[:script_prints], do: assert(text in tail(snapshot))
+    context
+  end
+
+  step "a setup script that must finish before the agent starts", context do
+    put_setup(context, nil, "echo started; read _", false)
+  end
+
+  step "its terminal is closed while it is still running", context do
+    context = launch(context, "list the files")
+    {_, context} = World.await_setup(context, &(tail(&1) == ["started"]))
+
+    {:ok, _} =
+      HalC2.Terminal.close(%{"threadId" => context.setup_thread, "terminalId" => "setup"})
+
+    context
+  end
+
+  step "the setup stops waiting for it", context do
+    context
+  end
+
+  step "the script's terminal asks tools for plain output without colour", context do
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done"
+    assert [no_color, force_color, _] = String.split(File.read!(context.setup_log <> ".env"), "|")
+    assert {no_color, force_color} == {"1", "0"}
+    context
+  end
+
+  step "a tool that probes the terminal for truecolour does not wait for an answer", context do
+    assert [_, _, ""] = String.split(File.read!(context.setup_log <> ".env"), "|")
+    context
+  end
+
+  step ~r/^a setup stage reports a (?<kind>detail|error) of 5,000 characters$/,
+       %{args: [kind]} = context do
+    context = hold_checkout(context)
+    long = String.duplicate("x", 5_000)
+
+    update =
+      if kind == "detail",
+        do: &HalC2.WorktreeSetup.set_stage(&1, "checkout", "running", %{"detail" => long}),
+        else: &HalC2.WorktreeSetup.finish(&1, "failed", long)
+
+    :ok = GenServer.call(HalC2.WorktreeSetup, {:update, context.setup_thread, update})
+    Map.put(context, :long_kind, kind)
+  end
+
+  step "a client reads the setup", context do
+    Map.put(context, :read_setup, HalC2.WorktreeSetup.subscribe(context.setup_thread, self()))
+  end
+
+  step ~r/^the (?<kind>detail|error) is cut to (?<limit>200|1,000) characters and ends with an ellipsis$/,
+       %{args: [kind, limit]} = context do
+    text =
+      if kind == "detail",
+        do: Enum.find(context.read_setup["stages"], &(&1["id"] == "checkout"))["detail"],
+        else: context.read_setup["error"]
+
+    assert String.length(text) == String.to_integer(String.replace(limit, ",", ""))
+    assert String.ends_with?(text, "…")
     context
   end
 
@@ -280,27 +802,48 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   step "a thread's worktree setup is still checking out files", context do
-    # A post-checkout hook holds `git worktree add` open; it reports its pid and
-    # folder through a pipe once the files are on disk.
-    root = World.project(context).root
-    pipe = Path.join(Mc.tmp_dir(context.mc, "hook"), "checkout")
-    {_, 0} = System.cmd("mkfifo", [pipe])
-    hook = Path.join(root, ".git/hooks/post-checkout")
-    File.write!(hook, "#!/bin/sh\necho \"$$ $(pwd)\" > '#{pipe}'\nexec sleep 600\n")
-    File.chmod!(hook, 0o755)
+    hold_checkout(context)
+  end
 
-    reader = Task.async(fn -> System.cmd("cat", [pipe]) end)
-    context = launch(context, "list the files")
-    {out, 0} = Task.await(reader, 15_000)
-    [pid, path] = String.split(String.trim(out), " ", parts: 2)
-    ExUnit.Callbacks.on_exit(fn -> System.cmd("kill", [pid], stderr_to_stdout: true) end)
+  step "a thread's worktree setup is running a stage", context do
+    hold_checkout(context)
+  end
 
+  step "the setup finishes", context do
     {snapshot, context} =
       World.await_setup(context, &(World.setup_stage(&1, "checkout") == "running"))
 
-    assert snapshot["phase"] == "running"
-    assert File.dir?(path)
-    Map.put(context, :worktree, %{path: path, root: root})
+    Map.put(context, :settled, HalC2.WorktreeSetup.finish(snapshot, "done", nil))
+  end
+
+  # Git fails when its post-checkout hook is killed under it.
+  step "the setup fails", context do
+    {_, 0} = System.cmd("kill", ["-9", context.hook_pid])
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "failed", inspect(snapshot)
+    Map.put(context, :settled, snapshot)
+  end
+
+  step "the setup is cancelled", context do
+    {reply, context} =
+      World.call(context, "worktreeSetup.cancel", %{"threadId" => context.setup_thread})
+
+    assert {:ok, %{"cancelled" => true}} = reply
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    Map.put(context, :settled, snapshot)
+  end
+
+  step "that stage is reported as {string}", %{args: [status]} = context do
+    stage = Enum.find(context.settled["stages"], &(&1["id"] == "checkout"))
+    assert stage["status"] == status
+    assert stage["endedAt"]
+    context
+  end
+
+  step "stages that never started are left as they were", context do
+    agent = Enum.find(context.settled["stages"], &(&1["id"] == "agent"))
+    assert %{"status" => "pending", "endedAt" => nil} = agent
+    context
   end
 
   step "the thread no longer points at a worktree", context do
@@ -411,6 +954,53 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
     context = World.put_client(context, World.client(context))
     context = watch_setup(context)
     assert context.watched == nil
+    context
+  end
+
+  # The half minute is the server's timer: the client reads the setup now, with more
+  # than the scenario's 20 seconds of it still to run.
+  step "a client reads the setup 20 seconds later", context do
+    %{setups: setups} = :sys.get_state(HalC2.WorktreeSetup)
+    %{expiry: {timer, _}} = setups[context.setup_thread]
+    assert Process.read_timer(timer) > 20_000
+    assert Process.read_timer(timer) <= 30_000
+    watch_setup(context)
+  end
+
+  step "it sees the finished setup with its outcome", context do
+    assert %{"phase" => "done", "error" => nil} = context.watched
+    assert World.setup_stage(context.watched, "agent") == "done"
+    context
+  end
+
+  step "the thread starts another worktree setup", context do
+    root = World.project(context).root
+    {reader, _pipe} = checkout_hook(context, root)
+    finished = context.watched
+
+    :ok =
+      HalC2.WorktreeSetup.start(
+        context.setup_thread,
+        "run-again",
+        %{"workspaceRoot" => root, "scripts" => []},
+        %{"type" => "worktree", "baseRef" => "main", "startFromOrigin" => false},
+        "again"
+      )
+
+    {out, 0} = Task.await(reader, 15_000)
+    [pid, _] = String.split(String.trim(out), " ", parts: 2)
+    ExUnit.Callbacks.on_exit(fn -> System.cmd("kill", [pid], stderr_to_stdout: true) end)
+    Map.put(context, :replaced, finished)
+  end
+
+  step "clients see only the new setup from its first stage on", context do
+    current = HalC2.WorktreeSetup.subscribe(context.setup_thread, self())
+    assert current["sequence"] > context.replaced["sequence"]
+    assert %{"phase" => "running", "error" => nil, "endedAt" => nil} = current
+    assert World.setup_stage(current, "checkout") == "running"
+    assert World.setup_stage(current, "agent") == "pending"
+    %{setups: setups} = :sys.get_state(HalC2.WorktreeSetup)
+    refute Map.has_key?(setups[context.setup_thread], :expiry)
     context
   end
 
@@ -604,6 +1194,70 @@ defmodule HalC2.Steps.SourceControl.WorktreesAndSetupScripts do
   end
 
   # --- helpers --------------------------------------------------------------------------------
+
+  # A setup held in its checkout: a post-checkout hook keeps `git worktree add` open once
+  # the files are on disk. `context.hook_pid` is the hook's.
+  defp hold_checkout(context) do
+    root = World.project(context).root
+    {reader, _pipe} = checkout_hook(context, root)
+    context = launch(context, "list the files")
+    {out, 0} = Task.await(reader, 15_000)
+    [pid, path] = String.split(String.trim(out), " ", parts: 2)
+    ExUnit.Callbacks.on_exit(fn -> System.cmd("kill", [pid], stderr_to_stdout: true) end)
+
+    {snapshot, context} =
+      World.await_setup(context, &(World.setup_stage(&1, "checkout") == "running"))
+
+    assert snapshot["phase"] == "running"
+    assert File.dir?(path)
+    Map.merge(context, %{worktree: %{path: path, root: root}, hook_pid: pid})
+  end
+
+  # The hook reports its pid and folder through a pipe; the task reads them.
+  defp checkout_hook(context, root) do
+    pipe = Path.join(Mc.tmp_dir(context.mc, "hook"), "checkout")
+    {_, 0} = System.cmd("mkfifo", [pipe])
+    hook = Path.join(root, ".git/hooks/post-checkout")
+    File.write!(hook, "#!/bin/sh\necho \"$$ $(pwd)\" > '#{pipe}'\nexec sleep 600\n")
+    File.chmod!(hook, 0o755)
+    {Task.async(fn -> System.cmd("cat", [pipe]) end), pipe}
+  end
+
+  defp ending_script(context, title, command, code) do
+    context |> put_setup(title, command, false) |> Map.put(:script_exit, code)
+  end
+
+  defp shows_expected_tail(context) do
+    {snapshot, context} = World.await_setup(context, &(&1["phase"] != "running"))
+    assert snapshot["phase"] == "done", inspect(snapshot)
+    assert tail(snapshot) == context.expected_tail
+    context
+  end
+
+  defp tail(snapshot), do: Enum.find(snapshot["stages"], &(&1["id"] == "setup-script"))["tail"]
+
+  # The thread's error item once it has one, following its stream.
+  defp await_error_item(id) do
+    :ok = HalC2.Streams.subscribe(id, self(), nil)
+    follow_error_item(id)
+  end
+
+  defp follow_error_item(id) do
+    items =
+      HalC2.StreamState.list(HalC2.Streams.Server.state(HalC2.Streams.ensure(id)), "turn-item")
+
+    case Enum.find(items, & &1["failure"]) do
+      nil ->
+        receive do
+          {:hal_c2_stream, ^id, _} -> follow_error_item(id)
+        after
+          15_000 -> flunk("no error item: #{inspect(items)}")
+        end
+
+      item ->
+        item
+    end
+  end
 
   defp launch(context, text) do
     project = World.project(context)

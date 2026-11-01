@@ -12,12 +12,15 @@ import HalC2.Shell
 // leaves the current value unmarked.
 // `disabledRows` greys out the rows at those indexes in the popup; keys can still
 // reach them, so `onActivated` should refuse them too.
+// `rowAction` is a control at the end of each popup row, which reads its row as
+// `parent.row`; pressing it neither chooses the row nor closes the popup.
 ComboBox {
     id: control
 
     property bool outline: false
     property var disabledRows: []
     property bool markCurrent: true
+    property Component rowAction: null
     property string iconName: ""
     property real iconSize: 16
     property real chevronSize: 14
@@ -113,6 +116,14 @@ ComboBox {
                 name: "check"
                 size: 14
                 color: Theme.palette.color("iconMuted", "#8b8b93")
+                Layout.alignment: Qt.AlignVCenter
+            }
+
+            Loader {
+                readonly property int row: item.index
+                active: control.rowAction !== null
+                visible: active
+                sourceComponent: control.rowAction
                 Layout.alignment: Qt.AlignVCenter
             }
         }

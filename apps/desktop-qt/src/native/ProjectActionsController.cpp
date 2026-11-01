@@ -1,5 +1,7 @@
 #include "ProjectActionsController.h"
 
+#include "SettingsController.h"
+
 #include <QRegularExpression>
 
 #include "DraftController.h"
@@ -203,8 +205,17 @@ void ProjectActionsController::applyDefaultWorkspace() {
   const bool placed = checkout.envMode != untouched.envMode || checkout.branch || checkout.worktreePath || !checkout.environmentId.isEmpty();
   if (placed || mode.isEmpty() || mode == checkout.envMode) return;
   checkout.envMode = mode;
+  if (mode == QLatin1String("worktree")) checkout.startFromOrigin = startsWorktreesFromOrigin(place->environmentId);
   m_applied.insert(draftId);
   workspace->setCheckout(draftId, checkout);
+}
+
+bool ProjectActionsController::startsWorktreesFromOrigin(const QString& environmentId) const {
+  const QString key = QStringLiteral("newWorktreesStartFromOrigin");
+  const std::optional<QJsonObject> settings = m_settings->settings(environmentId);
+  const auto* shell = NativeShell::of(this)->controller<SettingsController>();
+  if (settings) return settings->value(key).toBool(shell && shell->defaultOf(key).toBool());
+  return shell && shell->setting(key).toBool();
 }
 
 QString ProjectActionsController::shortcutOf(const QString& scriptId) const {

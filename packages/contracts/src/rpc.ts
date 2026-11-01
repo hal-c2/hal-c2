@@ -290,6 +290,8 @@ import {
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import {
+  DesktopUpdateControlMessage,
+  DesktopUpdateStatusReport,
   HostResourcesSnapshot,
   ResourceTelemetryHistory,
   ResourceTelemetryHistoryInput,
@@ -494,6 +496,7 @@ export const WS_METHODS = {
   serverSignalProcess: "server.signalProcess",
   serverReportClientActivity: "server.reportClientActivity",
   serverReportHostPowerState: "server.reportHostPowerState",
+  serverReportDesktopUpdateStatus: "server.reportDesktopUpdateStatus",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
@@ -597,6 +600,7 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+  subscribeDesktopUpdateControl: "subscribeDesktopUpdateControl",
 } as const;
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -953,6 +957,13 @@ const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientAc
 const WsServerReportHostPowerStateRpc = Rpc.make(WS_METHODS.serverReportHostPowerState, {
   payload: HostPowerSnapshot,
   error: EnvironmentAuthorizationError,
+});
+
+// The desktop app that started the MC reports its updater; nobody else may.
+const WsServerReportDesktopUpdateStatusRpc = Rpc.make(WS_METHODS.serverReportDesktopUpdateStatus, {
+  payload: DesktopUpdateStatusReport,
+  success: Schema.Struct({}),
+  error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetBackgroundPolicyRpc = Rpc.make(WS_METHODS.serverGetBackgroundPolicy, {
@@ -1907,6 +1918,14 @@ const WsSubscribeBackgroundPolicyRpc = Rpc.make(WS_METHODS.subscribeBackgroundPo
   stream: true,
 });
 
+// The MC's update control messages, for the desktop app that started it.
+const WsSubscribeDesktopUpdateControlRpc = Rpc.make(WS_METHODS.subscribeDesktopUpdateControl, {
+  payload: Schema.Struct({}),
+  success: DesktopUpdateControlMessage,
+  error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTelemetry, {
   payload: Schema.Struct({}),
   success: ResourceTelemetrySnapshot,
@@ -1990,6 +2009,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpaceCommentReopenRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
+  WsServerReportDesktopUpdateStatusRpc,
   WsServerGetBackgroundPolicyRpc,
   WsClusterStatusRpc,
   WsClusterInviteRpc,
@@ -2103,6 +2123,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
   WsSubscribeResourceTelemetryRpc,
+  WsSubscribeDesktopUpdateControlRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetTurnDiffRpc,
