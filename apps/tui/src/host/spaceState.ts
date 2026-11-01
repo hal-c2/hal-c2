@@ -829,6 +829,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   };
 
   /** What the open page says about its agent, and the keys that go with it. */
+  // An error as a sentence's middle: a provider's own text may end its sentence already.
+  const agentError = (error: string | null | undefined): string =>
+    clip((error ?? "").replace(/[.\s]+$/, ""), AGENT_ERROR_MOST);
+
   const agentText = (agent: SpacePageAgent): string => {
     const title = options.threads().find((thread) => thread.id === agent.threadId)?.title;
     const open = `o opens ${title ? `“${title}”` : "its thread"}`;
@@ -840,9 +844,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
       case "completed":
         return `The agent finished ${agent.edited ? "and changed" : "without changing"} this page. · ${open} · z clears`;
       case "failed":
-        return `The agent failed: ${clip(agent.error ?? "", AGENT_ERROR_MOST)}. The page stays as it last wrote it. · h history · ${open} · z clears`;
+        return `The agent failed: ${agentError(agent.error)}. The page stays as it last wrote it. · h history · ${open} · z clears`;
       case "stopped":
-        return `${agent.error ? `The agent stopped: ${clip(agent.error, AGENT_ERROR_MOST)}.` : "The agent was stopped."} · h history · ${open} · z clears`;
+        return `${agent.error ? `The agent stopped: ${agentError(agent.error)}.` : "The agent was stopped."} · h history · ${open} · z clears`;
     }
   };
 
@@ -1931,7 +1935,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     if (view !== "page") return;
     const agent = agentOfPage(pageId);
     if (agent) fn(agent);
-    else options.status("No agent was asked on this page: g asks one.", "info");
+    else options.status("No agent was asked on this page: A asks one.", "info");
   };
 
   const stopAgent = withAgent((agent) => {

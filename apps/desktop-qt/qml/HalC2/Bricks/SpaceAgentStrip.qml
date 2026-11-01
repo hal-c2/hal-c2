@@ -15,6 +15,9 @@ Rectangle {
     readonly property bool failed: status === "failed"
     readonly property color tone: Theme.palette.color(failed ? "error" : "accent", failed ? "#ef4444" : "#2563eb")
 
+    // The error as a sentence's middle: a provider's own text may end its sentence already.
+    readonly property string error: (Spaces.agent.error ?? "").replace(/[.\s]+$/, "")
+
     signal historyRequested
 
     objectName: "spaceAgentStrip"
@@ -56,9 +59,9 @@ Rectangle {
                     case "completed":
                         return Spaces.agent.edited ? qsTr("The agent finished and changed this page.") : qsTr("The agent finished without changing this page.");
                     case "failed":
-                        return qsTr("The agent failed: %1. The page stays as it last wrote it.").arg(Spaces.agent.error ?? "");
+                        return qsTr("The agent failed: %1. The page stays as it last wrote it.").arg(strip.error);
                     case "stopped":
-                        return Spaces.agent.error ? qsTr("The agent stopped: %1.").arg(Spaces.agent.error) : qsTr("The agent was stopped.");
+                        return strip.error ? qsTr("The agent stopped: %1.").arg(strip.error) : qsTr("The agent was stopped.");
                     }
                     return "";
                 }

@@ -891,6 +891,8 @@ Item {
                 [{ status: "completed", edited: false }, "The agent finished without changing this page."],
                 [{ status: "stopped" }, "The agent was stopped."],
                 [{ status: "stopped", error: "its thread was deleted" }, "The agent stopped: its thread was deleted."],
+                [{ status: "stopped", error: "It was cut off.\n" }, "The agent stopped: It was cut off."],
+                [{ status: "failed", error: "The agent's turn failed." }, "The agent failed: The agent's turn failed. The page stays as it last wrote it."],
                 [{ status: "failed", error: "out of credits" }, "The agent failed: out of credits. The page stays as it last wrote it."]
             ];
             const view = root.research({});

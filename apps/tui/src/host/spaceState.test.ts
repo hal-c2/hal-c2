@@ -691,7 +691,16 @@ describe("a page's agent", () => {
     const t = onRoadmap();
     t.controller.dispatch("space.stopAgent", {});
     expect(t.calls.some((call) => call.method === "space.page.stopAgent")).toBe(false);
-    expect(t.statuses).toEqual(["No agent was asked on this page: g asks one."]);
+    expect(t.statuses).toEqual(["No agent was asked on this page: A asks one."]);
+  });
+
+  test("an error that ends its own sentence is not given a second full stop", () => {
+    const failed = onRoadmap(agent({ status: "failed", error: "The agent's turn failed." }));
+    expect(failed.view().message).toStartWith(
+      "The agent failed: The agent's turn failed. The page stays as it last wrote it.",
+    );
+    const stopped = onRoadmap(agent({ status: "stopped", error: "It was cut off.\n" }));
+    expect(stopped.view().message).toStartWith("The agent stopped: It was cut off. ·");
   });
 
   test("a long request is clipped, and the rows make room for a wrapped message", () => {
