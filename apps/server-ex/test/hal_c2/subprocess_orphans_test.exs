@@ -747,6 +747,14 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert Orphans.parse_stat("123 (sh) S 1 123 " <> rest, "") == :unknown
   end
 
+  test "only a read that says the process is no more reads as gone" do
+    # A program reaped between the read's open and its read answers :esrch.
+    assert Orphans.unreadable_stat(:enoent) == :gone
+    assert Orphans.unreadable_stat(:esrch) == :gone
+    assert Orphans.unreadable_stat(:eacces) == :unknown
+    assert Orphans.unreadable_stat(:eio) == :unknown
+  end
+
   test "tracking a program already gone is fine, and gone? tells it from a running one" do
     boot(:mc)
     assert :ok = Orphans.track(self(), 2_000_000_000, "mark")

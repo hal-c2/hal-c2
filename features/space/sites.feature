@@ -291,6 +291,13 @@ Feature: A page published as a site
       And a browser with no pairing opens the site link of the page "Roadmap"
       Then the browser reads "cat.png"
 
+    @mc
+    Scenario: A chart on a published page shows as its words
+      Given the page "Roadmap" has a chart of "May" 3
+      When the user publishes the page "Roadmap" as a site
+      And a browser with no pairing opens the site link of the page "Roadmap"
+      Then the browser reads "a chart"
+
   # Out of scope for the first version of sites.
   @backlog @mc @shared
   Scenario: A published page reads from a database

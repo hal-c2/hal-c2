@@ -73,6 +73,8 @@ export interface FakeSpaceMc {
   readonly commentsOf: (pageId: string) => Entity[];
   /** What text generation does when a page is made from a thread. */
   generation: FakeGeneration;
+  /** The chart the next `space.block.visualize` draws; null when it cannot be answered. */
+  chart: Entity | null;
   /** What image generation does. */
   imageGeneration: FakeImageGeneration;
   /** Where each summary was written: the folder of the thread the request named. */
@@ -736,6 +738,35 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
       commit(`space:${input.spaceId}`, [["block", added.id, { s: added }]]);
       return { block: added };
     },
+    // HalC2.Space.Visualize's refusals, and the chart stored whole, in place or as a new block.
+    "space.block.visualize": (input, by) => {
+      const target = livePage(input.spaceId, input.pageId);
+      const words = String(input.request).replace(/^\/visualize\s*/, "");
+      const refuseChart = (reason: string, why: string): never => {
+        throw new FakeSpaceRefusal("SpaceChartError", reason, `No chart was drawn: ${why}`);
+      };
+      const generation = mc.generation;
+      if (generation.kind !== "available") refuseChart(generation.kind, generation.message);
+      const drawn = mc.chart ?? refuseChart("unanswerable", "neither answers that.");
+      const chart = { ...drawn, request: words };
+      const fields = { text: `${drawn.title} (a chart; ${drawn.source})`, chart };
+      if (input.blockId !== undefined) {
+        const found = liveBlock(input.spaceId, input.blockId);
+        if (found.kind !== "chart") refuse("invalid", "Only a chart can be asked for again.");
+        commit(`space:${input.spaceId}`, [
+          ["block", found.id, { s: { ...fields, updatedBy: by, updatedAt: now() } }],
+        ]);
+        return { block: table(input.spaceId, "block").get(found.id) };
+      }
+      const order = orderAt(input.spaceId, target.id, input.afterBlockId);
+      const added = {
+        ...newBlock(input.spaceId, target.id, { kind: "paragraph", text: "" }, order, by),
+        kind: "chart",
+        ...fields,
+      };
+      commit(`space:${input.spaceId}`, [["block", added.id, { s: added }]]);
+      return { block: added };
+    },
     "space.block.update": (input, by) => {
       const found = liveBlock(input.spaceId, input.blockId);
       if (typeof input.text !== "string") refuse("invalid", "A block's text is a string.");
@@ -1054,6 +1085,7 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     },
     commentsOf: (pageId) => all("comment").filter((entry) => entry.pageId === pageId),
     generation: { kind: "unavailable", message: "No text generation provider is set up." },
+    chart: null,
     imageGeneration: { kind: "unavailable", message: "No image generation provider is set up." },
     summaries: [],
     refusals: [],
