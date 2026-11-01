@@ -13,6 +13,7 @@ import {
   type SpaceComment,
   type SpaceId,
   type SpacePage,
+  type SpaceSite,
   spaceStreamId,
   WS_METHODS,
 } from "@hal-c2/contracts";
@@ -30,6 +31,7 @@ import type { StatusKind } from "../store.ts";
 import { type Palette, THEME } from "../theme.ts";
 import type { AskSpec } from "./askState.ts";
 import type { PickRequest } from "./composerState.ts";
+import { loopbackHost } from "../thisMachine.ts";
 import { wrapWords } from "./settingsSections.ts";
 import { chunk, styled, type StyledText } from "./styledText.ts";
 
@@ -83,6 +85,8 @@ export interface SpaceControllerOptions {
   readonly menu: (spec: PickRequest) => void;
   /** Put text on the clipboard; false when the terminal cannot. */
   readonly copy?: (text: string) => boolean;
+  /** The address this client reached the MC at; a site link is made on it. */
+  readonly origin?: string;
   /** Read a Markdown file on this machine to import it. */
   readonly readLocalText?: (path: string) => Promise<string>;
   /** The threads a page can be made from, and whose names show on agents' edits. */
@@ -119,8 +123,12 @@ const HINTS: Record<TuiSpaceView, string> = {
   spaces: "  ⏎ open · n new · e rename · d delete · esc close",
   pages:
     "  ⏎ open · n new · a subpage · e rename · m move · d trash · r restore · D delete · i import · t from thread · esc back",
-  page: "  ⏎ edit · n add · c comment · x tick/resolve · m move · d delete · l link · y copy · esc back",
+  page: "  ⏎ edit · n add · c comment · x tick/resolve · m move · d delete · l link · y copy · p publish · esc back",
 };
+
+export const SITE_BEHIND_HINT = "Edited since it was published · p publishes again";
+export const SITE_LOCAL_ONLY_HINT =
+  "Only this machine can open this link · P publishes over Tailscale";
 
 const BLOCK_KINDS: ReadonlyArray<{ readonly kind: SpaceBlockKind; readonly label: string }> = [
   { kind: "paragraph", label: "Paragraph" },
@@ -212,6 +220,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     (entitiesOf(space, "block") as unknown as SpaceBlock[])
       .filter((block) => block.pageId === id)
       .toSorted(byOrder);
+  /** The site a page is published as, if it is. */
+  const siteOf = (id: string | null): SpaceSite | undefined =>
+    (entitiesOf(space, "site") as unknown as SpaceSite[]).find((site) => site.pageId === id);
   const commentsOf = (id: string): SpaceComment[] =>
     (entitiesOf(space, "comment") as unknown as SpaceComment[]).filter(
       (comment) => comment.pageId === id,
@@ -371,6 +382,17 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     };
   };
 
+  /** What the open page says about its site: the link, and what the reader would miss. */
+  const siteRows = (id: string): TuiSpaceRow[] => {
+    const site = siteOf(id);
+    if (!site) return [];
+    return [
+      label(`Site: ${site.url}`),
+      ...(site.behind ? [label(SITE_BEHIND_HINT)] : []),
+      ...(site.localOnly ? [label(SITE_LOCAL_ONLY_HINT)] : []),
+    ];
+  };
+
   /** Every row of the open level, before the selection is applied. */
   const allRows = (): TuiSpaceRow[] => {
     if (view === "spaces") {
@@ -392,7 +414,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const id = pageId;
     if (id === null) return [];
     const comments = commentsOf(id);
-    const rows: TuiSpaceRow[] = [];
+    const rows: TuiSpaceRow[] = siteRows(id);
     for (const block of blocksOf(id)) {
       rows.push(...blockRows(block));
       for (const comment of comments.filter((entry) => entry.blockId === block.id)) {
@@ -440,7 +462,9 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     const page = pageById(pageId);
     const from = page?.sourceThreadId ? ` · from ${threadTitle(page.sourceThreadId)}` : "";
     const bin = page && !isLive(page) ? " · in the trash" : "";
-    return `page · ${page?.title ?? ""}${from}${bin}`;
+    const site = siteOf(pageId);
+    const published = site ? (site.behind ? " · published, behind" : " · published") : "";
+    return `page · ${page?.title ?? ""}${from}${bin}${published}`;
   };
 
   const feedState = (): { status: TuiSpaceState["status"]; message: string } => {
@@ -999,6 +1023,62 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     });
   };
 
+  const publishSite = (tailscale: boolean) => {
+    const page = pageInView();
+    if (page === null) {
+      options.status("Open or select a page to publish it as a site.", "info");
+      return;
+    }
+    const title = pageById(page)?.title ?? "the page";
+    // A link made on loopback is no use to anyone else, so the address that reached
+    // this MC goes along, as for a pairing link. Tailscale names its own.
+    const origin = options.origin ?? "";
+    const reached = origin !== "" && !loopbackHost(new URL(origin).hostname);
+    void send<{ site: SpaceSite }>(WS_METHODS.spacePagePublish, {
+      spaceId,
+      pageId: page,
+      ...(tailscale ? { tailscale: true } : reached ? { baseUrl: origin } : {}),
+    }).then((result) => {
+      if (result) options.status(`Published “${title}” at ${result.site.url}`, "info");
+    });
+  };
+
+  const copySiteLink = () => {
+    const site = siteOf(pageInView());
+    if (!site) {
+      options.status("This page is not published.", "info");
+      return;
+    }
+    if (options.copy?.(site.url) === true) options.status("Site link copied.", "info");
+    else options.status("This terminal cannot reach the clipboard.", "warning");
+  };
+
+  const unpublishSite = () => {
+    const page = pageInView();
+    if (!siteOf(page)) {
+      options.status("This page is not published.", "info");
+      return;
+    }
+    void send(WS_METHODS.spacePageUnpublish, { spaceId, pageId: page }).then((result) => {
+      if (result) options.status("Unpublished: the link no longer opens.", "info");
+    });
+  };
+
+  /** The palette's way to what p, P, Y and u do on the page in view. */
+  const siteCommands = (): Array<{ title: string; action: string }> => {
+    const site = siteOf(pageInView());
+    return [
+      { title: site ? "Publish again" : "Publish as a site", action: "space.publish" },
+      { title: "Publish over Tailscale", action: "space.publishTailscale" },
+      ...(site
+        ? [
+            { title: "Copy site link", action: "space.copySiteLink" },
+            { title: "Unpublish", action: "space.unpublish" },
+          ]
+        : []),
+    ];
+  };
+
   const importMarkdown = () => {
     const id = spaceId;
     if (view !== "pages" || id === null) return;
@@ -1117,6 +1197,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     "space.move": inView(moveEntry),
     "space.link": inView(link),
     "space.export": inView(exportMarkdown),
+    "space.publish": inView(() => publishSite(false)),
+    "space.publishTailscale": inView(() => publishSite(true)),
+    "space.copySiteLink": inView(copySiteLink),
+    "space.unpublish": inView(unpublishSite),
     "space.import": inView(importMarkdown),
     "space.fromThread": inView(fromThread),
     "space.select": (payload) => {
@@ -1163,6 +1247,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Import a Markdown file as a page", action: "space.import" },
           { title: "Write a page from a thread", action: "space.fromThread" },
           { title: "Copy page as Markdown", action: "space.export" },
+          ...siteCommands(),
         );
       } else {
         entries.push(
@@ -1175,6 +1260,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           { title: "Link a subpage", action: "space.link" },
           { title: "Copy page as Markdown", action: "space.export" },
           { title: "Restore page from the trash", action: "space.restore" },
+          ...siteCommands(),
         );
       }
       return entries;

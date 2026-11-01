@@ -7,7 +7,6 @@
 #   apps/server-ex/lib/hal_c2/space/sites.ex
 #   apps/server-ex/lib/hal_c2/web.ex (the address a link is made from, as for pairing links)
 
-@backlog-tui
 Feature: A page published as a site
   The user publishes a page and gets a link. Anyone who can reach the MC's address opens
   the link in an ordinary browser and reads the page as a plain HTML page, without pairing

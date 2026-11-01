@@ -130,6 +130,8 @@ export interface HostOptions {
   readonly log: (message: string) => void;
   /** Clock for snooze partitioning; tests pin it. */
   readonly now?: () => string;
+  /** The address this client reached the MC at; a site link is made on it. */
+  readonly origin?: string;
   /** Put text on the system clipboard; false when the terminal cannot (OSC 52). */
   readonly copyToClipboard?: (text: string) => boolean;
   /** `VISUAL` / `EDITOR` for Ctrl+G (default: the process environment). */
@@ -760,6 +762,7 @@ export function createHost(options: HostOptions): Host {
     ask: (spec) => ask.ask(spec),
     menu: (spec) => composer!.pick(spec),
     copy: (text) => options.copyToClipboard?.(text) === true,
+    ...(options.origin ? { origin: options.origin } : {}),
     readLocalText:
       options.readLocalText ??
       ((path) => NodeFSP.readFile(path.replace(/^~(?=$|\/)/, home), "utf8")),
