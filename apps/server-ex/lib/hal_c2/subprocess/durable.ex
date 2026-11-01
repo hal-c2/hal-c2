@@ -61,6 +61,7 @@ defmodule HalC2.Subprocess.Durable do
   # It needs two stale looks in a row: a machine waking from sleep can run the watcher
   # before the helper has touched `alive`. It is in the group it signals, so it ignores
   # TERM to live to send the KILL, and only KILL stops it.
+  # `kill -s`, because dash reads `kill -TERM -- -1` as a bad pid.
   @shim ~S"""
   exec </dev/null >/dev/null 2>&1
   dir=$1; wait_minutes=$2; err=$3; shift 3
@@ -78,9 +79,9 @@ defmodule HalC2.Subprocess.Durable do
         stale=0
       fi
       if [ "$stale" -ge 2 ]; then
-        kill -TERM -- "-$shim" 2>/dev/null
+        kill -s TERM -- "-$shim" 2>/dev/null
         sleep 5
-        kill -KILL -- "-$shim" 2>/dev/null
+        kill -s KILL -- "-$shim" 2>/dev/null
         exit 0
       fi
     done
