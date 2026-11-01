@@ -3,7 +3,9 @@ defmodule HalC2.Search do
   Thread search (`orchestration.searchThreads`): finished user and assistant
   messages whose text contains the query, one match per active thread, preferring
   what the user wrote. Messages are indexed in `HalC2.Store` as they finish, with whether
-  a person typed them; threads an older MC wrote are read once at startup (`backfill/0`).
+  a person typed them. What did not pass through a stream is read whole: an import's thread
+  when it lands (`index_thread/2`), and at startup what an older MC or an import with no MC
+  running wrote (`backfill/0`).
   """
 
   alias HalC2.{Store, StreamState}
@@ -28,31 +30,45 @@ defmodule HalC2.Search do
     :ok
   end
 
-  @doc "Indexes every thread's messages once, for logs an older MC wrote."
+  @doc "Indexes every thread's messages, for what an older MC or an offline import wrote."
   def backfill do
     path = Store.path()
 
     if not read?() do
-      for %{id: id, kind: "thread"} <- Store.list_streams(path) do
-        state = StreamState.load(path, id)
-        thread = StreamState.get(state, "thread")[id]
+      for %{id: id, kind: "thread"} <- Store.list_streams(path),
+          do: index_thread(id, StreamState.load(path, id))
 
-        entries =
-          for message <- StreamState.list(state, "message"),
-              entry = entry(message["id"], message, thread),
-              do: entry
-
-        if entries != [], do: Store.index_messages(id, entries)
-      end
-
+      :ok = Store.forget_untyped_messages()
       Store.put_meta(@read, "1")
     end
 
     :ok
   end
 
-  @doc "Whether the index says who typed every message, so turns can be counted from it."
-  def read?, do: Store.meta(Store.path(), @read) == "1"
+  @doc "Has the next start read every thread again, after an import with no MC running."
+  def read_again, do: Store.delete_meta(@read)
+
+  @doc "Indexes all of a thread's messages from its loaded `state`, as an import needs."
+  def index_thread(id, state) do
+    thread = StreamState.get(state, "thread")[id]
+
+    entries =
+      for message <- StreamState.list(state, "message"),
+          entry = entry(message["id"], message, thread),
+          do: entry
+
+    if entries != [], do: Store.index_messages(id, entries)
+    :ok
+  end
+
+  @doc """
+  Whether the index says who typed every message, so turns can be counted from it. An older
+  MC run on this store since it was read leaves messages that do not say, so it is read again.
+  """
+  def read? do
+    path = Store.path()
+    Store.meta(path, @read) == "1" and not Store.untyped_messages?(path)
+  end
 
   defp entry(id, nil, _thread), do: {id, :deleted}
 

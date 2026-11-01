@@ -102,6 +102,46 @@ defmodule HalC2.Steps.Space.Visualize do
     context
   end
 
+  step "an older MC has run on this store since it read them", context do
+    # Its rows say nothing of who typed them, one of them a message since deleted.
+    Store.put_meta("test.flush", "1")
+    {:ok, db} = Exqlite.Sqlite3.open(Store.path())
+    :ok = Exqlite.Sqlite3.execute(db, "PRAGMA busy_timeout = 5000")
+
+    :ok =
+      Exqlite.Sqlite3.execute(db, """
+      UPDATE messages SET typed = NULL;
+      INSERT INTO messages (stream, id, role, text, created_at)
+        SELECT stream, 'since-deleted', 'user', 'gone', created_at FROM messages LIMIT 1;
+      """)
+
+    :ok = Exqlite.Sqlite3.close(db)
+    context
+  end
+
+  step "a thread of {string} moved to another MC", %{args: [project]} = context do
+    context = World.create_thread(context, "Moved away", project)
+    moved = World.thread(context, "Moved away")
+
+    context
+    |> World.put_entity("Moved away", "thread", moved["id"], %{
+      "s" => Map.put(moved, "movedTo", "elsewhere")
+    })
+    |> tap(fn _ -> Store.put_meta("test.flush", "1") end)
+  end
+
+  step "the MC counts {int} turn(s) for {string}", %{args: [count, title]} = context do
+    id = context.t3.ids[title]
+    Store.put_meta("test.flush", "1")
+
+    assert [{^id, _day, ^count}] =
+             Store.path()
+             |> Store.typed_messages_since("2000-01-01")
+             |> Enum.filter(&(elem(&1, 0) == id))
+
+    context
+  end
+
   step "the MC has read its older threads", context do
     :ok = HalC2.Search.backfill()
     context

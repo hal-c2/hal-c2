@@ -45,7 +45,8 @@ defmodule HalC2.StorePropTest do
 
   # streams: id => %{kind: "thread" | "project", events: [event] oldest first}
   # shell: id => {kind, row}
-  # messages: stream id => %{message id => {role, text, created_at, typed?}}
+  # messages: stream id => %{message id => {role, text, created_at, typed?}}, typed? nil
+  # on one only an older MC wrote.
   # clock numbers message creation times, which search orders by.
   def initial_state,
     do: %{
@@ -92,7 +93,8 @@ defmodule HalC2.StorePropTest do
           [stream_id(), integer(0, max(state.seq, 1)), oneof(["thread", "project"]), entity()]}},
         {1, {:call, __MODULE__, :list_shell, []}},
         {3, {:call, __MODULE__, :search_messages, [needle(), integer(1, 6)]}},
-        {2, {:call, __MODULE__, :typed_messages_since, []}}
+        {2, {:call, __MODULE__, :typed_messages_since, []}},
+        {1, {:call, __MODULE__, :untyped_messages?, []}}
       ] ++
         if(mode == :restarting,
           do: [],
@@ -105,7 +107,11 @@ defmodule HalC2.StorePropTest do
         if(mode == :sequential,
           do: [
             {1, {:call, __MODULE__, :restart, []}},
-            {1, {:call, __MODULE__, :stalled_append, [batches(state), at()]}}
+            {1, {:call, __MODULE__, :stalled_append, [batches(state), at()]}},
+            {1,
+             {:call, __MODULE__, :older_mc_indexes,
+              [stream_id(), oneof(["m1", "m2", "m3"]), text(), state.clock]}},
+            {1, {:call, __MODULE__, :forget_untyped_messages, []}}
           ],
           else: []
         )
@@ -215,6 +221,35 @@ defmodule HalC2.StorePropTest do
     end
   end
 
+  # An older MC's upsert does not name `typed`, so what a row said of it stays.
+  def next_state(state, _result, {:call, _, :older_mc_indexes, [id, mid, text, clock]}) do
+    state = %{state | clock: clock + 1}
+
+    if known?(state, id) do
+      messages = Map.get(state.messages, id, %{})
+
+      typed? =
+        case messages do
+          %{^mid => {_, _, _, typed?}} -> typed?
+          _ -> nil
+        end
+
+      row = {"user", text, created_at(clock, id, mid), typed?}
+      %{state | messages: Map.put(state.messages, id, Map.put(messages, mid, row))}
+    else
+      state
+    end
+  end
+
+  def next_state(state, _result, {:call, _, :forget_untyped_messages, []}) do
+    kept =
+      Map.new(state.messages, fn {id, messages} ->
+        {id, Map.reject(messages, fn {_, row} -> elem(row, 3) == nil end)}
+      end)
+
+    %{state | messages: kept}
+  end
+
   def next_state(state, _result, {:call, _, :put_meta, [key, value]}),
     do: put_in(state.meta[key], value)
 
@@ -292,6 +327,13 @@ defmodule HalC2.StorePropTest do
 
     Map.new(result, fn {id, day, count} -> {{id, day}, count} end) == expected and
       length(result) == map_size(expected)
+  end
+
+  def postcondition(state, {:call, _, :untyped_messages?, []}, result) do
+    result ==
+      Enum.any?(state.messages, fn {_, messages} ->
+        Enum.any?(messages, fn {_, row} -> elem(row, 3) == nil end)
+      end)
   end
 
   def postcondition(state, {:call, _, :meta, [key]}, result), do: result == state.meta[key]
@@ -430,6 +472,27 @@ defmodule HalC2.StorePropTest do
   end
 
   def typed_messages_since, do: Store.typed_messages_since(Store.home_path(), "2026")
+  def untyped_messages?, do: Store.untyped_messages?(Store.home_path())
+  def forget_untyped_messages, do: Store.forget_untyped_messages()
+
+  # Another connection, as an older MC would be, writing what it writes.
+  def older_mc_indexes(id, mid, text, clock) do
+    {:ok, db} = Exqlite.Sqlite3.open(Store.home_path())
+    :ok = Exqlite.Sqlite3.execute(db, "PRAGMA busy_timeout = 5000")
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(db, """
+      INSERT INTO messages (stream, id, role, text, created_at)
+      SELECT key, ?1, 'user', ?2, ?3 FROM streams WHERE id = ?4
+      ON CONFLICT(stream, id) DO UPDATE SET
+        role = excluded.role, text = excluded.text, created_at = excluded.created_at
+      """)
+
+    :ok = Exqlite.Sqlite3.bind(stmt, [mid, text, created_at(clock, id, mid), id])
+    :done = Exqlite.Sqlite3.step(db, stmt)
+    :ok = Exqlite.Sqlite3.release(db, stmt)
+    :ok = Exqlite.Sqlite3.close(db)
+  end
 
   def put_meta(key, value), do: Store.put_meta(key, value)
   def meta(key), do: Store.meta(Store.home_path(), key)

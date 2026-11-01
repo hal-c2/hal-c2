@@ -22,6 +22,7 @@ defmodule Mix.Tasks.HalC2.Import do
     {:ok, _} = HalC2.Store.start_link(path: HalC2.Store.home_path())
 
     {us, {:ok, report}} = :timer.tc(fn -> HalC2.Import.V2.run(Path.expand(source)) end)
+    :ok = HalC2.Search.read_again()
 
     Mix.shell().info("""
     Imported #{report.streams} streams in #{div(us, 1000)} ms into #{home}

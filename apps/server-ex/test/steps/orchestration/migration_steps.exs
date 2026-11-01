@@ -270,6 +270,18 @@ defmodule HalC2.Steps.Orchestration.Migration do
   # the import folds them (`HalC2.Import.V1Thread`) into a thread whose messages sit
   # outside any run.
 
+  step "the MC counts {int} turn(s) for the imported thread {string}",
+       %{args: [count, id]} = context do
+    HalC2.Store.put_meta("test.flush", "1")
+
+    assert [{^id, _day, ^count}] =
+             HalC2.Store.path()
+             |> HalC2.Store.typed_messages_since("2000-01-01")
+             |> Enum.filter(&(elem(&1, 0) == id))
+
+    context
+  end
+
   step "the snapshot holds a thread logged by the version 1 orchestrator", context do
     image = %{"type" => "image", "id" => "img-1", "name" => "cart.png", "mimeType" => "image/png"}
 

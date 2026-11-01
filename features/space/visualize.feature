@@ -192,6 +192,28 @@ Feature: Charts on a page
       And the user asks for "/visualize weekly turns" on the page "Status"
       Then the chart holds the turns the MC counted
 
+    Scenario: Going back to an older MC and returning reads its threads again
+      Given this MC's threads took turns this week
+      And an older MC has run on this store since it read them
+      And text generation charts the request from the MC's threads and invents the values
+      When the user asks for "/visualize weekly turns" on the page "Status"
+      Then the user is told no chart was drawn
+      When the MC has read its older threads
+      And the user asks for "/visualize weekly turns" on the page "Status"
+      Then the chart holds the turns the MC counted
+
+    Scenario: A thread imported while the MC runs is counted
+      Given a T3 Code install on this machine holds the threads "Alpha" and "Beta"
+      When the user imports "Alpha" from that install
+      Then the MC counts 1 turn for "Alpha"
+
+    Scenario: A thread that moved away is no longer one of this MC's
+      Given this MC's threads took turns this week
+      And a thread of "shop" moved to another MC
+      And text generation charts the request from the dataset "threads_by_project"
+      When the user asks for "/visualize it" on the page "Status"
+      Then the chart holds one thread for "shop"
+
     Scenario: A worker is not one of the threads counted
       Given this MC's threads took turns this week
       And a worker took turns on this MC

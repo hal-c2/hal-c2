@@ -313,6 +313,7 @@ defmodule HalC2.StoreTest do
     :ok =
       Sqlite3.execute(db, """
       DROP INDEX messages_typed;
+      DROP INDEX messages_untyped;
       ALTER TABLE messages DROP COLUMN typed;
       INSERT INTO messages (stream, id, role, text, created_at)
         SELECT key, 'm1', 'user', 'old', '2026-01-01T09:00:00Z' FROM streams;
@@ -323,10 +324,12 @@ defmodule HalC2.StoreTest do
 
     assert Store.typed_messages_since(path, "2026-01-01") == []
     assert [{"t1", "user", "old", _}] = Store.search_messages(path, "%old%", 10)
+    assert Store.untyped_messages?(path)
 
     Store.index_messages("t1", [{"m1", "user", "old", "2026-01-01T09:00:00Z", true}])
     _ = :sys.get_state(Store)
     assert Store.typed_messages_since(path, "2026-01-01") == [{"t1", "2026-01-01", 1}]
+    refute Store.untyped_messages?(path)
   end
 
   test "the meta entries under a prefix are read in one go, and only those", %{path: path} do

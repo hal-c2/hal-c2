@@ -28,6 +28,13 @@ Feature: Bringing history over from the Node server
     And the operator is told how many streams, events and bytes went in and were kept
 
   @mc
+  Scenario: History imported after the MC read its threads is still read
+    Given the MC has read its older threads
+    When the operator imports the snapshot into an MC
+    And the MC has read its older threads
+    Then the MC counts 1 turn for the imported thread "t1"
+
+  @mc
   Scenario: The source is never written
     When the operator imports the snapshot into an MC
     Then the snapshot is opened read-only and is unchanged afterwards

@@ -638,6 +638,7 @@ defmodule HalC2.ThreadArchive do
       Streams.flush_shell(id)
     else
       {:ok, _} = Store.append([{:thread, id, changes}])
+      :ok = HalC2.Search.index_thread(id, StreamState.load(Store.path(), id))
       HalC2.Projection.rebuild(id)
     end
 
@@ -688,6 +689,7 @@ defmodule HalC2.ThreadArchive do
     # Provider sessions from an earlier install do not come along: the next message hands
     # the conversation over.
     loaded = StreamState.load(Store.path(), id)
+    :ok = HalC2.Search.index_thread(id, loaded)
 
     native =
       for pt <- StreamState.list(loaded, "provider-thread"),
