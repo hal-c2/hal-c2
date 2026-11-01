@@ -24,6 +24,7 @@ qt_add_qml_module(hal_c2_mobile
     SpaceDeckView.qml
     SpaceListRow.qml
     SpacePageView.qml
+    SpaceImagesView.qml
     SpacePagesView.qml
     SpaceScreen.qml
     SpaceSheet.qml

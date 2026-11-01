@@ -1,5 +1,5 @@
 # Sources:
-#   https://chatgpt.com/features/space/ (sites, images, Slack, scheduled pages, applets)
+#   https://chatgpt.com/features/space/ (sites, Slack, scheduled pages, applets)
 #   spaces-feature-bdd-tests branch, features/space/ (the prototype; read for ideas only):
 #     slides-sites-and-images.feature (sites and images), self-updating-pages-and-schedules.feature,
 #     living-pages-and-visualizations.feature, collaboration-agents-and-dots.feature
@@ -12,11 +12,6 @@ Feature: Spaces beyond Pages
   Scenario: The user publishes a page as a site
     When the user publishes the page "Roadmap" as a site
     Then the site shows the page as it is now
-
-  @mc @shared
-  Scenario: The user keeps images in a Space
-    When the user generates an image for the page "Roadmap"
-    Then the image is kept in the Space and shown on the page
 
   @mc @shared
   Scenario: A Space talks to a Slack channel

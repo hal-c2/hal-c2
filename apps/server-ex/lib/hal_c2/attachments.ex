@@ -74,6 +74,9 @@ defmodule HalC2.Attachments do
     end
   end
 
+  @doc "The largest image an upload may be, in bytes."
+  def max_image_bytes, do: @max_image_bytes
+
   @doc "Stores an upload's bytes on this MC, if its signed token is valid."
   def store(token, body) do
     with {:ok, %{"kind" => "attachment-upload"} = claims} <- verify(token),
@@ -474,6 +477,13 @@ defmodule HalC2.Attachments do
       file ->
         {:ok, file, resource["mimeType"] || MIME.from_path(file),
          resource["fileName"] || Path.basename(file)}
+    end
+  end
+
+  defp resolve(%{"_tag" => "space-image", "spaceId" => space_id, "imageId" => id} = resource) do
+    case HalC2.Space.image_file(space_id, id) do
+      {:ok, file, mime, name} -> {:ok, file, mime, name}
+      :error -> error("AssetAttachmentNotFoundError", resource, "The image was not found.")
     end
   end
 

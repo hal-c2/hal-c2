@@ -327,6 +327,13 @@ import {
   SpaceBlockUpdateInput,
   SpaceCommentAddInput,
   SpaceCommentRef,
+  SpaceImageAddInput,
+  SpaceImageDeleteResult,
+  SpaceImageGenerateInput,
+  SpaceImageGenerationError,
+  SpaceImageProvidersResult,
+  SpaceImageRef,
+  SpaceImageResult,
   SpaceCommentResult,
   SpaceCreateInput,
   SpaceDeckCreateFromPageInput,
@@ -549,6 +556,12 @@ export const WS_METHODS = {
   spaceSlideUpdate: "space.slide.update",
   spaceSlideMove: "space.slide.move",
   spaceSlideDelete: "space.slide.delete",
+  spaceImageAdd: "space.image.add",
+  spaceImageGenerate: "space.image.generate",
+  spaceImageTrash: "space.image.trash",
+  spaceImageRestore: "space.image.restore",
+  spaceImageDelete: "space.image.delete",
+  spaceImageProviders: "space.image.providers",
 
   // The cluster of this person's machines (MCs only)
   clusterStatus: "cluster.status",
@@ -1961,6 +1974,42 @@ const WsSpaceSlideDeleteRpc = Rpc.make(WS_METHODS.spaceSlideDelete, {
   error: SpaceRpcError,
 });
 
+const WsSpaceImageAddRpc = Rpc.make(WS_METHODS.spaceImageAdd, {
+  payload: SpaceImageAddInput,
+  success: SpaceImageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageGenerateRpc = Rpc.make(WS_METHODS.spaceImageGenerate, {
+  payload: SpaceImageGenerateInput,
+  success: SpaceImageResult,
+  error: Schema.Union([SpaceError, SpaceImageGenerationError, EnvironmentAuthorizationError]),
+});
+
+const WsSpaceImageTrashRpc = Rpc.make(WS_METHODS.spaceImageTrash, {
+  payload: SpaceImageRef,
+  success: SpaceImageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageRestoreRpc = Rpc.make(WS_METHODS.spaceImageRestore, {
+  payload: SpaceImageRef,
+  success: SpaceImageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageDeleteRpc = Rpc.make(WS_METHODS.spaceImageDelete, {
+  payload: SpaceImageRef,
+  success: SpaceImageDeleteResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageProvidersRpc = Rpc.make(WS_METHODS.spaceImageProviders, {
+  payload: Schema.Struct({}),
+  success: SpaceImageProvidersResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2071,6 +2120,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpaceSlideUpdateRpc,
   WsSpaceSlideMoveRpc,
   WsSpaceSlideDeleteRpc,
+  WsSpaceImageAddRpc,
+  WsSpaceImageGenerateRpc,
+  WsSpaceImageTrashRpc,
+  WsSpaceImageRestoreRpc,
+  WsSpaceImageDeleteRpc,
+  WsSpaceImageProvidersRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerReportDesktopUpdateStatusRpc,

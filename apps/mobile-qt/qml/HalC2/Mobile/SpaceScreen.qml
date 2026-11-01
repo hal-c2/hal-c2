@@ -2,12 +2,13 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls.Material
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import HalC2.Shell
 import HalC2.Bricks
 
 // The Spaces in the phone layout, one step at a time: the list of Spaces, a
-// Space's pages and decks, a page, its comments, a deck. Everything shown is SpaceController's
+// Space's pages and decks or images, a page, its comments, a deck. Everything shown is SpaceController's
 // (`Spaces`) and everything done is its actions; which step shows is the only
 // thing kept here, because the controller always has a page selected, opened
 // by the user or not.
@@ -35,6 +36,8 @@ Item {
     readonly property string pageId: Spaces.pageId
     readonly property string deckId: Spaces.deckId
     readonly property string error: (Shell.state.space ?? {}).error ?? ""
+    // Signing an address for every image lasts only as long as they are on screen.
+    readonly property bool browsingImages: view === "images" && visible
 
     signal backRequested
     // The awaited page opened.
@@ -52,6 +55,8 @@ Item {
         else if (view === "comments")
             view = "page";
         else if (view === "page" || view === "deck")
+            view = "pages";
+        else if (view === "images")
             view = "pages";
         else if (view === "pages")
             view = "spaces";
@@ -77,6 +82,32 @@ Item {
         openedPageId = id;
         Shell.dispatch("space.selectPage", { pageId: id });
         view = "page";
+    }
+
+    function showImages() {
+        forceActiveFocus();
+        view = "images";
+    }
+
+    function askImageFile() {
+        imageFile.open();
+    }
+
+    function askGenerateImage() {
+        generate.open();
+    }
+
+    function imageMenu(id) {
+        sheet.ask([
+            { id: "trash", label: qsTr("Move to trash"), icon: "trash", destructive: true }
+        ], () => Shell.dispatch("space.image.trash", { imageId: id }));
+    }
+
+    function imageTrashMenu(id) {
+        sheet.ask([
+            { id: "restore", label: qsTr("Restore"), icon: "archive-restore" },
+            { id: "delete", label: qsTr("Delete for good"), icon: "trash", destructive: true }
+        ], choice => Shell.dispatch(choice === "restore" ? "space.image.restore" : "space.image.delete", { imageId: id }));
     }
 
     function showComments(blockId) {
@@ -179,10 +210,13 @@ Item {
             { id: "heading", label: qsTr("Heading"), icon: "hash" },
             { id: "checklist", label: qsTr("Checklist"), icon: "square-check" },
             { id: "callout", label: qsTr("Callout"), icon: "info" },
-            { id: "subpage_link", label: qsTr("Subpage link"), icon: "link" }
+            { id: "subpage_link", label: qsTr("Subpage link"), icon: "link" },
+            { id: "image", label: qsTr("Image"), icon: "image" }
         ], kind => {
             if (kind === "subpage_link")
                 pickLink(afterBlockId);
+            else if (kind === "image")
+                pickImage(afterBlockId);
             else
                 text.ask({ title: qsTr("New block"), placeholder: qsTr("Write something"), action: qsTr("Add"), multiline: kind === "paragraph" || kind === "callout" }, written => insert({ kind: kind, text: written }, afterBlockId));
         });
@@ -199,6 +233,24 @@ Item {
         if (rows.length === 0)
             rows.push({ id: "", label: qsTr("No subpages yet"), enabled: false });
         sheet.ask(rows, linked => insert({ kind: "subpage_link", text: rows.find(row => row.id === linked).label, linkedPageId: linked }, afterBlockId));
+    }
+
+    // The Space's images, which an image block can show, and the way to get more.
+    function pickImage(afterBlockId) {
+        const rows = [];
+        for (let row = 0; row < Spaces.images.count; ++row) {
+            const image = Spaces.images.get(row);
+            rows.push({ id: image.id, label: image.name, icon: "image" });
+        }
+        if (rows.length === 0)
+            rows.push({ id: "", label: qsTr("No images yet"), enabled: false });
+        rows.push({ id: "browse", label: qsTr("Add or generate images…"), icon: "plus" });
+        sheet.ask(rows, chosen => {
+            if (chosen === "browse")
+                showImages();
+            else
+                insert({ kind: "image", text: rows.find(row => row.id === chosen).label, imageId: chosen }, afterBlockId);
+        });
     }
 
     function insert(block, afterBlockId) {
@@ -324,7 +376,7 @@ Item {
         openedPageId = resumeStep.pageId;
         openedDeckId = resumeStep.deckId ?? "";
         const selected = resumeStep.view === "deck" ? resumeStep.deckId === deckId : resumeStep.pageId === pageId;
-        view = resumeStep.view === "pages" || selected ? resumeStep.view : "pages";
+        view = resumeStep.view === "pages" || resumeStep.view === "images" || selected ? resumeStep.view : "pages";
     }
 
     function openArrived() {
@@ -372,6 +424,11 @@ Item {
             pageExpected = false;
             deckExpected = false;
         }
+    }
+    onBrowsingImagesChanged: Shell.dispatch("space.images.show", { shown: browsingImages })
+    Component.onDestruction: {
+        if (browsingImages)
+            Shell.dispatch("space.images.show", { shown: false });
     }
 
     Component.onCompleted: {
@@ -450,6 +507,12 @@ Item {
         screen: screen
     }
 
+    SpaceImagesView {
+        anchors.fill: parent
+        visible: screen.view === "images"
+        screen: screen
+    }
+
     SpacePageView {
         anchors.fill: parent
         visible: screen.view === "page"
@@ -480,5 +543,19 @@ Item {
 
     SpacePresenter {
         anchors.fill: parent
+    }
+
+    SpaceImageDialog {
+        id: generate
+    }
+
+    // On Android the system's picker answers with a content address.
+    FileDialog {
+        id: imageFile
+
+        title: qsTr("Add an image to the Space")
+        fileMode: FileDialog.OpenFile
+        nameFilters: [qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp)"), qsTr("All files (*)")]
+        onAccepted: Shell.dispatch("space.image.addFile", { url: selectedFile.toString() })
     }
 }

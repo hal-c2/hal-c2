@@ -23,6 +23,8 @@ QtObject {
     readonly property SpaceRows decks: SpaceRows {}
     readonly property SpaceRows deckTrash: SpaceRows {}
     readonly property SpaceRows slides: SpaceRows {}
+    readonly property SpaceRows images: SpaceRows {}
+    readonly property SpaceRows imageTrash: SpaceRows {}
 
     function fill(model, rows) {
         model.clear();
@@ -42,6 +44,8 @@ QtObject {
         fill(decks, state.decks);
         fill(deckTrash, state.deckTrash);
         fill(slides, state.slides);
+        fill(images, state.images);
+        fill(imageTrash, state.imageTrash);
         page = state.page ?? {};
         pageId = page.id ?? "";
         deck = state.deck ?? {};

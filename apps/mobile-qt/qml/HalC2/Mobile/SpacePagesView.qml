@@ -30,6 +30,13 @@ ColumnLayout {
         onBackRequested: view.screen.backRequested()
 
         MobileIconButton {
+            objectName: "spaceImages"
+            iconName: "image"
+            label: qsTr("Images")
+            onClicked: view.screen.showImages()
+        }
+
+        MobileIconButton {
             objectName: "spaceImport"
             iconName: "download"
             label: qsTr("Import Markdown")

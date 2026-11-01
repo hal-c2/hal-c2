@@ -25,6 +25,9 @@ Rectangle {
     readonly property int trashCount: Spaces.trash.count + Spaces.deckTrash.count
 
     signal importRequested
+    signal imagesRequested
+    // The user went to a page: the Space's images give way to it.
+    signal pageChosen
 
     // Asks for a name for a new page, inside `parentPageId` ("" for the top),
     // and with `link` also links to it from that parent.
@@ -196,10 +199,12 @@ Rectangle {
                     hoverEnabled: true
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                     onClicked: mouse => {
-                        if (mouse.button === Qt.RightButton)
+                        if (mouse.button === Qt.RightButton) {
                             pageMenu.popup();
-                        else
+                        } else {
                             Shell.dispatch("space.selectPage", { pageId: row.model.id });
+                            sidebar.pageChosen();
+                        }
                     }
                 }
 
@@ -344,8 +349,10 @@ Rectangle {
                     onClicked: mouse => {
                         if (mouse.button === Qt.RightButton)
                             deckMenu.popup();
-                        else
+                        else {
                             Shell.dispatch("space.selectDeck", { deckId: deckRow.model.id });
+                            sidebar.pageChosen();
+                        }
                     }
                 }
 
@@ -406,6 +413,16 @@ Rectangle {
         }
 
         ShellButton {
+            objectName: "spaceImages"
+            Layout.fillWidth: true
+            subtle: true
+            iconName: "image"
+            enabled: Spaces.spaceId !== ""
+            text: Spaces.images.count > 0 ? qsTr("Images (%1)").arg(Spaces.images.count) : qsTr("Images")
+            onClicked: sidebar.imagesRequested()
+        }
+
+        ShellButton {
             objectName: "spaceTrash"
             Layout.fillWidth: true
             subtle: true
@@ -447,7 +464,10 @@ Rectangle {
 
                     MouseArea {
                         anchors.fill: parent
-                        onClicked: Shell.dispatch("space.selectPage", { pageId: trashed.model.id })
+                        onClicked: {
+                            Shell.dispatch("space.selectPage", { pageId: trashed.model.id });
+                            sidebar.pageChosen();
+                        }
                     }
                 }
 
@@ -503,7 +523,10 @@ Rectangle {
 
                     MouseArea {
                         anchors.fill: parent
-                        onClicked: Shell.dispatch("space.selectDeck", { deckId: trashedDeck.model.id })
+                        onClicked: {
+                            Shell.dispatch("space.selectDeck", { deckId: trashedDeck.model.id });
+                            sidebar.pageChosen();
+                        }
                     }
                 }
 

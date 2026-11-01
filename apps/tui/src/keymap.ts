@@ -175,6 +175,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
       },
       { keys: "p", description: "Spaces: present a deck", chords: ["p"] },
       {
+        keys: "v",
+        description: "Spaces: the Space's images (n generates one, i adds a file)",
+        chords: ["v"],
+      },
+      {
         keys: "Tab · ^Enter",
         description: "Add project: browse ⇄ edit · run the action",
         chords: ["tab", "ctrl+return"],
@@ -392,6 +397,7 @@ export const KEYMAP_LAYERS = {
     s: "space.newDeck",
     "shift+s": "space.deckFromPage",
     p: "space.present",
+    v: "space.images",
     "ctrl+k": "palette.open",
     "ctrl+p": "space.close",
   },
