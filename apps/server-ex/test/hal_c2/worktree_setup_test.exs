@@ -715,10 +715,10 @@ defmodule HalC2.WorktreeSetupTest do
     assert_receive {:hal_c2_worktree_setup, ^thread_id, nil}, 5_000
   end
 
-  test "a hot reload keeps a setup running through it working" do
+  test "a hot reload keeps a setup running through it working, not retryable" do
     setup = %{snapshot: %{"phase" => "running"}}
 
-    {:ok, %{setups: %{"t" => %{superseded: false}}}} =
+    {:ok, %{setups: %{"t" => %{superseded: true}}}} =
       HalC2.WorktreeSetup.code_change(nil, %{setups: %{"t" => setup}, watchers: %{}}, nil)
   end
 

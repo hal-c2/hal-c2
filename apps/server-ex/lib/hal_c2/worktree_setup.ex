@@ -351,8 +351,11 @@ defmodule HalC2.WorktreeSetup do
           entry
       end)
 
+    # One from before retries has no launch to run again, so it ends like any other.
     setups =
-      Map.new(state.setups, fn {id, setup} -> {id, Map.put_new(setup, :superseded, false)} end)
+      Map.new(state.setups, fn {id, setup} ->
+        {id, Map.put_new(setup, :superseded, not is_map_key(setup, :launch))}
+      end)
 
     {:ok, %{state | watchers: watchers, setups: setups}}
   end
