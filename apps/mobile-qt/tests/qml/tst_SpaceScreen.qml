@@ -467,6 +467,7 @@ Item {
             editor.text = "More to say";
             screen.stepBack();
             const update = dispatched("space.slide.update")[0];
+            compare(update.spaceId, "s1");
             compare(update.slideId, "s2");
             compare(update.body, "More to say");
             verify(!("title" in update));

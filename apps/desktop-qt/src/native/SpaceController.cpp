@@ -968,8 +968,9 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
   } else if (action == QLatin1String("space.deck.createFromPage")) {
     call(QStringLiteral("deck.createFromPage"), {{QStringLiteral("pageId"), pageId}}, opensDeck);
   } else if (action == QLatin1String("space.deck.rename")) {
-    call(QStringLiteral("deck.rename"),
-         {{QStringLiteral("deckId"), deckId}, {QStringLiteral("title"), field(QLatin1String("title"))}});
+    QJsonObject rename = pick({"spaceId", "title"});
+    rename.insert(QStringLiteral("deckId"), deckId);
+    call(QStringLiteral("deck.rename"), rename);
   } else if (action == QLatin1String("space.deck.trash")) {
     call(QStringLiteral("deck.trash"), {{QStringLiteral("deckId"), deckId}});
   } else if (action == QLatin1String("space.deck.restore")) {

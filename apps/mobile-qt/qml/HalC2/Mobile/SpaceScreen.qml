@@ -259,7 +259,8 @@ Item {
             if (choice === "present") {
                 present(id);
             } else if (choice === "rename") {
-                text.ask({ title: qsTr("Rename deck"), placeholder: qsTr("Title"), text: title, action: qsTr("Rename") }, renamed => Shell.dispatch("space.deck.rename", { deckId: id, title: renamed }));
+                const space = Spaces.spaceId;
+                text.ask({ title: qsTr("Rename deck"), placeholder: qsTr("Title"), text: title, action: qsTr("Rename") }, renamed => Shell.dispatch("space.deck.rename", { spaceId: space, deckId: id, title: renamed }));
             } else {
                 Shell.dispatch("space.deck.trash", { deckId: id });
                 view = "pages";

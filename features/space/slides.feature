@@ -140,6 +140,14 @@ Feature: Slide decks in a Space
       Then the slide "One" shows the line "Up"
       And the slide "One" shows the line "Down"
 
+  @desktop
+  Rule: Writing a deck's title in place
+
+    Scenario: A title being written reaches its deck after the Space changes
+      Given the deck "Pitch"
+      When the title "Keynote" written for the deck "Pitch" lands once the Space "Lab" is on show
+      Then the decks of "Research" are "Keynote"
+
   @mc @desktop @mobile @tui
   Rule: Trash
 

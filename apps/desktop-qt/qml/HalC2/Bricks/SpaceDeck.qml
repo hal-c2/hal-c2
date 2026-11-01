@@ -25,13 +25,14 @@ Rectangle {
         Shell.dispatch("space.slide.insert", payload);
     }
 
-    // The title field keeps focus when another deck is picked: what was being
-    // written goes to its own deck, and the field moves on to the new one.
+    // The title field keeps focus when another deck or Space is picked: what was
+    // being written goes to its own deck, and the field moves on to the new one.
     onCurrentChanged: {
         const id = current.id ?? "";
         if (id !== titleField.deckId) {
             titleField.commit();
             titleField.deckId = id;
+            titleField.spaceId = Spaces.spaceId;
             titleField.show(current.title);
         } else if (!titleField.activeFocus) {
             titleField.show(current.title);
@@ -71,6 +72,7 @@ Rectangle {
                 id: titleField
 
                 property string deckId: ""
+                property string spaceId: ""
                 // The title last taken from the deck: text that differs is the user's edit.
                 property string shown: ""
 
@@ -94,7 +96,7 @@ Rectangle {
                     const title = text.trim();
                     if (deckId !== "" && title.length > 0 && title !== shown) {
                         shown = title;
-                        Shell.dispatch("space.deck.rename", { deckId: deckId, title: title });
+                        Shell.dispatch("space.deck.rename", { spaceId: spaceId, deckId: deckId, title: title });
                     } else {
                         show(deck.current.title);
                     }
@@ -206,15 +208,19 @@ Rectangle {
                 required property string title
                 required property string body
                 readonly property string slideId: model.id
+                // The Space it was made in: an edit written as the Space changes still goes there.
+                property string spaceId: ""
+
+                Component.onCompleted: spaceId = Spaces.spaceId
 
                 function writeTitle() {
                     if (slideTitle.text !== card.title && !deck.trashed)
-                        Shell.dispatch("space.slide.update", { slideId: card.slideId, title: slideTitle.text });
+                        Shell.dispatch("space.slide.update", { spaceId: card.spaceId, slideId: card.slideId, title: slideTitle.text });
                 }
 
                 function writeBody() {
                     if (slideBody.text !== card.body && !deck.trashed)
-                        Shell.dispatch("space.slide.update", { slideId: card.slideId, body: slideBody.text });
+                        Shell.dispatch("space.slide.update", { spaceId: card.spaceId, slideId: card.slideId, body: slideBody.text });
                 }
 
                 objectName: "spaceSlide:" + index

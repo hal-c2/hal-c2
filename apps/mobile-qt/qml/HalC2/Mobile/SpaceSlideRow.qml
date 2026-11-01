@@ -20,17 +20,21 @@ Rectangle {
     property bool readOnly: false
     readonly property string slideId: model.id
     readonly property bool editing: titleEditor.activeFocus || bodyEditor.activeFocus
+    // The Space it was made in: an edit written as the Space changes still goes there.
+    property string spaceId: ""
+
+    Component.onCompleted: spaceId = Spaces.spaceId
 
     signal menuRequested
 
     function writeTitle() {
         if (!readOnly && titleEditor.text !== title)
-            Shell.dispatch("space.slide.update", { slideId: slideId, title: titleEditor.text });
+            Shell.dispatch("space.slide.update", { spaceId: spaceId, slideId: slideId, title: titleEditor.text });
     }
 
     function writeBody() {
         if (!readOnly && bodyEditor.text !== body)
-            Shell.dispatch("space.slide.update", { slideId: slideId, body: bodyEditor.text });
+            Shell.dispatch("space.slide.update", { spaceId: spaceId, slideId: slideId, body: bodyEditor.text });
     }
 
     // What the MC wrote shows unless the user is writing there.

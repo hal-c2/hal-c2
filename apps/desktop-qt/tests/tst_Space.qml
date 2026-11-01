@@ -89,7 +89,7 @@ Item {
             title.forceActiveFocus();
             title.text = "First";
             title.focus = false;
-            compare(root.dispatched("space.slide.update")[0], { slideId: "s1", title: "First" });
+            compare(root.dispatched("space.slide.update")[0], { spaceId: "space-1", slideId: "s1", title: "First" });
         }
 
         function test_a_title_being_written_goes_to_its_own_deck() {
@@ -98,10 +98,20 @@ Item {
             title.forceActiveFocus();
             title.text = "Keynote";
             Spaces.deck = { id: "deck-2", title: "Other", trashed: false };
-            compare(root.dispatched("space.deck.rename"), [{ deckId: "deck-1", title: "Keynote" }]);
+            compare(root.dispatched("space.deck.rename"), [{ spaceId: "space-1", deckId: "deck-1", title: "Keynote" }]);
             compare(title.text, "Other");
             title.focus = false;
             compare(root.dispatched("space.deck.rename").length, 1);
+        }
+
+        function test_a_title_being_written_goes_to_the_space_its_deck_is_in() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            title.text = "Keynote";
+            Spaces.spaceId = "space-2";
+            Spaces.deck = {};
+            compare(root.dispatched("space.deck.rename"), [{ spaceId: "space-1", deckId: "deck-1", title: "Keynote" }]);
         }
 
         function test_picking_another_deck_renames_nothing_when_nothing_was_written() {
@@ -123,6 +133,16 @@ Item {
             title.focus = false;
             compare(root.dispatched("space.deck.rename"), []);
             compare(title.text, "Theirs");
+        }
+
+        function test_a_slide_being_written_goes_to_the_space_it_is_in() {
+            const view = pitch({});
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.text = "First";
+            Spaces.load({ spaceId: "space-2", spaceName: "Lab", spaces: [], pages: [], blocks: [], slides: [] });
+            tryVerify(() => root.dispatched("space.slide.update").length === 1);
+            compare(root.dispatched("space.slide.update")[0], { spaceId: "space-1", slideId: "s1", title: "First" });
         }
 
         function test_a_slide_goes_below_the_one_the_user_added_from() {

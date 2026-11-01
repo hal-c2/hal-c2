@@ -1510,6 +1510,13 @@ const Steps steps([] {
   step(QStringLiteral("the user renames the deck %1 to %1").arg(q), [](World& world, const Captures& c, const Table&) {
     actOnDeck(world, c[0], QStringLiteral("space.deck.rename"), {{QStringLiteral("title"), c[1]}});
   });
+  step(QStringLiteral("the title %1 written for the deck %1 lands once the Space %1 is on show").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString deck = idOfDeck(world, c[1]);
+    const QString space = current(world);
+    givenSpace(world, c[2]);
+    look(world, idOfSpace(world, c[2]));
+    act(world, QStringLiteral("space.deck.rename"), {{QStringLiteral("spaceId"), space}, {QStringLiteral("deckId"), deck}, {QStringLiteral("title"), c[0]}});
+  });
   step(QStringLiteral("the user moves the deck %1 to the trash").arg(q), [](World& world, const Captures& c, const Table&) {
     actOnDeck(world, c[0], QStringLiteral("space.deck.trash"), {});
   });
