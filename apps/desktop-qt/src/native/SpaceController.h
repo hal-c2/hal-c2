@@ -239,10 +239,10 @@ public:
   bool handle(const QString& action, const QVariant& payload) override;
 
   QString error() const { return m_error; }
-  // The phone's Space screen selects a page before showing it: the user is on
-  // it only while the screen says so (`space.pageShown`). On the desktop the
-  // selected page is the one on show.
-  void setPageShownBySteps() { m_pageShownBySteps = true; }
+  // The phone layout's Space screen selects a page before showing it: the user
+  // is on it only while the screen says so (`space.pageShown`). On the desktop
+  // and in the phone's wide layout the selected page is the one on show.
+  void setPageShownBySteps(bool bySteps);
 
 private:
   void setOpen(bool open);

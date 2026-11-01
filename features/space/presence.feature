@@ -83,6 +83,18 @@ Feature: Who else is on a page
       When the user opens the Space "Research"
       Then the user is no longer on the page "Roadmap"
 
+    Scenario: In the wide layout the page on show is being on it
+      Given the page "Roadmap" is open on the device "Phone"
+      And the user opens the Space "Research"
+      When the user unfolds the phone
+      Then the page shows the user also on "Phone"
+
+    Scenario: Folded back to the list of pages, the phone is no longer on the page
+      Given the user opens the Space "Research"
+      And the user unfolds the phone
+      When the window narrows to a phone's width
+      Then the user is no longer on the page "Roadmap"
+
   @mc
   Rule: The MC tracks viewers per page and writes nothing down
 
@@ -169,6 +181,12 @@ Feature: Who else is on a page
       And the page "Roadmap" is open on the device "Sierra's phone"
       When the user opens the page "Roadmap"
       Then the page shows "Sierra" as someone other than the user
+
+    Scenario: A device connected to another MC of the cluster is shown
+      Given a second MC in the cluster
+      And the page "Roadmap" is open on the device "Phone" through the second MC
+      When the user opens the page "Roadmap"
+      Then the page shows the user also on "Phone"
 
     Scenario: The user sees where others are on the page
       Given the page "Roadmap" is open on the device "Phone"

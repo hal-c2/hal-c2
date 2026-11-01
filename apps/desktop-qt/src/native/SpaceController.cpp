@@ -577,6 +577,11 @@ void SpaceController::setOpen(bool open) {
   followViewers();
 }
 
+void SpaceController::setPageShownBySteps(bool bySteps) {
+  m_pageShownBySteps = bySteps;
+  followViewers();
+}
+
 void SpaceController::follow() {
   if (!m_client->isReady() || m_client->environment().isEmpty()) return;
   // Asking lists Personal into an MC that has no Space yet.
