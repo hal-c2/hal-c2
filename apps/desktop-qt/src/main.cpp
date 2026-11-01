@@ -14,6 +14,7 @@
 #include "LayoutController.h"
 #include "AlertController.h"
 #include "BackendProcess.h"
+#include "DesktopUpdateSystem.h"
 #include "LicensesController.h"
 #include "LocalFolderModel.h"
 #include "LocalTranscriber.h"
@@ -265,6 +266,11 @@ int main(int argc, char* argv[]) {
     bridge.publish(QStringLiteral("backendError"), message);
   });
   QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &BackendProcess::stop);
+  // An update stops the MC while it installs, and starts it again when the
+  // install fails.
+  desktopUpdatePlatform().stopMc = [&backend] { backend.stop(); };
+  desktopUpdatePlatform().startMc = [&backend] { backend.start(); };
+  desktopUpdatePlatform().quit = [&app] { QMetaObject::invokeMethod(&app, &QCoreApplication::quit, Qt::QueuedConnection); };
 
   backend.start();
 

@@ -56,11 +56,25 @@ public:
                                                     {QStringLiteral("updatedAt"), QStringLiteral("2026-09-23T08:00:00Z")}});
     mc.onRaw(QStringLiteral("/.well-known/hal-c2/environment"), [this](QTcpSocket* socket, const QByteArray&) {
       if (!isMc) return answer(socket, 404, "<html>Not found</html>", "text/html");
+      QJsonObject descriptor{{QStringLiteral("environmentId"), mc.environmentId},
+                             {QStringLiteral("label"), mc.label},
+                             {QStringLiteral("orchestrationProtocolVersion"), protocol},
+                             {QStringLiteral("mc"), mc.name}};
+      const QJsonObject more = mc.descriptors.value(mc.environmentId);
+      for (auto it = more.begin(); it != more.end(); ++it) descriptor.insert(it.key(), it.value());
+      answer(socket, 200, json(descriptor));
+    });
+    // What a session may do (`/api/auth/session`): its scopes.
+    mc.onRaw(QStringLiteral("/api/auth/session"), [this](QTcpSocket* socket, const QByteArray& head) {
+      static const QRegularExpression bearer(QStringLiteral("authorization: Bearer ([^\\r\\n]+)"), QRegularExpression::CaseInsensitiveOption);
+      if (!sessions.contains(bearer.match(QString::fromUtf8(head)).captured(1))) {
+        return answer(socket, 401, json({{QStringLiteral("authenticated"), false}}));
+      }
       answer(socket, 200,
-             json({{QStringLiteral("environmentId"), mc.environmentId},
-                   {QStringLiteral("label"), mc.label},
-                   {QStringLiteral("orchestrationProtocolVersion"), protocol},
-                   {QStringLiteral("mc"), mc.name}}));
+             json({{QStringLiteral("authenticated"), true},
+                   {QStringLiteral("auth"), QJsonObject{{QStringLiteral("policy"), QStringLiteral("remote-reachable")}}},
+                   {QStringLiteral("scopes"), QJsonArray::fromStringList(scopes)},
+                   {QStringLiteral("sessionMethod"), QStringLiteral("bearer-session-token")}}));
     });
     mc.onRaw(QStringLiteral("/oauth/token"), [this](QTcpSocket* socket, const QByteArray& head) {
       static const QRegularExpression contentLength(QStringLiteral("content-length: *(\\d+)"), QRegularExpression::CaseInsensitiveOption);
@@ -120,6 +134,8 @@ public:
   QStringList tickets;
   // Every form `/oauth/token` was sent.
   QList<QUrlQuery> exchanges;
+  // What a session it sold may do.
+  QStringList scopes{QStringLiteral("orchestration:read"), QStringLiteral("orchestration:operate")};
 
 private:
   int m_links = 0;
