@@ -359,9 +359,19 @@ defmodule HalC2.WorktreeSetup do
   end
 
   # A cancelled setup leaves nothing behind: no worktree, no workspace on the thread.
-  # The run ends whatever becomes of the removal.
+  # Each step goes ahead whatever became of the one before it.
   defp cleanup(thread_id, setup) do
-    attempt(thread_id, fn -> remove_workspace(thread_id, setup) end)
+    if path = setup.snapshot["worktreePath"] || setup.claimed do
+      attempt(thread_id, fn ->
+        HalC2.Terminal.close(%{
+          "threadId" => thread_id,
+          "terminalId" => "setup",
+          "deleteHistory" => true
+        })
+      end)
+
+      attempt(thread_id, fn -> remove_workspace(thread_id, setup, path) end)
+    end
 
     attempt(thread_id, fn -> Orchestration.fail_prepared(thread_id, setup.run_id, "cancelled") end)
   end
@@ -374,35 +384,25 @@ defmodule HalC2.WorktreeSetup do
     :exit, reason -> Logger.warning("worktree cleanup for #{thread_id}: #{inspect(reason)}")
   end
 
-  defp remove_workspace(thread_id, setup) do
-    path = setup.snapshot["worktreePath"] || setup.claimed
+  defp remove_workspace(thread_id, setup, path) do
+    # A checkout cut short leaves what git started still writing, and the worktree
+    # locked as "initializing". A claimed folder was free, so all of it is the setup's.
+    HalC2.Git.stop_children(path)
 
-    if path do
-      HalC2.Terminal.close(%{
-        "threadId" => thread_id,
-        "terminalId" => "setup",
-        "deleteHistory" => true
-      })
-
-      # A checkout cut short leaves what git started still writing, and the worktree
-      # locked as "initializing". A claimed folder was free, so all of it is the setup's.
-      HalC2.Git.stop_children(path)
-
-      if setup.claimed do
-        branches = Enum.reject([setup.new_branch, setup.renaming], &is_nil/1)
-        HalC2.Vcs.clear_worktree(setup.root, path, branches)
-      else
-        HalC2.Git.run(setup.root, ["worktree", "unlock", path])
-        HalC2.Vcs.remove_worktree(%{"cwd" => setup.root, "path" => path, "force" => true})
-      end
-
-      Orchestration.dispatch(%{
-        "type" => "thread.metadata.update",
-        "threadId" => thread_id,
-        "worktreePath" => nil,
-        "branch" => nil
-      })
+    if setup.claimed do
+      branches = Enum.reject([setup.new_branch, setup.renaming], &is_nil/1)
+      HalC2.Vcs.clear_worktree(setup.root, path, branches)
+    else
+      HalC2.Git.run(setup.root, ["worktree", "unlock", path])
+      HalC2.Vcs.remove_worktree(%{"cwd" => setup.root, "path" => path, "force" => true})
     end
+
+    Orchestration.dispatch(%{
+      "type" => "thread.metadata.update",
+      "threadId" => thread_id,
+      "worktreePath" => nil,
+      "branch" => nil
+    })
   end
 
   # Gone when this returns, so nothing it would write lands after the cancel's own.

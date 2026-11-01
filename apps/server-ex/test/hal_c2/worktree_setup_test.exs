@@ -500,7 +500,7 @@ defmodule HalC2.WorktreeSetupTest do
     assert {:ok, %{"cancelled" => true}} = Task.await(cancel, 30_000)
   end
 
-  test "a cleanup that exits still ends the run", %{repo: repo} do
+  test "a terminal that will not close does not stop the cleanup", %{repo: repo} do
     project(repo, [
       %{
         "id" => "slow",
@@ -513,14 +513,18 @@ defmodule HalC2.WorktreeSetupTest do
     ])
 
     thread_id = launch("list the files")
-    await_running_script(thread_id)
+    %{"worktreePath" => path} = await_running_script(thread_id)
 
     # A terminal that does not answer makes closing it exit.
     [{terminal, _}] = Registry.lookup(HalC2.Terminal.Registry, {thread_id, "setup"})
     :sys.suspend(terminal)
     assert {:ok, %{"cancelled" => true}} = HalC2.WorktreeSetup.cancel(%{"threadId" => thread_id})
     await_phase(thread_id, "cancelled")
-    assert [%{"status" => "cancelled"}] = StreamState.list(current(thread_id), "run")
+    refute File.exists?(path)
+
+    state = current(thread_id)
+    assert [%{"status" => "cancelled"}] = StreamState.list(state, "run")
+    assert %{"worktreePath" => nil} = StreamState.get(state, "thread")[thread_id]
   end
 
   # Commits `file` on a new `branch` off main, leaving the checkout on main.
