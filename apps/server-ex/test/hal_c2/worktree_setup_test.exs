@@ -13,14 +13,6 @@ defmodule HalC2.WorktreeSetupTest do
     {_, 0} = git.(~w(init -q -b main))
     {_, 0} = git.(~w(-c user.email=t@t -c user.name=t commit -q --allow-empty -m init))
 
-    # The machine's own shell startup is not this test's: it may take longer than a wait here.
-    shell = System.get_env("SHELL")
-    System.put_env("SHELL", "/bin/sh")
-
-    on_exit(fn ->
-      if shell, do: System.put_env("SHELL", shell), else: System.delete_env("SHELL")
-    end)
-
     Application.put_env(:hal_c2, :home, Path.join(dir, "home"))
     Application.put_env(:hal_c2, :codex_command, ["python3", "-u", @fake_codex])
     on_exit(fn -> Application.delete_env(:hal_c2, :codex_command) end)
