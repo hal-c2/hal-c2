@@ -9,8 +9,9 @@
 Feature: An agent in a page
   From an open page the user asks an agent to do something to it. The agent runs in an
   ordinary thread, visible in the sidebar, in the project the user last worked in and on
-  the model a new thread there would use, or the one last used if none is set. Its edits are the hal_c2_page_* tools' edits: they land live on every
-  client and page history names the thread. A page has one such agent at a time, and
+  the model a new thread there would use, or the one last used if none is set. Its edits
+  are the hal_c2_page_* tools' edits: they land live on every client and page history
+  names the thread. A page has one such agent at a time, and
   the page says what it is doing. Every edit is in the page's history, so asking needs
   no approval of its own beyond what the provider's mode requires, and anything the
   agent did can be undone by restoring a version.
@@ -103,6 +104,22 @@ Feature: An agent in a page
       Then the agent's thread of "Roadmap" is in the project "shop"
       And the agent's thread of "Roadmap" uses the model of "Work"
       And the agent's thread of "Roadmap" has a message naming "Roadmap", "Research" and the page tools
+
+    Scenario Outline: A thread started in the background is not where the user last worked
+      Given <starter> started a newer thread in the project "lab"
+      When the user asks "tidy this and wait" on the page "Roadmap"
+      Then the agent's thread of "Roadmap" is in the project "shop"
+      And the agent's thread of "Roadmap" uses the model of "Work"
+
+      Examples:
+        | starter  |
+        | a plugin |
+        | an agent |
+
+    Scenario: A project's model on a turned off provider gives way
+      Given the project "shop" overrides its model with one on a turned off provider
+      When the user asks "tidy this and wait" on the page "Roadmap"
+      Then the agent's thread of "Roadmap" uses the model of "Work"
 
     Scenario: The word @agent is not part of what is asked
       When the user asks "@agent   tidy this and wait" on the page "Roadmap"

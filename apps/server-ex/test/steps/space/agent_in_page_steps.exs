@@ -161,6 +161,26 @@ defmodule HalC2.Steps.Space.AgentInPage do
     context
   end
 
+  step "a plugin started a newer thread in the project {string}",
+       %{args: [project]} = context do
+    background_thread(context, project, "system", plugin: %{"id" => "p", "kind" => "k"})
+  end
+
+  step "an agent started a newer thread in the project {string}",
+       %{args: [project]} = context do
+    background_thread(context, project, "agent", [])
+  end
+
+  step "the project {string} overrides its model with one on a turned off provider",
+       %{args: [project]} = context do
+    off = %{"instanceId" => "off", "model" => "gpt-off"}
+
+    World.update_settings(context, %{
+      "providerInstances" => %{"off" => %{"driver" => "codex", "enabled" => false}},
+      "projectSettingsOverrides" => %{project => %{"defaultModelSelection" => off}}
+    })
+  end
+
   step "the MC goes down before an agent's thread can start", context do
     World.put_app_env(:page_agent_launch, fn _ -> {:ok, %{}} end)
     context
@@ -318,6 +338,32 @@ defmodule HalC2.Steps.Space.AgentInPage do
   # --- helpers ------------------------------------------------------------------------
 
   defp thread(title), do: "agent of #{title}"
+
+  # Newer than "Work", and on a model of its own for the ask to leave alone.
+  defp background_thread(context, project, created_by, opts) do
+    context = World.create_project(context, project)
+    id = "background-#{project}"
+
+    {:ok, _} =
+      HalC2.Orchestration.launch_thread(
+        %{
+          "commandId" => "launch-#{id}",
+          "threadId" => id,
+          "projectId" => project,
+          "title" => "In the background",
+          "modelSelection" => %{"instanceId" => "codex", "model" => "gpt-background"},
+          "runtimeMode" => "full-access",
+          "interactionMode" => "default",
+          "workspaceStrategy" => %{"type" => "root"},
+          "createdBy" => created_by,
+          "creationSource" => "server"
+        },
+        opts
+      )
+
+    World.await_row(id, &(&1["createdBy"] == created_by))
+    context
+  end
 
   defp launches?, do: Application.get_env(:hal_c2, :page_agent_launch) == nil
 

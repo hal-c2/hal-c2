@@ -147,28 +147,36 @@ defmodule HalC2.Space.PageAgent do
   end
 
   # Settles the page's entity if `thread_id` is still its agent and has nothing left to do.
+  # A thread stays marked for its page after it settled, and `edited?/3` folds the Space's
+  # log, so a thread no longer this page's agent stops at the first read.
   defp settle(space_id, page_id, thread_id) do
-    case ended(thread_id) do
-      nil ->
-        :ok
+    with true <- agent_of?(space_id, page_id, thread_id),
+         {ended, error} <- ended(thread_id) do
+      edited = edited?(space_id, page_id, thread_id)
 
-      {ended, error} ->
-        edited = edited?(space_id, page_id, thread_id)
+      Space.transact(space_id, fn state ->
+        case entity(state, page_id) do
+          %{"threadId" => ^thread_id, "status" => status} = agent when status in @active ->
+            change(agent, %{
+              "status" => if(status == "stopping", do: "stopped", else: ended),
+              "edited" => edited,
+              "error" => if(status == "stopping", do: nil, else: error),
+              "endedAt" => Entities.now()
+            })
 
-        Space.transact(space_id, fn state ->
-          case entity(state, page_id) do
-            %{"threadId" => ^thread_id, "status" => status} = agent when status in @active ->
-              change(agent, %{
-                "status" => if(status == "stopping", do: "stopped", else: ended),
-                "edited" => edited,
-                "error" => if(status == "stopping", do: nil, else: error),
-                "endedAt" => Entities.now()
-              })
+          _ ->
+            {[], :ok}
+        end
+      end)
+    else
+      _ -> :ok
+    end
+  end
 
-            _ ->
-              {[], :ok}
-          end
-        end)
+  defp agent_of?(space_id, page_id, thread_id) do
+    case entity(Streams.state(Space.stream_id(space_id)), page_id) do
+      %{"threadId" => ^thread_id, "status" => status} -> status in @active
+      _ -> false
     end
   end
 
@@ -413,11 +421,12 @@ defmodule HalC2.Space.PageAgent do
 
   # --- which project and model --------------------------------------------------------
 
-  # The project of the thread worked in last, else the project made last: a page belongs
-  # to no project, and this is where the user is most likely working.
+  # The project of the thread the user worked in last, else the project made last: a page
+  # belongs to no project, and this is where the user is most likely working. What plugins
+  # and agents started in the background says nothing about that.
   defp target do
     rows = HalC2.Shell.rows() |> Enum.flat_map(&local_row/1)
-    threads = for {"thread", row} <- rows, row["deletedAt"] == nil, do: row
+    threads = for {"thread", row} <- rows, row["deletedAt"] == nil, by_user?(row), do: row
     projects = for {"project", row} <- rows, row["deletedAt"] == nil, do: row
     known = MapSet.new(projects, & &1["id"])
 
@@ -428,6 +437,8 @@ defmodule HalC2.Space.PageAgent do
       project_id -> target(project_id, Enum.find(projects, &(&1["id"] == project_id)), last)
     end
   end
+
+  defp by_user?(thread), do: thread["createdBy"] in ["user", nil]
 
   defp target(project_id, project, last) do
     settings = HalC2.Settings.for_project(project_id)
@@ -456,11 +467,17 @@ defmodule HalC2.Space.PageAgent do
     end
   end
 
+  # `settings` is already `HalC2.Settings.for_project/1`'s: the project's override is its
+  # default only if its provider is enabled.
   defp project_model(settings, project) do
-    overridden =
+    default = settings["defaultModelSelection"]
+
+    override =
       get_in(settings, ["projectSettingsOverrides", project["id"], "defaultModelSelection"])
 
-    overridden || project["defaultModelSelection"] || settings["defaultModelSelection"]
+    if default != nil and override == default,
+      do: default,
+      else: project["defaultModelSelection"] || default
   end
 
   defp first_model do
