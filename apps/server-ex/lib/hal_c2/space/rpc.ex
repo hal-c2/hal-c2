@@ -34,6 +34,14 @@ defmodule HalC2.Space.Rpc do
   defp call("page.delete", %{"spaceId" => s, "pageId" => p}),
     do: with({:ok, ids} <- Space.delete_page(s, p), do: {:ok, %{"deletedPageIds" => ids}})
 
+  defp call("page.publish", %{"spaceId" => s, "pageId" => p} = i) do
+    with {:ok, site} <- Space.publish_page(s, p, Map.take(i, ~w(baseUrl tailscale))),
+         do: {:ok, %{"site" => site}}
+  end
+
+  defp call("page.unpublish", %{"spaceId" => s, "pageId" => p}),
+    do: with({:ok, id} <- Space.unpublish_page(s, p), do: {:ok, %{"pageId" => id}})
+
   defp call("page.exportMarkdown", %{"spaceId" => s, "pageId" => p}),
     do: with({:ok, markdown} <- Space.export_markdown(s, p), do: {:ok, %{"markdown" => markdown}})
 
@@ -122,7 +130,8 @@ defmodule HalC2.Space.Rpc do
   end
 
   @methods ~w(list create rename delete page.create page.rename page.move page.trash
-    page.restore page.delete page.exportMarkdown page.importMarkdown page.createFromThread
+    page.restore page.delete page.publish page.unpublish page.exportMarkdown page.importMarkdown
+    page.createFromThread
     block.insert block.update block.setChecked block.move block.delete comment.add
     comment.resolve comment.reopen deck.create deck.createFromPage deck.rename deck.trash
     deck.restore deck.delete slide.insert slide.update slide.move slide.delete image.add
@@ -144,7 +153,8 @@ defmodule HalC2.Space.Rpc do
     not_found: "notFound",
     trashed: "trashed",
     not_empty: "notEmpty",
-    cycle: "cycle"
+    cycle: "cycle",
+    unavailable: "unavailable"
   }
 
   defp reply({:ok, _} = ok), do: ok

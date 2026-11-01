@@ -21,7 +21,12 @@ defmodule HalC2.SpacePropTest do
     the same value, or resolving a resolved comment (reopening an open one) writes none;
   - a deck made from a page has a slide per section of the page as it was, and no later
     change of the page reaches it; a deck in the trash takes no edits, and its slides go
-    with it when it is deleted for good.
+    with it when it is deleted for good;
+  - a published page's site comes down when the page is deleted or hidden in the trash
+    and stays down when it is restored; its snapshot changes only on publishing, and it
+    is behind exactly when publishing again would change it;
+  - a site's link opens while it stands and never again after, and publishing again
+    keeps a standing site's link;
   - an image has its file exactly as long as its entity exists, whatever shows it: a page
     or block going takes no image with it, and an image going leaves its blocks in place;
     a trashed image cannot be placed, and only a trashed image can be deleted.
@@ -60,6 +65,8 @@ defmodule HalC2.SpacePropTest do
         Process.put(:space, space["id"])
         File.mkdir_p!(HalC2.Attachments.dir())
         Process.put(:names, %{})
+        Process.delete(:links)
+        Process.delete(:tokens)
         {history, state, result} = run_commands(__MODULE__, cmds)
         HalC2.Prop.stop_services()
 
@@ -76,6 +83,7 @@ defmodule HalC2.SpacePropTest do
   # blocks: name => %{page, kind, checked, text}; comments: name => %{block, resolved};
   # decks: name => %{title, trashed}; deck_order: deck => its slide names in order;
   # slides: name => %{deck, title, body}. A slide a deck is made with is "<deck>.<n>".
+  # sites: page => %{shown, behind}, `shown` being what `view/2` said when it published.
   # images: name => %{trashed}.
   def initial_state do
     %{
@@ -86,6 +94,7 @@ defmodule HalC2.SpacePropTest do
       decks: %{},
       deck_order: %{},
       slides: %{},
+      sites: %{},
       images: %{}
     }
   end
@@ -107,6 +116,8 @@ defmodule HalC2.SpacePropTest do
             {2, {:call, __MODULE__, :trash_page, [elements(pages)]}},
             {3, {:call, __MODULE__, :restore_page, [in_trash(s, pages)]}},
             {1, {:call, __MODULE__, :delete_page, [in_trash(s, pages)]}},
+            {3, {:call, __MODULE__, :publish_page, [elements(pages)]}},
+            {1, {:call, __MODULE__, :unpublish_page, [elements(pages)]}},
             {4,
              {:call, __MODULE__, :insert_block,
               [elements(@blocks), elements(pages), kind(), boolean(), after_block(blocks)]}}
@@ -217,7 +228,7 @@ defmodule HalC2.SpacePropTest do
     do: not Map.has_key?(s.comments, name) and Map.has_key?(s.blocks, block)
 
   def precondition(s, {:call, _, cmd, [name]})
-      when cmd in [:trash_page, :restore_page, :delete_page],
+      when cmd in [:trash_page, :restore_page, :delete_page, :publish_page, :unpublish_page],
       do: Map.has_key?(s.pages, name)
 
   def precondition(s, {:call, _, cmd, [name | _]})
@@ -262,11 +273,41 @@ defmodule HalC2.SpacePropTest do
 
   def precondition(_s, {:call, _, :restart, []}), do: true
 
-  def next_state(s, _result, {:call, _, cmd, args}), do: elem(step(s, cmd, args), 1)
+  def next_state(s, _result, {:call, _, cmd, args}), do: elem(with_sites(s, cmd, args), 1)
 
   def postcondition(s, {:call, _, cmd, args}, {reply, events, snapshot, ordered}) do
-    {expected, next, writes} = step(s, cmd, args)
-    reply == expected and events in List.wrap(writes) and snapshot == snapshot(next) and ordered
+    {expected, next, writes} = with_sites(s, cmd, args)
+    reply == expected and events in writes and snapshot == snapshot(next) and ordered
+  end
+
+  # A command as `step/3` says, then its sites following what it did to their pages,
+  # each change one more event.
+  defp with_sites(s, cmd, args) do
+    {reply, next, writes} = step(s, cmd, args)
+
+    {next, followed} =
+      Enum.reduce(next.sites, {next, 0}, fn {page, site}, {s, n} ->
+        cond do
+          not (Map.has_key?(s.pages, page) and live?(s, page)) ->
+            {%{s | sites: Map.delete(s.sites, page)}, n + 1}
+
+          view(s, page) != site.shown != site.behind ->
+            {put_in(s.sites[page].behind, not site.behind), n + 1}
+
+          true ->
+            {s, n}
+        end
+      end)
+
+    {reply, next, Enum.map(List.wrap(writes), &(&1 + followed))}
+  end
+
+  # What a site of `page` shows of its blocks.
+  defp view(s, page) do
+    for name <- Map.get(s.order, page, []) do
+      block = s.blocks[name]
+      {block.kind, block.text, if(block.kind == "checklist", do: block.checked == true)}
+    end
   end
 
   # What a command replies, the model after it, and how many events it writes (a list
@@ -533,6 +574,26 @@ defmodule HalC2.SpacePropTest do
     end
   end
 
+  defp step(s, :publish_page, [name]) do
+    cond do
+      not live?(s, name) ->
+        {:trashed, s, 0}
+
+      # In the same instant, with nothing changed, publishing again has nothing to write.
+      Map.has_key?(s.sites, name) and view(s, name) == s.sites[name].shown ->
+        {:ok, put_in(s.sites[name].behind, false), [0, 1]}
+
+      true ->
+        {:ok, put_in(s.sites[name], %{shown: view(s, name), behind: false}), 1}
+    end
+  end
+
+  defp step(s, :unpublish_page, [name]) do
+    if Map.has_key?(s.sites, name),
+      do: {:ok, %{s | sites: Map.delete(s.sites, name)}, 1},
+      else: {:ok, s, 0}
+  end
+
   defp step(s, :add_image, [name]),
     do: {:ok, put_in(s.images[name], %{trashed: false}), 1}
 
@@ -634,7 +695,17 @@ defmodule HalC2.SpacePropTest do
   end
 
   defp snapshot(s) do
-    Map.take(s, [:pages, :order, :blocks, :comments, :decks, :deck_order, :slides, :images])
+    Map.take(s, [
+      :pages,
+      :order,
+      :blocks,
+      :comments,
+      :decks,
+      :deck_order,
+      :slides,
+      :sites,
+      :images
+    ])
   end
 
   # --- the system under test ------------------------------------------------------
@@ -646,6 +717,11 @@ defmodule HalC2.SpacePropTest do
   def trash_page(name), do: act(&Space.trash_page(&1, id(name)))
   def restore_page(name), do: act(&Space.restore_page(&1, id(name)))
   def delete_page(name), do: act(&Space.delete_page(&1, id(name)))
+
+  def publish_page(name),
+    do: act(&Space.publish_page(&1, id(name), %{"baseUrl" => "http://mc.test:1"}))
+
+  def unpublish_page(name), do: act(&Space.unpublish_page(&1, id(name)))
 
   def insert_block(name, page, kind, checked, after_id) do
     spec = %{"kind" => kind, "text" => name, "checked" => checked}
@@ -771,6 +847,7 @@ defmodule HalC2.SpacePropTest do
     name = Map.new(names, fn {name, id} -> {id, name} end)
     name = &Map.get(name, &1, &1)
     pages = StreamState.list(state, "page")
+    sites = StreamState.list(state, "site")
 
     order =
       Map.new(pages, fn page ->
@@ -816,6 +893,14 @@ defmodule HalC2.SpacePropTest do
           {name.(slide["id"]),
            %{deck: name.(slide["deckId"]), title: slide["title"], body: slide["body"]}}
         end),
+      sites:
+        Map.new(sites, fn site ->
+          {name.(site["pageId"]),
+           %{
+             behind: site["behind"],
+             shown: Enum.map(site["snapshot"]["blocks"], &{&1["kind"], &1["text"], &1["checked"]})
+           }}
+        end),
       images:
         Map.new(StreamState.list(state, "image"), fn image ->
           {name.(image["id"]), %{trashed: image["trashedAt"] != nil}}
@@ -835,7 +920,23 @@ defmodule HalC2.SpacePropTest do
     kept =
       StreamState.get(state, "image") |> Map.keys() |> Enum.map(&ImageFile.path/1) |> Enum.sort()
 
-    {snapshot, ordered and files == kept}
+    {snapshot,
+     ordered and files == kept and links_hold?(Map.new(sites, &{&1["pageId"], &1["id"]}))}
+  end
+
+  # Every standing site opens at the link it has had since it was published, and a link
+  # that came down stays down, whatever came after.
+  defp links_hold?(links) do
+    space = Process.get(:space)
+    standing = Map.values(links)
+    gone = MapSet.difference(Process.get(:tokens, MapSet.new()), MapSet.new(standing))
+    earlier = Process.get(:links, %{})
+    Process.put(:links, links)
+    Process.put(:tokens, MapSet.union(gone, MapSet.new(standing)))
+
+    Enum.all?(links, fn {page, token} -> Map.get(earlier, page, token) == token end) and
+      Enum.all?(standing, &Space.site(space, &1)) and
+      not Enum.any?(gone, &Space.site(space, &1))
   end
 
   defp id(name) when is_binary(name), do: Map.fetch!(Process.get(:names), name)

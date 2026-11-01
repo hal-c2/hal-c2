@@ -4,11 +4,11 @@ defmodule HalC2.Space do
   (`features/space/`).
 
   The `spaces` stream indexes the Spaces, one `space` entity each, and each Space's
-  own `space:<id>` stream holds its `page`, `block`, `comment`, `image`, `deck` and
+  own `space:<id>` stream holds its `page`, `block`, `comment`, `image`, `site`, `deck` and
   `slide` entities. Every change is a `HalC2.Streams.transact/3` on one of them, so the
   event log is the only record and clients follow both streams through the stream shape.
-  The decisions live in `HalC2.Space.Pages`, `HalC2.Space.Blocks`, `HalC2.Space.Images`
-  and `HalC2.Space.Decks`.
+  The decisions live in `HalC2.Space.Pages`, `HalC2.Space.Blocks`, `HalC2.Space.Images`,
+  `HalC2.Space.Sites` and `HalC2.Space.Decks`.
 
   An image's bytes are the one thing not in the log: they are a file
   (`HalC2.Space.ImageFile`), written before the entity that names it and removed after
@@ -21,7 +21,7 @@ defmodule HalC2.Space do
 
   alias HalC2.Orchestration.Entities
   alias HalC2.{Patch, StreamState, Streams}
-  alias HalC2.Space.{Blocks, Decks, ImageFile, ImageGeneration, Images, Markdown, Pages}
+  alias HalC2.Space.{Blocks, Decks, ImageFile, ImageGeneration, Images, Markdown, Pages, Sites}
 
   @index "spaces"
 
@@ -139,11 +139,20 @@ defmodule HalC2.Space do
   def transact(space_id, fun) when is_binary(space_id) do
     Streams.transact(stream_id(space_id), :space, fn state ->
       # The index is asked from inside the Space's stream: a delete decides there too.
-      if Streams.get(@index, "space", space_id), do: fun.(state), else: {[], no_space(space_id)}
+      if Streams.get(@index, "space", space_id),
+        do: fun.(state) |> and_sites(state),
+        else: {[], no_space(space_id)}
     end)
   end
 
   def transact(_space_id, _fun), do: {:error, :invalid, "spaceId is required."}
+
+  # Whatever a command does to pages, their sites follow in the same step.
+  defp and_sites({changes, reply}, state) do
+    if Sites.affected?(state, changes),
+      do: {changes ++ Sites.follow(state, with_changes(state, changes), changes), reply},
+      else: {changes, reply}
+  end
 
   @doc "The Space's stream state, for reads."
   def state(space_id) do
@@ -299,6 +308,29 @@ defmodule HalC2.Space do
   end
 
   # --- Markdown and threads -----------------------------------------------------------
+
+  def publish_page(space_id, page_id, where \\ %{}) do
+    # Refused first: reaching for the address can publish the MC over Tailscale.
+    with {:ok, _} <- transact(space_id, &{[], Pages.fetch_live(&1, page_id)}),
+         {:ok, reached} <- reached(where) do
+      transact(space_id, &Sites.publish(&1, page_id, reached, move: where["tailscale"] == true))
+    end
+  end
+
+  def unpublish_page(space_id, page_id), do: transact(space_id, &Sites.unpublish(&1, page_id))
+
+  @doc """
+  The site at this link: the Space's stream is only touched for a Space that exists, as
+  anyone can ask, and only this one entity is read from it.
+  """
+  def site(space_id, token) do
+    if Streams.get(@index, "space", space_id), do: Streams.get(stream_id(space_id), "site", token)
+  end
+
+  defp reached(where) do
+    with {:error, {:tailscale, message}} <- HalC2.Web.address(where),
+         do: {:error, :unavailable, message}
+  end
 
   def export_markdown(space_id, page_id) do
     with {:ok, state} <- state(space_id),

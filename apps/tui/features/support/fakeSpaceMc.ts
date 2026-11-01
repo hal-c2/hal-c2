@@ -79,6 +79,14 @@ export interface FakeSpaceMc {
   readonly summaries: Array<{ readonly threadId: string; readonly cwd: string | null }>;
   /** What the MC refused clients, newest last. */
   readonly refusals: string[];
+  /** Where a site link points; a loopback address makes it local only. */
+  siteAddress: string;
+  /** The machine's name on the tailnet, null when Tailscale is not up. */
+  tailnetName: string | null;
+  /** Whether a site link answers at the moment. */
+  readonly siteOpens: (url: string) => boolean;
+  /** The site a page is published as. */
+  readonly siteOf: (title: string) => Entity | undefined;
   /** The changes of the newest `space:<id>` transaction. */
   lastChanges: ReadonlyArray<Change>;
   /** Every watcher gets a fresh snapshot, as after a reconnection. */
@@ -228,6 +236,7 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
         ["comment", new Map()],
         ["deck", new Map()],
         ["slide", new Map()],
+        ["site", new Map()],
         ["image", new Map()],
       ]);
       content.set(spaceId, kinds);
@@ -253,19 +262,37 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     rows: streamRows(stream),
   });
 
+  /** What a site shows of its page. */
+  const siteSnapshot = (spaceId: string, entry: Entity) => ({
+    title: entry.title,
+    blocks: blocksOf(spaceId, entry.id).map(({ kind, text, checked }) => ({ kind, text, checked })),
+  });
+
+  /** A site whose page left goes down; one whose page changed falls behind. */
+  const followSites = (spaceId: string): Change[] =>
+    [...table(spaceId, "site").values()].flatMap((site): Change[] => {
+      const entry = table(spaceId, "page").get(site.pageId);
+      if (!entry || !isLive(spaceId, entry)) return [["site", site.id, { d: true }]];
+      const behind = JSON.stringify(site.snapshot) !== JSON.stringify(siteSnapshot(spaceId, entry));
+      return behind === site.behind ? [] : [["site", site.id, { s: { behind } }]];
+    });
+
   /** Apply one transaction's changes and send them to the stream's watchers as one frame. */
   const commit = (stream: string, changes: ReadonlyArray<Change>) => {
     if (changes.length === 0) return;
     const spaceId = stream === "spaces" ? null : stream.slice("space:".length);
     const at = Date.now();
-    const events = changes.map(([kind, id, patch]) => {
+    const apply = ([kind, id, patch]: Change) => {
       const entities = spaceId === null ? spaces : table(spaceId, kind);
       if (patch.d) entities.delete(id);
       else entities.set(id, { ...entities.get(id), ...patch.s });
       const seq = (seqs.get(stream) ?? 0) + 1;
       seqs.set(stream, seq);
       return [seq, kind, id, patch, at] as const;
-    });
+    };
+    const events = changes.map(apply);
+    // A site follows its page in the same transaction, as HalC2.Space.Sites does.
+    if (spaceId !== null) events.push(...followSites(spaceId).map(apply));
     if (spaceId !== null) mc.lastChanges = changes;
     for (const watcher of watchers.get(stream) ?? []) {
       watcher.onFrame({ type: "events", events: events as never });
@@ -630,6 +657,45 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
       ]);
       return { deletedPageIds: [...gone] };
     },
+    "space.page.publish": (input) => {
+      const found = livePage(input.spaceId, input.pageId);
+      const sites = table(input.spaceId, "site");
+      const existing = [...sites.values()].find((site) => site.pageId === found.id);
+      if (input.tailscale && mc.tailnetName === null) {
+        refuse("unavailable", "Tailscale cannot publish the site.");
+      }
+      const address = input.tailscale
+        ? `https://${mc.tailnetName}`
+        : (input.baseUrl ?? mc.siteAddress);
+      const id = existing?.id ?? nextId("token");
+      commit(`space:${input.spaceId}`, [
+        [
+          "site",
+          id,
+          {
+            s: {
+              id,
+              spaceId: input.spaceId,
+              pageId: found.id,
+              url: `${address}/sites/${input.spaceId}/${id}`,
+              localOnly: /\/\/(localhost|127\.)/.test(address),
+              publishedAt: now(),
+              behind: false,
+              snapshot: siteSnapshot(input.spaceId, found),
+            },
+          },
+        ],
+      ]);
+      return { site: sites.get(id) };
+    },
+    "space.page.unpublish": (input) => {
+      const found = page(input.spaceId, input.pageId);
+      const site = [...table(input.spaceId, "site").values()].find(
+        (entry) => entry.pageId === found.id,
+      );
+      if (site) commit(`space:${input.spaceId}`, [["site", site.id, { d: true }]]);
+      return { pageId: found.id };
+    },
     "space.page.exportMarkdown": (input) => {
       const found = page(input.spaceId, input.pageId);
       const titleOf = (id: string) => table(input.spaceId, "page").get(id)?.title ?? null;
@@ -991,6 +1057,13 @@ export function fakeSpaceMc(options: { readonly cwdOf: (threadId: string) => str
     imageGeneration: { kind: "unavailable", message: "No image generation provider is set up." },
     summaries: [],
     refusals: [],
+    siteAddress: "http://192.168.1.20:3773",
+    tailnetName: null,
+    siteOpens: (url) => all("site").some((site) => site.url === url),
+    siteOf: (title) => {
+      const found = named("page", "title", title);
+      return all("site").find((site) => site.pageId === found.id);
+    },
     lastChanges: [],
     restart: () => {
       for (const [stream, set] of watchers) {
