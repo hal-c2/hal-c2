@@ -388,12 +388,13 @@ defmodule HalC2.SettingsPropTest do
   def postcondition(
         state,
         {:call, _, :read, _},
-        {{doc, version}, via_settings, alive?, hal_c2_subagents?}
+        {{doc, version}, via_settings, alive?, hal_c2_subagents?, unreadable?}
       ) do
     alive? and doc == state.doc and version == state.version and
       (state.parallel or
          (via_settings == state.doc and
-            hal_c2_subagents? == (state.doc["nativeSubagents"] == "hal-c2")))
+            hal_c2_subagents? == (state.doc["nativeSubagents"] == "hal-c2") and
+            unreadable? == state.held))
   end
 
   def postcondition(state, {:call, _, :saved, _}, result) do
@@ -476,7 +477,7 @@ defmodule HalC2.SettingsPropTest do
     server = Process.whereis(Settings)
 
     {Settings.get(), Settings.settings(), is_pid(server) and Process.alive?(server),
-     Settings.hal_c2_subagents?()}
+     Settings.hal_c2_subagents?(), Settings.unreadable?()}
   end
 
   def saved, do: Settings.saved()
