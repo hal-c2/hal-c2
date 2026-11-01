@@ -1,0 +1,44 @@
+name: Set up the MC
+description: Elixir, the build mc_check caches, the deps, and a git identity for test repositories.
+
+outputs:
+  cache-key:
+    description: The key mc_check saves the build under.
+    value: ${{ steps.key.outputs.key }}
+  cache-hit:
+    description: Whether the cache held exactly that key.
+    value: ${{ steps.restore.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Elixir
+      id: beam
+      uses: erlef/setup-beam@v1
+      with:
+        otp-version: "29"
+        elixir-version: "1.20.3"
+
+    - name: Cache key
+      id: key
+      shell: bash
+      run: echo "key=mc-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('apps/server-ex/mix.lock') }}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore deps, build and Maude
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          apps/server-ex/deps
+          apps/server-ex/_build
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: mc-${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-
+
+    - name: Fetch deps
+      shell: bash
+      working-directory: apps/server-ex
+      run: mix deps.get
+
+    - name: Git identity for test repositories
+      shell: bash
+      run: git config --global user.name CI && git config --global user.email ci@example.com
