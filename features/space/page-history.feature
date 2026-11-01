@@ -127,6 +127,15 @@ Feature: A page's history
       When the user asks for the versions after those
       Then 1 version comes, and there are no more
 
+  @desktop
+  Rule: Beside a deck
+
+    Scenario: Opening a deck closes the history
+      Given the user reads the version 1 back on "Roadmap"
+      When the user makes the deck "Pitch"
+      Then the history is closed
+      And no version is being read
+
   @mc
   Rule: What happens to a page's history
 
