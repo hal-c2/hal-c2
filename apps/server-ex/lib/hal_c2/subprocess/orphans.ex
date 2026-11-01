@@ -40,8 +40,8 @@ defmodule HalC2.Subprocess.Orphans do
   helper opens one on the pid, then compares the start time just read here, so a pid
   reused at any point on the way is not signalled. Its group kill is as exact from
   Linux 6.9, and before that only checks the program is still there right before it.
-  With no helper (a checkout that has not built it, a code-only upgrade from a version
-  without one) or no pidfds in the kernel, and on macOS, the external `kill` runs
+  With no helper (a checkout that has not built it) or no pidfds in the kernel, and on
+  macOS, the external `kill` runs
   instead, and a pid reused in the moment between the last read and that `kill` would
   be signalled. Nor is a program recorded before it runs: its pid is only known
   once it is spawned, so it executes — argv and all — between the spawn and its
