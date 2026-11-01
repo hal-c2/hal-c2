@@ -42,6 +42,8 @@ defmodule HalC2Plugins.CodeReview do
   @severity_aliases %{"blocking" => "high", "suggestion" => "medium", "nit" => "low"}
   # The most of a repository's REVIEW.md that goes into the prompt; a longer one is left out.
   @review_md_limit 64 * 1024
+  # How many threads a review remembers having replaced.
+  @replaced_kept 20
   @choices %{
     "activation" => ~w(automatic selective),
     "display" => ~w(page threads both),
@@ -181,7 +183,7 @@ defmodule HalC2Plugins.CodeReview do
 
   def call("discard", %{"key" => key}, _context) do
     with {:ok, review, lister} <- server({:discard, key}) do
-      if review["checkout"], do: Checkout.remove(review["root"], review["checkout"])
+      retire(review)
 
       # The review is forgotten; its thread goes with it, out of the thread list, once
       # a listing that still had it is gone.
@@ -218,8 +220,10 @@ defmodule HalC2Plugins.CodeReview do
 
   @impl HalC2.Plugins.Extension
   def agent_tools(%{thread_id: thread_id}) when is_binary(thread_id) do
-    case server({:for_thread, thread_id}) do
-      {:ok, _review} ->
+    # Offered to every thread that is or was a review's, so an agent that reports too
+    # late hears why from `call_agent_tool/3` and not that the tool does not exist.
+    case server({:review_thread?, thread_id}) do
+      true ->
         [
           %{
             "name" => @tool,
@@ -262,7 +266,7 @@ defmodule HalC2Plugins.CodeReview do
           }
         ]
 
-      _ ->
+      false ->
         []
     end
   end
@@ -534,12 +538,15 @@ defmodule HalC2Plugins.CodeReview do
     end
   end
 
+  def handle_call({:review_thread?, thread_id}, _from, state),
+    do: {:reply, by_thread(state, thread_id) != nil or replaced_by(state, thread_id) != nil, state}
+
   def handle_call({:for_thread, thread_id}, _from, state) do
     case by_thread(state, thread_id) do
       %{"status" => "published"} -> {:reply, {:error, "This review is already published."}, state}
       %{"status" => "publishing"} -> {:reply, {:error, "This review is being published."}, state}
       %{} = review -> {:reply, {:ok, review}, state}
-      nil -> {:reply, {:error, "This thread is not a code review."}, state}
+      nil -> {:reply, {:error, late_report(state, thread_id) || "This thread is not a code review."}, state}
     end
   end
 
@@ -591,7 +598,7 @@ defmodule HalC2Plugins.CodeReview do
         end
 
       _ ->
-        {:reply, {:error, "This thread is not a code review waiting for findings."}, state}
+        {:reply, {:error, late_report(state, thread_id) || "This thread is not a code review waiting for findings."}, state}
     end
   end
 
@@ -1266,10 +1273,18 @@ defmodule HalC2Plugins.CodeReview do
         do: %{"sha" => review["reviewedSha"], "status" => review["status"]},
         else: review["held"]
 
+    # The threads this review ran in before, so a late report from one is told why it
+    # was refused. The last few are enough: the agents of older ones are long stopped.
+    replaced =
+      [review["threadId"] | review["replaced"] || []]
+      |> Enum.filter(&is_binary/1)
+      |> Enum.take(@replaced_kept)
+
     review =
       Map.merge(review, %{
         "status" => "queued",
         "held" => held,
+        "replaced" => replaced,
         "trigger" => trigger,
         "following" => trigger in @asks or followed?(review),
         "previous" => previous,
@@ -1416,9 +1431,11 @@ defmodule HalC2Plugins.CodeReview do
   defp run(review, settings) do
     %{"key" => key, "threadId" => thread_id} = review
 
-    # The run before this one is over: its checkout goes, and this run gets one of
-    # its own, so no two threads share a checkout.
-    if review["checkout"], do: Checkout.remove(review["root"], review["checkout"])
+    # The run before this one is over, even if its agent has not heard: a report ends
+    # no turn, and an agent can wake again after its turn ended or across a restart. It
+    # is stopped and its checkout goes, and this run gets one of its own, so no two
+    # threads share a checkout.
+    retire(review)
 
     result =
       with {:ok, projects} <- Host.projects(@id),
@@ -1483,6 +1500,22 @@ defmodule HalC2Plugins.CodeReview do
   rescue
     e -> GenServer.cast(__MODULE__, {:start_failed, review["key"], review["threadId"], Exception.message(e)})
   end
+
+  # Stops the agent working in the review's checkout, then removes the checkout. The
+  # checkout is named for the thread it was made for (`run/2`), which may be older than
+  # the review's `threadId`. An agent that does not stop in time loses its checkout
+  # anyway: the only other way out is a checkout nothing ever removes.
+  defp retire(%{"checkout" => checkout, "root" => root}) when is_binary(checkout) do
+    try do
+      Host.stop_thread(@id, Path.basename(checkout))
+    catch
+      :exit, _ -> :ok
+    end
+
+    Checkout.remove(root, checkout)
+  end
+
+  defp retire(_review), do: :ok
 
   # Claims the checked-out commit for this machine, unless a machine connected now
   # claimed it first. The peers are asked and the claim shared under one lock
@@ -2048,6 +2081,18 @@ defmodule HalC2Plugins.CodeReview do
   defp by_thread(state, thread_id),
     do: Enum.find_value(state.reviews, fn {_, r} -> if r["threadId"] == thread_id, do: r end)
 
+  defp replaced_by(state, thread_id),
+    do: Enum.find_value(state.reviews, fn {_, r} -> if thread_id in (r["replaced"] || []), do: r end)
+
+  # What a thread hears when it reports after a newer run replaced it, or nil. Its
+  # findings stay in its own thread: they are of an older commit, and the newer run
+  # reviews everything that is still there.
+  defp late_report(state, thread_id) do
+    with %{"headSha" => sha} <- replaced_by(state, thread_id) do
+      "This review was replaced by a newer run for #{String.slice(to_string(sha), 0, 7)}; your report was not recorded. Stop here: the newer run reviews the pull request."
+    end
+  end
+
   defp changed(state) do
     save(state)
     announce(state)
@@ -2162,7 +2207,7 @@ defmodule HalC2Plugins.CodeReview do
         |> Map.values()
         |> Enum.sort_by(&{Enum.find_index(@order, fn s -> s == &1["status"] end), &1["repository"], -&1["number"]})
         |> Enum.map(fn review ->
-          review = Map.drop(review, ["root"])
+          review = Map.drop(review, ["root", "replaced"])
 
           review =
             if review["elsewhere"],

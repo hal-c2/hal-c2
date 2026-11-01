@@ -56,6 +56,28 @@ Item {
             compare(Shell.dispatchedActions[0].payload.value, 8);
         }
 
+        function test_a_typed_folder_is_saved_once_and_a_project_has_none() {
+            Shell.state = { settingsScope: root.scope({}),
+                            storageSettings: { status: "ready", projectScope: false, mode: { value: "inherit", mixed: false },
+                                               worktrees: [], artifacts: [],
+                                               temporaryFilesFolder: { value: "/mnt/a", mixed: false } } };
+            const page = createTemporaryObject(storageComponent, root);
+            const field = findChild(findChild(page, "storageTemporaryFilesFolder"), "control");
+            compare(field.text, "/mnt/a");
+            field.forceActiveFocus();
+            field.editingFinished();
+            compare(Shell.dispatchedActions.length, 0);
+            field.text = "/mnt/b";
+            field.editingFinished();
+            compare(Shell.dispatchedActions[0].action, "storageSettings.temporaryFilesFolder");
+            compare(Shell.dispatchedActions[0].payload.folder, "/mnt/b");
+
+            Shell.state = { settingsScope: root.scope({}),
+                            storageSettings: { status: "ready", projectScope: true, mode: { value: "inherit", mixed: false },
+                                               worktrees: [], artifacts: [] } };
+            verify(!findChild(page, "storageTemporaryFilesFolder").visible);
+        }
+
         function test_an_unsupported_machine_asks_for_an_update_and_offers_the_others() {
             Shell.state = { settingsScope: root.scope({}),
                             storageSettings: { status: "unsupported", projectScope: false,

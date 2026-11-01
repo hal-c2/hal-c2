@@ -23,6 +23,8 @@ defmodule HalC2.CodeReviewPropTest do
     took is not posted again, but one it refused or never got is;
   - a report with nothing to post goes back to the agent as an error, and one posted
     automatically is answered once GitHub has, with how the post went;
+  - a new run stops the thread it replaces before its checkout goes, and a report from
+    a thread the review moved past, or whose review is published, is refused;
   - turning the plugin off or restarting it calls off the checkouts and posts in flight,
     and the look for pull requests, and leaves no checkout no review points at;
   - a settings save keeps them going, and starts queued reviews when it makes room;
@@ -350,6 +352,7 @@ defmodule HalC2.CodeReviewPropTest do
       discarded: [],
       checkouts: checkouts(m),
       orphans: [],
+      unstopped: [],
       posts: Enum.sort(m.posts),
       # A plugin turned off has no process to report from; its pause is saved with the
       # reviews and shows again once it is on.
@@ -464,7 +467,11 @@ defmodule HalC2.CodeReviewPropTest do
           end
         end
 
-      _ ->
+      # A thread that was or is the review's hears why it cannot report any more.
+      %{run: run, past: past} ->
+        {m, if(k == run or k in past, do: :error)}
+
+      nil ->
         {m, nil}
     end
   end
@@ -581,14 +588,18 @@ defmodule HalC2.CodeReviewPropTest do
       comments: [],
       publish_error: false,
       seq: nil,
-      followed: false
+      followed: false,
+      past: []
     }
   end
 
   defp queue(m, key) do
+    r = m.reviews[key]
+
     review = %{
-      m.reviews[key]
+      r
       | status: :queued,
+        past: if(r.run, do: [r.run | r.past], else: r.past),
         seq: m.seq + 1,
         verdict: nil,
         comments: [],
@@ -1165,9 +1176,28 @@ defmodule HalC2.CodeReviewPropTest do
       discarded: Enum.filter(Process.get(:cr_discarded), &thread(&1)["plugin"]["listed"]),
       checkouts: length(checkout_dirs()),
       orphans: orphans(),
+      unstopped: unstopped(view),
       posts: posts(),
       problems: Process.put(:cr_problems, []) |> Enum.reverse()
     }
+  end
+
+  # The threads that lost their checkout to a newer run or a discard, and still have
+  # a turn running: a review's earlier threads, once it has a checkout of a later one.
+  defp unstopped(:off), do: []
+
+  defp unstopped(_view) do
+    reviews = GenServer.call(@server, :reviews)
+
+    for {key, tids} <- Process.get(:cr_tids),
+        %{"checkout" => checkout} when is_binary(checkout) <- [reviews[key]],
+        tid <- Enum.take_while(tids, &(&1 != Path.basename(checkout))),
+        thread(tid) != nil,
+        Enum.any?(
+          HalC2.StreamState.list(HalC2.Streams.state(tid), "run"),
+          &(&1["status"] in ~w(preparing starting running waiting))
+        ),
+        do: tid
   end
 
   defp review_view(r) do

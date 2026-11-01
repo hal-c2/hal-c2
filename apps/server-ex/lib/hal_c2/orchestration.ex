@@ -20,6 +20,8 @@ defmodule HalC2.Orchestration do
   alias HalC2.{Patch, StreamState}
   alias HalC2.Projection.{JS, PullRequests}
 
+  # How long a stopped thread's agent gets to go, after the caller has stopped waiting.
+  @thread_stop_ms 120_000
   @active_statuses ~w(preparing starting running waiting)
 
   # The built-in runtimes' registries, in the order a release visits them. One
@@ -1303,6 +1305,142 @@ defmodule HalC2.Orchestration do
     end)
   end
 
+  @doc """
+  Stops a thread the plugin started: stops the tasks delegated from it, and theirs in
+  turn, cancels its queue, interrupts whatever it is running and releases its session,
+  so nothing of its agent is left working in its workspace or coming back to it. The
+  thread stays, and a later message resumes it. Answers once that is done, `:busy` if it is not within
+  `timeout` ms (the stop goes on without the caller, for `@thread_stop_ms` in all), or
+  `{:error, message}` for a thread that is not the plugin's to stop.
+  """
+  def stop_plugin_thread(thread_id, plugin_id, timeout \\ 15_000) do
+    read = fn state ->
+      thread = StreamState.get(state, "thread")[thread_id]
+
+      cond do
+        thread == nil ->
+          {[], {:error, "unknown thread #{thread_id}"}}
+
+        get_in(thread, ["plugin", "id"]) != plugin_id ->
+          {[], {:error, "Thread #{thread_id} was not started by #{plugin_id}."}}
+
+        thread["deletedAt"] != nil or thread["movedTo"] != nil ->
+          {[], :ok}
+
+        true ->
+          {[], :stop}
+      end
+    end
+
+    case HalC2.Streams.transact(thread_id, :thread, read) do
+      :stop -> await_stop(thread_id, timeout)
+      answer -> answer
+    end
+  end
+
+  # Interrupting and releasing each wait on a runtime without a bound of their own, so
+  # they run apart from the caller, who stops waiting at the deadline.
+  defp await_stop(thread_id, timeout) do
+    deadline = System.monotonic_time(:millisecond) + @thread_stop_ms
+    {stopper, ref} = spawn_monitor(fn -> stop_thread_tree(thread_id, deadline) end)
+
+    receive do
+      {:DOWN, ^ref, :process, ^stopper, {:shutdown, {:stopped, answer}}} -> answer
+      {:DOWN, ^ref, :process, ^stopper, _} -> :busy
+    after
+      timeout ->
+        Process.demonitor(ref, [:flush])
+        :busy
+    end
+  end
+
+  # Exits with its answer once the thread and every task below it have stopped.
+  defp stop_thread_tree(thread_id, deadline) do
+    :ok = HalC2.Streams.watch(thread_id, self())
+    {answer, tasks} = stop_runs(thread_id, nil, deadline, %{})
+    tasks_stopped = Enum.all?(Map.values(tasks), &task_stopped?(&1, deadline))
+
+    exit(
+      {:shutdown, {:stopped, if(answer == :ok and not tasks_stopped, do: :busy, else: answer)}}
+    )
+  end
+
+  defp task_stopped?(ref, deadline) do
+    receive do
+      {:DOWN, ^ref, :process, _, {:shutdown, {:stopped, :ok}}} -> true
+      {:DOWN, ^ref, :process, _, _} -> false
+    after
+      max(deadline - System.monotonic_time(:millisecond), 0) -> false
+    end
+  end
+
+  # A task stops apart from the others and from this thread, so one that is stuck holds
+  # up neither. `tasks` are the task ids already being stopped.
+  defp stop_tasks(thread_id, tasks, deadline) do
+    thread_id
+    |> HalC2.Orchestration.Delegation.stop_tasks()
+    |> Enum.reduce(tasks, fn %{"id" => id, "childThreadId" => child}, tasks ->
+      Map.put_new_lazy(tasks, id, fn ->
+        {_, ref} =
+          spawn_monitor(fn ->
+            # Refused for a task that already ended, whose thread may still have tasks.
+            HalC2.Orchestration.Delegation.cancel(thread_id, id)
+            stop_thread_tree(child, deadline)
+          end)
+
+        ref
+      end)
+    end)
+  end
+
+  # A run promoted from the queue meanwhile is interrupted too; a runtime still closing
+  # its turn after the run ended answers `:busy`, and is asked again. Tasks are looked at
+  # on every pass: the turn being stopped can still delegate, or a task's wake be queued.
+  defp stop_runs(thread_id, asked, deadline, tasks) do
+    tasks = stop_tasks(thread_id, tasks, deadline)
+    runs = StreamState.list(HalC2.Streams.state(thread_id), "run")
+    active = Enum.find_value(runs, &(&1["status"] in @active_statuses && &1["id"]))
+
+    if active && active != asked do
+      dispatch(%{"type" => "run.interrupt", "threadId" => thread_id, "runId" => active})
+    end
+
+    # Read before the queue: nothing was active and nothing is queued, so nothing is left
+    # for the end of a run to start. Whatever the queue held is looked at again.
+    queued = cancel_queued(thread_id)
+    released = if active || queued, do: :busy, else: release_session(thread_id)
+    left = deadline - System.monotonic_time(:millisecond)
+
+    cond do
+      released != :busy ->
+        {released, tasks}
+
+      left <= 0 ->
+        {:busy, tasks}
+
+      true ->
+        receive do
+          {:hal_c2_stream, ^thread_id, _} -> :ok
+        after
+          min(left, 500) -> :ok
+        end
+
+        stop_runs(thread_id, active || asked, deadline, tasks)
+    end
+  end
+
+  # Whether a queued run was cancelled. A thread that refuses it, deleted or moved, starts
+  # nothing from its queue here anyway.
+  defp cancel_queued(thread_id) do
+    thread_id
+    |> HalC2.Streams.state()
+    |> queued_runs()
+    |> Enum.map(
+      &dispatch(%{"type" => "queued-run.cancel", "threadId" => thread_id, "runId" => &1["id"]})
+    )
+    |> Enum.any?(&match?({:ok, _}, &1))
+  end
+
   defp organize_fields(thread, changes, at) do
     settled =
       case changes["settled"] do
@@ -2355,15 +2493,18 @@ defmodule HalC2.Orchestration do
   end
 
   # A steer is recorded in the running turn before the provider is asked to take it
-  # (`steer/4`), in the transaction that decided it. A repeat of its message id then
-  # finds it sent, so the provider is asked once, and the message sits in the
-  # transcript ahead of whatever the provider answers it with. The repeat answers for
-  # what the first send has done so far: if the provider then refuses the first, the
-  # repeat has already heard it was sent, and the sender learns otherwise from the
-  # first send's error and the message leaving the turn. An MC that stops between the
-  # two leaves the message in the turn `HalC2.Orchestration.Recovery` ends as
-  # interrupted, though the provider never read it. Its session ended with the MC, and
-  # that loss is accepted.
+  # (`steer/4`), in the transaction that decided it, marked pending until the provider
+  # answers. A repeat of its message id then finds it, so the provider is asked once,
+  # and the message sits in the transcript ahead of whatever the provider answers it
+  # with. The repeat cannot say it was sent yet: the provider may still refuse it, and
+  # a refusal can drop the message even after its turn ended (`unsteer/4`). An MC that
+  # stops between the two leaves the message in the turn
+  # `HalC2.Orchestration.Recovery` ends as interrupted, clearing the mark, though the
+  # provider never read it. Its session ended with the MC, and that loss is accepted.
+  # A send that dies while the MC stays up leaves the mark: its repeats keep hearing
+  # "try again" for a message that stays in the turn. A restart clears it only while
+  # the run is still active; once the run has ended, recovery skips the thread and the
+  # mark stays (#704).
   defp reserve_steer(state, run, command) do
     at = Entities.now()
     message_id = command["messageId"] || Entities.new_id("message")
@@ -2374,7 +2515,8 @@ defmodule HalC2.Orchestration do
       |> Map.merge(%{
         "attachments" => command["attachments"] || [],
         "createdBy" => command["createdBy"] || "user",
-        "creationSource" => command["creationSource"] || "web"
+        "creationSource" => command["creationSource"] || "web",
+        "steer" => "pending"
       })
       |> with_message_fields(command)
 
@@ -2403,6 +2545,7 @@ defmodule HalC2.Orchestration do
 
     case ask_steer(instance, thread_id, run["id"], steer_input(command)) do
       :ok ->
+        :ok = HalC2.Streams.transact(thread_id, :thread, &steer_taken(&1, message_id))
         {:ok, %{"sequence" => sequence(thread_id)}}
 
       {:error, reason} ->
@@ -2424,6 +2567,16 @@ defmodule HalC2.Orchestration do
             refused
         end
     end
+  end
+
+  defp steer_taken(state, message_id) do
+    taken =
+      upsert(state, "message", message_id, fn
+        nil -> nil
+        message -> Map.delete(message, "steer")
+      end)
+
+    {List.wrap(taken), :ok}
   end
 
   # The runtime's `steer/3`. The message is already in the turn (`reserve_steer/3`,
@@ -3267,10 +3420,15 @@ defmodule HalC2.Orchestration do
 
       # A client retrying a send after a reconnect repeats its message id, possibly
       # while the first send is still in flight. A message the thread already has
-      # (started, queued, prepared or steered) was sent: nothing more to decide.
-      is_binary(command["messageId"]) and
-          StreamState.get(state, "message")[command["messageId"]] != nil ->
-        {[], {:ok, :sent}}
+      # (started, queued, prepared or steered) was sent: nothing more to decide. A steer
+      # the provider can still refuse has not been sent yet. That answer holds only for
+      # now, so it is a map, which `dispatch_once/1` keeps no receipt of.
+      sent =
+          is_binary(command["messageId"]) &&
+            StreamState.get(state, "message")[command["messageId"]] ->
+        if sent["steer"] == "pending",
+          do: {[], {:error, %{"message" => "This message is still being sent. Try again."}}},
+          else: {[], {:ok, :sent}}
 
       thread["deletedAt"] != nil ->
         {[], {:error, "Thread #{thread_id} is deleted."}}

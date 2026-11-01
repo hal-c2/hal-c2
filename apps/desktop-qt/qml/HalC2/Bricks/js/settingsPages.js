@@ -52,7 +52,7 @@ var sections = [
       keywords: "source control git jujutsu github gitlab forgejo azure bitbucket authenticated account fetch interval pull merge method squash rebase writing style conventional commits instructions templates writer model" },
     { to: "/settings/storage", label: "Storage", brick: "StorageSettings", requires: "storageSettings",
       detail: "Worktree, artifact and log cleanup",
-      keywords: "storage cleanup disk worktrees delete inactive merged unchanged browser artifacts captures rotated logs retention days" },
+      keywords: "storage cleanup disk worktrees delete inactive merged unchanged browser artifacts captures rotated logs retention days temporary files tmp tmpdir folder" },
     { to: "/settings/connections", label: "Connections", brick: "ConnectionsSettings", action: "connections.open",
       requires: "connections", detail: "Pairing links and clients",
       settings: [{ title: "Load balancing", targetId: "load-balancing", requires: "loadBalancing",

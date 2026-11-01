@@ -370,6 +370,7 @@ Feature: Where HAL-C2 keeps its files
         | the Pi cache                    | ~/.cache/hal-c2/elixir/pi                         |
         | the usage scan cache            | ~/.cache/hal-c2/elixir/usage-scan-cache.bin       |
         | model rates for usage           | ~/.cache/hal-c2/elixir/usage-model-rates.json     |
+        | temporary files                 | ~/.cache/hal-c2/elixir/tmp                        |
 
     @mc
     Scenario Outline: HAL_C2_MC_HOME is a root for the MC alone
