@@ -387,7 +387,7 @@ void LocalCache::open(const QString& dir) {
   QSemaphore done;
   const QString path = QDir(dir).filePath(QStringLiteral("client-cache.sqlite"));
   // On the thread as it starts, before its event loop: startup then depends on
-  // no queued call to a thread still coming up, which stalled here (#720).
+  // no queued call to a thread still coming up, a suspected cause of #720.
   connect(thread, &QThread::started, worker, [worker, path, &opened, &done] {
     opened = worker->open(path);
     done.release();
