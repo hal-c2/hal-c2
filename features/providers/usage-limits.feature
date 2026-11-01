@@ -101,6 +101,12 @@ Feature: Subscription limits
       | the account has no credit  | No reset credit left.              |
 
   @mc
+  Scenario: A second Codex instance's reset credit is redeemed on its own account
+    Given a second Codex instance has a banked reset credit
+    When the user uses the reset credit on the second Codex instance
+    Then only the second Codex instance's account redeems it and shows the reset
+
+  @mc
   Scenario: A failed redemption is retried as the same attempt
     Given a reset credit redemption timed out
     When the user uses the reset credit again
@@ -142,6 +148,7 @@ Feature: Subscription limits
     Examples:
       | target                        | message                                               |
       | a provider that is not set up | Provider instance not found.                          |
+      | a Codex instance that is off  | Provider instance not found.                          |
       | a hub that is disabled        | The usage limit source is missing or disabled.        |
       | a hub without naming a credit | The reset credit request is incomplete.               |
 

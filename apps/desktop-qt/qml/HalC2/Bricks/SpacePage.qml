@@ -285,6 +285,14 @@ Rectangle {
             }
 
             ShellMenuItem {
+                objectName: "spaceMakeDeck"
+                text: qsTr("Make a deck")
+                iconName: "monitor"
+                enabled: !page.trashed
+                onTriggered: Shell.dispatch("space.deck.createFromPage", { pageId: Spaces.pageId })
+            }
+
+            ShellMenuItem {
                 objectName: "spacePublish"
                 text: page.siteUrl === "" ? qsTr("Publish as a site") : qsTr("Publish again")
                 iconName: "globe"

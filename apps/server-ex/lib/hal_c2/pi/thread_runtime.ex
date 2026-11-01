@@ -22,6 +22,7 @@ defmodule HalC2.Pi.ThreadRuntime do
   import HalC2.Orchestration.TurnWriter
 
   alias HalC2.JsonRpc.Connection
+  alias HalC2.Subprocess.Durable
   alias HalC2.Orchestration
   alias HalC2.Orchestration.Entities
 
@@ -118,6 +119,10 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   # --- server ------------------------------------------------------------------
 
+  @doc "Goes on with the program an earlier MC left running (`HalC2.Subprocess.Durable`)."
+  def adopt(thread_id, survivor),
+    do: GenServer.call(ensure(thread_id), {:adopt, survivor}, 30_000)
+
   @impl true
   def init(thread_id) do
     Process.flag(:trap_exit, true)
@@ -163,6 +168,26 @@ defmodule HalC2.Pi.ThreadRuntime do
        # runs on (`steered/3`).
        refused: []
      }}
+  end
+
+  # A program an earlier MC left running: this runtime goes on from its checkpoint.
+  @impl true
+  def handle_call({:adopt, %{dir: dir, snapshot: snapshot}}, _from, state) do
+    Process.flag(:trap_exit, true)
+
+    with {:ok, conn} <-
+           Connection.start_link(
+             adopt: %{dir: dir, offset: snapshot.offset, channel: snapshot.channel},
+             handler: self(),
+             dialect: :pi,
+             log: snapshot.state.thread_id
+           ),
+         {:ok, restored} <- code_change(nil, snapshot.state, nil) do
+      {:reply, :ok,
+       Durable.restored(%{restored | steers: :gen_server.reqids_new()}, :conn, conn, snapshot)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
@@ -320,6 +345,22 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   @impl true
+  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state),
+    do: {:noreply, Durable.checkpoint(checkpoint, __MODULE__, state, &flush(&1, :timer))}
+
+  def handle_info(:durable_save, state),
+    do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
+
+  # A `/compact` an earlier MC sent came back: its task went with that MC.
+  def handle_info({:json_rpc, _conn, {:response_after_restart, "compact", reply}}, state) do
+    if state.compact, do: send(self(), {state.compact, reply})
+    {:noreply, state}
+  end
+
+  def handle_info({:json_rpc, _conn, {:response_after_restart, _method, _reply}}, state),
+    do: {:noreply, state}
+
+  @impl true
   def handle_info({:json_rpc, conn, {:notification, type, event}}, %{conn: conn} = state) do
     if state.turn, do: {:noreply, event(type, event, state)}, else: {:noreply, state}
   end
@@ -349,7 +390,8 @@ defmodule HalC2.Pi.ThreadRuntime do
     {:noreply, %{state | conn: nil, compact: nil}}
   end
 
-  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
+  def handle_info(:flush, state),
+    do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
 
   def handle_info({:steer_timeout, from}, state), do: {:noreply, steer_timeout(state, from)}
 
@@ -366,6 +408,7 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   @impl true
   def terminate(_reason, state) do
+    Durable.leaving(state, &flush(&1, :timer))
     if state.conn, do: Connection.stop(state.conn)
     :ok
   end
@@ -463,7 +506,14 @@ defmodule HalC2.Pi.ThreadRuntime do
   defp launch_error(ok, _state), do: ok
 
   defp connect(argv, env, cwd, state) do
-    case Connection.start_link(cmd: argv, handler: self(), cd: cwd, env: env, dialect: :pi) do
+    case Connection.start_link(
+           cmd: argv,
+           handler: self(),
+           cd: cwd,
+           env: env,
+           dialect: :pi,
+           durable: state.thread_id
+         ) do
       {:ok, conn} -> {:ok, conn}
       {:error, reason} -> {:error, reason, state}
     end

@@ -32,6 +32,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   import HalC2.Orchestration.TurnWriter
 
   alias HalC2.JsonRpc.Connection
+  alias HalC2.Subprocess.Durable
   alias HalC2.Orchestration
   alias HalC2.Orchestration.{Entities, NativeSubagent}
   alias HalC2.Acp.Antigravity.Session, as: Antigravity
@@ -139,6 +140,10 @@ defmodule HalC2.Acp.ThreadRuntime do
     end
   end
 
+  @doc "Goes on with the program an earlier MC left running (`HalC2.Subprocess.Durable`)."
+  def adopt(thread_id, survivor),
+    do: GenServer.call(ensure(thread_id), {:adopt, survivor}, 30_000)
+
   # --- server ------------------------------------------------------------------
 
   @impl true
@@ -214,6 +219,52 @@ defmodule HalC2.Acp.ThreadRuntime do
        # An Antigravity process's runtime temp directory, removed with it.
        temp_dir: nil
      }}
+  end
+
+  # A program an earlier MC left running: this runtime goes on from its checkpoint.
+  @impl true
+  def handle_call({:adopt, %{dir: dir, snapshot: snapshot}}, _from, state) do
+    Process.flag(:trap_exit, true)
+
+    with {:ok, conn} <-
+           Connection.start_link(
+             adopt: %{dir: dir, offset: snapshot.offset, channel: snapshot.channel},
+             handler: self(),
+             dialect: :v2,
+             log: snapshot.state.thread_id,
+             stderr_prefix: Antigravity.stderr_prefix(snapshot.state.agent)
+           ),
+         {:ok, restored} <- code_change(nil, snapshot.state, nil) do
+      # What the old VM's boot of this agent held in memory: a sign-out finds the thread
+      # by this value, and a later launch's sweep spares only a live runtime dir.
+      Registry.update_value(@registry, restored.thread_id, fn _ -> restored.agent end)
+      if restored.temp_dir, do: HalC2.Acp.Antigravity.SessionFiles.keep(restored.temp_dir)
+
+      # A stop that was out when the MC went keeps its deadline.
+      if restored.interrupted and restored.turn != nil and
+           Antigravity.antigravity?(restored.agent) do
+        Process.send_after(
+          self(),
+          {:antigravity_cancel_timeout, restored.turn.ids.run},
+          HalC2.Acp.Antigravity.cancel_timeout()
+        )
+      end
+
+      {:reply, :ok,
+       Durable.restored(
+         %{
+           restored
+           | prompts: :gen_server.reqids_new(),
+             mcp_bridge: nil,
+             wire: restored.wire && %{restored.wire | timer: nil}
+         },
+         :conn,
+         conn,
+         snapshot
+       )}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   @impl true
@@ -466,6 +517,24 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   @impl true
+  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state),
+    do: {:noreply, Durable.checkpoint(checkpoint, __MODULE__, state, &flush(&1, :timer))}
+
+  def handle_info(:durable_save, state),
+    do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
+
+  # The turn's prompt, sent by the MC before this one, answered: the turn is over.
+  def handle_info(
+        {:json_rpc, _conn, {:response_after_restart, "session/prompt", reply}},
+        %{turn: %{}, prompt: prompt} = state
+      )
+      when prompt != nil,
+      do: answered(state, reply)
+
+  def handle_info({:json_rpc, _conn, {:response_after_restart, _method, _reply}}, state),
+    do: {:noreply, state}
+
+  @impl true
   def handle_info(
         {:json_rpc, _conn, {:notification, "session/update", %{"update" => update} = params}},
         state
@@ -705,7 +774,8 @@ defmodule HalC2.Acp.ThreadRuntime do
     {:noreply, released(%{state | conn: nil, session_id: nil, prompt: nil, server: nil})}
   end
 
-  def handle_info(:flush, state), do: {:noreply, flush(%{state | flush_timer: nil}, :timer)}
+  def handle_info(:flush, state),
+    do: {:noreply, Durable.flushed(state, flush(%{state | flush_timer: nil}, :timer))}
 
   # Antigravity never confirmed a stopped turn: stop its process and say so.
   def handle_info({:antigravity_cancel_timeout, run}, state) do
@@ -805,6 +875,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   # left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(reason, %{turn: turn} = state) when turn != nil do
+    Durable.leaving(state, &flush(&1, :timer))
     close_mcp_bridge(state)
 
     unless reason in [:normal, :shutdown] or match?({:shutdown, _}, reason) do
@@ -818,8 +889,10 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   def terminate(_reason, state) do
+    Durable.leaving(state, &flush(&1, :timer))
     close_mcp_bridge(state)
-    end_work(state, "interrupted")
+    # Stopping with the MC, its work goes on in the program, or the next boot ends it.
+    unless HalC2.Orchestration.Recovery.stopping?(), do: end_work(state, "interrupted")
     :ok
   catch
     _, _ -> :ok
@@ -988,6 +1061,7 @@ defmodule HalC2.Acp.ThreadRuntime do
              env: env,
              dialect: :v2,
              log: state.thread_id,
+             durable: state.thread_id,
              stderr_prefix: Antigravity.stderr_prefix(instance)
            ),
          {:ok, init} <-

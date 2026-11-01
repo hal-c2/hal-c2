@@ -89,7 +89,8 @@ defmodule HalC2.Muse do
              cd: cwd,
              env: env,
              dialect: :v2,
-             log: opts[:log]
+             log: opts[:log],
+             durable: opts[:durable]
            ) do
       case handshake(conn, opts[:read_only]) do
         {:ok, %{"schema" => %{"version" => @schema_version}} = init} ->

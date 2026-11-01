@@ -81,6 +81,7 @@ inline void setConfig(World& world, const QJsonObject& fields) {
 inline QString editorId(const QString& label) {
   static const QHash<QString, QString> ids{{QStringLiteral("VS Code"), QStringLiteral("vscode")},
                                            {QStringLiteral("Zed"), QStringLiteral("zed")},
+                                           {QStringLiteral("Sublime Text"), QStringLiteral("sublime")},
                                            {QStringLiteral("Cursor"), QStringLiteral("cursor")}};
   if (!ids.contains(label)) fail(QStringLiteral("%1 is not an editor these steps know").arg(label));
   return ids.value(label);

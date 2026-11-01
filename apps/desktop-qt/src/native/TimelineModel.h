@@ -106,11 +106,13 @@ public:
     PullRequestUrlRole,
     // An assistant reply's message, which a quote of it names as its source.
     MessageIdRole,
-    // A user message's images: [{id, name, url}]. `url` is empty until the
-    // brick asks for it (loadAttachment) and the MC has signed one.
+    // A user message's images: [{id, name, url, accessFormat ("text" | "json",
+    // empty unless a Snap Shot carries accessibility data), accessText}]. `url`
+    // is empty until the brick asks for it (loadAttachment) and the MC has
+    // signed one.
     AttachmentsRole,
     // A user message's other attachments, listed by name: [{id, name,
-    // detail}]. `detail` is a file's kind and size ("PDF · 2.0 MiB"), empty
+    // mimeType, detail}]. `detail` is a file's kind and size ("PDF · 2.0 MiB"), empty
     // for a kind this client does not know.
     SentFilesRole,
     // Whether an error row is a wait rather than a failure (a usage limit),
@@ -249,6 +251,8 @@ signals:
   void timesChanged();
   // An image on screen has no address yet (loadAttachment).
   void attachmentWanted(const QString& id);
+  // The MC answered: an image's new address, empty when it would not sign one.
+  void attachmentSigned(const QString& id, const QUrl& url);
   void earlierChanged();
   // loadEarlier(): the runs before the window holding `items` turn items are wanted.
   void earlierWanted(int items);
@@ -338,6 +342,9 @@ private:
   QSet<QString> m_expandedGroups;
   QSet<QString> m_keptOpen;  // run ids
   QHash<QString, AttachmentUrl> m_attachmentUrls;  // by attachment id
+  // A Snap Shot's tree as JSON, by attachment id: a list reads its role on every bind.
+  mutable QHash<QString, QString> m_accessJson;
+  QString accessJson(const QString& id, const QJsonObject& tree) const;
   QDateTime m_workingSince;
   bool m_turnTouched = false;
   bool m_checkpointsTouched = false;
