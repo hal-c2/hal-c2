@@ -209,6 +209,18 @@ Feature: Who else is on a page
       When the agent in "Work" adds the block "Agent note" to "Roadmap"
       Then the page shows the agent of "Work"
 
+    Scenario: An agent in a thread with a blank title goes by "Agent"
+      Given a thread "   "
+      And the user opens the page "Roadmap"
+      When the agent in "   " is working on the page "Roadmap"
+      Then the page shows the agent of "   " as "Agent"
+
+    Scenario: An agent's thread title goes out trimmed
+      Given a thread "  Work  "
+      And the user opens the page "Roadmap"
+      When the agent in "  Work  " is working on the page "Roadmap"
+      Then the page shows the agent of "  Work  " as "Work"
+
     Scenario: An agent changing a block counts as working on its page
       Given a thread "Work"
       And "Roadmap" has the blocks "Ship it"

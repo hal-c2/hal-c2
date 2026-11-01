@@ -94,15 +94,21 @@ defmodule HalC2.Mcp.Tools.Pages do
     |> reply()
   end
 
-  # The thread's agent is on the page, shown by the thread's title.
+  # The thread's agent is on the page, shown by the thread's title. A rename takes
+  # any text, and clients only accept a trimmed title with words in it.
   defp touched(caller, space, page) do
     title =
       case HalC2.Shell.row(node(), caller.thread_id) do
-        {"thread", %{"title" => title}} when is_binary(title) and title != "" -> title
-        _ -> "Agent"
+        {"thread", %{"title" => title}} when is_binary(title) -> String.trim(title)
+        _ -> ""
       end
 
-    Presence.agent_touched(caller.thread_id, title, space, page)
+    Presence.agent_touched(
+      caller.thread_id,
+      if(title == "", do: "Agent", else: title),
+      space,
+      page
+    )
   end
 
   defp reply({:ok, _} = ok), do: ok

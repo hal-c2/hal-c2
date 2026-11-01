@@ -104,6 +104,11 @@ defmodule HalC2.Steps.Space.Presence do
     sees(context, @user, [%{"type" => "agent", "threadId" => id, "title" => thread}])
   end
 
+  step "the page shows the agent of {string} as {string}", %{args: [thread, title]} = context do
+    id = World.thread_id(context, thread)
+    sees(context, @user, [%{"type" => "agent", "threadId" => id, "title" => title}])
+  end
+
   step "the device {string} sees the user also on {string}", %{args: [device, name]} = context do
     sees(context, device, user_on([name]))
   end
