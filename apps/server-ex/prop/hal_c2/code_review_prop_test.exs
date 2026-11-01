@@ -1031,13 +1031,12 @@ defmodule HalC2.CodeReviewPropTest do
 
   def crash do
     pid = Process.whereis(@server)
-    {:parent, sup} = Process.info(pid, :parent)
 
     killing(fn ->
       ref = Process.monitor(pid)
       Process.exit(pid, :kill)
       receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
-      await_restart(sup, pid, 1_000)
+      await_restart(pid)
     end)
 
     observe(nil, :restarted)
@@ -1438,16 +1437,16 @@ defmodule HalC2.CodeReviewPropTest do
       System.cmd("timeout", ["5", "sh", "-c", "until [ -s '#{path}' ]; do sleep 0.05; done"])
   end
 
-  defp await_restart(_sup, _old, 0), do: problem("code-review was not restarted after a crash")
-
-  defp await_restart(sup, old, tries) do
-    case Supervisor.which_children(sup) do
-      [{_, pid, _, _}] when is_pid(pid) and pid != old ->
-        :ok
-
-      _ ->
-        :sys.get_state(sup)
-        await_restart(sup, old, tries - 1)
+  # Back once the process replacing `old` publishes, as it does on starting. The
+  # supervisor hears of the crash a moment after this process does, so asking it
+  # straight away can still name `old`.
+  defp await_restart(old) do
+    receive do
+      {:hal_c2_plugin_topic, _, @id, "reviews", value} ->
+        Process.put(:cr_topic, value)
+        if Process.whereis(@server) in [nil, old], do: await_restart(old)
+    after
+      10_000 -> problem("code-review was not restarted after a crash")
     end
   end
 
