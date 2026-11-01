@@ -433,6 +433,45 @@ defmodule HalC2.Subprocess.OrphansTest do
     assert {:ok, 0} = Subprocess.stop(sub)
   end
 
+  # What `Subprocess.start` reaches when the mark turns unavailable after its first check.
+  test "tracking a running program while unavailable is refused, then recorded once it heals" do
+    restore = break_records_dir()
+    boot(:next, owner: dead_mc())
+    me = String.to_integer(System.pid())
+
+    assert {:error, :no_records_dir} = Orphans.track(self(), me, "mark")
+
+    restore.()
+
+    assert :ok = Orphans.track(self(), me, "mark")
+    assert %{"mark" => "mark", "mc" => mc} = record_of(me)
+    assert mc == dead_mc()
+  end
+
+  test "a start time still unreadable does not reap again at each refused start", %{tmp_dir: dir} do
+    me = String.to_integer(System.pid())
+    readable = Path.join(dir, "readable")
+    owner = fn -> %{"pid" => me, "started" => if(File.exists?(readable), do: "now")} end
+    boot(:died, owner: dead_mc())
+    {:ok, orphan} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+    # Out of the way of the boot's own reap, so only a retry could reach it.
+    [record] = File.ls!(Orphans.dir())
+    path = Path.join(Orphans.dir(), record)
+    File.rename!(path, Path.join(dir, record))
+    boot(:next, owner: owner)
+    File.rename!(Path.join(dir, record), path)
+
+    assert {:error, {:untracked, :no_start_time}} = Subprocess.start(["sh", "-c", @echo])
+    alive!(orphan)
+
+    File.write!(readable, "")
+
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    assert_receive {:subprocess_eof, reader} when reader == orphan.reader, 5_000
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
   test "in a running MC a program is not run untracked before the service has started" do
     # No service in this test: as in the window before the service's init, or
     # after a hot upgrade before it is started.

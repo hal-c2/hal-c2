@@ -74,7 +74,10 @@ defmodule HalC2.Subprocess.Orphans do
   tracking on: a dir that can be made again may hold records of a dead MC that
   `init/1` never reaped, and a caller waiting on the attempt is answered after that
   reap, so nothing resumes ahead of it. A failed attempt logs a warning, once per
-  refused start, and changes nothing.
+  refused start, and otherwise changes nothing unless the dir has come back: then it
+  reaps, and only the start time is still missing. Attempts behind that mark do not
+  reap again until the start time reads, so a stuck orphan's wait is not paid by every
+  refused start.
 
   The boot-time reap is synchronous, in `init/1`, before Recovery resumes
   anything. Its cost is bounded per orphan, not in total: a program that does
@@ -435,8 +438,11 @@ defmodule HalC2.Subprocess.Orphans do
     %{"pid" => pid, "started" => started(pid)}
   end
 
+  defp read_owner(owner) when is_function(owner), do: owner.()
+  defp read_owner(owner), do: owner
+
   defp set_up(owner, restart?) do
-    owner = if is_function(owner), do: owner.(), else: owner
+    owner = read_owner(owner)
     dir = dir()
 
     # Nothing here may stop the MC from booting (cf. `reap_one/1`): a records dir
@@ -492,8 +498,19 @@ defmodule HalC2.Subprocess.Orphans do
   # half-written `.tmp`, dropped, whose rename then fails and is written again.
   @impl true
   def handle_call(:retry_setup, _from, state) do
-    if match?({:unavailable, _}, :persistent_term.get(__MODULE__, nil)),
-      do: set_up(state.owner, false)
+    case :persistent_term.get(__MODULE__, nil) do
+      # Set up as far as the start time, reap included: without it there is no more to do.
+      {:unavailable, :no_start_time} ->
+        if read_owner(state.owner)["started"],
+          do: set_up(state.owner, false),
+          else: Logger.warning("not tracking programs: this MC's start time cannot be read")
+
+      {:unavailable, _} ->
+        set_up(state.owner, false)
+
+      _tracking ->
+        :ok
+    end
 
     reply =
       case :persistent_term.get(__MODULE__, nil) do
