@@ -114,12 +114,10 @@ defmodule HalC2.Subprocess.OrphansTest do
     # own: `setsid` execs in place, as a background job leads no group. Its pid is held,
     # so the group cannot be a later one's, and even an unmarked command in it goes.
     leader = ~S{while [ "$(cat /proc/$PPID/comm)" != sleep ]; do sleep 0.01; done; }
-    child = ~s{setsid sh -c '#{leader}sleep 60 & echo $!'}
-    {:ok, holder} = Exile.Process.start_link(["sh", "-c", child <> " & echo $!; exec sleep 60"])
+    child = ~s{setsid sh -c '#{leader}sleep 60 & echo $$ $!'}
+    {:ok, holder} = Exile.Process.start_link(["sh", "-c", child <> " & exec sleep 60"])
     {:ok, line} = Exile.Process.read(holder)
-    zombie = line |> String.trim() |> String.to_integer()
-    {:ok, line} = Exile.Process.read(holder)
-    command = line |> String.trim() |> String.to_integer()
+    [zombie, command] = line |> String.split() |> Enum.map(&String.to_integer/1)
     await_zombie(zombie, 500)
     refute Orphans.gone?(command)
 
