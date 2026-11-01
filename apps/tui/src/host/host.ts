@@ -130,6 +130,8 @@ export interface HostOptions {
   readonly log: (message: string) => void;
   /** Clock for snooze partitioning; tests pin it. */
   readonly now?: () => string;
+  /** The address this client reached the MC at; a site link is made on it. */
+  readonly origin?: string;
   /** Put text on the system clipboard; false when the terminal cannot (OSC 52). */
   readonly copyToClipboard?: (text: string) => boolean;
   /** `VISUAL` / `EDITOR` for Ctrl+G (default: the process environment). */
@@ -142,6 +144,8 @@ export interface HostOptions {
   readonly readLocalImage?: (path: string) => Promise<Uint8Array>;
   /** Read a Markdown file on this machine to import it as a Space page (`~` expands). */
   readonly readLocalText?: (path: string) => Promise<string>;
+  /** Read an image file on this machine to add it to a Space (`~` expands). */
+  readonly readLocalBytes?: (path: string, maxBytes: number) => Promise<Uint8Array>;
   /** Decode attached images for their preview (default: `@hal-c2/opentui-image`). */
   readonly decodeImage?: ImageDecoder;
   /**
@@ -760,9 +764,20 @@ export function createHost(options: HostOptions): Host {
     ask: (spec) => ask.ask(spec),
     menu: (spec) => composer!.pick(spec),
     copy: (text) => options.copyToClipboard?.(text) === true,
+    ...(options.origin ? { origin: options.origin } : {}),
     readLocalText:
       options.readLocalText ??
       ((path) => NodeFSP.readFile(path.replace(/^~(?=$|\/)/, home), "utf8")),
+    readLocalBytes:
+      options.readLocalBytes ??
+      (async (path, maxBytes) => {
+        const file = path.replace(/^~(?=$|\/)/, home);
+        const { size } = await NodeFSP.stat(file);
+        if (size > maxBytes) {
+          throw new Error(`an image may be at most ${maxBytes / (1024 * 1024)} MB`);
+        }
+        return NodeFSP.readFile(file);
+      }),
     threads: () =>
       (store.getState().shell?.threads ?? []).map((thread) => ({
         id: thread.id,

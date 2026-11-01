@@ -19,11 +19,15 @@ Item {
     }
 
     function block(id, text, more) {
-        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0 }, more);
+        return Object.assign({ id: id, kind: "paragraph", text: text, checked: false, linkedPageId: "", linkedTitle: "", byAgent: false, openComments: 0, imageId: "", imageState: "", imageUrl: "", imageWidth: 0, imageHeight: 0 }, more);
     }
 
     function pageRow(id, title, depth, parentPageId) {
         return { id: id, title: title, depth: depth, parentPageId: parentPageId, hasChildren: false, fromThread: false };
+    }
+
+    function imageRow(id, name, more) {
+        return Object.assign({ id: id, name: name, prompt: "", mimeType: "image/png", width: 4, height: 3, generatedBy: "", url: "" }, more);
     }
 
     // The Space "Research" with "Roadmap" (and its subpage "Q3") open.
@@ -163,6 +167,57 @@ Item {
             compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.restore", "space.page.delete"]);
         }
 
+        function site(more) {
+            return Object.assign({ id: "page-1", title: "Roadmap", parentPageId: "", trashed: false, sourceThreadId: "", sourceThreadTitle: "",
+                                   site: { url: "http://192.168.1.20:3773/sites/space-1/token", localOnly: false, behind: false, publishedAt: "" } }, more);
+        }
+
+        function test_an_unpublished_page_shows_no_site_and_offers_publishing() {
+            const view = root.research();
+            verify(!findChild(view, "spaceSiteBanner").visible);
+            mouseClick(findChild(view, "spacePageActions"));
+            const publish = findChild(view, "spacePublish");
+            verify(publish.visible);
+            compare(publish.text, "Publish as a site");
+            verify(!findChild(view, "spaceUnpublish").visible);
+            verify(!findChild(view, "spaceCopySiteLink").visible);
+            publish.triggered();
+            compare(dispatched("space.page.publish"), [{ pageId: "page-1" }]);
+        }
+
+        function test_a_published_page_shows_its_link_and_the_ways_on_and_back() {
+            const view = root.research({ page: site() });
+            verify(findChild(view, "spaceSiteBanner").visible);
+            compare(findChild(view, "spaceSiteLink").text, "http://192.168.1.20:3773/sites/space-1/token");
+            compare(findChild(view, "spacePublish").text, "Publish again");
+            verify(!findChild(view, "spaceSiteLocalOnly").visible);
+            mouseClick(findChild(view, "spaceSiteCopy"));
+            mouseClick(findChild(view, "spaceSiteRepublish"));
+            mouseClick(findChild(view, "spaceSiteUnpublish"));
+            compare(Shell.dispatchedActions.map(entry => entry.action), ["space.page.copySiteLink", "space.page.publish", "space.page.unpublish"]);
+        }
+
+        function test_the_page_says_when_its_site_is_behind() {
+            const view = root.research({ page: site() });
+            const upToDate = findChild(view, "spaceSiteStatus").text;
+            Spaces.page = site({ site: { url: "http://mc/sites/s/t", localOnly: false, behind: true, publishedAt: "" } });
+            verify(findChild(view, "spaceSiteStatus").text !== upToDate);
+        }
+
+        function test_a_link_only_this_machine_can_open_says_so_with_the_way_on() {
+            const view = root.research({ page: site({ site: { url: "http://127.0.0.1:3773/sites/s/t", localOnly: true, behind: false, publishedAt: "" } }) });
+            verify(findChild(view, "spaceSiteLocalOnly").visible);
+            mouseClick(findChild(view, "spaceSiteTailscale"));
+            compare(dispatched("space.page.publish"), [{ pageId: "page-1", tailscale: true }]);
+        }
+
+        function test_a_trashed_page_offers_no_publishing() {
+            const view = root.research({ page: { id: "page-1", title: "Roadmap", parentPageId: "", trashed: true, sourceThreadId: "", sourceThreadTitle: "" } });
+            mouseClick(findChild(view, "spacePageActions"));
+            verify(!findChild(view, "spacePublish").visible);
+            verify(findChild(view, "spaceCopyMarkdown").visible);
+        }
+
         function test_the_trash_restores_and_deletes_for_good() {
             const view = root.research({ trash: [{ id: "page-9", title: "Old", trashedAt: "2026-09-23T10:00:00.000Z" }] });
             const trash = findChild(view, "spaceTrash");
@@ -234,6 +289,107 @@ Item {
             keyClick("P");
             keyClick(Qt.Key_Return);
             compare(root.dispatched("space.page.rename"), [{ pageId: "page-1", title: "P" }]);
+        }
+
+        function test_an_image_block_is_placed_from_the_spaces_images() {
+            const view = root.research({ images: [root.imageRow("image-1", "cat.png")] });
+            findChild(view, "spaceComposer").forceActiveFocus();
+            keyClick("/");
+            keyClick("i");
+            keyClick("m");
+            keyClick(Qt.Key_Return);
+            const menu = findChild(view, "spaceImageMenu");
+            tryVerify(() => menu.opened);
+            mouseClick(findChild(view, "spaceImageMenu:cat.png"));
+            compare(root.dispatched("space.block.insert"), [{ pageId: "page-1", kind: "image", text: "cat.png", checked: false, imageId: "image-1" }]);
+        }
+
+        function test_an_image_block_says_what_became_of_its_image() {
+            const view = root.research({ blocks: [root.block("b1", "cat.png", { kind: "image", imageId: "i1", imageState: "trashed" }), root.block("b2", "dog.png", { kind: "image", imageId: "i2", imageState: "deleted" })] });
+            const trashed = findChild(view, "spaceBlockImage:cat.png");
+            compare(findChild(trashed, "spaceBlockImageSays").text, "This image is in the trash.");
+            mouseClick(findChild(trashed, "spaceBlockImageRestore"));
+            compare(root.dispatched("space.image.restore"), [{ imageId: "i1" }]);
+            tryVerify(() => findChild(view, "spaceBlockImage:dog.png") !== null);
+            const deleted = findChild(view, "spaceBlockImage:dog.png");
+            compare(findChild(deleted, "spaceBlockImageSays").text, "This image was deleted.");
+            verify(!findChild(deleted, "spaceBlockImageRestore").visible);
+        }
+
+        function test_an_image_that_will_not_decode_says_so() {
+            const view = root.research({ blocks: [root.block("b1", "cat.png", { kind: "image", imageId: "i1", imageState: "shown", imageUrl: "file:///nowhere/cat.png", imageWidth: 400, imageHeight: 200 })] });
+            const holder = findChild(view, "spaceBlockImage:cat.png");
+            tryCompare(findChild(holder, "spaceBlockImageSays"), "text", "This image could not be shown.");
+            verify(findChild(holder, "spaceBlockPicture").asynchronous);
+        }
+
+        function test_an_image_keeps_its_place_before_it_loads() {
+            const view = root.research({ blocks: [root.block("b1", "cat.png", { kind: "image", imageId: "i1", imageState: "shown", imageWidth: 400, imageHeight: 200 })] });
+            const holder = findChild(view, "spaceBlockImage:cat.png");
+            compare(holder.height, holder.width / 2);
+            compare(findChild(holder, "spaceBlockPicture").sourceSize.width, 1440);
+        }
+
+        function test_the_images_browser_trashes_restores_and_deletes() {
+            const view = root.research({ images: [root.imageRow("i1", "cat.png", { prompt: "a cat" })], imageTrash: [root.imageRow("i2", "dog.png")] });
+            mouseClick(findChild(view, "spaceImages"));
+            compare(root.dispatched("space.images.show"), [{ shown: true }]);
+            const browser = findChild(view, "spaceImagesBrowser");
+            tryVerify(() => browser.visible);
+            verify(!findChild(view, "spacePage").visible);
+            tryVerify(() => findChild(browser, "spaceImageTrash:cat.png") !== null);
+            const trash = findChild(browser, "spaceImageTrash:cat.png");
+            waitForItemPolished(findChild(browser, "spaceImageGrid").parent);
+            mouseClick(trash);
+            compare(root.dispatched("space.image.trash"), [{ imageId: "i1" }]);
+            mouseClick(findChild(browser, "spaceImagesTrash"));
+            tryVerify(() => findChild(browser, "spaceImageRestore:dog.png") !== null);
+            mouseClick(findChild(browser, "spaceImageRestore:dog.png"));
+            compare(root.dispatched("space.image.restore"), [{ imageId: "i2" }]);
+            mouseClick(findChild(browser, "spaceImageDelete:dog.png"));
+            compare(root.dispatched("space.image.delete"), [{ imageId: "i2" }]);
+            mouseClick(findChild(browser, "spaceImagesClose"));
+            tryVerify(() => !browser.visible);
+            compare(root.dispatched("space.images.show"), [{ shown: true }, { shown: false }]);
+        }
+
+        function test_cards_stay_level_with_or_without_a_prompt() {
+            const view = root.research({ images: [root.imageRow("i1", "cat.png", { prompt: "a cat" }), root.imageRow("i2", "dog.png")] });
+            mouseClick(findChild(view, "spaceImages"));
+            const browser = findChild(view, "spaceImagesBrowser");
+            tryVerify(() => findChild(browser, "spaceImage:dog.png") !== null);
+            waitForItemPolished(findChild(browser, "spaceImageGrid").contentItem);
+            const nameOf = card => findChild(findChild(browser, card), "spaceImageName");
+            tryCompare(nameOf("spaceImage:dog.png"), "y", nameOf("spaceImage:cat.png").y);
+        }
+
+        function test_the_generate_dialog_offers_only_who_can_generate() {
+            Shell.state = Object.assign({}, Shell.state, { space: { imageProviders: { providers: [{ instanceId: "codex", status: "ready" }, { instanceId: "claudeAgent", status: "unsupported" }], selection: { instanceId: "codex", model: "gpt-5" } } } });
+            const view = root.research({});
+            mouseClick(findChild(view, "spaceImages"));
+            mouseClick(findChild(view, "spaceImageGenerate"));
+            const dialog = findChild(view, "spaceImageDialog");
+            tryVerify(() => dialog.opened);
+            compare(root.dispatched("space.image.providers").length, 1);
+            compare(dialog.ready, ["codex"]);
+            compare(findChild(dialog.contentItem, "spaceImageModel").onlyInstances, ["codex"]);
+            compare(findChild(dialog.contentItem, "spaceImageNotHere").text, "Not supported here: claudeAgent");
+            verify(!findChild(dialog.contentItem, "spaceImageSubmit").enabled);
+            findChild(dialog.contentItem, "spaceImagePrompt").text = "a red fox";
+            mouseClick(findChild(dialog.contentItem, "spaceImageSubmit"));
+            compare(root.dispatched("space.image.generate"), [{ prompt: "a red fox", modelSelection: { instanceId: "codex", model: "gpt-5" } }]);
+        }
+
+        function test_the_generate_dialog_says_when_no_one_can_generate() {
+            Shell.state = Object.assign({}, Shell.state, { space: { imageProviders: { providers: [{ instanceId: "claudeAgent", status: "unsupported" }], selection: null } } });
+            const view = root.research({});
+            mouseClick(findChild(view, "spaceImages"));
+            mouseClick(findChild(view, "spaceImageGenerate"));
+            const dialog = findChild(view, "spaceImageDialog");
+            tryVerify(() => dialog.opened);
+            verify(findChild(dialog.contentItem, "spaceImageNoProvider").visible);
+            findChild(dialog.contentItem, "spaceImagePrompt").text = "a red fox";
+            verify(!findChild(dialog.contentItem, "spaceImageSubmit").enabled);
         }
 
         function test_a_page_from_a_thread_names_its_thread() {

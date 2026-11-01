@@ -6,13 +6,17 @@ import HalC2.Bricks
 
 // A thread, or a new thread's draft: the way back and its title, the route's
 // centre (the timeline, or the draft's opening line that picks its project),
-// and the composer, which carries the thread's approvals and questions.
+// and the composer, which carries the thread's approvals and questions. The
+// Files tab, which the desktop draws beside the thread, takes the screen under
+// the same bar; the way back closes it (MobileShell.stepBack).
 ColumnLayout {
     id: screen
 
     readonly property var route: Shell.state.route ?? null
     readonly property var notifications: Shell.state.notifications ?? null
     readonly property string threadKey: route !== null && route.kind === "thread" ? (route.threadKey ?? "") : ""
+    readonly property var panel: Shell.state.panel ?? null
+    readonly property bool filesOpen: panel !== null && panel.isOpen && panel.activeId === "files"
     readonly property bool muted: notifications !== null && (notifications.muted ?? []).indexOf(threadKey) >= 0
 
     signal backRequested
@@ -36,6 +40,14 @@ ColumnLayout {
         }
 
         MobileIconButton {
+            objectName: "openFiles"
+            visible: !screen.filesOpen && screen.threadKey.length > 0
+            iconName: "files"
+            label: qsTr("Files")
+            onClicked: Shell.dispatch("rightPanel.add", { kind: "files" })
+        }
+
+        MobileIconButton {
             objectName: "threadMenu"
             iconName: "ellipsis"
             label: qsTr("Thread actions")
@@ -53,13 +65,25 @@ ColumnLayout {
         objectName: "centreHost"
         Layout.fillWidth: true
         Layout.fillHeight: true
+        visible: !screen.filesOpen
         kind: screen.route?.kind ?? ""
+    }
+
+    Loader {
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        active: screen.filesOpen
+        visible: active
+        sourceComponent: FilesPanel {
+            objectName: "filesPanel"
+            source: Panel.files
+        }
     }
 
     Composer {
         objectName: "composer"
         Layout.fillWidth: true
-        visible: ready
+        visible: ready && !screen.filesOpen
         conversationScrolled: centre.conversationScrolled
     }
 }

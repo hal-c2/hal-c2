@@ -89,7 +89,7 @@ Feature: Viewing and editing files
       Then the image bytes are returned
 
     # Legacy: apps/server/src/workspace/WorkspaceFileSystem.ts (readFile: base64 limited to images and the image size cap)
-    @mc @backlog
+    @mc
     Scenario Outline: A file can be read as base64 only when it is an image within the size limit
       Given "<path>" in "shop" is <file>
       When a client reads "<path>" from "shop" as base64
@@ -102,14 +102,14 @@ Feature: Viewing and editing files
         | data/export.zip  | an archive               | the MC answers that the file is binary and cannot be read as text    |
 
     # Legacy: apps/server/src/workspace/WorkspaceFileSystem.test.ts (rejects an image-named symlink to a non-image target)
-    @mc @backlog
+    @mc
     Scenario: A link named like an image does not make another file readable as an image
       Given "shop" holds "preview.png" as a link to the binary file "database.sqlite"
       When a client reads "preview.png" from "shop" as base64
       Then the MC answers that the file is binary and cannot be read as text
 
     # Legacy: apps/server/src/workspace/WorkspaceFileSystem.ts (readFile: non-blocking open, stat check)
-    @mc @backlog
+    @mc
     Scenario: A named pipe in the project is refused instead of waiting for it
       Given "shop" holds a named pipe "queue.fifo" nobody writes to
       When a client reads "queue.fifo" from "shop"
@@ -140,14 +140,14 @@ Feature: Viewing and editing files
       When the user browses files and opens "src/app.ts"
       Then the user is told the file could not be read
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario: A partial preview says how much of the file is shown
       Given "logs/big.log" in "shop" is 3 MB
       When the user opens "logs/big.log"
       Then the user is told the preview is limited to the first 1 MB of the file
 
     # Legacy: packages/shared/src/filePreview.ts (decodeFilePreviewText)
-    @backlog @desktop
+    @desktop
     Scenario Outline: A file that is not text says why it is not shown
       Given "<path>" in "shop" <content>
       When the user opens "<path>"
@@ -159,8 +159,7 @@ Feature: Viewing and editing files
         | assets/a.dat  | contains null bytes                      | This file contains binary data and cannot be shown as text.            |
         | notes/old.txt | is written in a non-UTF-8 text encoding  | This file is not UTF-8 text. Open it in another app to view its contents. |
 
-    # The mobile client has no Files tab yet.
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario Outline: Media files are previewed instead of shown as text
       When the user opens "<path>"
       Then the file is previewed as <kind>
@@ -168,26 +167,19 @@ Feature: Viewing and editing files
       Examples:
         | path            | kind     |
         | assets/logo.png | an image |
-
-      # The desktop links neither Qt Multimedia (whose FFmpeg is not bundled)
-      # nor Qt PDF, so it offers a video, audio or a PDF to open in the
-      # browser, and shows an HTML page's text and markup.
-      @backlog
-      Examples: Not yet on any surface
-        | path              | kind       |
         | media/intro.mp4   | a video    |
         | media/theme.mp3   | audio      |
         | docs/manual.pdf   | a document |
         | public/index.html | a web page |
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario: Media files of a thread on another machine are previewed
       Given the thread is on another machine of the cluster
       When the user opens "assets/logo.png"
       Then the file is previewed as an image
       And the image comes from the machine the thread is on
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario Outline: A media preview that fails to load can be retried
       Given loading "<path>" fails once
       When the user opens "<path>"
@@ -198,12 +190,7 @@ Feature: Viewing and editing files
       Examples:
         | path            | kind  | result   |
         | assets/logo.png | image | is shown |
-
-      # No audio player on the desktop yet (see above).
-      @backlog
-      Examples: Not yet on any surface
-        | path            | kind  | result |
-        | media/theme.mp3 | audio | plays  |
+        | media/theme.mp3 | audio | plays    |
 
     @desktop @tui
     Scenario Outline: Rendered files can be switched to their source and back
@@ -221,7 +208,7 @@ Feature: Viewing and editing files
         | public/index.html |
 
     # Legacy: packages/shared/src/delimitedPreview.ts (parseDelimitedPreview limits)
-    @backlog @desktop
+    @desktop
     Scenario: A large table shows only its first rows and columns
       Given "data/orders.csv" has more than 100 rows and more than 30 columns
       When the user opens "data/orders.csv" rendered
@@ -229,7 +216,7 @@ Feature: Viewing and editing files
       And the user is told the table is limited and that the source shows the rest
 
     # Legacy: packages/shared/src/delimitedPreview.ts (parseDelimitedPreview quoting, byte order mark)
-    @backlog @desktop
+    @desktop
     Scenario: A table keeps quoted commas, doubled quotes and multi-line cells in one cell
       Given "data/orders.csv" has a cell reading "Smith, Jane" and a cell holding two lines
       When the user opens "data/orders.csv" rendered
@@ -237,14 +224,14 @@ Feature: Viewing and editing files
       And a leading byte order mark is not shown as text
 
     # Legacy: packages/shared/src/delimitedPreview.ts (a final quoted empty record with no line ending)
-    @backlog @desktop
+    @desktop
     Scenario: A table keeps a final quoted empty row that has no line ending
       Given "data/orders.csv" ends with a row whose only cell is an empty quoted value and no line ending
       When the user opens "data/orders.csv" rendered
       Then that empty row is shown after the last data row
 
     # Legacy: packages/shared/src/delimitedPreview.ts (filePreviewDelimiter)
-    @backlog @desktop
+    @desktop
     Scenario Outline: Which files are shown as a table
       When the user opens "<path>" of type "<type>" rendered
       Then <outcome>
@@ -257,16 +244,13 @@ Feature: Viewing and editing files
         | data/a.csv    | text/plain                | the file is shown as a comma table       |
         | data/a.txt    | text/plain                | the file is not shown as a table         |
 
-    # The three scenarios below are layout: the native steps drive models and cannot see
-    # columns, so they stay @backlog-desktop until a step can. The QML tests
-    # (apps/desktop-qt/tests/tst_RightPanel.qml) cover them meanwhile.
-    @desktop @backlog-desktop
+    @desktop
     Scenario: An open file sits beside the file tree
       When the user opens "src/app.ts"
       Then the file viewer takes the height of the Files tab
       And the file tree is a column beside it
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: The file tree can be hidden while a file is open
       Given the user opened "src/app.ts"
       When the user hides the file explorer
@@ -279,7 +263,7 @@ Feature: Viewing and editing files
       When the user opens "src/app.ts"
       Then the file tree stays hidden while the file is open
 
-    @desktop @backlog-desktop
+    @desktop
     Scenario: A narrow Files tab keeps the file's buttons in the file
       Given the Files tab is as narrow as a phone
       When the user opens "docs/guide.md"
@@ -335,32 +319,32 @@ Feature: Viewing and editing files
       And the user closes the file
       Then no file is open and the tree is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: An open file follows the agent's changes
       Given the user is reading "src/app.ts" with no edits of their own
       When the agent changes "src/app.ts"
       Then the viewer shows the new contents
       And an image the agent rewrites is shown as it is now, not from a cached copy
 
-    @backlog @desktop
+    @desktop
     Scenario: Media and documents are not read again when the workspace changes
       Given the user is previewing "assets/logo.png"
       When the agent changes another file
       Then "assets/logo.png" is not fetched again
 
-    @backlog @desktop
+    @desktop
     Scenario: A path that becomes a file is noticed while it is open
       Given the user opened "build" and it is a folder
       When the agent replaces the folder "build" with a file
       Then the viewer shows the file's contents
 
-    @backlog @desktop
+    @desktop
     Scenario: Opening a file at a line shows its source even when the rendered view is preferred
       Given the user prefers the rendered Markdown view
       When the user opens "docs/guide.md" at line 12
       Then the Markdown source is shown with line 12 in view
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A line selection in a file is let go of without a comment
       Given the user selected lines 10 to 12 of "src/cart.ts" and left the comment form closed
       When the user <action>
@@ -371,13 +355,13 @@ Feature: Viewing and editing files
         | clicks outside the file                        |
         | presses Escape while the file's text is focused |
 
-    @backlog @desktop
+    @desktop
     Scenario: A comment in progress is not dropped by a click outside the file
       Given the user is writing a comment on lines 10 to 12 of "src/cart.ts"
       When the user clicks outside the file
       Then the comment form and its text are still there
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: The file tree beside a file is shown only for project files
       Given the user chose to <preference> the file tree
       When the user opens <file>
@@ -390,14 +374,14 @@ Feature: Viewing and editing files
         | show       | a file outside the project on the host  | hidden  |
         | show       | an attachment                           | hidden  |
 
-    @backlog @desktop
+    @desktop
     Scenario: A folder in the path trail lists what is in it
       Given the user is looking at "src/lib/cart.ts"
       When the user opens the folder "lib" in the path trail
       Then the files and folders of "lib" are listed, folders first
       And the folder that is open is marked
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A folder in the path trail explains why it lists nothing
       Given <state>
       When the user opens the folder "lib" in the path trail
@@ -409,7 +393,7 @@ Feature: Viewing and editing files
         | "lib" was deleted after the file was opened    | This folder is no longer available.                                     |
         | the project index is partial and has nothing in "lib" | No entries from this folder are available in the partial workspace index. |
 
-    @backlog @desktop
+    @desktop
     Scenario: A folder in the path trail that fails to load can be retried
       Given listing "lib" fails once
       When the user opens the folder "lib" in the path trail
@@ -417,7 +401,7 @@ Feature: Viewing and editing files
       When the user retries
       Then the files of "lib" are listed
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A web page or document can be opened in the preview browser
       Given the environment can serve "<file>" to the preview
       When the user opens "<file>" in the preview browser
@@ -428,13 +412,13 @@ Feature: Viewing and editing files
         | public/index.html |
         | docs/manual.pdf   |
 
-    @backlog @desktop
+    @desktop
     Scenario: A file that cannot be opened in the preview browser says so
       Given the environment cannot serve "public/index.html" to the preview
       When the user opens "public/index.html" in the preview browser
       Then the user is told the file could not be opened in the browser with the reason
 
-    @backlog @desktop
+    @desktop
     Scenario: The preferred editor gives way when it is no longer available
       Given the user's preferred editor is "Zed" and it is no longer installed
       And the environment has the editors "VS Code" and "Sublime Text"
@@ -442,7 +426,7 @@ Feature: Viewing and editing files
       Then "VS Code" opens "src/app.ts"
       And "VS Code" is the preferred editor from then on
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Revealing a file is named after the host's file manager
       Given the environment's host is <host>
       When the user opens the menu of "src/app.ts"
@@ -478,23 +462,24 @@ Feature: Viewing and editing files
       Then "VS Code" opens the thread's workspace folder on the environment
       And "VS Code" stays the preferred editor for next time
 
-    @backlog @desktop
+    @desktop
     Scenario: A remote environment's workspace opens in the local editor over SSH
       Given the thread's environment is on another machine reachable over SSH as "devbox"
       When the user opens the thread's workspace in "VS Code"
       Then the local "VS Code" opens the workspace on "devbox" over SSH
 
-    # Legacy: apps/desktop/src/ipc/methods/window.ts (probeRemoteEditors)
-    @backlog @desktop
+    # Legacy: apps/desktop/src/ipc/methods/window.ts (probeRemoteEditors); the names
+    # are the ones the MC advertises (connections/environments.feature).
+    @desktop
     Scenario: Only editors on this computer that can work over SSH are offered for a remote environment
       Given the thread's environment is on another machine reachable over SSH
       And this computer has "VS Code" and "Zed" installed that can open folders over SSH
       And this computer has "Sublime Text" installed which cannot
       When the user looks at the editors offered for the thread's workspace
       Then "VS Code" and "Zed" are offered
-      And "Sublime Text" is not offered
+      And "Sublime Text" is not among them
 
-    @backlog @desktop
+    @desktop
     Scenario: A remote environment with no SSH route cannot open an editor
       Given the thread's environment is on another machine with no SSH route
       When the user looks at opening the thread's workspace in an editor
@@ -617,7 +602,13 @@ Feature: Viewing and editing files
     # Copying takes the text anywhere, also where no folder on this machine shows the
     # file (files-on-another-machine.feature). The phone layout has no file viewer
     # yet; the tablet's is the desktop's FilesPanel.
-    @shared @backlog-mobile
+    @mobile
+    Scenario: The way back leaves a thread's files for the thread
+      Given the user is reading "src/app.ts" in the viewer
+      When the user steps back from the file
+      Then the thread is on screen again, and its files can be opened again
+
+    @shared
     Scenario Outline: The open file's text is copied whole
       Given the user is reading "src/app.ts" in the viewer
       When the user copies the file's text <from>
@@ -630,7 +621,7 @@ Feature: Viewing and editing files
         | from the command palette |
 
     # The MC reads a file only up to its first 1 MB, so that is all the viewer has to copy.
-    @shared @backlog-mobile
+    @shared
     Scenario Outline: Copying a file larger than one megabyte copies its first megabyte and says so
       Given "logs/big.log" in "shop" is 3 MB
       And the user is reading "logs/big.log" in the viewer
@@ -658,14 +649,14 @@ Feature: Viewing and editing files
       Then the user is told the file could not be saved
       And the edit is still in the editor
 
-    @backlog @desktop
+    @desktop
     Scenario: A save that failed is tried again when the file is closed
       Given writing "src/app.ts" failed after an edit
       And writing "src/app.ts" works again
       When the user closes the file
       Then the edit is written to "src/app.ts"
 
-    @backlog @desktop
+    @desktop
     Scenario: An edit made while a save is under way is saved too
       Given a save of "src/app.ts" is being written
       When the user makes another edit
@@ -673,20 +664,34 @@ Feature: Viewing and editing files
       And the file is not shown as saved until the last edit is written
 
     # Legacy: packages/client-runtime/src/state/projectCommands.ts (optimisticFile), apps/web/src/components/files/projectFilesQueryState.ts
-    @backlog @desktop
+    @desktop
     Scenario: A saved edit stays on screen while the file is read again
       Given the user saved an edit to "src/app.ts" while an older read of it was still under way
       When the older read finishes
       Then the viewer keeps showing the saved edit
       And it shows the file as the environment has it once the new read arrives
 
-    @backlog @desktop
+    @desktop
     Scenario: Ticking a task in a document that changed underneath leaves the file alone
       Given "TODO.md" has the unticked task "Ship cart"
       And the user is looking at the rendered view
       And the agent has since rewritten "TODO.md" so the task moved
       When the user ticks "Ship cart"
       Then "TODO.md" is not changed
+
+    @desktop
+    Scenario: Two tasks ticked before the file has been read again are both recorded
+      Given "TODO.md" has the unticked task "Ship cart"
+      And the user is looking at the rendered view
+      When the user ticks "Ship cart" and "Tell everyone" before either read is answered
+      Then "TODO.md" records both tasks as done
+
+    @desktop
+    Scenario: A task ticked just before an edit does not tick another task
+      Given "TODO.md" has the unticked task "Ship cart"
+      And the user is looking at the rendered view
+      When the user ticks "Ship cart" and adds a task above it before the read is answered
+      Then "TODO.md" holds the user's edit and no task was ticked
 
   Rule: Paths stay inside the project
 
@@ -702,7 +707,7 @@ Feature: Viewing and editing files
         | reads  | link-to-home/.bashrc |
 
     # Legacy: apps/server/src/workspace/WorkspacePaths.ts (resolveRelativePathWithinRoot)
-    @mc @backlog
+    @mc
     Scenario Outline: The project's own folder is not a file path
       When a client <action> "<path>" in "shop"
       Then the MC answers that the path is outside the project
@@ -714,7 +719,7 @@ Feature: Viewing and editing files
         | writes | src/.. |
 
     # Legacy: apps/server/src/workspace/WorkspacePaths.ts (normalizeWorkspaceRoot: not a directory)
-    @mc @backlog
+    @mc
     Scenario: A project whose folder was replaced by a file reports it
       Given the folder of "shop" was replaced by a file
       When a client lists the files of "shop"
@@ -728,7 +733,7 @@ Feature: Viewing and editing files
 
   Rule: Viewing attachments
 
-    @backlog @desktop @mobile
+    @desktop @mobile
     Scenario Outline: An attachment opens in a viewer for its kind
       Given the user has attached "<file>" to a draft
       When the user opens the attachment from the draft
@@ -737,30 +742,30 @@ Feature: Viewing and editing files
       Examples:
         | file        | shown                                       |
         | receipt.png | an image                                    |
-        | invoice.pdf | a document the user can page through        |
         | notes.md    | rendered Markdown that can switch to source |
         | build.log   | text                                        |
+        | invoice.pdf | a document the user can page through        |
 
-    @backlog @desktop @mobile
+    @desktop @mobile
     Scenario: An attachment in a sent message opens in the same viewer
       Given a sent message carries the attachment "invoice.pdf"
       When the user opens the attachment from the conversation
       Then "invoice.pdf" is shown as a document from the environment
 
-    @backlog @desktop @mobile
+    @desktop @mobile
     Scenario: Images in the conversation open large and can be stepped through
       Given a message carries three images
       When the user opens the second image
       Then it is shown large
       And the user can step to the previous and next image
 
-    @backlog @desktop
+    @desktop
     Scenario: A large image says which of the images it is
       Given a message carries three images
       When the user opens the second image
       Then its name is shown with "(2/3)"
 
-    @backlog @desktop
+    @desktop
     Scenario: Stepping past the last image comes back to the first
       Given a message carries three images and the user opened the third
       When the user steps to the next image
@@ -768,14 +773,14 @@ Feature: Viewing and editing files
       When the user steps to the previous image
       Then the third image is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: A single image has nothing to step through
       Given a message carries one image
       When the user opens it
       Then no previous or next image is offered
       And the arrow keys do nothing
 
-    @backlog @desktop
+    @desktop
     Scenario: The arrow keys step through the images
       Given a message carries three images and the user opened the second
       When the user presses the right arrow key
@@ -783,7 +788,7 @@ Feature: Viewing and editing files
       When the user presses the left arrow key twice
       Then the first image is shown
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A large image is zoomed with the pointer
       Given the user opened an image that fits the window
       When the user <acts>
@@ -791,23 +796,23 @@ Feature: Viewing and editing files
 
       Examples:
         | acts                                          | result                                          |
-        | clicks it                                     | zoomed to twice its fitted size                 |
-        | clicks it again                               | back to its fitted size                         |
+        | clicks the image                              | zoomed to twice its fitted size                 |
+        | clicks the image again                        | back to its fitted size                         |
         | turns the wheel up over a point               | zoomed in around that point                     |
         | turns the wheel down at its fitted size       | left at its fitted size                         |
         | pinches or holds Control and turns the wheel  | zoomed faster than the wheel alone              |
 
-    @backlog @desktop
+    @desktop
     Scenario: A large image cannot be zoomed beyond eight times its fitted size
       Given the user opened an image that fits the window
       When the user zooms in as far as it will go
       Then the image is eight times its fitted size
       And zooming further changes nothing
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A large image is zoomed with the keyboard
       Given the user opened an image with focus on it
-      When the user presses <key>
+      When the user presses <key> in the viewer
       Then the image <result>
 
       Examples:
@@ -818,14 +823,14 @@ Feature: Viewing and editing files
         | minus         | zooms out one step                          |
         | 0             | returns to its fitted size                  |
 
-    @backlog @desktop
+    @desktop
     Scenario: A zoomed image is dragged to look around
       Given the user zoomed an opened image
       When the user drags it with the mouse
       Then the part of the image shown moves with the pointer
       And letting go does not zoom the image back out
 
-    @backlog @desktop
+    @desktop
     Scenario: The arrow keys look around a zoomed image and step through images otherwise
       Given a message carries three images and the user opened the second
       When the user zooms in and presses the right arrow key
@@ -833,19 +838,19 @@ Feature: Viewing and editing files
       When the user returns the image to its fitted size and presses the right arrow key
       Then the third image is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: Stepping to another image starts at its fitted size
       Given a message carries three images and the user zoomed the second
       When the user steps to the next image
       Then the third image is shown at its fitted size
 
-    @backlog @desktop
+    @desktop
     Scenario: The zoom is announced
       Given the user opened an image
       When the user zooms to twice its fitted size
       Then "200% zoom" is announced to assistive technology
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A large image or video is closed from where the user is
       Given the user opened an image from the conversation
       When the user <closes>
@@ -854,18 +859,18 @@ Feature: Viewing and editing files
 
       Examples:
         | closes                           |
-        | presses Escape                   |
+        | presses Escape in the viewer     |
         | clicks beside the image          |
         | uses the close button            |
 
-    @backlog @desktop
+    @desktop
     Scenario: Escape closes a menu of the viewer before the viewer
       Given the user opened an image and right-clicked it to open its menu
-      When the user presses Escape
-      Then the menu closes
+      When the user presses Escape in the viewer
+      Then the viewer's menu closes
       And the image is still open
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A large image that cannot be loaded says so
       Given the user opened an image whose picture cannot be loaded and <original>
       Then the viewer says "<message>"
@@ -875,25 +880,25 @@ Feature: Viewing and editing files
         | that has an address on the web                | This image could not be loaded.                           |
         | that has no address on the web                | Image unavailable. The file may have been moved or deleted. |
 
-    @backlog @desktop
+    @desktop
     Scenario: A large image that cannot be loaded offers its original
       Given the user opened an image whose picture cannot be loaded
       And the image has an address on the web
       Then the viewer offers to open the original
 
-    @backlog @desktop
+    @desktop
     Scenario: A large video starts playing
       Given a message carries a video
       When the user opens the video
       Then it starts playing in the viewer
 
-    @backlog @desktop
+    @desktop
     Scenario: The arrow keys belong to a video that has focus
       Given a message carries a video and an image and the user opened the video
       When the user presses the right arrow key with focus on the video
       Then the key is left to the video and the viewer stays on the video
 
-    @backlog @desktop
+    @desktop
     Scenario: A Snap Shot's text is read in the large view and the picture comes back
       Given the user opened a Snap Shot that has accessibility data
       When the user chooses to show its extracted text
@@ -901,7 +906,7 @@ Feature: Viewing and editing files
       When the user chooses to show the screenshot
       Then the picture is shown again
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A Snap Shot offers the form of what it captured
       Given the user opened a Snap Shot whose accessibility data is <format>
       Then the control to see it reads "<label>"
@@ -911,7 +916,7 @@ Feature: Viewing and editing files
         | text   | Show extracted text      |
         | JSON   | Show accessibility JSON  |
 
-    @backlog @desktop @mobile
+    @desktop @mobile
     Scenario: An attachment is shown as it was captured, not as the project's file of that name
       Given the user attached "src/app.ts" and has since changed the project's "src/app.ts"
       When the user opens the attachment
@@ -923,13 +928,13 @@ Feature: Viewing and editing files
       When the user removes it
       Then the viewer closes and the attachment leaves the draft
 
-    @backlog @desktop @mobile
+    @desktop @mobile
     Scenario: An attachment can be saved to this device
       Given the user is viewing an attachment of a sent message
       When the user saves it
       Then the file is downloaded under its own name
 
-    @backlog @desktop @mobile
+    @desktop @mobile
     Scenario Outline: An attachment that cannot be fetched says why and can be retried
       Given <state>
       When the user opens the attachment
@@ -942,20 +947,39 @@ Feature: Viewing and editing files
         | the environment is unreachable                | Reconnect to the environment and try again. |
         | the environment no longer has the attachment  | The attachment is unavailable.           |
 
-    @backlog @desktop
+    @desktop
+    Scenario: A save goes on after the viewer closes
+      Given the user is viewing an attachment of a sent message
+      When the user saves it and closes the viewer before it has downloaded
+      Then the file is downloaded under its own name
+
+    @desktop
+    Scenario: A web page in a draft shows its source
+      Given the user has attached "page.html" to a draft
+      When the user switches to its source
+      Then the source of the draft's page is shown
+
+    @desktop
+    Scenario: A draft's attachment that failed to load can be tried again
+      Given the user has attached "build.log" to a draft
+      And the attachment fails to load
+      When the user tries it again
+      Then it is shown as text
+
+    @desktop
     Scenario: A failed save of an attachment is reported
       Given the user is viewing an attachment of a sent message
       And the environment cannot be reached
       When the user saves it
       Then the user is told the file could not be saved with the reason
 
-    @backlog @desktop
+    @desktop
     Scenario: An attachment opened long ago is fetched with fresh access
       Given the user opened an attachment as a rendered page an hour ago
       When the user switches to its source
       Then the source is shown without the user reconnecting
 
-    @backlog @desktop
+    @desktop
     Scenario: A page that cannot be read as text can still be shown rendered
       Given the attachment "page.html" is not valid text
       When the user switches to its source
@@ -963,11 +987,11 @@ Feature: Viewing and editing files
       When the user switches back to the rendered page
       Then the page is shown
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Copying an attachment's text
       Given the user is viewing a text attachment that is <size>
       When the user copies it
-      Then the clipboard holds <copied>
+      Then the copy is <copied>
 
       Examples:
         | size                    | copied                                        |

@@ -327,6 +327,13 @@ import {
   SpaceBlockUpdateInput,
   SpaceCommentAddInput,
   SpaceCommentRef,
+  SpaceImageAddInput,
+  SpaceImageDeleteResult,
+  SpaceImageGenerateInput,
+  SpaceImageGenerationError,
+  SpaceImageProvidersResult,
+  SpaceImageRef,
+  SpaceImageResult,
   SpaceCommentResult,
   SpaceCreateInput,
   SpaceDeleteInput,
@@ -338,6 +345,9 @@ import {
   SpacePageCreateInput,
   SpacePageDeleteResult,
   SpacePageExportMarkdownResult,
+  SpacePagePublishInput,
+  SpacePagePublishResult,
+  SpacePageUnpublishResult,
   SpacePageImportMarkdownInput,
   SpacePageMoveInput,
   SpacePageRef,
@@ -516,6 +526,8 @@ export const WS_METHODS = {
   spacePageTrash: "space.page.trash",
   spacePageRestore: "space.page.restore",
   spacePageDelete: "space.page.delete",
+  spacePagePublish: "space.page.publish",
+  spacePageUnpublish: "space.page.unpublish",
   spacePageExportMarkdown: "space.page.exportMarkdown",
   spacePageImportMarkdown: "space.page.importMarkdown",
   spacePageCreateFromThread: "space.page.createFromThread",
@@ -527,6 +539,12 @@ export const WS_METHODS = {
   spaceCommentAdd: "space.comment.add",
   spaceCommentResolve: "space.comment.resolve",
   spaceCommentReopen: "space.comment.reopen",
+  spaceImageAdd: "space.image.add",
+  spaceImageGenerate: "space.image.generate",
+  spaceImageTrash: "space.image.trash",
+  spaceImageRestore: "space.image.restore",
+  spaceImageDelete: "space.image.delete",
+  spaceImageProviders: "space.image.providers",
 
   // The cluster of this person's machines (MCs only)
   clusterStatus: "cluster.status",
@@ -1813,6 +1831,18 @@ const WsSpacePageDeleteRpc = Rpc.make(WS_METHODS.spacePageDelete, {
   error: SpaceRpcError,
 });
 
+const WsSpacePagePublishRpc = Rpc.make(WS_METHODS.spacePagePublish, {
+  payload: SpacePagePublishInput,
+  success: SpacePagePublishResult,
+  error: SpaceError,
+});
+
+const WsSpacePageUnpublishRpc = Rpc.make(WS_METHODS.spacePageUnpublish, {
+  payload: SpacePageRef,
+  success: SpacePageUnpublishResult,
+  error: SpaceError,
+});
+
 const WsSpacePageExportMarkdownRpc = Rpc.make(WS_METHODS.spacePageExportMarkdown, {
   payload: SpacePageRef,
   success: SpacePageExportMarkdownResult,
@@ -1877,6 +1907,42 @@ const WsSpaceCommentReopenRpc = Rpc.make(WS_METHODS.spaceCommentReopen, {
   payload: SpaceCommentRef,
   success: SpaceCommentResult,
   error: SpaceRpcError,
+});
+
+const WsSpaceImageAddRpc = Rpc.make(WS_METHODS.spaceImageAdd, {
+  payload: SpaceImageAddInput,
+  success: SpaceImageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageGenerateRpc = Rpc.make(WS_METHODS.spaceImageGenerate, {
+  payload: SpaceImageGenerateInput,
+  success: SpaceImageResult,
+  error: Schema.Union([SpaceError, SpaceImageGenerationError, EnvironmentAuthorizationError]),
+});
+
+const WsSpaceImageTrashRpc = Rpc.make(WS_METHODS.spaceImageTrash, {
+  payload: SpaceImageRef,
+  success: SpaceImageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageRestoreRpc = Rpc.make(WS_METHODS.spaceImageRestore, {
+  payload: SpaceImageRef,
+  success: SpaceImageResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageDeleteRpc = Rpc.make(WS_METHODS.spaceImageDelete, {
+  payload: SpaceImageRef,
+  success: SpaceImageDeleteResult,
+  error: SpaceRpcError,
+});
+
+const WsSpaceImageProvidersRpc = Rpc.make(WS_METHODS.spaceImageProviders, {
+  payload: Schema.Struct({}),
+  success: SpaceImageProvidersResult,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
@@ -1968,6 +2034,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpacePageTrashRpc,
   WsSpacePageRestoreRpc,
   WsSpacePageDeleteRpc,
+  WsSpacePagePublishRpc,
+  WsSpacePageUnpublishRpc,
   WsSpacePageExportMarkdownRpc,
   WsSpacePageImportMarkdownRpc,
   WsSpacePageCreateFromThreadRpc,
@@ -1979,6 +2047,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsSpaceCommentAddRpc,
   WsSpaceCommentResolveRpc,
   WsSpaceCommentReopenRpc,
+  WsSpaceImageAddRpc,
+  WsSpaceImageGenerateRpc,
+  WsSpaceImageTrashRpc,
+  WsSpaceImageRestoreRpc,
+  WsSpaceImageDeleteRpc,
+  WsSpaceImageProvidersRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerReportDesktopUpdateStatusRpc,

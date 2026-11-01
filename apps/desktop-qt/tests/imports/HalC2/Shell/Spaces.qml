@@ -14,6 +14,8 @@ QtObject {
     readonly property SpaceRows trash: SpaceRows {}
     readonly property SpaceRows blocks: SpaceRows {}
     readonly property SpaceRows comments: SpaceRows {}
+    readonly property SpaceRows images: SpaceRows {}
+    readonly property SpaceRows imageTrash: SpaceRows {}
 
     function fill(model, rows) {
         model.clear();
@@ -30,6 +32,8 @@ QtObject {
         fill(trash, state.trash);
         fill(blocks, state.blocks);
         fill(comments, state.comments);
+        fill(images, state.images);
+        fill(imageTrash, state.imageTrash);
         page = state.page ?? {};
         pageId = page.id ?? "";
     }
