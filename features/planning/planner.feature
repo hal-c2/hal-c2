@@ -767,6 +767,33 @@ Feature: Planner
       And the plugin looks at GitHub
       Then "API" is done
 
+    # Pasting the address again is also how a link to the wrong host is corrected.
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A user links a pull request of a GitHub Enterprise host by its web address
+      Given the plan has "API"
+      When the user opens the task "API"
+      And the user links it to "https://github.example.com:8443/acme/other/pull/12/files"
+      Then the MC is asked to link "API" to #12 of "acme/other" at "https://github.example.com:8443/acme/other/pull/12/files"
+
+    # The MC would drop these addresses and link the pull request on github.com.
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario Outline: The address <address> is not a pull request's and cannot be linked
+      Given the plan has "API"
+      When the user opens the task "API"
+      And the user enters "<address>" to link
+      And the user presses Enter in the link field
+      Then the pull request cannot be linked
+
+      Examples:
+        | address                                                     |
+        | https://github.example.com/acme/other/issues/12             |
+        | https://github.example.com/acme/other/pull/012              |
+        | https://github.example.com:99999/acme/other/pull/12         |
+        | https://git_hub.example.com/acme/other/pull/12              |
+        | ftp://github.example.com/acme/other/pull/12                 |
+        | https://[1:2]/acme/other/pull/12                            |
+        | https://github.example.com/acme/other/pull/9007199254740993 |
+
     @mc
     Scenario: Open issues of a followed repository become tasks
       Given "planner" follows the issues of "acme/api"
@@ -1257,6 +1284,20 @@ Feature: Planner
       When the user moves "Issue 9" from "Launch" to "Beta"
       Then GitHub has #7 in the milestone "Release" last
 
+    # The correction goes to whoever names the issue when it is sent, not to where the task
+    # that left the issue went, so GitHub is not asked again to take it out, as it refused.
+    @mc
+    Scenario: A correction GitHub refused follows its issue to the task that took it over
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta", #9 in "Launch" and #12 in "Release" on GitHub
+      And GitHub takes moving #7 to "Launch" late and to "Release" at once, but refuses the second move to it
+      And GitHub refuses moving #7 out of its milestone
+      And the user moves "Issue 7" from "Beta" to "Launch", then to "Release" before GitHub answers
+      And the user relinks #7's task to #8
+      And the user relinks #12's task to #7
+      When the user moves "Issue 9" from "Launch" to "Beta"
+      Then GitHub is asked last to move #7 to the milestone "Release"
+
     # A move between milestones is asked of GitHub by the milestone the task moved to, so
     # a task that leaves that one before it asks still leaves the one GitHub has it in.
     @mc
@@ -1309,6 +1350,42 @@ Feature: Planner
       And the plugin looks at GitHub
       Then #7's task is in the milestone "Launch" and not "Beta"
       And the milestone "Launch" is marked as not synced
+
+    # GitHub still has the issue in the milestone the task left, and that milestone has
+    # nothing left to ask once the task is gone.
+    @mc
+    Scenario: A task removed after GitHub refused to move it takes its issue out of the milestone GitHub has it in
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub refuses moving #7 to "Launch"
+      When the user moves "Issue 7" from "Beta" to "Launch"
+      And the user removes "Issue 7"
+      Then GitHub is asked last to move #7 out of its milestone
+
+    # The same removal while the milestone waits on GitHub for another push. That push may
+    # never report, or report twice, and the issue still has to go.
+    @mc
+    Scenario: A task removed during a push that then stops still takes its issue out of the milestone
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub refuses moving #7 to "Launch"
+      And GitHub takes moving #9 to "Beta" late
+      When the user moves "Issue 7" from "Beta" to "Launch"
+      And while GitHub holds moving "Issue 9" from "Launch" to "Beta", the user removes "Issue 7" and the push is stopped
+      And the user moves "Issue 9" from "Beta" to "Launch"
+      Then GitHub is asked last to move #7 out of its milestone
+
+    @mc
+    Scenario: A task removed during a push answered again after a restart still takes its issue out of the milestone
+      Given "planner" syncs "acme/api" both ways
+      And #7 is in the milestone "Beta" and #9 in "Launch" on GitHub
+      And GitHub refuses moving #7 to "Launch"
+      And GitHub takes moving #9 to "Beta" late
+      And GitHub takes moving #7 out of its milestone late
+      When the user moves "Issue 7" from "Beta" to "Launch"
+      And while GitHub holds moving "Issue 9" from "Launch" to "Beta", the user removes "Issue 7" and GitHub takes the move
+      And "planner" is restarted and that answer is reported to the planner again
+      Then the answer reported again moves #7 out of its milestone
 
     @mc
     Scenario: A dependency on a task without an issue stays in the plan
@@ -1546,6 +1623,16 @@ Feature: Planner
       And GitHub answers renaming #7 to "Rate limiting" late, taking it
       When the user renames #7's task to "Rate limiting", then "planner" is stopped while GitHub answers and started again
       Then #7's task is named "Rate limiting" and marked as synced
+
+    # The report of a rename lands and its reply is lost, so it comes again while GitHub
+    # holds the rename it chained: the chained rename goes once, and the task waits for it.
+    @mc
+    Scenario: An answered rename reported again sends the rename it chained once
+      Given "planner" syncs "acme/api" both ways
+      And GitHub takes renaming #7 to "Rate limiting" late and to "Rate limits" late
+      When the user renames #7's task to "Rate limiting", then to "Rate limits", and the first answer is reported to the planner again while GitHub holds the second
+      Then GitHub is asked to name #7 "Rate limiting" and then "Rate limits", once each
+      And #7's task is named "Rate limits" and marked as synced
 
     # A report that landed while its reply was lost is answered with the push it
     # was answered with, not taken again: the move it carries is not applied twice
