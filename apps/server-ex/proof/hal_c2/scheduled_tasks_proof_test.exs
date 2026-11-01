@@ -18,6 +18,9 @@ defmodule HalC2.ScheduledTasksProofTest do
       "HalC2.ScheduledTasks.delete/1" => "delete",
       "HalC2.ScheduledTasks.set_enabled/1" => "set-enabled",
       "HalC2.ScheduledTasks.run_now/1" => ~w(run-now run-now-gone run-now-running),
+      "HalC2.ScheduledTasks.put_page_task/1" => "put-page-task",
+      "HalC2.ScheduledTasks.start/1" => "start",
+      "HalC2.ScheduledTasks.reconcile_pages/1" => "reconcile-pages",
       "HalC2.ScheduledTasks.subscribe/2" => "subscribe",
       "HalC2.ScheduledTasks.unsubscribe/2" => "unsubscribe",
       "HalC2.ScheduledTasks handle_call {:upsert, _}" => "upsert",
@@ -25,6 +28,9 @@ defmodule HalC2.ScheduledTasksProofTest do
       "HalC2.ScheduledTasks handle_call {:set_enabled, _, _}" => "set-enabled",
       "HalC2.ScheduledTasks handle_call {:run_now, _}" =>
         ~w(run-now run-now-gone run-now-running),
+      "HalC2.ScheduledTasks handle_call {:put_page_task, _}" => "put-page-task",
+      "HalC2.ScheduledTasks handle_call {:start, _}" => "start",
+      "HalC2.ScheduledTasks handle_call {:reconcile_pages, _}" => "reconcile-pages",
       "HalC2.ScheduledTasks handle_call {:subscribe, _, _}" => "subscribe",
       "HalC2.ScheduledTasks handle_cast {:unsubscribe, _, _}" => "unsubscribe",
       "HalC2.ScheduledTasks handle_info :tick" => "tick",
@@ -40,8 +46,10 @@ defmodule HalC2.ScheduledTasksProofTest do
     abstracts: %{
       "HalC2.ScheduledTasks.start_link/1" => "starts the process crash and restart stand for",
       "HalC2.ScheduledTasks.list/1" => @plain,
+      "HalC2.ScheduledTasks.page_tasks/0" => @plain,
       "HalC2.ScheduledTasks.run_timeout_ms/0" => @plain,
       "HalC2.ScheduledTasks handle_call :list" => @plain,
+      "HalC2.ScheduledTasks handle_call :page_tasks" => @plain,
       "HalC2.ScheduledTasks.next_run/2" => "aims a run; the model counts ticks",
       "HalC2.ScheduledTasks handle_info _" => "ignores what it does not know, as stale does",
       "HalC2.ScheduledTasks state :path" =>
@@ -73,8 +81,9 @@ defmodule HalC2.ScheduledTasksProofTest do
       ]
     }
 
-  # Two tasks, each due soon; the second is a task alone, with more of everything else.
-  @starts ["one(3, 1, 4)", "seeded(1, 1, 2)"]
+  # Two tasks, each due soon; a task alone, with more of everything else; and a task its
+  # page holds, lets go of, starts and deletes.
+  @starts ["one(3, 1, 4)", "seeded(1, 1, 2)", "paged(3, 1, 2)"]
 
   # Rules the code's own steps do not need; the fair ones are the code's. `fire`
   # (the prompt is sent) is not one of them: a run that never returns is ended

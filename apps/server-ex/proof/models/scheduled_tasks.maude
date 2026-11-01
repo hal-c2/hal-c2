@@ -25,7 +25,7 @@ mod SCHEDULED-TASKS is
   ops up down armed wrong quiet : -> Item [ctor] .
   --- The clock, the advances of it left, the commands, crashes and runs left, the next
   --- run's pid and the next task record's incarnation.
-  ops now ticks cmds faults starts pids incs : Nat -> Item [ctor] .
+  ops now ticks cmds pages faults starts pids incs : Nat -> Item [ctor] .
   --- The task ids, the booleans commands carry, the callers of run_now, and two watchers:
   --- alive or dead (`wl`, `wd`), and which the scheduler monitors (`watching`).
   ops known caller wl wd watching : Nat -> Item [ctor] .
@@ -34,6 +34,9 @@ mod SCHEDULED-TASKS is
   --- A task: id, enabled, next run, last status, incarnation (a ghost: which record this
   --- is, as an id reused after a delete is another one).
   op tsk : Nat Bool Next Status Nat -> Item [ctor] .
+  --- A task held while its page is in the trash: whatever aims it, it has no next run,
+  --- as put/2 sees to (`aim/1`), and it survives a crash as the saved task does.
+  op held : Nat -> Item [ctor] .
   --- An entry of the runs table: pid, task id, the incarnation that started it, trigger,
   --- the time it started at and who waits.
   op run : Nat Nat Nat Trig Nat From -> Item [ctor] .
@@ -58,6 +61,7 @@ mod SCHEDULED-TASKS is
   vars C : Conf .
 
   eq armed armed = armed .
+  eq held(I) tsk(I, En, at(M), St, J) = held(I) tsk(I, En, unset, St, J) .
 
   --- The next run of a task a command left enabled or not: a pending run is kept, else
   --- aimed afresh (two ticks on).
@@ -83,6 +87,10 @@ mod SCHEDULED-TASKS is
   op quiet? : Conf -> Bool .
   eq quiet?(quiet C) = true .
   eq quiet?(C) = false [owise] .
+
+  op held? : Nat Conf -> Bool .
+  eq held?(I, held(I) C) = true .
+  eq held?(I, C) = false [owise] .
 
   op entry : Nat Conf -> Bool .
   eq entry(P, run(P, I, J, T, S, Fm) C) = true .
@@ -113,8 +121,9 @@ mod SCHEDULED-TASKS is
   eq mark(J, K) = wrong [owise] .
 
   --- stop_runs/2: a deleted task's runs end, and a caller waiting on one is told the task
-  --- is gone.
+  --- is gone. The record goes with them, and so does its being held.
   op stop : Nat Conf -> Conf .
+  eq stop(I, held(I) C) = stop(I, C) .
   eq stop(I, run(P, I, J, T, S, Fm) C) = reply(Fm) stop(I, kill(P, C)) .
   eq stop(I, C) = C [owise] .
   op kill : Nat Conf -> Conf .
@@ -169,6 +178,38 @@ mod SCHEDULED-TASKS is
 
   rl [delete] :
     { up cmds(s K) known(I) tsk(I, En, Nx, St, J) C } => { up cmds(K) known(I) armed stop(I, C) } .
+
+  --- What a page does to its task spends its own budget, `pages`, so a start that has none
+  --- explores what it did before.
+  --- put_page_task/1: a new task starts enabled, a changed one stays paused or running.
+  rl [put-page-task] :
+    up pages(s K) now(N) known(I) tsk(I, En, Nx, St, J)
+    => up pages(K) now(N) known(I) tsk(I, En, aim(En, En, Nx, N), St, J) armed .
+  crl [put-page-task] :
+    { up pages(s K) now(N) known(I) incs(J) C }
+    => { up pages(K) now(N) known(I) incs(s J)
+         tsk(I, true, aim(true, false, unset, N), never, J) armed C }
+    if not has(I, C) .
+
+  --- start/1: a run nobody waits on, and it may be of a held task. Refused, it changes
+  --- nothing.
+  crl [start] :
+    { up pages(s K) known(I) now(N) pids(P) starts(s F) tsk(I, En, Nx, St, J) C }
+    => { up pages(K) known(I) now(N) pids(s P) starts(F) tsk(I, En, Nx, running, J)
+         run(P, I, J, manual, N, nobody) runner(P, I, N, manual) armed C }
+    if not running?(I, C) .
+
+  --- reconcile_pages/1, by what became of the page, which the Space decides: trashed, it
+  --- is held; restored, it is aimed afresh; deleted for good, it goes as with delete/1.
+  crl [reconcile-pages] :
+    { up pages(s K) known(I) tsk(I, En, Nx, St, J) C }
+    => { up pages(K) known(I) armed held(I) tsk(I, En, unset, St, J) C }
+    if not held?(I, C) .
+  rl [reconcile-pages] :
+    { up pages(s K) now(N) known(I) held(I) tsk(I, En, Nx, St, J) C }
+    => { up pages(K) now(N) known(I) armed tsk(I, En, aim(En, false, unset, N), St, J) C } .
+  rl [reconcile-pages] :
+    { up pages(s K) known(I) tsk(I, En, Nx, St, J) C } => { up pages(K) known(I) armed stop(I, C) } .
 
   --- run_now/1: an answer at once, or once the run is recorded.
   crl [run-now-gone] : { up caller(X) known(I) C } => { up known(I) got(X) C }
@@ -241,8 +282,13 @@ mod SCHEDULED-TASKS is
 
   --- Two tasks, both due soon, and two callers; K commands, F crashes and T advances of the
   --- clock to come. `watched` is two watchers alone, and `hushed` is `one` on an MC
-  --- without automatic actions.
-  ops seeded one watched hushed : Nat Nat Nat -> Sys .
+  --- without automatic actions. `paged` is one task its page acts on: the first number
+  --- is what the page does, beside one ordinary command.
+  ops seeded one watched hushed paged : Nat Nat Nat -> Sys .
+  eq paged(K, F, A) =
+    { up armed now(0) ticks(A) cmds(1) pages(K) faults(F) pids(1) starts(3) incs(2)
+      known(1) flag(true) flag(false) caller(1) caller(2)
+      tsk(1, true, at(1), never, 1) } .
   eq seeded(K, F, A) =
     { up armed now(0) ticks(A) cmds(K) faults(F) pids(1) starts(3) incs(3)
       known(1) known(2) flag(true) flag(false) caller(1) caller(2)
