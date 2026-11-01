@@ -214,6 +214,30 @@ Item {
             Spaces.images.setProperty(0, "url", "data:image/png;name=refused;base64,AAAA");
             tryCompare(thumbnail, "status", Image.Error);
             compare(placeholder.visible, true);
+
+            // A failed load leaves nothing on screen, so the next address has no picture to keep.
+            Spaces.images.setProperty(0, "url", address("after-refusal"));
+            compare(thumbnail.status, Image.Loading);
+            compare(placeholder.visible, true);
+            tryCompare(thumbnail, "status", Image.Ready);
+            compare(placeholder.visible, false);
+
+            // Nor does an address taken away.
+            Spaces.images.setProperty(0, "url", "");
+            compare(thumbnail.status, Image.Null);
+            compare(placeholder.visible, true);
+            Spaces.images.setProperty(0, "url", address("after-none"));
+            compare(thumbnail.status, Image.Loading);
+            compare(placeholder.visible, true);
+            tryCompare(thumbnail, "status", Image.Ready);
+            compare(placeholder.visible, false);
+
+            // A new tile can find its address already in the image cache.
+            Spaces.images.append({ id: "i2", name: "dog.png", prompt: "", url: address("after-none") });
+            waitForRendering(screen);
+            const cached = findChild(screen, "spaceImage:dog.png");
+            tryCompare(findChild(cached, "spaceImageThumbnail"), "status", Image.Ready);
+            compare(findChild(cached, "spaceImagePlaceholder").visible, false);
         }
 
         function test_anImageInTheTrashComesBackOrGoesForGood() {

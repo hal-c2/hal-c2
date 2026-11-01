@@ -106,14 +106,18 @@ ColumnLayout {
                         asynchronous: true
                         // A new address for the same bytes must not blank the picture.
                         retainWhileLoading: true
+
+                        // Whether the last load to finish left a picture. A renewal's load keeps it;
+                        // paintedWidth can't tell, as it keeps its value when the picture has gone.
+                        property bool hasPicture: false
+
+                        onStatusChanged: if (status !== Image.Loading) hasPicture = status === Image.Ready
                     }
 
                     ShellIcon {
                         objectName: "spaceImagePlaceholder"
                         anchors.centerIn: parent
-                        // While loading, paintedWidth tells a first load from a renewal, whose
-                        // picture stays. It keeps its value after a failure, so it can't decide then.
-                        visible: thumbnail.status === Image.Loading ? thumbnail.paintedWidth <= 0 : thumbnail.status !== Image.Ready
+                        visible: !thumbnail.hasPicture
                         name: "image"
                         size: 18
                         color: Theme.palette.color("iconMuted", "#a1a1aa")
