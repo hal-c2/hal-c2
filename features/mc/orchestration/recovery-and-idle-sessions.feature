@@ -30,8 +30,8 @@
 #   packages/contracts/src/orchestrationV2.ts (OrchestrationV2LimitRecovery)
 #   docs/user/ (continuing threads after an update)
 Feature: Recovering from restarts and releasing idle sessions
-  Provider processes stop with the MC, and ones an MC that died left running are
-  killed at its next boot, before any thread goes on. At boot the engine ends
+  Provider processes that cannot go on through a restart (reattach-after-restart.feature)
+  are killed at the next boot, before any thread goes on. At boot the engine ends
   every turn that was cut off, so no thread is stuck running, and can ask cut-off
   threads to continue. While the MC runs, a turn whose runtime crashes ends as failed, and
   stopping a turn nothing drives any more ends it. The MC also stops provider
