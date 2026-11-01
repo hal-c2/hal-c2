@@ -10,7 +10,7 @@ defmodule HalC2.Subprocess.Durable do
     * `out`, an append-only file of the program's stdout. A file rather than a second
       FIFO because reading a FIFO consumes it: what a dying MC had read but not yet
       recorded would be gone. A program never blocks on it or gets SIGPIPE;
-    * `err`, likewise for stderr, read only when the caller asked for a prefix;
+    * `err`, likewise for stderr, only when the caller asked for a prefix;
     * `status`, and a last line in `out`, once the program has ended;
     * `alive`, which the attached helper touches; a shim that sees it go stale ends
       the program, so one whose MC never comes back does not run on for good;
@@ -20,10 +20,11 @@ defmodule HalC2.Subprocess.Durable do
   (`attach_args/2`), so `HalC2.Subprocess` reads and writes it as any other. The MC
   dying only ends the helper.
 
-  A runtime checkpoints after each batch of output (`save/2`): its state, its
-  connection's, and the offset they account for. A VM that dies between recording a
-  batch's patches and that checkpoint replays the batch, so an update can repeat but
-  none is lost. The files are not synced: a crash of the machine ends the program too.
+  A runtime checkpoints (`checkpoint/4`) its state, its connection's, and the offset they
+  account for. A VM that dies since the last save replays what came after it, so an
+  update can repeat but none is lost; an MC stopping saves first (`leaving/2`). The
+  files are not synced: a crash of the machine ends the program too. `out` is not
+  trimmed, so it grows for as long as the program runs, until the idle release.
 
   A boot (`survivors/0`) keeps a program only if its checkpoint names the run the thread
   is on (`HalC2.Orchestration.Recovery`). Anything else is killed first, as without
@@ -40,6 +41,9 @@ defmodule HalC2.Subprocess.Durable do
   @exit_mark "\x01hal-c2-exit "
   # How long a program waits for an MC, in minutes.
   @wait_minutes 10
+  @save_ms 100
+  @pending {__MODULE__, :pending}
+  @timer {__MODULE__, :timer}
   # Bumped when the snapshot's outer shape changes; an older one is not adopted.
   @format 1
   @runtimes [
@@ -50,43 +54,54 @@ defmodule HalC2.Subprocess.Durable do
     HalC2.Muse.ThreadRuntime
   ]
 
+  # In the foreground, because `sh` starts a background job with SIGINT and SIGQUIT
+  # ignored and it could not undo that: whatever the program runs would inherit it. The
+  # shim leads the program's process group (`detach/3`), so the watcher signals both.
+  # It needs two stale looks in a row: a machine waking from sleep can run the watcher
+  # before the helper has touched `alive`.
   @shim ~S"""
-  dir=$1; shift
+  exec </dev/null >/dev/null 2>&1
+  dir=$1; wait_minutes=$2; err=$3; shift 3
   exec 3<>"$dir/in"
   touch "$dir/alive"
   trap : TERM INT HUP
-  "$@" <&3 >>"$dir/out" 2>>"$dir/err" 3<&- &
-  prog=$!
+  shim=$$
   (
-    trap - TERM INT HUP
+    stale=0
     while sleep 30; do
-      if [ -z "$(find "$dir/alive" -mmin -"$HAL_C2_DURABLE_WAIT" 2>/dev/null)" ]; then
-        kill -TERM "$prog" 2>/dev/null
+      if [ -z "$(find "$dir/alive" -mmin -"$wait_minutes" 2>/dev/null)" ]; then
+        stale=$((stale + 1))
+      else
+        stale=0
+      fi
+      if [ "$stale" -ge 2 ]; then
+        kill -TERM -- "-$shim" 2>/dev/null
         sleep 5
-        kill -KILL "$prog" 2>/dev/null
+        kill -KILL -- "-$shim" 2>/dev/null
         exit 0
       fi
     done
-  ) </dev/null >/dev/null 2>&1 3<&- &
+  ) 3<&- &
   watch=$!
-  status=1
-  while kill -0 "$prog" 2>/dev/null; do
-    wait "$prog"
-    status=$?
-  done
+  "$@" <&3 >>"$dir/out" 2>>"$err" 3<&-
+  status=$?
   kill "$watch" 2>/dev/null
   printf '%s' "$status" >"$dir/status.tmp"
   mv "$dir/status.tmp" "$dir/status"
   printf '\n\001hal-c2-exit %s\n' "$status" >>"$dir/out"
   """
 
+  # `in` opened read-write, so the open cannot block once the shim is gone. A shim gone
+  # without its report (a kill of its whole group) gets one written here, so what is
+  # left of the output is still read to its end, however much that is.
   @helper ~S"""
-  dir=$1; offset=$2; prefix=$3; shim=$4; helper=$$
-  tail -c +"$((offset + 1))" -f "$dir/out" &
+  dir=$1; offset=$2; prefix=$3; shim=$4
+  exec 3<>"$dir/in"
+  tail -c +"$((offset + 1))" -f "$dir/out" 3<&- &
   out=$!
   err=
   if [ -n "$prefix" ]; then
-    tail -n 0 -f "$dir/err" >&2 &
+    tail -n 0 -f "$dir/err" >&2 3<&- &
     err=$!
   fi
   (
@@ -94,12 +109,12 @@ defmodule HalC2.Subprocess.Durable do
       touch "$dir/alive"
       sleep 2
     done
-    # Gone without its report (a kill of the whole group): the output will not end by itself.
-    sleep 1
-    kill "$out" $err "$helper" 2>/dev/null
-  ) </dev/null >/dev/null 2>&1 &
+    if [ ! -e "$dir/status" ]; then
+      printf '\n\001hal-c2-exit 137\n' >>"$dir/out"
+    fi
+  ) </dev/null >/dev/null 2>&1 3<&- &
   beat=$!
-  cat >"$dir/in"
+  cat >&3
   kill "$out" $err "$beat" 2>/dev/null
   """
 
@@ -162,27 +177,29 @@ defmodule HalC2.Subprocess.Durable do
     end
   end
 
-  # The shim is the background job of a shell that exits at once. It stays in that
-  # shell's process group, which erl_child_setup made for it, so the program and the
-  # commands it starts can be signalled together, and nothing the VM does reaches it.
+  # A port rather than Exile: erl_child_setup makes the program the leader of a session of
+  # its own and leaves it running when the port closes or the VM goes, and it gets no
+  # background job's ignored signals. The shim lets go of the port's pipes first thing.
   defp detach(dir, cmd, opts) do
-    launcher =
-      ~S(sh -c "$0" "$@" </dev/null >/dev/null 2>&1 & printf '%s %s' "$$" "$!")
+    err = if opts[:stderr_prefix], do: Path.join(dir, "err"), else: "/dev/null"
 
-    args = ["-c", launcher, @shim, "shim", dir | cmd]
+    args = ["-c", @shim, "shim", dir, "#{@wait_minutes}", err | cmd]
 
-    options =
-      [env: [{"HAL_C2_DURABLE_WAIT", "#{@wait_minutes}"} | opts[:env] || []]] ++
-        if(opts[:cd], do: [cd: opts[:cd]], else: [])
+    env = for {key, value} <- opts[:env] || [], do: {to_charlist(key), to_charlist(value)}
+    cd = if opts[:cd], do: [cd: to_charlist(opts[:cd])], else: []
+    settings = [:binary, :exit_status, :hide, {:args, args}, {:env, env}] ++ cd
+    {runner, ref} = spawn_monitor(fn -> exit({:spawned, open(settings)}) end)
 
-    case shell("sh", args, options) do
-      {out, 0} ->
-        [group, pid] = out |> String.trim() |> String.split(" ")
-        {:ok, {String.to_integer(group), String.to_integer(pid)}}
-
-      other ->
-        {:error, {:durable, other}}
+    receive do
+      {:DOWN, ^ref, :process, ^runner, {:spawned, pid}} when is_integer(pid) -> {:ok, {pid, pid}}
+      {:DOWN, ^ref, :process, ^runner, reason} -> {:error, {:durable, reason}}
     end
+  end
+
+  defp open(settings) do
+    port = Port.open({:spawn_executable, System.find_executable("sh")}, settings)
+    {:os_pid, pid} = Port.info(port, :os_pid)
+    pid
   end
 
   @doc "The argv of the helper that connects an MC to `dir` from byte `offset` of its output."
@@ -194,8 +211,55 @@ defmodule HalC2.Subprocess.Durable do
   @doc "Whether a line of output is the shim's report that the program ended."
   def exit_line?(line), do: String.starts_with?(line, @exit_mark)
 
-  @doc "Records a runtime's state as of a checkpoint a connection or session handed it."
-  def save(%{dir: dir} = checkpoint, runtime, state) do
+  @doc """
+  A runtime heard a checkpoint from its connection or session; returns its state. What
+  was just sent to the program is saved at once, or a reply to it could not be told
+  apart after a restart. Output is saved at most every #{@save_ms} ms: a stale save only
+  replays more output, and a long turn's state is too big to write for every batch.
+  Saving runs `flush` first, so the state saved holds no text the log already has.
+  """
+  def checkpoint(checkpoint, runtime, state, flush) do
+    Process.put(@pending, {checkpoint, runtime})
+
+    cond do
+      checkpoint[:wrote] ->
+        save_pending(state, flush)
+
+      Process.get(@timer) ->
+        state
+
+      true ->
+        Process.put(@timer, Process.send_after(self(), :durable_save, @save_ms))
+        state
+    end
+  end
+
+  @doc "The timer of `checkpoint/4` fired: `:durable_save`."
+  def save_due(state, flush) do
+    Process.delete(@timer)
+    save_pending(state, flush)
+  end
+
+  @doc "A runtime is stopping: with the MC, what it has is saved as it stands."
+  def leaving(state, flush) do
+    if HalC2.Orchestration.Recovery.stopping?(), do: save_pending(state, flush), else: state
+  catch
+    _, _ -> state
+  end
+
+  defp save_pending(state, flush) do
+    case Process.delete(@pending) do
+      {checkpoint, runtime} ->
+        state = flush.(state)
+        save(checkpoint, runtime, state)
+        state
+
+      nil ->
+        state
+    end
+  end
+
+  defp save(%{dir: dir} = checkpoint, runtime, state) do
     snapshot = %{
       format: @format,
       runtime: runtime,

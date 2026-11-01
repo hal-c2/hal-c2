@@ -150,7 +150,7 @@ defmodule HalC2.JsonRpc.Connection do
   end
 
   def handle_info({:subprocess_offset, _reader, offset}, state),
-    do: {:noreply, checkpoint(%{state | offset: offset})}
+    do: {:noreply, checkpoint(%{state | offset: offset}, false)}
 
   def handle_info({:subprocess_stderr, _reader, lines}, state) do
     for line <- lines, do: send(state.handler, {:json_rpc, self(), {:invalid, line}})
@@ -217,9 +217,12 @@ defmodule HalC2.JsonRpc.Connection do
 
   # After what the program wrote and after what it was sent: one that goes quiet on a
   # request (a long tool run) would otherwise leave a checkpoint that never heard of it.
-  defp checkpoint(%{sub: %{durable: %{dir: dir}}} = state) do
+  defp checkpoint(state, wrote \\ true)
+
+  defp checkpoint(%{sub: %{durable: %{dir: dir}}} = state, wrote) do
     checkpoint = %{
       dir: dir,
+      wrote: wrote,
       offset: state.offset,
       channel: %{next_id: state.next_id, methods: Map.merge(state.earlier, state.methods)}
     }
@@ -228,7 +231,7 @@ defmodule HalC2.JsonRpc.Connection do
     state
   end
 
-  defp checkpoint(state), do: state
+  defp checkpoint(state, _wrote), do: state
 
   defp handle_line(line, state) do
     HalC2.ProviderLog.native(Map.get(state, :log), line)

@@ -235,6 +235,21 @@ defmodule HalC2.Acp.ThreadRuntime do
              stderr_prefix: Antigravity.stderr_prefix(snapshot.state.agent)
            ),
          {:ok, restored} <- code_change(nil, snapshot.state, nil) do
+      # What the old VM's boot of this agent held in memory: a sign-out finds the thread
+      # by this value, and a later launch's sweep spares only a live runtime dir.
+      Registry.update_value(@registry, restored.thread_id, fn _ -> restored.agent end)
+      if restored.temp_dir, do: HalC2.Acp.Antigravity.SessionFiles.keep(restored.temp_dir)
+
+      # A stop that was out when the MC went keeps its deadline.
+      if restored.interrupted and restored.turn != nil and
+           Antigravity.antigravity?(restored.agent) do
+        Process.send_after(
+          self(),
+          {:antigravity_cancel_timeout, restored.turn.ids.run},
+          HalC2.Acp.Antigravity.cancel_timeout()
+        )
+      end
+
       {:reply, :ok,
        Durable.restored(
          %{
@@ -502,10 +517,11 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   @impl true
-  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state) do
-    Durable.save(checkpoint, __MODULE__, state)
-    {:noreply, state}
-  end
+  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state),
+    do: {:noreply, Durable.checkpoint(checkpoint, __MODULE__, state, &flush(&1, :timer))}
+
+  def handle_info(:durable_save, state),
+    do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
 
   # The turn's prompt, sent by the MC before this one, answered: the turn is over.
   def handle_info(
@@ -858,6 +874,7 @@ defmodule HalC2.Acp.ThreadRuntime do
   # left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(reason, %{turn: turn} = state) when turn != nil do
+    Durable.leaving(state, &flush(&1, :timer))
     close_mcp_bridge(state)
 
     unless reason in [:normal, :shutdown] or match?({:shutdown, _}, reason) do
@@ -871,8 +888,10 @@ defmodule HalC2.Acp.ThreadRuntime do
   end
 
   def terminate(_reason, state) do
+    Durable.leaving(state, &flush(&1, :timer))
     close_mcp_bridge(state)
-    end_work(state, "interrupted")
+    # Stopping with the MC, its work goes on in the program, or the next boot ends it.
+    unless HalC2.Orchestration.Recovery.stopping?(), do: end_work(state, "interrupted")
     :ok
   catch
     _, _ -> :ok

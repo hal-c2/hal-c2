@@ -142,7 +142,7 @@ defmodule HalC2.Claude.Session do
   end
 
   def handle_info({:subprocess_offset, _reader, offset}, state),
-    do: {:noreply, checkpoint(%{state | offset: offset})}
+    do: {:noreply, checkpoint(%{state | offset: offset}, false)}
 
   def handle_info({:subprocess_eof, _reader}, state), do: {:stop, :normal, state}
   def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
@@ -159,12 +159,15 @@ defmodule HalC2.Claude.Session do
     do: {:ok, state |> Map.put_new(:offset, 0) |> Map.put(:v, @state_version)}
 
   # After what the CLI wrote and after what it was sent.
-  defp checkpoint(%{sub: %{durable: %{dir: dir}}} = state) do
+  defp checkpoint(state, wrote \\ true)
+
+  defp checkpoint(%{sub: %{durable: %{dir: dir}}} = state, wrote) do
     notify(
       state,
       {:checkpoint,
        %{
          dir: dir,
+         wrote: wrote,
          offset: state.offset,
          channel: %{next_id: state.next_id, permissions: state.permissions}
        }}
@@ -173,7 +176,7 @@ defmodule HalC2.Claude.Session do
     state
   end
 
-  defp checkpoint(state), do: state
+  defp checkpoint(state, _wrote), do: state
 
   defp handle_line(line, state) do
     HalC2.ProviderLog.native(Map.get(state, :log), line)

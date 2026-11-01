@@ -345,10 +345,11 @@ defmodule HalC2.Pi.ThreadRuntime do
   end
 
   @impl true
-  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state) do
-    Durable.save(checkpoint, __MODULE__, state)
-    {:noreply, state}
-  end
+  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state),
+    do: {:noreply, Durable.checkpoint(checkpoint, __MODULE__, state, &flush(&1, :timer))}
+
+  def handle_info(:durable_save, state),
+    do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
 
   # A `/compact` an earlier MC sent came back: its task went with that MC.
   def handle_info({:json_rpc, _conn, {:response_after_restart, "compact", reply}}, state) do
@@ -406,6 +407,7 @@ defmodule HalC2.Pi.ThreadRuntime do
 
   @impl true
   def terminate(_reason, state) do
+    Durable.leaving(state, &flush(&1, :timer))
     if state.conn, do: Connection.stop(state.conn)
     :ok
   end

@@ -290,6 +290,12 @@ defmodule HalC2.Claude.ThreadRuntime do
              log: snapshot.state.thread_id
            ),
          {:ok, restored} <- code_change(nil, snapshot.state, nil) do
+      # A stop that was out when the MC went keeps its deadline.
+      if restored.turn != nil and restored.interrupted do
+        settle = Application.get_env(:hal_c2, :claude_interrupt_timeout_ms, 10_000)
+        Process.send_after(self(), {:settle_interrupt, restored.turn.ids.run}, settle)
+      end
+
       {:reply, :ok, Durable.restored(restored, :session, session, snapshot)}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -563,10 +569,11 @@ defmodule HalC2.Claude.ThreadRuntime do
   end
 
   @impl true
-  def handle_info({:claude, _session, {:checkpoint, checkpoint}}, state) do
-    Durable.save(checkpoint, __MODULE__, state)
-    {:noreply, state}
-  end
+  def handle_info({:claude, _session, {:checkpoint, checkpoint}}, state),
+    do: {:noreply, Durable.checkpoint(checkpoint, __MODULE__, state, &flush(&1, :timer))}
+
+  def handle_info(:durable_save, state),
+    do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
 
   # What a CLI stopped for another instance's (`ensure_session/2`) had already sent
   # belongs to no turn of this one.
@@ -710,6 +717,7 @@ defmodule HalC2.Claude.ThreadRuntime do
   # next boot ends what is left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(_reason, state) do
+    Durable.leaving(state, &flush(&1, :timer))
     unless HalC2.Orchestration.Recovery.stopping?(), do: end_work(state, "interrupted")
     :ok
   catch

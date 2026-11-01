@@ -105,6 +105,82 @@ defmodule HalC2.SubprocessDurableTest do
     assert {:ok, 3} = Subprocess.stop(sub)
   end
 
+  test "a program starts with no signal ignored, and leads its group" do
+    script = ~S"""
+    import signal, os
+    print(signal.getsignal(signal.SIGINT) == signal.default_int_handler,
+          signal.getsignal(signal.SIGQUIT) == signal.SIG_DFL,
+          os.getpgrp() == os.getppid(), flush=True)
+    input()
+    """
+
+    {:ok, sub} = Subprocess.start(["python3", "-c", script], durable: "t1")
+    assert {["True True True"], _} = lines(sub, 1)
+    Subprocess.stop(sub)
+  end
+
+  test "a shim gone without its report still gets all the output read, then ends" do
+    program = ~S|i=0; while [ $i -lt 3000 ]; do echo line$i; i=$((i+1)); done; sleep 60|
+    {:ok, sub} = Subprocess.start(["sh", "-c", program], durable: "t1")
+    %{"group" => group} = JSON.decode!(File.read!(Path.join(sub.durable.dir, "meta")))
+    Process.sleep(200)
+    System.cmd("kill", ["-KILL", "--", "-#{group}"])
+    assert {lines, _} = lines(sub, 3000)
+    assert List.last(lines) == "line2999"
+    assert_receive {:subprocess_eof, _}, 10_000
+    Subprocess.stop(sub)
+  end
+
+  test "output a stopped program left is read to its end when adopted later" do
+    {:ok, sub} = Subprocess.start(["sh", "-c", "echo one; echo two; exit 4"], durable: "t1")
+    dir = sub.durable.dir
+    HalC2.Orchestration.Recovery.leaving(true)
+    :detached = Subprocess.stop(sub)
+    HalC2.Orchestration.Recovery.leaving(false)
+    flush_messages()
+    Process.sleep(300)
+
+    {:ok, sub} = Subprocess.adopt(dir, 0)
+    assert {["one", "two"], _} = lines(sub, 2)
+    assert_receive {:subprocess_eof, _}, 5_000
+    assert {:ok, 4} = Subprocess.stop(sub)
+  end
+
+  test "saving flushes first; output's saves wait and a write's do not", %{home: home} do
+    dir = Path.join(home, "program")
+    File.mkdir_p!(dir)
+    snapshot = Path.join(dir, "snapshot")
+    me = self()
+
+    flush = fn state ->
+      send(me, :flushed)
+      %{state | buffer: %{}}
+    end
+
+    state = %{thread_id: "t1", buffer: %{"a" => "text"}}
+    point = %{dir: dir, offset: 1, channel: %{}, wrote: false}
+
+    state = Durable.checkpoint(point, __MODULE__, state, flush)
+    refute File.exists?(snapshot)
+    assert_receive :durable_save, 1_000
+    state = Durable.save_due(state, flush)
+    assert_received :flushed
+    assert %{state: %{buffer: buffer}} = :erlang.binary_to_term(File.read!(snapshot))
+    assert buffer == %{}
+
+    File.rm!(snapshot)
+    Durable.checkpoint(%{point | wrote: true}, __MODULE__, state, flush)
+    assert File.exists?(snapshot)
+  end
+
+  defp flush_messages do
+    receive do
+      _ -> flush_messages()
+    after
+      0 -> :ok
+    end
+  end
+
   test "a stop ends a program, whose stdin never closes" do
     {:ok, sub} = Subprocess.start(@echo, durable: "t1")
     pid = Subprocess.os_pid(sub)

@@ -353,10 +353,11 @@ defmodule HalC2.Muse.ThreadRuntime do
   def handle_cast({:runtime_mode, _mode}, state), do: {:noreply, state}
 
   @impl true
-  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state) do
-    Durable.save(checkpoint, __MODULE__, state)
-    {:noreply, state}
-  end
+  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state),
+    do: {:noreply, Durable.checkpoint(checkpoint, __MODULE__, state, &flush(&1, :timer))}
+
+  def handle_info(:durable_save, state),
+    do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
 
   def handle_info({:json_rpc, _conn, {:response_after_restart, _method, _reply}}, state),
     do: {:noreply, state}
@@ -407,6 +408,7 @@ defmodule HalC2.Muse.ThreadRuntime do
 
   @impl true
   def terminate(_reason, state) do
+    Durable.leaving(state, &flush(&1, :timer))
     if state.conn, do: Connection.stop(state.conn)
     :ok
   end

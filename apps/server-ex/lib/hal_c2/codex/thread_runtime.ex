@@ -285,6 +285,12 @@ defmodule HalC2.Codex.ThreadRuntime do
              program: "Codex App Server"
            ),
          {:ok, restored} <- code_change(nil, snapshot.state, nil) do
+      # A stop that was out when the MC went keeps its deadline.
+      if restored.interrupting do
+        deadline = Application.get_env(:hal_c2, :codex_interrupt_deadline_ms, 10_000)
+        Process.send_after(self(), {:interrupt_deadline, restored.interrupting}, deadline)
+      end
+
       {:reply, :ok, Durable.restored(restored, :conn, conn, snapshot)}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
@@ -546,10 +552,11 @@ defmodule HalC2.Codex.ThreadRuntime do
   end
 
   @impl true
-  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state) do
-    Durable.save(checkpoint, __MODULE__, state)
-    {:noreply, state}
-  end
+  def handle_info({:json_rpc, _conn, {:checkpoint, checkpoint}}, state),
+    do: {:noreply, Durable.checkpoint(checkpoint, __MODULE__, state, &flush(&1, :timer))}
+
+  def handle_info(:durable_save, state),
+    do: {:noreply, Durable.save_due(state, &flush(&1, :timer))}
 
   # What an app-server stopped for another instance's (`connect/2`) had already sent
   # belongs to no turn of this one.
@@ -741,6 +748,8 @@ defmodule HalC2.Codex.ThreadRuntime do
   # stopping; the next boot ends what is left (`HalC2.Orchestration.Recovery`).
   @impl true
   def terminate(_reason, state) do
+    Durable.leaving(state, &flush(&1, :timer))
+
     unless HalC2.Orchestration.Recovery.stopping?(),
       do: end_background(%{state | conn: nil}, "interrupted")
 
