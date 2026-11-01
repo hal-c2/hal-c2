@@ -250,8 +250,9 @@ Popup {
             anchors.fill: parent
             anchors.topMargin: 56
             anchors.bottomMargin: 16
-            anchors.leftMargin: 64
-            anchors.rightMargin: 64
+            // On a narrow window the stepping buttons lie over the picture.
+            anchors.leftMargin: viewer.width < 560 ? 0 : 64
+            anchors.rightMargin: viewer.width < 560 ? 0 : 64
             clip: viewer.zoom > 1
 
             Image {

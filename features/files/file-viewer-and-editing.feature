@@ -140,7 +140,7 @@ Feature: Viewing and editing files
       When the user browses files and opens "src/app.ts"
       Then the user is told the file could not be read
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario: A partial preview says how much of the file is shown
       Given "logs/big.log" in "shop" is 3 MB
       When the user opens "logs/big.log"
@@ -159,8 +159,7 @@ Feature: Viewing and editing files
         | assets/a.dat  | contains null bytes                      | This file contains binary data and cannot be shown as text.            |
         | notes/old.txt | is written in a non-UTF-8 text encoding  | This file is not UTF-8 text. Open it in another app to view its contents. |
 
-    # The mobile client has no Files tab yet.
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario Outline: Media files are previewed instead of shown as text
       When the user opens "<path>"
       Then the file is previewed as <kind>
@@ -173,14 +172,14 @@ Feature: Viewing and editing files
         | docs/manual.pdf   | a document |
         | public/index.html | a web page |
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario: Media files of a thread on another machine are previewed
       Given the thread is on another machine of the cluster
       When the user opens "assets/logo.png"
       Then the file is previewed as an image
       And the image comes from the machine the thread is on
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario Outline: A media preview that fails to load can be retried
       Given loading "<path>" fails once
       When the user opens "<path>"
@@ -594,7 +593,13 @@ Feature: Viewing and editing files
     # Copying takes the text anywhere, also where no folder on this machine shows the
     # file (files-on-another-machine.feature). The phone layout has no file viewer
     # yet; the tablet's is the desktop's FilesPanel.
-    @shared @backlog-mobile
+    @mobile
+    Scenario: The way back leaves a thread's files for the thread
+      Given the user is reading "src/app.ts" in the viewer
+      When the user steps back from the file
+      Then the thread is on screen again, and its files can be opened again
+
+    @shared
     Scenario Outline: The open file's text is copied whole
       Given the user is reading "src/app.ts" in the viewer
       When the user copies the file's text <from>
@@ -607,7 +612,7 @@ Feature: Viewing and editing files
         | from the command palette |
 
     # The MC reads a file only up to its first 1 MB, so that is all the viewer has to copy.
-    @shared @backlog-mobile
+    @shared
     Scenario Outline: Copying a file larger than one megabyte copies its first megabyte and says so
       Given "logs/big.log" in "shop" is 3 MB
       And the user is reading "logs/big.log" in the viewer
@@ -705,7 +710,7 @@ Feature: Viewing and editing files
 
   Rule: Viewing attachments
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario Outline: An attachment opens in a viewer for its kind
       Given the user has attached "<file>" to a draft
       When the user opens the attachment from the draft
@@ -718,13 +723,13 @@ Feature: Viewing and editing files
         | build.log   | text                                        |
         | invoice.pdf | a document the user can page through        |
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario: An attachment in a sent message opens in the same viewer
       Given a sent message carries the attachment "invoice.pdf"
       When the user opens the attachment from the conversation
       Then "invoice.pdf" is shown as a document from the environment
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario: Images in the conversation open large and can be stepped through
       Given a message carries three images
       When the user opens the second image
@@ -888,7 +893,7 @@ Feature: Viewing and editing files
         | text   | Show extracted text      |
         | JSON   | Show accessibility JSON  |
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario: An attachment is shown as it was captured, not as the project's file of that name
       Given the user attached "src/app.ts" and has since changed the project's "src/app.ts"
       When the user opens the attachment
@@ -900,13 +905,13 @@ Feature: Viewing and editing files
       When the user removes it
       Then the viewer closes and the attachment leaves the draft
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario: An attachment can be saved to this device
       Given the user is viewing an attachment of a sent message
       When the user saves it
       Then the file is downloaded under its own name
 
-    @desktop @mobile @backlog-mobile
+    @desktop @mobile
     Scenario Outline: An attachment that cannot be fetched says why and can be retried
       Given <state>
       When the user opens the attachment

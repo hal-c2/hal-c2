@@ -24,6 +24,7 @@
 namespace {
 
 const QStringList kDefaultGlobs{
+    QStringLiteral("files/file-viewer-and-editing.feature"),
     QStringLiteral("mobile/pairing-and-environments.feature"),
     QStringLiteral("mobile/home-and-thread-list.feature"),
     QStringLiteral("mobile/composer.feature"),
