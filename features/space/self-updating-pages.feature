@@ -7,6 +7,7 @@
 #   apps/server-ex/lib/hal_c2/space/schedule.ex
 #   apps/server-ex/lib/hal_c2/scheduled_tasks.ex
 #   apps/server-ex/lib/hal_c2/space/sites.ex (a run's Markdown on a published page)
+#   apps/server-ex/lib/hal_c2/space/decks.ex (a run's Markdown in a deck made from the page)
 
 Feature: Pages that update themselves
   A page can carry an instruction and a cadence. Each run writes its result into one
@@ -229,6 +230,14 @@ Feature: Pages that update themselves
       And the page "Status" is published as a site
       When a browser with no pairing opens the site link of the page "Status"
       Then the document has the heading "Weekly status"
+
+    Scenario: A deck from a page reads what a run wrote as ordinary blocks
+      Given text generation writes a heading "Weekly status" over the checked item "Shipped"
+      And the update of "Status" has run
+      When the user makes a deck from the page "Status"
+      Then the deck "Status" has the slides:
+        | title         | body          |
+        | Weekly status | - [x] Shipped |
 
     Scenario: Removing the update does not put a site behind for an image with no caption
       Given the image "chart.png" in "Research"

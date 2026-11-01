@@ -430,6 +430,14 @@ defmodule HalC2.Space do
 
   def links(_state, spec), do: spec
 
+  @doc "A run's Markdown as the block specs it reads as in this Space, each with its text."
+  def written(state, markdown) do
+    markdown
+    |> Markdown.blocks()
+    |> Enum.map(&links(state, &1))
+    |> Enum.map(&Map.put(&1, "text", Blocks.text(state, &1)))
+  end
+
   @doc """
   A new page summarising a thread of this MC, written by text generation in the
   thread's checkout. With no provider to write it, or one that fails, there is no page.

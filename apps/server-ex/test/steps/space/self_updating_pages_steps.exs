@@ -149,6 +149,13 @@ defmodule HalC2.Steps.Space.SelfUpdatingPages do
     World.text_writers(context, [:codex, :claude], %{"markdown" => markdown})
   end
 
+  step "text generation writes a heading {string} over the checked item {string}",
+       %{args: [heading, item]} = context do
+    System.delete_env("FAKE_TEXT_FAIL")
+    markdown = "## #{heading}\n\n- [x] #{item}"
+    World.text_writers(context, [:codex, :claude], %{"markdown" => markdown})
+  end
+
   step "text generation writes the image {string} of the Space", %{args: [name]} = context do
     image = Enum.find(Images.live(state(context)), &(&1["name"] == name))
     markdown = "![#{name}](space-image:#{image["id"]})"

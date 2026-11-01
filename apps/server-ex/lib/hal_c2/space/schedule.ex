@@ -101,7 +101,7 @@ defmodule HalC2.Space.Schedule do
     specs =
       case Enum.find(Blocks.of_page(state, page_id), &(&1["kind"] == "generated")) do
         nil -> []
-        block -> block["text"] |> Markdown.blocks() |> Enum.map(&Space.links(state, &1))
+        block -> Space.written(state, block["text"])
       end
 
     Blocks.release_generated(state, page_id, specs, @author)
