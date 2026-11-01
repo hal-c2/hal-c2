@@ -1007,6 +1007,8 @@ struct ImagesModel {
   QMap<QString, QString> addresses;
   // The addresses whose end has come; shown until a new one arrives.
   QSet<QString> lapsed;
+  // An address was refused since the rows were last rebuilt: the client will try again.
+  bool retrying = false;
   // What the last step asked to have signed, sorted.
   QStringList asked;
   int seq = 1;
@@ -1033,6 +1035,7 @@ bool refreshDue(const ImagesModel& model) {
 
 // Whatever rebuilds the rows asks for each image on screen with no good address.
 void askForImages(ImagesModel& model) {
+  model.retrying = false;
   const QSet<QString> wanted = onScreen(model);
   for (const QString& id : wanted) {
     if (model.inFlight.contains(id) || (model.addresses.contains(id) && !model.lapsed.contains(id))) continue;
@@ -1118,12 +1121,21 @@ struct ImagesSut {
     }
     RC_ASSERT(listed(pages.images()) == kept);
     RC_ASSERT(listed(pages.imageTrash()) == binned);
-    RC_ASSERT(refreshTimer()->isActive() == refreshDue(model));
+    RC_ASSERT(refreshTimer()->isActive() == (model.retrying || refreshDue(model)));
   }
 
   QTimer* refreshTimer() { return pages.findChild<QTimer*>(QStringLiteral("spaceAddressRefresh")); }
 
   void answer(const QString& image) { pages.setImageAddress(image, addressFor(image), now + 3'600'000); }
+
+  // Runs a timer that is due as though its time had come.
+  void fire(QTimer* timer) {
+    if (!timer->isActive()) return;
+    timer->start(0);
+    QCoreApplication::processEvents();
+  }
+
+  void rebuildNow() { fire(pages.findChild<QTimer*>(QStringLiteral("spaceRebuildSoon"))); }
 };
 
 using ImageCommand = rc::state::Command<ImagesModel, ImagesSut>;
@@ -1269,7 +1281,10 @@ struct AnswerAddress : ImageCommand {
   void apply(ImagesModel& model) const override {
     model.asked.clear();
     model.inFlight.remove(image);
-    if (!ok) return;
+    if (!ok) {
+      model.retrying = true;
+      return;
+    }
     model.lapsed.remove(image);
     if (model.order.contains(image)) model.addresses.insert(image, addressFor(image));
     askForImages(model);
@@ -1277,7 +1292,7 @@ struct AnswerAddress : ImageCommand {
   void act(const ImagesModel&, ImagesSut& sut) const {
     if (ok) {
       sut.answer(image);
-      QCoreApplication::processEvents();
+      sut.rebuildNow();
     } else {
       sut.pages.imageAddressFailed(image);
     }
@@ -1306,7 +1321,7 @@ struct AnswerAllAtOnce : ImageCommand {
     sut.asked.clear();
     sut.changes = 0;
     for (const QString& image : model.inFlight) sut.answer(image);
-    QCoreApplication::processEvents();
+    sut.rebuildNow();
     RC_ASSERT(sut.changes == 1);
     sut.check(next);
   }
@@ -1314,22 +1329,20 @@ struct AnswerAllAtOnce : ImageCommand {
 };
 
 // An hour or two pass with nothing changing in the Space. What is on screen is
-// signed anew by the client's own timer; what is not waits until it is shown.
+// signed anew by the client's own timer, and what was refused is asked for again;
+// what is not on screen waits until it is shown.
 struct AddressesLapse : ImageCommand {
-  explicit AddressesLapse(const ImagesModel& model) { RC_PRE(!model.addresses.isEmpty()); }
-  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(!model.addresses.isEmpty()); }
+  explicit AddressesLapse(const ImagesModel& model) { RC_PRE(!model.addresses.isEmpty() || model.retrying); }
+  void checkPreconditions(const ImagesModel& model) const override { RC_PRE(!model.addresses.isEmpty() || model.retrying); }
   void apply(ImagesModel& model) const override {
     model.asked.clear();
-    const bool fires = refreshDue(model);
+    const bool fires = model.retrying || refreshDue(model);
     for (auto it = model.addresses.cbegin(); it != model.addresses.cend(); ++it) model.lapsed.insert(it.key());
     if (fires) askForImages(model);
   }
   void act(const ImagesModel&, ImagesSut& sut) const {
     sut.now += 2 * 3'600'000;
-    if (sut.refreshTimer()->isActive()) {
-      sut.refreshTimer()->start(0);
-      QCoreApplication::processEvents();
-    }
+    sut.fire(sut.refreshTimer());
   }
   void run(const ImagesModel& model, ImagesSut& sut) const override { imageStep(*this, model, sut); }
   void show(std::ostream& os) const override { os << "AddressesLapse"; }

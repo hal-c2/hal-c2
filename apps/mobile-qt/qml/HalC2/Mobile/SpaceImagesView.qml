@@ -103,6 +103,8 @@ ColumnLayout {
                         sourceSize: Qt.size(168, 168)
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
+                        // A new address for the same bytes must not blank the picture.
+                        retainWhileLoading: true
                     }
 
                     ShellIcon {
