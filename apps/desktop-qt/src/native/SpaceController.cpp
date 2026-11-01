@@ -386,6 +386,18 @@ QVariantMap SpacePages::page() const {
           {QStringLiteral("sourceThreadTitle"), thread.isEmpty() ? QString() : threadTitle(thread)}};
 }
 
+QVariantMap SpacePages::agent() const {
+  const QJsonObject agent = m_space.entity(QStringLiteral("pageAgent"), m_pageId);
+  if (agent.isEmpty()) return {};
+  const QString thread = text(agent, QLatin1String("threadId"));
+  return {{QStringLiteral("status"), text(agent, QLatin1String("status"))},
+          {QStringLiteral("request"), text(agent, QLatin1String("request"))},
+          {QStringLiteral("threadId"), thread},
+          {QStringLiteral("threadTitle"), threadTitle(thread)},
+          {QStringLiteral("edited"), agent.value(QLatin1String("edited")).toBool()},
+          {QStringLiteral("error"), text(agent, QLatin1String("error"))}};
+}
+
 QString SpacePages::status() const {
   if (m_unreachable) return QStringLiteral("unreachable");
   const SpaceStream& stream = m_spaceId.isEmpty() ? m_index : m_space;
@@ -679,6 +691,18 @@ void SpaceController::activate() {
     });
     keys->commands()->setTerms(kHistory, {QStringLiteral("space"), QStringLiteral("page"), QStringLiteral("versions"),
                                           QStringLiteral("restore"), QStringLiteral("undo")});
+    keys->commands()->add(kAskAgent, tr("Ask an agent about this page"), [this, navigation] {
+      navigation->open(NavigationController::Route::of(kRoute));
+      if (pageId().isEmpty()) {
+        refuse(tr("Open a page to ask an agent about it."));
+      } else if (page().value(QStringLiteral("trashed")).toBool()) {
+        refuse(tr("Restore the page to ask an agent about it."));
+      } else {
+        emit agentAskRequested();
+      }
+    });
+    keys->commands()->setTerms(kAskAgent, {QStringLiteral("space"), QStringLiteral("page"), QStringLiteral("agent"),
+                                           QStringLiteral("tidy"), QStringLiteral("@agent")});
   }
   connect(navigation, &NavigationController::changed, this,
           [this, navigation] { setOpen(navigation->route().kind == kRoute); });
@@ -1003,6 +1027,18 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
   } else if (action == QLatin1String("space.history.close")) {
     m_historyRefresh->stop();
     history()->close();
+  } else if (action == QLatin1String("space.agent.ask")) {
+    call(QStringLiteral("page.askAgent"), {{QStringLiteral("pageId"), pageId}, {QStringLiteral("request"), field(QLatin1String("request"))}});
+  } else if (action == QLatin1String("space.agent.stop")) {
+    call(QStringLiteral("page.stopAgent"), {{QStringLiteral("pageId"), pageId}});
+  } else if (action == QLatin1String("space.agent.dismiss")) {
+    call(QStringLiteral("page.dismissAgent"), {{QStringLiteral("pageId"), pageId}});
+  } else if (action == QLatin1String("space.agent.openThread")) {
+    const QString thread = agent().value(QStringLiteral("threadId")).toString();
+    auto* navigation = NativeShell::of(this)->controller<NavigationController>();
+    if (navigation && !thread.isEmpty()) {
+      navigation->open(NavigationController::Route::thread(m_client->environment() + QLatin1Char(':') + thread));
+    }
   } else if (action == QLatin1String("space.history.more")) {
     askHistory(history()->more());
   } else if (action == QLatin1String("space.history.read")) {

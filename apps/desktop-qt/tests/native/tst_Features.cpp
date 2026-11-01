@@ -610,6 +610,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("planning/planner.feature"),
     QStringLiteral("space/pages.feature"),
     QStringLiteral("space/page-history.feature"),
+    QStringLiteral("space/agent-in-page.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

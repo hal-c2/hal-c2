@@ -8,6 +8,8 @@ QtObject {
     property string spaceName: ""
     property string pageId: ""
     property var page: ({})
+    property var agent: ({})
+    signal agentAskRequested
     property string status: "live"
     readonly property SpaceRows spaces: SpaceRows {}
     readonly property SpaceRows pages: SpaceRows {}
@@ -38,6 +40,7 @@ QtObject {
         spaceId = state.spaceId ?? "";
         spaceName = state.spaceName ?? "";
         status = state.status ?? "live";
+        agent = state.agent ?? {};
         fill(spaces, state.spaces);
         fill(pages, state.pages);
         fill(trash, state.trash);

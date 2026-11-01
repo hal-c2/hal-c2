@@ -192,6 +192,9 @@ class SpacePages : public QObject {
   Q_PROPERTY(QString pageId READ pageId NOTIFY changed)
   // {id, title, parentPageId, trashed, sourceThreadId, sourceThreadTitle}, or empty.
   Q_PROPERTY(QVariantMap page READ page NOTIFY changed)
+  // What the open page says about the agent asked to work on it: {status (running, stopping,
+  // completed, failed, stopped), request, threadId, threadTitle, edited, error}, or empty.
+  Q_PROPERTY(QVariantMap agent READ agent NOTIFY changed)
   // loading, live or unreachable: the selected Space's stream (the index's
   // before a Space is selected).
   Q_PROPERTY(QString status READ status NOTIFY changed)
@@ -209,6 +212,7 @@ public:
   QString spaceName() const;
   QString pageId() const { return m_pageId; }
   QVariantMap page() const;
+  QVariantMap agent() const;
   QString status() const;
 
   SpaceStream& index() { return m_index; }
@@ -241,6 +245,8 @@ public:
 
 signals:
   void changed();
+  // The command to ask an agent was run: the page takes the words.
+  void agentAskRequested();
   // The selected Space changed: its stream is followed anew.
   void spaceSelected(const QString& id);
 
@@ -304,7 +310,8 @@ private:
 // blockId, body}`, `space.comment.resolve {commentId}`, `space.comment.reopen
 // {commentId}`, `space.history.open {pageId}`, `space.history.close`,
 // `space.history.more`, `space.history.read {version}`, `space.history.back`,
-// `space.history.restore {version}`.
+// `space.history.restore {version}`, `space.agent.ask {pageId, request}`, `space.agent.stop
+// {pageId}`, `space.agent.dismiss {pageId}`, `space.agent.openThread` (the open page's agent).
 class SpaceController : public SpacePages, public NativeController {
   Q_OBJECT
 
@@ -312,6 +319,7 @@ public:
   static inline const QString kOpen = QStringLiteral("space.open");
   static inline const QString kPageFromThread = QStringLiteral("space.pageFromThread");
   static inline const QString kHistory = QStringLiteral("space.history.open");
+  static inline const QString kAskAgent = QStringLiteral("space.agent.focus");
 
   SpaceController(ShellBridge* bridge, McClient* client, ShellStore* store, QObject* parent = nullptr);
 

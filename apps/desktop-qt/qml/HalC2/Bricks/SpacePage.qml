@@ -83,8 +83,23 @@ Rectangle {
         page.insertAfter = "";
     }
 
-    // Writes the composer's text as a block of the chosen kind, or opens the
-    // kinds when it starts with `/`.
+    Connections {
+        target: Spaces
+        function onAgentAskRequested() {
+            page.startAsk();
+        }
+    }
+
+    // Starts the words of an ask in the composer.
+    function startAsk() {
+        composer.text = "@agent ";
+        composer.cursorPosition = composer.text.length;
+        composer.forceActiveFocus();
+    }
+
+    // Writes the composer's text as a block of the chosen kind, opens the kinds
+    // when it starts with `/`, or asks an agent when it starts with `@agent`. An
+    // ask the page cannot take yet keeps its words.
     function submit() {
         if (slash.visible) {
             slash.choose();
@@ -93,6 +108,12 @@ Rectangle {
         const text = composer.text.trim();
         if (text.length === 0)
             return;
+        if (/^@agent(\s|$)/i.test(text)) {
+            Shell.dispatch("space.agent.ask", { pageId: Spaces.pageId, request: text });
+            if (!agentStrip.active)
+                composer.clear();
+            return;
+        }
         page.insert(page.newKind, text, "");
         composer.clear();
         if (page.newKind === "heading" || page.newKind === "callout")
@@ -223,6 +244,14 @@ Rectangle {
             }
 
             ShellMenuItem {
+                objectName: "spaceAskAgent"
+                text: qsTr("Ask an agent…")
+                iconName: "sparkles"
+                enabled: !page.trashed
+                onTriggered: page.startAsk()
+            }
+
+            ShellMenuItem {
                 objectName: "spaceHistoryOpen"
                 text: qsTr("History")
                 iconName: "clock"
@@ -267,6 +296,13 @@ Rectangle {
             text: qsTr("Made from the thread “%1”").arg(page.current.sourceThreadTitle ?? "")
             color: page.muted
             font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        SpaceAgentStrip {
+            id: agentStrip
+
+            Layout.fillWidth: true
+            onHistoryRequested: Shell.dispatch("space.history.open", { pageId: Spaces.pageId })
         }
 
         Rectangle {
@@ -394,7 +430,7 @@ Rectangle {
 
                 objectName: "spaceComposer"
                 Layout.fillWidth: true
-                placeholderText: qsTr("Write, or type / for a kind of block")
+                placeholderText: qsTr("Write, type / for a kind of block, or @agent to ask an agent")
                 onTextChanged: {
                     if (text.startsWith("/")) {
                         slash.query = text.slice(1);
