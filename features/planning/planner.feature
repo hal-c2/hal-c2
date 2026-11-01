@@ -142,6 +142,27 @@ Feature: Planner
       Then the chart reaches back to the baseline of "Launch"
 
     @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The user links a pull request by its repository and number
+      Given the plan has "API"
+      When the user opens the task "API"
+      And the user links the pull request "acme/api#12"
+      Then the MC is asked to link "API" to #12 of "acme/api"
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: The user links a GitHub Enterprise pull request by its address
+      Given the plan has "API"
+      When the user opens the task "API"
+      And the user links the pull request "https://ghe.example.com:8443/acme/api/pull/12/files?w=1"
+      Then the MC is asked to link "API" to #12 of "acme/api" at "https://ghe.example.com:8443/acme/api/pull/12/files?w=1"
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: An address that is not a pull request cannot be linked as one
+      Given the plan has "API"
+      When the user opens the task "API"
+      And the user enters "https://ghe.example.com/acme/api/issues/12" as the pull request to link
+      Then it cannot be linked and the MC is asked nothing
+
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
     Scenario: A task names a project the MC no longer offers
       Given the plan has "API" in the project "gone"
       When the user opens the task "API"

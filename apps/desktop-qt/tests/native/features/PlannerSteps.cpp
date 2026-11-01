@@ -400,6 +400,8 @@ void answer(World& world, const FakeMc::Rpc& rpc) {
     const QJsonObject fields = input.value(QLatin1String("fields")).toObject();
     for (auto it = fields.begin(); it != fields.end(); ++it) task.insert(it.key(), it.value());
     result = QJsonObject{{QStringLiteral("item"), task}};
+  } else if (method == QLatin1String("link")) {
+    // What the UI gives is what the scenarios read; the MC part's link is its own to test.
   } else if (method == QLatin1String("moveToMilestone")) {
     for (const auto& [key, held] : {std::pair{QLatin1String("from"), false}, std::pair{QLatin1String("to"), true}}) {
       const QString milestone = input.value(key).toString();
@@ -917,6 +919,30 @@ const Steps steps([] {
   step(QStringLiteral("%1 is listed with no marker on the timeline").arg(q), [](World& world, const Captures& c, const Table&) {
     waitShownNamed(world, QStringLiteral("plannerTask:") + c[0]);
     expect(hidden(world, QStringLiteral("plannerMilestone:") + c[0]), QStringLiteral("%1 has a marker").arg(c[0]));
+  });
+  step(QStringLiteral("the user links the pull request %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitShownNamed(world, QStringLiteral("plannerItemLink"))->setProperty("text", c[0]);
+    world.sync();
+    click(world, waitShownNamed(world, QStringLiteral("plannerItemLinkButton")));
+  });
+  step(QStringLiteral("the MC is asked to link %1 to #%2 of %1").arg(q, QStringLiteral("(\\d+)")), [](World& world, const Captures& c, const Table&) {
+    waitAsked(world, QStringLiteral("link"), {{QStringLiteral("itemId"), idOf(world, c[0])}, {QStringLiteral("pullRequest"), QJsonObject{{QStringLiteral("repository"), c[2]}, {QStringLiteral("number"), c[1].toInt()}}}});
+  });
+  step(QStringLiteral("the MC is asked to link %1 to #%2 of %1 at %1").arg(q, QStringLiteral("(\\d+)")), [](World& world, const Captures& c, const Table&) {
+    waitAsked(world, QStringLiteral("link"), {{QStringLiteral("itemId"), idOf(world, c[0])}, {QStringLiteral("pullRequest"), QJsonObject{{QStringLiteral("repository"), c[2]}, {QStringLiteral("number"), c[1].toInt()}, {QStringLiteral("url"), c[3]}}}});
+  });
+  step(QStringLiteral("the user enters %1 as the pull request to link").arg(q), [](World& world, const Captures& c, const Table&) {
+    waitShownNamed(world, QStringLiteral("plannerItemLink"))->setProperty("text", c[0]);
+    world.sync();
+  });
+  step(QStringLiteral("it cannot be linked and the MC is asked nothing"), [](World& world, const Captures&, const Table&) {
+    expect(!waitShownNamed(world, QStringLiteral("plannerItemLinkButton"))->isEnabled(), QStringLiteral("the address can be linked"));
+    QQuickItem* field = waitShownNamed(world, QStringLiteral("plannerItemLink"));
+    field->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(pluginShell(world), Qt::Key_Return);
+    world.sync();
+    expect(asked(world, QStringLiteral("link")).isEmpty(), QStringLiteral("the MC was asked %1").arg(showAsked(world, QStringLiteral("link"))));
+    expect(field->property("text").toString().contains(QLatin1String("/issues/")), QStringLiteral("the field was emptied"));
   });
   step(QStringLiteral("the plan has %1").arg(q), [](World& world, const Captures& c, const Table&) {
     dated(world, c[0], QStringLiteral("2026-10-21"), QStringLiteral("2026-10-30"));

@@ -659,6 +659,17 @@ Item {
         }
     }
 
+    // The pull request a user names in the Link PR field, as `owner/name#12` or by its web
+    // address, or null. The address goes along as an agent's does, so the MC keeps its host
+    // and makes it canonical; this takes only addresses that it would keep.
+    function pullRequestRef(text) {
+        const named = /^\s*([\w.-]+\/[\w.-]+)#(\d+)\s*$/.exec(text);
+        if (named)
+            return { repository: named[1], number: Number(named[2]) };
+        const address = /^\s*(https?:\/\/(?:[a-z0-9.-]+|\[[0-9a-f:.]+\])(?::\d+)?\/([\w.-]+\/[\w.-]+)\/pull\/([1-9]\d*)(?:[\/?#]\S*)?)\s*$/i.exec(text);
+        return address ? { repository: address[2], number: Number(address[3]), url: address[1] } : null;
+    }
+
     function time(value) {
         return value ? Qt.formatDateTime(new Date(value), Qt.locale().dateTimeFormat(Locale.ShortFormat)) : "";
     }
@@ -1815,19 +1826,18 @@ Item {
 
                             objectName: "plannerItemLink"
                             Layout.fillWidth: true
-                            placeholderText: qsTr("owner/name#12")
+                            placeholderText: qsTr("owner/name#12 or its address")
                             Accessible.name: qsTr("Pull request to link")
-                            onAccepted: linkButton.clicked()
+                            onAccepted: if (linkButton.enabled)
+                                linkButton.clicked()
                         }
 
                         ShellButton {
                             id: linkButton
 
-                            readonly property var ref: {
-                                const found = /^\s*([\w.-]+\/[\w.-]+)#(\d+)\s*$/.exec(linkField.text);
-                                return found ? { repository: found[1], number: Number(found[2]) } : null;
-                            }
+                            readonly property var ref: page.pullRequestRef(linkField.text)
 
+                            objectName: "plannerItemLinkButton"
                             subtle: true
                             enabled: ref !== null
                             text: qsTr("Link PR")
