@@ -244,7 +244,7 @@ Feature: Viewing and editing files
       Then that empty row is shown after the last data row
 
     # Legacy: packages/shared/src/delimitedPreview.ts (filePreviewDelimiter)
-    @backlog @desktop
+    @desktop
     Scenario Outline: Which files are shown as a table
       When the user opens "<path>" of type "<type>" rendered
       Then <outcome>
@@ -716,7 +716,7 @@ Feature: Viewing and editing files
 
   Rule: Viewing attachments
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario Outline: An attachment opens in a viewer for its kind
       Given the user has attached "<file>" to a draft
       When the user opens the attachment from the draft
@@ -725,9 +725,13 @@ Feature: Viewing and editing files
       Examples:
         | file        | shown                                       |
         | receipt.png | an image                                    |
-        | invoice.pdf | a document the user can page through        |
         | notes.md    | rendered Markdown that can switch to source |
         | build.log   | text                                        |
+
+      @backlog
+      Examples: A document (the clients have no PDF renderer yet)
+        | file        | shown                                       |
+        | invoice.pdf | a document the user can page through        |
 
     @backlog @desktop @mobile
     Scenario: An attachment in a sent message opens in the same viewer
@@ -735,20 +739,20 @@ Feature: Viewing and editing files
       When the user opens the attachment from the conversation
       Then "invoice.pdf" is shown as a document from the environment
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: Images in the conversation open large and can be stepped through
       Given a message carries three images
       When the user opens the second image
       Then it is shown large
       And the user can step to the previous and next image
 
-    @backlog @desktop
+    @desktop
     Scenario: A large image says which of the images it is
       Given a message carries three images
       When the user opens the second image
       Then its name is shown with "(2/3)"
 
-    @backlog @desktop
+    @desktop
     Scenario: Stepping past the last image comes back to the first
       Given a message carries three images and the user opened the third
       When the user steps to the next image
@@ -756,14 +760,14 @@ Feature: Viewing and editing files
       When the user steps to the previous image
       Then the third image is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: A single image has nothing to step through
       Given a message carries one image
       When the user opens it
       Then no previous or next image is offered
       And the arrow keys do nothing
 
-    @backlog @desktop
+    @desktop
     Scenario: The arrow keys step through the images
       Given a message carries three images and the user opened the second
       When the user presses the right arrow key
@@ -771,7 +775,7 @@ Feature: Viewing and editing files
       When the user presses the left arrow key twice
       Then the first image is shown
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A large image is zoomed with the pointer
       Given the user opened an image that fits the window
       When the user <acts>
@@ -779,23 +783,23 @@ Feature: Viewing and editing files
 
       Examples:
         | acts                                          | result                                          |
-        | clicks it                                     | zoomed to twice its fitted size                 |
-        | clicks it again                               | back to its fitted size                         |
+        | clicks the image                              | zoomed to twice its fitted size                 |
+        | clicks the image again                        | back to its fitted size                         |
         | turns the wheel up over a point               | zoomed in around that point                     |
         | turns the wheel down at its fitted size       | left at its fitted size                         |
         | pinches or holds Control and turns the wheel  | zoomed faster than the wheel alone              |
 
-    @backlog @desktop
+    @desktop
     Scenario: A large image cannot be zoomed beyond eight times its fitted size
       Given the user opened an image that fits the window
       When the user zooms in as far as it will go
       Then the image is eight times its fitted size
       And zooming further changes nothing
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A large image is zoomed with the keyboard
       Given the user opened an image with focus on it
-      When the user presses <key>
+      When the user presses <key> in the viewer
       Then the image <result>
 
       Examples:
@@ -806,14 +810,14 @@ Feature: Viewing and editing files
         | minus         | zooms out one step                          |
         | 0             | returns to its fitted size                  |
 
-    @backlog @desktop
+    @desktop
     Scenario: A zoomed image is dragged to look around
       Given the user zoomed an opened image
       When the user drags it with the mouse
       Then the part of the image shown moves with the pointer
       And letting go does not zoom the image back out
 
-    @backlog @desktop
+    @desktop
     Scenario: The arrow keys look around a zoomed image and step through images otherwise
       Given a message carries three images and the user opened the second
       When the user zooms in and presses the right arrow key
@@ -821,19 +825,19 @@ Feature: Viewing and editing files
       When the user returns the image to its fitted size and presses the right arrow key
       Then the third image is shown
 
-    @backlog @desktop
+    @desktop
     Scenario: Stepping to another image starts at its fitted size
       Given a message carries three images and the user zoomed the second
       When the user steps to the next image
       Then the third image is shown at its fitted size
 
-    @backlog @desktop
+    @desktop
     Scenario: The zoom is announced
       Given the user opened an image
       When the user zooms to twice its fitted size
       Then "200% zoom" is announced to assistive technology
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A large image or video is closed from where the user is
       Given the user opened an image from the conversation
       When the user <closes>
@@ -842,18 +846,18 @@ Feature: Viewing and editing files
 
       Examples:
         | closes                           |
-        | presses Escape                   |
+        | presses Escape in the viewer     |
         | clicks beside the image          |
         | uses the close button            |
 
-    @backlog @desktop
+    @desktop
     Scenario: Escape closes a menu of the viewer before the viewer
       Given the user opened an image and right-clicked it to open its menu
-      When the user presses Escape
-      Then the menu closes
+      When the user presses Escape in the viewer
+      Then the viewer's menu closes
       And the image is still open
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A large image that cannot be loaded says so
       Given the user opened an image whose picture cannot be loaded and <original>
       Then the viewer says "<message>"
@@ -863,7 +867,7 @@ Feature: Viewing and editing files
         | that has an address on the web                | This image could not be loaded.                           |
         | that has no address on the web                | Image unavailable. The file may have been moved or deleted. |
 
-    @backlog @desktop
+    @desktop
     Scenario: A large image that cannot be loaded offers its original
       Given the user opened an image whose picture cannot be loaded
       And the image has an address on the web
@@ -881,7 +885,7 @@ Feature: Viewing and editing files
       When the user presses the right arrow key with focus on the video
       Then the key is left to the video and the viewer stays on the video
 
-    @backlog @desktop
+    @desktop
     Scenario: A Snap Shot's text is read in the large view and the picture comes back
       Given the user opened a Snap Shot that has accessibility data
       When the user chooses to show its extracted text
@@ -889,7 +893,7 @@ Feature: Viewing and editing files
       When the user chooses to show the screenshot
       Then the picture is shown again
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: A Snap Shot offers the form of what it captured
       Given the user opened a Snap Shot whose accessibility data is <format>
       Then the control to see it reads "<label>"
@@ -899,7 +903,7 @@ Feature: Viewing and editing files
         | text   | Show extracted text      |
         | JSON   | Show accessibility JSON  |
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: An attachment is shown as it was captured, not as the project's file of that name
       Given the user attached "src/app.ts" and has since changed the project's "src/app.ts"
       When the user opens the attachment
@@ -911,13 +915,13 @@ Feature: Viewing and editing files
       When the user removes it
       Then the viewer closes and the attachment leaves the draft
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario: An attachment can be saved to this device
       Given the user is viewing an attachment of a sent message
       When the user saves it
       Then the file is downloaded under its own name
 
-    @backlog @desktop @mobile
+    @desktop @mobile @backlog-mobile
     Scenario Outline: An attachment that cannot be fetched says why and can be retried
       Given <state>
       When the user opens the attachment
@@ -930,20 +934,20 @@ Feature: Viewing and editing files
         | the environment is unreachable                | Reconnect to the environment and try again. |
         | the environment no longer has the attachment  | The attachment is unavailable.           |
 
-    @backlog @desktop
+    @desktop
     Scenario: A failed save of an attachment is reported
       Given the user is viewing an attachment of a sent message
       And the environment cannot be reached
       When the user saves it
       Then the user is told the file could not be saved with the reason
 
-    @backlog @desktop
+    @desktop
     Scenario: An attachment opened long ago is fetched with fresh access
       Given the user opened an attachment as a rendered page an hour ago
       When the user switches to its source
       Then the source is shown without the user reconnecting
 
-    @backlog @desktop
+    @desktop
     Scenario: A page that cannot be read as text can still be shown rendered
       Given the attachment "page.html" is not valid text
       When the user switches to its source
@@ -951,11 +955,11 @@ Feature: Viewing and editing files
       When the user switches back to the rendered page
       Then the page is shown
 
-    @backlog @desktop
+    @desktop
     Scenario Outline: Copying an attachment's text
       Given the user is viewing a text attachment that is <size>
       When the user copies it
-      Then the clipboard holds <copied>
+      Then the copy is <copied>
 
       Examples:
         | size                    | copied                                        |

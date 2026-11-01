@@ -334,6 +334,8 @@ const Steps steps([] {
       if (auto* panel = world.native().controller<RightPanelController>(); panel && panel->files()) {
         if (panel->files()->fileProblem() == c[0] || panel->files()->trailProblem() == c[0]) return true;
       }
+      // What the attachment viewer says when it could not fetch.
+      if (world.state(QStringLiteral("attachmentViewer")).toMap().value(QStringLiteral("problem")) == c[0]) return true;
       // A toast is told by its title, its description, or as "title — description".
       for (const QVariant& item : toasts(world)) {
         const QString title = item.toMap().value(QStringLiteral("title")).toString();

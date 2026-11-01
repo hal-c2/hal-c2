@@ -1294,6 +1294,7 @@ void TimelineModel::loadAttachment(const QString& id) {
 }
 
 void TimelineModel::setAttachmentUrl(const QString& id, const QUrl& url, const QDateTime& expiresAt) {
+  emit attachmentSigned(id, url);
   if (url.isEmpty()) {
     m_attachmentUrls.remove(id);
     return;
@@ -1562,11 +1563,23 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         if (text(attachment, QLatin1String("type")) != QLatin1String("image")) continue;
         const QString id = text(attachment, QLatin1String("id"));
         const AttachmentUrl known = m_attachmentUrls.value(id);
-        images.append(QVariantMap{
+        QVariantMap image{
             {QStringLiteral("id"), id},
             {QStringLiteral("name"), text(attachment, QLatin1String("name"))},
             {QStringLiteral("url"), known.expiresAt > m_now() ? known.url : QUrl()},
-        });
+        };
+        // A Snap Shot's capture: its tree as JSON, or its flat text.
+        const QJsonObject source = attachment.value(QLatin1String("source")).toObject();
+        const QJsonObject tree = source.value(QLatin1String("accessibility")).toObject();
+        const QString flat = text(tree, QLatin1String("format")) == QLatin1String("flat-text") ? text(tree, QLatin1String("text")) : text(source, QLatin1String("accessibleText"));
+        if (!tree.isEmpty() && text(tree, QLatin1String("format")) != QLatin1String("flat-text")) {
+          image.insert(QStringLiteral("accessFormat"), QStringLiteral("json"));
+          image.insert(QStringLiteral("accessText"), QString::fromUtf8(QJsonDocument(tree).toJson()));
+        } else if (!flat.isEmpty()) {
+          image.insert(QStringLiteral("accessFormat"), QStringLiteral("text"));
+          image.insert(QStringLiteral("accessText"), flat);
+        }
+        images.append(image);
       }
       return images;
     }
@@ -1587,6 +1600,7 @@ QVariant TimelineModel::data(const QModelIndex& index, int role) const {
         }
         files.append(QVariantMap{{QStringLiteral("id"), text(attachment, QLatin1String("id"))},
                                  {QStringLiteral("name"), name},
+                                 {QStringLiteral("mimeType"), text(attachment, QLatin1String("mimeType"))},
                                  {QStringLiteral("detail"), detail}});
       }
       return files;
