@@ -404,7 +404,15 @@ defmodule HalC2.Subprocess.OrphansTest do
   defp record_of(pid) do
     Orphans.dir()
     |> File.ls!()
-    |> Enum.map(&(Path.join(Orphans.dir(), &1) |> File.read!() |> JSON.decode!()))
+    # Another program's record may go, or be half written, while this reads.
+    |> Enum.flat_map(fn name ->
+      with {:ok, text} <- File.read(Path.join(Orphans.dir(), name)),
+           {:ok, record} <- JSON.decode(text) do
+        [record]
+      else
+        _ -> []
+      end
+    end)
     |> Enum.find(&(&1["pid"] == pid))
   end
 

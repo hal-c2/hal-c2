@@ -83,7 +83,8 @@ defmodule HalC2.SubprocessOrphansPropTest do
       [
         {3, {:call, __MODULE__, :boot, []}},
         {1, {:call, __MODULE__, :blind_boot, [oneof([:unlistable, :unreadable])]}},
-        {1, {:call, __MODULE__, :dirless_boot, []}},
+        # Orphans waiting out of reach are what a healing start must reap first.
+        {if(state.orphans == [], do: 1, else: 5), {:call, __MODULE__, :dirless_boot, []}},
         {1, {:call, __MODULE__, :timeless_boot, []}}
       ] ++ exits(state)
     )
@@ -103,7 +104,7 @@ defmodule HalC2.SubprocessOrphansPropTest do
         else: [{1, {:call, __MODULE__, :start_during_restart, [state.next]}}]
 
     # The other way out: the failure ends, and the next start heals.
-    heals = if state.broken, do: [{2, {:call, __MODULE__, :failure_ends, []}}], else: []
+    heals = if state.broken, do: [{8, {:call, __MODULE__, :failure_ends, []}}], else: []
 
     frequency(
       [
