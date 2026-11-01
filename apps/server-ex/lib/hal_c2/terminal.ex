@@ -64,7 +64,8 @@ defmodule HalC2.Terminal do
              do: call(ensure(input), {:attach, input, subscriber})
 
       {pid, _} ->
-        with {:ok, input} <- provider_env(input), do: call(pid, {:attach, input, subscriber})
+        with {:ok, input} <- running_attach_env(input),
+             do: call(pid, {:attach, input, subscriber})
     end
   end
 
@@ -250,6 +251,16 @@ defmodule HalC2.Terminal do
       {:ok, input |> Map.delete("providerInstanceId") |> Map.put("env", env)}
     end
   end
+
+  # A live shell needs nothing more from settings, so unreadable ones do not keep a
+  # client from it. Without a `cwd` the attach starts nothing, even if the shell ended.
+  defp running_attach_env(%{"providerInstanceId" => id} = input) when is_binary(id) do
+    if HalC2.Settings.unreadable?(),
+      do: {:ok, Map.drop(input, ["cwd", "providerInstanceId"])},
+      else: provider_env(input)
+  end
+
+  defp running_attach_env(input), do: {:ok, input}
 
   defp settings_unreadable_error(id) do
     %{
