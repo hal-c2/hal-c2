@@ -154,6 +154,21 @@ defmodule HalC2.VcsTest do
     refute_receive {:hal_c2_vcs, _, _}, 200
   end
 
+  test "a new branch started from a remote ref has no upstream", %{repo: repo} do
+    assert {:ok, %{"worktree" => %{"path" => path}}} =
+             Vcs.create_worktree(%{
+               "cwd" => repo,
+               "refName" => "origin/main",
+               "newRefName" => "wt/from-origin",
+               "path" => nil
+             })
+
+    {out, status} =
+      System.cmd("git", ~w(rev-parse --abbrev-ref @{upstream}), cd: path, stderr_to_stdout: true)
+
+    assert status != 0, "it tracks #{out}"
+  end
+
   defp commit!(repo, message),
     do: git!(repo, ~w(-c user.name=t -c user.email=t@t commit -q -m) ++ [message])
 

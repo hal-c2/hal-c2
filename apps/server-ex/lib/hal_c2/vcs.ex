@@ -620,7 +620,8 @@ defmodule HalC2.Vcs do
 
     args =
       if input["newRefName"],
-        do: ["worktree", "add", "-b", input["newRefName"], path, ref],
+        # No upstream yet: a new branch started from `origin/dev` must not push to `dev`.
+        do: ["worktree", "add", "--no-track", "-b", input["newRefName"], path, ref],
         else: ["worktree", "add", path, ref]
 
     fresh = not File.exists?(path)
