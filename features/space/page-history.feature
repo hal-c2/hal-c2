@@ -5,6 +5,7 @@
 #   packages/contracts/src/space.ts (space.page.history, space.page.version, space.page.restoreVersion)
 #   apps/server-ex/lib/hal_c2/space/history.ex
 #   features/space/images.feature (a block on an image that left stays and says so)
+#   features/space/sites.feature (a site is behind when publishing again would change it)
 
 Feature: A page's history
   A page's history is read from the Space's event log, on demand and a stretch at a
@@ -161,6 +162,14 @@ Feature: A page's history
       And the user moves the page "Roadmap" into "Ideas"
       When the user restores the version 1 back on "Roadmap"
       Then "Roadmap" is a subpage of "Ideas"
+
+    Scenario: A restore moves a published page's site as any edit does
+      Given the page "Roadmap" is published as a site
+      When the user restores the version 1 back on "Roadmap"
+      Then the page "Roadmap" shows its site is behind
+      When the user restores the version 1 back on "Roadmap"
+      Then the page "Roadmap" shows its site is up to date
+      And the history has 4 versions
 
     Scenario: A restore brings an image's block back, whatever became of the image
       Given the image "cat.png" in "Research"
