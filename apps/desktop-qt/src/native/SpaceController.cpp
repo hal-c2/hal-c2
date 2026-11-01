@@ -249,6 +249,9 @@ SpacePages::SpacePages(QObject* parent)
                               "imageId", "imageState", "imageUrl", "imageWidth", "imageHeight"},
                              this)),
       m_comments(new SpaceRows({"id", "blockId", "blockText", "body", "resolved", "byAgent", "createdAt"}, this)),
+      m_decks(new SpaceRows({"id", "title"}, this)),
+      m_deckTrash(new SpaceRows({"id", "title", "trashedAt"}, this)),
+      m_slides(new SpaceRows({"id", "title", "body"}, this)),
       m_images(new SpaceRows({"id", "name", "prompt", "mimeType", "width", "height", "generatedBy", "url"}, this)),
       m_imageTrash(new SpaceRows({"id", "name", "prompt", "mimeType", "width", "height", "generatedBy", "url"}, this)) {
   m_addressRefresh = new QTimer(this);
@@ -289,6 +292,14 @@ QVariantMap SpacePages::siteOf(const QString& pageId) const {
   return {};
 }
 
+QVariantMap SpacePages::deck() const {
+  const QJsonObject deck = m_space.entity(QStringLiteral("deck"), m_deckId);
+  if (deck.isEmpty()) return {};
+  return {{QStringLiteral("id"), m_deckId},
+          {QStringLiteral("title"), text(deck, QLatin1String("title"))},
+          {QStringLiteral("trashed"), trashed(deck)}};
+}
+
 QString SpacePages::status() const {
   if (m_unreachable) return QStringLiteral("unreachable");
   const SpaceStream& stream = m_spaceId.isEmpty() ? m_index : m_space;
@@ -323,8 +334,13 @@ void SpacePages::selectSpace(const QString& id) {
   if (id == m_spaceId || !m_index.of(QStringLiteral("space")).contains(id)) return;
   m_spaceId = id;
   m_pageId.clear();
-  // A page awaited in this Space is still awaited: it arrives with the Space's copy.
-  if (id != m_awaitedSpace) m_awaitedPage.clear();
+  m_deckId.clear();
+  m_presenting = false;
+  // What is awaited in this Space is still awaited: it arrives with the Space's copy.
+  if (id != m_awaitedSpace) {
+    m_awaitedPage.clear();
+    m_awaitedDeck.clear();
+  }
   m_space.clear();
   m_pending.clear();
   m_addresses.clear();
@@ -334,8 +350,17 @@ void SpacePages::selectSpace(const QString& id) {
 }
 
 void SpacePages::selectPage(const QString& id) {
-  if (id == m_pageId || !m_space.of(QStringLiteral("page")).contains(id)) return;
+  if ((id == m_pageId && m_deckId.isEmpty()) || !m_space.of(QStringLiteral("page")).contains(id)) return;
   m_pageId = id;
+  m_deckId.clear();
+  m_presenting = false;
+  rebuild();
+}
+
+void SpacePages::selectDeck(const QString& id) {
+  if (id == m_deckId || !m_space.of(QStringLiteral("deck")).contains(id)) return;
+  m_deckId = id;
+  m_presenting = false;
   rebuild();
 }
 
@@ -372,8 +397,54 @@ void SpacePages::awaitSpace(const QString& id) {
 }
 
 void SpacePages::awaitPage(const QString& id) {
+  m_awaitedDeck.clear();
   m_awaitedPage = id;
   selectPage(id);
+}
+
+void SpacePages::awaitDeck(const QString& id) {
+  m_awaitedPage.clear();
+  m_awaitedDeck = id;
+  selectDeck(id);
+}
+
+bool SpacePages::present(const QString& id) {
+  const QJsonObject deck = m_space.entity(QStringLiteral("deck"), id);
+  if (deck.isEmpty() || trashed(deck)) return false;
+  selectDeck(id);
+  if (m_slides->rowCount() == 0) return false;
+  m_presenting = true;
+  m_slideIndex = 0;
+  m_slideId = m_slides->get(0).value(QStringLiteral("id")).toString();
+  emit changed();
+  return true;
+}
+
+void SpacePages::step(int by) {
+  if (!m_presenting) return;
+  const int at = std::clamp(m_slideIndex + by, 0, m_slides->rowCount() - 1);
+  if (at == m_slideIndex) return;
+  m_slideIndex = at;
+  m_slideId = m_slides->get(at).value(QStringLiteral("id")).toString();
+  emit changed();
+}
+
+void SpacePages::leave() {
+  if (std::exchange(m_presenting, false)) emit changed();
+}
+
+void SpacePages::followPresenter() {
+  if (!m_presenting) return;
+  const QJsonObject deck = m_space.entity(QStringLiteral("deck"), m_deckId);
+  const int count = m_slides->rowCount();
+  if (deck.isEmpty() || trashed(deck) || count == 0) {
+    m_presenting = false;
+    return;
+  }
+  const int at = m_slides->indexOf(m_slideId);
+  // A slide that went is followed by what took its place.
+  m_slideIndex = at >= 0 ? at : std::min(m_slideIndex, count - 1);
+  m_slideId = m_slides->get(m_slideIndex).value(QStringLiteral("id")).toString();
 }
 
 bool SpacePages::live(const QJsonObject& page) const {
@@ -440,13 +511,23 @@ bool SpacePages::reselect() {
     if (!m_spaceId.isEmpty()) {
       m_spaceId.clear();
       m_pageId.clear();
+      m_deckId.clear();
+      m_presenting = false;
       m_space.clear();
       m_pending.clear();
       emit spaceSelected({});
     }
   }
   const QHash<QString, QJsonObject>& pages = m_space.of(QStringLiteral("page"));
-  if (pages.contains(m_awaitedPage)) m_pageId = std::exchange(m_awaitedPage, {});
+  if (pages.contains(m_awaitedPage)) {
+    m_pageId = std::exchange(m_awaitedPage, {});
+    m_deckId.clear();
+    m_presenting = false;
+  }
+  if (m_space.of(QStringLiteral("deck")).contains(m_awaitedDeck)) {
+    m_deckId = std::exchange(m_awaitedDeck, {});
+    m_presenting = false;
+  }
   return false;
 }
 
@@ -603,6 +684,40 @@ void SpacePages::rebuild() {
   }
   m_comments->setRows(comments);
   if (m_viewersPage != m_pageId) clearViewers();
+
+  const QHash<QString, QJsonObject>& decks = m_space.of(QStringLiteral("deck"));
+  if (m_space.hasCopy() && !decks.contains(m_deckId)) m_deckId.clear();
+  QList<QJsonObject> liveDecks;
+  QList<QJsonObject> trashedDecks;
+  for (const QJsonObject& deck : decks) (trashed(deck) ? trashedDecks : liveDecks).append(deck);
+  QList<QVariantMap> deckRows;
+  for (const QJsonObject& deck : sorted(liveDecks, QLatin1String("createdAt"))) {
+    deckRows.append({{QStringLiteral("id"), text(deck, QLatin1String("id"))},
+                     {QStringLiteral("title"), text(deck, QLatin1String("title"))}});
+  }
+  m_decks->setRows(deckRows);
+  QList<QVariantMap> deckTrash;
+  trashedDecks = sorted(trashedDecks, QLatin1String("trashedAt"));
+  std::reverse(trashedDecks.begin(), trashedDecks.end());
+  for (const QJsonObject& deck : trashedDecks) {
+    deckTrash.append({{QStringLiteral("id"), text(deck, QLatin1String("id"))},
+                      {QStringLiteral("title"), text(deck, QLatin1String("title"))},
+                      {QStringLiteral("trashedAt"), text(deck, QLatin1String("trashedAt"))}});
+  }
+  m_deckTrash->setRows(deckTrash);
+
+  QList<QJsonObject> deckSlides;
+  for (const QJsonObject& slide : m_space.of(QStringLiteral("slide"))) {
+    if (text(slide, QLatin1String("deckId")) == m_deckId) deckSlides.append(slide);
+  }
+  QList<QVariantMap> slides;
+  for (const QJsonObject& slide : sorted(deckSlides, QLatin1String("order"))) {
+    slides.append({{QStringLiteral("id"), text(slide, QLatin1String("id"))},
+                   {QStringLiteral("title"), text(slide, QLatin1String("title"))},
+                   {QStringLiteral("body"), text(slide, QLatin1String("body"))}});
+  }
+  m_slides->setRows(slides);
+  followPresenter();
   emit changed();
   const QStringList needed = imagesToSign(wanted);
   armAddressRefresh(wanted);
@@ -680,6 +795,24 @@ void SpaceController::activate() {
     });
     keys->commands()->setTerms(kPageFromThread, {QStringLiteral("space"), QStringLiteral("page"),
                                                  QStringLiteral("summary"), QStringLiteral("summarise")});
+    keys->commands()->add(kDeckFromPage, tr("Make a deck from page"), [this] {
+      if (!m_open || pageId().isEmpty() || !deckId().isEmpty()) {
+        refuse(tr("Open a page in a Space to make a deck from it."));
+      } else {
+        handle(QStringLiteral("space.deck.createFromPage"), QVariantMap());
+      }
+    });
+    keys->commands()->setTerms(kDeckFromPage, {QStringLiteral("space"), QStringLiteral("slides"),
+                                               QStringLiteral("presentation")});
+    keys->commands()->add(kPresentDeck, tr("Present deck"), [this] {
+      if (!m_open || deckId().isEmpty()) {
+        refuse(tr("Open a deck in a Space to present it."));
+      } else {
+        presentDeck(deckId());
+      }
+    });
+    keys->commands()->setTerms(kPresentDeck, {QStringLiteral("space"), QStringLiteral("slides"),
+                                              QStringLiteral("presentation"), QStringLiteral("slideshow")});
   }
   connect(navigation, &NavigationController::changed, this,
           [this, navigation] { setOpen(navigation->route().kind == kRoute); });
@@ -696,6 +829,7 @@ void SpaceController::setOpen(bool open) {
   if (open) {
     follow();
   } else {
+    leave();
     unfollow();
     m_pageShown = false;
   }
@@ -871,6 +1005,14 @@ void SpaceController::pageFromThread(const QString& threadKey) {
   });
 }
 
+void SpaceController::presentDeck(const QString& id) {
+  if (present(id)) return;
+  const QJsonObject deck = space().entity(QStringLiteral("deck"), id);
+  refuse(!deck.isEmpty() && deck.value(QLatin1String("trashedAt")).toString().isEmpty()
+             ? tr("This deck has no slides to present.")
+             : tr("Restore this deck from the trash to present it."));
+}
+
 // The signed address needs no token, and the MC's origin is whichever way this
 // client reaches it, so an Image loads it over LAN and Tailscale alike.
 void SpaceController::signImages(const QStringList& imageIds) {
@@ -980,6 +1122,10 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     return out;
   };
   const QString pageId = input.contains(QLatin1String("pageId")) ? field(QLatin1String("pageId")) : this->pageId();
+  const QString deckId = input.contains(QLatin1String("deckId")) ? field(QLatin1String("deckId")) : this->deckId();
+  const auto opensDeck = [this](const QJsonObject& result) {
+    awaitDeck(result.value(QLatin1String("deck")).toObject().value(QLatin1String("id")).toString());
+  };
 
   if (action == kOpen) {
     if (auto* navigation = NativeShell::of(this)->controller<NavigationController>()) {
@@ -1113,6 +1259,38 @@ bool SpaceController::handle(const QString& action, const QVariant& payload) {
     call(QStringLiteral("comment.resolve"), pick({"spaceId", "commentId"}));
   } else if (action == QLatin1String("space.comment.reopen")) {
     call(QStringLiteral("comment.reopen"), pick({"spaceId", "commentId"}));
+  } else if (action == QLatin1String("space.selectDeck")) {
+    selectDeck(deckId);
+  } else if (action == QLatin1String("space.deck.create")) {
+    call(QStringLiteral("deck.create"), pick({"spaceId", "title"}), opensDeck);
+  } else if (action == QLatin1String("space.deck.createFromPage")) {
+    call(QStringLiteral("deck.createFromPage"), {{QStringLiteral("pageId"), pageId}}, opensDeck);
+  } else if (action == QLatin1String("space.deck.rename")) {
+    QJsonObject rename = pick({"spaceId", "title"});
+    rename.insert(QStringLiteral("deckId"), deckId);
+    call(QStringLiteral("deck.rename"), rename);
+  } else if (action == QLatin1String("space.deck.trash")) {
+    call(QStringLiteral("deck.trash"), {{QStringLiteral("deckId"), deckId}});
+  } else if (action == QLatin1String("space.deck.restore")) {
+    call(QStringLiteral("deck.restore"), {{QStringLiteral("deckId"), deckId}});
+  } else if (action == QLatin1String("space.deck.delete")) {
+    call(QStringLiteral("deck.delete"), {{QStringLiteral("deckId"), deckId}});
+  } else if (action == QLatin1String("space.slide.insert")) {
+    QJsonObject insert = orNull(pick({"spaceId", "title", "body"}), QLatin1String("afterSlideId"));
+    insert.insert(QStringLiteral("deckId"), deckId);
+    call(QStringLiteral("slide.insert"), insert);
+  } else if (action == QLatin1String("space.slide.update")) {
+    call(QStringLiteral("slide.update"), pick({"spaceId", "slideId", "title", "body"}));
+  } else if (action == QLatin1String("space.slide.move")) {
+    call(QStringLiteral("slide.move"), orNull(pick({"spaceId", "slideId"}), QLatin1String("afterSlideId")));
+  } else if (action == QLatin1String("space.slide.delete")) {
+    call(QStringLiteral("slide.delete"), pick({"spaceId", "slideId"}));
+  } else if (action == QLatin1String("space.deck.present")) {
+    presentDeck(deckId);
+  } else if (action == QLatin1String("space.deck.step")) {
+    step(input.value(QLatin1String("by")).toInt());
+  } else if (action == QLatin1String("space.deck.leave")) {
+    leave();
   } else if (action == QLatin1String("space.images.show")) {
     setImagesShown(input.value(QLatin1String("shown")).toBool());
   } else if (action == QLatin1String("space.image.providers")) {

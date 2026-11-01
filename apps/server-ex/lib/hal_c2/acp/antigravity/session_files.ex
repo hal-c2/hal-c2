@@ -106,6 +106,9 @@ defmodule HalC2.Acp.Antigravity.SessionFiles do
     :ets.select(@live_table, [{{:"$1", true}, [], [:"$1"]}]) |> MapSet.new()
   end
 
+  @doc "`dir` is a runtime's, of a program an earlier MC left running: no sweep takes it."
+  def keep(dir), do: live_add(dir)
+
   defp live_add(dir) do
     table()
     :ets.insert(@live_table, {dir, true})

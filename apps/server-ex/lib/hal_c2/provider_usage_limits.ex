@@ -23,8 +23,8 @@ defmodule HalC2.ProviderUsageLimits do
   it never waits on a probe, and every change makes clients read the provider list
   again (`HalC2.Settings.notify_providers/0`).
 
-  `provider.consumeResetCredit` redeems a Codex reset credit here, or a hub
-  account's through `HalC2.UsageLimitSources`. Clients that answer `/usage-limits`
+  `provider.consumeResetCredit` redeems a reset credit of a Codex instance here, or
+  a hub account's through `HalC2.UsageLimitSources`. Clients that answer `/usage-limits`
   themselves see it offered by every provider with limits to show (`with_command/2`).
   """
 
@@ -126,16 +126,21 @@ defmodule HalC2.ProviderUsageLimits do
   def consume_reset_credit(%{"sourceId" => _} = input),
     do: HalC2.UsageLimitSources.consume_reset_credit(input)
 
-  def consume_reset_credit(%{"instanceId" => "codex"}) do
-    if Codex.installed?(),
-      do: GenServer.call(__MODULE__, :consume_codex, 90_000),
-      else: setup_error("codex", "Provider instance not found.")
-  end
-
+  # A Codex instance that is off or missing is not probed, so it has no credits to
+  # show and a redemption could never be confirmed.
   def consume_reset_credit(%{"instanceId" => instance}) do
-    if Enum.any?(HalC2.Environment.providers(), &(&1["instanceId"] == instance)),
-      do: setup_error(instance, "This provider does not bank reset credits."),
-      else: setup_error(instance, "Provider instance not found.")
+    codex? = driver(instance) == "codex"
+
+    cond do
+      codex? and probed?(instance) ->
+        GenServer.call(__MODULE__, {:consume_codex, instance}, 90_000)
+
+      not codex? and Enum.any?(HalC2.Environment.providers(), &(&1["instanceId"] == instance)) ->
+        setup_error(instance, "This provider does not bank reset credits.")
+
+      true ->
+        setup_error(instance, "Provider instance not found.")
+    end
   end
 
   @doc """
@@ -371,7 +376,7 @@ defmodule HalC2.ProviderUsageLimits do
     {:ok,
      %{
        claude_names: %{},
-       redeem_key: nil,
+       redeem_keys: %{},
        providers: provider_settings(HalC2.Settings.settings())
      }, {:continue, :boot}}
   end
@@ -389,7 +394,14 @@ defmodule HalC2.ProviderUsageLimits do
        names when is_map(names) -> names
        nil -> %{}
        name -> %{"claudeAgent" => name}
-     end)}
+     end)
+     |> upgrade_redeem_key()}
+  end
+
+  # The one pending attempt from when only the built-in instance could redeem.
+  defp upgrade_redeem_key(state) do
+    {key, state} = Map.pop(state, :redeem_key)
+    Map.put_new(state, :redeem_keys, if(key, do: %{"codex" => key}, else: %{}))
   end
 
   @impl true
@@ -403,22 +415,27 @@ defmodule HalC2.ProviderUsageLimits do
   def handle_call({:refresh, instances}, _from, state),
     do: {:reply, :ok, probe(state, instances)}
 
-  # One redemption at a time, with one idempotency key kept until Codex reports an
-  # outcome, so a retry after a timeout is the same attempt rather than a second credit.
-  def handle_call(:consume_codex, _from, state) do
-    key = state.redeem_key || HalC2.Environment.uuid4()
+  # A call queued across a hot upgrade, from when only the built-in instance redeemed.
+  def handle_call(:consume_codex, from, state),
+    do: handle_call({:consume_codex, "codex"}, from, state)
 
-    case run(fn -> Codex.consume(key) end, 25_000) do
+  # One redemption at a time, with one idempotency key per instance kept until Codex
+  # reports an outcome, so a retry after a timeout is the same attempt rather than a
+  # second credit.
+  def handle_call({:consume_codex, instance}, _from, state) do
+    key = state.redeem_keys[instance] || HalC2.Environment.uuid4()
+
+    case run(fn -> Codex.consume(key, instance) end, 25_000) do
       {:ok, outcome} ->
-        before = get("codex")
-        state = probe(%{state | redeem_key: nil}, ["codex"])
-        now = get("codex")
+        before = get(instance)
+        state = probe(%{state | redeem_keys: Map.delete(state.redeem_keys, instance)}, [instance])
+        now = get(instance)
 
         if now == nil or now["checkedAt"] == (before || %{})["checkedAt"] or
              get_in(now, ["unavailable", "reason"]) == "probeFailed" do
           {:reply,
            setup_error(
-             "codex",
+             instance,
              "The reset was applied, but Codex could not confirm the new limits. Refresh to check."
            ), state}
         else
@@ -428,8 +445,8 @@ defmodule HalC2.ProviderUsageLimits do
       failure ->
         Logger.warning("Codex reset credit redemption failed: #{inspect(failure)}")
 
-        {:reply, setup_error("codex", "Codex could not redeem the reset credit."),
-         %{state | redeem_key: key}}
+        {:reply, setup_error(instance, "Codex could not redeem the reset credit."),
+         %{state | redeem_keys: Map.put(state.redeem_keys, instance, key)}}
     end
   end
 
@@ -525,9 +542,13 @@ defmodule HalC2.ProviderUsageLimits do
       HalC2.Settings.notify_providers()
     end
 
-    # Its probed bucket name goes too, so a later instance reusing the id
-    # never writes under the previous account's model name.
-    state = %{state | claude_names: Map.take(claude_names(state), all)}
+    # Its probed bucket name and pending redemption go too, so a later instance
+    # reusing the id never acts under the previous account's.
+    state = %{
+      state
+      | claude_names: Map.take(claude_names(state), all),
+        redeem_keys: Map.take(state.redeem_keys, all)
+    }
 
     probes =
       for instance <- instances, probed?(instance) do
