@@ -33,11 +33,27 @@ defmodule HalC2.SpaceSitesTest do
   describe "the network address of an MC listening on every interface" do
     defp up(ip), do: {"if", [flags: [:up], addr: ip]}
 
-    test "a home or office network comes before a bridge, and that before anything else" do
+    test "a home or office network comes before the rest of the private ranges, and those before anything else" do
       assert Web.network_ip({:ok, [up({100, 64, 0, 1}), up({192, 168, 1, 20})]}) == "192.168.1.20"
       assert Web.network_ip({:ok, [up({172, 17, 0, 1}), up({10, 0, 0, 5})]}) == "10.0.0.5"
       assert Web.network_ip({:ok, [up({100, 64, 0, 1}), up({172, 17, 0, 1})]}) == "172.17.0.1"
       assert Web.network_ip({:ok, [up({100, 64, 0, 1})]}) == "100.64.0.1"
+    end
+
+    # Found on a machine running Compose: a bridge's 192.168 address outranked the Wi-Fi's 10.
+    test "a bridge for this machine's containers and VMs does not count" do
+      bridges =
+        for name <- ~w(docker0 br-e0f16321754d virbr0),
+            do: {~c"#{name}", [flags: [:up], addr: {192, 168, 144, 1}]}
+
+      assert Web.network_ip(
+               {:ok, bridges ++ [{~c"wlan0", [flags: [:up], addr: {10, 0, 3, 114}]}]}
+             ) == "10.0.3.114"
+
+      assert Web.network_ip({:ok, bridges}) == nil
+
+      assert Web.network_ip({:ok, [{~c"br0", [flags: [:up], addr: {192, 168, 1, 20}]}]}) ==
+               "192.168.1.20"
     end
 
     test "loopback, link-local, IPv6 and interfaces that are down do not count" do

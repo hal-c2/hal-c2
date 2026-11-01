@@ -90,14 +90,17 @@ defmodule HalC2.Web do
     end
   end
 
+  @virtual_interfaces ~w(docker br- virbr veth vmnet vboxnet podman cni lxcbr lxdbr bridge)
+
   @doc """
   The IPv4 address of an interface that is up in `:inet.getifaddrs/0`'s answer, not
-  loopback or link-local: a home or office network first, a tailnet or public address
-  last, and a container bridge's 172.16.0.0/12 after the other private ranges.
+  loopback, link-local or a bridge for this machine's containers and VMs, which nobody
+  else can reach: a home or office network first, a tailnet or public address last.
   """
   def network_ip({:ok, interfaces}) do
     ips =
-      for {_name, opts} <- interfaces,
+      for {name, opts} <- interfaces,
+          not String.starts_with?(to_string(name), @virtual_interfaces),
           :up in Keyword.get(opts, :flags, []),
           {:addr, {a, b, _, _} = ip} <- opts,
           a != 127 and {a, b} != {169, 254},
