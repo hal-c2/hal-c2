@@ -28,12 +28,6 @@ Feature: An agent in a page
       Then "Roadmap" says its agent is working on "tidy this and wait"
       And "Roadmap" links to its agent's thread
 
-    Scenario: Following an agent whose thread is gone says so
-      Given the user asks "tidy this and wait" on the page "Roadmap"
-      And the agent of "Roadmap" names a thread this client does not have
-      When the user follows the agent of "Roadmap" to its thread
-      Then the user is told the agent's thread is not available
-
     Scenario: The agent's edits land live and name its thread
       Given a second client watching the Space "Research"
       And the user asks "tidy this and wait" on the page "Roadmap"
@@ -76,6 +70,15 @@ Feature: An agent in a page
       Given the user asks "tidy this and wait" on the page "Roadmap"
       When the thread of the agent of "Roadmap" is deleted
       Then "Roadmap" says its agent stopped because "its thread was deleted"
+
+  @desktop @mobile @tui
+  Rule: Following an agent from a client
+
+    Scenario: Following an agent whose thread is gone says so
+      Given the user asks "tidy this and wait" on the page "Roadmap"
+      And the agent of "Roadmap" names a thread this client does not have
+      When the user follows the agent of "Roadmap" to its thread
+      Then the user is told the agent's thread is not available
 
   @desktop @mobile @tui
   Rule: The user's way out of an ask

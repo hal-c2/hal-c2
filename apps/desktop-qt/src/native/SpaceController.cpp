@@ -248,7 +248,7 @@ SpaceHistory::Next SpaceHistory::open(const QString& pageId) {
 void SpaceHistory::close() {
   m_pageId.clear();
   m_listToken = 0;
-  m_appending = m_stale = m_failed = false;
+  m_appending = m_refreshing = m_stale = m_failed = false;
   m_nextBefore = -1;
   m_versions->setRows({});
   stopReading();
@@ -271,16 +271,18 @@ SpaceHistory::Next SpaceHistory::refresh() {
     return std::nullopt;
   }
   m_listToken = ++m_tokens;
+  m_refreshing = true;
   m_failed = false;
   emit changed();
-  // As far back as the user has looked, so the list does not shrink under them.
+  // As far back as the user has looked, up to what the MC sends at once; receive()
+  // keeps the rows older than that, so the list does not shrink under them.
   const int limit = std::clamp(static_cast<int>(m_versions->rowCount()), 30, 100);
   return Request{m_listToken, {{QStringLiteral("pageId"), m_pageId}, {QStringLiteral("limit"), limit}}};
 }
 
 SpaceHistory::Next SpaceHistory::settled() {
   m_listToken = 0;
-  m_appending = false;
+  m_appending = m_refreshing = false;
   emit changed();
   if (!std::exchange(m_stale, false)) return std::nullopt;
   return refresh();
@@ -288,7 +290,8 @@ SpaceHistory::Next SpaceHistory::settled() {
 
 SpaceHistory::Next SpaceHistory::receive(int token, const QJsonObject& result) {
   if (token == 0 || token != m_listToken) return std::nullopt;
-  QList<QVariantMap> rows = m_appending ? m_versions->rows() : QList<QVariantMap>();
+  const QList<QVariantMap> had = m_versions->rows();
+  QList<QVariantMap> rows = m_appending ? had : QList<QVariantMap>();
   QSet<QString> held;
   for (const QVariantMap& row : rows) held.insert(row.value(QStringLiteral("id")).toString());
   for (const QJsonValue& value : result.value(QLatin1String("versions")).toArray()) {
@@ -304,8 +307,18 @@ SpaceHistory::Next SpaceHistory::receive(int token, const QJsonObject& result) {
                  {QStringLiteral("threadTitle"), text(version, QLatin1String("threadTitle"))},
                  {QStringLiteral("restoredFromAt"), text(version, QLatin1String("restoredFromAt"))}});
   }
+  qint64 nextBefore = result.value(QLatin1String("nextBefore")).toInteger(-1);
+  // A refresh that stopped at a row already held joins up with the older rows; one
+  // that stopped short of them leaves a gap, so they go.
+  const auto oldest = std::find_if(had.begin(), had.end(), [&](const QVariantMap& row) {
+    return row.value(QStringLiteral("version")).toLongLong() == nextBefore;
+  });
+  if (m_refreshing && nextBefore >= 0 && oldest != had.end() && oldest + 1 != had.end()) {
+    rows.append(QList<QVariantMap>(oldest + 1, had.end()));
+    nextBefore = m_nextBefore;
+  }
   m_versions->setRows(rows);
-  m_nextBefore = result.value(QLatin1String("nextBefore")).toInteger(-1);
+  m_nextBefore = nextBefore;
   m_failed = false;
   return settled();
 }

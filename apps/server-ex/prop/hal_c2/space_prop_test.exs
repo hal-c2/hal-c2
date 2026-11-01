@@ -21,7 +21,9 @@ defmodule HalC2.SpacePropTest do
   - a restore makes a live page look as it did, keeps every comment, moves no page, and
     writes nothing when the page already looks like it;
   - reading a page's history writes nothing, its versions go strictly back in time, and
-    the newest of them reads as the page does now.
+    the newest of them reads as the page does now;
+  - deleting a page for good is its deleter's edit of a page that linked to it, whoever
+    wrote the link.
   """
 
   use ExUnit.Case, async: false
@@ -64,6 +66,31 @@ defmodule HalC2.SpacePropTest do
       end
     end
   end
+
+  property "a link's removal is the deleter's edit, whoever wrote the link",
+    numtests: HalC2.Prop.numtests(20) do
+    forall {writer, deleter} <- {author(), author()} do
+      home = HalC2.Prop.scratch_home("space")
+
+      HalC2.Prop.start_services([
+        {HalC2.Store, path: Path.join(home, "hal-c2.sqlite")},
+        HalC2.Streams
+      ])
+
+      {:ok, space} = Space.create("Prop")
+      {:ok, %{"id" => holder}} = Space.create_page(space["id"], "Holder", nil)
+      {:ok, %{"id" => linked}} = Space.create_page(space["id"], "Linked", nil)
+      spec = %{"kind" => "subpage_link", "linkedPageId" => linked}
+      {:ok, _} = Space.insert_block(space["id"], holder, spec, :last, writer)
+      {:ok, _} = Space.trash_page(space["id"], linked)
+      {:ok, _} = Space.delete_page(space["id"], linked, deleter)
+      {:ok, %{versions: [newest | _]}} = Space.page_versions(space["id"], holder)
+      HalC2.Prop.stop_services()
+      newest.author == deleter
+    end
+  end
+
+  defp author, do: oneof([Space.user(), Space.agent("thread-1"), Space.agent("thread-2")])
 
   # --- model ----------------------------------------------------------------------
 

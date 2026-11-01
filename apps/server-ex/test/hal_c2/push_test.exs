@@ -10,7 +10,8 @@ defmodule HalC2.PushTest do
     dir = Path.join(System.tmp_dir!(), "hal-c2-push-#{System.unique_integer([:positive])}")
     on_exit(fn -> File.rm_rf(dir) end)
     mc = Mc.start(dir)
-    Mc.ensure(PushPhone)
+    # The clock and the requests it saw outlast `Mc.restart/1`, as real time does.
+    start_supervised!(PushPhone)
     # Retries say how long they would wait instead of waiting.
     test = self()
     {Push, opts} = PushPhone.service()

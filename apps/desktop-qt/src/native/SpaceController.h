@@ -160,6 +160,7 @@ private:
   bool m_failed = false;
   bool m_reading = false;
   qint64 m_nextBefore = -1;
+  bool m_refreshing = false;
   QVariantMap m_version;
 };
 

@@ -152,7 +152,9 @@ defmodule HalC2.Space do
   def move_page(space_id, id, parent_id), do: transact(space_id, &Pages.move(&1, id, parent_id))
   def trash_page(space_id, id), do: transact(space_id, &Pages.trash(&1, id))
   def restore_page(space_id, id), do: transact(space_id, &Pages.restore(&1, id))
-  def delete_page(space_id, id), do: transact(space_id, &Pages.delete(&1, id))
+
+  def delete_page(space_id, id, author \\ @user),
+    do: transact(space_id, &Pages.delete(&1, id, author))
 
   def insert_block(space_id, page_id, spec, after_id \\ :last, author \\ @user),
     do: transact(space_id, &Blocks.insert(&1, page_id, spec, after_id, author))
