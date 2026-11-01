@@ -289,6 +289,8 @@ private:
   // Writes a pending edit now; `closing` when the file is going away, so
   // nothing but a failure is heard of it.
   void save(bool closing = false);
+  // Sends the oldest waiting write, once the one under way is answered.
+  void writeNext();
   // What the agent last did to the workspace, or empty.
   QString mutation() const;
   void followMutation();
@@ -360,6 +362,17 @@ private:
   // An edit waits to be written; a write is on its way.
   bool m_pending = false;
   bool m_saving = false;
+  struct Write {
+    QString environment;
+    QString root;
+    QString path;
+    QString contents;
+    int revision;
+    int request;
+    bool closing;
+  };
+  QList<Write> m_writes;
+  bool m_writing = false;
   int m_revision = 0;
   QString m_saveProblem;
   // The environment that refused to write a file by its full path for want of

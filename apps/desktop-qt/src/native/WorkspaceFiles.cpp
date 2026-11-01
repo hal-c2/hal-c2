@@ -8,6 +8,7 @@
 #include <QHash>
 #include <QLocale>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QTimeZone>
 
 #include <functional>
@@ -832,16 +833,34 @@ void WorkspaceFiles::save(bool closing) {
   }
   // One write at a time: the next goes when this one is answered.
   if (m_saving && !closing) return;
-  const QString path = m_openPath;
-  const QString root = m_root;
-  const int revision = m_revision;
-  const int request = m_fileRequest;
-  const QString environment = m_environment;
   m_saving = !closing;
   if (closing) m_pending = false;
-  m_client->call(this, m_environment, QStringLiteral("projects.writeFile"),
-                 QJsonObject{{QStringLiteral("cwd"), root}, {QStringLiteral("relativePath"), path}, {QStringLiteral("contents"), m_text}},
+  m_writes.append({m_environment, m_root, m_openPath, m_text, m_revision, m_fileRequest, closing});
+  writeNext();
+  emit saveChanged();
+}
+
+void WorkspaceFiles::writeNext() {
+  // The MC answers each call on its own, so two writes under way could land in
+  // either order and put older text over newer.
+  if (m_writing || m_writes.isEmpty()) return;
+  const Write write = m_writes.takeFirst();
+  if (m_hostWritesRefusedOn == write.environment && hostPath(write.path)) {
+    // Refused while this one waited. The edit stays on screen, if it still is.
+    if (!write.closing && write.request == m_fileRequest) m_saving = false;
+    emit saveChanged();
+    writeNext();
+    return;
+  }
+  m_writing = true;
+  const auto [environment, root, path, contents, revision, request, closing] = write;
+  m_client->call(this, environment, QStringLiteral("projects.writeFile"),
+                 QJsonObject{{QStringLiteral("cwd"), root}, {QStringLiteral("relativePath"), path}, {QStringLiteral("contents"), contents}},
                  [this, path, root, environment, revision, request, closing](const QJsonValue& detail, const std::optional<QString>& error) {
+                   const auto next = qScopeGuard([this] {
+                     m_writing = false;
+                     writeNext();
+                   });
                    // A session without terminal access may not write outside the workspace (Rpc.required_scope/2).
                    const QJsonObject refusal = error ? detail.toObject() : QJsonObject();
                    const bool hostRefused = refusal.value(QLatin1String("_tag")) == QLatin1String("EnvironmentScopeRequiredError") &&
@@ -880,7 +899,6 @@ void WorkspaceFiles::save(bool closing) {
                    emit saveChanged();
                    rereadIfDue();
                  });
-  emit saveChanged();
 }
 
 void WorkspaceFiles::setDefaultWrap(bool wrap) {

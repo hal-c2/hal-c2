@@ -25,6 +25,7 @@ struct Held {
     mc.onRpc(QStringLiteral("projects.searchEntries"), hold);
     mc.onRpc(QStringLiteral("assets.createUrl"), hold);
     mc.onRpc(QStringLiteral("projects.readFile"), hold);
+    mc.onRpc(QStringLiteral("projects.writeFile"), hold);
     client.setRetryDelays({20});
     client.open(mc.origin(), QStringLiteral("token"));
   }
@@ -337,6 +338,42 @@ private slots:
     QVERIFY(held.answer(1, QStringLiteral("top")));
     files.setQuery({});
     QCOMPARE(files.tree()->visiblePaths(), QStringList{QStringLiteral("top")});
+  }
+
+  // The MC answers each call on its own: a write from leaving the file, answered
+  // after one from coming back to it, put the older text back on disk.
+  void writesGoOneAtATimeInOrder() {
+    Held held;
+    QVERIFY(held.ready());
+    WorkspaceFiles files(&held.client);
+    files.setSaveDelay(0);
+    files.setTarget(QStringLiteral("env-a"), QStringLiteral("/w"));
+    const auto open = [&](const QString& path) {
+      files.openFile(path);
+      if (!QTest::qWaitFor([&] { return !held.callsOf(QStringLiteral("projects.readFile")).isEmpty() && held.callsOf(QStringLiteral("projects.readFile")).last().payload.value(QLatin1String("relativePath")).toString() == path; })) return false;
+      held.mc.reply(held.callsOf(QStringLiteral("projects.readFile")).last(), QJsonObject{{QStringLiteral("relativePath"), path}, {QStringLiteral("contents"), QStringLiteral("disk")}});
+      return QTest::qWaitFor([&] { return files.fileStatus() == QLatin1String("ready"); });
+    };
+    const auto writes = [&] { return held.callsOf(QStringLiteral("projects.writeFile")); };
+    QVERIFY(open(QStringLiteral("a.txt")));
+    files.edit(QStringLiteral("first"));
+    QVERIFY(QTest::qWaitFor([&] { return writes().size() == 1; }));
+    QVERIFY(open(QStringLiteral("b.txt")));
+    QVERIFY(open(QStringLiteral("a.txt")));
+    files.edit(QStringLiteral("second"));
+    QTest::qWait(0);
+    QVERIFY(held.settled());
+    QCOMPARE(writes().size(), 1);
+
+    QStringList sent;
+    for (qsizetype answered = 0; answered < 3; ++answered) {
+      QVERIFY(QTest::qWaitFor([&] { return writes().size() == answered + 1; }));
+      const FakeMc::Rpc write = writes().at(answered);
+      sent.append(write.payload.value(QLatin1String("contents")).toString());
+      held.mc.reply(write, QJsonObject{{QStringLiteral("relativePath"), write.payload.value(QLatin1String("relativePath"))}});
+      QVERIFY(held.settled());
+    }
+    QCOMPARE(sent, (QStringList{QStringLiteral("first"), QStringLiteral("first"), QStringLiteral("second")}));
   }
 };
 

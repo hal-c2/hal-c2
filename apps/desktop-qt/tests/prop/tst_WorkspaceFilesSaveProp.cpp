@@ -226,6 +226,8 @@ struct Open : Step<Open> {
   void act(const Model& before, Sut& sut) const {
     if (path != before.openPath) sut.edited = false;
     sut.opening([&] { sut.files->openFile(path); });
+    // Answered at once, and older replies are dropped: a failure cannot carry over.
+    sut.readFailed = false;
   }
   void show(std::ostream& os) const override { os << "open " << path.toStdString(); }
 };
@@ -319,7 +321,7 @@ struct Settle : Step<Settle> {
   void act(const Model& before, Sut& sut) const {
     sut.files->setEditing(false);
     RC_ASSERT(sut.sync());
-    for (int round = 0; round < 10 && !(sut.held.isEmpty() && sut.heldReads.isEmpty()); ++round) {
+    for (int round = 0; round < 100 && !(sut.held.isEmpty() && sut.heldReads.isEmpty()); ++round) {
       while (!sut.held.isEmpty()) sut.answer(0);
       while (!sut.heldReads.isEmpty()) sut.heldReads.takeFirst()(false);
       RC_ASSERT(sut.sync());
