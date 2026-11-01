@@ -163,6 +163,20 @@ Item {
         }, environment);
     }
 
+    // The pull request the Link PR field names, as `owner/name#12` or by its web address,
+    // or null. An address `Plan.ref/2` would not keep would quietly link the pull request
+    // on github.com instead of its own host, so one is no pull request here. So is an IPv6 literal host, which only an agent can send.
+    function pullRequestRef(text) {
+        const given = text.trim();
+        const named = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(given);
+        if (named)
+            return Number.isSafeInteger(Number(named[2])) ? { repository: named[1], number: Number(named[2]) } : null;
+        const address = /^https?:\/\/[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.?(?::(\d+))?\/([\w.-]+\/[\w.-]+)\/pull\/([1-9]\d*)(?:[\/?#]\S*)?$/i.exec(given);
+        if (!address || !Number.isSafeInteger(Number(address[3])) || (address[1] !== undefined && (Number(address[1]) < 1 || Number(address[1]) > 65535)))
+            return null;
+        return { repository: address[2], number: Number(address[3]), url: given };
+    }
+
     function environmentLabel(environment) {
         const known = (Shell.state.mcPlugins?.environments ?? []).find(each => each.id === environment);
         return known?.label ?? environment;
@@ -1815,19 +1829,18 @@ Item {
 
                             objectName: "plannerItemLink"
                             Layout.fillWidth: true
-                            placeholderText: qsTr("owner/name#12")
+                            placeholderText: qsTr("owner/name#12 or its web address")
                             Accessible.name: qsTr("Pull request to link")
-                            onAccepted: linkButton.clicked()
+                            onAccepted: if (linkButton.enabled)
+                                linkButton.clicked()
                         }
 
                         ShellButton {
                             id: linkButton
 
-                            readonly property var ref: {
-                                const found = /^\s*([\w.-]+\/[\w.-]+)#(\d+)\s*$/.exec(linkField.text);
-                                return found ? { repository: found[1], number: Number(found[2]) } : null;
-                            }
+                            readonly property var ref: page.pullRequestRef(linkField.text)
 
+                            objectName: "plannerItemLinkButton"
                             subtle: true
                             enabled: ref !== null
                             text: qsTr("Link PR")

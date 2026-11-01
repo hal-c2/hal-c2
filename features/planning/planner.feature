@@ -767,6 +767,33 @@ Feature: Planner
       And the plugin looks at GitHub
       Then "API" is done
 
+    # Pasting the address again is also how a link to the wrong host is corrected.
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario: A user links a pull request of a GitHub Enterprise host by its web address
+      Given the plan has "API"
+      When the user opens the task "API"
+      And the user links it to "https://github.example.com:8443/acme/other/pull/12/files"
+      Then the MC is asked to link "API" to #12 of "acme/other" at "https://github.example.com:8443/acme/other/pull/12/files"
+
+    # The MC would drop these addresses and link the pull request on github.com.
+    @desktop @mobile @tui @backlog-mobile @backlog-tui
+    Scenario Outline: The address <address> is not a pull request's and cannot be linked
+      Given the plan has "API"
+      When the user opens the task "API"
+      And the user enters "<address>" to link
+      And the user presses Enter in the link field
+      Then the pull request cannot be linked
+
+      Examples:
+        | address                                                     |
+        | https://github.example.com/acme/other/issues/12             |
+        | https://github.example.com/acme/other/pull/012              |
+        | https://github.example.com:99999/acme/other/pull/12         |
+        | https://git_hub.example.com/acme/other/pull/12              |
+        | ftp://github.example.com/acme/other/pull/12                 |
+        | https://[1:2]/acme/other/pull/12                            |
+        | https://github.example.com/acme/other/pull/9007199254740993 |
+
     @mc
     Scenario: Open issues of a followed repository become tasks
       Given "planner" follows the issues of "acme/api"
