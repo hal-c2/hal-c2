@@ -561,7 +561,48 @@ Answer historyCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
 
 Answer written(FakeMc& mc, const QString& method, const QJsonObject& in);
 
+// The MC's side of a page's agent: its thread is a row like any other, and how its run ends
+// is the scenario's.
+Answer agentCall(FakeMc& mc, const QString& method, const QJsonObject& in) {
+  const QString stream = streamOf(text(in, QLatin1String("spaceId")));
+  const QString pageId = text(in, QLatin1String("pageId"));
+  const QJsonObject asked = one(mc, stream, QStringLiteral("pageAgent"), pageId);
+  const bool active = text(asked, QLatin1String("status")) == QLatin1String("running");
+  if (method == QLatin1String("page.askAgent")) {
+    QString request = text(in, QLatin1String("request")).trimmed();
+    if (request.startsWith(QLatin1String("@agent"))) request = request.mid(6).trimmed();
+    if (request.isEmpty()) return refused(QStringLiteral("invalid"), QStringLiteral("Say what the agent should do."));
+    if (active) return refused(QStringLiteral("invalid"), QStringLiteral("An agent is already working on this page."));
+    const QString thread = newId(mc, QStringLiteral("agent-thread"));
+    QJsonObject row = mc.threads.first();
+    row.insert(QStringLiteral("id"), thread);
+    row.insert(QStringLiteral("title"), QStringLiteral("Page agent"));
+    mc.threads.insert(thread, row);
+    mc.sendRow(thread, row);
+    const QJsonObject agent{{QStringLiteral("id"), pageId},
+                            {QStringLiteral("pageId"), pageId},
+                            {QStringLiteral("threadId"), thread},
+                            {QStringLiteral("request"), request},
+                            {QStringLiteral("status"), QStringLiteral("running")},
+                            {QStringLiteral("edited"), false},
+                            {QStringLiteral("error"), QJsonValue::Null},
+                            {QStringLiteral("startedAt"), stamp(mc)},
+                            {QStringLiteral("endedAt"), QJsonValue::Null}};
+    set(mc, stream, QStringLiteral("pageAgent"), pageId, agent);
+    return {{{QStringLiteral("agent"), agent}}};
+  }
+  if (asked.isEmpty()) return refused(QStringLiteral("notFound"), QStringLiteral("No agent was asked on this page."));
+  if (method == QLatin1String("page.stopAgent")) {
+    if (active) set(mc, stream, QStringLiteral("pageAgent"), pageId, {{QStringLiteral("status"), QStringLiteral("stopped")}, {QStringLiteral("endedAt"), stamp(mc)}});
+    return {{{QStringLiteral("agent"), one(mc, stream, QStringLiteral("pageAgent"), pageId)}}};
+  }
+  if (active) return refused(QStringLiteral("invalid"), QStringLiteral("The agent is still working on this page."));
+  remove(mc, stream, QStringLiteral("pageAgent"), pageId);
+  return {{{QStringLiteral("pageId"), pageId}}};
+}
+
 Answer call(FakeMc& mc, const QString& method, const QJsonObject& in) {
+  if (method.endsWith(QLatin1String("Agent"))) return agentCall(mc, method, in);
   if (method == QLatin1String("page.history") || method == QLatin1String("page.version") || method == QLatin1String("page.restoreVersion")) {
     return historyCall(mc, method, in);
   }
@@ -1076,6 +1117,16 @@ void settleHistory(World& world) {
   world.waitFor([&] { return !viewOf(world)->history()->loading(); }, [&] { return S("the history to come; %1").arg(describe(world)); });
 }
 
+QJsonObject askedOn(World& world, const QString& title) {
+  return one(world.mc, streamOf(current(world)), S("pageAgent"), idOfPage(world, title));
+}
+
+// That the page `title`, on screen, says of its agent what `says` wants.
+void expectAgent(World& world, const QString& title, const std::function<bool(const QVariantMap&)>& says, const QString& wanted) {
+  lookAtPage(world, idOfPage(world, title));
+  expectShown(world, [&] { return says(viewOf(world)->agent()); }, S("the page's agent to be %1, it says %2").arg(wanted, show(viewOf(world)->agent())));
+}
+
 // The history of the page `id` on screen, opened from the page's menu.
 void showHistory(World& world, const QString& id) {
   if (viewOf(world)->pageId() == id && shown(world) == QLatin1String("version")) backTo(world, S("history"));
@@ -1456,6 +1507,70 @@ const Steps steps([] {
   step(S("the second client sees the block %1").arg(q), [](World& world, const Captures& c, const Table&) {
     const QStringList texts = column(second(world).blocks(), S("text"));
     expect(texts.contains(c[0]), S("the second client shows the blocks %1").arg(show(texts)));
+  });
+
+  // A page's agent.
+  step(S("the user asks %1 on the page %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, idOfPage(world, c[1]));
+    world.tap(S("spacePageActions"));
+    choose(world, S("agent"));
+    answer(world, c[0]);
+  });
+  step(S("%1 says its agent is working on %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectAgent(world, c[0], [&](const QVariantMap& agent) { return agent.value(S("status")) == S("running") && agent.value(S("request")) == c[1]; }, S("working on %1").arg(c[1]));
+  });
+  step(S("%1 links to its agent's thread").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString thread = text(askedOn(world, c[0]), QLatin1String("threadId"));
+    expectAgent(world, c[0], [&](const QVariantMap& agent) { return agent.value(S("threadId")) == thread && agent.value(S("threadTitle")) == S("Page agent"); }, S("linked to its thread"));
+    world.tap(S("spaceAgentOpenThread"));
+    world.sync();
+    const QString key = navigation(world)->threadKey();
+    expect(key.endsWith(QLatin1Char(':') + thread), S("the link opened %1").arg(key));
+  });
+  step(S("the agent of %1 adds the block %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QString page = idOfPage(world, c[0]);
+    const QJsonObject author = agent(text(askedOn(world, c[0]), QLatin1String("threadId")));
+    insertBlock(world.mc, current(world), page, {{S("kind"), S("paragraph")}, {S("text"), c[1]}, {S("checked"), false}}, QJsonValue::Undefined, author);
+    noteEdits(world.mc, current(world), author);
+    set(world.mc, streamOf(current(world)), S("pageAgent"), page, {{S("edited"), true}});
+    world.sync();
+  });
+  step(S("the block %1 was written by the agent of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    const QJsonObject block = blockSaying(world, c[0]);
+    expect(block.value(QLatin1String("createdBy")).toObject() == agent(text(askedOn(world, c[1]), QLatin1String("threadId"))), S("the block says %1").arg(show(block)));
+  });
+  step(S("the agent of %1 finishes").arg(q), [](World& world, const Captures& c, const Table&) {
+    set(world.mc, streamOf(current(world)), S("pageAgent"), idOfPage(world, c[0]), {{S("status"), S("completed")}, {S("endedAt"), stamp(world.mc)}});
+    world.sync();
+  });
+  step(S("the agent of %1 fails with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    set(world.mc, streamOf(current(world)), S("pageAgent"), idOfPage(world, c[0]), {{S("status"), S("failed")}, {S("error"), c[1]}, {S("endedAt"), stamp(world.mc)}});
+    world.sync();
+  });
+  step(S("the user stops the agent of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, idOfPage(world, c[0]));
+    world.tap(S("spaceAgentStop"));
+    world.sync();
+  });
+  step(S("the user dismisses the agent of %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    lookAtPage(world, idOfPage(world, c[0]));
+    world.tap(S("spaceAgentDismiss"));
+    world.sync();
+  });
+  step(S("%1 says its agent finished and changed the page").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectAgent(world, c[0], [](const QVariantMap& agent) { return agent.value(S("status")) == S("completed") && agent.value(S("edited")).toBool(); }, S("finished with changes"));
+  });
+  step(S("%1 says its agent finished without changing the page").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectAgent(world, c[0], [](const QVariantMap& agent) { return agent.value(S("status")) == S("completed") && !agent.value(S("edited")).toBool(); }, S("finished without changes"));
+  });
+  step(S("%1 says its agent was stopped").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectAgent(world, c[0], [](const QVariantMap& agent) { return agent.value(S("status")) == S("stopped"); }, S("stopped"));
+  });
+  step(S("%1 says its agent failed with %1").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectAgent(world, c[0], [&](const QVariantMap& agent) { return agent.value(S("status")) == S("failed") && agent.value(S("error")) == c[1]; }, S("failed with %1").arg(c[1]));
+  });
+  step(S("%1 says nothing about an agent").arg(q), [](World& world, const Captures& c, const Table&) {
+    expectAgent(world, c[0], [](const QVariantMap& agent) { return agent.isEmpty(); }, S("saying nothing"));
   });
 
   // A page's history.
