@@ -123,6 +123,37 @@ Item {
             compare(screen.view, "images");
         }
 
+        function test_thePlaceholderShowsOnlyWhenThereIsNoPicture() {
+            const pixel = ";base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+            const screen = makeScreen({ images: [{ id: "i1", name: "cat.png", prompt: "", url: "" }] });
+            screen.openSpace("s1");
+            screen.showImages();
+            waitForRendering(screen);
+            const row = findChild(screen, "spaceImage:cat.png");
+            const thumbnail = findChild(row, "spaceImageThumbnail");
+            const placeholder = findChild(row, "spaceImagePlaceholder");
+            compare(placeholder.visible, true);
+
+            // Each address is a new one to the image cache, so each one is fetched.
+            const address = name => "data:image/png;name=" + name + pixel;
+            Spaces.images.setProperty(0, "url", address("first"));
+            compare(thumbnail.status, Image.Loading);
+            compare(placeholder.visible, true);
+            tryCompare(thumbnail, "status", Image.Ready);
+            compare(placeholder.visible, false);
+
+            Spaces.images.setProperty(0, "url", address("renewed"));
+            compare(thumbnail.status, Image.Loading);
+            compare(placeholder.visible, false);
+            tryCompare(thumbnail, "status", Image.Ready);
+            compare(placeholder.visible, false);
+
+            ignoreWarning(new RegExp("Error decoding: data:image/png;name=refused"));
+            Spaces.images.setProperty(0, "url", "data:image/png;name=refused;base64,AAAA");
+            tryCompare(thumbnail, "status", Image.Error);
+            compare(placeholder.visible, true);
+        }
+
         function test_anImageInTheTrashComesBackOrGoesForGood() {
             const screen = makeScreen();
             screen.imageMenu("i1");

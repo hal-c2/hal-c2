@@ -97,6 +97,7 @@ ColumnLayout {
                     Image {
                         id: thumbnail
 
+                        objectName: "spaceImageThumbnail"
                         anchors.fill: parent
                         source: card.model.url
                         // A thumbnail, whatever the size of the file.
@@ -108,8 +109,11 @@ ColumnLayout {
                     }
 
                     ShellIcon {
+                        objectName: "spaceImagePlaceholder"
                         anchors.centerIn: parent
-                        visible: thumbnail.status !== Image.Ready
+                        // While loading, paintedWidth tells a first load from a renewal, whose
+                        // picture stays. It keeps its value after a failure, so it can't decide then.
+                        visible: thumbnail.status === Image.Loading ? thumbnail.paintedWidth <= 0 : thumbnail.status !== Image.Ready
                         name: "image"
                         size: 18
                         color: Theme.palette.color("iconMuted", "#a1a1aa")

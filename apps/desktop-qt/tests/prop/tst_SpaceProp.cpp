@@ -1122,6 +1122,9 @@ struct ImagesSut {
     RC_ASSERT(listed(pages.images()) == kept);
     RC_ASSERT(listed(pages.imageTrash()) == binned);
     RC_ASSERT(refreshTimer()->isActive() == (model.retrying || refreshDue(model)));
+    // A retry owed is not left waiting on another image's address, an hour away.
+    // Qt runs a timer this long on whole seconds, so 30 seconds can read a little over.
+    if (model.retrying) RC_ASSERT(refreshTimer()->remainingTime() <= 31'000);
   }
 
   QTimer* refreshTimer() { return pages.findChild<QTimer*>(QStringLiteral("spaceAddressRefresh")); }
@@ -1135,7 +1138,15 @@ struct ImagesSut {
     QCoreApplication::processEvents();
   }
 
-  void rebuildNow() { fire(pages.findChild<QTimer*>(QStringLiteral("spaceRebuildSoon"))); }
+  // An answer waits for the rest of its batch, but not so long that anyone sees it.
+  void rebuildNow() {
+    QTimer* timer = pages.findChild<QTimer*>(QStringLiteral("spaceRebuildSoon"));
+    const int waits = timer->interval();
+    RC_ASSERT(waits > 0);
+    RC_ASSERT(waits <= 50);
+    fire(timer);
+    timer->setInterval(waits);
+  }
 };
 
 using ImageCommand = rc::state::Command<ImagesModel, ImagesSut>;
