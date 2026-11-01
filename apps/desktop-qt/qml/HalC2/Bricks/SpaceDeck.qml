@@ -1,0 +1,427 @@
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import QtQuick.Layouts
+import HalC2.Shell
+
+// The open deck of the Space view (Spaces.deck): its title, the way to present
+// it, and its slides, each edited in place and written when the user leaves the
+// field. A trashed deck is read only, with the way back.
+Rectangle {
+    id: deck
+
+    objectName: "spaceDeck"
+
+    readonly property var current: Spaces.deck
+    readonly property bool trashed: current.trashed === true
+    readonly property color foreground: Theme.palette.color("text", "#e4e4e7")
+    readonly property color muted: Theme.palette.color("textMuted", "#a1a1aa")
+    readonly property color lineColor: Theme.palette.color("border", "#27272a")
+
+    function addSlide(afterSlideId) {
+        const payload = { deckId: Spaces.deckId, title: "", body: "" };
+        if (afterSlideId !== "")
+            payload.afterSlideId = afterSlideId;
+        Shell.dispatch("space.slide.insert", payload);
+    }
+
+    // The title field keeps focus when another deck or Space is picked: what was
+    // being written goes to its own deck, and the field moves on to the new one.
+    onCurrentChanged: {
+        const id = current.id ?? "";
+        if (id !== titleField.deckId) {
+            titleField.commit();
+            titleField.deckId = id;
+            titleField.spaceId = Spaces.spaceId;
+            titleField.show(current.title);
+        } else if (!titleField.activeFocus) {
+            titleField.show(current.title);
+        }
+    }
+
+    color: Theme.palette.color("canvas", "#09090b")
+
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.leftMargin: 48
+        anchors.rightMargin: 48
+        anchors.topMargin: 24
+        spacing: 8
+
+        Text {
+            text: Spaces.spaceName
+            color: deck.muted
+            font.pixelSize: Math.round(12 * Theme.fontScale)
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            ShellButton {
+                id: deckActions
+
+                objectName: "spaceDeckActions"
+                subtle: true
+                iconName: "ellipsis"
+                Accessible.name: qsTr("Deck actions")
+                onClicked: actionsMenu.popup(deckActions, 0, deckActions.height + 4)
+            }
+
+            TextInput {
+                id: titleField
+
+                property string deckId: ""
+                property string spaceId: ""
+                // The title last taken from the deck: text that differs is the user's edit.
+                property string shown: ""
+
+                objectName: "spaceDeckTitle"
+                Layout.fillWidth: true
+                readOnly: deck.trashed
+                color: deck.foreground
+                selectByMouse: true
+                selectionColor: Theme.palette.color("accent", "#2563eb")
+                selectedTextColor: Theme.palette.color("accentForeground", "#ffffff")
+                font.pixelSize: Math.round(28 * Theme.fontScale)
+                font.weight: Font.Bold
+                clip: true
+
+                function show(title) {
+                    shown = title ?? "";
+                    text = shown;
+                }
+
+                function commit() {
+                    const title = text.trim();
+                    if (deckId !== "" && title.length > 0 && title !== shown) {
+                        shown = title;
+                        Shell.dispatch("space.deck.rename", { spaceId: spaceId, deckId: deckId, title: title });
+                    } else {
+                        show(deck.current.title);
+                    }
+                }
+
+                onAccepted: focus = false
+                onActiveFocusChanged: {
+                    if (!activeFocus)
+                        commit();
+                }
+                Keys.onEscapePressed: {
+                    show(deck.current.title);
+                    focus = false;
+                }
+            }
+
+            ShellButton {
+                objectName: "spaceDeckPresent"
+                primary: true
+                iconName: "play"
+                text: qsTr("Present")
+                enabled: !deck.trashed && Spaces.slides.count > 0
+                onClicked: Shell.dispatch("space.deck.present", { deckId: Spaces.deckId })
+            }
+        }
+
+        ShellMenu {
+            id: actionsMenu
+
+            ShellMenuItem {
+                objectName: "spaceDeckAddSlide"
+                text: qsTr("Add a slide")
+                iconName: "plus"
+                enabled: !deck.trashed
+                onTriggered: deck.addSlide("")
+            }
+
+            ShellMenuSeparator {}
+
+            ShellMenuItem {
+                text: deck.trashed ? qsTr("Restore") : qsTr("Move to the trash")
+                iconName: deck.trashed ? "archive-restore" : "trash"
+                destructive: !deck.trashed
+                onTriggered: Shell.dispatch(deck.trashed ? "space.deck.restore" : "space.deck.trash", { deckId: Spaces.deckId })
+            }
+        }
+
+        Rectangle {
+            objectName: "spaceDeckTrashedBanner"
+            Layout.fillWidth: true
+            visible: deck.trashed
+            implicitHeight: trashedRow.implicitHeight + 16
+            radius: Math.min(Theme.radius, 8)
+            color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.12)
+            border.color: Qt.alpha(Theme.palette.color("warning", "#f59e0b"), 0.4)
+
+            RowLayout {
+                id: trashedRow
+
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 8
+
+                ShellIcon {
+                    name: "trash"
+                    size: 14
+                    color: deck.foreground
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: qsTr("This deck is in the trash, so it cannot be changed.")
+                    color: deck.foreground
+                    wrapMode: Text.Wrap
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                ShellButton {
+                    objectName: "spaceDeckRestore"
+                    text: qsTr("Restore")
+                    iconName: "archive-restore"
+                    onClicked: Shell.dispatch("space.deck.restore", { deckId: Spaces.deckId })
+                }
+
+                ShellButton {
+                    objectName: "spaceDeckDelete"
+                    text: qsTr("Delete for good")
+                    tint: Theme.palette.color("error", "#ef4444")
+                    onClicked: Shell.dispatch("space.deck.delete", { deckId: Spaces.deckId })
+                }
+            }
+        }
+
+        ListView {
+            objectName: "spaceSlides"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            clip: true
+            spacing: 8
+            model: Spaces.slides
+            boundsBehavior: Flickable.StopAtBounds
+            bottomMargin: 24
+
+            delegate: Rectangle {
+                id: card
+
+                required property var model
+                required property int index
+                required property string title
+                required property string body
+                readonly property string slideId: model.id
+                // The Space it was made in: an edit written as the Space changes still goes there.
+                property string spaceId: ""
+
+                // What was last taken from the slide: text that differs is the user's edit, written
+                // while the deck was live even if it is in the trash by now.
+                property string shownTitle: ""
+                property string shownBody: ""
+
+                Component.onCompleted: {
+                    spaceId = Spaces.spaceId;
+                    showTitle();
+                    showBody();
+                }
+
+                function showTitle() {
+                    shownTitle = title;
+                    slideTitle.text = title;
+                }
+
+                function showBody() {
+                    shownBody = body;
+                    slideBody.text = body;
+                }
+
+                function writeTitle() {
+                    if (slideTitle.text === shownTitle) {
+                        showTitle();
+                    } else {
+                        shownTitle = slideTitle.text;
+                        Shell.dispatch("space.slide.update", { spaceId: card.spaceId, slideId: card.slideId, title: slideTitle.text });
+                    }
+                }
+
+                function writeBody() {
+                    if (slideBody.text === shownBody) {
+                        showBody();
+                    } else {
+                        shownBody = slideBody.text;
+                        Shell.dispatch("space.slide.update", { spaceId: card.spaceId, slideId: card.slideId, body: slideBody.text });
+                    }
+                }
+
+                objectName: "spaceSlide:" + index
+                width: ListView.view.width
+                height: cardRow.implicitHeight + 20
+                radius: Math.min(Theme.radius, 8)
+                color: "transparent"
+                border.color: deck.lineColor
+
+                // The fields follow the slide while the user is not writing in them.
+                onTitleChanged: {
+                    if (!slideTitle.activeFocus)
+                        card.showTitle();
+                }
+                onBodyChanged: {
+                    if (!slideBody.activeFocus)
+                        card.showBody();
+                }
+
+                RowLayout {
+                    id: cardRow
+
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 10
+                    spacing: 10
+
+                    Text {
+                        Layout.alignment: Qt.AlignTop
+                        text: String(card.index + 1)
+                        color: deck.muted
+                        font.pixelSize: Math.round(13 * Theme.fontScale)
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        TextInput {
+                            id: slideTitle
+
+                            objectName: "spaceSlideTitle:" + card.index
+                            Layout.fillWidth: true
+                            readOnly: deck.trashed
+                            color: deck.foreground
+                            selectByMouse: true
+                            clip: true
+                            font.pixelSize: Math.round(16 * Theme.fontScale)
+                            font.weight: Font.DemiBold
+                            onAccepted: focus = false
+                            onActiveFocusChanged: {
+                                if (!activeFocus)
+                                    card.writeTitle();
+                            }
+                            Keys.onEscapePressed: {
+                                card.showTitle();
+                                focus = false;
+                            }
+
+                            Text {
+                                visible: slideTitle.text === ""
+                                text: qsTr("Slide title")
+                                color: deck.muted
+                                font: slideTitle.font
+                            }
+                        }
+
+                        TextEdit {
+                            id: slideBody
+
+                            objectName: "spaceSlideBody:" + card.index
+                            Layout.fillWidth: true
+                            readOnly: deck.trashed
+                            color: deck.foreground
+                            textFormat: TextEdit.PlainText
+                            wrapMode: TextEdit.Wrap
+                            selectByMouse: true
+                            font.pixelSize: Math.round(14 * Theme.fontScale)
+                            onActiveFocusChanged: {
+                                if (!activeFocus)
+                                    card.writeBody();
+                            }
+                            Keys.onEscapePressed: {
+                                card.showBody();
+                                focus = false;
+                            }
+
+                            Text {
+                                visible: slideBody.text === ""
+                                text: qsTr("What the slide says")
+                                color: deck.muted
+                                font: slideBody.font
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignTop
+                        visible: !deck.trashed
+                        spacing: 2
+
+                        ShellButton {
+                            objectName: "spaceSlideUp:" + card.index
+                            subtle: true
+                            iconName: "arrow-up"
+                            implicitHeight: 24
+                            implicitWidth: 24
+                            Accessible.name: qsTr("Move up")
+                            enabled: card.index > 0
+                            onClicked: Shell.dispatch("space.slide.move", {
+                                slideId: card.slideId,
+                                afterSlideId: card.index > 1 ? Spaces.slides.get(card.index - 2).id : ""
+                            })
+                        }
+
+                        ShellButton {
+                            objectName: "spaceSlideDown:" + card.index
+                            subtle: true
+                            iconName: "arrow-down"
+                            implicitHeight: 24
+                            implicitWidth: 24
+                            Accessible.name: qsTr("Move down")
+                            enabled: card.index + 1 < Spaces.slides.count
+                            onClicked: Shell.dispatch("space.slide.move", { slideId: card.slideId, afterSlideId: Spaces.slides.get(card.index + 1).id })
+                        }
+
+                        ShellButton {
+                            objectName: "spaceSlideAdd:" + card.index
+                            subtle: true
+                            iconName: "plus"
+                            implicitHeight: 24
+                            implicitWidth: 24
+                            Accessible.name: qsTr("Add a slide below")
+                            onClicked: deck.addSlide(card.slideId)
+                        }
+
+                        ShellButton {
+                            objectName: "spaceSlideDelete:" + card.index
+                            subtle: true
+                            iconName: "trash"
+                            implicitHeight: 24
+                            implicitWidth: 24
+                            tint: Theme.palette.color("error", "#ef4444")
+                            Accessible.name: qsTr("Delete the slide")
+                            onClicked: Shell.dispatch("space.slide.delete", { slideId: card.slideId })
+                        }
+                    }
+                }
+            }
+
+            footer: Item {
+                width: ListView.view ? ListView.view.width : 0
+                height: deck.trashed ? 0 : 44
+
+                ShellButton {
+                    objectName: "spaceAddSlide"
+                    anchors.bottom: parent.bottom
+                    visible: !deck.trashed
+                    subtle: true
+                    iconName: "plus"
+                    text: qsTr("Add a slide")
+                    onClicked: deck.addSlide("")
+                }
+            }
+
+            Text {
+                objectName: "spaceDeckEmpty"
+                anchors.top: parent.top
+                visible: Spaces.slides.count === 0 && deck.trashed
+                text: qsTr("This deck has no slides.")
+                color: deck.muted
+                font.pixelSize: Math.round(14 * Theme.fontScale)
+            }
+        }
+    }
+}
