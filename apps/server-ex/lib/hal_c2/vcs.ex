@@ -636,7 +636,7 @@ defmodule HalC2.Vcs do
              [timeout: worktree_timeout(), stop_children: path] ++
                checkout_progress(opts[:on_progress])
            )
-           |> tap(&if(fresh, do: clear_cut_short(&1, cwd, path, new_branch && branch))) do
+           |> tap(&if(fresh, do: clear_cut_short(&1, cwd, path, if(new_branch, do: branch)))) do
       if input["newRefName"], do: remember_base(cwd, input["newRefName"], ref)
 
       # `git worktree add` leaves submodules empty; filling them is best effort.
