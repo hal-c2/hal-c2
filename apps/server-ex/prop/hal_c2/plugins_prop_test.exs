@@ -1022,9 +1022,12 @@ defmodule HalC2.PluginsPropTest do
   def crash_hard(id) do
     sup = parent(Process.whereis(plugin_module(id)))
     ref = Process.monitor(sup)
-    kill_until_down(plugin_module(id), sup, ref, 10)
+    kill_until_down(plugin_module(id), sup, ref, 500)
     {:ok, observe()}
   end
+
+  # With no worker registered the supervisor is restarting it or already giving up, and
+  # the wait gives it time: a pass that doesn't wait spends every try before either lands.
 
   defp kill_until_down(_module, _sup, _ref, 0), do: raise("the plugin's supervisor never gave up")
 
@@ -1047,7 +1050,7 @@ defmodule HalC2.PluginsPropTest do
     receive do
       {:DOWN, ^sup_ref, _, _, _} -> :ok
     after
-      0 -> kill_until_down(module, sup, sup_ref, left - 1)
+      10 -> kill_until_down(module, sup, sup_ref, left - 1)
     end
   end
 

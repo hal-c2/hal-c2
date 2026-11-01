@@ -8,7 +8,7 @@ import HalC2.Bricks
 
 // One block of the open page in the phone layout. Its text is edited where it
 // is and goes to the MC when the editor loses focus; a checklist item is ticked
-// by its box and a link opens its page. Moving, deleting and commenting are in
+// by its box, a link opens its page and an image shows above its caption. Moving, deleting and commenting are in
 // the menu at its end, where a desktop's hover would have them.
 Rectangle {
     id: row
@@ -22,6 +22,13 @@ Rectangle {
     required property string linkedTitle
     required property bool byAgent
     required property int openComments
+    required property string imageId
+    required property string imageState
+    required property string imageUrl
+    required property int imageWidth
+    required property int imageHeight
+    // The controller selects a page before the user opens it: no bytes until then.
+    property bool onScreen: true
     // A page in the trash is only read.
     property bool readOnly: false
     readonly property string blockId: model.id
@@ -72,6 +79,27 @@ Rectangle {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignVCenter
             spacing: 2
+
+            // Its height follows its width, which a layout would write over.
+            Item {
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                Layout.preferredHeight: picture.height
+                visible: row.kind === "image"
+
+                SpaceBlockImage {
+                    id: picture
+
+                    objectName: "spaceBlockImage:" + row.text
+                    width: parent.width
+                    imageId: row.imageId
+                    state_: row.imageState
+                    url: row.onScreen ? row.imageUrl : ""
+                    naturalWidth: row.imageWidth
+                    naturalHeight: row.imageHeight
+                    readOnly: row.readOnly
+                }
+            }
 
             TextEdit {
                 id: editor

@@ -102,6 +102,9 @@ SpacePageUpdate SpacePageUpdate.qml
 SpaceUpdateDialog SpaceUpdateDialog.qml
 SpaceBlock 1.0 SpaceBlock.qml
 SpaceSlashMenu 1.0 SpaceSlashMenu.qml
+SpaceBlockImage 1.0 SpaceBlockImage.qml
+SpaceImages 1.0 SpaceImages.qml
+SpaceImageDialog 1.0 SpaceImageDialog.qml
 SpaceComments 1.0 SpaceComments.qml
 UsageChart 1.0 UsageChart.qml
 ProvidersSettings 1.0 ProvidersSettings.qml
