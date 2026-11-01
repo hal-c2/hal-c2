@@ -60,6 +60,42 @@ defmodule HalC2.TerminalTest do
       %{input: %{"threadId" => "thread-1", "terminalId" => "term-1", "cwd" => dir}}
     end
 
+    test "a terminal id too long for a file name keeps its saved scrollback" do
+      long = String.duplicate("x", 200)
+      emoji = String.duplicate("🦀", 128)
+
+      for id <- [long, emoji], do: Terminal.put_scrollback("thread-1", id, "from #{id}\n")
+      Terminal.put_scrollback("thread-1", "term-1", "short\n")
+      Terminal.put_scrollback(long, "term-1", "long thread\n")
+
+      assert Enum.sort(Terminal.saved_scrollback("thread-1")) ==
+               Enum.sort([
+                 {long, "from #{long}\n"},
+                 {emoji, "from #{emoji}\n"},
+                 {"term-1", "short\n"}
+               ])
+
+      assert Terminal.saved_scrollback(long) == [{"term-1", "long thread\n"}]
+      assert {:ok, %{"terminalIds" => ids}} = Terminal.list(%{"threadId" => "thread-1"})
+      assert Enum.sort(ids) == Enum.sort([long, emoji, "term-1"])
+
+      Terminal.close(%{"threadId" => "thread-1", "terminalId" => long, "deleteHistory" => true})
+      refute List.keymember?(Terminal.saved_scrollback("thread-1"), long, 0)
+
+      Terminal.close(%{"threadId" => "thread-1", "deleteHistory" => true})
+      assert Terminal.saved_scrollback("thread-1") == []
+      assert Terminal.saved_scrollback(long) == [{"term-1", "long thread\n"}]
+    end
+
+    test "deleting the history of a terminal whose id is * leaves its siblings alone" do
+      Terminal.put_scrollback("thread-1", "*", "star\n")
+      Terminal.put_scrollback("thread-1", "term-1", "sibling\n")
+
+      Terminal.close(%{"threadId" => "thread-1", "terminalId" => "*", "deleteHistory" => true})
+
+      assert Terminal.saved_scrollback("thread-1") == [{"term-1", "sibling\n"}]
+    end
+
     test "a state from before the attach capture gains its field on upgrade" do
       assert {:ok, %{attach_capture: nil}} = Terminal.code_change(0, %{}, nil)
     end

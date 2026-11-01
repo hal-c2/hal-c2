@@ -246,6 +246,24 @@ defmodule HalC2.Steps.Terminal.Reconnect do
     context
   end
 
+  step "a terminal whose id is 200 characters long that has printed {string}",
+       %{args: [text]} = context do
+    {_, context} = Terminal.open!(context, %{"terminalId" => String.duplicate("x", 200)}, "ctl")
+    {_, context} = Terminal.attach!(context, "default", attach_input(context))
+    print(context, "default", text)
+  end
+
+  step "later opens the long terminal again", context do
+    {_, context} = Terminal.open!(context, %{}, "ctl")
+    {snapshot, context} = Terminal.attach!(context, "later", attach_input(context))
+    Map.put(context, :snapshot, snapshot)
+  end
+
+  step "its history contains {string}", %{args: [text]} = context do
+    assert context.snapshot["history"] =~ line(text)
+    context
+  end
+
   step "a client closes the terminal and deletes its history", context do
     input = Map.put(session(context), "deleteHistory", true)
     {nil, context} = World.call!(context, "terminal.close", input, "ctl")
