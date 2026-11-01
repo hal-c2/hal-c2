@@ -15,6 +15,7 @@ SpaceCommentsView 1.0 SpaceCommentsView.qml
 SpaceHistoryView 1.0 SpaceHistoryView.qml
 SpaceListRow 1.0 SpaceListRow.qml
 SpacePageView 1.0 SpacePageView.qml
+SpaceImagesView 1.0 SpaceImagesView.qml
 SpacePagesView 1.0 SpacePagesView.qml
 SpaceScreen 1.0 SpaceScreen.qml
 SpaceSheet 1.0 SpaceSheet.qml

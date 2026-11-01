@@ -7,6 +7,7 @@ import {
   SpaceBlockId,
   SpaceCommentId,
   SpaceId,
+  SpaceImageId,
   SpacePageId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -16,8 +17,9 @@ import {
  * Spaces hold Pages that people and agents write together. Clients read them
  * from streams, the same subscribe/resume path as projects and threads:
  * `SPACES_STREAM_ID` holds one `space` entity per Space, and `spaceStreamId(id)`
- * holds that Space's `page`, `block`, `comment` and `pageAgent` entities. The RPCs below
- * change them.
+ * holds that Space's `page`, `block`, `comment`, `image` and `pageAgent` entities. The RPCs
+ * below change them. An image's bytes are never on a stream: fetch them on demand from the
+ * address `assets.createUrl` signs for a `space-image`.
  */
 export const SPACES_STREAM_ID = "spaces";
 
@@ -58,6 +60,7 @@ export const SpaceBlockKind = Schema.Literals([
   "checklist",
   "callout",
   "subpage_link",
+  "image",
 ]);
 export type SpaceBlockKind = typeof SpaceBlockKind.Type;
 
@@ -70,6 +73,8 @@ export const SpaceBlock = Schema.Struct({
   checked: Schema.Boolean,
   /** The page a `subpage_link` block points at. */
   linkedPageId: Schema.NullOr(SpacePageId),
+  /** The image an `image` block shows; its `text` is the caption. Only on image blocks. */
+  imageId: Schema.optional(SpaceImageId),
   /**
    * Sorts the page's blocks: compare as plain strings. A block inserted or moved
    * gets a key between its neighbours', so no other block changes.
@@ -95,6 +100,37 @@ export const SpaceComment = Schema.Struct({
 });
 export type SpaceComment = typeof SpaceComment.Type;
 
+/** A provider and model, as chosen for anything else in HAL-C2. */
+const SpaceImageSelection = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  model: Schema.optional(Schema.String),
+});
+
+/**
+ * What is known about an image a Space keeps, not its bytes. Any number of blocks may
+ * show one image; a block whose image has left says so.
+ */
+export const SpaceImage = Schema.Struct({
+  id: SpaceImageId,
+  spaceId: SpaceId,
+  name: TrimmedNonEmptyString,
+  /** Read from the file's content: image/png, image/jpeg, image/gif or image/webp. */
+  mimeType: TrimmedNonEmptyString,
+  sizeBytes: Schema.Number,
+  width: Schema.Number,
+  height: Schema.Number,
+  /** What it was generated from; null for an image added from a file. */
+  prompt: Schema.NullOr(Schema.String),
+  /** The provider and model that made it; null for an image added from a file. */
+  generatedBy: Schema.NullOr(SpaceImageSelection),
+  /** Set while the image is in the trash. */
+  trashedAt: Schema.NullOr(IsoDateTime),
+  createdBy: SpaceAuthor,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type SpaceImage = typeof SpaceImage.Type;
+
 // Spaces
 
 /** Lists the Spaces, making the "Personal" Space first if there are none. */
@@ -108,7 +144,7 @@ export type SpaceCreateInput = typeof SpaceCreateInput.Type;
 export const SpaceRenameInput = Schema.Struct({ spaceId: SpaceId, name: TrimmedNonEmptyString });
 export type SpaceRenameInput = typeof SpaceRenameInput.Type;
 
-/** Deletes a Space that has no pages, in the trash or out of it. */
+/** Deletes a Space that has no pages or images, in the trash or out of it. */
 export const SpaceDeleteInput = Schema.Struct({ spaceId: SpaceId });
 export type SpaceDeleteInput = typeof SpaceDeleteInput.Type;
 
@@ -195,6 +231,8 @@ export const SpaceBlockInsertInput = Schema.Struct({
   checked: Schema.optional(Schema.Boolean),
   /** Required for `subpage_link`, which shows that page's title. */
   linkedPageId: Schema.optional(SpacePageId),
+  /** Required for `image`: an image of this Space not in the trash. */
+  imageId: Schema.optional(SpaceImageId),
   afterBlockId: AfterBlockId,
 });
 export type SpaceBlockInsertInput = typeof SpaceBlockInsertInput.Type;
@@ -355,6 +393,60 @@ export const SpacePageVersionContent = Schema.Struct({
 });
 export type SpacePageVersionContent = typeof SpacePageVersionContent.Type;
 
+// Images
+
+/**
+ * Keeps an upload as an image, if its content is a PNG, JPEG, GIF or WebP. Upload with
+ * `attachments.createUploadUrl` first; the upload is used up whatever the answer.
+ */
+export const SpaceImageAddInput = Schema.Struct({
+  spaceId: SpaceId,
+  attachmentId: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+});
+export type SpaceImageAddInput = typeof SpaceImageAddInput.Type;
+
+/**
+ * An image from a prompt, made by the coding agent of `modelSelection`, or of the
+ * selection `space.image.providers` names when it is left out. Takes as long as the
+ * agent does, up to 5 minutes.
+ */
+export const SpaceImageGenerateInput = Schema.Struct({
+  spaceId: SpaceId,
+  prompt: TrimmedNonEmptyString,
+  modelSelection: Schema.optional(SpaceImageSelection),
+});
+export type SpaceImageGenerateInput = typeof SpaceImageGenerateInput.Type;
+
+/**
+ * Names one image for `space.image.trash`, `space.image.restore` and
+ * `space.image.delete`. Only an image in the trash can be deleted; its file goes with it.
+ */
+export const SpaceImageRef = Schema.Struct({ spaceId: SpaceId, imageId: SpaceImageId });
+export type SpaceImageRef = typeof SpaceImageRef.Type;
+
+export const SpaceImageResult = Schema.Struct({ image: SpaceImage });
+export type SpaceImageResult = typeof SpaceImageResult.Type;
+
+export const SpaceImageDeleteResult = Schema.Struct({ imageId: SpaceImageId });
+export type SpaceImageDeleteResult = typeof SpaceImageDeleteResult.Type;
+
+export const SpaceImageProvider = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  driver: TrimmedNonEmptyString,
+  status: Schema.Literals(["ready", "unavailable", "unsupported"]),
+  /** Why it cannot make an image; null when it can. */
+  message: Schema.NullOr(Schema.String),
+});
+export type SpaceImageProvider = typeof SpaceImageProvider.Type;
+
+/** Which providers can make an image, and which is used when the user does not choose. */
+export const SpaceImageProvidersResult = Schema.Struct({
+  providers: Schema.Array(SpaceImageProvider),
+  selection: Schema.NullOr(SpaceImageSelection),
+});
+export type SpaceImageProvidersResult = typeof SpaceImageProvidersResult.Type;
+
 // Errors
 
 /** A Space request the MC refused: something missing, a page in the trash, a move into itself. */
@@ -369,5 +461,17 @@ export class SpaceTextGenerationError extends Schema.TaggedError<SpaceTextGenera
   {
     message: Schema.String,
     reason: Schema.Literals(["unavailable", "failed"]),
+  },
+) {}
+
+/**
+ * An image could not be generated: this provider cannot, none is available, or the
+ * agent failed or left no image.
+ */
+export class SpaceImageGenerationError extends Schema.TaggedError<SpaceImageGenerationError>()(
+  "SpaceImageGenerationError",
+  {
+    message: Schema.String,
+    reason: Schema.Literals(["unsupported", "unavailable", "failed"]),
   },
 ) {}

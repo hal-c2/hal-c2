@@ -339,7 +339,8 @@ step("a second client watching the Space {string}", async (ctx: SpaceWorld, name
   host.dispatch("space.activate");
   host.dispatch("space.activate");
   await host.settled();
-  expect(secondPane(ctx).view).toBe("page");
+  const pages = mc(ctx).pagesOf(mc(ctx).spaceNamed(name).id);
+  expect(secondPane(ctx).view).toBe(pages.length > 0 ? "page" : "pages");
 });
 
 step("the second client sees the block {string}", async (ctx: SpaceWorld, text: string) => {
@@ -940,6 +941,15 @@ step("the version reads {string}", (ctx: SpaceWorld, texts: string) => {
   expect(versionBlocks(ctx)).toEqual(list(texts));
 });
 
+step("the version shows the image {string}", (ctx: SpaceWorld, name: string) => {
+  expect(versionBlocks(ctx)).toContain(`[image: ${name}]`);
+});
+
+step("the version says the image {string} is in the trash", async (ctx: SpaceWorld, name) => {
+  await settle(ctx);
+  expect(versionBlocks(ctx)).toContain(`[image: ${name} is in the trash]`);
+});
+
 step("the user goes back to the list of versions", (ctx: SpaceWorld) => press(ctx, "Esc"));
 
 step("no version is being read", (ctx: SpaceWorld) => {
@@ -1127,4 +1137,224 @@ step("the user dismisses the agent of {string}", async (ctx: SpaceWorld, page: s
 
 step("{string} says nothing about an agent", async (ctx: SpaceWorld, page: string) => {
   expect(await agentSays(ctx, page)).toBe("");
+});
+
+// --- images ---
+
+const IMAGE_UNAVAILABLE = "No image generation provider is set up.";
+const IMAGE_FAILED = "The provider left no image.";
+const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+async function openImages(ctx: SpaceWorld, name = ctx.spaceName!) {
+  await openSpace(ctx, name);
+  await press(ctx, "v");
+  expect(pane(ctx).view).toBe("images");
+}
+
+/** An image's name, without the prompt after it. */
+const imageName = (text: string) => text.split("  · ")[0]!;
+const imageRows = (rows: ReadonlyArray<TuiSpaceRow>, kind: TuiSpaceRow["kind"]) =>
+  listed(rows, kind).map(imageName);
+
+const imageKey = (ctx: SpaceWorld, name: string) => {
+  const { id } = mc(ctx).imageNamed(name);
+  return pane(ctx).rows.some((row) => row.key === `imageTrash:${id}`)
+    ? `imageTrash:${id}`
+    : `image:${id}`;
+};
+
+async function selectImage(ctx: SpaceWorld, name: string) {
+  await openImages(ctx);
+  await selectRow(ctx, imageKey(ctx, name));
+}
+
+/** Add a file from this machine through the pane's field. */
+async function addFile(ctx: SpaceWorld, name: string, bytes: Uint8Array, space: string) {
+  const folder = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "hal-c2-tui-image-"));
+  ctx.cleanups.push(() => NodeFS.rmSync(folder, { recursive: true, force: true }));
+  const file = NodePath.join(folder, name);
+  NodeFS.writeFileSync(file, bytes);
+  await openImages(ctx, space);
+  await press(ctx, "i");
+  await answer(ctx, file);
+}
+
+step(
+  "the user adds the image {string} to {string}",
+  (ctx: SpaceWorld, name: string, space: string) => addFile(ctx, name, PNG, space),
+);
+
+step(
+  "the user adds the file {string} holding plain text to {string}",
+  (ctx: SpaceWorld, name: string, space: string) =>
+    addFile(ctx, name, new TextEncoder().encode("only words"), space),
+);
+
+step("the images of {string} are {string}", async (ctx: SpaceWorld, space: string, names) => {
+  await openImages(ctx, space);
+  expect(imageRows(pane(ctx).rows, "image")).toEqual(list(names));
+});
+
+step(
+  "the image trash of {string} holds {string}",
+  async (ctx: SpaceWorld, space: string, names) => {
+    await openImages(ctx, space);
+    expect(imageRows(pane(ctx).rows, "trashedImage")).toEqual(list(names));
+  },
+);
+
+// The pane refuses what is no image before sending it; the MC's refusals read the same.
+step("the image request is refused", async (ctx: SpaceWorld) => {
+  await settle(ctx);
+  expect(status(ctx).kind).toBe("error");
+});
+
+step("the second client sees the image {string}", async (ctx: SpaceWorld, name: string) => {
+  await ctx.second!.settled();
+  ctx.second!.dispatch("space.images");
+  await ctx.second!.settled();
+  expect(imageRows(secondPane(ctx).rows, "image")).toContain(name);
+});
+
+step("image generation is available", (ctx: SpaceWorld) => {
+  mc(ctx).imageGeneration = { kind: "available" };
+});
+
+step("no image generation provider is available", (ctx: SpaceWorld) => {
+  mc(ctx).imageGeneration = { kind: "unavailable", message: IMAGE_UNAVAILABLE };
+});
+
+step("image generation fails", (ctx: SpaceWorld) => {
+  mc(ctx).imageGeneration = { kind: "failed", message: IMAGE_FAILED };
+});
+
+step(
+  "the user generates an image of {string} in {string}",
+  async (ctx: SpaceWorld, prompt: string, space: string) => {
+    await openImages(ctx, space);
+    await press(ctx, "n");
+    await answer(ctx, prompt);
+    await settle(ctx);
+    if (mode(ctx) === "select") await choose(ctx, "codex");
+    await settle(ctx);
+  },
+);
+
+step("{string} has a generated image of {string}", (ctx: SpaceWorld, space: string, prompt) => {
+  const images = mc(ctx).imagesOf(mc(ctx).spaceNamed(space).id);
+  expect(images.map((image) => image.prompt)).toEqual([prompt]);
+  expect(images[0]!.generatedBy.instanceId).toBe("codex");
+});
+
+step("the user is told image generation is unavailable", async (ctx: SpaceWorld) => {
+  await settle(ctx);
+  expect(status(ctx)).toEqual(
+    expect.objectContaining({
+      text: `Image generation is unavailable, so no image was made: ${IMAGE_UNAVAILABLE}`,
+      kind: "error",
+    }),
+  );
+});
+
+step("the user is told image generation failed", async (ctx: SpaceWorld) => {
+  await settle(ctx);
+  expect(status(ctx)).toEqual(
+    expect.objectContaining({
+      text: `Image generation failed, so no image was made: ${IMAGE_FAILED}`,
+      kind: "error",
+    }),
+  );
+});
+
+step("the image providers on offer say which can generate", async (ctx: SpaceWorld) => {
+  await openImages(ctx);
+  await press(ctx, "n");
+  await answer(ctx, "a red fox");
+  await settle(ctx);
+  expect(mode(ctx)).toBe("select");
+  const offered = select(ctx).options;
+  expect(offered.find((option) => option.label === "codex")?.disabled).toBeFalsy();
+  const notHere = offered.find((option) => option.label === "claudeAgent");
+  expect(notHere?.disabled).toBe(true);
+  expect(notHere?.description).toBe("not supported here");
+  await press(ctx, "Esc");
+  expect(mc(ctx).imagesOf(currentSpaceId(ctx))).toEqual([]);
+});
+
+step("the image {string} in {string}", (ctx: SpaceWorld, name: string, space: string) => {
+  mc(ctx).seedImage(seedSpace(ctx, space), name);
+});
+
+step("the image {string} is in the image trash", (ctx: SpaceWorld, name: string) => {
+  mc(ctx).run("space.image.trash", {
+    spaceId: currentSpaceId(ctx),
+    imageId: mc(ctx).imageNamed(name).id,
+  });
+});
+
+step("{string} shows the image {string} already", (ctx: SpaceWorld, page: string, name: string) => {
+  mc(ctx).run("space.block.insert", {
+    spaceId: currentSpaceId(ctx),
+    pageId: pageId(ctx, page),
+    kind: "image",
+    imageId: mc(ctx).imageNamed(name).id,
+  });
+});
+
+step(
+  "the user places the image {string} on {string}",
+  async (ctx: SpaceWorld, name: string, page: string) => {
+    const trashed = mc(ctx).imageNamed(name).trashedAt !== null;
+    await openPage(ctx, page);
+    await press(ctx, "n");
+    await choose(ctx, "Image");
+    await choose(ctx, trashed ? `${name} (in the trash)` : name);
+  },
+);
+
+const expectBlock = async (ctx: SpaceWorld, page: string, text: string) => {
+  expect((await blockRows(ctx, page)).map(blockText)).toContain(text);
+};
+
+step("{string} shows the image {string}", (ctx: SpaceWorld, page: string, name: string) =>
+  expectBlock(ctx, page, `[image: ${name}]`),
+);
+
+step(
+  "{string} says the image {string} is in the trash",
+  (ctx: SpaceWorld, page: string, name: string) =>
+    expectBlock(ctx, page, `[image: ${name} is in the trash]`),
+);
+
+step(
+  "{string} says the image {string} was deleted",
+  (ctx: SpaceWorld, page: string, name: string) =>
+    expectBlock(ctx, page, `[image: ${name} was deleted]`),
+);
+
+step("the user moves the image {string} to the trash", async (ctx: SpaceWorld, name: string) => {
+  await selectImage(ctx, name);
+  await press(ctx, "d");
+});
+
+step("the user restores the image {string}", async (ctx: SpaceWorld, name: string) => {
+  await selectImage(ctx, name);
+  await press(ctx, "r");
+});
+
+step("the user deletes the image {string} for good", async (ctx: SpaceWorld, name: string) => {
+  await selectImage(ctx, name);
+  await press(ctx, "D");
+  await choose(ctx, "Delete for good");
+});
+
+step("the images list shows the prompt {string}", (ctx: SpaceWorld, prompt: string) => {
+  expect(listed(pane(ctx).rows, "image").map((text) => text.split("  · ")[1])).toContain(prompt);
+});
+
+step("the user opens the page {string}", (ctx: SpaceWorld, title: string) => openPage(ctx, title));
+
+step("the page shows the text {string}", (ctx: SpaceWorld, text: string) => {
+  const rows = pane(ctx).rows.filter((row) => row.kind === "block" && row.first);
+  expect(rows.map(blockText)).toContain(text);
 });

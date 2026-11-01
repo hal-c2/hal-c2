@@ -174,6 +174,11 @@ export const KEYBINDING_GROUPS: ReadonlyArray<KeyBindingGroup> = [
         chords: ["g", "s", "o", "z"],
       },
       {
+        keys: "v",
+        description: "Spaces: the Space's images (n generates one, i adds a file)",
+        chords: ["v"],
+      },
+      {
         keys: "Tab · ^Enter",
         description: "Add project: browse ⇄ edit · run the action",
         chords: ["tab", "ctrl+return"],
@@ -392,6 +397,7 @@ export const KEYMAP_LAYERS = {
     y: "space.export",
     i: "space.import",
     t: "space.fromThread",
+    v: "space.images",
     "ctrl+k": "palette.open",
     "ctrl+p": "space.close",
   },

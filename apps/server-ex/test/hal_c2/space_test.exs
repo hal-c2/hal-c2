@@ -6,7 +6,7 @@ defmodule HalC2.SpaceTest do
   use ExUnit.Case
 
   alias HalC2.{Space, Streams}
-  alias HalC2.Space.{Markdown, Order}
+  alias HalC2.Space.{ImageFile, Images, Markdown, Order}
 
   @moduletag :tmp_dir
   setup %{tmp_dir: dir} do
@@ -117,6 +117,29 @@ defmodule HalC2.SpaceTest do
 
       assert [{"page", ^page_id, %{"s" => _}}, {"block", _, _}, {"page", ^page_id, %{"u" => _}}] =
                changes
+    end
+
+    # A link to a page that is gone turns into a paragraph; a block on an image that
+    # left stays one and says what became of it.
+    test "a restore brings an image's block back after the image was deleted", %{space: space} do
+      page_id = page!(space, "Roadmap")
+      {:ok, image} = Space.add_image(space, upload(), "cat.png")
+
+      {:ok, block} =
+        Space.insert_block(space, page_id, %{"kind" => "image", "imageId" => image["id"]})
+
+      {:ok, %{versions: [%{version: version} | _]}} = Space.page_versions(space, page_id)
+      {:ok, _} = Space.delete_block(space, block["id"])
+      {:ok, _} = Space.trash_image(space, image["id"])
+      {:ok, _} = Space.delete_image(space, image["id"])
+
+      assert {:ok, _} = Space.restore_page_version(space, page_id, version)
+
+      {:ok, state} = Space.state(space)
+      assert [restored] = Space.Blocks.of_page(state, page_id)
+      assert restored["id"] == block["id"]
+      assert restored["kind"] == "image"
+      assert restored["imageId"] == image["id"]
     end
   end
 
@@ -299,6 +322,121 @@ defmodule HalC2.SpaceTest do
     test "a link to a page the Space lacks is imported as a paragraph", %{space: space} do
       {:ok, page} = Space.import_markdown(space, "[Old](#gone)", "Copy")
       assert texts(space, page["id"]) == ["[Old](#gone)"]
+    end
+  end
+
+  describe "images" do
+    @png <<0x89, "PNG\r\n", 0x1A, "\n", 13::32, "IHDR", 3::32, 2::32, 8, 6, 0, 0, 0>>
+
+    defp upload(bytes \\ @png) do
+      id = "pending-#{HalC2.Environment.uuid4()}"
+      File.mkdir_p!(HalC2.Attachments.dir())
+      File.write!(Path.join(HalC2.Attachments.dir(), id <> ".png"), bytes)
+      id
+    end
+
+    test "the size comes from the file, whatever was claimed", %{space: space} do
+      assert {:ok, %{"width" => 3, "height" => 2, "mimeType" => "image/png"}} =
+               Space.add_image(space, upload(), "cat.png")
+    end
+
+    test "a name loses its folders", %{space: space} do
+      assert {:ok, %{"name" => "cat.png"}} =
+               Space.add_image(space, upload(), "../../secret/cat.png")
+    end
+
+    test "only an upload can be taken, not any file by its id", %{space: space} do
+      for id <- ["../../etc/passwd", "thread-1", "pending-../x", nil] do
+        assert {:error, :invalid, _} = Space.add_image(space, id, "x.png")
+      end
+    end
+
+    test "an upload still being written is not taken", %{space: space} do
+      id = "pending-#{HalC2.Environment.uuid4()}"
+      File.mkdir_p!(HalC2.Attachments.dir())
+      part = Path.join(HalC2.Attachments.dir(), id <> ".part")
+      File.write!(part, @png)
+      assert {:error, :invalid, _} = Space.add_image(space, id, "x.png")
+      assert File.exists?(part)
+    end
+
+    test "an upload to a Space that is not there stays where it was" do
+      id = upload()
+      assert {:error, _, _} = Space.add_image("nothing", id, "x.png")
+      assert HalC2.Attachments.path(%{"id" => id})
+    end
+
+    test "a deleted image cannot be placed or restored", %{space: space} do
+      {:ok, image} = Space.add_image(space, upload(), "cat.png")
+      page = page!(space, "Roadmap")
+      {:ok, _} = Space.trash_image(space, image["id"])
+      {:ok, _} = Space.delete_image(space, image["id"])
+      refute ImageFile.existing(image["id"])
+
+      assert {:error, :not_found, _} =
+               Space.insert_block(space, page, %{
+                 "kind" => "image",
+                 "imageId" => image["id"]
+               })
+
+      assert {:error, :not_found, _} = Space.restore_image(space, image["id"])
+    end
+
+    test "an image block needs an image", %{space: space} do
+      page = page!(space, "Roadmap")
+      assert {:error, _, _} = Space.insert_block(space, page, %{"kind" => "image"})
+    end
+
+    test "other blocks gain no imageId", %{space: space} do
+      page = page!(space, "Roadmap")
+
+      {:ok, block} =
+        Space.insert_block(space, page, %{"kind" => "paragraph", "imageId" => "x"})
+
+      refute Map.has_key?(block, "imageId")
+    end
+
+    test "a generated image's name is the start of its prompt, on one line" do
+      name = Images.name_from("a red\n fox / " <> String.duplicate("x", 100))
+      assert String.length(name) <= 60
+      refute name =~ "\n"
+      refute name =~ "/"
+    end
+
+    test "each kind of file reads its own size" do
+      assert {:ok, "image/gif", 2, 3} =
+               ImageFile.sniff(<<"GIF87a", 2::little-16, 3::little-16, 0>>)
+
+      assert {:ok, "image/jpeg", 5, 4} =
+               ImageFile.sniff(
+                 <<0xFF, 0xD8, 0xFF, 0xFF, 0xE0, 4::16, 0, 0, 0xFF, 0xC2, 17::16, 8, 4::16,
+                   5::16>>
+               )
+
+      assert {:ok, "image/webp", 2, 3} =
+               ImageFile.sniff(
+                 <<"RIFF", 0::32, "WEBP", "VP8X", 0::32, 0::32, 1::little-24, 2::little-24>>
+               )
+
+      bits = Bitwise.bor(6, Bitwise.bsl(7, 14))
+
+      assert {:ok, "image/webp", 7, 8} =
+               ImageFile.sniff(<<"RIFF", 0::32, "WEBP", "VP8L", 0::32, 0x2F, bits::little-32>>)
+    end
+
+    test "a file whose headers lie or end early is refused" do
+      for bytes <- [
+            "",
+            <<0xFF, 0xD8>>,
+            <<0xFF, 0xD8, 0xFF, 0xE0, 200::16, 0>>,
+            <<0xFF, 0xD8, 0xFF, 0xE0, 0::16>>,
+            <<0xFF, 0xD8, 0xFF, 0xDA, 0::16>>,
+            <<"GIF89a", 0::little-16, 3::little-16>>,
+            <<"RIFF", 0::32, "WEBPXXXX">>,
+            ~s(<svg xmlns="http://www.w3.org/2000/svg"/>)
+          ] do
+        assert ImageFile.sniff(bytes) == :error
+      end
     end
   end
 

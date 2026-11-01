@@ -101,6 +101,9 @@ SpacePage 1.0 SpacePage.qml
 SpaceAgentStrip 1.0 SpaceAgentStrip.qml
 SpaceBlock 1.0 SpaceBlock.qml
 SpaceSlashMenu 1.0 SpaceSlashMenu.qml
+SpaceBlockImage 1.0 SpaceBlockImage.qml
+SpaceImages 1.0 SpaceImages.qml
+SpaceImageDialog 1.0 SpaceImageDialog.qml
 SpaceComments 1.0 SpaceComments.qml
 SpaceHistoryPanel 1.0 SpaceHistoryPanel.qml
 SpaceVersionView 1.0 SpaceVersionView.qml

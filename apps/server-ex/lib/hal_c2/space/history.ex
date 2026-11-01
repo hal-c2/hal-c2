@@ -5,8 +5,8 @@ defmodule HalC2.Space.History do
   the writer, on its own connection, so it costs a scan of the Space's edits and
   nothing while nobody asks.
 
-  A version is a run of content edits (the title, a block's kind, text, tick, link or
-  place) by one author with at most `@gap` between any two of them. It is named by the
+  A version is a run of content edits (the title, a block's kind, text, tick, link,
+  image or place) by one author with at most `@gap` between any two of them. It is named by the
   `seq` of its last edit: any `seq` reads the page as it stood then, so a name stays
   good when its run later grows. Moves and the trash are not edits, so they make no
   version and a restore leaves them alone.
@@ -23,6 +23,8 @@ defmodule HalC2.Space.History do
   commit. It keeps blocks' ids, so a block that comes back has the comments it left
   with: a restore that takes a block away leaves its comments on the page. Comments
   themselves are not versioned, and those a user deleted with a block stay deleted.
+  Neither are images: a version's image block shows the image as it is now, and comes
+  back saying so when the image is in the trash or deleted for good.
   """
 
   alias HalC2.Orchestration.Entities
@@ -31,7 +33,7 @@ defmodule HalC2.Space.History do
   alias HalC2.Space.Pages
 
   @gap :timer.minutes(5)
-  @content ~w(kind text checked linkedPageId order)
+  @content ~w(kind text checked linkedPageId imageId order)
   @default_limit 30
   @max_limit 100
 
@@ -77,7 +79,7 @@ defmodule HalC2.Space.History do
     with {:ok, page} <- Pages.fetch_live(state, page_id) do
       stamp = &Map.merge(&1, %{"updatedBy" => author, "updatedAt" => at})
       current = Map.new(Space.Blocks.of_page(state, page_id), &{&1["id"], &1})
-      wanted = Enum.map(version.blocks, &Space.links(state, &1))
+      wanted = Enum.map(version.blocks, &wanted_block(state, &1))
       ids = MapSet.new(wanted, & &1["id"])
 
       blocks =
@@ -87,7 +89,7 @@ defmodule HalC2.Space.History do
               [{"block", block["id"], Patch.diff(nil, stamp.(block))}]
 
             now ->
-              next = Map.merge(now, Map.take(block, @content))
+              next = now |> Map.drop(@content) |> Map.merge(Map.take(block, @content))
               if next == now, do: [], else: [{"block", now["id"], Patch.diff(now, stamp.(next))}]
           end
         end)
@@ -114,6 +116,10 @@ defmodule HalC2.Space.History do
     end
     |> Pages.refused()
   end
+
+  # An image block stays one whatever became of its image: it says what did.
+  defp wanted_block(_state, %{"kind" => "image"} = block), do: block
+  defp wanted_block(state, block), do: Space.links(state, block)
 
   defp existing(space_id, page_id) do
     with {:ok, state} <- Space.state(space_id) do

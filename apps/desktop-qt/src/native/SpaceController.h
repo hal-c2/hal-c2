@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QDateTime>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
@@ -112,7 +114,9 @@ public:
   };
   using Next = std::optional<Request>;
 
-  SpaceHistory(std::function<QString(const QString& pageId)> titleOf, QObject* parent = nullptr);
+  // `imageFields` is what a block showing an image says of it (SpacePages::imageFields).
+  SpaceHistory(std::function<QString(const QString& pageId)> titleOf,
+               std::function<QVariantMap(const QString& imageId)> imageFields, QObject* parent = nullptr);
 
   bool shown() const { return !m_pageId.isEmpty(); }
   QString pageId() const { return m_pageId; }
@@ -141,14 +145,21 @@ public:
   // The answer to a `space.page.version`. A failed one goes back to the list.
   void receiveVersion(int token, const QJsonObject& result);
   void failedVersion(int token);
+  // The images of the version being read, which want addresses as the page's own do.
+  QStringList imagesRead() const;
+  // The version's rows anew: a title, an image or its address moved on.
+  void repaint();
 
 signals:
   void changed();
+  // A version with images came: they want addresses.
+  void imagesArrived();
 
 private:
   Next settled();
 
   std::function<QString(const QString&)> m_titleOf;
+  std::function<QVariantMap(const QString&)> m_imageFields;
   SpaceRows* m_versions;
   SpaceRows* m_blocks;
   QString m_pageId;
@@ -162,6 +173,7 @@ private:
   qint64 m_nextBefore = -1;
   bool m_refreshing = false;
   QVariantMap m_version;
+  QJsonArray m_read;
 };
 
 // What the Space view shows of the MC's Space streams: the Spaces, the
@@ -177,9 +189,18 @@ private:
 //            page tree, depth first, untrashed and under no trashed page
 //   trash    {id, title, trashedAt}: trashed pages, the latest first
 //   blocks   {id, kind, text, checked, linkedPageId, linkedTitle, byAgent,
-//            openComments}: the page's blocks by their `order`
+//            openComments, imageId, imageState, imageUrl, imageWidth,
+//            imageHeight}: the page's blocks by their `order`; imageState is
+//            shown, trashed or deleted on an image block, else ""
 //   comments {id, blockId, blockText, body, resolved, byAgent, createdAt}:
 //            the page's comments, open ones first
+//   images, imageTrash {id, name, prompt, mimeType, width, height, generatedBy,
+//            url}: the Space's images and those in its trash, the latest first
+//
+// An image's bytes are never in the stream: `url` is a signed address, "" until
+// it is signed, kept while a newer one is on its way. Only an image on the open
+// page, or any image while the browser is open (setImagesShown), is asked for
+// (imagesNeeded); a deleted one never is.
 class SpacePages : public QObject {
   Q_OBJECT
   Q_PROPERTY(SpaceRows* spaces READ spaces CONSTANT)
@@ -188,6 +209,8 @@ class SpacePages : public QObject {
   Q_PROPERTY(SpaceRows* blocks READ blocks CONSTANT)
   Q_PROPERTY(SpaceRows* comments READ comments CONSTANT)
   Q_PROPERTY(SpaceHistory* history READ history CONSTANT)
+  Q_PROPERTY(SpaceRows* images READ images CONSTANT)
+  Q_PROPERTY(SpaceRows* imageTrash READ imageTrash CONSTANT)
   Q_PROPERTY(QString spaceId READ spaceId NOTIFY changed)
   Q_PROPERTY(QString spaceName READ spaceName NOTIFY changed)
   Q_PROPERTY(QString pageId READ pageId NOTIFY changed)
@@ -209,6 +232,8 @@ public:
   SpaceRows* blocks() const { return m_blocks; }
   SpaceRows* comments() const { return m_comments; }
   SpaceHistory* history() const { return m_history; }
+  SpaceRows* images() const { return m_images; }
+  SpaceRows* imageTrash() const { return m_imageTrash; }
   QString spaceId() const { return m_spaceId; }
   QString spaceName() const;
   QString pageId() const { return m_pageId; }
@@ -239,6 +264,16 @@ public:
   void settle(int token, const std::optional<QJsonObject>& block);
   bool pending(const QString& blockId, const QString& field) const { return m_pending.contains(blockId + QLatin1Char('\n') + field); }
 
+  // Whether the Space's images are being browsed, so all of them need an address.
+  void setImagesShown(bool shown);
+  // The address asked for by imagesNeeded, good until `expiresAt` (ms since the
+  // epoch). One asked for before the Space changed is dropped.
+  void setImageAddress(const QString& imageId, const QString& url, qint64 expiresAt);
+  // It could not be signed: asked for again the next time the rows change.
+  void imageAddressFailed(const QString& imageId);
+  // What "now" is for an address's end, for a test to move.
+  void setClock(std::function<qint64()> now) { m_now = std::move(now); }
+
   // Titles for what a page names: a page's own, or "Untitled".
   QString titleOf(const QString& pageId) const;
   QString threadTitle(const QString& threadId) const;
@@ -252,6 +287,8 @@ signals:
   void agentAskAnswered(const QString& pageId, const QString& request, bool taken);
   // The selected Space changed: its stream is followed anew.
   void spaceSelected(const QString& id);
+  // These images should be shown and have no good address, nor one on its way.
+  void imagesNeeded(const QStringList& imageIds);
 
 private:
   struct Pending {
@@ -270,6 +307,12 @@ private:
   // another Space, which rebuilt the rows.
   bool reselect();
   bool live(const QJsonObject& page) const;
+  // The images whose address should now be asked for, marked as asked.
+  // {imageId, imageState, imageUrl, imageWidth, imageHeight} of a block showing an
+  // image; imageState is shown, trashed or deleted, and all are empty for no image.
+  QVariantMap imageFields(const QString& imageId) const;
+  QStringList imagesToSign(const QSet<QString>& wanted);
+  void armAddressRefresh(const QSet<QString>& wanted);
 
   SpaceStream m_index;
   SpaceStream m_space;
@@ -281,11 +324,26 @@ private:
   QHash<QString, Pending> m_pending;
   int m_tokens = 0;
   std::function<QString(const QString&)> m_threadTitle;
+  struct Address {
+    QString url;
+    qint64 expiresAt = 0;
+  };
+  bool m_imagesShown = false;
+  QHash<QString, Address> m_addresses;
+  QSet<QString> m_signing;
+  std::function<qint64()> m_now = &QDateTime::currentMSecsSinceEpoch;
+  // Fires when the first address on screen is due to be signed anew, as nothing
+  // else may change in the Space while it lasts.
+  QTimer* m_addressRefresh;
+  // One rebuild for all the addresses answered in one turn of the event loop.
+  QTimer* m_rebuildSoon;
   SpaceRows* m_spaces;
   SpaceRows* m_pages;
   SpaceRows* m_trash;
   SpaceRows* m_blocks;
   SpaceRows* m_comments;
+  SpaceRows* m_images;
+  SpaceRows* m_imageTrash;
   SpaceHistory* m_history;
 };
 
@@ -295,7 +353,8 @@ private:
 // toast and kept in `error`.
 //
 // Publishes `space`: {error (the last refusal, until the next request), busy
-// (a page from a thread is being written)}.
+// (a page from a thread is being written), addingImage, generatingImage,
+// imageProviders ({providers, selection}, `space.image.providers`' answer)}.
 //
 // Actions (each payload's `spaceId` defaults to the selected Space):
 // `space.open`, `space.select {spaceId}`, `space.selectPage {pageId}`,
@@ -306,7 +365,7 @@ private:
 // `space.page.copyMarkdown {pageId}`, `space.page.saveMarkdown {pageId, url}`,
 // `space.page.importMarkdown {markdown}`, `space.page.importFile {url}`,
 // `space.pageFromThread {threadKey}`,
-// `space.block.insert {pageId, kind, text, checked, linkedPageId, afterBlockId}`
+// `space.block.insert {pageId, kind, text, checked, linkedPageId, imageId, afterBlockId}`
 // (afterBlockId: "" first, absent last), `space.block.update {blockId, text}`,
 // `space.block.setChecked {blockId, checked}`, `space.block.move {blockId,
 // afterBlockId}`, `space.block.delete {blockId}`, `space.comment.add {pageId,
@@ -314,7 +373,10 @@ private:
 // {commentId}`, `space.history.open {pageId}`, `space.history.close`,
 // `space.history.more`, `space.history.read {version}`, `space.history.back`,
 // `space.history.restore {version}`, `space.agent.ask {pageId, request}`, `space.agent.stop
-// {pageId}`, `space.agent.dismiss {pageId}`, `space.agent.openThread` (the open page's agent).
+// {pageId}`, `space.agent.dismiss {pageId}`, `space.agent.openThread` (the open page's agent),
+// `space.images.show {shown}`, `space.image.providers`, `space.image.addFile {url}`,
+// `space.image.generate {prompt, modelSelection}`, `space.image.trash {imageId}`,
+// `space.image.restore {imageId}`, `space.image.delete {imageId}`.
 class SpaceController : public SpacePages, public NativeController {
   Q_OBJECT
 
@@ -350,6 +412,9 @@ private:
   // written (at most once in `kHistoryRefreshMs`, however fast it is written).
   void followHistory();
   void askHistory(const SpaceHistory::Next& request);
+  void signImages(const QStringList& imageIds);
+  void addImageFile(const QString& url);
+  void generateImage(const QString& prompt, const QJsonObject& selection);
   void toast(const QString& type, const QString& title, const QString& description = {});
   void publish();
 
@@ -364,6 +429,9 @@ private:
   QString m_followedSpace;
   QString m_error;
   int m_writing = 0;
+  int m_addingImages = 0;
+  int m_generatingImages = 0;
+  QVariantMap m_imageProviders;
   // The page last written from a thread.
   QString m_written;
   QTimer* m_historyRefresh;

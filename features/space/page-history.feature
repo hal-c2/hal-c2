@@ -4,6 +4,7 @@
 #     apps/desktop-qt/examples/space/VersionHistoryDrawer.qml (the prototype; read for ideas only)
 #   packages/contracts/src/space.ts (space.page.history, space.page.version, space.page.restoreVersion)
 #   apps/server-ex/lib/hal_c2/space/history.ex
+#   features/space/images.feature (a block on an image that left stays and says so)
 
 Feature: A page's history
   A page's history is read from the Space's event log, on demand and a stretch at a
@@ -56,6 +57,14 @@ Feature: A page's history
       When the user restores the version 1 back on "Roadmap"
       Then the blocks of "Roadmap" read "Final"
       And the history has 4 versions
+
+    Scenario: A version shows its image as the image is now
+      Given the image "cat.png" in "Research"
+      And "Roadmap" shows the image "cat.png" already
+      When the user reads the version 0 back on "Roadmap"
+      Then the version shows the image "cat.png"
+      When the image "cat.png" is in the image trash
+      Then the version says the image "cat.png" is in the trash
 
     Scenario: A client watching the Space sees a restore land
       Given a second client watching the Space "Research"
@@ -152,6 +161,17 @@ Feature: A page's history
       And the user moves the page "Roadmap" into "Ideas"
       When the user restores the version 1 back on "Roadmap"
       Then "Roadmap" is a subpage of "Ideas"
+
+    Scenario: A restore brings an image's block back, whatever became of the image
+      Given the image "cat.png" in "Research"
+      And "Roadmap" shows the image "cat.png" already
+      And a while passes
+      And the user removes the image from "Roadmap"
+      And the image "cat.png" is in the image trash
+      When the user restores the version 1 back on "Roadmap"
+      Then "Roadmap" says the image "cat.png" is in the trash
+      When the user restores the image "cat.png"
+      Then "Roadmap" shows the image "cat.png"
 
     Scenario: A deleted block comes back without its comments
       Given a while passes

@@ -23,6 +23,7 @@
 namespace {
 
 const QStringList kPages{QStringLiteral("page-1"), QStringLiteral("page-2")};
+const QString kImage = QStringLiteral("image-1");
 // What the fake MC sends when not told how many, small enough to page through.
 constexpr int kStretch = 3;
 constexpr int kMaxVersions = 12;
@@ -48,7 +49,10 @@ struct Sut {
     bool fromTheTop;
   };
 
-  SpaceHistory history{[](const QString&) { return QString(); }};
+  // The address an image has, which the Space's rows would say.
+  QString address;
+  SpaceHistory history{[](const QString&) { return QString(); },
+                       [this](const QString& id) { return QVariantMap{{QStringLiteral("imageId"), id}, {QStringLiteral("imageUrl"), address}}; }};
   QAbstractItemModelTester rows{history.versions()};
   std::vector<Waiting> waiting;
   QHash<int, int> readTokens;
@@ -102,6 +106,8 @@ void check(const Model& model, const Sut& sut) {
   RC_ASSERT(sut.history.reading() == (model.reading >= 0));
   RC_ASSERT(sut.history.version().isEmpty() == !model.arrived);
   RC_ASSERT(sut.history.blocks()->rowCount() == (model.arrived ? 1 : 0));
+  // The image of the version being read wants an address only while it is read.
+  RC_ASSERT(sut.history.imagesRead() == (model.arrived ? QStringList{kImage} : QStringList{}));
 }
 
 void answer(const Model& model, Sut& sut, size_t index, bool refuse) {
@@ -233,6 +239,20 @@ struct Back : Command {
   void show(std::ostream& os) const override { os << "Back"; }
 };
 
+// An address comes, or the Space moves on, whatever the history is doing: the
+// version being read says so and nothing else changes.
+struct Repaint : Command {
+  int address = *rc::gen::inRange(0, 3);
+
+  void run(const Model& model, Sut& sut) const override {
+    sut.address = QString::number(address);
+    sut.history.repaint();
+    check(model, sut);
+    if (model.arrived) RC_ASSERT(sut.history.blocks()->get(0).value(QStringLiteral("imageUrl")).toString() == sut.address);
+  }
+  void show(std::ostream& os) const override { os << "Repaint(" << address << ")"; }
+};
+
 struct AnswerRead : Command {
   int pick = *rc::gen::inRange(0, 8);
   bool refuse = *rc::gen::weightedElement<bool>({{1, true}, {4, false}});
@@ -255,7 +275,9 @@ struct AnswerRead : Command {
       sut.history.receiveVersion(token, {{QStringLiteral("version"), read},
                                          {QStringLiteral("at"), QStringLiteral("2026-09-23T10:00:00Z")},
                                          {QStringLiteral("title"), QStringLiteral("Roadmap")},
-                                         {QStringLiteral("blocks"), QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("b1")}}}}});
+                                         {QStringLiteral("blocks"), QJsonArray{QJsonObject{{QStringLiteral("id"), QStringLiteral("b1")},
+                                                                                            {QStringLiteral("kind"), QStringLiteral("image")},
+                                                                                            {QStringLiteral("imageId"), kImage}}}}});
     }
     check(nextState(before), sut);
   }
@@ -273,7 +295,7 @@ private slots:
       Model model;
       Sut sut;
       rc::state::check(model, sut,
-                       rc::state::gen::execOneOfWithArgs<Open, Close, Write, Write, Write, More, Answer, Answer, Answer, Settle, Read, Back,
+                       rc::state::gen::execOneOfWithArgs<Open, Close, Write, Write, Write, More, Answer, Answer, Answer, Settle, Read, Back, Repaint,
                                                          AnswerRead>());
     }));
   }

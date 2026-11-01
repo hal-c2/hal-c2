@@ -644,6 +644,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("space/pages.feature"),
     QStringLiteral("space/page-history.feature"),
     QStringLiteral("space/agent-in-page.feature"),
+    QStringLiteral("space/images.feature"),
 };
 
 const QString kFeaturesDir = QStringLiteral(HAL_C2_FEATURES_DIR);

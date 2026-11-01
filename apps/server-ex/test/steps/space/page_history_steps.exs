@@ -8,7 +8,8 @@ defmodule HalC2.Steps.Space.PageHistory do
   import ExUnit.Assertions
 
   alias Exqlite.Sqlite3
-  alias HalC2.{Space, Store}
+  alias HalC2.{Space, Store, Streams}
+  alias HalC2.Space.Images
   alias HalC2.Test.Mc.World
 
   step "a while passes", context do
@@ -85,6 +86,19 @@ defmodule HalC2.Steps.Space.PageHistory do
 
   step "the version reads {string}", %{args: [text]} = context do
     assert texts_of(context.reading) == text
+    context
+  end
+
+  step "the version shows the image {string}", %{args: [name]} = context do
+    assert image_in_version(context, name)["imageId"] == Map.fetch!(context.image_ids, name)
+    context
+  end
+
+  # The version holds the block; what the block says of the image is the image's own.
+  step "the version says the image {string} is in the trash", %{args: [name]} = context do
+    id = Map.fetch!(context.image_ids, name)
+    assert image_in_version(context, name)["imageId"] == id
+    assert Images.get(Streams.state(Space.stream_id(context.space)), id)["trashedAt"] != nil
     context
   end
 
@@ -198,6 +212,9 @@ defmodule HalC2.Steps.Space.PageHistory do
     {read, _} = World.call!(context, "space.page.version", version_ref(context, version))
     texts_of(read)
   end
+
+  defp image_in_version(context, name),
+    do: Enum.find(context.reading["blocks"], &(&1["kind"] == "image" and &1["text"] == name))
 
   defp texts_of(read), do: Enum.map_join(read["blocks"], ", ", & &1["text"])
 
