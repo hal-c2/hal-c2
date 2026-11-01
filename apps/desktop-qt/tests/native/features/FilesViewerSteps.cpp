@@ -8,11 +8,13 @@
 #include <QJsonObject>
 #include <QQuickItem>
 #include <QTest>
+#include <QTimer>
 
 #include "CommandRegistry.h"
 #include "FilesViewer.h"
 #include "FilesWorkspace.h"
 #include "KeybindingController.h"
+#include "NativeShell.h"
 #include "NavigationController.h"
 #include "SettingsController.h"
 #include "Space.h"
@@ -939,6 +941,17 @@ const Steps backlogSteps([] {
     QTest::keyClick(&world.brick->window(), 'z');
     world.sync();
     expect(files(world).text().contains(u'z'), describeViewer(world));
+  });
+  step(QStringLiteral("the user closes this window, leaving another"), [](World& world, const Captures&, const Table&) {
+    world.bridge().dispatch(QStringLiteral("window.new"), QVariantMap{});
+    expect(world.native().windows().size() == 2, QStringLiteral("no second window opened"));
+    world.closeWindow(world.native().main());
+    expect(world.native().windows().size() == 1, QStringLiteral("the window did not close"));
+  });
+  step(QStringLiteral("the user quits the app"), [](World& world, const Captures&, const Table&) {
+    // The MC answers while quitting waits for it.
+    QTimer::singleShot(0, &world.native(), [&world] { world.mc.answerHeld(); });
+    world.native().finishWrites(NativeShell::quitWriteWaitMs);
   });
   step(QStringLiteral("the file ends up with both edits"), [](World& world, const Captures&, const Table&) {
     const QString path = viewer(world).edited;

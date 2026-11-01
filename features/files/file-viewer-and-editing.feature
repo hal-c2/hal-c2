@@ -654,6 +654,18 @@ Feature: Viewing and editing files
       Then the file ends up with both edits
       And the file is not shown as saved until the last edit is written
 
+    @desktop
+    Scenario Outline: Edits waiting to be written are saved when the app goes away
+      Given a save of "src/app.ts" is being written
+      And the user makes another edit
+      When the user <goes>
+      Then the file ends up with both edits
+
+      Examples:
+        | goes                                |
+        | closes this window, leaving another |
+        | quits the app                       |
+
     # Legacy: packages/client-runtime/src/state/projectCommands.ts (optimisticFile), apps/web/src/components/files/projectFilesQueryState.ts
     @desktop
     Scenario: A saved edit stays on screen while the file is read again

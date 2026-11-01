@@ -217,6 +217,12 @@ public:
   bool editing() const { return m_editing; }
   void setEditing(bool editing);
   bool unsaved() const { return m_pending; }
+  // A write waits or is on its way.
+  bool writing() const { return m_underWay || !m_writes.isEmpty(); }
+  // The viewer is going away: an edit that waits for its pause goes now, and
+  // writesFinished says when no write is left. Destroying the viewer first
+  // drops what is queued, so its owner waits for this (NativeShell).
+  void finishWrites() { save(true); }
   QString saveProblem() const { return m_saveProblem; }
   bool outsideProject() const;
   QString trailFolder() const { return m_trailFolder; }
@@ -275,6 +281,8 @@ signals:
   void sourceKindsChanged();
   // The MC would not write `path`.
   void saveFailed(const QString& path, const QString& problem);
+  // The last write was answered.
+  void writesFinished();
   // The browser is to open `url`, the open media file's address (openMedia).
   void mediaOpened(const QUrl& url);
 

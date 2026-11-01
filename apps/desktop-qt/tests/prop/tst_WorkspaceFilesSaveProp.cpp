@@ -354,6 +354,30 @@ struct Settle : Step<Settle> {
   void show(std::ostream& os) const override { os << "answer every write"; }
 };
 
+// The viewer is going away: nothing it holds stays unwritten, and it hears so.
+struct Finish : Step<Finish> {
+  explicit Finish(const Model&) {}
+  void apply(Model&) const override {}
+  void act(const Model& before, Sut& sut) const {
+    int finished = 0;
+    const QMetaObject::Connection counting = QObject::connect(sut.files.get(), &WorkspaceFiles::writesFinished, [&finished] { ++finished; });
+    const bool pending = sut.files->unsaved();
+    sut.files->finishWrites();
+    const bool writing = sut.files->writing();
+    RC_ASSERT(sut.sync());
+    for (int round = 0; round < 100 && !sut.held.isEmpty(); ++round) {
+      while (!sut.held.isEmpty()) sut.answer(0);
+      RC_ASSERT(sut.sync());
+    }
+    QObject::disconnect(counting);
+    RC_ASSERT(sut.held.isEmpty() && !sut.files->writing() && !sut.files->unsaved());
+    if (writing) RC_ASSERT(finished >= 1);
+    const bool refused = outside(before.openPath) && sut.refused.contains(before.environment);
+    if (pending && !refused) RC_ASSERT(sut.disk.value(Sut::key(before.environment, before.openPath)) == sut.files->text());
+  }
+  void show(std::ostream& os) const override { os << "finish the writes"; }
+};
+
 struct Close : Step<Close> {
   explicit Close(const Model&) {}
   void apply(Model& model) const override { model.openPath.clear(); }
@@ -375,7 +399,7 @@ private slots:
     QVERIFY(rc::check("edits are written to their own file, never by full path where that was refused", [] {
       Sut sut;
       RC_ASSERT(sut.client.isReady());
-      rc::state::check(Model(), sut, rc::state::gen::execOneOfWithArgs<SetTarget, Open, Open, Edit, Edit, Tick, Tick, Tick, SetEditing, Answer, Answer, AgentWrites, AnswerRead, AnswerRead, Settle, Close>());
+      rc::state::check(Model(), sut, rc::state::gen::execOneOfWithArgs<SetTarget, Open, Open, Edit, Edit, Tick, Tick, Tick, SetEditing, Answer, Answer, AgentWrites, AnswerRead, AnswerRead, Settle, Finish, Close>());
     }));
   }
 };
