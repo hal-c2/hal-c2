@@ -6,8 +6,9 @@ import HalC2.Shell
 
 // One block of a page (a row of Spaces.blocks): its text edited in place and
 // written when the user leaves it or presses Return, a checklist item's tick,
-// a callout's tint, a subpage link that opens the page, and the block's own
-// actions (comment, add a block below, move up or down, delete).
+// a callout's tint, a subpage link that opens the page, an image above its
+// caption, and the block's own actions (comment, add a block below, move up or
+// down, delete).
 Item {
     id: block
 
@@ -19,6 +20,11 @@ Item {
     required property string linkedTitle
     required property bool byAgent
     required property int openComments
+    required property string imageId
+    required property string imageState
+    required property string imageUrl
+    required property int imageWidth
+    required property int imageHeight
     // Where it is on the page, and the blocks either side ("" at an end).
     required property int index
     property string previousId: ""
@@ -42,7 +48,7 @@ Item {
     }
 
     objectName: "spaceBlock:" + text
-    implicitHeight: Math.max(row.implicitHeight, 28) + (block.kind === "heading" ? 10 : 4)
+    implicitHeight: Math.max(row.implicitHeight, 28) + (block.kind === "heading" ? 10 : 4) + (picture.visible ? picture.height + 6 : 0)
 
     // The editor follows the block while the user is not writing in it.
     onTextChanged: {
@@ -64,12 +70,29 @@ Item {
         border.color: Qt.alpha(block.info, 0.4)
     }
 
+    SpaceBlockImage {
+        id: picture
+
+        objectName: "spaceBlockImage:" + block.text
+        anchors.top: parent.top
+        anchors.left: parent.left
+        width: Math.min(parent.width, 720)
+        visible: block.kind === "image"
+        imageId: block.imageId
+        state_: block.imageState
+        url: block.imageUrl
+        naturalWidth: block.imageWidth
+        naturalHeight: block.imageHeight
+        readOnly: block.readOnly
+    }
+
     RowLayout {
         id: row
 
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: picture.visible ? (picture.height + 6) / 2 : 0
         anchors.leftMargin: block.kind === "callout" ? 10 : 0
         spacing: 8
 

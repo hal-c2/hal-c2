@@ -246,20 +246,8 @@ defmodule HalC2.PlannerMilestonesPropTest do
   # Calls the plugin from a caller of its own, and returns once GitHub holds a move or the
   # caller is done. `milestones`, any of them nil for none, are the ones the call changes.
   defp change(method, input, milestones) do
-    caller =
-      spawn_monitor(fn ->
-        try do
-          call(method, input)
-        catch
-          # The plugin stopped with the case.
-          :exit, _ -> :ok
-        else
-          {:ok, _} -> :ok
-          # A link or an unlink reads its task again once GitHub answers, removed by then.
-          {:error, %{"message" => "planner: There is no task " <> _}} -> :ok
-          refused -> exit({:refused, method, refused})
-        end
-      end)
+    # It ends with the plugin's answer, which `await_github/0` reads.
+    caller = spawn_monitor(fn -> exit(call(method, input)) end)
 
     Process.put(:pl_callers, [caller | Process.get(:pl_callers)])
     await_github()
@@ -355,10 +343,16 @@ defmodule HalC2.PlannerMilestonesPropTest do
       {^reader, {:data, {:eol, gate}}} ->
         Process.put(:pl_held, Process.get(:pl_held) ++ [gate])
 
-      {:DOWN, ref, :process, pid, reason} ->
+      {:DOWN, ref, :process, pid, answer} ->
         if {pid, ref} in callers do
           Process.put(:pl_callers, List.delete(callers, {pid, ref}))
-          if reason != :normal, do: problem("a call failed: #{inspect(reason)}")
+
+          case answer do
+            {:ok, _} -> :ok
+            # A link or an unlink reads its task again once GitHub answers, removed by then.
+            {:error, %{"message" => "planner: There is no task " <> _}} -> :ok
+            _ -> problem("a call failed: #{inspect(answer)}")
+          end
         else
           await_github()
         end
@@ -664,11 +658,22 @@ defmodule HalC2.PlannerMilestonesPropTest do
   end
 
   defp end_case do
+    # The callers end first, and for good. Left to find the plugin gone they would go on
+    # telling it how their pushes went for 30 seconds (`report/6` in the plugin), reach
+    # the next case's plugin, and run their next pushes under that case's rules and log.
+    for {pid, ref} <- Process.get(:pl_callers) do
+      Process.exit(pid, :kill)
+      receive do: ({:DOWN, ^ref, :process, _, _} -> :ok)
+    end
+
     HalC2.Prop.stop_services()
-    # The moves GitHub still holds are answered, and their callers find the plugin gone.
-    # They end before the next case begins: a gh one of them ran later would read that
-    # case's rules and log.
-    release(System.monotonic_time(:millisecond) + 15_000)
+    # With no caller to go on, the moves GitHub still holds are answered so each gh ends.
+    # Not File.write!: a gh already gone with its caller leaves a fifo with no reader, and
+    # opening that blocks for good.
+    for gate <- Process.get(:pl_held) do
+      System.cmd("timeout", ["5", "sh", "-c", "echo go > '#{gate}'"])
+    end
+
     {reader, notify} = Process.get(:pl_reader)
     File.write!(notify, "stop
 ", [:raw])
@@ -681,16 +686,6 @@ defmodule HalC2.PlannerMilestonesPropTest do
 
     # Notices that came after the last answer.
     receive_all(reader)
-  end
-
-  defp release(deadline) do
-    for gate <- Process.get(:pl_held), do: File.write!(gate, "go\n", [:raw])
-    Process.put(:pl_held, [])
-
-    if Process.get(:pl_callers) != [] and System.monotonic_time(:millisecond) < deadline do
-      await_github()
-      release(deadline)
-    end
   end
 
   defp receive_all(reader) do

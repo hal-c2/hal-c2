@@ -145,6 +145,16 @@ defmodule HalC2.TurnsProofTest do
       "HalC2.Orchestration.TurnWatch.start_link/1" =>
         "starts the process TurnWatch's rules run in",
       "HalC2.Orchestration.IdleSessions.start_link/1" => "starts the timer the idle rules run on",
+      "HalC2.Orchestration.Recovery.leaving/1" =>
+        "stands in for :init stopping in a test; stopping?/0 is abstracted",
+      "HalC2.Orchestration.Recovery.start_reattach/0" =>
+        "connects to programs that outlive the MC, which here stop with it; Durable's own tests hold it",
+      "HalC2.Codex.ThreadRuntime handle_call {:adopt, %{dir: _, snapshot: _}}" =>
+        "programs here stop with the MC; a failed adoption settles as restart does",
+      "HalC2.Codex.ThreadRuntime handle_info {:json_rpc, _, {:checkpoint, _}}" =>
+        "saves state to a file for a later boot; no run changes",
+      "HalC2.Codex.ThreadRuntime handle_info :durable_save" =>
+        "saves state to a file for a later boot; no run changes",
       "HalC2.Orchestration.Recovery.start_link/0" => "runs run/0 at boot, as restart does",
       "HalC2.Orchestration.Recovery.stopping?/0" =>
         "a runtime stopping with the MC leaves its turn to Recovery, as restart's wipe does"

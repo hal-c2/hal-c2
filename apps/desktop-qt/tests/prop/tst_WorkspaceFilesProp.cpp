@@ -4,7 +4,8 @@
 // the tab, opens and closes folders and files, searches, retries, and the
 // agent changes the files and the tree is listed again. A media file is never
 // read: it previews from an address the MC signs, which may run out, fail to
-// load, and be signed again.
+// load, and be signed again. A PDF is then downloaded through that address, in
+// any order against everything else, and is not ready before it has come.
 //
 // The model is what the user should see: each folder's listing from the
 // newest request for it that was answered (an older answer landing later is
@@ -18,6 +19,7 @@
 
 #include <QDateTime>
 #include <QJsonArray>
+#include <QTcpSocket>
 
 #include <memory>
 
@@ -47,7 +49,7 @@ QList<Entry> listingOf(const QString& root, int version, const QString& folder) 
   const QString tag = root.mid(1);
   const QString v = QString::number(version);
   if (folder.isEmpty())
-    return {{QStringLiteral("d"), true, false}, {QStringLiteral("logo.png"), false, false}, {tag + QLatin1Char('-') + v + QStringLiteral(".txt"), false, false}};
+    return {{QStringLiteral("d"), true, false}, {QStringLiteral("logo.png"), false, false}, {QStringLiteral("manual.pdf"), false, false}, {tag + QLatin1Char('-') + v + QStringLiteral(".txt"), false, false}};
   if (folder == QLatin1String("d"))
     return {{QStringLiteral("d/e"), true, false}, {QStringLiteral("d/clip.mp4"), false, false}, {QStringLiteral("d/") + tag + QStringLiteral(".md"), false, false}};
   return {{QStringLiteral("d/e/") + tag + QLatin1Char('-') + v + QStringLiteral(".txt"), false, false}};
@@ -75,7 +77,8 @@ QString contentsOf(const QString& root, int version, const QString& path) {
   return root + QLatin1Char(':') + path + QLatin1Char('@') + QString::number(version);
 }
 
-bool isMedia(const QString& path) { return path.endsWith(QLatin1String(".png")) || path.endsWith(QLatin1String(".mp4")); }
+bool isDocument(const QString& path) { return path.endsWith(QLatin1String(".pdf")); }
+bool isMedia(const QString& path) { return path.endsWith(QLatin1String(".png")) || path.endsWith(QLatin1String(".mp4")) || isDocument(path); }
 
 // The address the MC signs `count`-th, for `path`.
 QString addressOf(int count, const QString& path) {
@@ -95,8 +98,8 @@ enum class State { Unloaded, Loading, Loaded, Failed };
 
 // One request the MC holds: what it is for, and its answer as the disk was.
 struct Request {
-  QString kind;  // list, search, read or sign
-  QString key;   // the folder, the query or the file
+  QString kind;  // list, search, read, sign or download
+  QString key;   // the folder, the query, the file or the signed address
   QString root;
   int seq = 0;
   QList<Entry> entries;
@@ -303,13 +306,24 @@ struct Model {
       }
     } else {
       if (latestRead != request.seq) return;
-      fileStatus = ok ? QStringLiteral("ready") : QStringLiteral("error");
+      if (request.kind == QLatin1String("download")) {
+        // A copy that did not come is a document that failed to load, once shown.
+        fileStatus = ok ? QStringLiteral("ready") : QStringLiteral("error");
+        if (std::exchange(openOnSign, -1) == request.seq) opened.append(mediaUrl);
+        if (!ok) mediaUrl.clear();
+        return;
+      }
       text = ok ? request.contents : QString();
       if (sign && ok) {
         mediaUrl = addressOf(signedCount, request.key);
         fresh = lasting;
+        if (isDocument(request.key)) {
+          pending.append({QStringLiteral("download"), mediaUrl, request.root, request.seq, {}, {}});
+          return;
+        }
         if (std::exchange(openOnSign, -1) == request.seq) opened.append(mediaUrl);
       }
+      fileStatus = ok ? QStringLiteral("ready") : QStringLiteral("error");
     }
   }
 
@@ -387,7 +401,10 @@ struct Sut {
   struct Held {
     Request request;
     FakeMc::Rpc rpc;
+    QTcpSocket* download = nullptr;
   };
+  // The workspace each signed address is of.
+  QHash<QString, QString> signedRoots;
 
   FakeMc mc;
   McClient client;
@@ -424,6 +441,11 @@ struct Sut {
     mc.onRpc(QStringLiteral("projects.searchEntries"), hold(QStringLiteral("search"), QStringLiteral("query")));
     mc.onRpc(QStringLiteral("projects.readFile"), hold(QStringLiteral("read"), QStringLiteral("relativePath")));
     mc.onRpc(QStringLiteral("assets.createUrl"), hold(QStringLiteral("sign"), QStringLiteral("path")));
+    mc.onRaw(QStringLiteral("/api/assets/"), [this](QTcpSocket* socket, const QByteArray& head) {
+      socket->read(head.size());
+      const QString address = QString::fromUtf8(head.left(head.indexOf('\r')).split(' ').value(1));
+      held.append({{QStringLiteral("download"), address, signedRoots.value(address), 0, {}, {}}, {}, socket});
+    });
     client.setRetryDelays({20});
     client.open(mc.origin(), QStringLiteral("token"));
     halc2::prop::until([this] { return client.isReady(); });
@@ -452,12 +474,17 @@ struct Sut {
     for (qsizetype i = 0; i < held.size(); ++i) {
       if (!(held.at(i).request == request) || rank-- > 0) continue;
       const Held answered = held.takeAt(i);
-      if (!ok) {
+      if (answered.download) {
+        answered.download->write(ok ? "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 4\r\n\r\n%PDF"
+                                    : "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        answered.download->disconnectFromHost();
+      } else if (!ok) {
         mc.refuse(answered.rpc, QStringLiteral("no"));
       } else if (request.kind == QLatin1String("sign")) {
         // An hour, or less than the minute the client keeps in hand.
         const qint64 expires = QDateTime::currentMSecsSinceEpoch() + (lasting ? 3600'000 : 30'000);
-        mc.reply(answered.rpc, QJsonObject{{QStringLiteral("relativeUrl"), addressOf(++signedCount, request.key)},
+        signedRoots.insert(addressOf(++signedCount, request.key), request.root);
+        mc.reply(answered.rpc, QJsonObject{{QStringLiteral("relativeUrl"), addressOf(signedCount, request.key)},
                                            {QStringLiteral("expiresAt"), double(expires)}});
       } else if (request.kind == QLatin1String("read")) {
         mc.reply(answered.rpc, QJsonObject{{QStringLiteral("contents"), answered.request.contents}});
@@ -501,6 +528,8 @@ void check(const Model& expected, Sut& sut) {
   RC_ASSERT(asked(held) == pending);
 
   WorkspaceFiles& files = *sut.files;
+  // A download is answered over HTTP, which the barrier does not cover.
+  halc2::prop::until([&] { return files.fileStatus() == expected.fileStatus; });
   RC_ASSERT(files.root() == expected.root);
   RC_ASSERT(sut.rows() == expected.rows());
   RC_ASSERT(files.tree()->rootStatus() == expected.rootStatus());
@@ -669,7 +698,8 @@ struct MediaFailed : Step<MediaFailed> {
   explicit MediaFailed(const Model& model) { RC_PRE(!model.mediaUrl.isEmpty()); }
   void checkPreconditions(const Model& model) const override { RC_PRE(!model.mediaUrl.isEmpty()); }
   void apply(Model& model) const override {
-    if (!shown) return;
+    // Nothing is on screen to fail while a document is still coming.
+    if (!shown || model.fileStatus != QLatin1String("ready")) return;
     model.mediaUrl.clear();
     model.fileStatus = QStringLiteral("error");
   }
@@ -710,6 +740,46 @@ class WorkspaceFilesProp : public QObject {
   Q_OBJECT
 
 private slots:
+  // A table read back is the table written, whatever its cells hold.
+  void tables() {
+    QVERIFY(rc::check("a delimited file parses back to the cells it was written from", [] {
+      const auto rows = *rc::gen::container<std::vector<std::vector<std::string>>>(
+          rc::gen::nonEmpty(rc::gen::container<std::vector<std::string>>(rc::gen::container<std::string>(rc::gen::elementOf(std::string("ab ,\"\n"))))));
+      const std::vector<std::vector<std::string>> kept(rows.begin(), rows.begin() + std::min<size_t>(rows.size(), 100));
+      QString text;
+      QList<QStringList> expected;
+      for (const auto& row : kept) {
+        QStringList cells;
+        QStringList written;
+        for (const std::string& cell : std::vector<std::string>(row.begin(), row.begin() + std::min<size_t>(row.size(), 30))) {
+          cells.append(QString::fromStdString(cell));
+          written.append(u'"' + QString(cells.last()).replace(u'"', QStringLiteral("\"\"")) + u'"');
+        }
+        expected.append(cells);
+        text += written.join(u',') + u'\n';
+      }
+      const auto parsed = WorkspaceFiles::parseDelimited(text, u',');
+      RC_ASSERT(parsed.rows == expected);
+      RC_ASSERT(!parsed.truncated);
+    }));
+  }
+
+  // The edges of the last row, whatever ends the file.
+  void tableEdges() {
+    using Rows = QList<QStringList>;
+    for (const QString& ending : {QString(), QStringLiteral("\n"), QStringLiteral("\r\n")}) {
+      QCOMPARE(WorkspaceFiles::parseDelimited(QStringLiteral("name\r\nAlice\r\n\"\"") + ending, u',').rows,
+               (Rows{{QStringLiteral("name")}, {QStringLiteral("Alice")}, {QString()}}));
+    }
+    QCOMPARE(WorkspaceFiles::parseDelimited(QStringLiteral("\"\""), u',').rows, (Rows{{QString()}}));
+    QCOMPARE(WorkspaceFiles::parseDelimited(QString(), u',').rows, Rows());
+    QCOMPARE(WorkspaceFiles::parseDelimited(QStringLiteral("\ufeff"), u',').rows, Rows());
+    const QString full = QStringLiteral("x\n").repeated(99) + QStringLiteral("\"\"");
+    QCOMPARE(WorkspaceFiles::parseDelimited(full, u',').rows.size(), 100);
+    QVERIFY(!WorkspaceFiles::parseDelimited(full, u',').truncated);
+    QVERIFY(WorkspaceFiles::parseDelimited(full + QStringLiteral("\nextra"), u',').truncated);
+  }
+
   void files() {
     QVERIFY(rc::check("the Files tab shows the newest answers about the workspace on screen", [] {
       Sut sut;

@@ -14,6 +14,8 @@ ColumnLayout {
     required property Item screen
     readonly property var page: Spaces.page ?? ({})
     readonly property bool trashed: page.trashed === true
+    readonly property var site: page.site ?? ({})
+    readonly property string siteUrl: site.url ?? ""
     // The row being written in, kept above the keyboard.
     property SpaceBlockRow editing: null
 
@@ -50,7 +52,7 @@ ColumnLayout {
             objectName: "spacePageActions"
             iconName: "ellipsis"
             label: qsTr("Page actions")
-            onClicked: view.trashed ? view.screen.trashMenu(Spaces.pageId) : view.screen.pageMenu(Spaces.pageId, view.page.title, view.page.parentPageId ?? "")
+            onClicked: view.trashed ? view.screen.trashMenu(Spaces.pageId) : view.screen.pageMenu(Spaces.pageId, view.page.title, view.page.parentPageId ?? "", view.site)
         }
     }
 
@@ -95,6 +97,80 @@ ColumnLayout {
                 color: Theme.palette.color("error", "#ef4444")
                 font.pixelSize: Math.round(13 * Theme.fontScale)
             }
+
+            // The page's site: where it is, whether it is behind the page, and the ways on and back.
+            ColumnLayout {
+                objectName: "spaceSiteNotice"
+                Layout.fillWidth: true
+                Layout.margins: 16
+                Layout.bottomMargin: 4
+                visible: view.siteUrl !== ""
+                spacing: 4
+
+                Label {
+                    objectName: "spaceSiteStatus"
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    text: view.site.behind === true
+                        ? qsTr("Published. This page has changes the site does not show until you publish again.")
+                        : qsTr("Published. The site shows this page as it is now.")
+                    color: Theme.palette.color("text", "#e4e4e7")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Label {
+                    objectName: "spaceSiteLink"
+                    Layout.fillWidth: true
+                    elide: Text.ElideMiddle
+                    text: view.siteUrl
+                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Label {
+                    objectName: "spaceSiteLocalOnly"
+                    Layout.fillWidth: true
+                    visible: view.site.localOnly === true
+                    wrapMode: Text.Wrap
+                    text: qsTr("Only this machine can open this link: the MC listens on loopback.")
+                    color: Theme.palette.color("textMuted", "#a1a1aa")
+                    font.pixelSize: Math.round(13 * Theme.fontScale)
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 4
+
+                    MobileButton {
+                        objectName: "spaceSiteCopy"
+                        subtle: true
+                        text: qsTr("Copy link")
+                        onClicked: Shell.dispatch("space.page.copySiteLink", { pageId: Spaces.pageId })
+                    }
+
+                    MobileButton {
+                        objectName: "spaceSiteRepublish"
+                        subtle: true
+                        text: qsTr("Publish again")
+                        onClicked: Shell.dispatch("space.page.publish", { pageId: Spaces.pageId })
+                    }
+
+                    MobileButton {
+                        objectName: "spaceSiteUnpublish"
+                        subtle: true
+                        text: qsTr("Unpublish")
+                        onClicked: Shell.dispatch("space.page.unpublish", { pageId: Spaces.pageId })
+                    }
+
+                    MobileButton {
+                        objectName: "spaceSiteTailscale"
+                        visible: view.site.localOnly === true
+                        subtle: true
+                        text: qsTr("Publish over Tailscale")
+                        onClicked: Shell.dispatch("space.page.publish", { pageId: Spaces.pageId, tailscale: true })
+                    }
+                }
+            }
         }
 
         delegate: SpaceBlockRow {
@@ -102,6 +178,7 @@ ColumnLayout {
 
             width: ListView.view.width
             readOnly: view.trashed
+            onScreen: view.visible
             onEditingChanged: {
                 if (editing) {
                     view.editing = blockRow;

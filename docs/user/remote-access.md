@@ -28,6 +28,9 @@ Scan the QR code on your phone or paste the pairing URL into the receiving app's
 pairing field. A loopback address such as `127.0.0.1` reaches only the device opening
 the link, so Settings shows no QR code for one.
 
+An MC listening on every interface (`HAL_C2_MC_HOST=0.0.0.0`) puts this machine's network
+address in a link made in Settings, passing over bridges for local containers and VMs.
+
 When your machines are [clustered](#cluster-your-machines), **Settings →
 Connections** asks which machine the link is for. A phone reaches the whole
 cluster through the machine it paired with, and loses it when that machine
@@ -162,12 +165,16 @@ hal-c2-service pair --tailscale   # the installed MC file
 ```
 
 The pairing link uses an address such as `https://machine.tailnet.ts.net/`.
-The mapping created for it persists across restarts. Remove its
+The mapping created for it persists across restarts, and publishing a page
+[over Tailscale](sites.md#who-can-open-the-link) creates the same one. Remove its
 default-port mapping with:
 
 ```bash
 tailscale serve --https=443 off
 ```
+
+When something else held port 443, the mapping is on the MC's own port instead:
+`tailscale serve --https=<port> off`, with the port shown in the link.
 
 If that port is already in use, choose another with
 `--tailscale-serve-port` (`pair --tailscale --tailscale-serve-port 8443`).
