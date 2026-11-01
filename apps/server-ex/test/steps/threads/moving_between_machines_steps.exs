@@ -1456,7 +1456,7 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   # --- broken-off moves ------------------------------------------------------------------
 
   step "{string} is being copied to {string}", %{args: [title, to]} = context do
-    hold(context, title, to, to, :staged)
+    context |> hold(title, to, to, :staged) |> Map.put(:moving_title, title)
   end
 
   step "{string} goes offline before it has confirmed the thread", %{args: [machine]} = context do
@@ -1490,7 +1490,15 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   step "{string} restarts while {string} is still copying", %{args: [machine, to]} = context do
     assert Machines.machine(context, machine) == :local
     assert to == context.move_to
-    restart_source(context)
+    context = restart_source(context)
+
+    # Called off before the destination asks to take it, or it would be told to go ahead.
+    await_shell(
+      fn -> World.thread(context, context.moving_title)["moving"] == nil end,
+      "the move to #{to} called off"
+    )
+
+    context
   end
 
   step "{string} finishes copying", %{args: [machine]} = context do
@@ -1586,10 +1594,11 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
     Application.delete_env(:hal_c2, :thread_move_hook)
     context = restart_source(context)
 
-    # Back online, it has the sidebar of the machine it moved the thread to.
+    # Back online, it has let go and has the sidebar of the machine it moved the thread to.
     await_shell(
       fn ->
-        Enum.any?(HalC2.Shell.environments(), &(elem(&1, 0) == dest)) and
+        match?({"thread", %{"movedTo" => %{}}}, HalC2.Shell.row(node(), id)) and
+          Enum.any?(HalC2.Shell.environments(), &(elem(&1, 0) == dest)) and
           match?({"thread", _}, HalC2.Shell.row(dest, id))
       end,
       "#{title} on #{context.move_to}"
@@ -2104,7 +2113,8 @@ defmodule HalC2.Steps.Threads.MovingBetweenMachines do
   end
 
   # The scenario's MC goes offline in the middle of the held move and comes back: the
-  # move's own process is gone, and `HalC2.ThreadMove` has settled what it found.
+  # move's own process is gone, and `HalC2.ThreadMove` has started settling what it found
+  # (in a task: the caller awaits the outcome it expects with `await_shell/2`).
   defp restart_source(context) do
     Task.shutdown(context.held.task, :brutal_kill)
     context = %{context | mc: Mc.restart(context.mc)}

@@ -3,8 +3,9 @@ import QtTest
 import "../qml/HalC2/Bricks"
 import HalC2.Shell
 
-// features/space/pages.feature: what the Space view asks of SpaceController
-// as the user writes a page, and what it shows of the Space it is given.
+// features/space/pages.feature and slides.feature: what the Space view asks of
+// SpaceController as the user writes a page or a deck, and what it shows of the
+// Space it is given.
 Item {
     id: root
     width: 1200
@@ -56,6 +57,255 @@ Item {
         function init() {
             Shell.reset();
             Spaces.reset();
+        }
+
+        function pitch(more) {
+            const view = root.research(Object.assign({
+                deck: { id: "deck-1", title: "Pitch", trashed: false },
+                decks: [{ id: "deck-1", title: "Pitch" }],
+                slides: [{ id: "s1", title: "One", body: "" }, { id: "s2", title: "Two", body: "" }, { id: "s3", title: "Three", body: "" }]
+            }, more));
+            tryVerify(() => findChild(view, "spaceSlideTitle:2"));
+            return view;
+        }
+
+        function test_an_open_deck_shows_in_place_of_the_page() {
+            const view = pitch({});
+            verify(findChild(view, "spaceDeck").visible);
+            verify(!findChild(view, "spacePage").visible);
+            compare(findChild(view, "spaceDeckTitle").text, "Pitch");
+            compare(findChild(view, "spaceSlideTitle:1").text, "Two");
+        }
+
+        function test_the_images_give_way_to_a_deck_chosen_beside_them() {
+            const view = pitch({ images: [root.imageRow("i1", "cat.png")] });
+            mouseClick(findChild(view, "spaceImages"));
+            const browser = findChild(view, "spaceImagesBrowser");
+            tryVerify(() => browser.visible);
+            verify(!findChild(view, "spaceDeck").visible);
+            mouseClick(findChild(view, "spaceDeckRow:Pitch"));
+            tryVerify(() => !browser.visible);
+            verify(findChild(view, "spaceDeck").visible);
+        }
+
+        function test_slides_move_up_and_down_past_their_neighbours() {
+            const view = pitch({});
+            mouseClick(findChild(view, "spaceSlideUp:1"));
+            compare(root.dispatched("space.slide.move")[0].afterSlideId, "");
+            mouseClick(findChild(view, "spaceSlideUp:2"));
+            compare(root.dispatched("space.slide.move")[1].afterSlideId, "s1");
+            mouseClick(findChild(view, "spaceSlideDown:0"));
+            compare(root.dispatched("space.slide.move")[2].afterSlideId, "s2");
+        }
+
+        function test_a_slide_is_written_when_the_user_leaves_the_field() {
+            const view = pitch({});
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.text = "First";
+            title.focus = false;
+            compare(root.dispatched("space.slide.update")[0], { spaceId: "space-1", slideId: "s1", title: "First" });
+        }
+
+        function test_a_title_being_written_goes_to_its_own_deck() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            title.text = "Keynote";
+            Spaces.deck = { id: "deck-2", title: "Other", trashed: false };
+            compare(root.dispatched("space.deck.rename"), [{ spaceId: "space-1", deckId: "deck-1", title: "Keynote" }]);
+            compare(title.text, "Other");
+            title.focus = false;
+            compare(root.dispatched("space.deck.rename").length, 1);
+        }
+
+        function test_a_title_being_written_goes_to_the_space_its_deck_is_in() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            title.text = "Keynote";
+            Spaces.spaceId = "space-2";
+            Spaces.deck = {};
+            compare(root.dispatched("space.deck.rename"), [{ spaceId: "space-1", deckId: "deck-1", title: "Keynote" }]);
+        }
+
+        function test_picking_another_deck_renames_nothing_when_nothing_was_written() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            Spaces.deck = { id: "deck-2", title: "Other", trashed: false };
+            compare(title.text, "Other");
+            Spaces.deck = {};
+            title.focus = false;
+            compare(root.dispatched("space.deck.rename"), []);
+        }
+
+        function test_leaving_the_title_keeps_a_rename_from_another_client() {
+            const view = pitch({});
+            const title = findChild(view, "spaceDeckTitle");
+            title.forceActiveFocus();
+            Spaces.deck = { id: "deck-1", title: "Theirs", trashed: false };
+            title.focus = false;
+            compare(root.dispatched("space.deck.rename"), []);
+            compare(title.text, "Theirs");
+        }
+
+        function test_a_slide_being_written_goes_to_the_space_it_is_in() {
+            const view = pitch({});
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.text = "First";
+            Spaces.load({ spaceId: "space-2", spaceName: "Lab", spaces: [], pages: [], blocks: [], slides: [] });
+            tryVerify(() => root.dispatched("space.slide.update").length === 1);
+            compare(root.dispatched("space.slide.update")[0], { spaceId: "space-1", slideId: "s1", title: "First" });
+        }
+
+        function test_a_slide_being_written_survives_picking_a_deck_in_the_trash_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", write: { title: "First" } },
+                { tag: "body", field: "spaceSlideBody:0", write: { body: "First" } }
+            ];
+        }
+
+        function test_a_slide_being_written_survives_picking_a_deck_in_the_trash(data) {
+            const view = pitch({});
+            const field = findChild(view, data.field);
+            field.forceActiveFocus();
+            field.text = "First";
+            Spaces.load({
+                spaceId: "space-1",
+                spaceName: "Research",
+                deck: { id: "deck-9", title: "Old", trashed: true },
+                deckTrash: [{ id: "deck-9", title: "Old", trashedAt: "t" }],
+                slides: [{ id: "s9", title: "Gone", body: "" }]
+            });
+            tryVerify(() => root.dispatched("space.slide.update").length === 1);
+            compare(root.dispatched("space.slide.update")[0], Object.assign({ spaceId: "space-1", slideId: "s1" }, data.write));
+        }
+
+        function test_leaving_a_slide_keeps_an_edit_from_another_client_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", role: "title" },
+                { tag: "body", field: "spaceSlideBody:0", role: "body" }
+            ];
+        }
+
+        function test_leaving_a_slide_keeps_an_edit_from_another_client(data) {
+            const view = pitch({});
+            const field = findChild(view, data.field);
+            field.forceActiveFocus();
+            Spaces.slides.setProperty(0, data.role, "Theirs");
+            field.focus = false;
+            compare(root.dispatched("space.slide.update"), []);
+            compare(field.text, "Theirs");
+        }
+
+        function test_escape_on_a_slide_keeps_an_edit_from_another_client() {
+            const view = pitch({});
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.text = "Mine";
+            Spaces.slides.setProperty(0, "title", "Theirs");
+            keyClick(Qt.Key_Escape);
+            compare(root.dispatched("space.slide.update"), []);
+            compare(title.text, "Theirs");
+        }
+
+        function test_an_edit_from_another_client_does_not_replace_what_is_being_typed_data() {
+            return [
+                { tag: "title", field: "spaceSlideTitle:0", role: "title" },
+                { tag: "body", field: "spaceSlideBody:0", role: "body" }
+            ];
+        }
+
+        function test_an_edit_from_another_client_does_not_replace_what_is_being_typed(data) {
+            const view = pitch({ slides: [{ id: "s1", title: "", body: "" }, { id: "s2", title: "Two", body: "" }, { id: "s3", title: "Three", body: "" }] });
+            const field = findChild(view, data.field);
+            field.forceActiveFocus();
+            keyClick(Qt.Key_M);
+            compare(field.text, "m");
+            Spaces.slides.setProperty(0, data.role, "Theirs");
+            compare(field.text, "m");
+        }
+
+        function test_writing_over_an_edit_from_another_client_is_the_users_to_make() {
+            const view = pitch({});
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.text = "Mine";
+            Spaces.slides.setProperty(0, "title", "Theirs");
+            title.focus = false;
+            compare(root.dispatched("space.slide.update"), [{ spaceId: "space-1", slideId: "s1", title: "Mine" }]);
+        }
+
+        function test_leaving_a_slide_of_a_trashed_deck_writes_nothing() {
+            const view = pitch({ deck: { id: "deck-1", title: "Pitch", trashed: true }, decks: [], deckTrash: [{ id: "deck-1", title: "Pitch", trashedAt: "t" }] });
+            const title = findChild(view, "spaceSlideTitle:0");
+            title.forceActiveFocus();
+            title.focus = false;
+            const body = findChild(view, "spaceSlideBody:0");
+            body.forceActiveFocus();
+            body.focus = false;
+            compare(root.dispatched("space.slide.update"), []);
+        }
+
+        function test_a_slide_goes_below_the_one_the_user_added_from() {
+            const view = pitch({});
+            mouseClick(findChild(view, "spaceSlideAdd:0"));
+            compare(root.dispatched("space.slide.insert")[0].afterSlideId, "s1");
+            mouseClick(findChild(view, "spaceSlideDelete:1"));
+            compare(root.dispatched("space.slide.delete")[0].slideId, "s2");
+        }
+
+        function test_a_trashed_deck_is_read_only_with_the_way_back() {
+            const view = pitch({ deck: { id: "deck-1", title: "Pitch", trashed: true }, decks: [], deckTrash: [{ id: "deck-1", title: "Pitch", trashedAt: "t" }] });
+            verify(findChild(view, "spaceDeckTrashedBanner").visible);
+            verify(findChild(view, "spaceSlideTitle:0").readOnly);
+            verify(!findChild(view, "spaceDeckPresent").enabled);
+            mouseClick(findChild(view, "spaceDeckRestore"));
+            compare(root.dispatched("space.deck.restore")[0].deckId, "deck-1");
+        }
+
+        function test_the_trash_holds_decks_beside_pages() {
+            const view = root.research({
+                trash: [{ id: "page-9", title: "Old page", trashedAt: "t" }],
+                deckTrash: [{ id: "deck-9", title: "Old deck", trashedAt: "t" }]
+            });
+            mouseClick(findChild(view, "spaceTrash"));
+            compare(findChild(view, "spaceTrash").text, "Trash (2)");
+            mouseClick(findChild(view, "spaceRestoreDeck:Old deck"));
+            compare(root.dispatched("space.deck.restore")[0].deckId, "deck-9");
+            mouseClick(findChild(view, "spaceDeleteDeck:Old deck"));
+            compare(root.dispatched("space.deck.delete")[0].deckId, "deck-9");
+        }
+
+        function test_a_page_makes_a_deck_from_its_menu() {
+            const view = root.research({});
+            findChild(view, "spaceMakeDeck").triggered();
+            compare(root.dispatched("space.deck.createFromPage")[0].pageId, "page-1");
+        }
+
+        function test_the_presenter_steps_by_key_and_leaves_with_escape() {
+            const view = pitch({ presenting: true, slide: { id: "s2", title: "Two", body: "Words" }, slideNumber: 2, slideCount: 3 });
+            const keys = findChild(view, "spacePresenterKeys");
+            tryVerify(() => keys.activeFocus);
+            compare(findChild(view, "spacePresenterTitle").text, "Two");
+            compare(findChild(view, "spacePresenterCount").text, "2 / 3");
+            keyClick(Qt.Key_Right);
+            keyClick(Qt.Key_Space);
+            keyClick(Qt.Key_Left);
+            compare(root.dispatched("space.deck.step").map(entry => entry.by), [1, 1, -1]);
+            keyClick(Qt.Key_Escape);
+            compare(root.dispatched("space.deck.leave").length, 1);
+        }
+
+        function test_a_tap_on_the_left_goes_back_and_elsewhere_goes_on() {
+            const view = pitch({ presenting: true, slide: { id: "s1", title: "One", body: "" }, slideNumber: 1, slideCount: 3 });
+            const tap = findChild(view, "spacePresenterTap");
+            tryVerify(() => tap.visible && tap.width > 0);
+            mouseClick(tap, 10, 10);
+            mouseClick(tap, tap.width - 10, 10);
+            compare(root.dispatched("space.deck.step").map(entry => entry.by), [-1, 1]);
         }
 
         function test_a_slash_picks_the_kind_of_the_next_block() {

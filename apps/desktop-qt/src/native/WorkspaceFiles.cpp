@@ -881,6 +881,7 @@ void WorkspaceFiles::writeNext() {
   if (m_underWay) return;
   if (m_writes.isEmpty()) {
     if (std::exchange(m_readAfterWrites, false)) readOpenFile();
+    emit writesFinished();
     return;
   }
   const Write write = m_writes.takeFirst();

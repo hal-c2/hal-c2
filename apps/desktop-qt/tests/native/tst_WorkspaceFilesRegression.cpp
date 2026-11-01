@@ -69,6 +69,42 @@ class WorkspaceFilesRegression : public QObject {
   Q_OBJECT
 
 private slots:
+  // Edits behind an unanswered write went with the viewer. They go in order,
+  // and it hears when the last is answered.
+  void finishingWritesSendsWhatWaitsInOrder() {
+    Held held;
+    QList<FakeMc::Rpc> writes;
+    held.mc.onRpc(QStringLiteral("projects.writeFile"), [&writes](const FakeMc::Rpc& rpc) { writes.append(rpc); });
+    QVERIFY(held.ready());
+    WorkspaceFiles files(&held.client);
+    int finished = 0;
+    QObject::connect(&files, &WorkspaceFiles::writesFinished, [&finished] { ++finished; });
+    files.setSaveDelay(60 * 60 * 1000);
+    files.setTarget(QStringLiteral("env-a"), QStringLiteral("/w"));
+    files.openFile(QStringLiteral("a.txt"));
+    QVERIFY(QTest::qWaitFor([&] { return !held.callsOf(QStringLiteral("projects.readFile")).isEmpty(); }));
+    held.mc.reply(held.callsOf(QStringLiteral("projects.readFile")).first(), QJsonObject{{QStringLiteral("contents"), QStringLiteral("a\n")}});
+    QVERIFY(held.settled());
+    QVERIFY(!files.writing());
+
+    files.edit(QStringLiteral("first\n"));
+    files.finishWrites();
+    files.edit(QStringLiteral("second\n"));
+    files.finishWrites();
+    QVERIFY(files.writing());
+    QVERIFY(QTest::qWaitFor([&] { return writes.size() == 1; }));
+    QVERIFY(held.settled());
+    QCOMPARE(writes.size(), 1);
+
+    held.mc.reply(writes.at(0), QJsonObject{});
+    QVERIFY(QTest::qWaitFor([&] { return writes.size() == 2; }));
+    QCOMPARE(writes.at(1).payload.value(QLatin1String("contents")).toString(), QStringLiteral("second\n"));
+    QCOMPARE(finished, 0);
+    held.mc.reply(writes.at(1), QJsonObject{});
+    QVERIFY(QTest::qWaitFor([&] { return finished == 1; }));
+    QVERIFY(!files.writing());
+  }
+
   // A write by full path refused for want of terminal access left the edit
   // pending, and opening a project file next wrote that edit into it.
   void anEditRefusedOutsideTheWorkspaceIsNotWrittenToTheNextFile() {

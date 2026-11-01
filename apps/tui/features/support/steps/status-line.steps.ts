@@ -36,6 +36,17 @@ step("the user submits an empty commit message", async (ctx: World) => {
   await settle(ctx);
 });
 
+step("the user rebinds the palette to {string}", async (ctx: World, chord: string) => {
+  await ready(ctx);
+  ctx.host!.dispatch("keymap.rebind", { action: "palette.open", chord });
+  await settle(ctx);
+});
+
+step("the key hint row promises {string}", async (ctx: World, hint: string) => {
+  await settle(ctx);
+  expect((ctx.host!.state.get("statusRow") as { hint: string }).hint).toContain(hint);
+});
+
 step("the status line shows {string}", async (ctx: World, text: string) => {
   expect(await statusLine(ctx)).toContain(text);
 });
