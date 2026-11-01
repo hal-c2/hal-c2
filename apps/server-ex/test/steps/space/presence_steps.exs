@@ -57,8 +57,6 @@ defmodule HalC2.Steps.Space.Presence do
     context
   end
 
-  step("a thread {string}", %{args: [title]} = context, do: World.create_thread(context, title))
-
   step "the agent in {string} is working on the page {string}",
        %{args: [thread, title]} = context do
     Mc.ensure(Presence)
