@@ -270,6 +270,17 @@ defmodule HalC2.Steps.Orchestration.Migration do
   # the import folds them (`HalC2.Import.V1Thread`) into a thread whose messages sit
   # outside any run.
 
+  step "the snapshot holds a message the user typed in thread {string}",
+       %{args: [id]} = context do
+    event(context, "thread", id, "message.updated", %{
+      "id" => "typed",
+      "threadId" => id,
+      "role" => "user",
+      "text" => "Typed",
+      "createdAt" => iso(@start)
+    })
+  end
+
   step "the MC counts {int} turn(s) for the imported thread {string}",
        %{args: [count, id]} = context do
     HalC2.Store.put_meta("test.flush", "1")

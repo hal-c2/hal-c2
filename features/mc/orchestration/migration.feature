@@ -29,7 +29,8 @@ Feature: Bringing history over from the Node server
 
   @mc
   Scenario: History imported after the MC read its threads is still read
-    Given the MC has read its older threads
+    Given the snapshot holds a message the user typed in thread "t1"
+    And the MC has read its older threads
     When the operator imports the snapshot into an MC
     And the MC has read its older threads
     Then the MC counts 1 turn for the imported thread "t1"
