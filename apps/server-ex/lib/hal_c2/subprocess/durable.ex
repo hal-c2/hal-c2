@@ -294,6 +294,7 @@ defmodule HalC2.Subprocess.Durable do
   defp save(%{dir: dir} = checkpoint, runtime, state) do
     snapshot = %{
       format: @format,
+      dir: dir,
       runtime: runtime,
       state: state,
       offset: checkpoint.offset,
@@ -320,8 +321,15 @@ defmodule HalC2.Subprocess.Durable do
     if turn = state[:turn],
       do: HalC2.Orchestration.TurnWatch.claim(state.thread_id, turn.ids.run)
 
+    # A program gone quiet sends no checkpoint, and this flush may write what the save
+    # holds: `flushed/2` and `leaving/2` need the checkpoint this state came from.
+    checkpoint = %{dir: snapshot.dir, offset: snapshot.offset, channel: snapshot.channel}
+    Process.put(@last, {checkpoint, snapshot.runtime})
     send(self(), :flush)
-    state |> Map.put(field, channel) |> Map.put(:flush_timer, nil)
+
+    # `text_at` is the old VM's monotonic time, which means nothing here: kept, it would
+    # hold back every paragraph until this VM had been up as long as that one.
+    state |> Map.put(field, channel) |> Map.put(:flush_timer, nil) |> Map.delete(:text_at)
   end
 
   @doc """

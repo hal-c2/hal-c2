@@ -171,17 +171,20 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
         Process.whereis(registry),
         thread <- Registry.select(registry, [{{:"$1", :_, :_}, [], [:"$1"]}]),
         {pid, _} <- Registry.lookup(registry, thread) do
+      state = :sys.get_state(pid)
+      channel = state[:conn] || state[:session]
+      ref = channel && Process.monitor(channel)
       GenServer.stop(pid, :shutdown)
+      # What holds the program goes too, before anything can read the MC as back.
+      if ref, do: assert_receive({:DOWN, ^ref, :process, _, _}, 5_000)
     end
 
     context
   end
 
-  # After what an earlier MC's leaving could still do: a stop of its connection reaching
-  # the adopted program takes up to a second, and a check before that proves nothing.
   step "the provider process of {string} is the one that was running",
        %{args: [thread]} = context do
-    Process.sleep(1_000)
+    settled(context, thread)
     assert program(context, thread) == context.program
     assert alive?(context.program)
     context
@@ -193,7 +196,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
   end
 
   step "the user stops {string} after the restart", %{args: [thread]} = context do
-    Process.sleep(1_000)
+    settled(context, thread)
     assert status(context, thread) == "running"
     assert alive?(context.program)
 
@@ -262,7 +265,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
 
   step "the user sends {string} to {string} after the restart",
        %{args: [text, thread]} = context do
-    Process.sleep(1_000)
+    settled(context, thread)
     context = World.post_message(context, thread, text)
     World.await_idle(context, thread)
     context
@@ -302,7 +305,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
   end
 
   step "the approval of {string} is still pending", %{args: [thread]} = context do
-    Process.sleep(1_000)
+    settled(context, thread)
     request = World.state(context, thread).entities["runtime-request"][context.request_id]
     assert request["status"] == "pending"
     context
@@ -327,7 +330,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
 
   step "the provider process of {string} crashes after the restart",
        %{args: [thread]} = context do
-    Process.sleep(1_000)
+    settled(context, thread)
     id = World.thread_id(context, thread)
     %{dir: dir} = Durable.survivors_peek()[id]
     %{"group" => group} = JSON.decode!(File.read!(Path.join(dir, "meta")))
@@ -355,6 +358,30 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
     context
   end
 
+  # The adopted runtime has handled what adoption sent it, the first flush included.
+  defp settled(context, thread), do: :sys.get_state(runtime(context, thread))
+
+  defp await_saved_past(context, thread, text, tries \\ 500) do
+    id = World.thread_id(context, thread)
+    %{dir: dir} = Durable.survivors_peek()[id]
+
+    held? =
+      case File.read(Path.join(dir, "snapshot")) do
+        {:ok, binary} ->
+          %{state: %{buffer: buffer}} = :erlang.binary_to_term(binary)
+          Enum.any?(Map.values(buffer), &(&1 =~ text))
+
+        _ ->
+          true
+      end
+
+    cond do
+      not held? -> :ok
+      tries == 0 -> flunk("the save of #{thread} still holds #{text}")
+      true -> Process.sleep(10) && await_saved_past(context, thread, text, tries - 1)
+    end
+  end
+
   defp runtime(context, thread) do
     id = World.thread_id(context, thread)
 
@@ -362,7 +389,9 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
       [
         HalC2.Codex.Registry,
         HalC2.Claude.Registry,
-        HalC2.Acp.Registry
+        HalC2.Acp.Registry,
+        HalC2.Pi.Registry,
+        HalC2.Muse.Registry
       ],
       fn registry ->
         case Process.whereis(registry) && Registry.lookup(registry, id) do
@@ -387,13 +416,13 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
       match?(%{"text" => "One.\n\n"}, state.entities["message"]["message:codex:msg-stream"])
     end)
 
-    # Past the flush and the save after it.
-    Process.sleep(600)
+    # The flush wrote it, and the save after that no longer holds it.
+    await_saved_past(context, thread, "One.")
     context
   end
 
   step "{string} shows that paragraph once", %{args: [thread]} = context do
-    Process.sleep(1_000)
+    settled(context, thread)
     message = World.state(context, thread).entities["message"]["message:codex:msg-stream"]
     assert message["text"] == "One.\n\n"
     context
@@ -429,7 +458,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
   end
 
   step "a second Antigravity thread starts", context do
-    Process.sleep(1_000)
+    settled(context, context.thread)
     temp = :sys.get_state(runtime(context, context.thread)).temp_dir
     assert is_binary(temp)
     File.mkdir_p!(temp)
@@ -447,7 +476,7 @@ defmodule HalC2.Steps.Orchestration.ReattachAfterRestart do
   end
 
   step "the user signs out of Antigravity", context do
-    Process.sleep(1_000)
+    settled(context, context.thread)
     assert runtime(context, context.thread) in HalC2.Acp.Antigravity.sessions("antigravity")
     HalC2.Acp.Antigravity.stop_sessions("antigravity")
     context

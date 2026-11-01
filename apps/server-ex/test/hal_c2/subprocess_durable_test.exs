@@ -240,6 +240,27 @@ defmodule HalC2.SubprocessDurableTest do
     Subprocess.stop(sub)
   end
 
+  test "an adopted state forgets the old VM's clock and can save what it flushes", %{home: home} do
+    dir = Path.join(home, "adopted")
+    File.mkdir_p!(dir)
+    snapshot = %{dir: dir, offset: 7, channel: %{}, runtime: __MODULE__, mcp: []}
+    ahead = System.monotonic_time(:millisecond) + :timer.hours(72)
+    state = %{thread_id: "t1", buffer: %{"a" => "One.\n\nTw"}, text_at: ahead, flush_timer: nil}
+
+    restored = Durable.restored(state, :conn, self(), snapshot)
+    refute Map.has_key?(restored, :text_at)
+    assert_received :flush
+
+    # Nothing has checkpointed in this VM, and the program is quiet.
+    written = %{restored | buffer: %{"a" => "Tw"}}
+    Durable.flushed(restored, written)
+    assert_receive :durable_save, 1_000
+    Durable.save_due(written, & &1)
+
+    assert %{offset: 7, state: %{buffer: %{"a" => "Tw"}}} =
+             :erlang.binary_to_term(File.read!(Path.join(dir, "snapshot")))
+  end
+
   defp flush_messages do
     receive do
       _ -> flush_messages()

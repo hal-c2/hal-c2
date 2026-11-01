@@ -206,6 +206,14 @@ Feature: Reattaching to provider programs after a restart
       And the MC restarts
       Then "t1" shows that paragraph once
 
+    Scenario: Text a quiet program streamed stays once across two restarts
+      Given thread "t1" has a turn on "codex" that streamed a paragraph and paused
+      When the MC dies
+      And the MC restarts
+      And the MC dies
+      And the MC restarts
+      Then "t1" shows that paragraph once
+
     # The stop went out before the MC left, and the program never answers it.
     Scenario Outline: A stop that was out when the MC went still settles
       Given thread "t1" has a running turn on "<provider>"
