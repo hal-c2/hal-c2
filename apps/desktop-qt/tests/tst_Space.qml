@@ -181,6 +181,29 @@ Item {
             compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", blockId: "c1" }]);
         }
 
+        function test_writing_a_block_or_adding_below_ends_asking_again() {
+            const blocks = [chartBlock("bar"), root.block("b2", "Below", {})];
+            const view = root.research({ blocks: blocks });
+            const again = findChild(view, "spaceAskAgain:" + blocks[0].text);
+            tryVerify(() => again !== null);
+            const hint = findChild(view, "spaceReplacing");
+            const composer = findChild(view, "spaceComposer");
+            again.clicked();
+            tryVerify(() => hint.visible);
+            composer.text = "A plain paragraph";
+            composer.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            tryVerify(() => !hint.visible);
+            again.clicked();
+            tryVerify(() => hint.visible);
+            findChild(view, "spaceBlock:" + blocks[1].text).addBelowRequested("b2");
+            tryVerify(() => !hint.visible);
+            composer.text = "/visualize signups";
+            composer.forceActiveFocus();
+            keyClick(Qt.Key_Return);
+            compare(root.dispatched("space.block.visualize"), [{ pageId: "page-1", request: "/visualize signups", afterBlockId: "b2" }]);
+        }
+
         function test_a_slash_picks_the_kind_of_the_next_block() {
             const view = root.research({});
             const composer = findChild(view, "spaceComposer");

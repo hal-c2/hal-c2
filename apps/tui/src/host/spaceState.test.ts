@@ -280,6 +280,21 @@ describe("a chart on a page", () => {
     });
   });
 
+  test("a chart from the add menu is a new one, even with a chart selected", () => {
+    const t = onPage(chartBlock("c1"));
+    t.select("block:c1");
+    t.controller.dispatch("space.new", {});
+    t.menus.at(-1)!.onChoose("chart");
+    expect(t.asks.at(-1)!.value).toBeUndefined();
+    t.asks.at(-1)!.onSubmit("signups");
+    expect(t.calls.at(-1)!.payload).toEqual({
+      spaceId: "s1",
+      pageId: "p1",
+      request: "signups",
+      afterBlockId: "c1",
+    });
+  });
+
   test("off a page there is nothing to chart on", () => {
     const t = inResearch([page("p1", "Status")]);
     t.controller.dispatch("space.visualize", {});

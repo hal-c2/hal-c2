@@ -113,14 +113,19 @@ defmodule HalC2.Space.Visualize do
       else: {:error, "The chart holds numbers this page does not state."}
   end
 
-  # Whole numbers as written: not the 35 in 350, the 3 in Q3 or the 3 in 3k.
+  # Each number whole, as written: not the 35 in 350, the 3 in Q3, or the 3 in 3k or 3.5k.
+  # A comma before one is a list's, so 1,2,3 is three numbers. One too large for a float
+  # is not read.
   defp numbers(text) do
-    ~r/(?<![\w.,])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w])/u
+    ~r/(?<![\w.])(?>(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?!\w)/u
     |> Regex.scan(text)
-    |> MapSet.new(fn [number] ->
-      {value, _} = number |> String.replace(",", "") |> Float.parse()
-      value
+    |> Enum.flat_map(fn [number] ->
+      case number |> String.replace(",", "") |> Float.parse() do
+        {value, _} -> [value]
+        :error -> []
+      end
     end)
+    |> MapSet.new()
   end
 
   # --- what this MC counts -----------------------------------------------------------

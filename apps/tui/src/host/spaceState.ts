@@ -854,7 +854,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
           return;
         }
         if (kind === "chart") {
-          visualize();
+          visualize(false);
           return;
         }
         const name = BLOCK_KINDS.find((entry) => entry.kind === kind)!.label.toLowerCase();
@@ -870,9 +870,10 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
   /**
    * Asks the MC for a chart in the user's words. On a chart it asks again, starting from
    * the words that chart was asked for in, and replaces it; elsewhere a new chart goes
-   * where a new block would. The MC draws it or says why not, and the stream shows it.
+   * where a new block would, as it always does from the add menu (`again` false). The MC
+   * draws it or says why not, and the stream shows it.
    */
-  const visualize = () => {
+  const visualize = (again = true) => {
     const id = spaceId;
     const page = pageId;
     if (view !== "page" || id === null || page === null) {
@@ -881,7 +882,7 @@ export function createSpaceController(options: SpaceControllerOptions): SpaceCon
     }
     const entry = selectedEntry();
     const replacing =
-      entry?.kind === "block"
+      again && entry?.kind === "block"
         ? blocksOf(page).find((block) => block.id === entry.id && block.kind === "chart")
         : undefined;
     const asked = generation;

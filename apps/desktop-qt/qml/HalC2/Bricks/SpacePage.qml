@@ -84,6 +84,7 @@ Rectangle {
             payload.afterBlockId = page.insertAfter;
         Shell.dispatch("space.block.insert", payload);
         page.insertAfter = "";
+        page.replacing = "";
     }
 
     // Asks the MC to draw a chart for `/visualize <request>`, in place of the
@@ -370,6 +371,7 @@ Rectangle {
                 onAskAgainRequested: (blockId, request) => page.askAgain(blockId, request)
                 onAddBelowRequested: blockId => {
                     page.insertAfter = blockId;
+                    page.replacing = "";
                     composer.forceActiveFocus();
                 }
             }

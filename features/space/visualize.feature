@@ -110,6 +110,38 @@ Feature: Charts on a page
       When the user asks for "/visualize signups" on the page "Status"
       Then the user is told no chart was drawn
 
+    Scenario Outline: A number is read whole
+      Given "Status" has the blocks "<page>"
+      And text generation answers with a bar chart of "May" <number>
+      When the user asks for "/visualize signups" on the page "Status"
+      Then the user is told no chart was drawn
+
+      Examples:
+        | page               | number |
+        | About 3.5k signups | 3      |
+        | About 3.5k signups | 5      |
+        | We made $1.5M      | 1      |
+        | We had 1,000k      | 1      |
+
+    Scenario Outline: A number in a list counts
+      Given "Status" has the blocks "<page>"
+      And text generation answers with a bar chart of "May" <number>
+      When the user asks for "/visualize signups" on the page "Status"
+      Then the page shows a bar chart titled "Chart"
+
+      Examples:
+        | page    | number |
+        | Jan,120 | 120    |
+        | 1,2,3   | 2      |
+        | 1,000   | 1000   |
+
+    Scenario: A number too large to read leaves the rest of the page readable
+      Given "Status" has the blocks "Signups were 3 in May"
+      And "Status" also holds a number too large to read
+      And text generation answers with a bar chart of "May" 3
+      When the user asks for "/visualize signups" on the page "Status"
+      Then the page shows a bar chart titled "Chart"
+
     Scenario: The MC counts its threads; the model only picks what to count
       Given this MC's threads took turns this week
       And text generation charts the request from the MC's threads and invents the values

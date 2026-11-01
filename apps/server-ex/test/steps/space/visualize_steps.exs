@@ -106,6 +106,11 @@ defmodule HalC2.Steps.Space.Visualize do
     context
   end
 
+  step "{string} also holds a number too large to read", %{args: [title]} = context do
+    insert(context, title, String.duplicate("9", 400))
+    context
+  end
+
   step "the user asks to see the numbers behind the chart", context do
     assert chart_block(context)
     context
