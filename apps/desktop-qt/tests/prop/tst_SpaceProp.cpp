@@ -242,6 +242,7 @@ QList<QVariantMap> blocksOf(const Model& model) {
                  {QStringLiteral("linkedTitle"), linked.isEmpty() ? QString() : titleOf(model.held, linked)},
                  {QStringLiteral("byAgent"), byAgent(block, "createdBy")},
                  {QStringLiteral("openComments"), open},
+                 {QStringLiteral("chart"), block.value(QLatin1String("chart")).toObject().toVariantMap()},
                  {QStringLiteral("imageId"), QString()},
                  {QStringLiteral("imageState"), QString()},
                  {QStringLiteral("imageUrl"), QString()},
@@ -588,6 +589,7 @@ struct Write : Command {
       offer(1, "block.order");
       offer(2, "block.check");
       offer(1, "block.replace");
+      offer(1, "block.chart");
       offer(1, "block.delete");
       if (comments.size() < kMaxComments) offer(2, "comment.create");
     }
@@ -729,6 +731,14 @@ struct Write : Command {
     if (op == QLatin1String("block.order")) return set({{QStringLiteral("order"), value}, {QStringLiteral("updatedAt"), at}});
     if (op == QLatin1String("block.check")) {
       return set({{QStringLiteral("checked"), !current.value(QLatin1String("checked")).toBool()}, {QStringLiteral("updatedAt"), at}});
+    }
+    if (op == QLatin1String("block.chart")) {
+      // A chart lands on the block, or asking again replaces it.
+      const QJsonObject chart{{QStringLiteral("type"), QStringLiteral("bar")}, {QStringLiteral("title"), QStringLiteral("Turns")},
+                              {QStringLiteral("labels"), QJsonArray{QStringLiteral("May")}},
+                              {QStringLiteral("series"), QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("Turns")}, {QStringLiteral("values"), QJsonArray{at.size()}}}}},
+                              {QStringLiteral("request"), QStringLiteral("turns")}, {QStringLiteral("source"), at}};
+      return set({{QStringLiteral("kind"), QStringLiteral("chart")}, {QStringLiteral("chart"), chart}, {QStringLiteral("updatedAt"), at}});
     }
     if (op == QLatin1String("block.replace")) {
       // The whole block written anew, as a replay sends one: what it leaves out goes.

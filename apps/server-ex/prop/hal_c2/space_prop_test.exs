@@ -17,6 +17,8 @@ defmodule HalC2.SpacePropTest do
   - deleting a page for good takes its subpages, their blocks and comments with it;
   - a page's blocks are in the order inserted and moved, with strictly ordered keys;
   - an edit of a block's text and tick together is refused whole, or changes both;
+  - a chart is drawn in a new block or in place of a chart, and only there: its text
+    cannot be edited, and asking again keeps its place and its comments;
   - each command writes one event per entity it changes, and a refusal, a tick to
     the same value, or resolving a resolved comment (reopening an open one) writes none;
   - a deck made from a page has a slide per section of the page as it was, and no later
@@ -37,7 +39,7 @@ defmodule HalC2.SpacePropTest do
   use PropCheck.StateM
 
   alias HalC2.{Space, StreamState, Streams}
-  alias HalC2.Space.{Blocks, Decks, ImageFile}
+  alias HalC2.Space.{Blocks, Chart, Decks, ImageFile}
 
   @moduletag timeout: :infinity
   @moduletag capture_log: true
@@ -80,7 +82,7 @@ defmodule HalC2.SpacePropTest do
   # --- model ----------------------------------------------------------------------
 
   # pages: name => %{parent, trashed}; order: page => its block names in order;
-  # blocks: name => %{page, kind, checked, text}; comments: name => %{block, resolved};
+  # blocks: name => %{page, kind, checked, text, chart}; comments: name => %{block, resolved};
   # decks: name => %{title, trashed}; deck_order: deck => its slide names in order;
   # slides: name => %{deck, title, body}. A slide a deck is made with is "<deck>.<n>".
   # sites: page => %{shown, behind}, `shown` being what `view/2` said when it published.
@@ -120,7 +122,10 @@ defmodule HalC2.SpacePropTest do
             {1, {:call, __MODULE__, :unpublish_page, [elements(pages)]}},
             {4,
              {:call, __MODULE__, :insert_block,
-              [elements(@blocks), elements(pages), kind(), boolean(), after_block(blocks)]}}
+              [elements(@blocks), elements(pages), kind(), boolean(), after_block(blocks)]}},
+            {2,
+             {:call, __MODULE__, :insert_chart,
+              [elements(@blocks), elements(pages), title(), after_block(blocks)]}}
           ]
         ) ++
         if(blocks == [],
@@ -131,6 +136,8 @@ defmodule HalC2.SpacePropTest do
             {2,
              {:call, __MODULE__, :edit_block,
               [elements(blocks), oneof([nil, "x", "y"]), oneof([nil, boolean()])]}},
+            {2,
+             {:call, __MODULE__, :replace_chart, [elements(blocks), elements(pages), title()]}},
             {1, {:call, __MODULE__, :delete_block, [elements(blocks)]}},
             {2, {:call, __MODULE__, :add_comment, [elements(@comments), elements(blocks)]}}
           ]
@@ -203,6 +210,7 @@ defmodule HalC2.SpacePropTest do
   end
 
   defp kind, do: elements(~w(paragraph checklist heading callout))
+  defp title, do: elements(~w(T1 T2))
   defp after_block([]), do: oneof([:last, nil])
   defp after_block(blocks), do: oneof([:last, nil, elements(blocks)])
   defp after_slide([]), do: oneof([:last, nil])
@@ -218,6 +226,14 @@ defmodule HalC2.SpacePropTest do
     do:
       not Map.has_key?(s.blocks, name) and Map.has_key?(s.pages, page) and
         (after_id in [:last, nil] or Map.has_key?(s.blocks, after_id))
+
+  def precondition(s, {:call, _, :insert_chart, [name, page, _, after_id]}),
+    do:
+      not is_map_key(s.blocks, name) and is_map_key(s.pages, page) and
+        (not is_binary(after_id) or is_map_key(s.blocks, after_id))
+
+  def precondition(s, {:call, _, :replace_chart, [name, page, _]}),
+    do: is_map_key(s.blocks, name) and is_map_key(s.pages, page)
 
   def precondition(s, {:call, _, :move_block, [name, after_id]}),
     do:
@@ -377,9 +393,42 @@ defmodule HalC2.SpacePropTest do
         {:not_found, s, 0}
 
       true ->
-        block = %{page: page, kind: kind, checked: kind == "checklist" and checked, text: name}
+        block = %{
+          page: page,
+          kind: kind,
+          checked: kind == "checklist" and checked,
+          text: name,
+          chart: nil
+        }
+
         order = place(s.order[page], after_id, name)
         {:ok, %{s | blocks: Map.put(s.blocks, name, block), order: %{s.order | page => order}}, 1}
+    end
+  end
+
+  defp step(s, :insert_chart, [name, page, title, after_id]) do
+    cond do
+      not live?(s, page) ->
+        {:trashed, s, 0}
+
+      is_binary(after_id) and s.blocks[after_id].page != page ->
+        {:not_found, s, 0}
+
+      true ->
+        block = %{page: page, kind: "chart", checked: false, text: summary(title), chart: title}
+        order = place(s.order[page], after_id, name)
+        {:ok, %{s | blocks: Map.put(s.blocks, name, block), order: %{s.order | page => order}}, 1}
+    end
+  end
+
+  defp step(s, :replace_chart, [name, page, title]) do
+    block = s.blocks[name]
+
+    cond do
+      block.kind != "chart" or block.page != page -> {:not_found, s, 0}
+      not live?(s, page) -> {:trashed, s, 0}
+      block.chart == title -> {:ok, s, 0}
+      true -> {:ok, put_in(s.blocks[name], %{block | chart: title, text: summary(title)}), 1}
     end
   end
 
@@ -426,6 +475,7 @@ defmodule HalC2.SpacePropTest do
 
     cond do
       not live?(s, block.page) -> {:trashed, s, 0}
+      text != nil and block.kind == "chart" -> {:invalid, s, 0}
       checked != nil and block.kind != "checklist" -> {:invalid, s, 0}
       next == block -> {:ok, s, 0}
       true -> {:ok, put_in(s.blocks[name], next), 1}
@@ -624,13 +674,15 @@ defmodule HalC2.SpacePropTest do
         {:trashed, s, 0}
 
       true ->
-        block = %{page: page, kind: "image", checked: false, text: name}
+        block = %{page: page, kind: "image", checked: false, text: name, chart: nil}
         order = s.order[page] ++ [name]
         {:ok, %{s | blocks: Map.put(s.blocks, name, block), order: %{s.order | page => order}}, 1}
     end
   end
 
   defp step(s, :restart, []), do: {:ok, s, 0}
+
+  defp summary(title), do: Chart.summary(chart(title))
 
   # A deck `name` with a slide for each `{title, body}`, named "<deck>.<n>".
   defp made(s, name, title, specs) do
@@ -726,6 +778,23 @@ defmodule HalC2.SpacePropTest do
   def insert_block(name, page, kind, checked, after_id) do
     spec = %{"kind" => kind, "text" => name, "checked" => checked}
     act(name, &Space.insert_block(&1, id(page), spec, id(after_id)))
+  end
+
+  def insert_chart(name, page, title, after_id),
+    do: act(name, &Space.put_chart(&1, id(page), chart(title), nil, id(after_id)))
+
+  def replace_chart(name, page, title),
+    do: act(&Space.put_chart(&1, id(page), chart(title), id(name)))
+
+  defp chart(title) do
+    %{
+      "type" => "bar",
+      "title" => title,
+      "request" => "turns",
+      "source" => "Numbers from this page",
+      "labels" => ["a"],
+      "series" => [%{"name" => "s", "values" => [1]}]
+    }
   end
 
   def move_block(name, after_id), do: act(&Space.move_block(&1, id(name), id(after_id)))
@@ -874,7 +943,8 @@ defmodule HalC2.SpacePropTest do
              page: name.(block["pageId"]),
              kind: block["kind"],
              checked: block["checked"],
-             text: block["text"]
+             text: block["text"],
+             chart: block["chart"]["title"]
            }}
         end),
       comments:

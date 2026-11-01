@@ -814,6 +814,245 @@ step("the user is told text generation failed", async (ctx: SpaceWorld) => {
   expect(status(ctx).text).toBe(`Text generation failed, so no page was made: ${FAILED}`);
 });
 
+// --- charts ---
+
+const FROM_THIS_PAGE = "Numbers from this page";
+const COUNTED = "Counted by this MC from its 2 threads, 12 weeks to 2026-11-01";
+const AVAILABLE = { kind: "available", title: "", markdown: "" } as const;
+
+const chartOf = (
+  type: string,
+  title: string,
+  source: string,
+  points: ReadonlyArray<readonly [string, number]>,
+) => ({
+  type,
+  title,
+  source,
+  labels: points.map(([label]) => label),
+  series: [{ name: title, values: points.map(([, value]) => value) }],
+});
+
+/** The page the scenario's chart is on, for the steps that do not name it. */
+const chartPage = (ctx: SpaceWorld) => mc(ctx).pagesOf(currentSpaceId(ctx))[0]!.title as string;
+
+function seedChart(
+  ctx: SpaceWorld,
+  page: string,
+  points: ReadonlyArray<readonly [string, number]>,
+  values = points.map(([, value]) => value),
+) {
+  const before = mc(ctx).generation;
+  mc(ctx).generation = AVAILABLE;
+  mc(ctx).chart = {
+    ...chartOf("bar", "Signups", FROM_THIS_PAGE, points),
+    series: [{ name: "Signups", values }],
+  };
+  mc(ctx).run("space.block.visualize", {
+    spaceId: currentSpaceId(ctx),
+    pageId: seedPage(ctx, page),
+    request: "signups",
+  });
+  mc(ctx).chart = null;
+  mc(ctx).generation = before;
+}
+
+/** Every row the chart on the open page draws. */
+async function chartDrawn(ctx: SpaceWorld) {
+  await openPage(ctx, chartPage(ctx));
+  return pane(ctx).rows.filter((row) => row.blockKind === "chart");
+}
+
+/** What the chart's rows read as label and number, whichever way it is drawn. */
+const numbersOf = (rows: ReadonlyArray<TuiSpaceRow>) =>
+  rows.flatMap((row) => {
+    const match = /^\s+(\S+)\s+[█▏▎▍▌▋▊▉]*\s*(\d+)$/.exec(row.text);
+    return match ? [[match[1], Number(match[2])]] : [];
+  });
+
+const answerChart = (ctx: World, request: string) =>
+  answer(ctx, request.replace(/^\/visualize\s*/, ""));
+
+const selectChart = async (ctx: SpaceWorld) => {
+  const [title] = await chartDrawn(ctx);
+  expect(title).toBeDefined();
+  await selectRow(ctx, title!.key);
+};
+
+step("this MC's threads took turns this week", () => {});
+
+step("text generation charts the request from the MC's threads", (ctx: SpaceWorld) => {
+  mc(ctx).generation = AVAILABLE;
+  mc(ctx).chart = chartOf("bar", "Weekly turns", COUNTED, [
+    ["10-26", 4],
+    ["11-02", 7],
+  ]);
+});
+
+step(
+  "text generation answers with a {word} chart of {string} {int}",
+  (ctx: SpaceWorld, type: string, label: string, value: number) => {
+    mc(ctx).generation = AVAILABLE;
+    mc(ctx).chart = chartOf(type, "Signups", FROM_THIS_PAGE, [[label, value]]);
+  },
+);
+
+step(
+  "text generation answers with a {word} chart of {string} {int} and {string} {int}",
+  (ctx: SpaceWorld, type: string, a: string, x: number, b: string, y: number) => {
+    mc(ctx).generation = AVAILABLE;
+    mc(ctx).chart = chartOf(type, "Signups", FROM_THIS_PAGE, [
+      [a, x],
+      [b, y],
+    ]);
+  },
+);
+
+step("text generation says the request cannot be answered", (ctx: SpaceWorld) => {
+  mc(ctx).generation = AVAILABLE;
+  mc(ctx).chart = null;
+});
+
+step(
+  "the page {string} has a chart of {string} {int} and {string} {int}",
+  (ctx: SpaceWorld, page: string, a: string, x: number, b: string, y: number) => {
+    seedChart(ctx, page, [
+      [a, x],
+      [b, y],
+    ]);
+  },
+);
+
+step(
+  "the page {string} has the blocks {string} and a chart of {string} {int} and {string} {int} and the blocks {string}",
+  (
+    ctx: SpaceWorld,
+    page: string,
+    before: string,
+    a: string,
+    x: number,
+    b: string,
+    y: number,
+    after,
+  ) => {
+    seedBlock(ctx, page, "paragraph", before);
+    seedChart(ctx, page, [
+      [a, x],
+      [b, y],
+    ]);
+    seedBlock(ctx, page, "paragraph", after);
+  },
+);
+
+step("{string} also says {string}", (ctx: SpaceWorld, page: string, text: string) => {
+  seedBlock(ctx, page, "paragraph", text);
+});
+
+step(
+  "the user asks for {string} on the page {string}",
+  async (ctx: SpaceWorld, request: string, page: string) => {
+    await openPage(ctx, page);
+    await press(ctx, "n");
+    await choose(ctx, "Chart");
+    await answerChart(ctx, request);
+  },
+);
+
+step("the user asks again for {string}", async (ctx: SpaceWorld, request: string) => {
+  await selectChart(ctx);
+  await press(ctx, "g");
+  // It starts from the words the chart was asked for in.
+  expect(findObject(ctx, "askInput").get("text")).toBe("signups");
+  await answerChart(ctx, request);
+});
+
+step(
+  "the page shows a {word} chart titled {string}",
+  async (ctx: SpaceWorld, type: string, title: string) => {
+    const rows = await chartDrawn(ctx);
+    expect(rows[0] && words(rows[0])).toBe(title);
+    // Bars for a bar chart, a table with no bars for a line.
+    expect(rows.some((row) => row.text.includes("█"))).toBe(type === "bar");
+  },
+);
+
+step(
+  /^the chart says its numbers came from (this MC's threads|this page)$/,
+  async (ctx: SpaceWorld, where: string) => {
+    const shown = (await chartDrawn(ctx)).map(words).join(" ");
+    expect(shown.endsWith(where === "this page" ? FROM_THIS_PAGE : COUNTED)).toBe(true);
+  },
+);
+
+step("the second client sees a chart titled {string}", async (ctx: SpaceWorld, title: string) => {
+  await ctx.second!.settled();
+  const row = secondPane(ctx).rows.find((one) => one.blockKind === "chart");
+  expect(row && words(row)).toBe(title);
+});
+
+step(
+  "the page {string} has a chart with 2 labels and 1 number",
+  (ctx: SpaceWorld, page: string) => {
+    seedChart(
+      ctx,
+      page,
+      [
+        ["May", 3],
+        ["June", 5],
+      ],
+      [3],
+    );
+  },
+);
+
+step("the chart's numbers are not shown", async (ctx: SpaceWorld) => {
+  const rows = await chartDrawn(ctx);
+  expect(rows.map(words).join(" ")).toContain("a chart");
+  expect(numbersOf(rows)).toEqual([]);
+});
+
+// A terminal draws a chart's numbers beside it: there is nothing to open, only the chart to read.
+step("the user asks to see the numbers behind the chart", selectChart);
+
+step("the numbers read {string} {int}", async (ctx: SpaceWorld, label: string, value: number) => {
+  expect(numbersOf(await chartDrawn(ctx))).toEqual([[label, value]]);
+});
+
+step(
+  "the numbers read {string} {int} and {string} {int}",
+  async (ctx: SpaceWorld, a: string, x: number, b: string, y: number) => {
+    expect(numbersOf(await chartDrawn(ctx))).toEqual([
+      [a, x],
+      [b, y],
+    ]);
+  },
+);
+
+step(
+  "the page shows one chart, between {string} and {string}",
+  async (ctx: SpaceWorld, before: string, after: string) => {
+    const rows = await blockRows(ctx, chartPage(ctx));
+    expect(rows.filter((row) => row.blockKind === "chart")).toHaveLength(1);
+    const at = rows.findIndex((row) => row.blockKind === "chart");
+    expect([words(rows[at - 1]!), words(rows[at + 1]!)]).toEqual([before, after]);
+  },
+);
+
+step("the user deletes the chart", async (ctx: SpaceWorld) => {
+  await selectChart(ctx);
+  await press(ctx, "d");
+});
+
+step("the page shows no chart", async (ctx: SpaceWorld) => {
+  expect(await chartDrawn(ctx)).toEqual([]);
+});
+
+step("the user is told no chart was drawn", async (ctx: SpaceWorld) => {
+  await settle(ctx);
+  expect(status(ctx).kind).toBe("error");
+  expect(status(ctx).text.startsWith("No chart was drawn")).toBe(true);
+});
+
 // --- agents ---
 
 /** An agent's MCP tool writes to the MC while the user reads the page. */

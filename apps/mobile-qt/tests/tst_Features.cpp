@@ -34,6 +34,7 @@ const QStringList kDefaultGlobs{
     QStringLiteral("mobile/notifications.feature"),
     QStringLiteral("mobile/spaces.feature"),
     QStringLiteral("space/pages.feature"),
+    QStringLiteral("space/visualize.feature"),
     QStringLiteral("space/slides.feature"),
     QStringLiteral("space/sites.feature"),
     QStringLiteral("space/images.feature"),
