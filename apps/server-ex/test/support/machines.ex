@@ -255,15 +255,18 @@ defmodule HalC2.Test.Machines do
   returns the run.
   """
   def send_message(id, text, selection \\ %{"instanceId" => "codex", "model" => "gpt-5.4"}) do
+    # This runs on the machine, and a moved thread keeps the ids other machines sent it.
+    # `System.unique_integer/1` only differs within one VM, and a thread takes a message
+    # id it already has as sent, so a repeated one would start no run.
     :ok = HalC2.Streams.subscribe(id, self(), nil)
     ordinal = length(entities(id, "run")) + 1
 
     {:ok, _} =
       HalC2.Orchestration.dispatch(%{
         "type" => "message.dispatch",
-        "commandId" => "cmd-#{System.unique_integer([:positive])}",
+        "commandId" => HalC2.Orchestration.Entities.new_id("cmd"),
         "threadId" => id,
-        "messageId" => "msg-#{System.unique_integer([:positive])}",
+        "messageId" => HalC2.Orchestration.Entities.new_id("msg"),
         "text" => text,
         "attachments" => [],
         "modelSelection" => selection,
