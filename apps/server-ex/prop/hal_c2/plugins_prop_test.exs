@@ -1009,10 +1009,10 @@ defmodule HalC2.PluginsPropTest do
   # the run.
   defp await_restart(module, sup, deadline \\ deadline()) do
     if past?(deadline), do: raise("the plugin's supervisor never restarted its worker")
-    :sys.get_state(sup)
+    :sys.get_state(sup, 60_000)
 
     if Process.whereis(module),
-      do: :sys.get_state(sup),
+      do: :sys.get_state(sup, 60_000),
       else: await_restart(module, sup, deadline)
   end
 
