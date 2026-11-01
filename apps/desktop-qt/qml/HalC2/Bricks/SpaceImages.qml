@@ -131,6 +131,8 @@ Rectangle {
                             sourceSize: Qt.size(400, 400)
                             fillMode: Image.PreserveAspectFit
                             asynchronous: true
+                            // A new address for the same bytes must not blank the picture.
+                            retainWhileLoading: true
                         }
 
                         Text {

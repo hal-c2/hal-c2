@@ -24,10 +24,21 @@ Rectangle {
     // Hiding it is a preference, kept while this panel lives (the next file opens
     // with the tree still hidden), not a state of the file that was open.
     property bool explorerOpen: true
+    // What the file's header takes with all its buttons out: its margins, then each
+    // button and the gap before it. The path gives way to them, so it counts for nothing.
+    readonly property real headerFullWidth: 14 + [renderButton, editButton, copyButton, openInEditorButton, openPreviewButton, wrapButton, fileExplorerToggleButton, closeButton].reduce((sum, button) => sum + (button.wanted ? button.implicitWidth + 4 : 0), 0)
+    // The text buttons grow with the user's font scale and can outgrow any tab, while
+    // the icon buttons cannot, so the text buttons move into a menu when they would
+    // not fit. The toggle and Close, the way out of the file, stay on the header.
+    readonly property bool headerFits: width >= headerFullWidth
+    // Follows headerFits by hand: focus has to move before the buttons trade places,
+    // because a hidden button has already lost it.
+    property bool headerCollapsed: false
     // What the tree takes beside an open file: at most 352px or 46% of the tab, and
-    // never so much that the file (whose header buttons are its minimum width) is
-    // pushed under it. A row layout does not shrink a fixed-size column on its own.
-    readonly property real explorerShare: Math.max(0, Math.min(352, width * 0.46, width - 1 - fileViewer.Layout.minimumWidth))
+    // never so much that the file's header buttons are collapsed or pushed under it.
+    // Reserving the full header keeps widening the tab from ever taking the tree away.
+    // A row layout does not shrink a fixed-size column on its own.
+    readonly property real explorerShare: Math.max(0, Math.min(352, width * 0.46, width - 1 - headerFullWidth))
     // Below this width the tree has no room for a row to be read, so a file that
     // leaves it less is open without the tree rather than beside a sliver of it that
     // still takes focus. A row needs its indent, icon and gap (8 + 13 + 6), about ten
@@ -55,6 +66,26 @@ Rectangle {
         if (!explorerShown && fileOpen && focusInside(filesExplorerColumn))
             fileExplorerToggleButton.forceActiveFocus();
     }
+
+    // Where focus goes when the ⋯ button leaves: the toggle, or Close for a file
+    // outside the project, which has no toggle.
+    function focusHeaderHome() {
+        (fileExplorerToggleButton.wanted ? fileExplorerToggleButton : closeButton).forceActiveFocus();
+    }
+
+    // The buttons trading places under the focused item would clear focus to
+    // nowhere, and an open menu has no business outliving its button.
+    onHeaderFitsChanged: {
+        headerMenu.close();
+        const focusOnText = renderButton.activeFocus || editButton.activeFocus || wrapButton.activeFocus;
+        const focusOnMenu = headerMenuButton.activeFocus;
+        headerCollapsed = !headerFits;
+        if (headerCollapsed && focusOnText)
+            headerMenuButton.forceActiveFocus();
+        else if (!headerCollapsed && focusOnMenu)
+            focusHeaderHome();
+    }
+    Component.onCompleted: headerCollapsed = !headerFits
 
     // The reverse case: closing the file hides the viewer holding the
     // toggle or close button, so give focus to the tree that remains.
@@ -114,8 +145,8 @@ Rectangle {
             id: fileViewer
 
             objectName: "fileViewer"
-            // A file whose header is wider than the tab overflows this column;
-            // clip here so the tree column does not pay for an offscreen pass.
+            // Content wider than the tab overflows this column; clip here so the
+            // tree column does not pay for an offscreen pass.
             clip: true
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -138,17 +169,25 @@ Rectangle {
                     source: root.source
                 }
                 ShellButton {
+                    id: renderButton
+
+                    readonly property bool wanted: (root.source?.renderKind ?? "").length > 0 && !(root.source?.editing ?? false)
+
                     objectName: "fileRender"
                     subtle: true
-                    visible: (root.source?.renderKind ?? "").length > 0 && !(root.source?.editing ?? false)
+                    visible: wanted && !root.headerCollapsed
                     text: root.source?.rendered ? qsTr("Source") : qsTr("Rendered")
                     implicitHeight: 26
                     onClicked: root.source.rendered = !root.source.rendered
                 }
                 ShellButton {
+                    id: editButton
+
+                    readonly property bool wanted: root.source?.fileStatus === "ready" && root.mediaKind.length === 0
+
                     objectName: "fileEdit"
                     subtle: true
-                    visible: root.source?.fileStatus === "ready" && root.mediaKind.length === 0
+                    visible: wanted && !root.headerCollapsed
                     enabled: root.source?.editable ?? false
                     text: root.source?.editing ? qsTr("Done") : qsTr("Edit")
                     implicitHeight: 26
@@ -156,9 +195,13 @@ Rectangle {
                     onClicked: root.source.editing = !root.source.editing
                 }
                 ShellButton {
+                    id: copyButton
+
+                    readonly property bool wanted: root.source?.fileStatus === "ready" && root.mediaKind.length === 0
+
                     objectName: "fileCopy"
                     subtle: true
-                    visible: root.source?.fileStatus === "ready" && root.mediaKind.length === 0
+                    visible: wanted
                     iconName: "copy"
                     iconSize: 13
                     iconTint: root.muted
@@ -168,9 +211,13 @@ Rectangle {
                     onClicked: Shell.dispatch("files.copyContents", {})
                 }
                 ShellButton {
+                    id: openInEditorButton
+
+                    readonly property bool wanted: (Shell.state.workspace?.editors ?? []).some(editor => editor.id !== "file-manager")
+
                     objectName: "fileOpenInEditor"
                     subtle: true
-                    visible: (Shell.state.workspace?.editors ?? []).some(editor => editor.id !== "file-manager")
+                    visible: wanted
                     iconName: "external-link"
                     iconSize: 13
                     iconTint: root.muted
@@ -180,9 +227,13 @@ Rectangle {
                     onClicked: Shell.dispatch("files.openInEditor", {path: root.source.openPath})
                 }
                 ShellButton {
+                    id: openPreviewButton
+
+                    readonly property bool wanted: (root.source?.openPath ?? "").match(/\.(html?|pdf)$/i) !== null
+
                     objectName: "fileOpenPreview"
                     subtle: true
-                    visible: (root.source?.openPath ?? "").match(/\.(html?|pdf)$/i) !== null
+                    visible: wanted
                     iconName: "globe"
                     iconSize: 13
                     iconTint: root.muted
@@ -192,19 +243,76 @@ Rectangle {
                     onClicked: root.source.openInPreview()
                 }
                 ShellButton {
+                    id: wrapButton
+
+                    readonly property bool wanted: root.mediaKind.length === 0
+
                     objectName: "fileWrap"
                     subtle: true
-                    visible: root.mediaKind.length === 0
+                    visible: wanted && !root.headerCollapsed
                     text: root.source?.wrap ? qsTr("No wrap") : qsTr("Wrap")
                     implicitHeight: 26
                     onClicked: root.source.wrap = !root.source.wrap
                 }
+                // Where the text buttons go when the header has no room for them.
+                ShellButton {
+                    id: headerMenuButton
+
+                    objectName: "fileHeaderMenu"
+                    subtle: true
+                    visible: root.headerCollapsed && (renderButton.wanted || editButton.wanted || wrapButton.wanted)
+                    iconName: "ellipsis"
+                    iconSize: 13
+                    iconTint: root.muted
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    Accessible.name: qsTr("File options")
+                    onClicked: headerMenu.open()
+
+                    ShellMenu {
+                        id: headerMenu
+
+                        y: parent.height
+                        // A popup gives focus back to its button when it has closed,
+                        // even a button the header no longer shows.
+                        onClosed: {
+                            if (root.fileOpen && !root.headerCollapsed)
+                                root.focusHeaderHome();
+                        }
+
+                        ShellMenuItem {
+                            objectName: "fileRenderItem"
+                            visible: renderButton.wanted
+                            height: visible ? implicitHeight : 0
+                            text: renderButton.text
+                            onTriggered: renderButton.clicked()
+                        }
+                        ShellMenuItem {
+                            objectName: "fileEditItem"
+                            visible: editButton.wanted
+                            height: visible ? implicitHeight : 0
+                            enabled: editButton.enabled
+                            text: editButton.text
+                            Accessible.description: editButton.Accessible.description
+                            onTriggered: editButton.clicked()
+                        }
+                        ShellMenuItem {
+                            objectName: "fileWrapItem"
+                            visible: wrapButton.wanted
+                            height: visible ? implicitHeight : 0
+                            text: wrapButton.text
+                            onTriggered: wrapButton.clicked()
+                        }
+                    }
+                }
                 ShellButton {
                     id: fileExplorerToggleButton
 
+                    readonly property bool wanted: !(root.source?.outsideProject ?? false)
+
                     objectName: "fileExplorerToggle"
                     subtle: true
-                    visible: !(root.source?.outsideProject ?? false)
+                    visible: wanted
                     // The button owns the flip; the panel copies it into the
                     // explorerOpen preference. checked presents what is on
                     // screen (explorerShown), so an auto-hidden tree does not
@@ -240,6 +348,10 @@ Rectangle {
                     }
                 }
                 ShellButton {
+                    id: closeButton
+
+                    readonly property bool wanted: true
+
                     objectName: "fileClose"
                     subtle: true
                     iconName: "x"

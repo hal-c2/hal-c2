@@ -63,12 +63,35 @@ defmodule HalC2.Subprocess.OrphansTest do
     String.to_integer(line)
   end
 
+  # No `/proc` to read marks from means no mark for a boot to find either.
+  defp await_unmarked(pid, tries) when tries > 0 do
+    case File.read("/proc/#{pid}/environ") do
+      {:ok, environ} ->
+        if String.contains?(environ, "HAL_C2_PROGRAM_ID=") do
+          Process.sleep(10)
+          await_unmarked(pid, tries - 1)
+        end
+
+      _unreadable ->
+        :ok
+    end
+  end
+
   defp await_gone(pid, tries) when tries > 0 do
     if Orphans.gone?(pid) do
       :ok
     else
       Process.sleep(10)
       await_gone(pid, tries - 1)
+    end
+  end
+
+  defp await_reaped(pid, tries) when tries > 0 do
+    if Orphans.started(pid) do
+      Process.sleep(10)
+      await_reaped(pid, tries - 1)
+    else
+      :ok
     end
   end
 
@@ -92,6 +115,8 @@ defmodule HalC2.Subprocess.OrphansTest do
     {:ok, sub} = Subprocess.start(["sh", "-c", script])
     :ok = stop_supervised(:died)
     stranger = left_behind(sub)
+    # `$!` names the fork, which carries the mark until `env` has exec'd `sleep`.
+    await_unmarked(stranger, 500)
 
     boot(:next)
 
@@ -118,7 +143,10 @@ defmodule HalC2.Subprocess.OrphansTest do
     boot(:died, owner: dead_mc())
     {:ok, sub} = Subprocess.start(["sh", "-c", @leaves])
     :ok = stop_supervised(:died)
+    leader = Subprocess.os_pid(sub)
     command = left_behind(sub)
+    # A leader not yet reaped still holds its pid, and a boot kills its group.
+    await_reaped(leader, 500)
     [record] = File.ls!(Orphans.dir())
     path = Path.join(Orphans.dir(), record)
 
@@ -351,6 +379,161 @@ defmodule HalC2.Subprocess.OrphansTest do
     # The refusal comes before any spawn is tried: even a program that is not
     # there is answered with the tracking failure, not the spawn's own.
     assert {:error, {:untracked, :no_records_dir}} = Subprocess.start(["/no/such/program"])
+  end
+
+  # hal-c2/hal-c2#451. A file where the state dir goes; the dir, records and all, waits
+  # beside it until the returned function puts it back.
+  defp break_records_dir do
+    parent = Path.dirname(Orphans.dir())
+    File.mkdir_p!(parent)
+    File.rename!(parent, parent <> ".aside")
+    File.write!(parent, "")
+
+    fn ->
+      File.rm!(parent)
+      File.rename!(parent <> ".aside", parent)
+    end
+  end
+
+  test "a records dir that can be made again reaps, as the owner the boot was given, before any start" do
+    boot(:died, owner: dead_mc())
+    {:ok, orphan} = Subprocess.start(["sh", "-c", "sleep 60 & " <> @echo])
+    orphan_pid = Subprocess.os_pid(orphan)
+    :ok = stop_supervised(:died)
+
+    restore = break_records_dir()
+    owner = %{"pid" => String.to_integer(System.pid()), "started" => "the boot's own"}
+    boot(:next, owner: owner)
+
+    assert {:error, {:untracked, :no_records_dir}} = Subprocess.start(["sh", "-c", @echo])
+    alive!(orphan)
+
+    restore.()
+
+    # Starts at once, each behind the same attempt: every one that returns finds the
+    # orphan reaped already and its own record written, and none is refused.
+    results =
+      1..4
+      |> Enum.map(fn _ ->
+        Task.async(fn ->
+          {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+          reaped? = Orphans.gone?(orphan_pid)
+          record? = sub |> Subprocess.os_pid() |> record_of() |> Map.get("mc")
+          {:ok, 0} = Subprocess.stop(sub)
+          {reaped?, record?}
+        end)
+      end)
+      |> Task.await_many(10_000)
+
+    assert results == List.duplicate({true, owner}, 4)
+    assert_receive {:subprocess_eof, reader} when reader == orphan.reader, 5_000
+  end
+
+  defp record_of(pid) do
+    Orphans.dir()
+    |> File.ls!()
+    # Another program's record may go, or be half written, while this reads.
+    |> Enum.flat_map(fn name ->
+      with {:ok, text} <- File.read(Path.join(Orphans.dir(), name)),
+           {:ok, record} <- JSON.decode(text) do
+        [record]
+      else
+        _ -> []
+      end
+    end)
+    |> Enum.find(&(&1["pid"] == pid))
+  end
+
+  test "a start time that can be read again turns tracking on for the next start", %{tmp_dir: dir} do
+    me = String.to_integer(System.pid())
+    readable = Path.join(dir, "readable")
+    # A function, as the MC's own identity is: read again at each attempt.
+    owner = fn -> %{"pid" => me, "started" => if(File.exists?(readable), do: "now")} end
+    boot(:next, owner: owner)
+
+    assert {:error, {:untracked, :no_start_time}} = Subprocess.start(["sh", "-c", @echo])
+
+    File.write!(readable, "")
+
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    alive!(sub)
+    assert record_of(Subprocess.os_pid(sub))["mc"] == %{"pid" => me, "started" => "now"}
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
+  # What `Subprocess.start` reaches when the mark turns unavailable after its first check.
+  test "tracking a running program while unavailable is refused, then recorded once it heals" do
+    restore = break_records_dir()
+    boot(:next, owner: dead_mc())
+    me = String.to_integer(System.pid())
+
+    assert {:error, :no_records_dir} = Orphans.track(self(), me, "mark")
+
+    restore.()
+
+    assert :ok = Orphans.track(self(), me, "mark")
+    assert %{"mark" => "mark", "mc" => mc} = record_of(me)
+    assert mc == dead_mc()
+  end
+
+  test "a start time still unreadable does not reap again at each refused start", %{tmp_dir: dir} do
+    me = String.to_integer(System.pid())
+    readable = Path.join(dir, "readable")
+    owner = fn -> %{"pid" => me, "started" => if(File.exists?(readable), do: "now")} end
+    boot(:died, owner: dead_mc())
+    {:ok, orphan} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+    # Out of the way of the boot's own reap, so only a retry could reach it.
+    [record] = File.ls!(Orphans.dir())
+    path = Path.join(Orphans.dir(), record)
+    File.rename!(path, Path.join(dir, record))
+    boot(:next, owner: owner)
+    File.rename!(Path.join(dir, record), path)
+
+    assert {:error, {:untracked, :no_start_time}} = Subprocess.start(["sh", "-c", @echo])
+    alive!(orphan)
+
+    File.write!(readable, "")
+
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    assert_receive {:subprocess_eof, reader} when reader == orphan.reader, 5_000
+    assert {:ok, 0} = Subprocess.stop(sub)
+  end
+
+  test "with both failures at boot, the dir coming back reaps once and the start stays refused",
+       %{tmp_dir: dir} do
+    me = String.to_integer(System.pid())
+    readable = Path.join(dir, "readable")
+    owner = fn -> %{"pid" => me, "started" => if(File.exists?(readable), do: "now")} end
+    boot(:died, owner: dead_mc())
+    {:ok, first} = Subprocess.start(["sh", "-c", @echo])
+    {:ok, second} = Subprocess.start(["sh", "-c", @echo])
+    :ok = stop_supervised(:died)
+    # The second's record is out of reach of the first attempt's reap, so only a later
+    # reap could kill it.
+    [record] =
+      File.ls!(Orphans.dir())
+      |> Enum.filter(&String.starts_with?(&1, "#{Subprocess.os_pid(second)}-"))
+
+    path = Path.join(Orphans.dir(), record)
+    File.rename!(path, Path.join(dir, record))
+
+    restore = break_records_dir()
+    boot(:next, owner: owner)
+    assert {:error, {:untracked, :no_records_dir}} = Subprocess.start(["sh", "-c", @echo])
+    restore.()
+
+    assert {:error, {:untracked, :no_start_time}} = Subprocess.start(["sh", "-c", @echo])
+    assert_receive {:subprocess_eof, reader} when reader == first.reader, 5_000
+
+    File.rename!(Path.join(dir, record), path)
+    assert {:error, {:untracked, :no_start_time}} = Subprocess.start(["sh", "-c", @echo])
+    alive!(second)
+
+    File.write!(readable, "")
+    {:ok, sub} = Subprocess.start(["sh", "-c", @echo])
+    assert_receive {:subprocess_eof, reader} when reader == second.reader, 5_000
+    assert {:ok, 0} = Subprocess.stop(sub)
   end
 
   test "in a running MC a program is not run untracked before the service has started" do

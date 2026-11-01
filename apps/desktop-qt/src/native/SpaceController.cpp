@@ -37,6 +37,11 @@ const QStringList kImageTypes{QStringLiteral("image/png"), QStringLiteral("image
 // to the rows would sign it again.
 const qint64 kAddressMarginMs = 60'000;
 const qint64 kAddressAtLeastMs = 5 * 60'000;
+// How soon a refused address is asked for again, with nothing else changing.
+const int kAddressRetryMs = 30'000;
+// Long enough to take in the signed addresses of one batch, which arrive over
+// several turns of the event loop.
+const int kRebuildSoonMs = 50;
 
 // HalC2.Patch: `s` sets, `u` unsets, `a` appends to strings, `d` deletes
 // (alone) or replaces (with `s`/`a`). nullopt when the entity is gone.
@@ -258,8 +263,9 @@ SpacePages::SpacePages(QObject* parent)
   m_addressRefresh->setSingleShot(true);
   connect(m_addressRefresh, &QTimer::timeout, this, &SpacePages::rebuild);
   m_rebuildSoon = new QTimer(this);
+  m_rebuildSoon->setObjectName(QStringLiteral("spaceRebuildSoon"));
   m_rebuildSoon->setSingleShot(true);
-  m_rebuildSoon->setInterval(0);
+  m_rebuildSoon->setInterval(kRebuildSoonMs);
   connect(m_rebuildSoon, &QTimer::timeout, this, &SpacePages::rebuild);
 }
 
@@ -370,11 +376,12 @@ void SpacePages::setImagesShown(bool shown) {
 void SpacePages::setImageAddress(const QString& imageId, const QString& url, qint64 expiresAt) {
   if (!m_signing.remove(imageId)) return;
   m_addresses.insert(imageId, {url, qMax(expiresAt, m_now() + kAddressAtLeastMs)});
-  m_rebuildSoon->start();
+  if (!m_rebuildSoon->isActive()) m_rebuildSoon->start();
 }
 
 void SpacePages::imageAddressFailed(const QString& imageId) {
   m_signing.remove(imageId);
+  if (!m_addressRefresh->isActive() || m_addressRefresh->remainingTime() > kAddressRetryMs) m_addressRefresh->start(kAddressRetryMs);
 }
 
 QStringList SpacePages::imagesToSign(const QSet<QString>& wanted) {
