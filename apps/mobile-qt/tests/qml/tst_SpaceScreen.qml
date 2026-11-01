@@ -312,5 +312,67 @@ Item {
             tryCompare(Shell, "dispatchCount", 3);
             compare(dispatched("space.block.update")[0].text, "Final");
         }
+
+        function chartBlock() {
+            return root.block("c1", "Signups (a chart; Numbers from this page)", {
+                kind: "chart",
+                chart: { type: "bar", title: "Signups", labels: ["May", "June"], series: [{ name: "Signups", values: [3, 5] }], request: "signups", source: "Numbers from this page" }
+            });
+        }
+
+        function openChart() {
+            const screen = makeScreen({ blocks: [chartBlock()] });
+            screen.openSpace("s1");
+            screen.openPage("p1");
+            waitForRendering(screen);
+            return screen;
+        }
+
+        function test_aChartIsDrawnAndNotWrittenIn() {
+            const screen = openChart();
+            tryVerify(() => findChild(screen, "spaceChart") !== null);
+            compare(findChild(screen, "spaceChartTitle").text, "Signups");
+            compare(findChild(screen, "spaceChartSource").text, "Numbers from this page");
+            verify(!findChild(screen, "spaceBlockEditor:Signups (a chart; Numbers from this page)").visible);
+        }
+
+        function test_aChartShowsItsNumbers() {
+            const screen = openChart();
+            tryVerify(() => findChild(screen, "spaceChartNumbers") !== null);
+            mouseClick(findChild(screen, "spaceChartNumbers"));
+            tryVerify(() => findChild(screen, "spaceChartCell:May") !== null);
+        }
+
+        function test_theAddMenuAsksForAChartWhereItWasOpened() {
+            const screen = openChart();
+            screen.addBlockMenu("c1");
+            sheetOf(screen).choose("chart");
+            dialogOf(screen).then("weekly turns");
+            compare(dispatched("space.block.visualize")[0].request, "weekly turns");
+            compare(dispatched("space.block.visualize")[0].afterBlockId, "c1");
+        }
+
+        function test_askingAgainOffersTheWordsAndReplacesTheChart() {
+            const screen = openChart();
+            screen.blockMenu(0, "c1", "", "signups");
+            sheetOf(screen).choose("again");
+            compare(dialogOf(screen).written, "signups");
+            dialogOf(screen).then(dialogOf(screen).written);
+            compare(dispatched("space.block.visualize")[0].request, "signups");
+            compare(dispatched("space.block.visualize")[0].blockId, "c1");
+        }
+
+        function test_onlyAChartIsAskedForAgain() {
+            const screen = makeScreen({ blocks: [root.block("b1", "One")] });
+            screen.blockMenu(0, "b1", "One");
+            verify(!sheetOf(screen).rows.some(row => row.id === "again"));
+        }
+
+        function test_aChartBeingDrawnIsShown() {
+            const screen = openChart();
+            verify(!findChild(screen, "spaceDrawing").visible);
+            publishSpace({ drawing: true });
+            tryVerify(() => findChild(screen, "spaceDrawing").visible);
+        }
     }
 }
