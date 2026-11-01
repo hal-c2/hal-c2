@@ -19,6 +19,7 @@ defmodule HalC2.SubprocessDurablePropTest do
     numtests: HalC2.Prop.numtests(15) do
     forall ops <- list(oneof([:send, :drain, :restart])) do
       HalC2.Prop.scratch_home("durable")
+      flush()
       Application.put_env(:hal_c2, :durable_programs, true)
       {:ok, sub} = Subprocess.start(@echo, durable: "t1")
       pid = Subprocess.os_pid(sub)
@@ -27,7 +28,10 @@ defmodule HalC2.SubprocessDurablePropTest do
       same = Subprocess.os_pid(world.sub) == pid
       Subprocess.stop(world.sub)
       Application.put_env(:hal_c2, :durable_programs, false)
-      same and Enum.map(world.read, &String.to_integer/1) == Enum.to_list(1..world.n//1)
+      expected = Enum.map(1..world.n//1, &"#{&1}")
+
+      (same and world.read == expected)
+      |> when_fail(IO.puts("same program: #{same}, read #{inspect(world.read)}, sent #{world.n}"))
     end
   end
 
@@ -38,16 +42,16 @@ defmodule HalC2.SubprocessDurablePropTest do
   end
 
   # Whatever it has, up to everything once it is told to wait for it.
-  defp step(:drain, world) do
+  defp step(:drain, %{sub: %{reader: reader}} = world) do
     if length(world.read) >= world.n do
       world
     else
       receive do
-        {:subprocess_lines, _, lines} ->
+        {:subprocess_lines, ^reader, lines} ->
           Subprocess.ack(world.sub)
           step(:drain, %{world | read: world.read ++ lines})
 
-        {:subprocess_offset, _, offset} ->
+        {:subprocess_offset, ^reader, offset} ->
           step(:drain, %{world | offset: offset})
       after
         5_000 -> world
@@ -66,13 +70,13 @@ defmodule HalC2.SubprocessDurablePropTest do
     %{world | sub: sub}
   end
 
-  defp settle(world) do
+  defp settle(%{sub: %{reader: reader}} = world) do
     receive do
-      {:subprocess_lines, _, lines} ->
+      {:subprocess_lines, ^reader, lines} ->
         Subprocess.ack(world.sub)
         settle(%{world | read: world.read ++ lines})
 
-      {:subprocess_offset, _, offset} ->
+      {:subprocess_offset, ^reader, offset} ->
         settle(%{world | offset: offset})
     after
       20 -> world
