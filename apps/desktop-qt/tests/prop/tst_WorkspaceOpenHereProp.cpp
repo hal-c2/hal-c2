@@ -14,9 +14,12 @@
 // MC starts it there. Every other open asks no MC to start anything and tells
 // the user why. Whichever thread is open, the editors offered are this
 // machine's: the thread's environment's when it runs here, else the shell's own.
+// Neither on this machine: the thread's MC advertising an SSH name offers this
+// computer's SSH-capable editors, and an editor opens by a link; otherwise none.
 
 #include "Prop.h"
 
+#include <QDesktopServices>
 #include <QJsonArray>
 #include <QTemporaryDir>
 #include <QTimeZone>
@@ -72,7 +75,22 @@ QJsonArray editorsOf(bool member) {
                 : QJsonArray{QStringLiteral("vscode"), QStringLiteral("file-manager")};
 }
 
+// The links handed to the operating system.
+class Links : public QObject {
+  Q_OBJECT
+
+public:
+  Links() { QDesktopServices::setUrlHandler(QStringLiteral("vscode"), this, "open"); }
+  ~Links() override { QDesktopServices::unsetUrlHandler(QStringLiteral("vscode")); }
+  QList<QUrl> opened;
+
+public slots:
+  void open(const QUrl& url) { opened.append(url); }
+};
+
 struct Model {
+  // Whether the MCs advertise an SSH name, for the whole run.
+  bool ssh = false;
   Machine own = Machine::Unsaid;
   Machine member = Machine::Unsaid;
   bool joined = false;
@@ -85,6 +103,7 @@ struct Model {
     // Unsaid, the shell's own MC is here by its loopback address; a member never is.
     return which == 0 ? own != Machine::Elsewhere : member == Machine::Here;
   }
+  bool far(int which) const { return !here(which) && !here(0); }
 };
 
 struct Sut {
@@ -95,15 +114,21 @@ struct Sut {
   // Every `shell.openInEditor`: the environment it was for and its payload.
   QList<std::pair<QString, QJsonObject>> opened;
   Folder folder = Folder::Older;
+  Links links;
+  // No editor's command on PATH: only VS Code is offered over SSH.
+  QTemporaryDir noCommands;
+  QByteArray path = qgetenv("PATH");
 
-  Sut() {
+  explicit Sut(bool ssh) {
+    qputenv("PATH", noCommands.path().toLocal8Bit());
     thisMachine::setIdForTesting(kHere);
-    mc.onShape(QStringLiteral("config"), [this](int id, const QJsonObject& shape) {
+    mc.onShape(QStringLiteral("config"), [this, ssh](int id, const QJsonObject& shape) {
       const bool member = shape.value(QLatin1String("environment")).toString() == kMember;
       mc.send({{QStringLiteral("t"), QStringLiteral("config")},
                {QStringLiteral("id"), id},
                {QStringLiteral("config"), QJsonObject{{QStringLiteral("settings"), QJsonObject()},
                                                       {QStringLiteral("availableEditors"), editorsOf(member)},
+                                                      {QStringLiteral("remoteOpenTargets"), ssh ? QJsonArray{QJsonObject{{QStringLiteral("kind"), QStringLiteral("mdns")}, {QStringLiteral("host"), QStringLiteral("devbox")}}} : QJsonArray{}},
                                                       {QStringLiteral("shellRevealInFileManager"), true}}}});
     });
     mc.onRpc(QStringLiteral("shell.openInEditor"), [this](const FakeMc::Rpc& rpc) {
@@ -141,6 +166,7 @@ struct Sut {
   ~Sut() {
     native.reset();
     thisMachine::setIdForTesting(std::nullopt);
+    qputenv("PATH", path);
   }
 
   static QJsonObject project(const QString& id, const QString& root) {
@@ -309,12 +335,18 @@ struct OpenIt : Command {
     // This machine's editors: the thread's MC's when it runs here, else the shell's.
     const bool memberList = which == 1 && model.here(1);
     QStringList expected;
-    for (const QJsonValue& id : editorsOf(memberList)) expected.append(id.toString());
+    const bool far = model.far(which);
+    if (far) {
+      if (model.ssh) expected.append(QStringLiteral("vscode"));
+    } else {
+      for (const QJsonValue& id : editorsOf(memberList)) expected.append(id.toString());
+    }
     RC_ASSERT(prop::until([&] { return sut.offered() == expected; }));
 
-    const QString editor = open == Open::Reveal ? QStringLiteral("file-manager") : expected.first();
+    const QString editor = open == Open::Reveal ? QStringLiteral("file-manager") : expected.isEmpty() ? QStringLiteral("vscode") : expected.first();
     const QString path = open == Open::Workspace ? Sut::rootOf(which) : Sut::rootOf(which) + QStringLiteral("/src/app.ts");
     const qsizetype before = sut.opened.size();
+    const qsizetype linksBefore = sut.links.opened.size();
     const QString toastBefore = sut.newestToast().first;
     if (open == Open::Workspace) {
       sut.bridge.dispatch(QStringLiteral("workspace.openInEditor"), QVariantMap{{QStringLiteral("editorId"), editor}});
@@ -328,7 +360,13 @@ struct OpenIt : Command {
     // A member's file elsewhere is in the shell's MC's folder for it, when that MC runs here.
     const bool asked = !model.here(which) && which == 1 && model.here(0);
     const bool mounted = asked && model.folder == Folder::Mounted;
-    if (model.here(which) || mounted) {
+    if (far && model.ssh && open != Open::Reveal) {
+      RC_ASSERT(sut.opened.size() == before);
+      RC_ASSERT(sut.links.opened.size() == linksBefore + 1);
+      RC_ASSERT(sut.links.opened.last() == QUrl(QStringLiteral("vscode://vscode-remote/ssh-remote+devbox") + path));
+      RC_ASSERT(toastId == toastBefore);
+    } else if (model.here(which) || mounted) {
+      RC_ASSERT(sut.links.opened.size() == linksBefore);
       QJsonObject payload{{QStringLiteral("cwd"), mounted ? kFolders + QLatin1Char('/') + kMember + path : path}, {QStringLiteral("editor"), editor}};
       if (open == Open::Reveal) payload.insert(QStringLiteral("reveal"), true);
       RC_ASSERT(sut.opened.size() == before + 1);
@@ -337,6 +375,7 @@ struct OpenIt : Command {
       RC_ASSERT(toastId == toastBefore);
     } else {
       RC_ASSERT(sut.opened.size() == before);
+      RC_ASSERT(sut.links.opened.size() == linksBefore);
       RC_ASSERT(toastId != toastBefore);
       RC_ASSERT(toastTitle == (asked && model.folder == Folder::NoFuse ? kNoFuse : kTold));
     }
@@ -356,8 +395,10 @@ class WorkspaceOpenHereProp : public QObject {
 private slots:
   void model() {
     QVERIFY(rc::check("an editor or the file manager starts only on this machine, whatever the MCs say and when", [] {
-      Sut sut;
-      rc::state::check(Model{}, sut,
+      Model initial;
+      initial.ssh = *rc::gen::arbitrary<bool>();
+      Sut sut(initial.ssh);
+      rc::state::check(initial, sut,
                        rc::state::gen::execOneOfWithArgs<Announce, Announce, Announce, Join, Go, Go, Answer, Drop, Reconnect, OpenIt, OpenIt, OpenIt>());
     }));
   }

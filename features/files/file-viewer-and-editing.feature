@@ -454,23 +454,24 @@ Feature: Viewing and editing files
       Then "VS Code" opens the thread's workspace folder on the environment
       And "VS Code" stays the preferred editor for next time
 
-    @backlog @desktop
+    @desktop
     Scenario: A remote environment's workspace opens in the local editor over SSH
       Given the thread's environment is on another machine reachable over SSH as "devbox"
       When the user opens the thread's workspace in "VS Code"
       Then the local "VS Code" opens the workspace on "devbox" over SSH
 
-    # Legacy: apps/desktop/src/ipc/methods/window.ts (probeRemoteEditors)
-    @backlog @desktop
+    # Legacy: apps/desktop/src/ipc/methods/window.ts (probeRemoteEditors); the names
+    # are the ones the MC advertises (connections/environments.feature).
+    @desktop
     Scenario: Only editors on this computer that can work over SSH are offered for a remote environment
       Given the thread's environment is on another machine reachable over SSH
       And this computer has "VS Code" and "Zed" installed that can open folders over SSH
       And this computer has "Sublime Text" installed which cannot
       When the user looks at the editors offered for the thread's workspace
       Then "VS Code" and "Zed" are offered
-      And "Sublime Text" is not offered
+      And "Sublime Text" is not among them
 
-    @backlog @desktop
+    @desktop
     Scenario: A remote environment with no SSH route cannot open an editor
       Given the thread's environment is on another machine with no SSH route
       When the user looks at opening the thread's workspace in an editor

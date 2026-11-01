@@ -166,6 +166,14 @@ private:
   QString envMode() const;
   bool envModeChangeable() const;
   QString currentBranch() const;
+  // Neither the thread's machine nor the shell's MC is the one the user sits at:
+  // no folder here holds its files, and an editor opens them only over SSH.
+  bool farFromHere() const;
+  QString sshHost() const;
+  QJsonArray sshEditors() const;
+  QString placeLabel() const;
+  QString sshNote() const;
+  QString noSshRoute() const;
   QJsonArray editors() const;
   QString preferredEditor(const QJsonArray& editors) const;
   QVariantList environmentChoices() const;
@@ -220,6 +228,8 @@ private:
   int m_config = 0;
   QString m_configEnvironment;
   QJsonObject m_configElsewhere;
+  mutable std::optional<QJsonArray> m_sshEditors;
+  mutable QByteArray m_sshEditorsPath;
 
   // The ref list: loaded when the picker opens or its search changes.
   QString m_query;
