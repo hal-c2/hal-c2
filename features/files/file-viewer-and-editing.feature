@@ -89,7 +89,7 @@ Feature: Viewing and editing files
       Then the image bytes are returned
 
     # Legacy: apps/server/src/workspace/WorkspaceFileSystem.ts (readFile: base64 limited to images and the image size cap)
-    @mc @backlog
+    @mc
     Scenario Outline: A file can be read as base64 only when it is an image within the size limit
       Given "<path>" in "shop" is <file>
       When a client reads "<path>" from "shop" as base64
@@ -102,14 +102,14 @@ Feature: Viewing and editing files
         | data/export.zip  | an archive               | the MC answers that the file is binary and cannot be read as text    |
 
     # Legacy: apps/server/src/workspace/WorkspaceFileSystem.test.ts (rejects an image-named symlink to a non-image target)
-    @mc @backlog
+    @mc
     Scenario: A link named like an image does not make another file readable as an image
       Given "shop" holds "preview.png" as a link to the binary file "database.sqlite"
       When a client reads "preview.png" from "shop" as base64
       Then the MC answers that the file is binary and cannot be read as text
 
     # Legacy: apps/server/src/workspace/WorkspaceFileSystem.ts (readFile: non-blocking open, stat check)
-    @mc @backlog
+    @mc
     Scenario: A named pipe in the project is refused instead of waiting for it
       Given "shop" holds a named pipe "queue.fifo" nobody writes to
       When a client reads "queue.fifo" from "shop"
@@ -693,7 +693,7 @@ Feature: Viewing and editing files
         | reads  | link-to-home/.bashrc |
 
     # Legacy: apps/server/src/workspace/WorkspacePaths.ts (resolveRelativePathWithinRoot)
-    @mc @backlog
+    @mc
     Scenario Outline: The project's own folder is not a file path
       When a client <action> "<path>" in "shop"
       Then the MC answers that the path is outside the project
@@ -705,7 +705,7 @@ Feature: Viewing and editing files
         | writes | src/.. |
 
     # Legacy: apps/server/src/workspace/WorkspacePaths.ts (normalizeWorkspaceRoot: not a directory)
-    @mc @backlog
+    @mc
     Scenario: A project whose folder was replaced by a file reports it
       Given the folder of "shop" was replaced by a file
       When a client lists the files of "shop"

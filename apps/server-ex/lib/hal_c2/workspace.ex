@@ -98,7 +98,8 @@ defmodule HalC2.Workspace do
     with {:ok, root} <- root(cwd, "ProjectReadFileError"),
          {:ok, path, shown} <- read_target(root, relative, error),
          {:ok, %File.Stat{type: :regular, size: size}} <- stat(path, error),
-         :ok <- if(base64? and not chat_image?(path), do: :binary, else: :ok),
+         # By what the path resolves to: a link named like an image reads no other file.
+         :ok <- if(base64? and not chat_image?(real(path)), do: :binary, else: :ok),
          # An image too large to attach comes back without its bytes.
          {:ok, contents} <- read_head(path, if(base64? and size > max, do: 0, else: max), error) do
       cond do
@@ -112,7 +113,7 @@ defmodule HalC2.Workspace do
           error.("binary_file", "'#{relative}' is not a text file.")
       end
     else
-      :binary -> error.("binary_file", "'#{relative}' is not a text file.")
+      :binary -> error.("binary_file", "'#{relative}' is binary and cannot be read as text.")
       {:ok, %File.Stat{}} -> error.("path_not_file", "'#{relative}' is not a file.")
       {:error, _} = failure -> failure
     end
@@ -122,7 +123,8 @@ defmodule HalC2.Workspace do
     if Path.type(relative) == :absolute do
       {:ok, real(relative), relative}
     else
-      with {:ok, path} <- inside(root, relative, error), do: {:ok, path, normalize(relative)}
+      with {:ok, path} <- inside_file(root, relative, error),
+           do: {:ok, path, normalize(relative)}
     end
   end
 
@@ -160,7 +162,7 @@ defmodule HalC2.Workspace do
       with {:ok, path} <- existing_text(real(relative), relative, error),
            do: {:ok, path, relative}
     else
-      with {:ok, path} <- inside(root, relative, error),
+      with {:ok, path} <- inside_file(root, relative, error),
            :ok <- mkdir(Path.dirname(path), error),
            {:ok, path} <- inside(root, relative, error),
            do: {:ok, path, normalize(relative)}
@@ -584,6 +586,13 @@ defmodule HalC2.Workspace do
       true ->
         {:ok, Path.join(root, relative)}
     end
+  end
+
+  # As `inside/3`, for a file: the root's own folder is not one.
+  defp inside_file(root, relative, error) do
+    if Path.expand(normalize(relative), root) == root,
+      do: error.("workspace_path_outside_root", "'#{relative}' is outside the workspace."),
+      else: inside(root, relative, error)
   end
 
   @doc "Whether `path` is `root` or under it; both absolute and normalized."
