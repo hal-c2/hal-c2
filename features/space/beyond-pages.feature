@@ -22,8 +22,6 @@ Feature: Spaces beyond Pages
     Then "Status" holds the new summary and says when it was written
 
   @mc @shared
-
-  @mc @shared
   Scenario: The user sees who else is on a page
     Given a second client is reading the page "Roadmap"
     Then each client sees the other on the page
